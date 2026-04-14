@@ -1,0 +1,9 @@
+[package]
+name = "reference"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eframe = "0.34.1"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+rusqlite = { version = "0.39.0", features = ["bundled"] }
