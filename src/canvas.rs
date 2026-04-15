@@ -154,6 +154,10 @@ impl CanvasState {
         }
     }
 
+    pub fn has_selection(&self) -> bool {
+        !self.selected_item_ids.is_empty()
+    }
+
     pub fn take_dirty_items(&mut self) -> Vec<crate::data::BoardItem> {
         let dirty_ids = std::mem::take(&mut self.dirty_item_ids);
         dirty_ids
@@ -191,6 +195,24 @@ impl CanvasState {
                 .then_with(|| left.filename.cmp(&right.filename))
         });
         entries
+    }
+
+    pub fn selection_screen_rect(&self, rect: egui::Rect) -> Option<egui::Rect> {
+        let mut selected_rect: Option<egui::Rect> = None;
+
+        for image in &self.images {
+            if !self.is_selected(image.record.item.id) {
+                continue;
+            }
+
+            let image_rect = image_screen_rect(self, rect, image);
+            selected_rect = Some(match selected_rect {
+                Some(rect) => rect.union(image_rect),
+                None => image_rect,
+            });
+        }
+
+        selected_rect
     }
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
@@ -376,16 +398,21 @@ fn handle_input(
     state: &mut CanvasState,
     response: &egui::Response,
 ) {
-    if response.dragged_by(egui::PointerButton::Middle) {
+    let pointer_pos = ui.input(|i| i.pointer.latest_pos());
+    let pointer_on_canvas = pointer_pos
+        .map(|pointer_pos| ui.ctx().layer_id_at(pointer_pos) == Some(response.layer_id))
+        .unwrap_or(false);
+
+    if pointer_on_canvas && response.dragged_by(egui::PointerButton::Middle) {
         state.pan += response.drag_delta();
     }
 
-    let pointer_pos = ui.input(|i| i.pointer.latest_pos());
     if response.hovered() {
         state.last_pointer_screen_pos = pointer_pos;
     }
 
-    if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))
+    if pointer_on_canvas
+        && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))
         && let Some(pointer_pos) = pointer_pos
     {
         if let Some(item_id) = hit_test_image(state, rect, pointer_pos) {
@@ -465,7 +492,7 @@ fn handle_input(
         state.set_selection(selected);
     }
 
-    if !response.hovered() {
+    if !pointer_on_canvas || !response.hovered() {
         return;
     }
 

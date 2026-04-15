@@ -3,8 +3,12 @@ use time::OffsetDateTime;
 
 const SIDEBAR_WIDTH: f32 = 180.0;
 const SIDEBAR_MAX_WIDTH: f32 = 200.0;
-const TITLEBAR_UNDERLAY_HEIGHT: f32 = 44.0;
 const SIDEBAR_CONTENT_TOP_PADDING: f32 = 46.0;
+const SELECTION_TOOLBAR_WIDTH: f32 = 44.0;
+const SELECTION_TOOLBAR_HEIGHT: f32 = 36.0;
+const SELECTION_TOOLBAR_GAP: f32 = 12.0;
+const DELETE_ICON: egui::ImageSource<'static> =
+    egui::include_image!("../assets/icons/iconoir-trash.svg");
 
 #[derive(Clone, Debug, Default)]
 pub struct AppConfig {
@@ -240,7 +244,9 @@ impl ReferenceApp {
 
 impl eframe::App for ReferenceApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let screen_rect = ui.max_rect();
+        let screen_rect = ui.ctx().viewport_rect();
+        ui.set_clip_rect(screen_rect);
+        ui.expand_to_include_rect(screen_rect);
 
         self.handle_import_results(ui.ctx());
 
@@ -280,7 +286,13 @@ impl eframe::App for ReferenceApp {
             &mut self.canvas,
             self.dev_harness.show_overlay(),
         );
-        show_titlebar_underlay(ui.ctx(), screen_rect);
+        show_selection_toolbar(
+            ui.ctx(),
+            screen_rect,
+            &mut self.canvas,
+            self.library.as_ref(),
+            &mut self.status,
+        );
         self.persist_canvas_changes();
         show_sidebar(ui.ctx(), screen_rect, &mut self.canvas, &mut self.status);
         self.dev_harness
@@ -296,17 +308,75 @@ impl eframe::App for ReferenceApp {
     }
 }
 
-fn show_titlebar_underlay(ctx: &egui::Context, screen_rect: egui::Rect) {
-    egui::Area::new(egui::Id::new("titlebar_underlay"))
-        .order(egui::Order::Background)
-        .fixed_pos(egui::Pos2::ZERO)
-        .interactable(false)
+fn show_selection_toolbar(
+    ctx: &egui::Context,
+    screen_rect: egui::Rect,
+    canvas: &mut crate::canvas::CanvasState,
+    library: Option<&crate::storage::Library>,
+    status: &mut String,
+) {
+    if !canvas.has_selection() {
+        return;
+    }
+
+    let Some(selection_rect) = canvas.selection_screen_rect(screen_rect) else {
+        return;
+    };
+
+    let canvas_rect = canvas_view_rect(screen_rect);
+    let min_x = canvas_rect.min.x + 8.0;
+    let max_x = canvas_rect.max.x - SELECTION_TOOLBAR_WIDTH - 8.0;
+    let min_y = canvas_rect.min.y + 8.0;
+    let max_y = canvas_rect.max.y - SELECTION_TOOLBAR_HEIGHT - 8.0;
+
+    let toolbar_x = (selection_rect.center().x - SELECTION_TOOLBAR_WIDTH * 0.5).clamp(min_x, max_x);
+    let toolbar_y = (selection_rect.min.y - SELECTION_TOOLBAR_HEIGHT - SELECTION_TOOLBAR_GAP)
+        .clamp(min_y, max_y);
+
+    egui::Area::new(egui::Id::new("selection_toolbar"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(egui::pos2(toolbar_x, toolbar_y))
         .show(ctx, |ui| {
-            let rect = egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(screen_rect.width(), TITLEBAR_UNDERLAY_HEIGHT),
-            );
-            ui.painter().rect_filled(rect, 0.0, crate::theme::SHADE_90);
+            egui::Frame::new()
+                .fill(crate::theme::SHADE_80)
+                .stroke(egui::Stroke::NONE)
+                .corner_radius(10)
+                .inner_margin(egui::Margin {
+                    left: 4,
+                    right: 4,
+                    top: 4,
+                    bottom: 4,
+                })
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let delete_icon = egui::Image::new(DELETE_ICON)
+                            .fit_to_exact_size(egui::vec2(16.0, 16.0))
+                            .tint(crate::theme::SHADE_BASE);
+                        let delete_button = egui::Button::image(delete_icon)
+                        .min_size(egui::vec2(28.0, 28.0))
+                        .frame(true)
+                        .frame_when_inactive(false)
+                        .stroke(egui::Stroke::NONE)
+                        .corner_radius(8);
+
+                        if ui.add(delete_button).clicked() {
+                            let removed_ids = canvas.delete_selected();
+                            if removed_ids.is_empty() {
+                                return;
+                            }
+
+                            if let Some(library) = library {
+                                if let Err(error) = library.delete_board_items(&removed_ids) {
+                                    *status = error;
+                                    return;
+                                }
+                            }
+
+                            let noun = if removed_ids.len() == 1 { "image" } else { "images" };
+                            *status = format!("Deleted {} {noun}", removed_ids.len());
+                        }
+                    });
+                });
         });
 }
 

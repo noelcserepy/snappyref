@@ -24,6 +24,7 @@ pub fn run() -> eframe::Result<()> {
         options,
         Box::new(|cc| {
             theme::configure_theme(&cc.egui_ctx);
+            egui_extras::install_image_loaders(&cc.egui_ctx);
             Ok(Box::new(app::ReferenceApp::new(cc, config.clone())))
         }),
     )
