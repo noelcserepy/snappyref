@@ -10,6 +10,10 @@ const SELECTION_TOOLBAR_HEIGHT: f32 = 36.0;
 const SELECTION_TOOLBAR_GAP: f32 = 12.0;
 const ARCHIVE_ICON: egui::ImageSource<'static> =
     egui::include_image!("../assets/icons/iconoir-archive.svg");
+const NAV_ARROW_DOWN_ICON: egui::ImageSource<'static> =
+    egui::include_image!("../assets/icons/iconoir-nav-arrow-down.svg");
+const NAV_ARROW_RIGHT_ICON: egui::ImageSource<'static> =
+    egui::include_image!("../assets/icons/iconoir-nav-arrow-right.svg");
 const COPY_PAYLOAD_KIND: &str = "reference-board-items";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -556,6 +560,9 @@ fn show_sidebar(
     status: &mut String,
 ) {
     let sidebar_height = screen_rect.height();
+    let sidebar_inner_top = SIDEBAR_CONTENT_TOP_PADDING + 8.0;
+    let sidebar_inner_bottom = 12.0;
+    let sidebar_inner_height = (sidebar_height - sidebar_inner_top - sidebar_inner_bottom).max(0.0);
     let entries = canvas.sidebar_entries();
 
     egui::Area::new(egui::Id::new("library_sidebar"))
@@ -569,14 +576,15 @@ fn show_sidebar(
                 .inner_margin(egui::Margin {
                     left: 14,
                     right: 12,
-                    top: (SIDEBAR_CONTENT_TOP_PADDING + 8.0) as i8,
-                    bottom: 12,
+                    top: sidebar_inner_top as i8,
+                    bottom: sidebar_inner_bottom as i8,
                 })
                 .show(ui, |ui| {
                     ui.set_width(SIDEBAR_WIDTH);
                     ui.set_min_width(SIDEBAR_WIDTH);
                     ui.set_max_width(SIDEBAR_MAX_WIDTH);
-                    ui.set_min_height(sidebar_height);
+                    ui.set_min_height(sidebar_inner_height);
+                    ui.set_max_height(sidebar_inner_height);
 
                     ui.vertical(|ui| {
                         paint_sidebar_header(ui, entries.len());
@@ -588,10 +596,8 @@ fn show_sidebar(
                             *archive_section_open,
                             archived_entries.len(),
                         );
-                        let status_height = 28.0;
                         let active_height =
-                            (ui.available_height() - archive_section_height - status_height - 18.0)
-                                .max(80.0);
+                            (ui.available_height() - archive_section_height - 10.0).max(80.0);
 
                         ui.allocate_ui_with_layout(
                             egui::vec2(ui.available_width(), active_height),
@@ -618,19 +624,6 @@ fn show_sidebar(
                             .show(ui, |ui| {
                                 paint_archive_section(ui, archive_section_open, archived_entries);
                             });
-
-                        ui.add_space(10.0);
-                        paint_sidebar_divider(ui);
-                        ui.add_space(8.0);
-                        ui.add_sized(
-                            [ui.available_width(), 18.0],
-                            egui::Label::new(
-                                egui::RichText::new(status.as_str())
-                                    .size(12.0)
-                                    .color(crate::theme::SHADE_30),
-                            )
-                            .truncate(),
-                        );
                     });
                 });
         });
@@ -666,7 +659,7 @@ fn archive_section_target_height(open: bool, count: usize) -> f32 {
     }
 
     let rows = count.min(5) as f32;
-    28.0 + 8.0 + rows * 24.0
+    28.0 + 8.0 + rows * 20.0
 }
 
 fn paint_sidebar_divider(ui: &mut egui::Ui) {
@@ -684,38 +677,70 @@ fn paint_archive_section(
     open: &mut bool,
     entries: &[crate::storage::ArchivedSidebarEntry],
 ) {
-    paint_sidebar_divider(ui);
-    ui.add_space(8.0);
-
-    let archive_icon = egui::Image::new(ARCHIVE_ICON)
-        .fit_to_exact_size(egui::vec2(14.0, 14.0))
-        .tint(crate::theme::SHADE_20);
-    let chevron = if *open { "v" } else { ">" };
+    let chevron_icon = if *open {
+        NAV_ARROW_DOWN_ICON
+    } else {
+        NAV_ARROW_RIGHT_ICON
+    };
     let noun = if entries.len() == 1 { "item" } else { "items" };
-
-    ui.horizontal(|ui| {
-        let header = egui::Button::image_and_text(archive_icon, format!("Archive"))
+    let row_height = 20.0;
+    let text_color = crate::theme::SHADE_10;
+    let icon_color = crate::theme::SHADE_BASE;
+    let icon_size = egui::vec2(14.0, 14.0);
+    let response = ui.add_sized(
+        [ui.available_width(), row_height],
+        egui::Button::new("")
             .frame(false)
             .fill(egui::Color32::TRANSPARENT)
-            .stroke(egui::Stroke::NONE)
-            .corner_radius(6);
-        if ui.add(header).clicked() {
-            *open = !*open;
-        }
+            .stroke(egui::Stroke::NONE),
+    );
 
-        ui.label(
-            egui::RichText::new(chevron)
-                .size(11.0)
-                .color(crate::theme::SHADE_40),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(
-                egui::RichText::new(format!("{} {noun}", entries.len()))
-                    .size(10.0)
-                    .color(crate::theme::SHADE_40),
-            );
-        });
-    });
+    if response.clicked() {
+        *open = !*open;
+    }
+
+    let rect = response.rect;
+    let icon_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.min.x, rect.center().y - icon_size.y * 0.5),
+        icon_size,
+    );
+    ui.put(
+        icon_rect,
+        egui::Image::new(ARCHIVE_ICON)
+            .fit_to_exact_size(icon_size)
+            .tint(icon_color),
+    );
+    ui.painter().text(
+        egui::pos2(icon_rect.max.x + 8.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        "Archive",
+        egui::FontId::proportional(12.0),
+        text_color,
+    );
+    let count_text = format!("{} {noun}", entries.len());
+    let count_galley = ui.painter().layout_no_wrap(
+        count_text.clone(),
+        egui::FontId::proportional(10.0),
+        text_color,
+    );
+    let chevron_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.max.x - count_galley.size().x - icon_size.x - 10.0,
+            rect.center().y - icon_size.y * 0.5,
+        ),
+        icon_size,
+    );
+    ui.put(
+        chevron_rect,
+        egui::Image::new(chevron_icon)
+            .fit_to_exact_size(icon_size)
+            .tint(text_color),
+    );
+    ui.painter().galley(
+        egui::pos2(rect.max.x - count_galley.size().x, rect.center().y - count_galley.size().y * 0.5),
+        count_galley,
+        text_color,
+    );
 
     if !*open {
         return;
@@ -727,8 +752,8 @@ fn paint_archive_section(
             [ui.available_width(), 18.0],
             egui::Label::new(
                 egui::RichText::new(&entry.filename)
-                    .size(11.0)
-                    .color(crate::theme::SHADE_30),
+                    .size(12.0)
+                    .color(crate::theme::SHADE_10),
             )
             .truncate(),
         );
@@ -804,11 +829,6 @@ fn paint_sidebar_entry(
     } else {
         egui::Stroke::NONE
     };
-    let arrow_color = if entry.selected {
-        crate::theme::SHADE_20
-    } else {
-        crate::theme::SHADE_40
-    };
     let text_color = if entry.selected {
         crate::theme::SHADE_BASE
     } else {
@@ -827,9 +847,6 @@ fn paint_sidebar_entry(
         })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.add_space(4.0);
-                ui.label(egui::RichText::new(">").size(10.0).color(arrow_color));
-                ui.add_space(2.0);
                 let response = ui.add_sized(
                     [ui.available_width(), 16.0],
                     egui::Button::new(

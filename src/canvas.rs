@@ -602,16 +602,14 @@ fn paint_images(
             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
-        painter.rect_stroke(
-            image_rect,
-            0.0,
-            if state.is_selected(image.record.item.id) {
-                egui::Stroke::new(1.0, crate::theme::SHADE_BASE)
-            } else {
-                egui::Stroke::new(1.0, crate::theme::SHADE_60)
-            },
-            egui::StrokeKind::Outside,
-        );
+        if state.is_selected(image.record.item.id) {
+            painter.rect_stroke(
+                image_rect,
+                0.0,
+                egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
+                egui::StrokeKind::Outside,
+            );
+        }
 
         if debug_labels {
             let label = format!(
