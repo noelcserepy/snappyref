@@ -44,17 +44,13 @@ impl NativeWindowCapture {
                     .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
             }
 
-            let ns_view = unsafe {
-                self.ns_view_ptr
-                    .cast::<NSView>()
-                    .as_ref()
-            };
+            let ns_view = unsafe { self.ns_view_ptr.cast::<NSView>().as_ref() };
 
             let bounds = ns_view.bounds();
-            let bitmap = unsafe {
-                ns_view.bitmapImageRepForCachingDisplayInRect(bounds)
-            }
-            .ok_or_else(|| "failed to allocate bitmap image rep for window capture".to_owned())?;
+            let bitmap = unsafe { ns_view.bitmapImageRepForCachingDisplayInRect(bounds) }
+                .ok_or_else(|| {
+                    "failed to allocate bitmap image rep for window capture".to_owned()
+                })?;
 
             unsafe {
                 ns_view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);

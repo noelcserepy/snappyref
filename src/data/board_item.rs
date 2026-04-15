@@ -8,6 +8,7 @@ pub struct BoardItem {
     pub scale: f32,
     pub rotation: f32,
     pub z_index: i32,
+    pub archived: bool,
 }
 
 #[derive(Clone, Debug)]

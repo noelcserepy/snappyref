@@ -59,6 +59,15 @@ struct CanvasImage {
     texture: egui::TextureHandle,
 }
 
+#[derive(Clone)]
+struct SelectedLayoutItem {
+    id: i64,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
 struct DragState {
     pointer_start_world: egui::Pos2,
     starting_positions: Vec<(i64, egui::Pos2)>,
@@ -109,6 +118,19 @@ impl CanvasState {
         self.images.sort_by_key(|image| image.record.item.z_index);
     }
 
+    pub fn add_reference_item(&mut self, record: BoardItemWithAsset) -> Result<(), String> {
+        let texture = self
+            .images
+            .iter()
+            .find(|image| image.record.asset.id == record.asset.id)
+            .map(|image| image.texture.clone())
+            .ok_or_else(|| format!("missing source texture for asset {}", record.asset.id))?;
+
+        self.images.push(CanvasImage { record, texture });
+        self.images.sort_by_key(|image| image.record.item.z_index);
+        Ok(())
+    }
+
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn replace_items(&mut self, ctx: &egui::Context, items: Vec<LoadedCanvasItem>) {
         self.clear();
@@ -156,6 +178,30 @@ impl CanvasState {
 
     pub fn has_selection(&self) -> bool {
         !self.selected_item_ids.is_empty()
+    }
+
+    pub fn selected_item_ids(&self) -> Vec<i64> {
+        self.selected_item_ids.clone()
+    }
+
+    pub fn selected_center_world(&self) -> Option<egui::Pos2> {
+        let mut min = egui::Pos2::new(f32::INFINITY, f32::INFINITY);
+        let mut max = egui::Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
+        let mut found = false;
+
+        for image in &self.images {
+            if !self.is_selected(image.record.item.id) {
+                continue;
+            }
+
+            found = true;
+            min.x = min.x.min(image.record.item.x);
+            min.y = min.y.min(image.record.item.y);
+            max.x = max.x.max(image.record.item.x);
+            max.y = max.y.max(image.record.item.y);
+        }
+
+        found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))
     }
 
     pub fn take_dirty_items(&mut self) -> Vec<crate::data::BoardItem> {
@@ -220,7 +266,11 @@ impl CanvasState {
         self.selected_item_ids = item_ids
             .iter()
             .copied()
-            .filter(|item_id| self.images.iter().any(|image| image.record.item.id == *item_id))
+            .filter(|item_id| {
+                self.images
+                    .iter()
+                    .any(|image| image.record.item.id == *item_id)
+            })
             .collect();
     }
 
@@ -238,6 +288,91 @@ impl CanvasState {
         for item_id in moved_ids {
             self.mark_dirty(item_id);
         }
+    }
+
+    pub fn arrange_selected_horizontal(&mut self) -> usize {
+        let mut items = self.selected_layout_items();
+        if items.len() <= 1 {
+            return items.len();
+        }
+
+        items.sort_by(|left, right| left.x.total_cmp(&right.x));
+        let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
+        let gap = 16.0;
+        let max_height = items
+            .iter()
+            .map(|item| item.height)
+            .fold(0.0_f32, f32::max);
+
+        let mut x_cursor = 0.0;
+        let mut placements = Vec::with_capacity(items.len());
+        for item in &items {
+            let center = egui::pos2(x_cursor + item.width * 0.5, max_height - item.height * 0.5);
+            placements.push((item.id, center));
+            x_cursor += item.width + gap;
+        }
+
+        let total_width = x_cursor - gap;
+        let local_center = egui::pos2(total_width * 0.5, max_height * 0.5);
+        self.apply_arrangement(placements, current_center.to_vec2() - local_center.to_vec2())
+    }
+
+    pub fn arrange_selected_vertical(&mut self) -> usize {
+        let mut items = self.selected_layout_items();
+        if items.len() <= 1 {
+            return items.len();
+        }
+
+        items.sort_by(|left, right| left.y.total_cmp(&right.y));
+        let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
+        let gap = 16.0;
+        let max_width = items.iter().map(|item| item.width).fold(0.0_f32, f32::max);
+
+        let mut y_cursor = 0.0;
+        let mut placements = Vec::with_capacity(items.len());
+        for item in &items {
+            let center = egui::pos2(item.width * 0.5, y_cursor + item.height * 0.5);
+            placements.push((item.id, center));
+            y_cursor += item.height + gap;
+        }
+
+        let total_height = y_cursor - gap;
+        let local_center = egui::pos2(max_width * 0.5, total_height * 0.5);
+        self.apply_arrangement(placements, current_center.to_vec2() - local_center.to_vec2())
+    }
+
+    pub fn arrange_selected_compact(&mut self) -> usize {
+        let mut items = self.selected_layout_items();
+        if items.len() <= 1 {
+            return items.len();
+        }
+
+        items.sort_by(|left, right| {
+            left.y
+                .total_cmp(&right.y)
+                .then_with(|| left.x.total_cmp(&right.x))
+        });
+        let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
+
+        let mut best_layout: Option<(Vec<(i64, egui::Pos2)>, f32, f32, f32, f32)> = None;
+        for columns in 1..=items.len() {
+            let (placements, width, height) = compact_layout(&items, columns, 0.0);
+            let aspect_ratio = width.max(height) / width.min(height).max(1.0);
+            let area = width * height;
+
+            match &best_layout {
+                Some((_, _, _, best_ratio, best_area))
+                    if aspect_ratio > *best_ratio
+                        || ((aspect_ratio - *best_ratio).abs() < 0.001 && area >= *best_area) => {}
+                _ => best_layout = Some((placements, width, height, aspect_ratio, area)),
+            }
+        }
+
+        let Some((placements, width, height, _, _)) = best_layout else {
+            return 0;
+        };
+        let local_center = egui::pos2(width * 0.5, height * 0.5);
+        self.apply_arrangement(placements, current_center.to_vec2() - local_center.to_vec2())
     }
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
@@ -366,6 +501,12 @@ impl CanvasState {
         self.selected_item_ids.push(item_id);
     }
 
+    fn add_to_selection(&mut self, item_id: i64) {
+        if !self.selected_item_ids.contains(&item_id) {
+            self.selected_item_ids.push(item_id);
+        }
+    }
+
     fn clear_selection(&mut self) {
         self.selected_item_ids.clear();
     }
@@ -379,6 +520,74 @@ impl CanvasState {
             self.dirty_item_ids.push(item_id);
         }
     }
+
+    fn selected_layout_items(&self) -> Vec<SelectedLayoutItem> {
+        self.images
+            .iter()
+            .filter(|image| self.is_selected(image.record.item.id))
+            .map(|image| SelectedLayoutItem {
+                id: image.record.item.id,
+                x: image.record.item.x,
+                y: image.record.item.y,
+                width: image.record.asset.width as f32 * image.record.item.scale.max(0.01),
+                height: image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+            })
+            .collect()
+    }
+
+    fn apply_arrangement(
+        &mut self,
+        placements: Vec<(i64, egui::Pos2)>,
+        offset: egui::Vec2,
+    ) -> usize {
+        let mut arranged_ids = Vec::with_capacity(placements.len());
+
+        for (item_id, local_center) in placements {
+            if let Some(image) = self
+                .images
+                .iter_mut()
+                .find(|image| image.record.item.id == item_id)
+            {
+                let world_center = local_center + offset;
+                image.record.item.x = world_center.x;
+                image.record.item.y = world_center.y;
+                arranged_ids.push(item_id);
+            }
+        }
+
+        for item_id in &arranged_ids {
+            self.mark_dirty(*item_id);
+        }
+
+        arranged_ids.len()
+    }
+}
+
+fn compact_layout(
+    items: &[SelectedLayoutItem],
+    columns: usize,
+    gap: f32,
+) -> (Vec<(i64, egui::Pos2)>, f32, f32) {
+    let mut placements = Vec::with_capacity(items.len());
+    let mut y_cursor = 0.0;
+    let mut total_width = 0.0_f32;
+
+    for row in items.chunks(columns) {
+        let row_height = row.iter().map(|item| item.height).fold(0.0_f32, f32::max);
+        let mut x_cursor = 0.0;
+
+        for item in row {
+            let center = egui::pos2(x_cursor + item.width * 0.5, y_cursor + item.height * 0.5);
+            placements.push((item.id, center));
+            x_cursor += item.width + gap;
+        }
+
+        total_width = total_width.max((x_cursor - gap).max(0.0));
+        y_cursor += row_height + gap;
+    }
+
+    let total_height = (y_cursor - gap).max(0.0);
+    (placements, total_width, total_height)
 }
 
 pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut CanvasState, debug_labels: bool) {
@@ -389,6 +598,7 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut CanvasState, debug_
 
     painter.rect_filled(rect, 0.0, crate::theme::SHADE_90);
     paint_images(&painter, rect, state, debug_labels);
+    paint_selection_bounds(&painter, rect, state);
     paint_marquee(&painter, state);
 }
 
@@ -399,6 +609,7 @@ fn handle_input(
     response: &egui::Response,
 ) {
     let pointer_pos = ui.input(|i| i.pointer.latest_pos());
+    let shift_held = ui.input(|i| i.modifiers.shift);
     let pointer_on_canvas = pointer_pos
         .map(|pointer_pos| ui.ctx().layer_id_at(pointer_pos) == Some(response.layer_id))
         .unwrap_or(false);
@@ -416,7 +627,9 @@ fn handle_input(
         && let Some(pointer_pos) = pointer_pos
     {
         if let Some(item_id) = hit_test_image(state, rect, pointer_pos) {
-            if !state.is_selected(item_id) {
+            if shift_held {
+                state.add_to_selection(item_id);
+            } else if !state.is_selected(item_id) {
                 state.set_single_selection(item_id);
             }
 
@@ -541,7 +754,12 @@ fn zoom_around_pointer(
     state.pan += pointer_pos - screen_after;
 }
 
-fn paint_images(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState, debug_labels: bool) {
+fn paint_images(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    state: &CanvasState,
+    debug_labels: bool,
+) {
     for image in &state.images {
         let image_rect = image_screen_rect(state, rect, image);
 
@@ -556,16 +774,14 @@ fn paint_images(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState, 
             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
-        painter.rect_stroke(
-            image_rect,
-            0.0,
-            if state.is_selected(image.record.item.id) {
-                egui::Stroke::new(1.0, crate::theme::SHADE_BASE)
-            } else {
-                egui::Stroke::new(1.0, crate::theme::SHADE_60)
-            },
-            egui::StrokeKind::Outside,
-        );
+        if state.is_selected(image.record.item.id) {
+            painter.rect_stroke(
+                image_rect,
+                0.0,
+                egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
+                egui::StrokeKind::Outside,
+            );
+        }
 
         if debug_labels {
             let label = format!(
@@ -591,6 +807,23 @@ fn paint_marquee(painter: &egui::Painter, state: &CanvasState) {
     let rect = egui::Rect::from_two_pos(marquee_state.start_screen, marquee_state.current_screen);
     painter.rect_stroke(
         rect,
+        0.0,
+        egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
+        egui::StrokeKind::Outside,
+    );
+}
+
+fn paint_selection_bounds(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) {
+    if state.selected_item_ids.len() <= 1 {
+        return;
+    }
+
+    let Some(selection_rect) = state.selection_screen_rect(rect) else {
+        return;
+    };
+
+    painter.rect_stroke(
+        selection_rect.expand(6.0),
         0.0,
         egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
         egui::StrokeKind::Outside,

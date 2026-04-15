@@ -150,23 +150,22 @@ fn import_clipboard(
         }
     };
 
-    let record =
-        match library.persist_imported_image(
-            &stored_path,
-            image::ImageFormat::Png.to_mime_type(),
-            width,
-            height,
-            file_size,
-            desired_world,
-        ) {
-            Ok(record) => record,
-            Err(error) => {
-                return ImportResult::Failed {
-                    context: stored_path.display().to_string(),
-                    error,
-                };
-            }
-        };
+    let record = match library.persist_imported_image(
+        &stored_path,
+        image::ImageFormat::Png.to_mime_type(),
+        width,
+        height,
+        file_size,
+        desired_world,
+    ) {
+        Ok(record) => record,
+        Err(error) => {
+            return ImportResult::Failed {
+                context: stored_path.display().to_string(),
+                error,
+            };
+        }
+    };
 
     ImportResult::Loaded(LoadedCanvasItem { record, rgba })
 }

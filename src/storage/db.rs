@@ -8,6 +8,14 @@ use rusqlite::{Connection, params};
 
 use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset, UserSession};
 
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct ArchivedSidebarEntry {
+    pub item_id: i64,
+    pub filename: String,
+    pub imported_at: i64,
+}
+
 #[derive(Clone, Debug)]
 pub struct Library {
     root: PathBuf,
@@ -131,14 +139,16 @@ impl Library {
                     y,
                     scale,
                     rotation,
-                    z_index
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    z_index,
+                    archived
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     asset_id,
                     desired_world.x,
                     desired_world.y,
                     1.0_f32,
                     0.0_f32,
+                    0_i64,
                     0_i64
                 ],
             )
@@ -168,6 +178,7 @@ impl Library {
                 scale: 1.0,
                 rotation: 0.0,
                 z_index: 0,
+                archived: false,
             },
         })
     }
@@ -194,6 +205,7 @@ impl Library {
                     a.imported_at
                  FROM board_items b
                  JOIN assets a ON a.id = b.asset_id
+                 WHERE b.archived = 0
                  ORDER BY b.z_index ASC, b.id ASC",
             )
             .map_err(|error| format!("failed to prepare board-items query: {error}"))?;
@@ -209,6 +221,7 @@ impl Library {
                         scale: row.get(4)?,
                         rotation: row.get(5)?,
                         z_index: row.get(6)?,
+                        archived: false,
                     },
                     asset: ImageAsset {
                         id: row.get(7)?,
@@ -233,20 +246,200 @@ impl Library {
         connection
             .execute(
                 "UPDATE board_items
-                 SET x = ?1, y = ?2, scale = ?3, rotation = ?4, z_index = ?5
-                 WHERE id = ?6",
+                 SET x = ?1, y = ?2, scale = ?3, rotation = ?4, z_index = ?5, archived = ?6
+                 WHERE id = ?7",
                 params![
                     item.x,
                     item.y,
                     item.scale,
                     item.rotation,
                     item.z_index,
+                    if item.archived { 1_i64 } else { 0_i64 },
                     item.id,
                 ],
             )
             .map_err(|error| format!("failed to update board item: {error}"))?;
 
         Ok(())
+    }
+
+    pub fn archive_board_items(&self, item_ids: &[i64]) -> Result<(), String> {
+        if item_ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start archive transaction: {error}"))?;
+
+        for item_id in item_ids {
+            transaction
+                .execute(
+                    "UPDATE board_items SET archived = 1 WHERE id = ?1",
+                    params![item_id],
+                )
+                .map_err(|error| format!("failed to archive board item {item_id}: {error}"))?;
+        }
+
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit archive transaction: {error}"))?;
+
+        Ok(())
+    }
+
+    pub fn load_archived_sidebar_entries(&self) -> Result<Vec<ArchivedSidebarEntry>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT
+                    b.id,
+                    a.filename,
+                    a.imported_at
+                 FROM board_items b
+                 JOIN assets a ON a.id = b.asset_id
+                 WHERE b.archived = 1
+                 ORDER BY a.imported_at DESC, a.filename ASC, b.id ASC",
+            )
+            .map_err(|error| format!("failed to prepare archived-items query: {error}"))?;
+
+        let rows = statement
+            .query_map([], |row| {
+                Ok(ArchivedSidebarEntry {
+                    item_id: row.get(0)?,
+                    filename: row.get(1)?,
+                    imported_at: row.get(2)?,
+                })
+            })
+            .map_err(|error| format!("failed to read archived-items query: {error}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect archived-items: {error}"))
+    }
+
+    pub fn duplicate_board_items(
+        &self,
+        item_ids: &[i64],
+        anchor_world: egui::Pos2,
+        source_center_world: egui::Pos2,
+    ) -> Result<Vec<BoardItemWithAsset>, String> {
+        if item_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT
+                    b.id,
+                    b.asset_id,
+                    b.x,
+                    b.y,
+                    b.scale,
+                    b.rotation,
+                    b.z_index,
+                    a.id,
+                    a.original_path,
+                    a.filename,
+                    a.mime_type,
+                    a.width,
+                    a.height,
+                    a.file_size,
+                    a.imported_at
+                 FROM board_items b
+                 JOIN assets a ON a.id = b.asset_id
+                 WHERE b.id = ?1 AND b.archived = 0",
+            )
+            .map_err(|error| format!("failed to prepare duplicate-item query: {error}"))?;
+
+        let mut source_records = Vec::new();
+        for item_id in item_ids {
+            let record = statement
+                .query_row(params![item_id], |row| {
+                    Ok(BoardItemWithAsset {
+                        item: BoardItem {
+                            id: row.get(0)?,
+                            asset_id: row.get(1)?,
+                            x: row.get(2)?,
+                            y: row.get(3)?,
+                            scale: row.get(4)?,
+                            rotation: row.get(5)?,
+                            z_index: row.get(6)?,
+                            archived: false,
+                        },
+                        asset: ImageAsset {
+                            id: row.get(7)?,
+                            original_path: PathBuf::from(row.get::<_, String>(8)?),
+                            filename: row.get(9)?,
+                            mime_type: row.get(10)?,
+                            width: row.get::<_, u32>(11)?,
+                            height: row.get::<_, u32>(12)?,
+                            file_size: row.get::<_, i64>(13)? as u64,
+                            imported_at: row.get(14)?,
+                        },
+                    })
+                })
+                .map_err(|error| {
+                    format!("failed to load board item {item_id} for duplication: {error}")
+                })?;
+            source_records.push(record);
+        }
+
+        let delta = anchor_world - source_center_world;
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start duplicate transaction: {error}"))?;
+
+        let mut duplicated = Vec::new();
+        for source in source_records {
+            transaction
+                .execute(
+                    "INSERT INTO board_items (
+                        asset_id,
+                        x,
+                        y,
+                        scale,
+                        rotation,
+                        z_index,
+                        archived
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        source.item.asset_id,
+                        source.item.x + delta.x,
+                        source.item.y + delta.y,
+                        source.item.scale,
+                        source.item.rotation,
+                        source.item.z_index,
+                        0_i64
+                    ],
+                )
+                .map_err(|error| {
+                    format!("failed to duplicate board item {}: {error}", source.item.id)
+                })?;
+
+            let item_id = transaction.last_insert_rowid();
+            duplicated.push(BoardItemWithAsset {
+                asset: source.asset.clone(),
+                item: BoardItem {
+                    id: item_id,
+                    asset_id: source.item.asset_id,
+                    x: source.item.x + delta.x,
+                    y: source.item.y + delta.y,
+                    scale: source.item.scale,
+                    rotation: source.item.rotation,
+                    z_index: source.item.z_index,
+                    archived: false,
+                },
+            });
+        }
+
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit duplicate transaction: {error}"))?;
+
+        Ok(duplicated)
     }
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
@@ -353,7 +546,8 @@ impl Library {
                     y         REAL NOT NULL,
                     scale     REAL NOT NULL,
                     rotation  REAL NOT NULL,
-                    z_index   INTEGER NOT NULL
+                    z_index   INTEGER NOT NULL,
+                    archived  INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS user_session (
@@ -364,7 +558,9 @@ impl Library {
                 );
                 ",
             )
-            .map_err(|error| format!("failed to initialize database schema: {error}"))
+            .map_err(|error| format!("failed to initialize database schema: {error}"))?;
+
+        ensure_board_items_archived_column(&connection)
     }
 
     fn connection(&self) -> Result<Connection, String> {
@@ -418,4 +614,29 @@ impl StringFallback for String {
             self
         }
     }
+}
+
+fn ensure_board_items_archived_column(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(board_items)")
+        .map_err(|error| format!("failed to inspect board_items schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read board_items schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect board_items schema: {error}"))?;
+
+    if columns.iter().any(|column| column == "archived") {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE board_items ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|error| format!("failed to add archived column to board_items: {error}"))?;
+
+    Ok(())
 }
