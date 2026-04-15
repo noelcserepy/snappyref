@@ -84,49 +84,43 @@ impl ImportWorker {
     }
 }
 
-fn import_path(library: &Library, source_path: PathBuf, desired_world: egui::Pos2) -> ImportResult {
-    let decoded = match decode_image_file(&source_path) {
-        Ok(decoded) => decoded,
-        Err(error) => {
-            return ImportResult::Failed {
-                context: source_path.display().to_string(),
-                error,
-            };
-        }
-    };
+pub fn import_path_sync(
+    library: &Library,
+    source_path: PathBuf,
+    desired_world: egui::Pos2,
+) -> Result<LoadedCanvasItem, String> {
+    let decoded = decode_image_file(&source_path)
+        .map_err(|error| format!("{}: {error}", source_path.display()))?;
 
-    let stored_path = match library.store_original(&source_path) {
-        Ok(path) => path,
-        Err(error) => {
-            return ImportResult::Failed {
-                context: source_path.display().to_string(),
-                error,
-            };
-        }
-    };
+    let stored_path = library
+        .store_original(&source_path)
+        .map_err(|error| format!("{}: {error}", source_path.display()))?;
 
-    let record =
-        match library.persist_imported_image(
+    let record = library
+        .persist_imported_image(
             &stored_path,
             decoded.format.to_mime_type(),
             decoded.width,
             decoded.height,
             decoded.file_size,
             desired_world,
-        ) {
-            Ok(record) => record,
-            Err(error) => {
-                return ImportResult::Failed {
-                    context: stored_path.display().to_string(),
-                    error,
-                };
-            }
-        };
+        )
+        .map_err(|error| format!("{}: {error}", stored_path.display()))?;
 
-    ImportResult::Loaded(LoadedCanvasItem {
+    Ok(LoadedCanvasItem {
         record,
         rgba: decoded.rgba,
     })
+}
+
+fn import_path(library: &Library, source_path: PathBuf, desired_world: egui::Pos2) -> ImportResult {
+    match import_path_sync(library, source_path.clone(), desired_world) {
+        Ok(loaded) => ImportResult::Loaded(loaded),
+        Err(error) => ImportResult::Failed {
+            context: source_path.display().to_string(),
+            error,
+        },
+    }
 }
 
 fn import_clipboard(

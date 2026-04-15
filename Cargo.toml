@@ -7,7 +7,12 @@ edition = "2024"
 arboard = "3.6.1"
 eframe = "0.34.1"
 image = { version = "0.25.10", default-features = false, features = ["default-formats"] }
+objc2-app-kit = { version = "0.2.2", features = ["NSResponder", "NSView", "NSWindow", "NSBitmapImageRep", "NSImageRep"] }
+objc2-foundation = { version = "0.2.2", features = ["NSDictionary", "NSData", "NSString"] }
+raw-window-handle = "0.6.2"
 rusqlite = { version = "0.39.0", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 time = { version = "0.3.47", features = ["formatting"] }
 
 [patch.crates-io]

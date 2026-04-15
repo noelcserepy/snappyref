@@ -1,4 +1,5 @@
 use eframe::egui;
+use serde::Serialize;
 
 use crate::data::{BoardItemWithAsset, UserSession};
 use crate::jobs::LoadedCanvasItem;
@@ -18,9 +19,39 @@ pub struct CanvasState {
 }
 
 pub struct SidebarEntry {
+    pub item_id: i64,
     pub filename: String,
     pub imported_at: i64,
     pub selected: bool,
+}
+
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+#[derive(Clone, Debug, Serialize)]
+pub struct CanvasSnapshot {
+    pub camera_pan_x: f32,
+    pub camera_pan_y: f32,
+    pub camera_zoom: f32,
+    pub selected_item_ids: Vec<i64>,
+    pub items: Vec<CanvasItemSnapshot>,
+}
+
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+#[derive(Clone, Debug, Serialize)]
+pub struct CanvasItemSnapshot {
+    pub item_id: i64,
+    pub asset_id: i64,
+    pub filename: String,
+    pub mime_type: String,
+    pub x: f32,
+    pub y: f32,
+    pub scale: f32,
+    pub rotation: f32,
+    pub z_index: i32,
+    pub selected: bool,
+    pub screen_min_x: f32,
+    pub screen_min_y: f32,
+    pub screen_max_x: f32,
+    pub screen_max_y: f32,
 }
 
 struct CanvasImage {
@@ -78,6 +109,23 @@ impl CanvasState {
         self.images.sort_by_key(|image| image.record.item.z_index);
     }
 
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn replace_items(&mut self, ctx: &egui::Context, items: Vec<LoadedCanvasItem>) {
+        self.clear();
+        for item in items {
+            self.add_loaded_item(ctx, item);
+        }
+    }
+
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn clear(&mut self) {
+        self.images.clear();
+        self.selected_item_ids.clear();
+        self.drag_state = None;
+        self.marquee_state = None;
+        self.dirty_item_ids.clear();
+    }
+
     fn world_to_screen(&self, world: egui::Pos2, rect: egui::Rect) -> egui::Pos2 {
         rect.center() + self.pan + world.to_vec2() * self.zoom
     }
@@ -90,6 +138,12 @@ impl CanvasState {
     pub fn apply_user_session(&mut self, session: &UserSession) {
         self.pan = egui::vec2(session.camera_pan_x, session.camera_pan_y);
         self.zoom = session.camera_zoom.clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
+    }
+
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn set_camera(&mut self, pan_x: f32, pan_y: f32, zoom: f32) {
+        self.pan = egui::vec2(pan_x, pan_y);
+        self.zoom = zoom.clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
     }
 
     pub fn user_session(&self) -> UserSession {
@@ -113,11 +167,17 @@ impl CanvasState {
             .collect()
     }
 
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn viewport_center_world(&self, rect: egui::Rect) -> egui::Pos2 {
+        self.screen_to_world(rect.center(), rect)
+    }
+
     pub fn sidebar_entries(&self) -> Vec<SidebarEntry> {
         let mut entries = self
             .images
             .iter()
             .map(|image| SidebarEntry {
+                item_id: image.record.item.id,
                 filename: image.record.asset.filename.clone(),
                 imported_at: image.record.asset.imported_at,
                 selected: self.is_selected(image.record.item.id),
@@ -131,6 +191,148 @@ impl CanvasState {
                 .then_with(|| left.filename.cmp(&right.filename))
         });
         entries
+    }
+
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn select_items(&mut self, item_ids: &[i64]) {
+        self.selected_item_ids = item_ids
+            .iter()
+            .copied()
+            .filter(|item_id| self.images.iter().any(|image| image.record.item.id == *item_id))
+            .collect();
+    }
+
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn move_selected_by(&mut self, dx: f32, dy: f32) {
+        let selected_ids = self.selected_item_ids.clone();
+        let mut moved_ids = Vec::new();
+        for image in &mut self.images {
+            if selected_ids.contains(&image.record.item.id) {
+                image.record.item.x += dx;
+                image.record.item.y += dy;
+                moved_ids.push(image.record.item.id);
+            }
+        }
+        for item_id in moved_ids {
+            self.mark_dirty(item_id);
+        }
+    }
+
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn set_item_position(&mut self, item_id: i64, x: f32, y: f32) -> Result<(), String> {
+        let image = self
+            .images
+            .iter_mut()
+            .find(|image| image.record.item.id == item_id)
+            .ok_or_else(|| format!("item {item_id} not found"))?;
+
+        image.record.item.x = x;
+        image.record.item.y = y;
+        self.mark_dirty(item_id);
+        Ok(())
+    }
+
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn set_item_scale(&mut self, item_id: i64, scale: f32) -> Result<(), String> {
+        let clamped_scale = scale.max(0.01);
+        let image = self
+            .images
+            .iter_mut()
+            .find(|image| image.record.item.id == item_id)
+            .ok_or_else(|| format!("item {item_id} not found"))?;
+
+        image.record.item.scale = clamped_scale;
+        self.mark_dirty(item_id);
+        Ok(())
+    }
+
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn focus_item(
+        &mut self,
+        item_id: i64,
+        rect: egui::Rect,
+        zoom: Option<f32>,
+    ) -> Result<(), String> {
+        let (item_x, item_y) = self
+            .images
+            .iter()
+            .find(|image| image.record.item.id == item_id)
+            .map(|image| (image.record.item.x, image.record.item.y))
+            .ok_or_else(|| format!("item {item_id} not found"))?;
+
+        if let Some(zoom) = zoom {
+            self.zoom = zoom.clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
+        }
+
+        let target_world = egui::vec2(item_x, item_y) * self.zoom;
+        self.pan = -target_world;
+        let centered_screen = self.world_to_screen(egui::pos2(item_x, item_y), rect);
+        self.pan += rect.center() - centered_screen;
+        Ok(())
+    }
+
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn delete_selected(&mut self) -> Vec<i64> {
+        let selected_ids = self.selected_item_ids.clone();
+        self.delete_items(&selected_ids)
+    }
+
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn delete_items(&mut self, item_ids: &[i64]) -> Vec<i64> {
+        if item_ids.is_empty() {
+            return Vec::new();
+        }
+
+        let mut removed_ids = Vec::new();
+        self.images.retain(|image| {
+            let keep = !item_ids.contains(&image.record.item.id);
+            if !keep {
+                removed_ids.push(image.record.item.id);
+            }
+            keep
+        });
+        self.selected_item_ids
+            .retain(|item_id| !removed_ids.contains(item_id));
+        self.dirty_item_ids
+            .retain(|item_id| !removed_ids.contains(item_id));
+        self.drag_state = None;
+        self.marquee_state = None;
+        removed_ids
+    }
+
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn snapshot(&self, rect: egui::Rect) -> CanvasSnapshot {
+        let items = self
+            .images
+            .iter()
+            .map(|image| {
+                let screen_rect = image_screen_rect(self, rect, image);
+                CanvasItemSnapshot {
+                    item_id: image.record.item.id,
+                    asset_id: image.record.asset.id,
+                    filename: image.record.asset.filename.clone(),
+                    mime_type: image.record.asset.mime_type.clone(),
+                    x: image.record.item.x,
+                    y: image.record.item.y,
+                    scale: image.record.item.scale,
+                    rotation: image.record.item.rotation,
+                    z_index: image.record.item.z_index,
+                    selected: self.is_selected(image.record.item.id),
+                    screen_min_x: screen_rect.min.x,
+                    screen_min_y: screen_rect.min.y,
+                    screen_max_x: screen_rect.max.x,
+                    screen_max_y: screen_rect.max.y,
+                }
+            })
+            .collect();
+
+        CanvasSnapshot {
+            camera_pan_x: self.pan.x,
+            camera_pan_y: self.pan.y,
+            camera_zoom: self.zoom,
+            selected_item_ids: self.selected_item_ids.clone(),
+            items,
+        }
     }
 
     fn is_selected(&self, item_id: i64) -> bool {
@@ -151,20 +353,20 @@ impl CanvasState {
     }
 
     fn mark_dirty(&mut self, item_id: i64) {
-        if !self.dirty_item_ids.contains(&item_id) {
+        if item_id > 0 && !self.dirty_item_ids.contains(&item_id) {
             self.dirty_item_ids.push(item_id);
         }
     }
 }
 
-pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut CanvasState) {
+pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut CanvasState, debug_labels: bool) {
     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
     handle_input(ui, rect, state, &response);
 
     let painter = ui.painter_at(rect);
 
     painter.rect_filled(rect, 0.0, crate::theme::SHADE_90);
-    paint_images(&painter, rect, state);
+    paint_images(&painter, rect, state, debug_labels);
     paint_marquee(&painter, state);
 }
 
@@ -312,7 +514,7 @@ fn zoom_around_pointer(
     state.pan += pointer_pos - screen_after;
 }
 
-fn paint_images(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) {
+fn paint_images(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState, debug_labels: bool) {
     for image in &state.images {
         let image_rect = image_screen_rect(state, rect, image);
 
@@ -337,6 +539,20 @@ fn paint_images(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) 
             },
             egui::StrokeKind::Outside,
         );
+
+        if debug_labels {
+            let label = format!(
+                "#{}  ({:.0}, {:.0})",
+                image.record.item.id, image.record.item.x, image.record.item.y
+            );
+            painter.text(
+                image_rect.min + egui::vec2(6.0, 6.0),
+                egui::Align2::LEFT_TOP,
+                label,
+                egui::FontId::proportional(12.0),
+                crate::theme::SHADE_BASE,
+            );
+        }
     }
 }
 

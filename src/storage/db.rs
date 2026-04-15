@@ -249,6 +249,38 @@ impl Library {
         Ok(())
     }
 
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn delete_board_items(&self, item_ids: &[i64]) -> Result<(), String> {
+        if item_ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start delete transaction: {error}"))?;
+
+        for item_id in item_ids {
+            transaction
+                .execute("DELETE FROM board_items WHERE id = ?1", params![item_id])
+                .map_err(|error| format!("failed to delete board item {item_id}: {error}"))?;
+        }
+
+        transaction
+            .execute(
+                "DELETE FROM assets
+                 WHERE id NOT IN (SELECT asset_id FROM board_items)",
+                [],
+            )
+            .map_err(|error| format!("failed to prune orphaned assets: {error}"))?;
+
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit delete transaction: {error}"))?;
+
+        Ok(())
+    }
+
     pub fn load_user_session(&self) -> Result<UserSession, String> {
         let connection = self.connection()?;
         let mut statement = connection

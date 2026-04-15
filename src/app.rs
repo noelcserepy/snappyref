@@ -3,16 +3,33 @@ use time::OffsetDateTime;
 
 const SIDEBAR_WIDTH: f32 = 180.0;
 const SIDEBAR_MAX_WIDTH: f32 = 200.0;
+const TITLEBAR_UNDERLAY_HEIGHT: f32 = 44.0;
+const SIDEBAR_CONTENT_TOP_PADDING: f32 = 46.0;
+
+#[derive(Clone, Debug, Default)]
+pub struct AppConfig {
+    pub dev_mode: bool,
+}
+
+impl AppConfig {
+    pub fn from_env() -> Self {
+        let dev_mode = std::env::args().skip(1).any(|argument| argument == "--dev");
+        Self { dev_mode }
+    }
+}
 
 pub struct ReferenceApp {
     canvas: crate::canvas::CanvasState,
+    dev_harness: crate::dev_harness::DevHarness,
+    window_capture: Option<crate::native_capture::NativeWindowCapture>,
+    wgpu_render_state: Option<eframe::egui_wgpu::RenderState>,
     library: Option<crate::storage::Library>,
     import_worker: Option<crate::jobs::ImportWorker>,
     status: String,
 }
 
 impl ReferenceApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
         let library_root = std::env::current_dir()
             .unwrap_or_else(|_| std::path::PathBuf::from("."))
             .join("library");
@@ -20,11 +37,23 @@ impl ReferenceApp {
         match crate::storage::Library::initialize(library_root) {
             Ok(library) => {
                 let import_worker = crate::jobs::ImportWorker::new(library.clone());
+                let mut status = "Library ready".to_owned();
+                let dev_harness = match crate::dev_harness::DevHarness::new(config.dev_mode, library.root()) {
+                    Ok(harness) => harness,
+                    Err(error) => {
+                        status = format!("Dev harness unavailable: {error}");
+                        crate::dev_harness::DevHarness::new(false, library.root())
+                            .unwrap_or_else(|_| unreachable!("disabled dev harness should always initialize"))
+                    }
+                };
                 let mut app = Self {
                     canvas: crate::canvas::CanvasState::default(),
+                    dev_harness,
+                    window_capture: crate::native_capture::NativeWindowCapture::from_creation_context(cc),
+                    wgpu_render_state: cc.wgpu_render_state.clone(),
                     library: Some(library.clone()),
                     import_worker: Some(import_worker),
-                    status: format!("Library: {}", library.root().display()),
+                    status,
                 };
                 app.load_user_session();
                 app.enqueue_existing_items();
@@ -32,6 +61,10 @@ impl ReferenceApp {
             }
             Err(error) => Self {
                 canvas: crate::canvas::CanvasState::default(),
+                dev_harness: crate::dev_harness::DevHarness::new(false, std::path::Path::new("."))
+                    .unwrap_or_else(|_| unreachable!("disabled dev harness should always initialize")),
+                window_capture: crate::native_capture::NativeWindowCapture::from_creation_context(cc),
+                wgpu_render_state: cc.wgpu_render_state.clone(),
                 library: None,
                 import_worker: None,
                 status: format!("Storage unavailable: {error}"),
@@ -210,30 +243,81 @@ impl eframe::App for ReferenceApp {
         let screen_rect = ui.max_rect();
 
         self.handle_import_results(ui.ctx());
+
+        if self.dev_harness.has_pending_screenshot()
+            && let Some(render_state) = &self.wgpu_render_state
+        {
+            let _ = render_state
+                .device
+                .poll(eframe::wgpu::PollType::Poll);
+            ui.ctx().request_repaint();
+        }
+
+        if self.dev_harness.is_enabled() {
+            match self
+                .dev_harness
+                .begin_frame(
+                    ui.ctx(),
+                    screen_rect,
+                    &mut self.canvas,
+                    self.window_capture.as_ref(),
+                    self.library.as_ref(),
+                    &mut self.status,
+                )
+            {
+                crate::dev_harness::DevHarnessAction::None => {}
+                crate::dev_harness::DevHarnessAction::CloseApp => {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+
         self.handle_clipboard_paste(ui.ctx(), screen_rect);
         self.handle_dropped_files(ui, screen_rect);
-        crate::canvas::show(ui, screen_rect, &mut self.canvas);
-        self.persist_canvas_changes();
-        show_sidebar(
-            ui.ctx(),
+        crate::canvas::show(
+            ui,
             screen_rect,
-            &self.status,
-            &self.canvas.sidebar_entries(),
+            &mut self.canvas,
+            self.dev_harness.show_overlay(),
         );
+        show_titlebar_underlay(ui.ctx(), screen_rect);
+        self.persist_canvas_changes();
+        show_sidebar(ui.ctx(), screen_rect, &mut self.canvas, &mut self.status);
+        self.dev_harness
+            .show_overlay_ui(ui.ctx(), screen_rect, &self.canvas, &self.status);
     }
 
     fn on_exit(&mut self) {
         self.save_user_session();
     }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        crate::theme::SHADE_90.to_normalized_gamma_f32()
+    }
+}
+
+fn show_titlebar_underlay(ctx: &egui::Context, screen_rect: egui::Rect) {
+    egui::Area::new(egui::Id::new("titlebar_underlay"))
+        .order(egui::Order::Background)
+        .fixed_pos(egui::Pos2::ZERO)
+        .interactable(false)
+        .show(ctx, |ui| {
+            let rect = egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(screen_rect.width(), TITLEBAR_UNDERLAY_HEIGHT),
+            );
+            ui.painter().rect_filled(rect, 0.0, crate::theme::SHADE_90);
+        });
 }
 
 fn show_sidebar(
     ctx: &egui::Context,
     screen_rect: egui::Rect,
-    status: &str,
-    entries: &[crate::canvas::SidebarEntry],
+    canvas: &mut crate::canvas::CanvasState,
+    status: &mut String,
 ) {
     let sidebar_height = screen_rect.height();
+    let entries = canvas.sidebar_entries();
 
     egui::Area::new(egui::Id::new("library_sidebar"))
         .order(egui::Order::Foreground)
@@ -241,9 +325,14 @@ fn show_sidebar(
         .show(ctx, |ui| {
             egui::Frame::new()
                 .fill(crate::theme::SHADE_80)
-                .stroke(egui::Stroke::new(1.0, crate::theme::SHADE_60))
+                .stroke(egui::Stroke::new(1.0, crate::theme::SHADE_70))
                 .corner_radius(0)
-                .inner_margin(8)
+                .inner_margin(egui::Margin {
+                    left: 14,
+                    right: 12,
+                    top: (SIDEBAR_CONTENT_TOP_PADDING + 8.0) as i8,
+                    bottom: 12,
+                })
                 .show(ui, |ui| {
                     ui.set_width(SIDEBAR_WIDTH);
                     ui.set_min_width(SIDEBAR_WIDTH);
@@ -251,19 +340,30 @@ fn show_sidebar(
                     ui.set_min_height(sidebar_height);
 
                     ui.vertical(|ui| {
-                        ui.colored_label(crate::theme::SHADE_BASE, "Library");
-                        ui.colored_label(crate::theme::SHADE_30, "./library/originals");
-                        ui.add_space(8.0);
+                        paint_sidebar_header(ui, entries.len());
+                        ui.add_space(12.0);
+                        paint_sidebar_divider(ui);
+                        ui.add_space(10.0);
 
                         egui::ScrollArea::vertical()
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
-                                paint_library_tree(ui, entries);
+                                ui.spacing_mut().item_spacing = egui::vec2(0.0, 2.0);
+                                paint_library_tree(ui, screen_rect, canvas, status, &entries);
                             });
 
+                        ui.add_space(10.0);
+                        paint_sidebar_divider(ui);
                         ui.add_space(8.0);
-                        ui.separator();
-                        ui.colored_label(crate::theme::SHADE_20, status);
+                        ui.add_sized(
+                            [ui.available_width(), 18.0],
+                            egui::Label::new(
+                                egui::RichText::new(status.as_str())
+                                    .size(12.0)
+                                    .color(crate::theme::SHADE_30),
+                            )
+                            .truncate(),
+                        );
                     });
                 });
         });
@@ -276,37 +376,146 @@ fn sidebar_rect(screen_rect: egui::Rect) -> egui::Rect {
     )
 }
 
-fn paint_library_tree(ui: &mut egui::Ui, entries: &[crate::canvas::SidebarEntry]) {
-    ui.horizontal(|ui| {
-        ui.colored_label(crate::theme::SHADE_10, "v");
-        ui.colored_label(crate::theme::SHADE_10, "originals");
-    });
-    ui.add_space(4.0);
+fn canvas_view_rect(screen_rect: egui::Rect) -> egui::Rect {
+    let sidebar = sidebar_rect(screen_rect);
+    egui::Rect::from_min_max(egui::pos2(sidebar.max.x, screen_rect.min.y), screen_rect.max)
+}
 
-    let mut current_group: Option<String> = None;
+fn paint_sidebar_header(ui: &mut egui::Ui, entry_count: usize) {
+    let noun = if entry_count == 1 { "item" } else { "items" };
+    ui.label(
+        egui::RichText::new(format!("{entry_count} {noun}"))
+            .size(12.0)
+            .color(crate::theme::SHADE_30),
+    );
+}
+
+fn paint_sidebar_divider(ui: &mut egui::Ui) {
+    let rect = ui.available_rect_before_wrap();
+    let y = rect.min.y;
+    ui.painter().line_segment(
+        [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
+        egui::Stroke::new(1.0, crate::theme::SHADE_70),
+    );
+    ui.add_space(1.0);
+}
+
+fn paint_library_tree(
+    ui: &mut egui::Ui,
+    screen_rect: egui::Rect,
+    canvas: &mut crate::canvas::CanvasState,
+    status: &mut String,
+    entries: &[crate::canvas::SidebarEntry],
+) {
+    let mut groups: Vec<(String, Vec<&crate::canvas::SidebarEntry>)> = Vec::new();
 
     for entry in entries {
         let group = format_import_date(entry.imported_at);
-        if current_group.as_ref() != Some(&group) {
-            current_group = Some(group.clone());
-            ui.horizontal(|ui| {
-                ui.add_space(14.0);
-                ui.colored_label(crate::theme::SHADE_20, "v");
-                ui.colored_label(crate::theme::SHADE_20, group);
-            });
+        match groups.last_mut() {
+            Some((current_group, grouped_entries)) if current_group == &group => grouped_entries.push(entry),
+            _ => groups.push((group, vec![entry])),
+        }
+    }
+
+    for (index, (group, grouped_entries)) in groups.iter().enumerate() {
+        if index > 0 {
+            ui.add_space(12.0);
         }
 
         ui.horizontal(|ui| {
-            ui.add_space(28.0);
-            ui.colored_label(crate::theme::SHADE_40, ">");
-            let color = if entry.selected {
-                crate::theme::SHADE_BASE
-            } else {
-                crate::theme::SHADE_10
-            };
-            ui.colored_label(color, &entry.filename);
+            ui.label(
+                egui::RichText::new(group)
+                    .size(11.0)
+                    .color(crate::theme::SHADE_20)
+                    .strong(),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let noun = if grouped_entries.len() == 1 { "file" } else { "files" };
+                ui.label(
+                    egui::RichText::new(format!("{} {noun}", grouped_entries.len()))
+                        .size(10.0)
+                        .color(crate::theme::SHADE_40),
+                );
+            });
         });
+        ui.add_space(4.0);
+
+        for entry in grouped_entries {
+            paint_sidebar_entry(ui, screen_rect, canvas, status, entry);
+        }
     }
+}
+
+fn paint_sidebar_entry(
+    ui: &mut egui::Ui,
+    screen_rect: egui::Rect,
+    canvas: &mut crate::canvas::CanvasState,
+    status: &mut String,
+    entry: &crate::canvas::SidebarEntry,
+) {
+    let row_fill = if entry.selected {
+        crate::theme::SHADE_70
+    } else {
+        crate::theme::SHADE_80
+    };
+    let row_stroke = if entry.selected {
+        egui::Stroke::new(1.0, crate::theme::SHADE_60)
+    } else {
+        egui::Stroke::NONE
+    };
+    let arrow_color = if entry.selected {
+        crate::theme::SHADE_20
+    } else {
+        crate::theme::SHADE_40
+    };
+    let text_color = if entry.selected {
+        crate::theme::SHADE_BASE
+    } else {
+        crate::theme::SHADE_10
+    };
+
+    egui::Frame::new()
+        .fill(row_fill)
+        .stroke(row_stroke)
+        .corner_radius(0)
+        .inner_margin(egui::Margin {
+            left: 4,
+            right: 4,
+            top: 3,
+            bottom: 3,
+        })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(">")
+                        .size(10.0)
+                        .color(arrow_color),
+                );
+                ui.add_space(2.0);
+                let response = ui.add_sized(
+                    [ui.available_width(), 16.0],
+                    egui::Button::new(
+                        egui::RichText::new(&entry.filename)
+                            .size(12.0)
+                            .color(text_color),
+                    )
+                    .frame(false)
+                    .wrap_mode(egui::TextWrapMode::Truncate),
+                );
+
+                if response.clicked() {
+                    canvas.select_items(&[entry.item_id]);
+                    if let Err(error) =
+                        canvas.focus_item(entry.item_id, canvas_view_rect(screen_rect), None)
+                    {
+                        *status = error;
+                    } else {
+                        *status = format!("Focused {}", entry.filename);
+                    }
+                }
+            });
+        });
 }
 
 fn format_import_date(imported_at: i64) -> String {
