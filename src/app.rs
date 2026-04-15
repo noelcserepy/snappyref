@@ -1,6 +1,9 @@
 use eframe::egui;
 use time::OffsetDateTime;
 
+const SIDEBAR_WIDTH: f32 = 180.0;
+const SIDEBAR_MAX_WIDTH: f32 = 200.0;
+
 pub struct ReferenceApp {
     canvas: crate::canvas::CanvasState,
     library: Option<crate::storage::Library>,
@@ -82,7 +85,7 @@ impl ReferenceApp {
             return;
         }
 
-        let desired_world = self.canvas.preferred_drop_world(screen_rect);
+        let desired_world = self.preferred_import_world(ui.ctx(), screen_rect);
 
         for dropped_file in dropped_files {
             let Some(source_path) = dropped_file.path else {
@@ -101,6 +104,55 @@ impl ReferenceApp {
         }
     }
 
+    fn handle_clipboard_paste(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
+        let Some(import_worker) = &self.import_worker else {
+            return;
+        };
+
+        let paste_requested = ctx.input(|input| {
+            input
+                .events
+                .iter()
+                .any(|event| matches!(event, egui::Event::Paste(_)))
+        });
+        if !paste_requested {
+            return;
+        }
+
+        let mut clipboard = match arboard::Clipboard::new() {
+            Ok(clipboard) => clipboard,
+            Err(error) => {
+                self.status = format!("Clipboard unavailable: {error}");
+                return;
+            }
+        };
+
+        let clipboard_image = match clipboard.get_image() {
+            Ok(image) => image,
+            Err(error) => {
+                self.status = format!("Clipboard does not contain an image: {error}");
+                return;
+            }
+        };
+
+        let desired_world = self.preferred_import_world(ctx, screen_rect);
+        let rgba = clipboard_image.bytes.into_owned();
+        let width = clipboard_image.width as u32;
+        let height = clipboard_image.height as u32;
+
+        if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::ImportClipboard {
+            rgba,
+            width,
+            height,
+            desired_world,
+        }) {
+            self.status = error;
+            return;
+        }
+
+        self.status = "Queued clipboard image".to_owned();
+    }
+
     fn handle_import_results(&mut self, ctx: &egui::Context) {
         let Some(import_worker) = &self.import_worker else {
             return;
@@ -110,7 +162,7 @@ impl ReferenceApp {
             match result {
                 crate::jobs::ImportResult::Loaded(loaded) => {
                     self.canvas.add_loaded_item(ctx, loaded);
-                    self.status = "Imported PNG".to_owned();
+                    self.status = "Imported image".to_owned();
                 }
                 crate::jobs::ImportResult::Failed { context, error } => {
                     self.status = format!("{context}: {error}");
@@ -140,6 +192,17 @@ impl ReferenceApp {
             self.status = error;
         }
     }
+
+    fn preferred_import_world(&self, ctx: &egui::Context, screen_rect: egui::Rect) -> egui::Pos2 {
+        let pointer_screen_pos = ctx.input(|input| input.pointer.latest_pos());
+        let sidebar_rect = sidebar_rect(screen_rect);
+
+        let import_screen_pos = pointer_screen_pos
+            .filter(|screen_pos| screen_rect.contains(*screen_pos) && !sidebar_rect.contains(*screen_pos))
+            .unwrap_or(screen_rect.center());
+
+        self.canvas.screen_to_world(import_screen_pos, screen_rect)
+    }
 }
 
 impl eframe::App for ReferenceApp {
@@ -147,6 +210,7 @@ impl eframe::App for ReferenceApp {
         let screen_rect = ui.max_rect();
 
         self.handle_import_results(ui.ctx());
+        self.handle_clipboard_paste(ui.ctx(), screen_rect);
         self.handle_dropped_files(ui, screen_rect);
         crate::canvas::show(ui, screen_rect, &mut self.canvas);
         self.persist_canvas_changes();
@@ -169,8 +233,6 @@ fn show_sidebar(
     status: &str,
     entries: &[crate::canvas::SidebarEntry],
 ) {
-    let sidebar_width = 180.0;
-    let sidebar_max_width = 200.0;
     let sidebar_height = screen_rect.height();
 
     egui::Area::new(egui::Id::new("library_sidebar"))
@@ -183,9 +245,9 @@ fn show_sidebar(
                 .corner_radius(0)
                 .inner_margin(8)
                 .show(ui, |ui| {
-                    ui.set_width(sidebar_width);
-                    ui.set_min_width(sidebar_width);
-                    ui.set_max_width(sidebar_max_width);
+                    ui.set_width(SIDEBAR_WIDTH);
+                    ui.set_min_width(SIDEBAR_WIDTH);
+                    ui.set_max_width(SIDEBAR_MAX_WIDTH);
                     ui.set_min_height(sidebar_height);
 
                     ui.vertical(|ui| {
@@ -205,6 +267,13 @@ fn show_sidebar(
                     });
                 });
         });
+}
+
+fn sidebar_rect(screen_rect: egui::Rect) -> egui::Rect {
+    egui::Rect::from_min_size(
+        egui::pos2(screen_rect.left(), screen_rect.top()),
+        egui::vec2(SIDEBAR_WIDTH, screen_rect.height()),
+    )
 }
 
 fn paint_library_tree(ui: &mut egui::Ui, entries: &[crate::canvas::SidebarEntry]) {

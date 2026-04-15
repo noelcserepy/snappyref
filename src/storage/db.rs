@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
+use image::{ColorType, ImageFormat};
 use rusqlite::{Connection, params};
 
 use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset, UserSession};
@@ -49,20 +50,36 @@ impl Library {
             .extension()
             .and_then(|value| value.to_str())
             .unwrap_or("png");
-        let timestamp = unix_timestamp_millis();
-        let safe_name = sanitize_filename(original_name);
-        let destination = self
-            .originals_dir
-            .join(format!("{timestamp}-{safe_name}.{extension}"));
+        let destination = self.destination_path(original_name, extension);
 
         fs::copy(source_path, &destination)
             .map_err(|error| format!("failed to copy original: {error}"))?;
         Ok(destination)
     }
 
+    pub fn store_clipboard_image(
+        &self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<PathBuf, String> {
+        let destination = self.destination_path("clipboard", "png");
+        image::save_buffer_with_format(
+            &destination,
+            rgba,
+            width,
+            height,
+            ColorType::Rgba8,
+            ImageFormat::Png,
+        )
+        .map_err(|error| format!("failed to write clipboard image: {error}"))?;
+        Ok(destination)
+    }
+
     pub fn persist_imported_image(
         &self,
         stored_path: &Path,
+        mime_type: &str,
         width: u32,
         height: u32,
         file_size: u64,
@@ -78,7 +95,7 @@ impl Library {
             .and_then(|value| value.to_str())
             .unwrap_or("image.png")
             .to_owned();
-        let mime_type = "image/png".to_owned();
+        let mime_type = mime_type.to_owned();
         let imported_at = unix_timestamp_seconds();
         let original_path = stored_path.to_string_lossy().into_owned();
 
@@ -321,6 +338,13 @@ impl Library {
     fn connection(&self) -> Result<Connection, String> {
         Connection::open(&self.db_path)
             .map_err(|error| format!("failed to open library database: {error}"))
+    }
+
+    fn destination_path(&self, source_name: &str, extension: &str) -> PathBuf {
+        let timestamp = unix_timestamp_millis();
+        let safe_name = sanitize_filename(source_name);
+        self.originals_dir
+            .join(format!("{timestamp}-{safe_name}.{extension}"))
     }
 }
 

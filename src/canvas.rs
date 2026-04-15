@@ -3,6 +3,9 @@ use eframe::egui;
 use crate::data::{BoardItemWithAsset, UserSession};
 use crate::jobs::LoadedCanvasItem;
 
+const MIN_CANVAS_ZOOM: f32 = 0.01;
+const MAX_CANVAS_ZOOM: f32 = 64.0;
+
 pub struct CanvasState {
     pan: egui::Vec2,
     zoom: f32,
@@ -84,14 +87,9 @@ impl CanvasState {
         egui::pos2(world.x, world.y)
     }
 
-    pub fn preferred_drop_world(&self, rect: egui::Rect) -> egui::Pos2 {
-        let screen_pos = self.last_pointer_screen_pos.unwrap_or(rect.center());
-        self.screen_to_world(screen_pos, rect)
-    }
-
     pub fn apply_user_session(&mut self, session: &UserSession) {
         self.pan = egui::vec2(session.camera_pan_x, session.camera_pan_y);
-        self.zoom = session.camera_zoom.clamp(0.2, 6.0);
+        self.zoom = session.camera_zoom.clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
     }
 
     pub fn user_session(&self) -> UserSession {
@@ -309,7 +307,7 @@ fn zoom_around_pointer(
     zoom_factor: f32,
 ) {
     let world_before = state.screen_to_world(pointer_pos, rect);
-    state.zoom = (state.zoom * zoom_factor).clamp(0.2, 6.0);
+    state.zoom = (state.zoom * zoom_factor).clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
     let screen_after = state.world_to_screen(world_before, rect);
     state.pan += pointer_pos - screen_after;
 }
