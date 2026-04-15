@@ -59,6 +59,15 @@ struct CanvasImage {
     texture: egui::TextureHandle,
 }
 
+#[derive(Clone)]
+struct SelectedLayoutItem {
+    id: i64,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
 struct DragState {
     pointer_start_world: egui::Pos2,
     starting_positions: Vec<(i64, egui::Pos2)>,
@@ -281,6 +290,91 @@ impl CanvasState {
         }
     }
 
+    pub fn arrange_selected_horizontal(&mut self) -> usize {
+        let mut items = self.selected_layout_items();
+        if items.len() <= 1 {
+            return items.len();
+        }
+
+        items.sort_by(|left, right| left.x.total_cmp(&right.x));
+        let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
+        let gap = 16.0;
+        let max_height = items
+            .iter()
+            .map(|item| item.height)
+            .fold(0.0_f32, f32::max);
+
+        let mut x_cursor = 0.0;
+        let mut placements = Vec::with_capacity(items.len());
+        for item in &items {
+            let center = egui::pos2(x_cursor + item.width * 0.5, max_height - item.height * 0.5);
+            placements.push((item.id, center));
+            x_cursor += item.width + gap;
+        }
+
+        let total_width = x_cursor - gap;
+        let local_center = egui::pos2(total_width * 0.5, max_height * 0.5);
+        self.apply_arrangement(placements, current_center.to_vec2() - local_center.to_vec2())
+    }
+
+    pub fn arrange_selected_vertical(&mut self) -> usize {
+        let mut items = self.selected_layout_items();
+        if items.len() <= 1 {
+            return items.len();
+        }
+
+        items.sort_by(|left, right| left.y.total_cmp(&right.y));
+        let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
+        let gap = 16.0;
+        let max_width = items.iter().map(|item| item.width).fold(0.0_f32, f32::max);
+
+        let mut y_cursor = 0.0;
+        let mut placements = Vec::with_capacity(items.len());
+        for item in &items {
+            let center = egui::pos2(item.width * 0.5, y_cursor + item.height * 0.5);
+            placements.push((item.id, center));
+            y_cursor += item.height + gap;
+        }
+
+        let total_height = y_cursor - gap;
+        let local_center = egui::pos2(max_width * 0.5, total_height * 0.5);
+        self.apply_arrangement(placements, current_center.to_vec2() - local_center.to_vec2())
+    }
+
+    pub fn arrange_selected_compact(&mut self) -> usize {
+        let mut items = self.selected_layout_items();
+        if items.len() <= 1 {
+            return items.len();
+        }
+
+        items.sort_by(|left, right| {
+            left.y
+                .total_cmp(&right.y)
+                .then_with(|| left.x.total_cmp(&right.x))
+        });
+        let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
+
+        let mut best_layout: Option<(Vec<(i64, egui::Pos2)>, f32, f32, f32, f32)> = None;
+        for columns in 1..=items.len() {
+            let (placements, width, height) = compact_layout(&items, columns, 0.0);
+            let aspect_ratio = width.max(height) / width.min(height).max(1.0);
+            let area = width * height;
+
+            match &best_layout {
+                Some((_, _, _, best_ratio, best_area))
+                    if aspect_ratio > *best_ratio
+                        || ((aspect_ratio - *best_ratio).abs() < 0.001 && area >= *best_area) => {}
+                _ => best_layout = Some((placements, width, height, aspect_ratio, area)),
+            }
+        }
+
+        let Some((placements, width, height, _, _)) = best_layout else {
+            return 0;
+        };
+        let local_center = egui::pos2(width * 0.5, height * 0.5);
+        self.apply_arrangement(placements, current_center.to_vec2() - local_center.to_vec2())
+    }
+
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn set_item_position(&mut self, item_id: i64, x: f32, y: f32) -> Result<(), String> {
         let image = self
@@ -426,6 +520,74 @@ impl CanvasState {
             self.dirty_item_ids.push(item_id);
         }
     }
+
+    fn selected_layout_items(&self) -> Vec<SelectedLayoutItem> {
+        self.images
+            .iter()
+            .filter(|image| self.is_selected(image.record.item.id))
+            .map(|image| SelectedLayoutItem {
+                id: image.record.item.id,
+                x: image.record.item.x,
+                y: image.record.item.y,
+                width: image.record.asset.width as f32 * image.record.item.scale.max(0.01),
+                height: image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+            })
+            .collect()
+    }
+
+    fn apply_arrangement(
+        &mut self,
+        placements: Vec<(i64, egui::Pos2)>,
+        offset: egui::Vec2,
+    ) -> usize {
+        let mut arranged_ids = Vec::with_capacity(placements.len());
+
+        for (item_id, local_center) in placements {
+            if let Some(image) = self
+                .images
+                .iter_mut()
+                .find(|image| image.record.item.id == item_id)
+            {
+                let world_center = local_center + offset;
+                image.record.item.x = world_center.x;
+                image.record.item.y = world_center.y;
+                arranged_ids.push(item_id);
+            }
+        }
+
+        for item_id in &arranged_ids {
+            self.mark_dirty(*item_id);
+        }
+
+        arranged_ids.len()
+    }
+}
+
+fn compact_layout(
+    items: &[SelectedLayoutItem],
+    columns: usize,
+    gap: f32,
+) -> (Vec<(i64, egui::Pos2)>, f32, f32) {
+    let mut placements = Vec::with_capacity(items.len());
+    let mut y_cursor = 0.0;
+    let mut total_width = 0.0_f32;
+
+    for row in items.chunks(columns) {
+        let row_height = row.iter().map(|item| item.height).fold(0.0_f32, f32::max);
+        let mut x_cursor = 0.0;
+
+        for item in row {
+            let center = egui::pos2(x_cursor + item.width * 0.5, y_cursor + item.height * 0.5);
+            placements.push((item.id, center));
+            x_cursor += item.width + gap;
+        }
+
+        total_width = total_width.max((x_cursor - gap).max(0.0));
+        y_cursor += row_height + gap;
+    }
+
+    let total_height = (y_cursor - gap).max(0.0);
+    (placements, total_width, total_height)
 }
 
 pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut CanvasState, debug_labels: bool) {

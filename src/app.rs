@@ -6,6 +6,7 @@ const SIDEBAR_WIDTH: f32 = 180.0;
 const SIDEBAR_MAX_WIDTH: f32 = 200.0;
 const SIDEBAR_CONTENT_TOP_PADDING: f32 = 46.0;
 const SELECTION_TOOLBAR_WIDTH: f32 = 44.0;
+const MULTI_SELECTION_TOOLBAR_WIDTH: f32 = 252.0;
 const SELECTION_TOOLBAR_HEIGHT: f32 = 36.0;
 const SELECTION_TOOLBAR_GAP: f32 = 12.0;
 const ARCHIVE_ICON: egui::ImageSource<'static> =
@@ -479,17 +480,23 @@ fn show_selection_toolbar(
         return;
     }
 
+    let selection_count = canvas.selected_item_ids().len();
     let Some(selection_rect) = canvas.selection_screen_rect(screen_rect) else {
         return;
     };
 
     let canvas_rect = canvas_view_rect(screen_rect);
     let min_x = canvas_rect.min.x + 8.0;
-    let max_x = canvas_rect.max.x - SELECTION_TOOLBAR_WIDTH - 8.0;
+    let toolbar_width = if selection_count > 1 {
+        MULTI_SELECTION_TOOLBAR_WIDTH
+    } else {
+        SELECTION_TOOLBAR_WIDTH
+    };
+    let max_x = canvas_rect.max.x - toolbar_width - 8.0;
     let min_y = canvas_rect.min.y + 8.0;
     let max_y = canvas_rect.max.y - SELECTION_TOOLBAR_HEIGHT - 8.0;
 
-    let toolbar_x = (selection_rect.center().x - SELECTION_TOOLBAR_WIDTH * 0.5).clamp(min_x, max_x);
+    let toolbar_x = (selection_rect.center().x - toolbar_width * 0.5).clamp(min_x, max_x);
     let toolbar_y = (selection_rect.min.y - SELECTION_TOOLBAR_HEIGHT - SELECTION_TOOLBAR_GAP)
         .clamp(min_y, max_y);
 
@@ -509,6 +516,39 @@ fn show_selection_toolbar(
                 })
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
+                        let action_button = |label: &str, min_width: f32| {
+                            egui::Button::new(
+                                egui::RichText::new(label)
+                                    .size(12.0)
+                                    .color(crate::theme::SHADE_BASE),
+                            )
+                            .min_size(egui::vec2(min_width, 28.0))
+                            .frame(true)
+                            .frame_when_inactive(false)
+                            .stroke(egui::Stroke::NONE)
+                            .corner_radius(8)
+                        };
+
+                        if selection_count > 1 {
+                            if ui.add(action_button("Compact", 66.0)).clicked() {
+                                let arranged = canvas.arrange_selected_compact();
+                                let noun = if arranged == 1 { "image" } else { "images" };
+                                *status = format!("Compacted {arranged} {noun}");
+                            }
+
+                            if ui.add(action_button("Row", 44.0)).clicked() {
+                                let arranged = canvas.arrange_selected_horizontal();
+                                let noun = if arranged == 1 { "image" } else { "images" };
+                                *status = format!("Arranged {arranged} {noun} in a row");
+                            }
+
+                            if ui.add(action_button("Column", 62.0)).clicked() {
+                                let arranged = canvas.arrange_selected_vertical();
+                                let noun = if arranged == 1 { "image" } else { "images" };
+                                *status = format!("Arranged {arranged} {noun} in a column");
+                            }
+                        }
+
                         let archive_icon = egui::Image::new(ARCHIVE_ICON)
                             .fit_to_exact_size(egui::vec2(16.0, 16.0))
                             .tint(crate::theme::SHADE_BASE);
