@@ -407,6 +407,12 @@ impl CanvasState {
         self.selected_item_ids.push(item_id);
     }
 
+    fn add_to_selection(&mut self, item_id: i64) {
+        if !self.selected_item_ids.contains(&item_id) {
+            self.selected_item_ids.push(item_id);
+        }
+    }
+
     fn clear_selection(&mut self) {
         self.selected_item_ids.clear();
     }
@@ -430,6 +436,7 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut CanvasState, debug_
 
     painter.rect_filled(rect, 0.0, crate::theme::SHADE_90);
     paint_images(&painter, rect, state, debug_labels);
+    paint_selection_bounds(&painter, rect, state);
     paint_marquee(&painter, state);
 }
 
@@ -440,6 +447,7 @@ fn handle_input(
     response: &egui::Response,
 ) {
     let pointer_pos = ui.input(|i| i.pointer.latest_pos());
+    let shift_held = ui.input(|i| i.modifiers.shift);
     let pointer_on_canvas = pointer_pos
         .map(|pointer_pos| ui.ctx().layer_id_at(pointer_pos) == Some(response.layer_id))
         .unwrap_or(false);
@@ -457,7 +465,9 @@ fn handle_input(
         && let Some(pointer_pos) = pointer_pos
     {
         if let Some(item_id) = hit_test_image(state, rect, pointer_pos) {
-            if !state.is_selected(item_id) {
+            if shift_held {
+                state.add_to_selection(item_id);
+            } else if !state.is_selected(item_id) {
                 state.set_single_selection(item_id);
             }
 
@@ -635,6 +645,23 @@ fn paint_marquee(painter: &egui::Painter, state: &CanvasState) {
     let rect = egui::Rect::from_two_pos(marquee_state.start_screen, marquee_state.current_screen);
     painter.rect_stroke(
         rect,
+        0.0,
+        egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
+        egui::StrokeKind::Outside,
+    );
+}
+
+fn paint_selection_bounds(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) {
+    if state.selected_item_ids.len() <= 1 {
+        return;
+    }
+
+    let Some(selection_rect) = state.selection_screen_rect(rect) else {
+        return;
+    };
+
+    painter.rect_stroke(
+        selection_rect.expand(6.0),
         0.0,
         egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
         egui::StrokeKind::Outside,

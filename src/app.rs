@@ -566,7 +566,7 @@ fn show_sidebar(
     let entries = canvas.sidebar_entries();
 
     egui::Area::new(egui::Id::new("library_sidebar"))
-        .order(egui::Order::Foreground)
+        .order(egui::Order::Tooltip)
         .fixed_pos(egui::pos2(screen_rect.left(), screen_rect.top()))
         .show(ctx, |ui| {
             egui::Frame::new()
