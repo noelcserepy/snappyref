@@ -7,17 +7,17 @@ use crate::native_capture::NativeWindowCapture;
 use crate::storage::Library;
 
 #[cfg(debug_assertions)]
-use std::fs;
-#[cfg(debug_assertions)]
-use std::collections::VecDeque;
-#[cfg(debug_assertions)]
-use std::path::PathBuf;
-#[cfg(debug_assertions)]
-use serde::Serialize;
+use crate::jobs::LoadedCanvasItem;
 #[cfg(debug_assertions)]
 use serde::Deserialize;
 #[cfg(debug_assertions)]
-use crate::jobs::LoadedCanvasItem;
+use serde::Serialize;
+#[cfg(debug_assertions)]
+use std::collections::VecDeque;
+#[cfg(debug_assertions)]
+use std::fs;
+#[cfg(debug_assertions)]
+use std::path::PathBuf;
 #[cfg(debug_assertions)]
 use std::time::Duration;
 
@@ -91,7 +91,9 @@ impl DevHarness {
     }
 
     pub fn show_overlay(&self) -> bool {
-        self.inner.as_ref().is_some_and(|inner| inner.overlay_visible)
+        self.inner
+            .as_ref()
+            .is_some_and(|inner| inner.overlay_visible)
     }
 
     pub fn has_pending_screenshot(&self) -> bool {
@@ -150,10 +152,7 @@ struct InnerDevHarness {
 impl InnerDevHarness {
     fn new(library_root: &Path) -> Result<Self, String> {
         let dev_root = library_root.join("dev");
-        let workspace_root = library_root
-            .parent()
-            .unwrap_or(library_root)
-            .to_path_buf();
+        let workspace_root = library_root.parent().unwrap_or(library_root).to_path_buf();
         fs::create_dir_all(dev_root.join("out"))
             .map_err(|error| format!("failed to create dev harness dir: {error}"))?;
 
@@ -219,7 +218,8 @@ impl InnerDevHarness {
                     break;
                 };
 
-                match self.apply_action(ctx, screen_rect, canvas, window_capture, library, &action) {
+                match self.apply_action(ctx, screen_rect, canvas, window_capture, library, &action)
+                {
                     Ok(action_result) => {
                         let completed_actions = command.total_actions - command.actions.len();
                         self.write_result(CommandResult::running(
@@ -281,16 +281,15 @@ impl InnerDevHarness {
             }
             DevAction::ImportFile { path, x, y } => {
                 let library = library.ok_or_else(|| "library unavailable".to_owned())?;
-                let desired_world = match (x, y) {
-                    (Some(x), Some(y)) => egui::pos2(*x, *y),
-                    (None, None) => canvas.viewport_center_world(screen_rect),
-                    _ => {
-                        return Err(
+                let desired_world =
+                    match (x, y) {
+                        (Some(x), Some(y)) => egui::pos2(*x, *y),
+                        (None, None) => canvas.viewport_center_world(screen_rect),
+                        _ => return Err(
                             "import_file requires both x and y, or neither to use viewport center"
                                 .to_owned(),
-                        )
-                    }
-                };
+                        ),
+                    };
                 let source_path = self.resolve_import_source_path(path);
                 let loaded = crate::jobs::import_path_sync(library, source_path, desired_world)?;
                 canvas.add_loaded_item(ctx, loaded);
@@ -331,7 +330,9 @@ impl InnerDevHarness {
                     window_capture.capture_png(&resolved_path)?;
                 } else {
                     self.pending_screenshot = Some(resolved_path);
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
+                        egui::UserData::default(),
+                    ));
                     ctx.request_repaint();
                 }
                 Ok(DevHarnessAction::None)
@@ -414,7 +415,10 @@ impl InnerDevHarness {
         status: &str,
     ) {
         let snapshot = canvas.snapshot(screen_rect);
-        let pending_id = self.pending_command.as_ref().map(|command| command.id.as_str());
+        let pending_id = self
+            .pending_command
+            .as_ref()
+            .map(|command| command.id.as_str());
 
         egui::Area::new(egui::Id::new("dev_harness_overlay"))
             .order(egui::Order::Foreground)
@@ -427,10 +431,19 @@ impl InnerDevHarness {
                     .show(ui, |ui| {
                         ui.set_max_width(320.0);
                         ui.colored_label(crate::theme::SHADE_BASE, "Dev Harness");
-                        ui.colored_label(crate::theme::SHADE_20, self.command_path.display().to_string());
-                        ui.colored_label(crate::theme::SHADE_30, format!("result: {}", self.result_path.display()));
+                        ui.colored_label(
+                            crate::theme::SHADE_20,
+                            self.command_path.display().to_string(),
+                        );
+                        ui.colored_label(
+                            crate::theme::SHADE_30,
+                            format!("result: {}", self.result_path.display()),
+                        );
                         ui.add_space(6.0);
-                        ui.label(format!("camera: ({:.1}, {:.1}) @ {:.3}", snapshot.camera_pan_x, snapshot.camera_pan_y, snapshot.camera_zoom));
+                        ui.label(format!(
+                            "camera: ({:.1}, {:.1}) @ {:.3}",
+                            snapshot.camera_pan_x, snapshot.camera_pan_y, snapshot.camera_zoom
+                        ));
                         ui.label(format!("items: {}", snapshot.items.len()));
                         ui.label(format!("selected: {:?}", snapshot.selected_item_ids));
                         if let Some(command_id) = pending_id {
@@ -535,19 +548,50 @@ struct DevCommandFile {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum DevAction {
-    LoadFixture { name: String },
+    LoadFixture {
+        name: String,
+    },
     ClearBoard,
-    SetCamera { pan_x: f32, pan_y: f32, zoom: f32 },
-    SelectItems { item_ids: Vec<i64> },
-    MoveSelected { dx: f32, dy: f32 },
-    ImportFile { path: PathBuf, x: Option<f32>, y: Option<f32> },
-    FocusItem { item_id: i64, zoom: Option<f32> },
+    SetCamera {
+        pan_x: f32,
+        pan_y: f32,
+        zoom: f32,
+    },
+    SelectItems {
+        item_ids: Vec<i64>,
+    },
+    MoveSelected {
+        dx: f32,
+        dy: f32,
+    },
+    ImportFile {
+        path: PathBuf,
+        x: Option<f32>,
+        y: Option<f32>,
+    },
+    FocusItem {
+        item_id: i64,
+        zoom: Option<f32>,
+    },
     DeleteSelected,
-    SetItemPosition { item_id: i64, x: f32, y: f32 },
-    SetItemScale { item_id: i64, scale: f32 },
-    DumpState { path: PathBuf },
-    Screenshot { path: PathBuf },
-    SetOverlay { visible: bool },
+    SetItemPosition {
+        item_id: i64,
+        x: f32,
+        y: f32,
+    },
+    SetItemScale {
+        item_id: i64,
+        scale: f32,
+    },
+    DumpState {
+        path: PathBuf,
+    },
+    Screenshot {
+        path: PathBuf,
+    },
+    SetOverlay {
+        visible: bool,
+    },
     Quit,
 }
 
@@ -626,11 +670,34 @@ struct DevManifest {
 fn build_fixture(name: &str) -> Result<Vec<LoadedCanvasItem>, String> {
     match name {
         "basic" | "basic-board" => Ok(vec![
-            fixture_item(-101, -201, "fixture-alpha.png", egui::pos2(-220.0, -100.0), [260, 180], [0xC4, 0x7E, 0x56]),
-            fixture_item(-102, -202, "fixture-beta.png", egui::pos2(40.0, 20.0), [220, 160], [0x6D, 0x8B, 0x74]),
-            fixture_item(-103, -203, "fixture-gamma.png", egui::pos2(250.0, -150.0), [180, 240], [0x7B, 0x88, 0xA0]),
+            fixture_item(
+                -101,
+                -201,
+                "fixture-alpha.png",
+                egui::pos2(-220.0, -100.0),
+                [260, 180],
+                [0xC4, 0x7E, 0x56],
+            ),
+            fixture_item(
+                -102,
+                -202,
+                "fixture-beta.png",
+                egui::pos2(40.0, 20.0),
+                [220, 160],
+                [0x6D, 0x8B, 0x74],
+            ),
+            fixture_item(
+                -103,
+                -203,
+                "fixture-gamma.png",
+                egui::pos2(250.0, -150.0),
+                [180, 240],
+                [0x7B, 0x88, 0xA0],
+            ),
         ]),
-        other => Err(format!("unknown fixture '{other}'. Supported fixtures: basic")),
+        other => Err(format!(
+            "unknown fixture '{other}'. Supported fixtures: basic"
+        )),
     }
 }
 
@@ -664,6 +731,7 @@ fn fixture_item(
                 scale: 1.0,
                 rotation: 0.0,
                 z_index: 0,
+                archived: false,
             },
         },
         rgba,

@@ -109,6 +109,19 @@ impl CanvasState {
         self.images.sort_by_key(|image| image.record.item.z_index);
     }
 
+    pub fn add_reference_item(&mut self, record: BoardItemWithAsset) -> Result<(), String> {
+        let texture = self
+            .images
+            .iter()
+            .find(|image| image.record.asset.id == record.asset.id)
+            .map(|image| image.texture.clone())
+            .ok_or_else(|| format!("missing source texture for asset {}", record.asset.id))?;
+
+        self.images.push(CanvasImage { record, texture });
+        self.images.sort_by_key(|image| image.record.item.z_index);
+        Ok(())
+    }
+
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn replace_items(&mut self, ctx: &egui::Context, items: Vec<LoadedCanvasItem>) {
         self.clear();
@@ -156,6 +169,30 @@ impl CanvasState {
 
     pub fn has_selection(&self) -> bool {
         !self.selected_item_ids.is_empty()
+    }
+
+    pub fn selected_item_ids(&self) -> Vec<i64> {
+        self.selected_item_ids.clone()
+    }
+
+    pub fn selected_center_world(&self) -> Option<egui::Pos2> {
+        let mut min = egui::Pos2::new(f32::INFINITY, f32::INFINITY);
+        let mut max = egui::Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
+        let mut found = false;
+
+        for image in &self.images {
+            if !self.is_selected(image.record.item.id) {
+                continue;
+            }
+
+            found = true;
+            min.x = min.x.min(image.record.item.x);
+            min.y = min.y.min(image.record.item.y);
+            max.x = max.x.max(image.record.item.x);
+            max.y = max.y.max(image.record.item.y);
+        }
+
+        found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))
     }
 
     pub fn take_dirty_items(&mut self) -> Vec<crate::data::BoardItem> {
@@ -220,7 +257,11 @@ impl CanvasState {
         self.selected_item_ids = item_ids
             .iter()
             .copied()
-            .filter(|item_id| self.images.iter().any(|image| image.record.item.id == *item_id))
+            .filter(|item_id| {
+                self.images
+                    .iter()
+                    .any(|image| image.record.item.id == *item_id)
+            })
             .collect();
     }
 
@@ -541,7 +582,12 @@ fn zoom_around_pointer(
     state.pan += pointer_pos - screen_after;
 }
 
-fn paint_images(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState, debug_labels: bool) {
+fn paint_images(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    state: &CanvasState,
+    debug_labels: bool,
+) {
     for image in &state.images {
         let image_rect = image_screen_rect(state, rect, image);
 
