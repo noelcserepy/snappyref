@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use eframe::egui;
 use rusqlite::{Connection, params};
 
-use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
+use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset, UserSession};
 
 #[derive(Clone, Debug)]
 pub struct Library {
@@ -232,6 +232,52 @@ impl Library {
         Ok(())
     }
 
+    pub fn load_user_session(&self) -> Result<UserSession, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT camera_pan_x, camera_pan_y, camera_zoom
+                 FROM user_session
+                 WHERE id = 1",
+            )
+            .map_err(|error| format!("failed to prepare user-session query: {error}"))?;
+
+        let session = statement.query_row([], |row| {
+            Ok(UserSession {
+                camera_pan_x: row.get(0)?,
+                camera_pan_y: row.get(1)?,
+                camera_zoom: row.get(2)?,
+            })
+        });
+
+        match session {
+            Ok(session) => Ok(session),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(UserSession::default()),
+            Err(error) => Err(format!("failed to load user session: {error}")),
+        }
+    }
+
+    pub fn save_user_session(&self, session: &UserSession) -> Result<(), String> {
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom)
+                 VALUES (1, ?1, ?2, ?3)
+                 ON CONFLICT(id) DO UPDATE SET
+                    camera_pan_x = excluded.camera_pan_x,
+                    camera_pan_y = excluded.camera_pan_y,
+                    camera_zoom = excluded.camera_zoom",
+                params![
+                    session.camera_pan_x,
+                    session.camera_pan_y,
+                    session.camera_zoom,
+                ],
+            )
+            .map_err(|error| format!("failed to save user session: {error}"))?;
+
+        Ok(())
+    }
+
     fn initialize_schema(&self) -> Result<(), String> {
         let connection = self.connection()?;
         connection
@@ -259,6 +305,13 @@ impl Library {
                     scale     REAL NOT NULL,
                     rotation  REAL NOT NULL,
                     z_index   INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS user_session (
+                    id            INTEGER PRIMARY KEY CHECK (id = 1),
+                    camera_pan_x  REAL NOT NULL,
+                    camera_pan_y  REAL NOT NULL,
+                    camera_zoom   REAL NOT NULL
                 );
                 ",
             )

@@ -1,16 +1,23 @@
 use eframe::egui;
 
-use crate::data::BoardItemWithAsset;
+use crate::data::{BoardItemWithAsset, UserSession};
 use crate::jobs::LoadedCanvasItem;
 
 pub struct CanvasState {
     pan: egui::Vec2,
     zoom: f32,
     images: Vec<CanvasImage>,
-    selected_item_id: Option<i64>,
+    selected_item_ids: Vec<i64>,
     drag_state: Option<DragState>,
+    marquee_state: Option<MarqueeState>,
     dirty_item_ids: Vec<i64>,
     last_pointer_screen_pos: Option<egui::Pos2>,
+}
+
+pub struct SidebarEntry {
+    pub filename: String,
+    pub imported_at: i64,
+    pub selected: bool,
 }
 
 struct CanvasImage {
@@ -19,8 +26,13 @@ struct CanvasImage {
 }
 
 struct DragState {
-    item_id: i64,
-    pointer_offset_world: egui::Vec2,
+    pointer_start_world: egui::Pos2,
+    starting_positions: Vec<(i64, egui::Pos2)>,
+}
+
+struct MarqueeState {
+    start_screen: egui::Pos2,
+    current_screen: egui::Pos2,
 }
 
 impl Default for CanvasState {
@@ -29,8 +41,9 @@ impl Default for CanvasState {
             pan: egui::Vec2::ZERO,
             zoom: 1.0,
             images: Vec::new(),
-            selected_item_id: None,
+            selected_item_ids: Vec::new(),
             drag_state: None,
+            marquee_state: None,
             dirty_item_ids: Vec::new(),
             last_pointer_screen_pos: None,
         }
@@ -76,6 +89,19 @@ impl CanvasState {
         self.screen_to_world(screen_pos, rect)
     }
 
+    pub fn apply_user_session(&mut self, session: &UserSession) {
+        self.pan = egui::vec2(session.camera_pan_x, session.camera_pan_y);
+        self.zoom = session.camera_zoom.clamp(0.2, 6.0);
+    }
+
+    pub fn user_session(&self) -> UserSession {
+        UserSession {
+            camera_pan_x: self.pan.x,
+            camera_pan_y: self.pan.y,
+            camera_zoom: self.zoom,
+        }
+    }
+
     pub fn take_dirty_items(&mut self) -> Vec<crate::data::BoardItem> {
         let dirty_ids = std::mem::take(&mut self.dirty_item_ids);
         dirty_ids
@@ -88,6 +114,49 @@ impl CanvasState {
             })
             .collect()
     }
+
+    pub fn sidebar_entries(&self) -> Vec<SidebarEntry> {
+        let mut entries = self
+            .images
+            .iter()
+            .map(|image| SidebarEntry {
+                filename: image.record.asset.filename.clone(),
+                imported_at: image.record.asset.imported_at,
+                selected: self.is_selected(image.record.item.id),
+            })
+            .collect::<Vec<_>>();
+
+        entries.sort_by(|left, right| {
+            right
+                .imported_at
+                .cmp(&left.imported_at)
+                .then_with(|| left.filename.cmp(&right.filename))
+        });
+        entries
+    }
+
+    fn is_selected(&self, item_id: i64) -> bool {
+        self.selected_item_ids.contains(&item_id)
+    }
+
+    fn set_single_selection(&mut self, item_id: i64) {
+        self.selected_item_ids.clear();
+        self.selected_item_ids.push(item_id);
+    }
+
+    fn clear_selection(&mut self) {
+        self.selected_item_ids.clear();
+    }
+
+    fn set_selection(&mut self, item_ids: Vec<i64>) {
+        self.selected_item_ids = item_ids;
+    }
+
+    fn mark_dirty(&mut self, item_id: i64) {
+        if !self.dirty_item_ids.contains(&item_id) {
+            self.dirty_item_ids.push(item_id);
+        }
+    }
 }
 
 pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut CanvasState) {
@@ -96,9 +165,9 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut CanvasState) {
 
     let painter = ui.painter_at(rect);
 
-    painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(10, 12, 16));
-    paint_grid(&painter, rect, state);
+    painter.rect_filled(rect, 0.0, crate::theme::SHADE_90);
     paint_images(&painter, rect, state);
+    paint_marquee(&painter, state);
 }
 
 fn handle_input(
@@ -120,22 +189,35 @@ fn handle_input(
         && let Some(pointer_pos) = pointer_pos
     {
         if let Some(item_id) = hit_test_image(state, rect, pointer_pos) {
-            state.selected_item_id = Some(item_id);
+            if !state.is_selected(item_id) {
+                state.set_single_selection(item_id);
+            }
 
             let pointer_world = state.screen_to_world(pointer_pos, rect);
-            if let Some(image) = state
+            let starting_positions = state
                 .images
                 .iter()
-                .find(|image| image.record.item.id == item_id)
-            {
-                let item_center = egui::pos2(image.record.item.x, image.record.item.y);
-                state.drag_state = Some(DragState {
-                    item_id,
-                    pointer_offset_world: item_center - pointer_world,
-                });
-            }
+                .filter(|image| state.is_selected(image.record.item.id))
+                .map(|image| {
+                    (
+                        image.record.item.id,
+                        egui::pos2(image.record.item.x, image.record.item.y),
+                    )
+                })
+                .collect();
+
+            state.drag_state = Some(DragState {
+                pointer_start_world: pointer_world,
+                starting_positions,
+            });
+            state.marquee_state = None;
         } else {
             state.drag_state = None;
+            state.clear_selection();
+            state.marquee_state = Some(MarqueeState {
+                start_screen: pointer_pos,
+                current_screen: pointer_pos,
+            });
         }
     }
 
@@ -144,22 +226,43 @@ fn handle_input(
         && let Some(pointer_pos) = pointer_pos
     {
         let pointer_world = state.screen_to_world(pointer_pos, rect);
-        let next_center = pointer_world + drag_state.pointer_offset_world;
+        let world_delta = pointer_world - drag_state.pointer_start_world;
 
-        if let Some(image) = state
-            .images
-            .iter_mut()
-            .find(|image| image.record.item.id == drag_state.item_id)
-        {
-            image.record.item.x = next_center.x;
-            image.record.item.y = next_center.y;
+        for (item_id, start_pos) in &drag_state.starting_positions {
+            if let Some(image) = state
+                .images
+                .iter_mut()
+                .find(|image| image.record.item.id == *item_id)
+            {
+                image.record.item.x = start_pos.x + world_delta.x;
+                image.record.item.y = start_pos.y + world_delta.y;
+            }
         }
     }
 
-    if ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary))
-        && let Some(drag_state) = state.drag_state.take()
+    if ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
+        if let Some(drag_state) = state.drag_state.take() {
+            for (item_id, _) in drag_state.starting_positions {
+                state.mark_dirty(item_id);
+            }
+        }
+        state.marquee_state = None;
+    }
+
+    if let Some(marquee_state) = &mut state.marquee_state
+        && ui.input(|i| i.pointer.primary_down())
+        && let Some(pointer_pos) = pointer_pos
     {
-        state.dirty_item_ids.push(drag_state.item_id);
+        marquee_state.current_screen = pointer_pos;
+        let selection_rect =
+            egui::Rect::from_two_pos(marquee_state.start_screen, marquee_state.current_screen);
+        let selected = state
+            .images
+            .iter()
+            .filter(|image| image_screen_rect(state, rect, image).intersects(selection_rect))
+            .map(|image| image.record.item.id)
+            .collect();
+        state.set_selection(selected);
     }
 
     if !response.hovered() {
@@ -217,7 +320,7 @@ fn paint_images(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) 
 
         painter.rect_filled(
             image_rect.expand(2.0),
-            6.0,
+            0.0,
             egui::Color32::from_rgba_premultiplied(0, 0, 0, 120),
         );
         painter.image(
@@ -228,67 +331,27 @@ fn paint_images(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) 
         );
         painter.rect_stroke(
             image_rect,
-            4.0,
-            if state.selected_item_id == Some(image.record.item.id) {
-                egui::Stroke::new(1.0, egui::Color32::WHITE)
+            0.0,
+            if state.is_selected(image.record.item.id) {
+                egui::Stroke::new(1.0, crate::theme::SHADE_BASE)
             } else {
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(56, 62, 82))
+                egui::Stroke::new(1.0, crate::theme::SHADE_60)
             },
             egui::StrokeKind::Outside,
         );
     }
 }
 
-fn paint_grid(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) {
-    let minor_step_world = 24.0;
-    let major_every = 4;
-    let minor_color = egui::Color32::from_rgb(18, 22, 30);
-    let major_color = egui::Color32::from_rgb(28, 34, 46);
-    let visible_world = rect.size() / state.zoom;
-    let min_world = egui::pos2(-visible_world.x, -visible_world.y) + (-state.pan / state.zoom);
-    let max_world = egui::pos2(visible_world.x, visible_world.y) + (-state.pan / state.zoom);
+fn paint_marquee(painter: &egui::Painter, state: &CanvasState) {
+    let Some(marquee_state) = &state.marquee_state else {
+        return;
+    };
 
-    let first_x = (min_world.x / minor_step_world).floor() as i32 - 1;
-    let last_x = (max_world.x / minor_step_world).ceil() as i32 + 1;
-    for index in first_x..=last_x {
-        let world_x = index as f32 * minor_step_world;
-        let screen_x = state.world_to_screen(egui::pos2(world_x, 0.0), rect).x;
-        if screen_x < rect.left() || screen_x > rect.right() {
-            continue;
-        }
-        let color = if index.rem_euclid(major_every) == 0 {
-            major_color
-        } else {
-            minor_color
-        };
-        painter.line_segment(
-            [
-                egui::pos2(screen_x, rect.top()),
-                egui::pos2(screen_x, rect.bottom()),
-            ],
-            egui::Stroke::new(1.0, color),
-        );
-    }
-
-    let first_y = (min_world.y / minor_step_world).floor() as i32 - 1;
-    let last_y = (max_world.y / minor_step_world).ceil() as i32 + 1;
-    for index in first_y..=last_y {
-        let world_y = index as f32 * minor_step_world;
-        let screen_y = state.world_to_screen(egui::pos2(0.0, world_y), rect).y;
-        if screen_y < rect.top() || screen_y > rect.bottom() {
-            continue;
-        }
-        let color = if index.rem_euclid(major_every) == 0 {
-            major_color
-        } else {
-            minor_color
-        };
-        painter.line_segment(
-            [
-                egui::pos2(rect.left(), screen_y),
-                egui::pos2(rect.right(), screen_y),
-            ],
-            egui::Stroke::new(1.0, color),
-        );
-    }
+    let rect = egui::Rect::from_two_pos(marquee_state.start_screen, marquee_state.current_screen);
+    painter.rect_stroke(
+        rect,
+        0.0,
+        egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
+        egui::StrokeKind::Outside,
+    );
 }

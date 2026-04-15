@@ -1,4 +1,5 @@
 use eframe::egui;
+use time::OffsetDateTime;
 
 pub struct ReferenceApp {
     canvas: crate::canvas::CanvasState,
@@ -22,6 +23,7 @@ impl ReferenceApp {
                     import_worker: Some(import_worker),
                     status: format!("Library: {}", library.root().display()),
                 };
+                app.load_user_session();
                 app.enqueue_existing_items();
                 app
             }
@@ -56,6 +58,17 @@ impl ReferenceApp {
             Err(error) => {
                 self.status = error;
             }
+        }
+    }
+
+    fn load_user_session(&mut self) {
+        let Some(library) = &self.library else {
+            return;
+        };
+
+        match library.load_user_session() {
+            Ok(session) => self.canvas.apply_user_session(&session),
+            Err(error) => self.status = error,
         }
     }
 
@@ -117,6 +130,16 @@ impl ReferenceApp {
             }
         }
     }
+
+    fn save_user_session(&mut self) {
+        let Some(library) = &self.library else {
+            return;
+        };
+
+        if let Err(error) = library.save_user_session(&self.canvas.user_session()) {
+            self.status = error;
+        }
+    }
 }
 
 impl eframe::App for ReferenceApp {
@@ -127,38 +150,98 @@ impl eframe::App for ReferenceApp {
         self.handle_dropped_files(ui, screen_rect);
         crate::canvas::show(ui, screen_rect, &mut self.canvas);
         self.persist_canvas_changes();
-        show_top_bar(ui.ctx(), screen_rect, &self.status);
+        show_sidebar(
+            ui.ctx(),
+            screen_rect,
+            &self.status,
+            &self.canvas.sidebar_entries(),
+        );
+    }
+
+    fn on_exit(&mut self) {
+        self.save_user_session();
     }
 }
 
-fn show_top_bar(ctx: &egui::Context, screen_rect: egui::Rect, status: &str) {
-    let margin = 16.0;
-    let bar_width = (screen_rect.width() - margin * 2.0).max(240.0);
+fn show_sidebar(
+    ctx: &egui::Context,
+    screen_rect: egui::Rect,
+    status: &str,
+    entries: &[crate::canvas::SidebarEntry],
+) {
+    let sidebar_width = 180.0;
+    let sidebar_max_width = 200.0;
+    let sidebar_height = screen_rect.height();
 
-    egui::Area::new(egui::Id::new("top_bar_overlay"))
+    egui::Area::new(egui::Id::new("library_sidebar"))
         .order(egui::Order::Foreground)
-        .fixed_pos(egui::pos2(
-            screen_rect.left() + margin,
-            screen_rect.top() + margin,
-        ))
+        .fixed_pos(egui::pos2(screen_rect.left(), screen_rect.top()))
         .show(ctx, |ui| {
             egui::Frame::new()
-                .fill(egui::Color32::from_rgba_premultiplied(18, 22, 30, 230))
-                .stroke(egui::Stroke::new(
-                    1.0,
-                    egui::Color32::from_rgba_premultiplied(110, 126, 160, 120),
-                ))
-                .corner_radius(14)
-                .inner_margin(12)
+                .fill(crate::theme::SHADE_80)
+                .stroke(egui::Stroke::new(1.0, crate::theme::SHADE_60))
+                .corner_radius(0)
+                .inner_margin(8)
                 .show(ui, |ui| {
-                    ui.set_min_width(bar_width);
-                    ui.horizontal(|ui| {
-                        ui.heading("Reference");
-                        ui.add_space(12.0);
-                        let _ = ui.button("Import");
-                        ui.add_space(16.0);
-                        ui.label(status);
+                    ui.set_width(sidebar_width);
+                    ui.set_min_width(sidebar_width);
+                    ui.set_max_width(sidebar_max_width);
+                    ui.set_min_height(sidebar_height);
+
+                    ui.vertical(|ui| {
+                        ui.colored_label(crate::theme::SHADE_BASE, "Library");
+                        ui.colored_label(crate::theme::SHADE_30, "./library/originals");
+                        ui.add_space(8.0);
+
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                paint_library_tree(ui, entries);
+                            });
+
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.colored_label(crate::theme::SHADE_20, status);
                     });
                 });
         });
+}
+
+fn paint_library_tree(ui: &mut egui::Ui, entries: &[crate::canvas::SidebarEntry]) {
+    ui.horizontal(|ui| {
+        ui.colored_label(crate::theme::SHADE_10, "v");
+        ui.colored_label(crate::theme::SHADE_10, "originals");
+    });
+    ui.add_space(4.0);
+
+    let mut current_group: Option<String> = None;
+
+    for entry in entries {
+        let group = format_import_date(entry.imported_at);
+        if current_group.as_ref() != Some(&group) {
+            current_group = Some(group.clone());
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.colored_label(crate::theme::SHADE_20, "v");
+                ui.colored_label(crate::theme::SHADE_20, group);
+            });
+        }
+
+        ui.horizontal(|ui| {
+            ui.add_space(28.0);
+            ui.colored_label(crate::theme::SHADE_40, ">");
+            let color = if entry.selected {
+                crate::theme::SHADE_BASE
+            } else {
+                crate::theme::SHADE_10
+            };
+            ui.colored_label(color, &entry.filename);
+        });
+    }
+}
+
+fn format_import_date(imported_at: i64) -> String {
+    OffsetDateTime::from_unix_timestamp(imported_at)
+        .map(|timestamp| timestamp.date().to_string())
+        .unwrap_or_else(|_| "unknown-date".to_owned())
 }
