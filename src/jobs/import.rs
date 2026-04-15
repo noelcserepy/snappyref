@@ -3,15 +3,21 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use eframe::egui;
-use image::ImageReader;
 
 use crate::data::BoardItemWithAsset;
+use crate::jobs::image_formats::decode_image_file;
 use crate::storage::Library;
 
 #[derive(Clone, Debug)]
 pub enum ImportRequest {
     ImportPath {
         source_path: PathBuf,
+        desired_world: egui::Pos2,
+    },
+    ImportClipboard {
+        rgba: Vec<u8>,
+        width: u32,
+        height: u32,
         desired_world: egui::Pos2,
     },
     LoadExisting {
@@ -48,6 +54,12 @@ impl ImportWorker {
                         source_path,
                         desired_world,
                     } => import_path(&library, source_path, desired_world),
+                    ImportRequest::ImportClipboard {
+                        rgba,
+                        width,
+                        height,
+                        desired_world,
+                    } => import_clipboard(&library, rgba, width, height, desired_world),
                     ImportRequest::LoadExisting { record } => load_existing(record),
                 };
 
@@ -72,37 +84,81 @@ impl ImportWorker {
     }
 }
 
-fn import_path(library: &Library, source_path: PathBuf, desired_world: egui::Pos2) -> ImportResult {
-    if !is_png(&source_path) {
-        return ImportResult::Failed {
-            context: source_path.display().to_string(),
-            error: "only PNG files are supported in this first import pass".to_owned(),
-        };
-    }
+pub fn import_path_sync(
+    library: &Library,
+    source_path: PathBuf,
+    desired_world: egui::Pos2,
+) -> Result<LoadedCanvasItem, String> {
+    let decoded = decode_image_file(&source_path)
+        .map_err(|error| format!("{}: {error}", source_path.display()))?;
 
-    let stored_path = match library.store_original(&source_path) {
+    let stored_path = library
+        .store_original(&source_path)
+        .map_err(|error| format!("{}: {error}", source_path.display()))?;
+
+    let record = library
+        .persist_imported_image(
+            &stored_path,
+            decoded.format.to_mime_type(),
+            decoded.width,
+            decoded.height,
+            decoded.file_size,
+            desired_world,
+        )
+        .map_err(|error| format!("{}: {error}", stored_path.display()))?;
+
+    Ok(LoadedCanvasItem {
+        record,
+        rgba: decoded.rgba,
+    })
+}
+
+fn import_path(library: &Library, source_path: PathBuf, desired_world: egui::Pos2) -> ImportResult {
+    match import_path_sync(library, source_path.clone(), desired_world) {
+        Ok(loaded) => ImportResult::Loaded(loaded),
+        Err(error) => ImportResult::Failed {
+            context: source_path.display().to_string(),
+            error,
+        },
+    }
+}
+
+fn import_clipboard(
+    library: &Library,
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    desired_world: egui::Pos2,
+) -> ImportResult {
+    let stored_path = match library.store_clipboard_image(&rgba, width, height) {
         Ok(path) => path,
         Err(error) => {
             return ImportResult::Failed {
-                context: source_path.display().to_string(),
+                context: "clipboard".to_owned(),
                 error,
             };
         }
     };
 
-    let (rgba, width, height, file_size) = match decode_png(&stored_path) {
-        Ok(decoded) => decoded,
+    let file_size = match std::fs::metadata(&stored_path) {
+        Ok(metadata) => metadata.len(),
         Err(error) => {
             return ImportResult::Failed {
                 context: stored_path.display().to_string(),
-                error,
+                error: format!("failed to read clipboard image metadata: {error}"),
             };
         }
     };
 
     let record =
-        match library.persist_imported_image(&stored_path, width, height, file_size, desired_world)
-        {
+        match library.persist_imported_image(
+            &stored_path,
+            image::ImageFormat::Png.to_mime_type(),
+            width,
+            height,
+            file_size,
+            desired_world,
+        ) {
             Ok(record) => record,
             Err(error) => {
                 return ImportResult::Failed {
@@ -116,33 +172,14 @@ fn import_path(library: &Library, source_path: PathBuf, desired_world: egui::Pos
 }
 
 fn load_existing(record: BoardItemWithAsset) -> ImportResult {
-    match decode_png(&record.asset.original_path) {
-        Ok((rgba, _, _, _)) => ImportResult::Loaded(LoadedCanvasItem { record, rgba }),
+    match decode_image_file(&record.asset.original_path) {
+        Ok(decoded) => ImportResult::Loaded(LoadedCanvasItem {
+            record,
+            rgba: decoded.rgba,
+        }),
         Err(error) => ImportResult::Failed {
             context: record.asset.original_path.display().to_string(),
             error,
         },
     }
-}
-
-fn decode_png(path: &PathBuf) -> Result<(Vec<u8>, u32, u32, u64), String> {
-    let file_size = std::fs::metadata(path)
-        .map_err(|error| format!("failed to read file metadata: {error}"))?
-        .len();
-    let image = ImageReader::open(path)
-        .map_err(|error| format!("failed to open PNG: {error}"))?
-        .decode()
-        .map_err(|error| format!("failed to decode PNG: {error}"))?
-        .to_rgba8();
-    let width = image.width();
-    let height = image.height();
-
-    Ok((image.into_raw(), width, height, file_size))
-}
-
-fn is_png(path: &PathBuf) -> bool {
-    path.extension()
-        .and_then(|value| value.to_str())
-        .map(|value| value.eq_ignore_ascii_case("png"))
-        .unwrap_or(false)
 }

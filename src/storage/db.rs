@@ -3,9 +3,10 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
+use image::{ColorType, ImageFormat};
 use rusqlite::{Connection, params};
 
-use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
+use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset, UserSession};
 
 #[derive(Clone, Debug)]
 pub struct Library {
@@ -49,20 +50,36 @@ impl Library {
             .extension()
             .and_then(|value| value.to_str())
             .unwrap_or("png");
-        let timestamp = unix_timestamp_millis();
-        let safe_name = sanitize_filename(original_name);
-        let destination = self
-            .originals_dir
-            .join(format!("{timestamp}-{safe_name}.{extension}"));
+        let destination = self.destination_path(original_name, extension);
 
         fs::copy(source_path, &destination)
             .map_err(|error| format!("failed to copy original: {error}"))?;
         Ok(destination)
     }
 
+    pub fn store_clipboard_image(
+        &self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<PathBuf, String> {
+        let destination = self.destination_path("clipboard", "png");
+        image::save_buffer_with_format(
+            &destination,
+            rgba,
+            width,
+            height,
+            ColorType::Rgba8,
+            ImageFormat::Png,
+        )
+        .map_err(|error| format!("failed to write clipboard image: {error}"))?;
+        Ok(destination)
+    }
+
     pub fn persist_imported_image(
         &self,
         stored_path: &Path,
+        mime_type: &str,
         width: u32,
         height: u32,
         file_size: u64,
@@ -78,7 +95,7 @@ impl Library {
             .and_then(|value| value.to_str())
             .unwrap_or("image.png")
             .to_owned();
-        let mime_type = "image/png".to_owned();
+        let mime_type = mime_type.to_owned();
         let imported_at = unix_timestamp_seconds();
         let original_path = stored_path.to_string_lossy().into_owned();
 
@@ -232,6 +249,84 @@ impl Library {
         Ok(())
     }
 
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn delete_board_items(&self, item_ids: &[i64]) -> Result<(), String> {
+        if item_ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start delete transaction: {error}"))?;
+
+        for item_id in item_ids {
+            transaction
+                .execute("DELETE FROM board_items WHERE id = ?1", params![item_id])
+                .map_err(|error| format!("failed to delete board item {item_id}: {error}"))?;
+        }
+
+        transaction
+            .execute(
+                "DELETE FROM assets
+                 WHERE id NOT IN (SELECT asset_id FROM board_items)",
+                [],
+            )
+            .map_err(|error| format!("failed to prune orphaned assets: {error}"))?;
+
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit delete transaction: {error}"))?;
+
+        Ok(())
+    }
+
+    pub fn load_user_session(&self) -> Result<UserSession, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT camera_pan_x, camera_pan_y, camera_zoom
+                 FROM user_session
+                 WHERE id = 1",
+            )
+            .map_err(|error| format!("failed to prepare user-session query: {error}"))?;
+
+        let session = statement.query_row([], |row| {
+            Ok(UserSession {
+                camera_pan_x: row.get(0)?,
+                camera_pan_y: row.get(1)?,
+                camera_zoom: row.get(2)?,
+            })
+        });
+
+        match session {
+            Ok(session) => Ok(session),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(UserSession::default()),
+            Err(error) => Err(format!("failed to load user session: {error}")),
+        }
+    }
+
+    pub fn save_user_session(&self, session: &UserSession) -> Result<(), String> {
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom)
+                 VALUES (1, ?1, ?2, ?3)
+                 ON CONFLICT(id) DO UPDATE SET
+                    camera_pan_x = excluded.camera_pan_x,
+                    camera_pan_y = excluded.camera_pan_y,
+                    camera_zoom = excluded.camera_zoom",
+                params![
+                    session.camera_pan_x,
+                    session.camera_pan_y,
+                    session.camera_zoom,
+                ],
+            )
+            .map_err(|error| format!("failed to save user session: {error}"))?;
+
+        Ok(())
+    }
+
     fn initialize_schema(&self) -> Result<(), String> {
         let connection = self.connection()?;
         connection
@@ -260,6 +355,13 @@ impl Library {
                     rotation  REAL NOT NULL,
                     z_index   INTEGER NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS user_session (
+                    id            INTEGER PRIMARY KEY CHECK (id = 1),
+                    camera_pan_x  REAL NOT NULL,
+                    camera_pan_y  REAL NOT NULL,
+                    camera_zoom   REAL NOT NULL
+                );
                 ",
             )
             .map_err(|error| format!("failed to initialize database schema: {error}"))
@@ -268,6 +370,13 @@ impl Library {
     fn connection(&self) -> Result<Connection, String> {
         Connection::open(&self.db_path)
             .map_err(|error| format!("failed to open library database: {error}"))
+    }
+
+    fn destination_path(&self, source_name: &str, extension: &str) -> PathBuf {
+        let timestamp = unix_timestamp_millis();
+        let safe_name = sanitize_filename(source_name);
+        self.originals_dir
+            .join(format!("{timestamp}-{safe_name}.{extension}"))
     }
 }
 
