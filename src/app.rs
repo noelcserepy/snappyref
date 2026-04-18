@@ -366,6 +366,7 @@ pub struct ReferenceApp {
     library: Option<crate::storage::Library>,
     import_worker: Option<crate::jobs::ImportWorker>,
     crop_undo_stack: Vec<CropUndoEntry>,
+    auto_image_scaling: bool,
     drawer_open: bool,
     status: String,
 }
@@ -391,6 +392,7 @@ impl ReferenceApp {
                     library: Some(library.clone()),
                     import_worker: Some(import_worker),
                     crop_undo_stack: Vec::new(),
+                    auto_image_scaling: true,
                     drawer_open: false,
                     status,
                 };
@@ -410,6 +412,7 @@ impl ReferenceApp {
                 library: None,
                 import_worker: None,
                 crop_undo_stack: Vec::new(),
+                auto_image_scaling: true,
                 drawer_open: false,
                 status: format!("Storage unavailable: {error}"),
             },
@@ -447,7 +450,10 @@ impl ReferenceApp {
         };
 
         match library.load_user_session() {
-            Ok(session) => self.canvas.apply_user_session(&session),
+            Ok(session) => {
+                self.canvas.apply_user_session(&session);
+                self.auto_image_scaling = session.auto_image_scaling;
+            }
             Err(error) => self.status = error,
         }
     }
@@ -472,6 +478,7 @@ impl ReferenceApp {
             if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::ImportPath {
                 source_path: source_path.clone(),
                 desired_world,
+                auto_scale: self.auto_image_scaling,
             }) {
                 self.status = error;
                 continue;
@@ -526,6 +533,7 @@ impl ReferenceApp {
             width,
             height,
             desired_world,
+            auto_scale: self.auto_image_scaling,
         }) {
             self.status = error;
             return;
@@ -805,7 +813,9 @@ impl ReferenceApp {
             return;
         };
 
-        if let Err(error) = library.save_user_session(&self.canvas.user_session()) {
+        let mut session = self.canvas.user_session();
+        session.auto_image_scaling = self.auto_image_scaling;
+        if let Err(error) = library.save_user_session(&session) {
             self.status = error;
         }
     }
@@ -914,7 +924,13 @@ impl eframe::App for ReferenceApp {
             drawer_height,
         );
         self.persist_canvas_changes();
-        show_shortcuts_drawer(ui.ctx(), screen_rect, drawer_open, &mut self.drawer_open);
+        show_shortcuts_drawer(
+            ui.ctx(),
+            screen_rect,
+            drawer_open,
+            &mut self.drawer_open,
+            &mut self.auto_image_scaling,
+        );
         show_drawer_toggle(ui.ctx(), screen_rect, drawer_open, &mut self.drawer_open);
         if self
             .screenshot_capture
@@ -1068,6 +1084,7 @@ fn show_shortcuts_drawer(
     screen_rect: egui::Rect,
     drawer_open: bool,
     drawer_open_state: &mut bool,
+    auto_image_scaling: &mut bool,
 ) {
     if !drawer_open {
         return;
@@ -1156,11 +1173,65 @@ fn show_shortcuts_drawer(
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(0.0, 10.0);
+                            paint_settings_section(ui, auto_image_scaling);
                             for section in SHORTCUT_SECTIONS {
                                 paint_shortcut_section(ui, section);
                             }
                         });
                 });
+        });
+}
+
+fn paint_settings_section(ui: &mut egui::Ui, auto_image_scaling: &mut bool) {
+    egui::Frame::new()
+        .fill(crate::theme::SHADE_90)
+        .stroke(egui::Stroke::new(1.0, crate::theme::SHADE_70))
+        .corner_radius(SHORTCUT_SECTION_CARD_RADIUS)
+        .inner_margin(egui::Margin {
+            left: 12,
+            right: 12,
+            top: 10,
+            bottom: 10,
+        })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Settings")
+                        .size(12.0)
+                        .strong()
+                        .color(crate::theme::SHADE_BASE),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new("New images only")
+                            .size(10.0)
+                            .color(crate::theme::SHADE_30),
+                    );
+                });
+            });
+            ui.add_space(8.0);
+
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("Auto-scale new images")
+                            .size(11.0)
+                            .color(crate::theme::SHADE_BASE),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Cap imported image height at {:.0} canvas units",
+                            crate::jobs::DEFAULT_IMPORT_TARGET_CANVAS_HEIGHT
+                        ))
+                        .size(10.0)
+                        .color(crate::theme::SHADE_30),
+                    );
+                });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.toggle_value(auto_image_scaling, "");
+                });
+            });
         });
 }
 

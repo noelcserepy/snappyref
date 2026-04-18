@@ -88,6 +88,7 @@ impl Library {
         height: u32,
         file_size: u64,
         desired_world: egui::Pos2,
+        initial_scale: f32,
     ) -> Result<BoardItemWithAsset, String> {
         let mut connection = self.connection()?;
         let transaction = connection
@@ -95,7 +96,7 @@ impl Library {
             .map_err(|error| format!("failed to start transaction: {error}"))?;
 
         let asset = insert_asset_row(&transaction, stored_path, mime_type, width, height, file_size)?;
-        let item = insert_board_item_row(&transaction, asset.id, desired_world)?;
+        let item = insert_board_item_row(&transaction, asset.id, desired_world, initial_scale)?;
 
         transaction
             .commit()
@@ -440,7 +441,7 @@ impl Library {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT camera_pan_x, camera_pan_y, camera_zoom
+                "SELECT camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling
                  FROM user_session
                  WHERE id = 1",
             )
@@ -451,6 +452,7 @@ impl Library {
                 camera_pan_x: row.get(0)?,
                 camera_pan_y: row.get(1)?,
                 camera_zoom: row.get(2)?,
+                auto_image_scaling: row.get::<_, i64>(3)? != 0,
             })
         });
 
@@ -465,16 +467,18 @@ impl Library {
         let connection = self.connection()?;
         connection
             .execute(
-                "INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom)
-                 VALUES (1, ?1, ?2, ?3)
+                "INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling)
+                 VALUES (1, ?1, ?2, ?3, ?4)
                  ON CONFLICT(id) DO UPDATE SET
                     camera_pan_x = excluded.camera_pan_x,
                     camera_pan_y = excluded.camera_pan_y,
-                    camera_zoom = excluded.camera_zoom",
+                    camera_zoom = excluded.camera_zoom,
+                    auto_image_scaling = excluded.auto_image_scaling",
                 params![
                     session.camera_pan_x,
                     session.camera_pan_y,
                     session.camera_zoom,
+                    if session.auto_image_scaling { 1_i64 } else { 0_i64 },
                 ],
             )
             .map_err(|error| format!("failed to save user session: {error}"))?;
@@ -516,13 +520,15 @@ impl Library {
                     id            INTEGER PRIMARY KEY CHECK (id = 1),
                     camera_pan_x  REAL NOT NULL,
                     camera_pan_y  REAL NOT NULL,
-                    camera_zoom   REAL NOT NULL
+                    camera_zoom   REAL NOT NULL,
+                    auto_image_scaling INTEGER NOT NULL DEFAULT 1
                 );
                 ",
             )
             .map_err(|error| format!("failed to initialize database schema: {error}"))?;
 
-        ensure_board_items_archived_column(&connection)
+        ensure_board_items_archived_column(&connection)?;
+        ensure_user_session_auto_image_scaling_column(&connection)
     }
 
     fn connection(&self) -> Result<Connection, String> {
@@ -659,6 +665,7 @@ fn insert_board_item_row(
     transaction: &Transaction<'_>,
     asset_id: i64,
     desired_world: egui::Pos2,
+    initial_scale: f32,
 ) -> Result<BoardItem, String> {
     transaction
         .execute(
@@ -675,7 +682,7 @@ fn insert_board_item_row(
                 asset_id,
                 desired_world.x,
                 desired_world.y,
-                1.0_f32,
+                initial_scale,
                 0.0_f32,
                 0_i64,
                 0_i64
@@ -688,9 +695,85 @@ fn insert_board_item_row(
         asset_id,
         x: desired_world.x,
         y: desired_world.y,
-        scale: 1.0,
+        scale: initial_scale,
         rotation: 0.0,
         z_index: 0,
         archived: false,
     })
+}
+
+fn ensure_user_session_auto_image_scaling_column(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(user_session)")
+        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read user_session schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
+
+    if columns.iter().any(|column| column == "auto_image_scaling") {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE user_session ADD COLUMN auto_image_scaling INTEGER NOT NULL DEFAULT 1",
+            [],
+        )
+        .map_err(|error| {
+            format!("failed to add auto_image_scaling column to user_session: {error}")
+        })?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Library;
+    use rusqlite::Connection;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn existing_user_session_rows_migrate_to_default_on_auto_scaling() {
+        let root = std::env::temp_dir().join(format!(
+            "reference-storage-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let db_path = root.join("library.db");
+        let connection = Connection::open(&db_path).unwrap();
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE user_session (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    camera_pan_x REAL NOT NULL,
+                    camera_pan_y REAL NOT NULL,
+                    camera_zoom REAL NOT NULL
+                );
+
+                INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom)
+                VALUES (1, 10.0, 20.0, 1.5);
+                ",
+            )
+            .unwrap();
+        drop(connection);
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let session = library.load_user_session().unwrap();
+
+        assert_eq!(session.camera_pan_x, 10.0);
+        assert_eq!(session.camera_pan_y, 20.0);
+        assert_eq!(session.camera_zoom, 1.5);
+        assert!(session.auto_image_scaling);
+
+        let _ = fs::remove_dir_all(root);
+    }
 }
