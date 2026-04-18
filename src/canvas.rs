@@ -17,13 +17,6 @@ pub struct CanvasState {
     last_pointer_screen_pos: Option<egui::Pos2>,
 }
 
-pub struct SidebarEntry {
-    pub item_id: i64,
-    pub filename: String,
-    pub imported_at: i64,
-    pub selected: bool,
-}
-
 struct CanvasImage {
     record: BoardItemWithAsset,
     texture: egui::TextureHandle,
@@ -164,27 +157,6 @@ impl CanvasState {
             .collect()
     }
 
-    pub fn sidebar_entries(&self) -> Vec<SidebarEntry> {
-        let mut entries = self
-            .images
-            .iter()
-            .map(|image| SidebarEntry {
-                item_id: image.record.item.id,
-                filename: image.record.asset.filename.clone(),
-                imported_at: image.record.asset.imported_at,
-                selected: self.is_selected(image.record.item.id),
-            })
-            .collect::<Vec<_>>();
-
-        entries.sort_by(|left, right| {
-            right
-                .imported_at
-                .cmp(&left.imported_at)
-                .then_with(|| left.filename.cmp(&right.filename))
-        });
-        entries
-    }
-
     pub fn selection_screen_rect(&self, rect: egui::Rect) -> Option<egui::Rect> {
         let mut selected_rect: Option<egui::Rect> = None;
 
@@ -225,10 +197,7 @@ impl CanvasState {
         items.sort_by(|left, right| left.x.total_cmp(&right.x));
         let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
         let gap = 16.0;
-        let max_height = items
-            .iter()
-            .map(|item| item.height)
-            .fold(0.0_f32, f32::max);
+        let max_height = items.iter().map(|item| item.height).fold(0.0_f32, f32::max);
 
         let mut x_cursor = 0.0;
         let mut placements = Vec::with_capacity(items.len());
@@ -240,7 +209,10 @@ impl CanvasState {
 
         let total_width = x_cursor - gap;
         let local_center = egui::pos2(total_width * 0.5, max_height * 0.5);
-        self.apply_arrangement(placements, current_center.to_vec2() - local_center.to_vec2())
+        self.apply_arrangement(
+            placements,
+            current_center.to_vec2() - local_center.to_vec2(),
+        )
     }
 
     pub fn arrange_selected_vertical(&mut self) -> usize {
@@ -264,7 +236,10 @@ impl CanvasState {
 
         let total_height = y_cursor - gap;
         let local_center = egui::pos2(max_width * 0.5, total_height * 0.5);
-        self.apply_arrangement(placements, current_center.to_vec2() - local_center.to_vec2())
+        self.apply_arrangement(
+            placements,
+            current_center.to_vec2() - local_center.to_vec2(),
+        )
     }
 
     pub fn arrange_selected_compact(&mut self) -> usize {
@@ -298,32 +273,10 @@ impl CanvasState {
             return 0;
         };
         let local_center = egui::pos2(width * 0.5, height * 0.5);
-        self.apply_arrangement(placements, current_center.to_vec2() - local_center.to_vec2())
-    }
-
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub fn focus_item(
-        &mut self,
-        item_id: i64,
-        rect: egui::Rect,
-        zoom: Option<f32>,
-    ) -> Result<(), String> {
-        let (item_x, item_y) = self
-            .images
-            .iter()
-            .find(|image| image.record.item.id == item_id)
-            .map(|image| (image.record.item.x, image.record.item.y))
-            .ok_or_else(|| format!("item {item_id} not found"))?;
-
-        if let Some(zoom) = zoom {
-            self.zoom = zoom.clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
-        }
-
-        let target_world = egui::vec2(item_x, item_y) * self.zoom;
-        self.pan = -target_world;
-        let centered_screen = self.world_to_screen(egui::pos2(item_x, item_y), rect);
-        self.pan += rect.center() - centered_screen;
-        Ok(())
+        self.apply_arrangement(
+            placements,
+            current_center.to_vec2() - local_center.to_vec2(),
+        )
     }
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]

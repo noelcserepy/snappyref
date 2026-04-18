@@ -1,3 +1,3 @@
 mod db;
 
-pub use db::{ArchivedSidebarEntry, Library};
+pub use db::Library;

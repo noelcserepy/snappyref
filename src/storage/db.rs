@@ -8,14 +8,6 @@ use rusqlite::{Connection, params};
 
 use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset, UserSession};
 
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
-pub struct ArchivedSidebarEntry {
-    pub item_id: i64,
-    pub filename: String,
-    pub imported_at: i64,
-}
-
 #[derive(Clone, Debug)]
 pub struct Library {
     originals_dir: PathBuf,
@@ -281,35 +273,6 @@ impl Library {
             .map_err(|error| format!("failed to commit archive transaction: {error}"))?;
 
         Ok(())
-    }
-
-    pub fn load_archived_sidebar_entries(&self) -> Result<Vec<ArchivedSidebarEntry>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT
-                    b.id,
-                    a.filename,
-                    a.imported_at
-                 FROM board_items b
-                 JOIN assets a ON a.id = b.asset_id
-                 WHERE b.archived = 1
-                 ORDER BY a.imported_at DESC, a.filename ASC, b.id ASC",
-            )
-            .map_err(|error| format!("failed to prepare archived-items query: {error}"))?;
-
-        let rows = statement
-            .query_map([], |row| {
-                Ok(ArchivedSidebarEntry {
-                    item_id: row.get(0)?,
-                    filename: row.get(1)?,
-                    imported_at: row.get(2)?,
-                })
-            })
-            .map_err(|error| format!("failed to read archived-items query: {error}"))?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("failed to collect archived-items: {error}"))
     }
 
     pub fn duplicate_board_items(
