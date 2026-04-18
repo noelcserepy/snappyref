@@ -1052,6 +1052,19 @@ impl ReferenceApp {
         }
     }
 
+    fn persist_settings_if_changed(&mut self, settings_changed: bool) {
+        Self::persist_settings_if_changed_with(settings_changed, || self.save_user_session());
+    }
+
+    fn persist_settings_if_changed_with<F>(settings_changed: bool, mut persist: F)
+    where
+        F: FnMut(),
+    {
+        if settings_changed {
+            persist();
+        }
+    }
+
     fn preferred_import_world(&self, ctx: &egui::Context, screen_rect: egui::Rect) -> egui::Pos2 {
         let pointer_screen_pos = ctx.input(|input| input.pointer.latest_pos());
         self.preferred_import_world_with_pointer(screen_rect, pointer_screen_pos)
@@ -1172,7 +1185,7 @@ impl eframe::App for ReferenceApp {
             drawer_height,
         );
         self.persist_canvas_changes();
-        show_shortcuts_drawer(
+        let settings_changed = show_shortcuts_drawer(
             ui.ctx(),
             screen_rect,
             drawer_open,
@@ -1180,6 +1193,7 @@ impl eframe::App for ReferenceApp {
             &mut self.auto_image_scaling,
             &mut self.import_gap,
         );
+        self.persist_settings_if_changed(settings_changed);
         show_drawer_toggle(ui.ctx(), screen_rect, drawer_open, &mut self.drawer_open);
         if self
             .screenshot_capture
@@ -1393,10 +1407,12 @@ fn show_shortcuts_drawer(
     drawer_open_state: &mut bool,
     auto_image_scaling: &mut bool,
     import_gap: &mut f32,
-) {
+) -> bool {
     if !drawer_open {
-        return;
+        return false;
     }
+
+    let mut settings_changed = false;
 
     let drawer_height = {
         let target = (screen_rect.height() * 0.42)
@@ -1481,7 +1497,8 @@ fn show_shortcuts_drawer(
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(0.0, 10.0);
-                            paint_settings_section(ui, auto_image_scaling, import_gap);
+                            settings_changed |=
+                                paint_settings_section(ui, auto_image_scaling, import_gap);
                             paint_supported_shortcuts_section(ui);
                             for section in SHORTCUT_SECTIONS {
                                 paint_shortcut_section(ui, section);
@@ -1489,9 +1506,16 @@ fn show_shortcuts_drawer(
                         });
                 });
         });
+
+    settings_changed
 }
 
-fn paint_settings_section(ui: &mut egui::Ui, auto_image_scaling: &mut bool, import_gap: &mut f32) {
+fn paint_settings_section(
+    ui: &mut egui::Ui,
+    auto_image_scaling: &mut bool,
+    import_gap: &mut f32,
+) -> bool {
+    let mut changed = false;
     egui::Frame::new()
         .fill(crate::theme::SHADE_90)
         .stroke(egui::Stroke::new(1.0, crate::theme::SHADE_70))
@@ -1538,7 +1562,7 @@ fn paint_settings_section(ui: &mut egui::Ui, auto_image_scaling: &mut bool, impo
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    paint_switch(ui, auto_image_scaling);
+                    changed |= paint_switch(ui, auto_image_scaling).changed();
                 });
             });
 
@@ -1559,16 +1583,20 @@ fn paint_settings_section(ui: &mut egui::Ui, auto_image_scaling: &mut bool, impo
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add(
+                    changed |= ui
+                        .add(
                         egui::DragValue::new(import_gap)
                             .speed(0.5)
                             .range(0.0..=128.0)
                             .fixed_decimals(0)
                             .suffix(" units"),
-                    );
+                    )
+                    .changed();
                 });
             });
         });
+
+    changed
 }
 
 fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
@@ -1805,4 +1833,141 @@ fn paint_shortcut_section(ui: &mut egui::Ui, section: &ShortcutSection) {
                     }
                 });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_arrangement_action, ArrangementAction, ReferenceApp};
+    use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
+    use crate::jobs::LoadedCanvasItem;
+    use crate::storage::Library;
+    use eframe::egui;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn persist_settings_if_changed_true_calls_save_once() {
+        let mut calls = 0;
+        ReferenceApp::persist_settings_if_changed_with(true, || {
+            calls += 1;
+        });
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn persist_settings_if_changed_false_skips_save() {
+        let mut calls = 0;
+        ReferenceApp::persist_settings_if_changed_with(false, || {
+            calls += 1;
+        });
+        assert_eq!(calls, 0);
+    }
+
+    #[test]
+    fn save_user_session_round_trips_import_gap() {
+        let root = temp_library_root("reference-app-gap");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.auto_image_scaling = false;
+        app.import_gap = 37.0;
+
+        app.save_user_session();
+
+        let session = library.load_user_session().unwrap();
+        assert!(!session.auto_image_scaling);
+        assert_eq!(session.import_gap, 37.0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn compact_arrangement_action_uses_dense_compact_layout() {
+        let mut canvas = crate::canvas::CanvasState::default();
+        let ctx = egui::Context::default();
+        let fixture = [
+            (1_i64, 300_u32, 520_u32),
+            (2, 180, 260),
+            (3, 160, 260),
+            (4, 150, 220),
+            (5, 150, 220),
+            (6, 140, 180),
+            (7, 140, 180),
+        ];
+        let gap = 12.0;
+
+        for (index, (id, width, height)) in fixture.iter().enumerate() {
+            let asset = ImageAsset {
+                id: *id,
+                original_path: PathBuf::from(format!("fixture-{id}.png")),
+                filename: format!("fixture-{id}.png"),
+                mime_type: "image/png".to_owned(),
+                width: *width,
+                height: *height,
+                file_size: 0,
+                imported_at: 0,
+            };
+            let record = BoardItemWithAsset {
+                item: BoardItem {
+                    id: *id,
+                    asset_id: *id,
+                    x: index as f32 * 500.0,
+                    y: index as f32 * 120.0,
+                    scale: 1.0,
+                    rotation: 0.0,
+                    z_index: index as i32,
+                    archived: false,
+                },
+                asset,
+            };
+            let rgba = vec![255; (*width as usize) * (*height as usize) * 4];
+            canvas.add_loaded_item(&ctx, LoadedCanvasItem { record, rgba });
+        }
+
+        canvas.select_items(&fixture.iter().map(|(id, _, _)| *id).collect::<Vec<_>>());
+        let mut status = String::new();
+        apply_arrangement_action(&mut canvas, ArrangementAction::Compact, gap, &mut status);
+
+        let bounds = canvas.selected_bounds_world().unwrap();
+        let arranged_area = bounds.width() * bounds.height();
+        let legacy_area = crate::canvas::legacy_compact_layout_area_for_sizes(
+            &fixture
+                .iter()
+                .map(|(id, width, height)| (*id, *width as f32, *height as f32))
+                .collect::<Vec<_>>(),
+            gap,
+        )
+        .unwrap();
+
+        assert!(arranged_area < legacy_area);
+        assert_eq!(status, format!("Compacted {} images", fixture.len()));
+    }
+
+    fn test_app(library: Option<Library>) -> ReferenceApp {
+        ReferenceApp {
+            canvas: crate::canvas::CanvasState::default(),
+            screenshot_capture: crate::screenshot::ScreenshotCapture::new(None),
+            window_capture: None,
+            wgpu_render_state: None,
+            library,
+            import_worker: None,
+            crop_undo_stack: Vec::new(),
+            auto_image_scaling: true,
+            import_gap: crate::data::DEFAULT_IMPORT_GAP,
+            drawer_open: false,
+            status: String::new(),
+        }
+    }
+
+    fn temp_library_root(prefix: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "{prefix}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 }

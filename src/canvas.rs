@@ -593,7 +593,324 @@ fn best_compact_layout(
     let mut best_layout: Option<(Vec<(i64, egui::Pos2)>, f32, f32, f32, f32, usize)> = None;
     for (candidate_index, bin_width) in compact_candidate_widths(items, gap).into_iter().enumerate()
     {
-        let Some((placements, width, height)) = skyline_pack_layout(items, bin_width, gap) else {
+        let Some((placements, width, height)) = maxrects_pack_layout(items, bin_width, gap) else {
+            continue;
+        };
+        let area = width * height;
+        let squareness = width.max(height) / width.min(height).max(1.0);
+
+        match &best_layout {
+            Some((_, _, _, best_squareness, best_area, best_index))
+                if area > *best_area
+                    || ((area - *best_area).abs() < 0.001 && squareness > *best_squareness)
+                    || ((area - *best_area).abs() < 0.001
+                        && (squareness - *best_squareness).abs() < 0.001
+                        && candidate_index >= *best_index) => {}
+            _ => {
+                best_layout = Some((placements, width, height, squareness, area, candidate_index));
+            }
+        }
+    }
+
+    best_layout.map(|(placements, width, height, _, _, _)| (placements, width, height))
+}
+
+fn compact_candidate_widths(items: &[SelectedLayoutItem], gap: f32) -> Vec<f32> {
+    let total_area = items
+        .iter()
+        .map(|item| (item.width + gap) * (item.height + gap))
+        .sum::<f32>();
+    let max_width = items
+        .iter()
+        .map(|item| item.width + gap)
+        .fold(0.0_f32, f32::max);
+    let ideal_width = total_area.sqrt().max(max_width);
+    let mut widths = vec![ideal_width];
+    let mut running_width = 0.0_f32;
+
+    for item in items {
+        let effective_width = item.width + gap;
+        running_width += effective_width;
+        widths.push(running_width.max(max_width));
+    }
+
+    widths.sort_by(|left, right| left.total_cmp(right));
+    widths.dedup_by(|left, right| (*left - *right).abs() < 0.5);
+    widths
+}
+
+fn maxrects_pack_layout(
+    items: &[SelectedLayoutItem],
+    bin_width: f32,
+    gap: f32,
+) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
+    if items.is_empty() {
+        return None;
+    }
+
+    let total_height = items
+        .iter()
+        .map(|item| item.height + gap)
+        .sum::<f32>()
+        .max(items.iter().map(|item| item.height + gap).fold(0.0_f32, f32::max));
+    let mut free_rects = vec![PackRect {
+        x: 0.0,
+        y: 0.0,
+        width: bin_width,
+        height: total_height,
+    }];
+    let mut placements = Vec::with_capacity(items.len());
+
+    for item in items {
+        let padded = padded_item_rect(item, gap);
+        if padded.width > bin_width + 0.001 {
+            return None;
+        }
+
+        let Some(placed) = place_maxrects_item(&mut free_rects, padded) else {
+            return None;
+        };
+        placements.push((
+            item.id,
+            egui::pos2(placed.x + item.width * 0.5, placed.y + item.height * 0.5),
+        ));
+    }
+
+    let (layout_width, layout_height) = placed_bounds(items, &placements)?;
+    Some((placements, layout_width, layout_height))
+}
+
+fn place_maxrects_item(free_rects: &mut Vec<PackRect>, padded: PackRect) -> Option<PackRect> {
+    let mut best_candidate: Option<(usize, PackRect, f32, f32)> = None;
+
+    for (index, free) in free_rects.iter().copied().enumerate() {
+        if padded.width > free.width + 0.001 || padded.height > free.height + 0.001 {
+            continue;
+        }
+
+        let short_side_fit = (free.width - padded.width).min(free.height - padded.height);
+        let long_side_fit = (free.width - padded.width).max(free.height - padded.height);
+        let placed = PackRect {
+            x: free.x,
+            y: free.y,
+            width: padded.width,
+            height: padded.height,
+        };
+
+        match best_candidate {
+            Some((_, best_rect, best_short, best_long))
+                if short_side_fit > best_short
+                    || ((short_side_fit - best_short).abs() < 0.001 && long_side_fit > best_long)
+                    || ((short_side_fit - best_short).abs() < 0.001
+                        && (long_side_fit - best_long).abs() < 0.001
+                        && (placed.y > best_rect.y
+                            || ((placed.y - best_rect.y).abs() < 0.001 && placed.x >= best_rect.x))) => {}
+            _ => best_candidate = Some((index, placed, short_side_fit, long_side_fit)),
+        }
+    }
+
+    let (candidate_index, placed, _, _) = best_candidate?;
+    split_free_rects(free_rects, candidate_index, placed);
+    Some(placed)
+}
+
+fn split_free_rects(free_rects: &mut Vec<PackRect>, candidate_index: usize, placed: PackRect) {
+    let mut next = Vec::with_capacity(free_rects.len() + 4);
+
+    for (index, free) in free_rects.iter().copied().enumerate() {
+        if index == candidate_index || rects_intersect(free, placed) {
+            next.extend(split_free_rect(free, placed));
+        } else {
+            next.push(free);
+        }
+    }
+
+    prune_free_rects(&mut next);
+    *free_rects = next;
+}
+
+fn split_free_rect(free: PackRect, placed: PackRect) -> Vec<PackRect> {
+    if !rects_intersect(free, placed) {
+        return vec![free];
+    }
+
+    let mut result = Vec::with_capacity(4);
+
+    if placed.y > free.y + 0.001 {
+        result.push(PackRect {
+            x: free.x,
+            y: free.y,
+            width: free.width,
+            height: placed.y - free.y,
+        });
+    }
+
+    if placed.bottom() < free.bottom() - 0.001 {
+        result.push(PackRect {
+            x: free.x,
+            y: placed.bottom(),
+            width: free.width,
+            height: free.bottom() - placed.bottom(),
+        });
+    }
+
+    if placed.x > free.x + 0.001 {
+        result.push(PackRect {
+            x: free.x,
+            y: free.y,
+            width: placed.x - free.x,
+            height: free.height,
+        });
+    }
+
+    if placed.right() < free.right() - 0.001 {
+        result.push(PackRect {
+            x: placed.right(),
+            y: free.y,
+            width: free.right() - placed.right(),
+            height: free.height,
+        });
+    }
+
+    result
+}
+
+fn prune_free_rects(free_rects: &mut Vec<PackRect>) {
+    free_rects.retain(|rect| rect.width > 0.001 && rect.height > 0.001);
+
+    loop {
+        let mut changed = false;
+
+        let mut index = 0;
+        while index < free_rects.len() {
+            let rect = free_rects[index];
+            let contained = free_rects
+                .iter()
+                .enumerate()
+                .any(|(other_index, other)| other_index != index && rect_contained_in(rect, *other));
+            if contained {
+                free_rects.remove(index);
+                changed = true;
+            } else {
+                index += 1;
+            }
+        }
+
+        let mut left_index = 0;
+        while left_index < free_rects.len() {
+            let mut right_index = left_index + 1;
+            while right_index < free_rects.len() {
+                if let Some(merged) = merge_adjacent_free_rects(
+                    free_rects[left_index],
+                    free_rects[right_index],
+                ) {
+                    free_rects[left_index] = merged;
+                    free_rects.remove(right_index);
+                    changed = true;
+                } else {
+                    right_index += 1;
+                }
+            }
+            left_index += 1;
+        }
+
+        if !changed {
+            break;
+        }
+    }
+}
+
+fn rects_intersect(left: PackRect, right: PackRect) -> bool {
+    left.x < right.right() - 0.001
+        && left.right() > right.x + 0.001
+        && left.y < right.bottom() - 0.001
+        && left.bottom() > right.y + 0.001
+}
+
+fn rect_contained_in(inner: PackRect, outer: PackRect) -> bool {
+    inner.x >= outer.x - 0.001
+        && inner.y >= outer.y - 0.001
+        && inner.right() <= outer.right() + 0.001
+        && inner.bottom() <= outer.bottom() + 0.001
+}
+
+fn merge_adjacent_free_rects(left: PackRect, right: PackRect) -> Option<PackRect> {
+    if (left.x - right.x).abs() < 0.001
+        && (left.width - right.width).abs() < 0.001
+        && (left.bottom() - right.y).abs() < 0.001
+    {
+        return Some(PackRect {
+            x: left.x,
+            y: left.y,
+            width: left.width,
+            height: left.height + right.height,
+        });
+    }
+
+    if (left.x - right.x).abs() < 0.001
+        && (left.width - right.width).abs() < 0.001
+        && (right.bottom() - left.y).abs() < 0.001
+    {
+        return Some(PackRect {
+            x: right.x,
+            y: right.y,
+            width: right.width,
+            height: left.height + right.height,
+        });
+    }
+
+    if (left.y - right.y).abs() < 0.001
+        && (left.height - right.height).abs() < 0.001
+        && (left.right() - right.x).abs() < 0.001
+    {
+        return Some(PackRect {
+            x: left.x,
+            y: left.y,
+            width: left.width + right.width,
+            height: left.height,
+        });
+    }
+
+    if (left.y - right.y).abs() < 0.001
+        && (left.height - right.height).abs() < 0.001
+        && (right.right() - left.x).abs() < 0.001
+    {
+        return Some(PackRect {
+            x: right.x,
+            y: right.y,
+            width: left.width + right.width,
+            height: right.height,
+        });
+    }
+
+    None
+}
+
+fn padded_item_rect(item: &SelectedLayoutItem, gap: f32) -> PackRect {
+    PackRect {
+        x: 0.0,
+        y: 0.0,
+        width: item.width + gap,
+        height: item.height + gap,
+    }
+}
+
+#[cfg(test)]
+fn legacy_best_compact_layout(
+    items: &[SelectedLayoutItem],
+    gap: f32,
+) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
+    if items.is_empty() {
+        return None;
+    }
+
+    let mut best_layout: Option<(Vec<(i64, egui::Pos2)>, f32, f32, f32, f32, usize)> = None;
+    for (candidate_index, bin_width) in legacy_compact_candidate_widths(items, gap)
+        .into_iter()
+        .enumerate()
+    {
+        let Some((placements, width, height)) = legacy_skyline_pack_layout(items, bin_width, gap)
+        else {
             continue;
         };
         let squareness = width.max(height) / width.min(height).max(1.0);
@@ -615,7 +932,8 @@ fn best_compact_layout(
     best_layout.map(|(placements, width, height, _, _, _)| (placements, width, height))
 }
 
-fn compact_candidate_widths(items: &[SelectedLayoutItem], gap: f32) -> Vec<f32> {
+#[cfg(test)]
+fn legacy_compact_candidate_widths(items: &[SelectedLayoutItem], gap: f32) -> Vec<f32> {
     let total_area = items
         .iter()
         .map(|item| item.width * item.height)
@@ -638,7 +956,8 @@ fn compact_candidate_widths(items: &[SelectedLayoutItem], gap: f32) -> Vec<f32> 
     widths
 }
 
-fn skyline_pack_layout(
+#[cfg(test)]
+fn legacy_skyline_pack_layout(
     items: &[SelectedLayoutItem],
     bin_width: f32,
     gap: f32,
@@ -647,7 +966,7 @@ fn skyline_pack_layout(
         return None;
     }
 
-    let mut skyline = vec![SkylineNode {
+    let mut skyline = vec![LegacySkylineNode {
         x: 0.0,
         y: 0.0,
         width: bin_width,
@@ -664,7 +983,7 @@ fn skyline_pack_layout(
         let mut best_candidate: Option<(usize, f32, f32)> = None;
         for node_index in 0..skyline.len() {
             let Some(candidate_y) =
-                skyline_candidate_y(&skyline, node_index, occupied_width, bin_width)
+                legacy_skyline_candidate_y(&skyline, node_index, occupied_width, bin_width)
             else {
                 continue;
             };
@@ -680,7 +999,7 @@ fn skyline_pack_layout(
         let Some((node_index, place_y, place_x)) = best_candidate else {
             return None;
         };
-        skyline_insert(
+        legacy_skyline_insert(
             &mut skyline,
             node_index,
             place_x,
@@ -698,8 +1017,9 @@ fn skyline_pack_layout(
     Some((placements, layout_width, layout_height))
 }
 
-fn skyline_candidate_y(
-    skyline: &[SkylineNode],
+#[cfg(test)]
+fn legacy_skyline_candidate_y(
+    skyline: &[LegacySkylineNode],
     start_index: usize,
     occupied_width: f32,
     bin_width: f32,
@@ -723,8 +1043,9 @@ fn skyline_candidate_y(
     Some(candidate_y)
 }
 
-fn skyline_insert(
-    skyline: &mut Vec<SkylineNode>,
+#[cfg(test)]
+fn legacy_skyline_insert(
+    skyline: &mut Vec<LegacySkylineNode>,
     node_index: usize,
     x: f32,
     y: f32,
@@ -734,7 +1055,7 @@ fn skyline_insert(
     let new_y = y + occupied_height;
     skyline.insert(
         node_index,
-        SkylineNode {
+        LegacySkylineNode {
             x,
             y: new_y,
             width: occupied_width,
@@ -759,10 +1080,11 @@ fn skyline_insert(
         }
     }
 
-    merge_skyline_nodes(skyline);
+    legacy_merge_skyline_nodes(skyline);
 }
 
-fn merge_skyline_nodes(skyline: &mut Vec<SkylineNode>) {
+#[cfg(test)]
+fn legacy_merge_skyline_nodes(skyline: &mut Vec<LegacySkylineNode>) {
     let mut index = 0;
     while index + 1 < skyline.len() {
         if (skyline[index].y - skyline[index + 1].y).abs() < 0.001 {
@@ -794,11 +1116,49 @@ fn placed_bounds(
     Some(((max_x - min_x).max(0.0), (max_y - min_y).max(0.0)))
 }
 
-#[derive(Clone, Copy)]
-struct SkylineNode {
+#[derive(Clone, Copy, Debug)]
+struct PackRect {
     x: f32,
     y: f32,
     width: f32,
+    height: f32,
+}
+
+impl PackRect {
+    fn right(self) -> f32 {
+        self.x + self.width
+    }
+
+    fn bottom(self) -> f32 {
+        self.y + self.height
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+struct LegacySkylineNode {
+    x: f32,
+    y: f32,
+    width: f32,
+}
+
+#[cfg(test)]
+pub(crate) fn legacy_compact_layout_area_for_sizes(
+    items: &[(i64, f32, f32)],
+    gap: f32,
+) -> Option<f32> {
+    let items = items
+        .iter()
+        .map(|(id, width, height)| SelectedLayoutItem {
+            id: *id,
+            x: 0.0,
+            y: 0.0,
+            width: *width,
+            height: *height,
+        })
+        .collect::<Vec<_>>();
+    let (_, width, height) = legacy_best_compact_layout(&items, gap)?;
+    Some(width * height)
 }
 
 pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut CanvasState, debug_labels: bool) {
@@ -1188,8 +1548,8 @@ fn merge_cropped_item_fields(
 mod tests {
     use super::{
         SelectedLayoutItem, best_compact_layout, crop_center_offset_local, horizontal_layout,
-        merge_cropped_item_fields, pixel_crop_rect_from_local, screen_rect_to_local_crop_rect,
-        vertical_layout,
+        legacy_best_compact_layout, merge_cropped_item_fields, pixel_crop_rect_from_local,
+        screen_rect_to_local_crop_rect, vertical_layout,
     };
     use crate::data::{BoardItem, ImageAsset};
     use std::path::PathBuf;
@@ -1353,6 +1713,85 @@ mod tests {
         assert!(compact_ratio < column_ratio);
     }
 
+    #[test]
+    fn compact_layout_is_deterministic_for_mixed_sizes() {
+        let items = hole_prone_items();
+        let gap = 12.0;
+
+        let first = best_compact_layout(&items, gap).unwrap();
+        let second = best_compact_layout(&items, gap).unwrap();
+
+        assert_eq!(first.1, second.1);
+        assert_eq!(first.2, second.2);
+        assert_eq!(first.0.len(), second.0.len());
+        for ((first_id, first_pos), (second_id, second_pos)) in first.0.iter().zip(second.0.iter()) {
+            assert_eq!(first_id, second_id);
+            assert!((first_pos.x - second_pos.x).abs() < 0.001);
+            assert!((first_pos.y - second_pos.y).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn compact_layout_has_smaller_area_than_legacy_skyline_on_hole_prone_fixture() {
+        let items = hole_prone_items();
+        let gap = 12.0;
+
+        let (_, compact_width, compact_height) = best_compact_layout(&items, gap).unwrap();
+        let (_, legacy_width, legacy_height) = legacy_best_compact_layout(&items, gap).unwrap();
+
+        assert!(compact_width * compact_height < legacy_width * legacy_height);
+    }
+
+    #[test]
+    fn compact_layout_has_no_overlaps_for_hole_prone_fixture() {
+        let items = hole_prone_items();
+        let gap = 12.0;
+        let (placements, _, _) = best_compact_layout(&items, gap).unwrap();
+
+        for left in &items {
+            for right in &items {
+                if left.id >= right.id {
+                    continue;
+                }
+                let left_rect = placement_rect(&items, &placements, left.id);
+                let right_rect = placement_rect(&items, &placements, right.id);
+                assert!(!left_rect.intersects(right_rect));
+            }
+        }
+    }
+
+    #[test]
+    fn compact_layout_handles_larger_mixed_selection() {
+        let mut items = Vec::new();
+        let base = [
+            (300.0, 520.0),
+            (180.0, 260.0),
+            (160.0, 260.0),
+            (150.0, 220.0),
+            (140.0, 180.0),
+            (220.0, 140.0),
+        ];
+        for index in 0..48 {
+            let (width, height) = base[index % base.len()];
+            items.push(layout_item(index as i64 + 1, width, height));
+        }
+
+        let gap = 12.0;
+        let (placements, _, _) = best_compact_layout(&items, gap).unwrap();
+
+        assert_eq!(placements.len(), items.len());
+        for left in &items {
+            for right in &items {
+                if left.id >= right.id {
+                    continue;
+                }
+                let left_rect = placement_rect(&items, &placements, left.id);
+                let right_rect = placement_rect(&items, &placements, right.id);
+                assert!(rectangles_respect_gap(left_rect, right_rect, gap));
+            }
+        }
+    }
+
     fn layout_item(id: i64, width: f32, height: f32) -> SelectedLayoutItem {
         SelectedLayoutItem {
             id,
@@ -1401,6 +1840,18 @@ mod tests {
 
     fn aspect_ratio(width: f32, height: f32) -> f32 {
         width.max(height) / width.min(height).max(1.0)
+    }
+
+    fn hole_prone_items() -> Vec<SelectedLayoutItem> {
+        vec![
+            layout_item(1, 300.0, 520.0),
+            layout_item(2, 180.0, 260.0),
+            layout_item(3, 160.0, 260.0),
+            layout_item(4, 150.0, 220.0),
+            layout_item(5, 150.0, 220.0),
+            layout_item(6, 140.0, 180.0),
+            layout_item(7, 140.0, 180.0),
+        ]
     }
 
     fn rectangles_respect_gap(
