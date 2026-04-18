@@ -3,6 +3,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use eframe::egui;
+use image::RgbaImage;
 
 use crate::data::BoardItemWithAsset;
 use crate::jobs::image_formats::decode_image_file;
@@ -20,6 +21,9 @@ pub enum ImportRequest {
         height: u32,
         desired_world: egui::Pos2,
     },
+    Crop {
+        request: crate::canvas::CanvasCropRequest,
+    },
     LoadExisting {
         record: BoardItemWithAsset,
     },
@@ -28,13 +32,29 @@ pub enum ImportRequest {
 #[derive(Debug)]
 pub enum ImportResult {
     Loaded(LoadedCanvasItem),
-    Failed { context: String, error: String },
+    Cropped(CroppedCanvasItem),
+    Failed {
+        item_id: Option<i64>,
+        context: String,
+        error: String,
+    },
 }
 
 #[derive(Debug)]
 pub struct LoadedCanvasItem {
     pub record: BoardItemWithAsset,
     pub rgba: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CroppedCanvasItem {
+    pub item_id: i64,
+    pub stored_path: PathBuf,
+    pub width: u32,
+    pub height: u32,
+    pub file_size: u64,
+    pub rgba: Vec<u8>,
+    pub crop_offset_local: egui::Vec2,
 }
 
 pub struct ImportWorker {
@@ -60,6 +80,7 @@ impl ImportWorker {
                         height,
                         desired_world,
                     } => import_clipboard(&library, rgba, width, height, desired_world),
+                    ImportRequest::Crop { request } => crop_item(&library, request),
                     ImportRequest::LoadExisting { record } => load_existing(record),
                 };
 
@@ -117,6 +138,7 @@ fn import_path(library: &Library, source_path: PathBuf, desired_world: egui::Pos
     match import_path_sync(library, source_path.clone(), desired_world) {
         Ok(loaded) => ImportResult::Loaded(loaded),
         Err(error) => ImportResult::Failed {
+            item_id: None,
             context: source_path.display().to_string(),
             error,
         },
@@ -134,6 +156,7 @@ fn import_clipboard(
         Ok(path) => path,
         Err(error) => {
             return ImportResult::Failed {
+                item_id: None,
                 context: "clipboard".to_owned(),
                 error,
             };
@@ -144,6 +167,7 @@ fn import_clipboard(
         Ok(metadata) => metadata.len(),
         Err(error) => {
             return ImportResult::Failed {
+                item_id: None,
                 context: stored_path.display().to_string(),
                 error: format!("failed to read clipboard image metadata: {error}"),
             };
@@ -161,13 +185,17 @@ fn import_clipboard(
         Ok(record) => record,
         Err(error) => {
             return ImportResult::Failed {
+                item_id: None,
                 context: stored_path.display().to_string(),
                 error,
             };
         }
     };
 
-    ImportResult::Loaded(LoadedCanvasItem { record, rgba })
+    ImportResult::Loaded(LoadedCanvasItem {
+        record,
+        rgba,
+    })
 }
 
 fn load_existing(record: BoardItemWithAsset) -> ImportResult {
@@ -177,8 +205,91 @@ fn load_existing(record: BoardItemWithAsset) -> ImportResult {
             rgba: decoded.rgba,
         }),
         Err(error) => ImportResult::Failed {
+            item_id: None,
             context: record.asset.original_path.display().to_string(),
             error,
         },
     }
+}
+
+fn crop_item(library: &Library, request: crate::canvas::CanvasCropRequest) -> ImportResult {
+    let source_context = request.source_asset.original_path.display().to_string();
+    let decoded = match decode_image_file(&request.source_asset.original_path) {
+        Ok(decoded) => decoded,
+        Err(error) => {
+            return ImportResult::Failed {
+                item_id: Some(request.item_id),
+                context: source_context,
+                error,
+            };
+        }
+    };
+    let image = match RgbaImage::from_vec(
+        request.source_asset.width,
+        request.source_asset.height,
+        decoded.rgba,
+    ) {
+        Some(image) => image,
+        None => {
+            return ImportResult::Failed {
+                item_id: Some(request.item_id),
+                context: source_context,
+                error: "failed to rebuild source image pixels for crop".to_owned(),
+            };
+        }
+    };
+
+    let cropped = image::imageops::crop_imm(
+        &image,
+        request.crop_rect.x,
+        request.crop_rect.y,
+        request.crop_rect.width,
+        request.crop_rect.height,
+    )
+    .to_image();
+    let cropped_rgba = cropped.into_raw();
+    let width = request.crop_rect.width;
+    let height = request.crop_rect.height;
+
+    let base_name = std::path::Path::new(&request.source_asset.filename)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("image");
+    let stored_path = match library.store_rgba_image(
+        &format!("{base_name}-crop"),
+        &cropped_rgba,
+        width,
+        height,
+    ) {
+        Ok(path) => path,
+        Err(error) => {
+            return ImportResult::Failed {
+                item_id: Some(request.item_id),
+                context: source_context,
+                error,
+            };
+        }
+    };
+
+    let file_size = match std::fs::metadata(&stored_path) {
+        Ok(metadata) => metadata.len(),
+        Err(error) => {
+            let _ = std::fs::remove_file(&stored_path);
+            return ImportResult::Failed {
+                item_id: Some(request.item_id),
+                context: stored_path.display().to_string(),
+                error: format!("failed to read cropped image metadata: {error}"),
+            };
+        }
+    };
+
+    ImportResult::Cropped(CroppedCanvasItem {
+        item_id: request.item_id,
+        stored_path,
+        width,
+        height,
+        file_size,
+        rgba: cropped_rgba,
+        crop_offset_local: request.crop_offset_local,
+    })
 }

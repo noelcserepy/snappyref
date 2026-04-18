@@ -92,6 +92,11 @@ const SHORTCUT_SECTIONS: &[ShortcutSection] = &[
                 mac: "⌦",
             },
             ShortcutRow {
+                action: "Crop image",
+                windows: "C + Left MB",
+                mac: "C + Left MB",
+            },
+            ShortcutRow {
                 action: "Edit item",
                 windows: "Return",
                 mac: "↵",
@@ -623,10 +628,85 @@ impl ReferenceApp {
                     self.canvas.add_loaded_item(ctx, loaded);
                     self.status = "Imported image".to_owned();
                 }
-                crate::jobs::ImportResult::Failed { context, error } => {
+                crate::jobs::ImportResult::Cropped(cropped) => {
+                    let Some(library) = &self.library else {
+                        let _ = std::fs::remove_file(&cropped.stored_path);
+                        self.canvas.clear_crop_pending(cropped.item_id);
+                        self.status = "Storage unavailable".to_owned();
+                        continue;
+                    };
+
+                    let mut updated_item = match self.canvas.projected_cropped_item(&cropped) {
+                        Ok(item) => item,
+                        Err(error) => {
+                            let _ = std::fs::remove_file(&cropped.stored_path);
+                            self.canvas.clear_crop_pending(cropped.item_id);
+                            self.status = error;
+                            continue;
+                        }
+                    };
+
+                    let asset = match library.create_asset_and_relink_board_item(
+                        updated_item.id,
+                        &cropped.stored_path,
+                        image::ImageFormat::Png.to_mime_type(),
+                        cropped.width,
+                        cropped.height,
+                        cropped.file_size,
+                        egui::pos2(updated_item.x, updated_item.y),
+                    ) {
+                        Ok(asset) => asset,
+                        Err(error) => {
+                            let _ = std::fs::remove_file(&cropped.stored_path);
+                            self.canvas.clear_crop_pending(cropped.item_id);
+                            self.status = error;
+                            continue;
+                        }
+                    };
+
+                    updated_item.asset_id = asset.id;
+
+                    let updated_item_id = updated_item.id;
+                    match self.canvas.apply_cropped_item(ctx, cropped, asset, updated_item) {
+                        Ok(()) => {
+                            self.canvas.clear_crop_pending(updated_item_id);
+                            self.status = "Cropped image".to_owned();
+                        }
+                        Err(error) => {
+                            self.canvas.clear_crop_pending(updated_item_id);
+                            self.status = error;
+                        }
+                    }
+                }
+                crate::jobs::ImportResult::Failed {
+                    item_id,
+                    context,
+                    error,
+                } => {
+                    if let Some(item_id) = item_id {
+                        self.canvas.clear_crop_pending(item_id);
+                    }
                     self.status = format!("{context}: {error}");
                 }
             }
+        }
+    }
+
+    fn handle_pending_crop_requests(&mut self) {
+        let Some(import_worker) = &self.import_worker else {
+            return;
+        };
+
+        while let Some(request) = self.canvas.take_pending_crop() {
+            let item_id = request.item_id;
+            self.canvas.mark_crop_pending(item_id);
+            if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::Crop { request }) {
+                self.canvas.clear_crop_pending(item_id);
+                self.status = error;
+                continue;
+            }
+
+            self.status = "Cropping image".to_owned();
         }
     }
 
@@ -738,6 +818,7 @@ impl eframe::App for ReferenceApp {
             block_drawer_input(ui.ctx(), self.drawer_rect(screen_rect));
         }
         crate::canvas::show(ui, screen_rect, &mut self.canvas, false);
+        self.handle_pending_crop_requests();
         show_selection_toolbar(
             ui.ctx(),
             screen_rect,
