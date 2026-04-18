@@ -27,19 +27,29 @@ struct ClipboardBoardSelection {
 
 #[derive(Clone, Debug, Default)]
 pub struct AppConfig {
-    pub dev_mode: bool,
+    pub screenshot_path: Option<std::path::PathBuf>,
 }
 
 impl AppConfig {
     pub fn from_env() -> Self {
-        let dev_mode = std::env::args().skip(1).any(|argument| argument == "--dev");
-        Self { dev_mode }
+        let mut screenshot_path = None;
+        let mut arguments = std::env::args().skip(1);
+
+        while let Some(argument) = arguments.next() {
+            if argument == "--screenshot" {
+                screenshot_path = arguments.next().map(std::path::PathBuf::from);
+            } else if let Some(path) = argument.strip_prefix("--screenshot=") {
+                screenshot_path = Some(std::path::PathBuf::from(path));
+            }
+        }
+
+        Self { screenshot_path }
     }
 }
 
 pub struct ReferenceApp {
     canvas: crate::canvas::CanvasState,
-    dev_harness: crate::dev_harness::DevHarness,
+    screenshot_capture: crate::screenshot::ScreenshotCapture,
     window_capture: Option<crate::native_capture::NativeWindowCapture>,
     wgpu_render_state: Option<eframe::egui_wgpu::RenderState>,
     library: Option<crate::storage::Library>,
@@ -58,21 +68,12 @@ impl ReferenceApp {
         match crate::storage::Library::initialize(library_root) {
             Ok(library) => {
                 let import_worker = crate::jobs::ImportWorker::new(library.clone());
-                let mut status = "Library ready".to_owned();
-                let dev_harness =
-                    match crate::dev_harness::DevHarness::new(config.dev_mode, library.root()) {
-                        Ok(harness) => harness,
-                        Err(error) => {
-                            status = format!("Dev harness unavailable: {error}");
-                            crate::dev_harness::DevHarness::new(false, library.root())
-                                .unwrap_or_else(|_| {
-                                    unreachable!("disabled dev harness should always initialize")
-                                })
-                        }
-                    };
+                let status = "Library ready".to_owned();
                 let mut app = Self {
                     canvas: crate::canvas::CanvasState::default(),
-                    dev_harness,
+                    screenshot_capture: crate::screenshot::ScreenshotCapture::new(
+                        config.screenshot_path.clone(),
+                    ),
                     window_capture:
                         crate::native_capture::NativeWindowCapture::from_creation_context(cc),
                     wgpu_render_state: cc.wgpu_render_state.clone(),
@@ -89,10 +90,9 @@ impl ReferenceApp {
             }
             Err(error) => Self {
                 canvas: crate::canvas::CanvasState::default(),
-                dev_harness: crate::dev_harness::DevHarness::new(false, std::path::Path::new("."))
-                    .unwrap_or_else(|_| {
-                        unreachable!("disabled dev harness should always initialize")
-                    }),
+                screenshot_capture: crate::screenshot::ScreenshotCapture::new(
+                    config.screenshot_path,
+                ),
                 window_capture: crate::native_capture::NativeWindowCapture::from_creation_context(
                     cc,
                 ),
@@ -406,38 +406,26 @@ impl eframe::App for ReferenceApp {
 
         self.handle_import_results(ui.ctx());
 
-        if self.dev_harness.has_pending_screenshot()
+        if self.screenshot_capture.is_pending()
             && let Some(render_state) = &self.wgpu_render_state
         {
             let _ = render_state.device.poll(eframe::wgpu::PollType::Poll);
             ui.ctx().request_repaint();
         }
 
-        if self.dev_harness.is_enabled() {
-            match self.dev_harness.begin_frame(
-                ui.ctx(),
-                screen_rect,
-                &mut self.canvas,
-                self.window_capture.as_ref(),
-                self.library.as_ref(),
-                &mut self.status,
-            ) {
-                crate::dev_harness::DevHarnessAction::None => {}
-                crate::dev_harness::DevHarnessAction::CloseApp => {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            }
+        if self.screenshot_capture.begin_frame(
+            ui.ctx(),
+            self.window_capture.as_ref(),
+            &mut self.status,
+        ) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
         }
 
         self.handle_clipboard_copy(ui.ctx());
         self.handle_clipboard_paste(ui.ctx(), screen_rect);
         self.handle_dropped_files(ui, screen_rect);
-        crate::canvas::show(
-            ui,
-            screen_rect,
-            &mut self.canvas,
-            self.dev_harness.show_overlay(),
-        );
+        crate::canvas::show(ui, screen_rect, &mut self.canvas, false);
         show_selection_toolbar(
             ui.ctx(),
             screen_rect,
@@ -455,8 +443,9 @@ impl eframe::App for ReferenceApp {
             &mut self.archive_section_open,
             &mut self.status,
         );
-        self.dev_harness
-            .show_overlay_ui(ui.ctx(), screen_rect, &self.canvas, &self.status);
+        if self.screenshot_capture.handle_event(ui.ctx(), &mut self.status) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 
     fn on_exit(&mut self) {
