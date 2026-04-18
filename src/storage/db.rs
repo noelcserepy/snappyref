@@ -6,7 +6,10 @@ use eframe::egui;
 use image::{ColorType, ImageFormat};
 use rusqlite::{Connection, Transaction, params};
 
-use crate::data::{BoardItem, BoardItemWithAsset, BoardLayoutItem, ImageAsset, UserSession};
+use crate::data::{
+    BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationKind,
+    CanvasBackground, ImageAsset, UserSession,
+};
 
 #[derive(Clone, Debug)]
 pub struct Library {
@@ -488,19 +491,25 @@ impl Library {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap
+                "SELECT camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap, canvas_background
                  FROM user_session
                  WHERE id = 1",
             )
             .map_err(|error| format!("failed to prepare user-session query: {error}"))?;
 
         let session = statement.query_row([], |row| {
+            let background = row
+                .get::<_, String>(5)
+                .ok()
+                .and_then(|value| CanvasBackground::from_str(&value))
+                .unwrap_or_default();
             Ok(UserSession {
                 camera_pan_x: row.get(0)?,
                 camera_pan_y: row.get(1)?,
                 camera_zoom: row.get(2)?,
                 auto_image_scaling: row.get::<_, i64>(3)? != 0,
                 import_gap: row.get(4)?,
+                canvas_background: background,
             })
         });
 
@@ -515,23 +524,160 @@ impl Library {
         let connection = self.connection()?;
         connection
             .execute(
-                "INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap)
-                 VALUES (1, ?1, ?2, ?3, ?4, ?5)
+                "INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap, canvas_background)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(id) DO UPDATE SET
                     camera_pan_x = excluded.camera_pan_x,
                     camera_pan_y = excluded.camera_pan_y,
                     camera_zoom = excluded.camera_zoom,
                     auto_image_scaling = excluded.auto_image_scaling,
-                    import_gap = excluded.import_gap",
+                    import_gap = excluded.import_gap,
+                    canvas_background = excluded.canvas_background",
                 params![
                     session.camera_pan_x,
                     session.camera_pan_y,
                     session.camera_zoom,
                     if session.auto_image_scaling { 1_i64 } else { 0_i64 },
                     session.import_gap,
+                    session.canvas_background.as_str(),
                 ],
             )
             .map_err(|error| format!("failed to save user session: {error}"))?;
+
+        Ok(())
+    }
+
+    pub fn load_canvas_annotations(&self) -> Result<Vec<CanvasAnnotation>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id, kind, start_x, start_y, end_x, end_y, text
+                 FROM canvas_annotations
+                 WHERE archived = 0
+                 ORDER BY id ASC",
+            )
+            .map_err(|error| format!("failed to prepare canvas-annotations query: {error}"))?;
+
+        let rows = statement
+            .query_map([], |row| {
+                let kind = row.get::<_, String>(1)?;
+                Ok(CanvasAnnotation {
+                    id: row.get(0)?,
+                    kind: CanvasAnnotationKind::from_str(&kind).ok_or_else(|| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Text,
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!("unknown canvas annotation kind: {kind}"),
+                            )),
+                        )
+                    })?,
+                    start_x: row.get(2)?,
+                    start_y: row.get(3)?,
+                    end_x: row.get(4)?,
+                    end_y: row.get(5)?,
+                    text: row.get(6)?,
+                    archived: false,
+                })
+            })
+            .map_err(|error| format!("failed to read canvas-annotations query: {error}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect canvas annotations: {error}"))
+    }
+
+    pub fn create_canvas_annotation(
+        &self,
+        kind: CanvasAnnotationKind,
+        start: egui::Pos2,
+        end: egui::Pos2,
+        text: &str,
+    ) -> Result<CanvasAnnotation, String> {
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "INSERT INTO canvas_annotations (
+                    kind,
+                    start_x,
+                    start_y,
+                    end_x,
+                    end_y,
+                    text,
+                    archived
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![kind.as_str(), start.x, start.y, end.x, end.y, text, 0_i64],
+            )
+            .map_err(|error| format!("failed to create canvas annotation: {error}"))?;
+
+        Ok(CanvasAnnotation {
+            id: connection.last_insert_rowid(),
+            kind,
+            start_x: start.x,
+            start_y: start.y,
+            end_x: end.x,
+            end_y: end.y,
+            text: text.to_owned(),
+            archived: false,
+        })
+    }
+
+    pub fn update_canvas_annotation(&self, annotation: &CanvasAnnotation) -> Result<(), String> {
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "UPDATE canvas_annotations
+                 SET start_x = ?1,
+                     start_y = ?2,
+                     end_x = ?3,
+                     end_y = ?4,
+                     text = ?5,
+                     archived = ?6
+                 WHERE id = ?7",
+                params![
+                    annotation.start_x,
+                    annotation.start_y,
+                    annotation.end_x,
+                    annotation.end_y,
+                    annotation.text,
+                    if annotation.archived { 1_i64 } else { 0_i64 },
+                    annotation.id,
+                ],
+            )
+            .map_err(|error| {
+                format!(
+                    "failed to update canvas annotation {}: {error}",
+                    annotation.id
+                )
+            })?;
+
+        Ok(())
+    }
+
+    pub fn archive_canvas_annotations(&self, annotation_ids: &[i64]) -> Result<(), String> {
+        if annotation_ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start annotation archive transaction: {error}"))?;
+
+        for annotation_id in annotation_ids {
+            transaction
+                .execute(
+                    "UPDATE canvas_annotations SET archived = 1 WHERE id = ?1",
+                    params![annotation_id],
+                )
+                .map_err(|error| {
+                    format!("failed to archive canvas annotation {annotation_id}: {error}")
+                })?;
+        }
+
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit annotation archive transaction: {error}"))?;
 
         Ok(())
     }
@@ -572,7 +718,19 @@ impl Library {
                     camera_pan_y  REAL NOT NULL,
                     camera_zoom   REAL NOT NULL,
                     auto_image_scaling INTEGER NOT NULL DEFAULT 1,
-                    import_gap    REAL NOT NULL DEFAULT 12.0
+                    import_gap    REAL NOT NULL DEFAULT 12.0,
+                    canvas_background TEXT NOT NULL DEFAULT 'dots'
+                );
+
+                CREATE TABLE IF NOT EXISTS canvas_annotations (
+                    id        INTEGER PRIMARY KEY,
+                    kind      TEXT NOT NULL,
+                    start_x   REAL NOT NULL,
+                    start_y   REAL NOT NULL,
+                    end_x     REAL NOT NULL,
+                    end_y     REAL NOT NULL,
+                    text      TEXT NOT NULL DEFAULT '',
+                    archived  INTEGER NOT NULL DEFAULT 0
                 );
                 ",
             )
@@ -580,7 +738,8 @@ impl Library {
 
         ensure_board_items_archived_column(&connection)?;
         ensure_user_session_auto_image_scaling_column(&connection)?;
-        ensure_user_session_import_gap_column(&connection)
+        ensure_user_session_import_gap_column(&connection)?;
+        ensure_user_session_canvas_background_column(&connection)
     }
 
     fn connection(&self) -> Result<Connection, String> {
@@ -806,9 +965,38 @@ fn ensure_user_session_import_gap_column(connection: &Connection) -> Result<(), 
     Ok(())
 }
 
+fn ensure_user_session_canvas_background_column(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(user_session)")
+        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read user_session schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
+
+    if columns.iter().any(|column| column == "canvas_background") {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE user_session ADD COLUMN canvas_background TEXT NOT NULL DEFAULT 'dots'",
+            [],
+        )
+        .map_err(|error| {
+            format!("failed to add canvas_background column to user_session: {error}")
+        })?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::Library;
+    use crate::data::{CanvasAnnotationKind, CanvasBackground};
+    use eframe::egui;
     use rusqlite::Connection;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -851,6 +1039,45 @@ mod tests {
         assert_eq!(session.camera_zoom, 1.5);
         assert!(session.auto_image_scaling);
         assert_eq!(session.import_gap, crate::data::DEFAULT_IMPORT_GAP);
+        assert_eq!(session.canvas_background, CanvasBackground::Dots);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn canvas_annotations_round_trip_and_archive() {
+        let root = std::env::temp_dir().join(format!(
+            "reference-annotation-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let created = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Textbox,
+                egui::pos2(10.0, 12.0),
+                egui::pos2(110.0, 72.0),
+                "hello",
+            )
+            .unwrap();
+
+        let loaded = library.load_canvas_annotations().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0], created);
+
+        let mut updated = loaded[0].clone();
+        updated.text = "updated".to_owned();
+        library.update_canvas_annotation(&updated).unwrap();
+
+        let loaded = library.load_canvas_annotations().unwrap();
+        assert_eq!(loaded[0].text, "updated");
+
+        library.archive_canvas_annotations(&[created.id]).unwrap();
+        assert!(library.load_canvas_annotations().unwrap().is_empty());
 
         let _ = fs::remove_dir_all(root);
     }

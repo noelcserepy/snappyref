@@ -1,3 +1,5 @@
+use super::CanvasBackground;
+
 pub const DEFAULT_IMPORT_GAP: f32 = 12.0;
 
 #[derive(Clone, Debug)]
@@ -7,6 +9,7 @@ pub struct UserSession {
     pub camera_zoom: f32,
     pub auto_image_scaling: bool,
     pub import_gap: f32,
+    pub canvas_background: CanvasBackground,
 }
 
 impl Default for UserSession {
@@ -17,6 +20,7 @@ impl Default for UserSession {
             camera_zoom: 1.0,
             auto_image_scaling: true,
             import_gap: DEFAULT_IMPORT_GAP,
+            canvas_background: CanvasBackground::default(),
         }
     }
 }

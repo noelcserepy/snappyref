@@ -7,6 +7,7 @@ use crate::native_capture::NativeWindowCapture;
 pub struct ScreenshotCapture {
     next_path: Option<PathBuf>,
     pending_path: Option<PathBuf>,
+    armed: bool,
 }
 
 impl ScreenshotCapture {
@@ -14,6 +15,7 @@ impl ScreenshotCapture {
         Self {
             next_path: path,
             pending_path: None,
+            armed: false,
         }
     }
 
@@ -31,9 +33,20 @@ impl ScreenshotCapture {
             return false;
         }
 
+        let Some(_path) = self.next_path.clone() else {
+            return false;
+        };
+
+        if !self.armed {
+            self.armed = true;
+            ctx.request_repaint();
+            return false;
+        }
+
         let Some(path) = self.next_path.take() else {
             return false;
         };
+        self.armed = false;
 
         if let Some(window_capture) = window_capture {
             match window_capture.capture_png(&path) {
