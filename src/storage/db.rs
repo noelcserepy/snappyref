@@ -6,7 +6,7 @@ use eframe::egui;
 use image::{ColorType, ImageFormat};
 use rusqlite::{Connection, Transaction, params};
 
-use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset, UserSession};
+use crate::data::{BoardItem, BoardItemWithAsset, BoardLayoutItem, ImageAsset, UserSession};
 
 #[derive(Clone, Debug)]
 pub struct Library {
@@ -95,17 +95,21 @@ impl Library {
             .transaction()
             .map_err(|error| format!("failed to start transaction: {error}"))?;
 
-        let asset = insert_asset_row(&transaction, stored_path, mime_type, width, height, file_size)?;
+        let asset = insert_asset_row(
+            &transaction,
+            stored_path,
+            mime_type,
+            width,
+            height,
+            file_size,
+        )?;
         let item = insert_board_item_row(&transaction, asset.id, desired_world, initial_scale)?;
 
         transaction
             .commit()
             .map_err(|error| format!("failed to commit transaction: {error}"))?;
 
-        Ok(BoardItemWithAsset {
-            asset,
-            item,
-        })
+        Ok(BoardItemWithAsset { asset, item })
     }
 
     pub fn create_asset_and_relink_board_item(
@@ -123,7 +127,14 @@ impl Library {
             .transaction()
             .map_err(|error| format!("failed to start relink transaction: {error}"))?;
 
-        let asset = insert_asset_row(&transaction, stored_path, mime_type, width, height, file_size)?;
+        let asset = insert_asset_row(
+            &transaction,
+            stored_path,
+            mime_type,
+            width,
+            height,
+            file_size,
+        )?;
         transaction
             .execute(
                 "UPDATE board_items
@@ -193,7 +204,10 @@ impl Library {
 
         let removed_asset_path = if asset_still_used == 0 {
             transaction
-                .execute("DELETE FROM assets WHERE id = ?1", params![removed_asset_id])
+                .execute(
+                    "DELETE FROM assets WHERE id = ?1",
+                    params![removed_asset_id],
+                )
                 .map_err(|error| format!("failed to delete asset {removed_asset_id}: {error}"))?;
             removed_asset_path
         } else {
@@ -263,6 +277,39 @@ impl Library {
 
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("failed to collect board-items: {error}"))
+    }
+
+    pub fn load_board_layout_items(&self) -> Result<Vec<BoardLayoutItem>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT
+                    b.id,
+                    b.x,
+                    b.y,
+                    a.width * b.scale,
+                    a.height * b.scale
+                 FROM board_items b
+                 JOIN assets a ON a.id = b.asset_id
+                 WHERE b.archived = 0
+                 ORDER BY b.z_index ASC, b.id ASC",
+            )
+            .map_err(|error| format!("failed to prepare board-layout query: {error}"))?;
+
+        let rows = statement
+            .query_map([], |row| {
+                Ok(BoardLayoutItem {
+                    id: row.get(0)?,
+                    x: row.get(1)?,
+                    y: row.get(2)?,
+                    width: row.get(3)?,
+                    height: row.get(4)?,
+                })
+            })
+            .map_err(|error| format!("failed to read board-layout query: {error}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect board-layout items: {error}"))
     }
 
     pub fn update_board_item(&self, item: &BoardItem) -> Result<(), String> {
@@ -441,7 +488,7 @@ impl Library {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling
+                "SELECT camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap
                  FROM user_session
                  WHERE id = 1",
             )
@@ -453,6 +500,7 @@ impl Library {
                 camera_pan_y: row.get(1)?,
                 camera_zoom: row.get(2)?,
                 auto_image_scaling: row.get::<_, i64>(3)? != 0,
+                import_gap: row.get(4)?,
             })
         });
 
@@ -467,18 +515,20 @@ impl Library {
         let connection = self.connection()?;
         connection
             .execute(
-                "INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling)
-                 VALUES (1, ?1, ?2, ?3, ?4)
+                "INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5)
                  ON CONFLICT(id) DO UPDATE SET
                     camera_pan_x = excluded.camera_pan_x,
                     camera_pan_y = excluded.camera_pan_y,
                     camera_zoom = excluded.camera_zoom,
-                    auto_image_scaling = excluded.auto_image_scaling",
+                    auto_image_scaling = excluded.auto_image_scaling,
+                    import_gap = excluded.import_gap",
                 params![
                     session.camera_pan_x,
                     session.camera_pan_y,
                     session.camera_zoom,
                     if session.auto_image_scaling { 1_i64 } else { 0_i64 },
+                    session.import_gap,
                 ],
             )
             .map_err(|error| format!("failed to save user session: {error}"))?;
@@ -521,14 +571,16 @@ impl Library {
                     camera_pan_x  REAL NOT NULL,
                     camera_pan_y  REAL NOT NULL,
                     camera_zoom   REAL NOT NULL,
-                    auto_image_scaling INTEGER NOT NULL DEFAULT 1
+                    auto_image_scaling INTEGER NOT NULL DEFAULT 1,
+                    import_gap    REAL NOT NULL DEFAULT 12.0
                 );
                 ",
             )
             .map_err(|error| format!("failed to initialize database schema: {error}"))?;
 
         ensure_board_items_archived_column(&connection)?;
-        ensure_user_session_auto_image_scaling_column(&connection)
+        ensure_user_session_auto_image_scaling_column(&connection)?;
+        ensure_user_session_import_gap_column(&connection)
     }
 
     fn connection(&self) -> Result<Connection, String> {
@@ -729,6 +781,31 @@ fn ensure_user_session_auto_image_scaling_column(connection: &Connection) -> Res
     Ok(())
 }
 
+fn ensure_user_session_import_gap_column(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(user_session)")
+        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read user_session schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
+
+    if columns.iter().any(|column| column == "import_gap") {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE user_session ADD COLUMN import_gap REAL NOT NULL DEFAULT 12.0",
+            [],
+        )
+        .map_err(|error| format!("failed to add import_gap column to user_session: {error}"))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::Library;
@@ -737,7 +814,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn existing_user_session_rows_migrate_to_default_on_auto_scaling() {
+    fn existing_user_session_rows_migrate_to_default_preferences() {
         let root = std::env::temp_dir().join(format!(
             "reference-storage-test-{}",
             SystemTime::now()
@@ -773,6 +850,7 @@ mod tests {
         assert_eq!(session.camera_pan_y, 20.0);
         assert_eq!(session.camera_zoom, 1.5);
         assert!(session.auto_image_scaling);
+        assert_eq!(session.import_gap, crate::data::DEFAULT_IMPORT_GAP);
 
         let _ = fs::remove_dir_all(root);
     }

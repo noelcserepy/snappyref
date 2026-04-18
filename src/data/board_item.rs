@@ -16,3 +16,12 @@ pub struct BoardItemWithAsset {
     pub item: BoardItem,
     pub asset: super::ImageAsset,
 }
+
+#[derive(Clone, Debug)]
+pub struct BoardLayoutItem {
+    pub id: i64,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
