@@ -2,13 +2,12 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 
 const MULTI_SELECTION_TOOLBAR_WIDTH: f32 = 204.0;
-const SELECTION_TOOLBAR_HEIGHT: f32 = 28.0;
-const SELECTION_TOOLBAR_GAP: f32 = 12.0;
+const SELECTION_TOOLBAR_HEIGHT: f32 = crate::theme::CONTROL_HEIGHT;
+const SELECTION_TOOLBAR_GAP: f32 = crate::theme::SPACE_3;
 const SHORTCUT_DRAWER_MIN_HEIGHT: f32 = 220.0;
 const SHORTCUT_DRAWER_MAX_HEIGHT: f32 = 360.0;
-const SHORTCUT_DRAWER_MARGIN: f32 = 12.0;
-const SHORTCUT_DRAWER_BUTTON_SIZE: f32 = 30.0;
-const SHORTCUT_SECTION_CARD_RADIUS: u8 = 12;
+const SHORTCUT_DRAWER_MARGIN: f32 = crate::theme::SPACE_3;
+const SHORTCUT_DRAWER_BUTTON_SIZE: f32 = crate::theme::CONTROL_HEIGHT;
 const COPY_PAYLOAD_KIND: &str = "reference-board-items";
 const MAX_CROP_UNDO_ENTRIES: usize = 32;
 
@@ -437,11 +436,21 @@ struct CropUndoEntry {
 #[derive(Clone, Debug, Default)]
 pub struct AppConfig {
     pub screenshot_path: Option<std::path::PathBuf>,
+    #[cfg(debug_assertions)]
+    verification_mode: Option<VerificationMode>,
+}
+
+#[cfg(debug_assertions)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VerificationMode {
+    OpenDrawer,
 }
 
 impl AppConfig {
     pub fn from_env() -> Self {
         let mut screenshot_path = None;
+        #[cfg(debug_assertions)]
+        let mut verification_mode = None;
         let mut arguments = std::env::args().skip(1);
 
         while let Some(argument) = arguments.next() {
@@ -449,10 +458,29 @@ impl AppConfig {
                 screenshot_path = arguments.next().map(std::path::PathBuf::from);
             } else if let Some(path) = argument.strip_prefix("--screenshot=") {
                 screenshot_path = Some(std::path::PathBuf::from(path));
+            } else if cfg!(debug_assertions) && argument == "--verify-open-drawer" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::OpenDrawer);
+                }
             }
         }
 
-        Self { screenshot_path }
+        Self {
+            screenshot_path,
+            #[cfg(debug_assertions)]
+            verification_mode,
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn open_drawer_on_start(&self) -> bool {
+        matches!(self.verification_mode, Some(VerificationMode::OpenDrawer))
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn open_drawer_on_start(&self) -> bool {
+        false
     }
 }
 
@@ -475,6 +503,12 @@ impl ReferenceApp {
         let library_root = std::env::current_dir()
             .unwrap_or_else(|_| std::path::PathBuf::from("."))
             .join("library");
+        let screenshot_path = config.screenshot_path.clone();
+        let window_capture = if screenshot_path.is_some() {
+            None
+        } else {
+            crate::native_capture::NativeWindowCapture::from_creation_context(cc)
+        };
 
         match crate::storage::Library::initialize(library_root) {
             Ok(library) => {
@@ -483,17 +517,16 @@ impl ReferenceApp {
                 let mut app = Self {
                     canvas: crate::canvas::CanvasState::default(),
                     screenshot_capture: crate::screenshot::ScreenshotCapture::new(
-                        config.screenshot_path.clone(),
+                        screenshot_path.clone(),
                     ),
-                    window_capture:
-                        crate::native_capture::NativeWindowCapture::from_creation_context(cc),
+                    window_capture,
                     wgpu_render_state: cc.wgpu_render_state.clone(),
                     library: Some(library.clone()),
                     import_worker: Some(import_worker),
                     crop_undo_stack: Vec::new(),
                     auto_image_scaling: true,
                     import_gap: crate::data::DEFAULT_IMPORT_GAP,
-                    drawer_open: false,
+                    drawer_open: config.open_drawer_on_start(),
                     status,
                 };
                 app.load_user_session();
@@ -502,19 +535,15 @@ impl ReferenceApp {
             }
             Err(error) => Self {
                 canvas: crate::canvas::CanvasState::default(),
-                screenshot_capture: crate::screenshot::ScreenshotCapture::new(
-                    config.screenshot_path,
-                ),
-                window_capture: crate::native_capture::NativeWindowCapture::from_creation_context(
-                    cc,
-                ),
+                screenshot_capture: crate::screenshot::ScreenshotCapture::new(screenshot_path),
+                window_capture,
                 wgpu_render_state: cc.wgpu_render_state.clone(),
                 library: None,
                 import_worker: None,
                 crop_undo_stack: Vec::new(),
                 auto_image_scaling: true,
                 import_gap: crate::data::DEFAULT_IMPORT_GAP,
-                drawer_open: false,
+                drawer_open: config.open_drawer_on_start(),
                 status: format!("Storage unavailable: {error}"),
             },
         }
@@ -1203,7 +1232,7 @@ impl eframe::App for ReferenceApp {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        crate::theme::SHADE_90.to_normalized_gamma_f32()
+        crate::theme::BACKGROUND.to_normalized_gamma_f32()
     }
 }
 
@@ -1292,12 +1321,15 @@ fn show_selection_toolbar(
         return;
     };
 
-    let min_x = screen_rect.min.x + 8.0;
+    let min_x = screen_rect.min.x + crate::theme::SPACE_2;
     let toolbar_width = MULTI_SELECTION_TOOLBAR_WIDTH;
-    let max_x = screen_rect.max.x - toolbar_width - 8.0;
-    let min_y = screen_rect.min.y + 8.0;
-    let max_y =
-        (screen_rect.max.y - bottom_reserved_height - SELECTION_TOOLBAR_HEIGHT - 8.0).max(min_y);
+    let max_x = screen_rect.max.x - toolbar_width - crate::theme::SPACE_2;
+    let min_y = screen_rect.min.y + crate::theme::SPACE_2;
+    let max_y = (screen_rect.max.y
+        - bottom_reserved_height
+        - SELECTION_TOOLBAR_HEIGHT
+        - crate::theme::SPACE_2)
+        .max(min_y);
 
     let toolbar_x = (selection_rect.center().x - toolbar_width * 0.5).clamp(min_x, max_x);
     let toolbar_y = (selection_rect.min.y - SELECTION_TOOLBAR_HEIGHT - SELECTION_TOOLBAR_GAP)
@@ -1307,19 +1339,19 @@ fn show_selection_toolbar(
         .order(egui::Order::Foreground)
         .fixed_pos(egui::pos2(toolbar_x, toolbar_y))
         .show(ctx, |ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
 
             let action_button = |label: &str, min_width: f32| {
                 egui::Button::new(
                     egui::RichText::new(label)
-                        .size(12.0)
-                        .color(crate::theme::SHADE_BASE),
+                        .text_style(egui::TextStyle::Body)
+                        .color(crate::theme::TEXT),
                 )
                 .min_size(egui::vec2(min_width, SELECTION_TOOLBAR_HEIGHT))
                 .frame(true)
                 .frame_when_inactive(false)
                 .stroke(egui::Stroke::NONE)
-                .corner_radius(8)
+                .corner_radius(crate::theme::CONTROL_RADIUS)
             };
 
             ui.horizontal(|ui| {
@@ -1407,15 +1439,10 @@ fn show_shortcuts_drawer(
             ui.set_min_size(drawer_rect.size());
 
             egui::Frame::new()
-                .fill(crate::theme::SHADE_80)
-                .stroke(egui::Stroke::new(1.0, crate::theme::SHADE_70))
-                .corner_radius(SHORTCUT_SECTION_CARD_RADIUS)
-                .inner_margin(egui::Margin {
-                    left: 16,
-                    right: 16,
-                    top: 14,
-                    bottom: 16,
-                })
+                .fill(crate::theme::SURFACE)
+                .stroke(crate::theme::stroke_subtle())
+                .corner_radius(crate::theme::CARD_RADIUS)
+                .inner_margin(crate::theme::PANEL_PADDING)
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.set_max_width(ui.available_width());
@@ -1425,14 +1452,13 @@ fn show_shortcuts_drawer(
                         .auto_shrink([false, false])
                         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                         .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(0.0, 14.0);
+                            ui.spacing_mut().item_spacing =
+                                egui::vec2(0.0, crate::theme::SECTION_GAP);
                             paint_drawer_section_label(ui, "Options", None);
                             settings_changed |=
                                 paint_settings_section(ui, auto_image_scaling, import_gap);
 
-                            ui.add_space(2.0);
-                            ui.separator();
-                            ui.add_space(2.0);
+                            ui.add_space(crate::theme::SECTION_GAP);
 
                             paint_drawer_section_label(ui, "Shortcuts", None);
                             paint_supported_shortcuts_section(ui);
@@ -1453,22 +1479,23 @@ fn paint_settings_section(
 ) -> bool {
     let mut changed = false;
     ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(12.0, 10.0);
+        ui.spacing_mut().item_spacing = egui::vec2(crate::theme::SPACE_3, crate::theme::SPACE_2);
 
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label(
                     egui::RichText::new("Auto-scale new images")
-                        .size(12.0)
-                        .color(crate::theme::SHADE_BASE),
+                        .text_style(egui::TextStyle::Body)
+                        .strong()
+                        .color(crate::theme::TEXT),
                 );
                 ui.label(
                     egui::RichText::new(format!(
                         "Cap imported image area at {:.0} canvas sq units. Applies to new imports.",
                         crate::jobs::DEFAULT_IMPORT_TARGET_CANVAS_AREA
                     ))
-                    .size(10.0)
-                    .color(crate::theme::SHADE_30),
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_MUTED),
                 );
             });
 
@@ -1477,19 +1504,20 @@ fn paint_settings_section(
             });
         });
 
-        ui.separator();
+        ui.add_space(crate::theme::SPACE_3);
 
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label(
                     egui::RichText::new("Import gap")
-                        .size(12.0)
-                        .color(crate::theme::SHADE_BASE),
+                        .text_style(egui::TextStyle::Body)
+                        .strong()
+                        .color(crate::theme::TEXT),
                 );
                 ui.label(
                     egui::RichText::new("Gap used when placing new images.")
-                        .size(10.0)
-                        .color(crate::theme::SHADE_30),
+                        .text_style(egui::TextStyle::Small)
+                        .color(crate::theme::TEXT_MUTED),
                 );
             });
 
@@ -1532,23 +1560,23 @@ fn paint_switch(ui: &mut egui::Ui, value: &mut bool) -> egui::Response {
     }
 
     let track_color = if *value {
-        crate::theme::SHADE_40
+        crate::theme::ACCENT
     } else {
-        crate::theme::SHADE_70
+        crate::theme::SURFACE_ELEVATED
     };
     let knob_color = if *value {
-        crate::theme::SHADE_BASE
+        crate::theme::TEXT
     } else {
-        crate::theme::SHADE_30
+        crate::theme::TEXT_MUTED
     };
     let animation = ui.ctx().animate_bool(response.id, *value);
     let knob_radius = 9.0;
     let knob_x = egui::lerp((rect.left() + 12.0)..=(rect.right() - 12.0), animation);
     let track_rect = rect.shrink2(egui::vec2(1.0, 3.0));
     let stroke_color = if response.hovered() {
-        crate::theme::SHADE_20
+        crate::theme::BORDER_STRONG
     } else {
-        crate::theme::SHADE_60
+        crate::theme::BORDER
     };
 
     ui.painter().rect(
@@ -1582,19 +1610,20 @@ fn show_drawer_toggle(
         .order(egui::Order::Foreground)
         .fixed_pos(egui::pos2(x, y))
         .show(ctx, |ui| {
-            ui.spacing_mut().button_padding = egui::vec2(12.0, 7.0);
+            ui.spacing_mut().button_padding =
+                egui::vec2(crate::theme::SPACE_3, crate::theme::SPACE_2);
             let shortcut_label = toggle_drawer_shortcut_label();
             let button = egui::Button::new(
                 egui::RichText::new(shortcut_label)
-                    .size(12.0)
-                    .color(crate::theme::SHADE_BASE),
+                    .text_style(egui::TextStyle::Body)
+                    .color(crate::theme::TEXT),
             )
             .min_size(button_size)
-            .fill(crate::theme::SHADE_80)
+            .fill(crate::theme::SURFACE)
             .frame(true)
             .frame_when_inactive(true)
-            .stroke(egui::Stroke::new(1.0, crate::theme::SHADE_60))
-            .corner_radius(16);
+            .stroke(crate::theme::stroke_subtle())
+            .corner_radius(crate::theme::CONTROL_RADIUS);
 
             let response = ui.add(button);
             let response = if drawer_open {
@@ -1612,16 +1641,15 @@ fn paint_drawer_section_label(ui: &mut egui::Ui, title: &str, detail: Option<&st
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(title)
-                .size(12.0)
-                .strong()
-                .color(crate::theme::SHADE_BASE),
+                .text_style(crate::theme::display_text_style())
+                .color(crate::theme::TEXT),
         );
         if let Some(detail) = detail {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     egui::RichText::new(detail)
-                        .size(10.0)
-                        .color(crate::theme::SHADE_30),
+                        .text_style(egui::TextStyle::Small)
+                        .color(crate::theme::TEXT_MUTED),
                 );
             });
         }
@@ -1631,9 +1659,9 @@ fn paint_drawer_section_label(ui: &mut egui::Ui, title: &str, detail: Option<&st
 fn paint_drawer_subsection_label(ui: &mut egui::Ui, title: &str) {
     ui.label(
         egui::RichText::new(title)
-            .size(10.0)
+            .text_style(egui::TextStyle::Small)
             .strong()
-            .color(crate::theme::SHADE_30),
+            .color(crate::theme::TEXT_SUBTLE),
     );
 }
 
@@ -1645,24 +1673,24 @@ fn paint_shortcut_grid(
     egui::Grid::new(id)
         .num_columns(3)
         .striped(false)
-        .spacing(egui::vec2(20.0, 6.0))
+        .spacing(egui::vec2(crate::theme::SPACE_5, crate::theme::SPACE_2))
         .show(ui, |ui| {
             ui.label(
                 egui::RichText::new("Action")
-                    .size(10.0)
-                    .color(crate::theme::SHADE_40)
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_SUBTLE)
                     .strong(),
             );
             ui.label(
                 egui::RichText::new("Windows/Linux")
-                    .size(10.0)
-                    .color(crate::theme::SHADE_40)
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_SUBTLE)
                     .strong(),
             );
             ui.label(
                 egui::RichText::new("Mac")
-                    .size(10.0)
-                    .color(crate::theme::SHADE_40)
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_SUBTLE)
                     .strong(),
             );
             ui.end_row();
@@ -1670,22 +1698,164 @@ fn paint_shortcut_grid(
             for row in rows {
                 ui.label(
                     egui::RichText::new(row.action)
-                        .size(11.0)
-                        .color(crate::theme::SHADE_BASE),
+                        .text_style(egui::TextStyle::Body)
+                        .color(crate::theme::TEXT),
                 );
-                ui.label(
-                    egui::RichText::new(row.windows)
-                        .size(10.0)
-                        .color(crate::theme::SHADE_20),
-                );
-                ui.label(
-                    egui::RichText::new(row.mac)
-                        .size(10.0)
-                        .color(crate::theme::SHADE_20),
-                );
+                paint_shortcut_keys(ui, row.windows);
+                paint_shortcut_keys(ui, row.mac);
                 ui.end_row();
             }
         });
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ShortcutVisualPart {
+    Key(String),
+    Joiner,
+}
+
+fn paint_shortcut_keys(ui: &mut egui::Ui, shortcut: &str) {
+    if shortcut == "None" {
+        ui.label(
+            egui::RichText::new("None")
+                .text_style(egui::TextStyle::Small)
+                .color(crate::theme::TEXT_SUBTLE),
+        );
+        return;
+    }
+
+    let parts = parse_shortcut_visual_parts(shortcut);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(crate::theme::SPACE_1, crate::theme::SPACE_1);
+        for part in parts {
+            match part {
+                ShortcutVisualPart::Key(label) => paint_shortcut_keycap(ui, &label),
+                ShortcutVisualPart::Joiner => {
+                    ui.label(
+                        egui::RichText::new("+")
+                            .text_style(egui::TextStyle::Small)
+                            .color(crate::theme::TEXT_SUBTLE),
+                    );
+                }
+            }
+        }
+    });
+}
+
+fn paint_shortcut_keycap(ui: &mut egui::Ui, label: &str) {
+    let corner_radius = crate::theme::CONTROL_RADIUS.saturating_sub(2);
+    egui::Frame::new()
+        .fill(crate::theme::SURFACE_ELEVATED)
+        .stroke(crate::theme::stroke_subtle())
+        .corner_radius(corner_radius)
+        .inner_margin(egui::Margin {
+            left: 6,
+            right: 6,
+            top: 3,
+            bottom: 3,
+        })
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(label)
+                    .text_style(egui::TextStyle::Monospace)
+                    .color(crate::theme::TEXT)
+                    .strong(),
+            );
+        });
+}
+
+fn parse_shortcut_visual_parts(shortcut: &str) -> Vec<ShortcutVisualPart> {
+    if shortcut.contains(" + ") {
+        let mut parts = Vec::new();
+        for (idx, segment) in shortcut.split(" + ").enumerate() {
+            if idx > 0 {
+                parts.push(ShortcutVisualPart::Joiner);
+            }
+            parts.extend(parse_compact_shortcut_segment(segment));
+        }
+        return parts;
+    }
+
+    parse_compact_shortcut_segment(shortcut)
+}
+
+fn parse_compact_shortcut_segment(segment: &str) -> Vec<ShortcutVisualPart> {
+    let chars = segment.chars().collect::<Vec<_>>();
+    if !chars.contains(&'+') {
+        return split_symbolic_keys(segment)
+            .into_iter()
+            .map(ShortcutVisualPart::Key)
+            .collect();
+    }
+
+    let mut parts = Vec::new();
+    let mut current = String::new();
+
+    for (idx, ch) in chars.iter().copied().enumerate() {
+        if ch == '+' {
+            if !current.is_empty() {
+                parts.extend(
+                    split_symbolic_keys(&current)
+                        .into_iter()
+                        .map(ShortcutVisualPart::Key),
+                );
+                current.clear();
+            }
+
+            let is_terminal = idx == chars.len() - 1;
+            let next_is_plus = chars.get(idx + 1).copied() == Some('+');
+
+            if is_terminal {
+                parts.push(ShortcutVisualPart::Key("+".to_owned()));
+            } else if next_is_plus || !parts.is_empty() {
+                parts.push(ShortcutVisualPart::Joiner);
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+
+    if !current.is_empty() {
+        parts.extend(
+            split_symbolic_keys(&current)
+                .into_iter()
+                .map(ShortcutVisualPart::Key),
+        );
+    }
+
+    while matches!(parts.last(), Some(ShortcutVisualPart::Joiner)) {
+        parts.pop();
+    }
+
+    parts
+}
+
+fn split_symbolic_keys(segment: &str) -> Vec<String> {
+    if segment.contains(' ') {
+        return vec![segment.to_owned()];
+    }
+
+    let mut keys = Vec::new();
+    let mut remaining = segment;
+
+    while let Some(first) = remaining.chars().next() {
+        if matches!(first, '⌘' | '⇧' | '⌥' | '⌃') {
+            keys.push(first.to_string());
+            remaining = &remaining[first.len_utf8()..];
+        } else {
+            break;
+        }
+    }
+
+    if !remaining.is_empty() {
+        keys.push(remaining.to_owned());
+    }
+
+    if keys.is_empty() {
+        keys.push(segment.to_owned());
+    }
+
+    keys
 }
 
 fn paint_shortcut_section(ui: &mut egui::Ui, section: &ShortcutSection) {

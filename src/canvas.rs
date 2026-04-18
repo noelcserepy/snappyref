@@ -648,11 +648,12 @@ fn maxrects_pack_layout(
         return None;
     }
 
-    let total_height = items
-        .iter()
-        .map(|item| item.height + gap)
-        .sum::<f32>()
-        .max(items.iter().map(|item| item.height + gap).fold(0.0_f32, f32::max));
+    let total_height = items.iter().map(|item| item.height + gap).sum::<f32>().max(
+        items
+            .iter()
+            .map(|item| item.height + gap)
+            .fold(0.0_f32, f32::max),
+    );
     let mut free_rects = vec![PackRect {
         x: 0.0,
         y: 0.0,
@@ -700,11 +701,13 @@ fn place_maxrects_item(free_rects: &mut Vec<PackRect>, padded: PackRect) -> Opti
         match best_candidate {
             Some((_, best_rect, best_short, best_long))
                 if short_side_fit > best_short
-                    || ((short_side_fit - best_short).abs() < 0.001 && long_side_fit > best_long)
+                    || ((short_side_fit - best_short).abs() < 0.001
+                        && long_side_fit > best_long)
                     || ((short_side_fit - best_short).abs() < 0.001
                         && (long_side_fit - best_long).abs() < 0.001
                         && (placed.y > best_rect.y
-                            || ((placed.y - best_rect.y).abs() < 0.001 && placed.x >= best_rect.x))) => {}
+                            || ((placed.y - best_rect.y).abs() < 0.001
+                                && placed.x >= best_rect.x))) => {}
             _ => best_candidate = Some((index, placed, short_side_fit, long_side_fit)),
         }
     }
@@ -784,10 +787,9 @@ fn prune_free_rects(free_rects: &mut Vec<PackRect>) {
         let mut index = 0;
         while index < free_rects.len() {
             let rect = free_rects[index];
-            let contained = free_rects
-                .iter()
-                .enumerate()
-                .any(|(other_index, other)| other_index != index && rect_contained_in(rect, *other));
+            let contained = free_rects.iter().enumerate().any(|(other_index, other)| {
+                other_index != index && rect_contained_in(rect, *other)
+            });
             if contained {
                 free_rects.remove(index);
                 changed = true;
@@ -800,10 +802,9 @@ fn prune_free_rects(free_rects: &mut Vec<PackRect>) {
         while left_index < free_rects.len() {
             let mut right_index = left_index + 1;
             while right_index < free_rects.len() {
-                if let Some(merged) = merge_adjacent_free_rects(
-                    free_rects[left_index],
-                    free_rects[right_index],
-                ) {
+                if let Some(merged) =
+                    merge_adjacent_free_rects(free_rects[left_index], free_rects[right_index])
+                {
                     free_rects[left_index] = merged;
                     free_rects.remove(right_index);
                     changed = true;
@@ -1167,7 +1168,7 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut CanvasState, debug_
 
     let painter = ui.painter_at(rect);
 
-    painter.rect_filled(rect, 0.0, crate::theme::SHADE_90);
+    painter.rect_filled(rect, 0.0, crate::theme::BACKGROUND);
     paint_images(&painter, rect, state, debug_labels);
     paint_selection_bounds(&painter, rect, state);
     paint_crop_marquee(&painter, rect, state);
@@ -1380,7 +1381,7 @@ fn paint_images(
             painter.rect_stroke(
                 image_rect,
                 0.0,
-                egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
+                crate::theme::stroke_strong(),
                 egui::StrokeKind::Outside,
             );
         }
@@ -1391,11 +1392,11 @@ fn paint_images(
                 image.record.item.id, image.record.item.x, image.record.item.y
             );
             painter.text(
-                image_rect.min + egui::vec2(6.0, 6.0),
+                image_rect.min + egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2),
                 egui::Align2::LEFT_TOP,
                 label,
-                egui::FontId::proportional(12.0),
-                crate::theme::SHADE_BASE,
+                egui::TextStyle::Body.resolve(&painter.ctx().global_style()),
+                crate::theme::TEXT,
             );
         }
     }
@@ -1410,7 +1411,7 @@ fn paint_marquee(painter: &egui::Painter, state: &CanvasState) {
     painter.rect_stroke(
         rect,
         0.0,
-        egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
+        crate::theme::stroke_strong(),
         egui::StrokeKind::Outside,
     );
 }
@@ -1435,13 +1436,13 @@ fn paint_crop_marquee(painter: &egui::Painter, rect: egui::Rect, state: &CanvasS
     painter.rect_stroke(
         image_rect,
         0.0,
-        egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
+        crate::theme::stroke_strong(),
         egui::StrokeKind::Outside,
     );
     painter.rect_stroke(
         crop_rect,
         0.0,
-        egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
+        crate::theme::stroke_strong(),
         egui::StrokeKind::Outside,
     );
 }
@@ -1458,7 +1459,7 @@ fn paint_selection_bounds(painter: &egui::Painter, rect: egui::Rect, state: &Can
     painter.rect_stroke(
         selection_rect.expand(6.0),
         0.0,
-        egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
+        crate::theme::stroke_strong(),
         egui::StrokeKind::Outside,
     );
 }
@@ -1724,7 +1725,8 @@ mod tests {
         assert_eq!(first.1, second.1);
         assert_eq!(first.2, second.2);
         assert_eq!(first.0.len(), second.0.len());
-        for ((first_id, first_pos), (second_id, second_pos)) in first.0.iter().zip(second.0.iter()) {
+        for ((first_id, first_pos), (second_id, second_pos)) in first.0.iter().zip(second.0.iter())
+        {
             assert_eq!(first_id, second_id);
             assert!((first_pos.x - second_pos.x).abs() < 0.001);
             assert!((first_pos.y - second_pos.y).abs() < 0.001);
