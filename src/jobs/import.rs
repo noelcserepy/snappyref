@@ -17,6 +17,7 @@ pub enum ImportRequest {
         source_path: PathBuf,
         desired_world: egui::Pos2,
         auto_scale: bool,
+        import_gap: f32,
     },
     ImportClipboard {
         rgba: Vec<u8>,
@@ -24,6 +25,7 @@ pub enum ImportRequest {
         height: u32,
         desired_world: egui::Pos2,
         auto_scale: bool,
+        import_gap: f32,
     },
     Crop {
         request: crate::canvas::CanvasCropRequest,
@@ -78,14 +80,24 @@ impl ImportWorker {
                         source_path,
                         desired_world,
                         auto_scale,
-                    } => import_path(&library, source_path, desired_world, auto_scale),
+                        import_gap,
+                    } => import_path(&library, source_path, desired_world, auto_scale, import_gap),
                     ImportRequest::ImportClipboard {
                         rgba,
                         width,
                         height,
                         desired_world,
                         auto_scale,
-                    } => import_clipboard(&library, rgba, width, height, desired_world, auto_scale),
+                        import_gap,
+                    } => import_clipboard(
+                        &library,
+                        rgba,
+                        width,
+                        height,
+                        desired_world,
+                        auto_scale,
+                        import_gap,
+                    ),
                     ImportRequest::Crop { request } => crop_item(&library, request),
                     ImportRequest::LoadExisting { record } => load_existing(record),
                 };
@@ -116,9 +128,19 @@ pub fn import_path_sync(
     source_path: PathBuf,
     desired_world: egui::Pos2,
     auto_scale: bool,
+    import_gap: f32,
 ) -> Result<LoadedCanvasItem, String> {
     let decoded = decode_image_file(&source_path)
         .map_err(|error| format!("{}: {error}", source_path.display()))?;
+    let initial_scale = initial_import_scale(decoded.width, decoded.height, auto_scale);
+    let arranged_world = arranged_import_world(
+        library,
+        desired_world,
+        decoded.width,
+        decoded.height,
+        initial_scale,
+        import_gap,
+    )?;
 
     let stored_path = library
         .store_original(&source_path)
@@ -131,8 +153,8 @@ pub fn import_path_sync(
             decoded.width,
             decoded.height,
             decoded.file_size,
-            desired_world,
-            initial_import_scale(decoded.width, decoded.height, auto_scale),
+            arranged_world,
+            initial_scale,
         )
         .map_err(|error| format!("{}: {error}", stored_path.display()))?;
 
@@ -147,8 +169,15 @@ fn import_path(
     source_path: PathBuf,
     desired_world: egui::Pos2,
     auto_scale: bool,
+    import_gap: f32,
 ) -> ImportResult {
-    match import_path_sync(library, source_path.clone(), desired_world, auto_scale) {
+    match import_path_sync(
+        library,
+        source_path.clone(),
+        desired_world,
+        auto_scale,
+        import_gap,
+    ) {
         Ok(loaded) => ImportResult::Loaded(loaded),
         Err(error) => ImportResult::Failed {
             item_id: None,
@@ -165,6 +194,7 @@ fn import_clipboard(
     height: u32,
     desired_world: egui::Pos2,
     auto_scale: bool,
+    import_gap: f32,
 ) -> ImportResult {
     let stored_path = match library.store_clipboard_image(&rgba, width, height) {
         Ok(path) => path,
@@ -188,14 +218,33 @@ fn import_clipboard(
         }
     };
 
+    let initial_scale = initial_import_scale(width, height, auto_scale);
+    let arranged_world = match arranged_import_world(
+        library,
+        desired_world,
+        width,
+        height,
+        initial_scale,
+        import_gap,
+    ) {
+        Ok(arranged_world) => arranged_world,
+        Err(error) => {
+            return ImportResult::Failed {
+                item_id: None,
+                context: "clipboard".to_owned(),
+                error,
+            };
+        }
+    };
+
     let record = match library.persist_imported_image(
         &stored_path,
         image::ImageFormat::Png.to_mime_type(),
         width,
         height,
         file_size,
-        desired_world,
-        initial_import_scale(width, height, auto_scale),
+        arranged_world,
+        initial_scale,
     ) {
         Ok(record) => record,
         Err(error) => {
@@ -207,10 +256,7 @@ fn import_clipboard(
         }
     };
 
-    ImportResult::Loaded(LoadedCanvasItem {
-        record,
-        rgba,
-    })
+    ImportResult::Loaded(LoadedCanvasItem { record, rgba })
 }
 
 fn load_existing(record: BoardItemWithAsset) -> ImportResult {
@@ -305,14 +351,154 @@ fn initial_import_scale(asset_width: u32, asset_height: u32, auto_scale: bool) -
     }
 
     let asset_area = asset_width as f32 * asset_height as f32;
-    (DEFAULT_IMPORT_TARGET_CANVAS_AREA / asset_area).sqrt().min(1.0)
+    (DEFAULT_IMPORT_TARGET_CANVAS_AREA / asset_area)
+        .sqrt()
+        .min(1.0)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LayoutRect {
+    id: i64,
+    rect: egui::Rect,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PlacementCandidate {
+    center: egui::Pos2,
+    generation_index: usize,
+}
+
+fn arranged_import_world(
+    library: &Library,
+    desired_world: egui::Pos2,
+    asset_width: u32,
+    asset_height: u32,
+    initial_scale: f32,
+    import_gap: f32,
+) -> Result<egui::Pos2, String> {
+    let item_width = asset_width as f32 * initial_scale.max(0.01);
+    let item_height = asset_height as f32 * initial_scale.max(0.01);
+    let new_rect = egui::Rect::from_center_size(
+        desired_world,
+        egui::vec2(item_width.max(0.0), item_height.max(0.0)),
+    );
+
+    let existing_items = library.load_board_items()?;
+    if existing_items.is_empty() {
+        return Ok(desired_world);
+    }
+
+    let mut existing_rects = existing_items
+        .iter()
+        .map(displayed_layout_rect)
+        .collect::<Vec<_>>();
+    existing_rects.sort_by(|left, right| {
+        left.rect
+            .top()
+            .total_cmp(&right.rect.top())
+            .then_with(|| left.rect.left().total_cmp(&right.rect.left()))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    let mut best_candidate: Option<(f32, f32, usize, egui::Pos2)> = None;
+    let mut generation_index = 0_usize;
+
+    for existing in &existing_rects {
+        for candidate_rect in [
+            egui::Rect::from_min_size(
+                egui::pos2(existing.rect.right() + import_gap, existing.rect.top()),
+                new_rect.size(),
+            ),
+            egui::Rect::from_min_size(
+                egui::pos2(existing.rect.left(), existing.rect.bottom() + import_gap),
+                new_rect.size(),
+            ),
+        ] {
+            let candidate = PlacementCandidate {
+                center: candidate_rect.center(),
+                generation_index,
+            };
+            generation_index += 1;
+
+            if candidate_overlaps_any(candidate_rect, &existing_rects, import_gap) {
+                continue;
+            }
+
+            let distance_score = candidate.center.distance_sq(desired_world);
+            let bounds_score = occupied_bounds_area(&existing_rects, candidate_rect);
+            let score = (
+                distance_score,
+                bounds_score,
+                candidate.generation_index,
+                candidate.center,
+            );
+
+            match best_candidate {
+                Some((best_distance, best_bounds, best_index, _))
+                    if distance_score > best_distance
+                        || (distance_score == best_distance && bounds_score > best_bounds)
+                        || (distance_score == best_distance
+                            && bounds_score == best_bounds
+                            && candidate.generation_index >= best_index) => {}
+                _ => best_candidate = Some(score),
+            }
+        }
+    }
+
+    Ok(best_candidate
+        .map(|(_, _, _, center)| center)
+        .unwrap_or(desired_world))
+}
+
+fn displayed_layout_rect(record: &BoardItemWithAsset) -> LayoutRect {
+    let size = egui::vec2(
+        record.asset.width as f32 * record.item.scale.max(0.01),
+        record.asset.height as f32 * record.item.scale.max(0.01),
+    );
+    LayoutRect {
+        id: record.item.id,
+        rect: egui::Rect::from_center_size(egui::pos2(record.item.x, record.item.y), size),
+    }
+}
+
+fn candidate_overlaps_any(
+    candidate_rect: egui::Rect,
+    existing_rects: &[LayoutRect],
+    gap: f32,
+) -> bool {
+    existing_rects
+        .iter()
+        .any(|existing| rects_overlap_with_gap(candidate_rect, existing.rect, gap))
+}
+
+fn rects_overlap_with_gap(left: egui::Rect, right: egui::Rect, gap: f32) -> bool {
+    left.left() < right.right() + gap
+        && left.right() > right.left() - gap
+        && left.top() < right.bottom() + gap
+        && left.bottom() > right.top() - gap
+}
+
+fn occupied_bounds_area(existing_rects: &[LayoutRect], candidate_rect: egui::Rect) -> f32 {
+    let mut min_x = candidate_rect.left();
+    let mut min_y = candidate_rect.top();
+    let mut max_x = candidate_rect.right();
+    let mut max_y = candidate_rect.bottom();
+
+    for existing in existing_rects {
+        min_x = min_x.min(existing.rect.left());
+        min_y = min_y.min(existing.rect.top());
+        max_x = max_x.max(existing.rect.right());
+        max_y = max_y.max(existing.rect.bottom());
+    }
+
+    (max_x - min_x) * (max_y - min_y)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImportResult, import_clipboard, import_path_sync,
-        initial_import_scale,
+        DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImportResult, arranged_import_world, import_clipboard,
+        import_path_sync, initial_import_scale, rects_overlap_with_gap,
     };
     use crate::storage::Library;
     use image::{ColorType, ImageFormat};
@@ -324,8 +510,7 @@ mod tests {
     fn scales_down_large_portrait_images_to_target_area() {
         let scale = initial_import_scale(1000, 1500, true);
         assert!(
-            (scale - (DEFAULT_IMPORT_TARGET_CANVAS_AREA / 1_500_000.0).sqrt()).abs()
-                < f32::EPSILON
+            (scale - (DEFAULT_IMPORT_TARGET_CANVAS_AREA / 1_500_000.0).sqrt()).abs() < f32::EPSILON
         );
     }
 
@@ -333,8 +518,7 @@ mod tests {
     fn scales_down_large_landscape_images_by_area_cap() {
         let scale = initial_import_scale(1920, 1080, true);
         assert!(
-            (scale - (DEFAULT_IMPORT_TARGET_CANVAS_AREA / 2_073_600.0).sqrt()).abs()
-                < f32::EPSILON
+            (scale - (DEFAULT_IMPORT_TARGET_CANVAS_AREA / 2_073_600.0).sqrt()).abs() < f32::EPSILON
         );
     }
 
@@ -358,13 +542,38 @@ mod tests {
         let square_path = write_png(&root, "square.png", 1000, 1000);
         let small_path = write_png(&root, "small.png", 180, 240);
 
-        let portrait = import_path_sync(&library, portrait_path, eframe::egui::Pos2::ZERO, true)
-            .unwrap();
-        let landscape =
-            import_path_sync(&library, landscape_path, eframe::egui::Pos2::ZERO, true).unwrap();
-        let square = import_path_sync(&library, square_path, eframe::egui::Pos2::ZERO, true)
-            .unwrap();
-        let small = import_path_sync(&library, small_path, eframe::egui::Pos2::ZERO, true).unwrap();
+        let portrait = import_path_sync(
+            &library,
+            portrait_path,
+            eframe::egui::Pos2::ZERO,
+            true,
+            crate::data::DEFAULT_IMPORT_GAP,
+        )
+        .unwrap();
+        let landscape = import_path_sync(
+            &library,
+            landscape_path,
+            eframe::egui::Pos2::ZERO,
+            true,
+            crate::data::DEFAULT_IMPORT_GAP,
+        )
+        .unwrap();
+        let square = import_path_sync(
+            &library,
+            square_path,
+            eframe::egui::Pos2::ZERO,
+            true,
+            crate::data::DEFAULT_IMPORT_GAP,
+        )
+        .unwrap();
+        let small = import_path_sync(
+            &library,
+            small_path,
+            eframe::egui::Pos2::ZERO,
+            true,
+            crate::data::DEFAULT_IMPORT_GAP,
+        )
+        .unwrap();
 
         assert!((displayed_area(&portrait) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
         assert!((displayed_area(&landscape) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
@@ -389,6 +598,7 @@ mod tests {
             844,
             eframe::egui::Pos2::ZERO,
             true,
+            crate::data::DEFAULT_IMPORT_GAP,
         ) {
             ImportResult::Loaded(loaded) => loaded,
             other => panic!("expected loaded tall clipboard image, got {other:?}"),
@@ -400,6 +610,7 @@ mod tests {
             200,
             eframe::egui::Pos2::ZERO,
             false,
+            crate::data::DEFAULT_IMPORT_GAP,
         ) {
             ImportResult::Loaded(loaded) => loaded,
             other => panic!("expected loaded small clipboard image, got {other:?}"),
@@ -408,6 +619,105 @@ mod tests {
         assert!((displayed_area(&tall) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
         assert_eq!(small.record.item.scale, 1.0);
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn empty_board_placement_uses_requested_anchor() {
+        let root = temp_library_root("empty-placement");
+        let library = Library::initialize(root.clone()).unwrap();
+        let anchor = eframe::egui::pos2(120.0, -48.0);
+
+        let arranged = arranged_import_world(&library, anchor, 300, 200, 1.0, 12.0).unwrap();
+
+        assert_eq!(arranged, anchor);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deterministic_candidate_order_prefers_right_before_below_on_tie() {
+        let root = temp_library_root("placement-order");
+        let library = Library::initialize(root.clone()).unwrap();
+        seed_board_item(&library, 1, 0.0, 0.0, 100, 100, 1.0);
+
+        let arranged = arranged_import_world(
+            &library,
+            eframe::egui::pos2(106.0, 106.0),
+            100,
+            100,
+            1.0,
+            12.0,
+        )
+        .unwrap();
+
+        assert_eq!(arranged, eframe::egui::pos2(112.0, 0.0));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn blocked_right_side_candidate_falls_through_to_valid_lower_slot() {
+        let root = temp_library_root("placement-blocked-right");
+        let library = Library::initialize(root.clone()).unwrap();
+        seed_board_item(&library, 1, 0.0, 0.0, 100, 100, 1.0);
+        seed_board_item(&library, 2, 112.0, 0.0, 100, 100, 1.0);
+
+        let arranged = arranged_import_world(
+            &library,
+            eframe::egui::pos2(112.0, 50.0),
+            100,
+            100,
+            1.0,
+            12.0,
+        )
+        .unwrap();
+
+        assert_eq!(arranged, eframe::egui::pos2(112.0, 112.0));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
+        let root = temp_library_root("placement-custom-gap");
+        let library = Library::initialize(root.clone()).unwrap();
+        let gap = 8.0;
+
+        let first = match import_clipboard(
+            &library,
+            solid_rgba(200, 200),
+            200,
+            200,
+            eframe::egui::Pos2::ZERO,
+            false,
+            gap,
+        ) {
+            ImportResult::Loaded(loaded) => loaded,
+            other => panic!("expected first loaded image, got {other:?}"),
+        };
+
+        let second = match import_clipboard(
+            &library,
+            solid_rgba(200, 200),
+            200,
+            200,
+            eframe::egui::Pos2::ZERO,
+            false,
+            gap,
+        ) {
+            ImportResult::Loaded(loaded) => loaded,
+            other => panic!("expected second loaded image, got {other:?}"),
+        };
+
+        let first_rect = eframe::egui::Rect::from_center_size(
+            eframe::egui::pos2(first.record.item.x, first.record.item.y),
+            eframe::egui::vec2(200.0, 200.0),
+        );
+        let second_rect = eframe::egui::Rect::from_center_size(
+            eframe::egui::pos2(second.record.item.x, second.record.item.y),
+            eframe::egui::vec2(200.0, 200.0),
+        );
+
+        assert_eq!(second_rect.left() - first_rect.right(), gap);
+        assert!(!rects_overlap_with_gap(first_rect, second_rect, gap));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -443,5 +753,37 @@ mod tests {
             * loaded.record.asset.height as f32
             * loaded.record.item.scale
             * loaded.record.item.scale
+    }
+
+    fn seed_board_item(
+        library: &Library,
+        id: i64,
+        x: f32,
+        y: f32,
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) {
+        let stored_path = library
+            .store_rgba_image(
+                &format!("seed-{id}"),
+                &solid_rgba(width, height),
+                width,
+                height,
+            )
+            .unwrap();
+        let file_size = fs::metadata(&stored_path).unwrap().len();
+        let record = library
+            .persist_imported_image(
+                &stored_path,
+                image::ImageFormat::Png.to_mime_type(),
+                width,
+                height,
+                file_size,
+                eframe::egui::pos2(x, y),
+                scale,
+            )
+            .unwrap();
+        assert_eq!(record.item.id, id);
     }
 }

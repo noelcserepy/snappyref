@@ -4,4 +4,4 @@ mod session;
 
 pub use asset::ImageAsset;
 pub use board_item::{BoardItem, BoardItemWithAsset};
-pub use session::UserSession;
+pub use session::{DEFAULT_IMPORT_GAP, UserSession};

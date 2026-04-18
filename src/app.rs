@@ -367,6 +367,7 @@ pub struct ReferenceApp {
     import_worker: Option<crate::jobs::ImportWorker>,
     crop_undo_stack: Vec<CropUndoEntry>,
     auto_image_scaling: bool,
+    import_gap: f32,
     drawer_open: bool,
     status: String,
 }
@@ -393,6 +394,7 @@ impl ReferenceApp {
                     import_worker: Some(import_worker),
                     crop_undo_stack: Vec::new(),
                     auto_image_scaling: true,
+                    import_gap: crate::data::DEFAULT_IMPORT_GAP,
                     drawer_open: false,
                     status,
                 };
@@ -413,6 +415,7 @@ impl ReferenceApp {
                 import_worker: None,
                 crop_undo_stack: Vec::new(),
                 auto_image_scaling: true,
+                import_gap: crate::data::DEFAULT_IMPORT_GAP,
                 drawer_open: false,
                 status: format!("Storage unavailable: {error}"),
             },
@@ -453,6 +456,7 @@ impl ReferenceApp {
             Ok(session) => {
                 self.canvas.apply_user_session(&session);
                 self.auto_image_scaling = session.auto_image_scaling;
+                self.import_gap = session.import_gap;
             }
             Err(error) => self.status = error,
         }
@@ -479,6 +483,7 @@ impl ReferenceApp {
                 source_path: source_path.clone(),
                 desired_world,
                 auto_scale: self.auto_image_scaling,
+                import_gap: self.import_gap,
             }) {
                 self.status = error;
                 continue;
@@ -534,6 +539,7 @@ impl ReferenceApp {
             height,
             desired_world,
             auto_scale: self.auto_image_scaling,
+            import_gap: self.import_gap,
         }) {
             self.status = error;
             return;
@@ -735,9 +741,7 @@ impl ReferenceApp {
 
     fn handle_crop_undo(&mut self, ctx: &egui::Context) {
         let undo_requested = ctx.input(|input| {
-            input.modifiers.command
-                && !input.modifiers.shift
-                && input.key_pressed(egui::Key::Z)
+            input.modifiers.command && !input.modifiers.shift && input.key_pressed(egui::Key::Z)
         });
         if !undo_requested {
             return;
@@ -786,7 +790,8 @@ impl ReferenceApp {
         while let Some(request) = self.canvas.take_pending_crop() {
             let item_id = request.item_id;
             self.canvas.mark_crop_pending(item_id);
-            if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::Crop { request }) {
+            if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::Crop { request })
+            {
                 self.canvas.clear_crop_pending(item_id);
                 self.status = error;
                 continue;
@@ -815,6 +820,7 @@ impl ReferenceApp {
 
         let mut session = self.canvas.user_session();
         session.auto_image_scaling = self.auto_image_scaling;
+        session.import_gap = self.import_gap;
         if let Err(error) = library.save_user_session(&session) {
             self.status = error;
         }
@@ -930,6 +936,7 @@ impl eframe::App for ReferenceApp {
             drawer_open,
             &mut self.drawer_open,
             &mut self.auto_image_scaling,
+            &mut self.import_gap,
         );
         show_drawer_toggle(ui.ctx(), screen_rect, drawer_open, &mut self.drawer_open);
         if self
@@ -1085,6 +1092,7 @@ fn show_shortcuts_drawer(
     drawer_open: bool,
     drawer_open_state: &mut bool,
     auto_image_scaling: &mut bool,
+    import_gap: &mut f32,
 ) {
     if !drawer_open {
         return;
@@ -1173,7 +1181,7 @@ fn show_shortcuts_drawer(
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(0.0, 10.0);
-                            paint_settings_section(ui, auto_image_scaling);
+                            paint_settings_section(ui, auto_image_scaling, import_gap);
                             for section in SHORTCUT_SECTIONS {
                                 paint_shortcut_section(ui, section);
                             }
@@ -1182,7 +1190,7 @@ fn show_shortcuts_drawer(
         });
 }
 
-fn paint_settings_section(ui: &mut egui::Ui, auto_image_scaling: &mut bool) {
+fn paint_settings_section(ui: &mut egui::Ui, auto_image_scaling: &mut bool, import_gap: &mut f32) {
     egui::Frame::new()
         .fill(crate::theme::SHADE_90)
         .stroke(egui::Stroke::new(1.0, crate::theme::SHADE_70))
@@ -1230,6 +1238,33 @@ fn paint_settings_section(ui: &mut egui::Ui, auto_image_scaling: &mut bool) {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.toggle_value(auto_image_scaling, "");
+                });
+            });
+
+            ui.add_space(8.0);
+
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("Import gap")
+                            .size(11.0)
+                            .color(crate::theme::SHADE_BASE),
+                    );
+                    ui.label(
+                        egui::RichText::new("Gap used when placing new images")
+                            .size(10.0)
+                            .color(crate::theme::SHADE_30),
+                    );
+                });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(
+                        egui::DragValue::new(import_gap)
+                            .speed(0.5)
+                            .range(0.0..=128.0)
+                            .fixed_decimals(0)
+                            .suffix(" units"),
+                    );
                 });
             });
         });

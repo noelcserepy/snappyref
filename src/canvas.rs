@@ -208,6 +208,7 @@ impl CanvasState {
             camera_pan_y: self.pan.y,
             camera_zoom: self.zoom,
             auto_image_scaling: true,
+            import_gap: crate::data::DEFAULT_IMPORT_GAP,
         }
     }
 
@@ -250,7 +251,8 @@ impl CanvasState {
     }
 
     pub fn clear_crop_pending(&mut self, item_id: i64) {
-        self.crop_pending_item_ids.retain(|pending_id| *pending_id != item_id);
+        self.crop_pending_item_ids
+            .retain(|pending_id| *pending_id != item_id);
     }
 
     pub fn evict_cached_asset(&mut self, asset_id: i64) {
@@ -496,7 +498,9 @@ impl CanvasState {
     }
 
     fn image_by_item_id(&self, item_id: i64) -> Option<&CanvasImage> {
-        self.images.iter().find(|image| image.record.item.id == item_id)
+        self.images
+            .iter()
+            .find(|image| image.record.item.id == item_id)
     }
 
     fn build_crop_request(
@@ -506,16 +510,22 @@ impl CanvasState {
     ) -> Option<CanvasCropRequest> {
         let image = self.image_by_item_id(crop_state.item_id)?;
         let image_rect = image_screen_rect(self, rect, image);
-        let clamped_screen_rect =
-            clamped_crop_screen_rect(crop_state.start_screen, crop_state.current_screen, image_rect)?;
+        let clamped_screen_rect = clamped_crop_screen_rect(
+            crop_state.start_screen,
+            crop_state.current_screen,
+            image_rect,
+        )?;
         let local_rect = screen_rect_to_local_crop_rect(
             clamped_screen_rect,
             image_rect,
             image.record.asset.width,
             image.record.asset.height,
         )?;
-        let crop_rect =
-            pixel_crop_rect_from_local(local_rect, image.record.asset.width, image.record.asset.height)?;
+        let crop_rect = pixel_crop_rect_from_local(
+            local_rect,
+            image.record.asset.width,
+            image.record.asset.height,
+        )?;
         let crop_offset_local = crop_center_offset_local(&image.record.asset, local_rect);
 
         Some(CanvasCropRequest {
@@ -822,9 +832,11 @@ fn paint_crop_marquee(painter: &egui::Painter, rect: egui::Rect, state: &CanvasS
     };
 
     let image_rect = image_screen_rect(state, rect, image);
-    let Some(crop_rect) =
-        clamped_crop_screen_rect(crop_state.start_screen, crop_state.current_screen, image_rect)
-    else {
+    let Some(crop_rect) = clamped_crop_screen_rect(
+        crop_state.start_screen,
+        crop_state.current_screen,
+        image_rect,
+    ) else {
         return;
     };
 
@@ -865,8 +877,12 @@ fn clamped_crop_screen_rect(
     image_rect: egui::Rect,
 ) -> Option<egui::Rect> {
     let clamped_current = egui::pos2(
-        current_screen.x.clamp(image_rect.left(), image_rect.right()),
-        current_screen.y.clamp(image_rect.top(), image_rect.bottom()),
+        current_screen
+            .x
+            .clamp(image_rect.left(), image_rect.right()),
+        current_screen
+            .y
+            .clamp(image_rect.top(), image_rect.bottom()),
     );
     let rect = egui::Rect::from_two_pos(start_screen, clamped_current);
     (rect.width() > 0.0 && rect.height() > 0.0).then_some(rect)
@@ -919,10 +935,7 @@ fn pixel_crop_rect_from_local(
     })
 }
 
-fn crop_center_offset_local(
-    asset: &crate::data::ImageAsset,
-    local_rect: egui::Rect,
-) -> egui::Vec2 {
+fn crop_center_offset_local(asset: &crate::data::ImageAsset, local_rect: egui::Rect) -> egui::Vec2 {
     let asset_center = egui::pos2(asset.width as f32 * 0.5, asset.height as f32 * 0.5);
     let local_center = local_rect.center();
     local_center - asset_center
@@ -950,8 +963,10 @@ mod tests {
 
     #[test]
     fn converts_drag_rect_to_crop_pixels_and_live_scale_position() {
-        let screen_rect =
-            eframe::egui::Rect::from_min_max(eframe::egui::pos2(40.0, 20.0), eframe::egui::pos2(240.0, 180.0));
+        let screen_rect = eframe::egui::Rect::from_min_max(
+            eframe::egui::pos2(40.0, 20.0),
+            eframe::egui::pos2(240.0, 180.0),
+        );
         let local_rect = screen_rect_to_local_crop_rect(screen_rect, screen_rect, 100, 80).unwrap();
         let crop_rect = pixel_crop_rect_from_local(local_rect, 100, 80).unwrap();
 
@@ -980,8 +995,10 @@ mod tests {
             file_size: 0,
             imported_at: 0,
         };
-        let kept_local =
-            eframe::egui::Rect::from_min_max(eframe::egui::pos2(10.0, 20.0), eframe::egui::pos2(40.0, 50.0));
+        let kept_local = eframe::egui::Rect::from_min_max(
+            eframe::egui::pos2(10.0, 20.0),
+            eframe::egui::pos2(40.0, 50.0),
+        );
         let crop_offset_local = crop_center_offset_local(&asset, kept_local);
         let mut merged_item = item.clone();
         merge_cropped_item_fields(&mut merged_item, 2, crop_offset_local);
