@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use eframe::egui;
 
 use crate::data::{BoardItemWithAsset, UserSession};
-use crate::jobs::LoadedCanvasItem;
+use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
 
 const MIN_CANVAS_ZOOM: f32 = 0.01;
 const MAX_CANVAS_ZOOM: f32 = 64.0;
@@ -10,9 +12,13 @@ pub struct CanvasState {
     pan: egui::Vec2,
     zoom: f32,
     images: Vec<CanvasImage>,
+    asset_rgba_cache: HashMap<i64, Vec<u8>>,
     selected_item_ids: Vec<i64>,
     drag_state: Option<DragState>,
     marquee_state: Option<MarqueeState>,
+    crop_state: Option<CropState>,
+    crop_pending_item_ids: Vec<i64>,
+    pending_crop: Option<CanvasCropRequest>,
     dirty_item_ids: Vec<i64>,
     last_pointer_screen_pos: Option<egui::Pos2>,
 }
@@ -41,15 +47,42 @@ struct MarqueeState {
     current_screen: egui::Pos2,
 }
 
+struct CropState {
+    item_id: i64,
+    start_screen: egui::Pos2,
+    current_screen: egui::Pos2,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PixelCropRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct CanvasCropRequest {
+    pub item_id: i64,
+    pub source_asset: crate::data::ImageAsset,
+    pub source_rgba: Vec<u8>,
+    pub crop_rect: PixelCropRect,
+    pub crop_offset_local: egui::Vec2,
+}
+
 impl Default for CanvasState {
     fn default() -> Self {
         Self {
             pan: egui::Vec2::ZERO,
             zoom: 1.0,
             images: Vec::new(),
+            asset_rgba_cache: HashMap::new(),
             selected_item_ids: Vec::new(),
             drag_state: None,
             marquee_state: None,
+            crop_state: None,
+            crop_pending_item_ids: Vec::new(),
+            pending_crop: None,
             dirty_item_ids: Vec::new(),
             last_pointer_screen_pos: None,
         }
@@ -58,6 +91,8 @@ impl Default for CanvasState {
 
 impl CanvasState {
     pub fn add_loaded_item(&mut self, ctx: &egui::Context, loaded: LoadedCanvasItem) {
+        self.asset_rgba_cache
+            .insert(loaded.record.asset.id, loaded.rgba.clone());
         let size = [
             loaded.record.asset.width as usize,
             loaded.record.asset.height as usize,
@@ -91,6 +126,65 @@ impl CanvasState {
 
         self.images.push(CanvasImage { record, texture });
         self.images.sort_by_key(|image| image.record.item.z_index);
+        Ok(())
+    }
+
+    pub fn snapshot_item_image(
+        &self,
+        item_id: i64,
+    ) -> Result<(BoardItemWithAsset, Vec<u8>), String> {
+        let image = self
+            .image_by_item_id(item_id)
+            .ok_or_else(|| format!("missing canvas item {}", item_id))?;
+        let rgba = self
+            .asset_rgba_cache
+            .get(&image.record.asset.id)
+            .cloned()
+            .ok_or_else(|| format!("missing cached pixels for asset {}", image.record.asset.id))?;
+        Ok((image.record.clone(), rgba))
+    }
+
+    pub fn projected_cropped_item(
+        &self,
+        cropped: &CroppedCanvasItem,
+    ) -> Result<crate::data::BoardItem, String> {
+        let Some(image) = self.image_by_item_id(cropped.item_id) else {
+            return Err(format!("missing canvas item {}", cropped.item_id));
+        };
+
+        let mut item = image.record.item.clone();
+        let asset_id = item.asset_id;
+        merge_cropped_item_fields(&mut item, asset_id, cropped.crop_offset_local);
+        Ok(item)
+    }
+
+    pub fn apply_cropped_item(
+        &mut self,
+        ctx: &egui::Context,
+        cropped: CroppedCanvasItem,
+        asset: crate::data::ImageAsset,
+        updated_item: crate::data::BoardItem,
+    ) -> Result<(), String> {
+        let size = [asset.width as usize, asset.height as usize];
+        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &cropped.rgba);
+        self.asset_rgba_cache.insert(asset.id, cropped.rgba.clone());
+        let texture = ctx.load_texture(
+            format!("asset-{}-item-{}", asset.id, cropped.item_id),
+            color_image,
+            egui::TextureOptions::LINEAR,
+        );
+
+        let Some(image) = self
+            .images
+            .iter_mut()
+            .find(|image| image.record.item.id == cropped.item_id)
+        else {
+            return Err(format!("missing canvas item {}", cropped.item_id));
+        };
+
+        image.record.item = updated_item;
+        image.record.asset = asset;
+        image.texture = texture;
         Ok(())
     }
 
@@ -142,6 +236,24 @@ impl CanvasState {
         }
 
         found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))
+    }
+
+    pub fn take_pending_crop(&mut self) -> Option<CanvasCropRequest> {
+        self.pending_crop.take()
+    }
+
+    pub fn mark_crop_pending(&mut self, item_id: i64) {
+        if !self.crop_pending_item_ids.contains(&item_id) {
+            self.crop_pending_item_ids.push(item_id);
+        }
+    }
+
+    pub fn clear_crop_pending(&mut self, item_id: i64) {
+        self.crop_pending_item_ids.retain(|pending_id| *pending_id != item_id);
+    }
+
+    pub fn evict_cached_asset(&mut self, asset_id: i64) {
+        self.asset_rgba_cache.remove(&asset_id);
     }
 
     pub fn take_dirty_items(&mut self) -> Vec<crate::data::BoardItem> {
@@ -305,6 +417,10 @@ impl CanvasState {
             .retain(|item_id| !removed_ids.contains(item_id));
         self.drag_state = None;
         self.marquee_state = None;
+        self.crop_state = None;
+        self.crop_pending_item_ids
+            .retain(|item_id| !removed_ids.contains(item_id));
+        self.pending_crop = None;
         removed_ids
     }
 
@@ -377,6 +493,42 @@ impl CanvasState {
 
         arranged_ids.len()
     }
+
+    fn image_by_item_id(&self, item_id: i64) -> Option<&CanvasImage> {
+        self.images.iter().find(|image| image.record.item.id == item_id)
+    }
+
+    fn build_crop_request(
+        &self,
+        rect: egui::Rect,
+        crop_state: &CropState,
+    ) -> Option<CanvasCropRequest> {
+        let image = self.image_by_item_id(crop_state.item_id)?;
+        let image_rect = image_screen_rect(self, rect, image);
+        let clamped_screen_rect =
+            clamped_crop_screen_rect(crop_state.start_screen, crop_state.current_screen, image_rect)?;
+        let local_rect = screen_rect_to_local_crop_rect(
+            clamped_screen_rect,
+            image_rect,
+            image.record.asset.width,
+            image.record.asset.height,
+        )?;
+        let crop_rect =
+            pixel_crop_rect_from_local(local_rect, image.record.asset.width, image.record.asset.height)?;
+        let crop_offset_local = crop_center_offset_local(&image.record.asset, local_rect);
+
+        Some(CanvasCropRequest {
+            item_id: image.record.item.id,
+            source_asset: image.record.asset.clone(),
+            source_rgba: self.asset_rgba_cache.get(&image.record.asset.id)?.clone(),
+            crop_rect,
+            crop_offset_local,
+        })
+    }
+
+    fn can_start_crop_on_item(&self, item_id: i64) -> bool {
+        !self.crop_pending_item_ids.contains(&item_id)
+    }
 }
 
 fn compact_layout(
@@ -415,6 +567,7 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut CanvasState, debug_
     painter.rect_filled(rect, 0.0, crate::theme::SHADE_90);
     paint_images(&painter, rect, state, debug_labels);
     paint_selection_bounds(&painter, rect, state);
+    paint_crop_marquee(&painter, rect, state);
     paint_marquee(&painter, state);
 }
 
@@ -425,6 +578,7 @@ fn handle_input(
     response: &egui::Response,
 ) {
     let pointer_pos = ui.input(|i| i.pointer.latest_pos());
+    let crop_key_held = ui.input(|i| i.key_down(egui::Key::C));
     let shift_held = ui.input(|i| i.modifiers.shift);
     let pointer_on_canvas = pointer_pos
         .map(|pointer_pos| ui.ctx().layer_id_at(pointer_pos) == Some(response.layer_id))
@@ -442,7 +596,19 @@ fn handle_input(
         && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))
         && let Some(pointer_pos) = pointer_pos
     {
-        if let Some(item_id) = hit_test_image(state, rect, pointer_pos) {
+        if crop_key_held && let Some(item_id) = hit_test_image(state, rect, pointer_pos) {
+            if !state.can_start_crop_on_item(item_id) {
+                return;
+            }
+            state.set_single_selection(item_id);
+            state.drag_state = None;
+            state.marquee_state = None;
+            state.crop_state = Some(CropState {
+                item_id,
+                start_screen: pointer_pos,
+                current_screen: pointer_pos,
+            });
+        } else if let Some(item_id) = hit_test_image(state, rect, pointer_pos) {
             if shift_held {
                 state.add_to_selection(item_id);
             } else if !state.is_selected(item_id) {
@@ -467,6 +633,7 @@ fn handle_input(
                 starting_positions,
             });
             state.marquee_state = None;
+            state.crop_state = None;
         } else {
             state.drag_state = None;
             state.clear_selection();
@@ -474,10 +641,19 @@ fn handle_input(
                 start_screen: pointer_pos,
                 current_screen: pointer_pos,
             });
+            state.crop_state = None;
         }
     }
 
-    if let Some(drag_state) = &state.drag_state
+    if let Some(crop_state) = &mut state.crop_state
+        && ui.input(|i| i.pointer.primary_down())
+        && let Some(pointer_pos) = pointer_pos
+    {
+        crop_state.current_screen = pointer_pos;
+    }
+
+    if state.crop_state.is_none()
+        && let Some(drag_state) = &state.drag_state
         && ui.input(|i| i.pointer.primary_down())
         && let Some(pointer_pos) = pointer_pos
     {
@@ -497,7 +673,9 @@ fn handle_input(
     }
 
     if ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
-        if let Some(drag_state) = state.drag_state.take() {
+        if let Some(crop_state) = state.crop_state.take() {
+            state.pending_crop = state.build_crop_request(rect, &crop_state);
+        } else if let Some(drag_state) = state.drag_state.take() {
             for (item_id, _) in drag_state.starting_positions {
                 state.mark_dirty(item_id);
             }
@@ -505,7 +683,8 @@ fn handle_input(
         state.marquee_state = None;
     }
 
-    if let Some(marquee_state) = &mut state.marquee_state
+    if state.crop_state.is_none()
+        && let Some(marquee_state) = &mut state.marquee_state
         && ui.input(|i| i.pointer.primary_down())
         && let Some(pointer_pos) = pointer_pos
     {
@@ -528,6 +707,10 @@ fn handle_input(
     let Some(pointer_pos) = pointer_pos else {
         return;
     };
+
+    if state.crop_state.is_some() {
+        return;
+    }
 
     let zoom_delta = ui.input(|i| i.zoom_delta());
     if (zoom_delta - 1.0).abs() > f32::EPSILON {
@@ -629,6 +812,35 @@ fn paint_marquee(painter: &egui::Painter, state: &CanvasState) {
     );
 }
 
+fn paint_crop_marquee(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) {
+    let Some(crop_state) = &state.crop_state else {
+        return;
+    };
+    let Some(image) = state.image_by_item_id(crop_state.item_id) else {
+        return;
+    };
+
+    let image_rect = image_screen_rect(state, rect, image);
+    let Some(crop_rect) =
+        clamped_crop_screen_rect(crop_state.start_screen, crop_state.current_screen, image_rect)
+    else {
+        return;
+    };
+
+    painter.rect_stroke(
+        image_rect,
+        0.0,
+        egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
+        egui::StrokeKind::Outside,
+    );
+    painter.rect_stroke(
+        crop_rect,
+        0.0,
+        egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
+        egui::StrokeKind::Outside,
+    );
+}
+
 fn paint_selection_bounds(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) {
     if state.selected_item_ids.len() <= 1 {
         return;
@@ -644,4 +856,186 @@ fn paint_selection_bounds(painter: &egui::Painter, rect: egui::Rect, state: &Can
         egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
         egui::StrokeKind::Outside,
     );
+}
+
+fn clamped_crop_screen_rect(
+    start_screen: egui::Pos2,
+    current_screen: egui::Pos2,
+    image_rect: egui::Rect,
+) -> Option<egui::Rect> {
+    let clamped_current = egui::pos2(
+        current_screen.x.clamp(image_rect.left(), image_rect.right()),
+        current_screen.y.clamp(image_rect.top(), image_rect.bottom()),
+    );
+    let rect = egui::Rect::from_two_pos(start_screen, clamped_current);
+    (rect.width() > 0.0 && rect.height() > 0.0).then_some(rect)
+}
+
+fn screen_rect_to_local_crop_rect(
+    screen_rect: egui::Rect,
+    image_rect: egui::Rect,
+    asset_width: u32,
+    asset_height: u32,
+) -> Option<egui::Rect> {
+    let image_size = image_rect.size();
+    if image_size.x <= 0.0 || image_size.y <= 0.0 {
+        return None;
+    }
+
+    let min = egui::pos2(
+        ((screen_rect.min.x - image_rect.min.x) / image_size.x * asset_width as f32)
+            .clamp(0.0, asset_width as f32),
+        ((screen_rect.min.y - image_rect.min.y) / image_size.y * asset_height as f32)
+            .clamp(0.0, asset_height as f32),
+    );
+    let max = egui::pos2(
+        ((screen_rect.max.x - image_rect.min.x) / image_size.x * asset_width as f32)
+            .clamp(0.0, asset_width as f32),
+        ((screen_rect.max.y - image_rect.min.y) / image_size.y * asset_height as f32)
+            .clamp(0.0, asset_height as f32),
+    );
+
+    Some(egui::Rect::from_min_max(min, max))
+}
+
+fn pixel_crop_rect_from_local(
+    local_rect: egui::Rect,
+    asset_width: u32,
+    asset_height: u32,
+) -> Option<PixelCropRect> {
+    let min_x = local_rect.min.x.floor().clamp(0.0, asset_width as f32) as u32;
+    let min_y = local_rect.min.y.floor().clamp(0.0, asset_height as f32) as u32;
+    let max_x = local_rect.max.x.ceil().clamp(0.0, asset_width as f32) as u32;
+    let max_y = local_rect.max.y.ceil().clamp(0.0, asset_height as f32) as u32;
+    let width = max_x.saturating_sub(min_x);
+    let height = max_y.saturating_sub(min_y);
+
+    (width > 0 && height > 0).then_some(PixelCropRect {
+        x: min_x,
+        y: min_y,
+        width,
+        height,
+    })
+}
+
+fn crop_center_offset_local(
+    asset: &crate::data::ImageAsset,
+    local_rect: egui::Rect,
+) -> egui::Vec2 {
+    let asset_center = egui::pos2(asset.width as f32 * 0.5, asset.height as f32 * 0.5);
+    let local_center = local_rect.center();
+    local_center - asset_center
+}
+
+fn merge_cropped_item_fields(
+    item: &mut crate::data::BoardItem,
+    asset_id: i64,
+    crop_offset_local: egui::Vec2,
+) {
+    item.asset_id = asset_id;
+    let scale = item.scale.max(0.01);
+    item.x += crop_offset_local.x * scale;
+    item.y += crop_offset_local.y * scale;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        crop_center_offset_local, merge_cropped_item_fields, pixel_crop_rect_from_local,
+        screen_rect_to_local_crop_rect,
+    };
+    use crate::data::{BoardItem, ImageAsset};
+    use std::path::PathBuf;
+
+    #[test]
+    fn converts_drag_rect_to_crop_pixels_and_live_scale_position() {
+        let screen_rect =
+            eframe::egui::Rect::from_min_max(eframe::egui::pos2(40.0, 20.0), eframe::egui::pos2(240.0, 180.0));
+        let local_rect = screen_rect_to_local_crop_rect(screen_rect, screen_rect, 100, 80).unwrap();
+        let crop_rect = pixel_crop_rect_from_local(local_rect, 100, 80).unwrap();
+
+        assert_eq!(crop_rect.x, 0);
+        assert_eq!(crop_rect.y, 0);
+        assert_eq!(crop_rect.width, 100);
+        assert_eq!(crop_rect.height, 80);
+
+        let item = BoardItem {
+            id: 1,
+            asset_id: 1,
+            x: 200.0,
+            y: 120.0,
+            scale: 2.0,
+            rotation: 0.0,
+            z_index: 0,
+            archived: false,
+        };
+        let asset = ImageAsset {
+            id: 1,
+            original_path: PathBuf::from("image.png"),
+            filename: "image.png".to_owned(),
+            mime_type: "image/png".to_owned(),
+            width: 100,
+            height: 80,
+            file_size: 0,
+            imported_at: 0,
+        };
+        let kept_local =
+            eframe::egui::Rect::from_min_max(eframe::egui::pos2(10.0, 20.0), eframe::egui::pos2(40.0, 50.0));
+        let crop_offset_local = crop_center_offset_local(&asset, kept_local);
+        let mut merged_item = item.clone();
+        merge_cropped_item_fields(&mut merged_item, 2, crop_offset_local);
+
+        assert_eq!(merged_item.asset_id, 2);
+        assert_eq!(merged_item.x, 150.0);
+        assert_eq!(merged_item.y, 110.0);
+    }
+
+    #[test]
+    fn rounds_local_rect_outward_to_cover_selected_pixels() {
+        let local_rect = eframe::egui::Rect::from_min_max(
+            eframe::egui::pos2(10.2, 11.8),
+            eframe::egui::pos2(40.1, 30.2),
+        );
+        let crop_rect = pixel_crop_rect_from_local(local_rect, 100, 100).unwrap();
+
+        assert_eq!(crop_rect.x, 10);
+        assert_eq!(crop_rect.y, 11);
+        assert_eq!(crop_rect.width, 31);
+        assert_eq!(crop_rect.height, 20);
+    }
+
+    #[test]
+    fn merge_only_updates_crop_owned_item_fields() {
+        let mut item = BoardItem {
+            id: 7,
+            asset_id: 2,
+            x: 12.0,
+            y: 18.0,
+            scale: 1.5,
+            rotation: 0.25,
+            z_index: 9,
+            archived: false,
+        };
+
+        merge_cropped_item_fields(&mut item, 11, eframe::egui::vec2(80.0, 96.0));
+
+        assert_eq!(item.asset_id, 11);
+        assert_eq!(item.x, 132.0);
+        assert_eq!(item.y, 162.0);
+        assert_eq!(item.scale, 1.5);
+        assert_eq!(item.rotation, 0.25);
+        assert_eq!(item.z_index, 9);
+        assert!(!item.archived);
+    }
+
+    #[test]
+    fn pending_crop_guard_blocks_second_crop_until_cleared() {
+        let mut state = super::CanvasState::default();
+
+        assert!(state.can_start_crop_on_item(42));
+        state.mark_crop_pending(42);
+        assert!(!state.can_start_crop_on_item(42));
+        state.clear_crop_pending(42);
+        assert!(state.can_start_crop_on_item(42));
+    }
 }

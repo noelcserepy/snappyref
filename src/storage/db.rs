@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
 use image::{ColorType, ImageFormat};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Transaction, params};
 
 use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset, UserSession};
 
@@ -57,7 +57,17 @@ impl Library {
         width: u32,
         height: u32,
     ) -> Result<PathBuf, String> {
-        let destination = self.destination_path("clipboard", "png");
+        self.store_rgba_image("clipboard", rgba, width, height)
+    }
+
+    pub fn store_rgba_image(
+        &self,
+        source_name: &str,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<PathBuf, String> {
+        let destination = self.destination_path(source_name, "png");
         image::save_buffer_with_format(
             &destination,
             rgba,
@@ -84,89 +94,116 @@ impl Library {
             .transaction()
             .map_err(|error| format!("failed to start transaction: {error}"))?;
 
-        let filename = stored_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("image.png")
-            .to_owned();
-        let mime_type = mime_type.to_owned();
-        let imported_at = unix_timestamp_seconds();
-        let original_path = stored_path.to_string_lossy().into_owned();
-
-        transaction
-            .execute(
-                "INSERT INTO assets (
-                    original_path,
-                    filename,
-                    mime_type,
-                    width,
-                    height,
-                    file_size,
-                    imported_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    original_path,
-                    filename,
-                    mime_type,
-                    i64::from(width),
-                    i64::from(height),
-                    file_size as i64,
-                    imported_at,
-                ],
-            )
-            .map_err(|error| format!("failed to insert asset: {error}"))?;
-        let asset_id = transaction.last_insert_rowid();
-
-        transaction
-            .execute(
-                "INSERT INTO board_items (
-                    asset_id,
-                    x,
-                    y,
-                    scale,
-                    rotation,
-                    z_index,
-                    archived
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    asset_id,
-                    desired_world.x,
-                    desired_world.y,
-                    1.0_f32,
-                    0.0_f32,
-                    0_i64,
-                    0_i64
-                ],
-            )
-            .map_err(|error| format!("failed to insert board item: {error}"))?;
-        let item_id = transaction.last_insert_rowid();
+        let asset = insert_asset_row(&transaction, stored_path, mime_type, width, height, file_size)?;
+        let item = insert_board_item_row(&transaction, asset.id, desired_world)?;
 
         transaction
             .commit()
             .map_err(|error| format!("failed to commit transaction: {error}"))?;
 
         Ok(BoardItemWithAsset {
-            asset: ImageAsset {
-                id: asset_id,
-                original_path: stored_path.to_path_buf(),
-                filename,
-                mime_type,
-                width,
-                height,
-                file_size,
-                imported_at,
-            },
-            item: BoardItem {
-                id: item_id,
-                asset_id,
-                x: desired_world.x,
-                y: desired_world.y,
-                scale: 1.0,
-                rotation: 0.0,
-                z_index: 0,
-                archived: false,
-            },
+            asset,
+            item,
         })
+    }
+
+    pub fn create_asset_and_relink_board_item(
+        &self,
+        item_id: i64,
+        stored_path: &Path,
+        mime_type: &str,
+        width: u32,
+        height: u32,
+        file_size: u64,
+        desired_world: egui::Pos2,
+    ) -> Result<ImageAsset, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start relink transaction: {error}"))?;
+
+        let asset = insert_asset_row(&transaction, stored_path, mime_type, width, height, file_size)?;
+        transaction
+            .execute(
+                "UPDATE board_items
+                 SET asset_id = ?1, x = ?2, y = ?3
+                 WHERE id = ?4",
+                params![asset.id, desired_world.x, desired_world.y, item_id],
+            )
+            .map_err(|error| format!("failed to relink board item {item_id}: {error}"))?;
+
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit relink transaction: {error}"))?;
+
+        Ok(asset)
+    }
+
+    pub fn restore_board_item_and_maybe_remove_asset(
+        &self,
+        item: &BoardItem,
+        removed_asset_id: i64,
+    ) -> Result<Option<PathBuf>, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start restore transaction: {error}"))?;
+
+        transaction
+            .execute(
+                "UPDATE board_items
+                 SET asset_id = ?1, x = ?2, y = ?3, scale = ?4, rotation = ?5, z_index = ?6, archived = ?7
+                 WHERE id = ?8",
+                params![
+                    item.asset_id,
+                    item.x,
+                    item.y,
+                    item.scale,
+                    item.rotation,
+                    item.z_index,
+                    if item.archived { 1_i64 } else { 0_i64 },
+                    item.id,
+                ],
+            )
+            .map_err(|error| format!("failed to restore board item {}: {error}", item.id))?;
+
+        let removed_asset_path = transaction
+            .query_row(
+                "SELECT original_path
+                 FROM assets
+                 WHERE id = ?1",
+                params![removed_asset_id],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .map(PathBuf::from);
+
+        let asset_still_used: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*)
+                 FROM board_items
+                 WHERE asset_id = ?1",
+                params![removed_asset_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| {
+                format!("failed to inspect asset references for {removed_asset_id}: {error}")
+            })?;
+
+        let removed_asset_path = if asset_still_used == 0 {
+            transaction
+                .execute("DELETE FROM assets WHERE id = ?1", params![removed_asset_id])
+                .map_err(|error| format!("failed to delete asset {removed_asset_id}: {error}"))?;
+            removed_asset_path
+        } else {
+            None
+        };
+
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit restore transaction: {error}"))?;
+
+        Ok(removed_asset_path)
     }
 
     pub fn load_board_items(&self) -> Result<Vec<BoardItemWithAsset>, String> {
@@ -564,4 +601,96 @@ fn ensure_board_items_archived_column(connection: &Connection) -> Result<(), Str
         .map_err(|error| format!("failed to add archived column to board_items: {error}"))?;
 
     Ok(())
+}
+
+fn insert_asset_row(
+    transaction: &Transaction<'_>,
+    stored_path: &Path,
+    mime_type: &str,
+    width: u32,
+    height: u32,
+    file_size: u64,
+) -> Result<ImageAsset, String> {
+    let filename = stored_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("image.png")
+        .to_owned();
+    let mime_type = mime_type.to_owned();
+    let imported_at = unix_timestamp_seconds();
+    let original_path = stored_path.to_string_lossy().into_owned();
+
+    transaction
+        .execute(
+            "INSERT INTO assets (
+                original_path,
+                filename,
+                mime_type,
+                width,
+                height,
+                file_size,
+                imported_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                original_path,
+                filename,
+                mime_type,
+                i64::from(width),
+                i64::from(height),
+                file_size as i64,
+                imported_at,
+            ],
+        )
+        .map_err(|error| format!("failed to insert asset: {error}"))?;
+
+    Ok(ImageAsset {
+        id: transaction.last_insert_rowid(),
+        original_path: stored_path.to_path_buf(),
+        filename,
+        mime_type,
+        width,
+        height,
+        file_size,
+        imported_at,
+    })
+}
+
+fn insert_board_item_row(
+    transaction: &Transaction<'_>,
+    asset_id: i64,
+    desired_world: egui::Pos2,
+) -> Result<BoardItem, String> {
+    transaction
+        .execute(
+            "INSERT INTO board_items (
+                asset_id,
+                x,
+                y,
+                scale,
+                rotation,
+                z_index,
+                archived
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                asset_id,
+                desired_world.x,
+                desired_world.y,
+                1.0_f32,
+                0.0_f32,
+                0_i64,
+                0_i64
+            ],
+        )
+        .map_err(|error| format!("failed to insert board item: {error}"))?;
+
+    Ok(BoardItem {
+        id: transaction.last_insert_rowid(),
+        asset_id,
+        x: desired_world.x,
+        y: desired_world.y,
+        scale: 1.0,
+        rotation: 0.0,
+        z_index: 0,
+        archived: false,
+    })
 }
