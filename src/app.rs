@@ -1220,8 +1220,8 @@ fn paint_settings_section(ui: &mut egui::Ui, auto_image_scaling: &mut bool) {
                     );
                     ui.label(
                         egui::RichText::new(format!(
-                            "Cap imported image height at {:.0} canvas units",
-                            crate::jobs::DEFAULT_IMPORT_TARGET_CANVAS_HEIGHT
+                            "Cap imported image area at {:.0} canvas sq units",
+                            crate::jobs::DEFAULT_IMPORT_TARGET_CANVAS_AREA
                         ))
                         .size(10.0)
                         .color(crate::theme::SHADE_30),

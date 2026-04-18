@@ -9,7 +9,7 @@ use crate::data::BoardItemWithAsset;
 use crate::jobs::image_formats::decode_image_file;
 use crate::storage::Library;
 
-pub const DEFAULT_IMPORT_TARGET_CANVAS_HEIGHT: f32 = 300.0;
+pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
 
 #[derive(Clone, Debug)]
 pub enum ImportRequest {
@@ -132,7 +132,7 @@ pub fn import_path_sync(
             decoded.height,
             decoded.file_size,
             desired_world,
-            initial_import_scale(decoded.height, auto_scale),
+            initial_import_scale(decoded.width, decoded.height, auto_scale),
         )
         .map_err(|error| format!("{}: {error}", stored_path.display()))?;
 
@@ -195,7 +195,7 @@ fn import_clipboard(
         height,
         file_size,
         desired_world,
-        initial_import_scale(height, auto_scale),
+        initial_import_scale(width, height, auto_scale),
     ) {
         Ok(record) => record,
         Err(error) => {
@@ -299,18 +299,19 @@ fn crop_item(library: &Library, request: crate::canvas::CanvasCropRequest) -> Im
     })
 }
 
-fn initial_import_scale(asset_height: u32, auto_scale: bool) -> f32 {
-    if !auto_scale || asset_height == 0 {
+fn initial_import_scale(asset_width: u32, asset_height: u32, auto_scale: bool) -> f32 {
+    if !auto_scale || asset_width == 0 || asset_height == 0 {
         return 1.0;
     }
 
-    (DEFAULT_IMPORT_TARGET_CANVAS_HEIGHT / asset_height as f32).min(1.0)
+    let asset_area = asset_width as f32 * asset_height as f32;
+    (DEFAULT_IMPORT_TARGET_CANVAS_AREA / asset_area).sqrt().min(1.0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_IMPORT_TARGET_CANVAS_HEIGHT, ImportResult, import_clipboard, import_path_sync,
+        DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImportResult, import_clipboard, import_path_sync,
         initial_import_scale,
     };
     use crate::storage::Library;
@@ -320,29 +321,35 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn scales_down_large_portrait_images_to_target_height() {
-        let scale = initial_import_scale(1500, true);
-        assert!((scale - (DEFAULT_IMPORT_TARGET_CANVAS_HEIGHT / 1500.0)).abs() < f32::EPSILON);
+    fn scales_down_large_portrait_images_to_target_area() {
+        let scale = initial_import_scale(1000, 1500, true);
+        assert!(
+            (scale - (DEFAULT_IMPORT_TARGET_CANVAS_AREA / 1_500_000.0).sqrt()).abs()
+                < f32::EPSILON
+        );
     }
 
     #[test]
-    fn scales_down_large_landscape_images_by_height_cap() {
-        let scale = initial_import_scale(1080, true);
-        assert!((scale - (DEFAULT_IMPORT_TARGET_CANVAS_HEIGHT / 1080.0)).abs() < f32::EPSILON);
+    fn scales_down_large_landscape_images_by_area_cap() {
+        let scale = initial_import_scale(1920, 1080, true);
+        assert!(
+            (scale - (DEFAULT_IMPORT_TARGET_CANVAS_AREA / 2_073_600.0).sqrt()).abs()
+                < f32::EPSILON
+        );
     }
 
     #[test]
     fn keeps_smaller_images_at_full_scale() {
-        assert_eq!(initial_import_scale(240, true), 1.0);
+        assert_eq!(initial_import_scale(180, 240, true), 1.0);
     }
 
     #[test]
     fn disabling_auto_scale_keeps_full_scale() {
-        assert_eq!(initial_import_scale(2000, false), 1.0);
+        assert_eq!(initial_import_scale(1200, 2000, false), 1.0);
     }
 
     #[test]
-    fn file_imports_land_in_same_height_band() {
+    fn file_imports_land_in_same_area_band() {
         let root = temp_library_root("file-import-scaling");
         let library = Library::initialize(root.clone()).unwrap();
 
@@ -359,9 +366,9 @@ mod tests {
             .unwrap();
         let small = import_path_sync(&library, small_path, eframe::egui::Pos2::ZERO, true).unwrap();
 
-        assert!((portrait.record.asset.height as f32 * portrait.record.item.scale - 300.0).abs() < 0.01);
-        assert!((landscape.record.asset.height as f32 * landscape.record.item.scale - 300.0).abs() < 0.01);
-        assert!((square.record.asset.height as f32 * square.record.item.scale - 300.0).abs() < 0.01);
+        assert!((displayed_area(&portrait) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
+        assert!((displayed_area(&landscape) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
+        assert!((displayed_area(&square) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
         assert_eq!(small.record.item.scale, 1.0);
 
         let _ = fs::remove_dir_all(root);
@@ -398,7 +405,7 @@ mod tests {
             other => panic!("expected loaded small clipboard image, got {other:?}"),
         };
 
-        assert!((tall.record.asset.height as f32 * tall.record.item.scale - 300.0).abs() < 0.01);
+        assert!((displayed_area(&tall) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
         assert_eq!(small.record.item.scale, 1.0);
 
         let _ = fs::remove_dir_all(root);
@@ -429,5 +436,12 @@ mod tests {
 
     fn solid_rgba(width: u32, height: u32) -> Vec<u8> {
         vec![255; width as usize * height as usize * 4]
+    }
+
+    fn displayed_area(loaded: &super::LoadedCanvasItem) -> f32 {
+        loaded.record.asset.width as f32
+            * loaded.record.asset.height as f32
+            * loaded.record.item.scale
+            * loaded.record.item.scale
     }
 }
