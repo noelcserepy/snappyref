@@ -533,6 +533,7 @@ impl ReferenceApp {
         }
 
         let desired_world = self.preferred_import_world(ui.ctx(), screen_rect);
+        let viewport_world = self.import_viewport_world_rect(screen_rect);
 
         for dropped_file in dropped_files {
             let Some(source_path) = dropped_file.path else {
@@ -542,6 +543,7 @@ impl ReferenceApp {
             if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::ImportPath {
                 source_path: source_path.clone(),
                 desired_world,
+                viewport_world,
                 auto_scale: self.auto_image_scaling,
                 import_gap: self.import_gap,
             }) {
@@ -589,6 +591,7 @@ impl ReferenceApp {
         };
 
         let desired_world = self.preferred_import_world(ctx, screen_rect);
+        let viewport_world = self.import_viewport_world_rect(screen_rect);
         let rgba = clipboard_image.bytes.into_owned();
         let width = clipboard_image.width as u32;
         let height = clipboard_image.height as u32;
@@ -598,6 +601,7 @@ impl ReferenceApp {
             width,
             height,
             desired_world,
+            viewport_world,
             auto_scale: self.auto_image_scaling,
             import_gap: self.import_gap,
         }) {
@@ -910,6 +914,20 @@ impl ReferenceApp {
     fn preferred_import_world(&self, ctx: &egui::Context, screen_rect: egui::Rect) -> egui::Pos2 {
         let pointer_screen_pos = ctx.input(|input| input.pointer.latest_pos());
         self.preferred_import_world_with_pointer(screen_rect, pointer_screen_pos)
+    }
+
+    fn import_viewport_world_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
+        let drawer_rect = self.drawer_rect(screen_rect);
+        let visible_screen_rect = egui::Rect::from_min_max(
+            screen_rect.min,
+            egui::pos2(screen_rect.max.x, drawer_rect.top()),
+        );
+        egui::Rect::from_two_pos(
+            self.canvas
+                .screen_to_world(visible_screen_rect.min, screen_rect),
+            self.canvas
+                .screen_to_world(visible_screen_rect.max, screen_rect),
+        )
     }
 
     fn preferred_import_world_with_pointer(

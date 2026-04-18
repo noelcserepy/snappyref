@@ -16,6 +16,7 @@ pub enum ImportRequest {
     ImportPath {
         source_path: PathBuf,
         desired_world: egui::Pos2,
+        viewport_world: egui::Rect,
         auto_scale: bool,
         import_gap: f32,
     },
@@ -24,6 +25,7 @@ pub enum ImportRequest {
         width: u32,
         height: u32,
         desired_world: egui::Pos2,
+        viewport_world: egui::Rect,
         auto_scale: bool,
         import_gap: f32,
     },
@@ -79,14 +81,23 @@ impl ImportWorker {
                     ImportRequest::ImportPath {
                         source_path,
                         desired_world,
+                        viewport_world,
                         auto_scale,
                         import_gap,
-                    } => import_path(&library, source_path, desired_world, auto_scale, import_gap),
+                    } => import_path(
+                        &library,
+                        source_path,
+                        desired_world,
+                        viewport_world,
+                        auto_scale,
+                        import_gap,
+                    ),
                     ImportRequest::ImportClipboard {
                         rgba,
                         width,
                         height,
                         desired_world,
+                        viewport_world,
                         auto_scale,
                         import_gap,
                     } => import_clipboard(
@@ -95,6 +106,7 @@ impl ImportWorker {
                         width,
                         height,
                         desired_world,
+                        viewport_world,
                         auto_scale,
                         import_gap,
                     ),
@@ -127,6 +139,7 @@ pub fn import_path_sync(
     library: &Library,
     source_path: PathBuf,
     desired_world: egui::Pos2,
+    viewport_world: egui::Rect,
     auto_scale: bool,
     import_gap: f32,
 ) -> Result<LoadedCanvasItem, String> {
@@ -136,6 +149,7 @@ pub fn import_path_sync(
     let arranged_world = arranged_import_world(
         library,
         desired_world,
+        viewport_world,
         decoded.width,
         decoded.height,
         initial_scale,
@@ -168,6 +182,7 @@ fn import_path(
     library: &Library,
     source_path: PathBuf,
     desired_world: egui::Pos2,
+    viewport_world: egui::Rect,
     auto_scale: bool,
     import_gap: f32,
 ) -> ImportResult {
@@ -175,6 +190,7 @@ fn import_path(
         library,
         source_path.clone(),
         desired_world,
+        viewport_world,
         auto_scale,
         import_gap,
     ) {
@@ -193,6 +209,7 @@ fn import_clipboard(
     width: u32,
     height: u32,
     desired_world: egui::Pos2,
+    viewport_world: egui::Rect,
     auto_scale: bool,
     import_gap: f32,
 ) -> ImportResult {
@@ -222,6 +239,7 @@ fn import_clipboard(
     let arranged_world = match arranged_import_world(
         library,
         desired_world,
+        viewport_world,
         width,
         height,
         initial_scale,
@@ -371,6 +389,7 @@ struct PlacementCandidate {
 fn arranged_import_world(
     library: &Library,
     desired_world: egui::Pos2,
+    viewport_world: egui::Rect,
     asset_width: u32,
     asset_height: u32,
     initial_scale: f32,
@@ -400,7 +419,7 @@ fn arranged_import_world(
             .then_with(|| left.id.cmp(&right.id))
     });
 
-    let mut best_candidate: Option<(f32, f32, usize, egui::Pos2)> = None;
+    let mut best_candidate: Option<(f32, f32, f32, usize, egui::Pos2)> = None;
     let mut generation_index = 0_usize;
 
     for existing in &existing_rects {
@@ -424,22 +443,28 @@ fn arranged_import_world(
                 continue;
             }
 
-            let squareness_score = occupied_bounds_squareness(&existing_rects, candidate_rect);
+            let viewport_score = viewport_distance_score(candidate_rect.center(), viewport_world);
             let distance_score = candidate.center.distance_sq(desired_world);
+            let squareness_score = occupied_bounds_squareness(&existing_rects, candidate_rect);
             let score = (
-                squareness_score,
+                viewport_score,
                 distance_score,
+                squareness_score,
                 candidate.generation_index,
                 candidate.center,
             );
 
             match best_candidate {
-                Some((best_squareness, best_distance, best_index, _))
-                    if squareness_score > best_squareness
-                        || ((squareness_score - best_squareness).abs() < 0.001
+                Some((best_viewport, best_distance, best_squareness, best_index, _))
+                    if viewport_score > best_viewport
+                        || ((viewport_score - best_viewport).abs() < 0.001
                             && distance_score > best_distance)
-                        || ((squareness_score - best_squareness).abs() < 0.001
+                        || ((viewport_score - best_viewport).abs() < 0.001
                             && (distance_score - best_distance).abs() < 0.001
+                            && squareness_score > best_squareness)
+                        || ((viewport_score - best_viewport).abs() < 0.001
+                            && (distance_score - best_distance).abs() < 0.001
+                            && (squareness_score - best_squareness).abs() < 0.001
                             && candidate.generation_index >= best_index) => {}
                 _ => best_candidate = Some(score),
             }
@@ -447,8 +472,20 @@ fn arranged_import_world(
     }
 
     Ok(best_candidate
-        .map(|(_, _, _, center)| center)
+        .map(|(_, _, _, _, center)| center)
         .unwrap_or(desired_world))
+}
+
+fn viewport_distance_score(candidate_center: egui::Pos2, viewport_world: egui::Rect) -> f32 {
+    let clamped = egui::pos2(
+        candidate_center
+            .x
+            .clamp(viewport_world.left(), viewport_world.right()),
+        candidate_center
+            .y
+            .clamp(viewport_world.top(), viewport_world.bottom()),
+    );
+    candidate_center.distance_sq(clamped)
 }
 
 fn displayed_layout_rect(record: &BoardLayoutItem) -> LayoutRect {
@@ -546,6 +583,7 @@ mod tests {
             &library,
             portrait_path,
             eframe::egui::Pos2::ZERO,
+            test_viewport_world(),
             true,
             crate::data::DEFAULT_IMPORT_GAP,
         )
@@ -554,6 +592,7 @@ mod tests {
             &library,
             landscape_path,
             eframe::egui::Pos2::ZERO,
+            test_viewport_world(),
             true,
             crate::data::DEFAULT_IMPORT_GAP,
         )
@@ -562,6 +601,7 @@ mod tests {
             &library,
             square_path,
             eframe::egui::Pos2::ZERO,
+            test_viewport_world(),
             true,
             crate::data::DEFAULT_IMPORT_GAP,
         )
@@ -570,6 +610,7 @@ mod tests {
             &library,
             small_path,
             eframe::egui::Pos2::ZERO,
+            test_viewport_world(),
             true,
             crate::data::DEFAULT_IMPORT_GAP,
         )
@@ -597,6 +638,7 @@ mod tests {
             390,
             844,
             eframe::egui::Pos2::ZERO,
+            test_viewport_world(),
             true,
             crate::data::DEFAULT_IMPORT_GAP,
         ) {
@@ -609,6 +651,7 @@ mod tests {
             160,
             200,
             eframe::egui::Pos2::ZERO,
+            test_viewport_world(),
             false,
             crate::data::DEFAULT_IMPORT_GAP,
         ) {
@@ -628,7 +671,9 @@ mod tests {
         let library = Library::initialize(root.clone()).unwrap();
         let anchor = eframe::egui::pos2(120.0, -48.0);
 
-        let arranged = arranged_import_world(&library, anchor, 300, 200, 1.0, 12.0).unwrap();
+        let arranged =
+            arranged_import_world(&library, anchor, test_viewport_world(), 300, 200, 1.0, 12.0)
+                .unwrap();
 
         assert_eq!(arranged, anchor);
         let _ = fs::remove_dir_all(root);
@@ -643,6 +688,7 @@ mod tests {
         let arranged = arranged_import_world(
             &library,
             eframe::egui::pos2(106.0, 106.0),
+            test_viewport_world(),
             100,
             100,
             1.0,
@@ -664,6 +710,7 @@ mod tests {
         let arranged = arranged_import_world(
             &library,
             eframe::egui::pos2(112.0, 50.0),
+            test_viewport_world(),
             100,
             100,
             1.0,
@@ -681,11 +728,43 @@ mod tests {
         let library = Library::initialize(root.clone()).unwrap();
         seed_board_item(&library, 1, 0.0, 0.0, 240, 80, 1.0);
 
-        let arranged =
-            arranged_import_world(&library, eframe::egui::pos2(172.0, 0.0), 80, 80, 1.0, 12.0)
-                .unwrap();
+        let arranged = arranged_import_world(
+            &library,
+            eframe::egui::pos2(172.0, 0.0),
+            test_viewport_world(),
+            80,
+            80,
+            1.0,
+            12.0,
+        )
+        .unwrap();
 
-        assert_eq!(arranged, eframe::egui::pos2(-80.0, 92.0));
+        assert_eq!(arranged, eframe::egui::pos2(172.0, 0.0));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn viewport_bounding_prefers_on_screen_candidate() {
+        let root = temp_library_root("placement-viewport-bounded");
+        let library = Library::initialize(root.clone()).unwrap();
+        seed_board_item(&library, 1, 0.0, 0.0, 240, 80, 1.0);
+        let viewport = eframe::egui::Rect::from_min_max(
+            eframe::egui::pos2(100.0, -60.0),
+            eframe::egui::pos2(260.0, 60.0),
+        );
+
+        let arranged = arranged_import_world(
+            &library,
+            eframe::egui::pos2(172.0, 0.0),
+            viewport,
+            80,
+            80,
+            1.0,
+            12.0,
+        )
+        .unwrap();
+
+        assert_eq!(arranged, eframe::egui::pos2(172.0, 0.0));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -701,6 +780,7 @@ mod tests {
             200,
             200,
             eframe::egui::Pos2::ZERO,
+            test_viewport_world(),
             false,
             gap,
         ) {
@@ -714,6 +794,7 @@ mod tests {
             200,
             200,
             eframe::egui::Pos2::ZERO,
+            test_viewport_world(),
             false,
             gap,
         ) {
@@ -767,6 +848,13 @@ mod tests {
             * loaded.record.asset.height as f32
             * loaded.record.item.scale
             * loaded.record.item.scale
+    }
+
+    fn test_viewport_world() -> eframe::egui::Rect {
+        eframe::egui::Rect::from_min_max(
+            eframe::egui::pos2(-10_000.0, -10_000.0),
+            eframe::egui::pos2(10_000.0, 10_000.0),
+        )
     }
 
     fn seed_board_item(
