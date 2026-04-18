@@ -892,7 +892,7 @@ impl ReferenceApp {
         self.status = "Undid crop".to_owned();
     }
 
-    fn handle_selection_shortcuts(&mut self, ctx: &egui::Context) {
+    fn handle_selection_shortcuts(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
@@ -930,7 +930,7 @@ impl ReferenceApp {
                     if !self.canvas.has_selection() {
                         continue;
                     }
-                    self.duplicate_selection_with_gap();
+                    self.duplicate_selection_with_gap(ctx, screen_rect);
                 }
                 SupportedShortcutAction::ToggleDrawer => {
                     self.drawer_open = !self.drawer_open;
@@ -950,7 +950,7 @@ impl ReferenceApp {
         }
     }
 
-    fn duplicate_selection_with_gap(&mut self) {
+    fn duplicate_selection_with_gap(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
         let Some(library) = &self.library else {
             self.status = "Storage unavailable".to_owned();
             return;
@@ -962,10 +962,22 @@ impl ReferenceApp {
             return;
         };
 
-        let anchor_world = egui::pos2(
-            source_center.x + source_bounds.width() + self.import_gap,
-            source_center.y,
-        );
+        let desired_world = self.preferred_import_world(ctx, screen_rect);
+        let viewport_world = self.import_viewport_world_rect(screen_rect);
+        let anchor_world = match crate::jobs::arrange_rect_world(
+            library,
+            desired_world,
+            viewport_world,
+            source_bounds.width(),
+            source_bounds.height(),
+            self.import_gap,
+        ) {
+            Ok(anchor_world) => anchor_world,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
         let duplicated = match library.duplicate_board_items(
             &self.canvas.selected_item_ids(),
             anchor_world,
@@ -1138,7 +1150,7 @@ impl eframe::App for ReferenceApp {
         self.handle_clipboard_copy(ui.ctx());
         self.handle_clipboard_paste(ui.ctx(), screen_rect);
         self.handle_dropped_files(ui, screen_rect);
-        self.handle_selection_shortcuts(ui.ctx());
+        self.handle_selection_shortcuts(ui.ctx(), screen_rect);
         let drawer_open = self.drawer_open;
         let drawer_height = if drawer_open {
             self.drawer_height(screen_rect)

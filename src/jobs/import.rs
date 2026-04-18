@@ -146,13 +146,12 @@ pub fn import_path_sync(
     let decoded = decode_image_file(&source_path)
         .map_err(|error| format!("{}: {error}", source_path.display()))?;
     let initial_scale = initial_import_scale(decoded.width, decoded.height, auto_scale);
-    let arranged_world = arranged_import_world(
+    let arranged_world = arrange_rect_world(
         library,
         desired_world,
         viewport_world,
-        decoded.width,
-        decoded.height,
-        initial_scale,
+        decoded.width as f32 * initial_scale.max(0.01),
+        decoded.height as f32 * initial_scale.max(0.01),
         import_gap,
     )?;
 
@@ -236,13 +235,12 @@ fn import_clipboard(
     };
 
     let initial_scale = initial_import_scale(width, height, auto_scale);
-    let arranged_world = match arranged_import_world(
+    let arranged_world = match arrange_rect_world(
         library,
         desired_world,
         viewport_world,
-        width,
-        height,
-        initial_scale,
+        width as f32 * initial_scale.max(0.01),
+        height as f32 * initial_scale.max(0.01),
         import_gap,
     ) {
         Ok(arranged_world) => arranged_world,
@@ -386,17 +384,14 @@ struct PlacementCandidate {
     generation_index: usize,
 }
 
-fn arranged_import_world(
+pub fn arrange_rect_world(
     library: &Library,
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
-    asset_width: u32,
-    asset_height: u32,
-    initial_scale: f32,
+    item_width: f32,
+    item_height: f32,
     import_gap: f32,
 ) -> Result<egui::Pos2, String> {
-    let item_width = asset_width as f32 * initial_scale.max(0.01);
-    let item_height = asset_height as f32 * initial_scale.max(0.01);
     let new_rect = egui::Rect::from_center_size(
         desired_world,
         egui::vec2(item_width.max(0.0), item_height.max(0.0)),
@@ -534,7 +529,7 @@ fn occupied_bounds_squareness(existing_rects: &[LayoutRect], candidate_rect: egu
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImportResult, arranged_import_world, import_clipboard,
+        DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImportResult, arrange_rect_world, import_clipboard,
         import_path_sync, initial_import_scale, rects_overlap_with_gap,
     };
     use crate::storage::Library;
@@ -672,7 +667,7 @@ mod tests {
         let anchor = eframe::egui::pos2(120.0, -48.0);
 
         let arranged =
-            arranged_import_world(&library, anchor, test_viewport_world(), 300, 200, 1.0, 12.0)
+            arrange_rect_world(&library, anchor, test_viewport_world(), 300.0, 200.0, 12.0)
                 .unwrap();
 
         assert_eq!(arranged, anchor);
@@ -685,13 +680,12 @@ mod tests {
         let library = Library::initialize(root.clone()).unwrap();
         seed_board_item(&library, 1, 0.0, 0.0, 100, 100, 1.0);
 
-        let arranged = arranged_import_world(
+        let arranged = arrange_rect_world(
             &library,
             eframe::egui::pos2(106.0, 106.0),
             test_viewport_world(),
-            100,
-            100,
-            1.0,
+            100.0,
+            100.0,
             12.0,
         )
         .unwrap();
@@ -707,13 +701,12 @@ mod tests {
         seed_board_item(&library, 1, 0.0, 0.0, 100, 100, 1.0);
         seed_board_item(&library, 2, 112.0, 0.0, 100, 100, 1.0);
 
-        let arranged = arranged_import_world(
+        let arranged = arrange_rect_world(
             &library,
             eframe::egui::pos2(112.0, 50.0),
             test_viewport_world(),
-            100,
-            100,
-            1.0,
+            100.0,
+            100.0,
             12.0,
         )
         .unwrap();
@@ -728,13 +721,12 @@ mod tests {
         let library = Library::initialize(root.clone()).unwrap();
         seed_board_item(&library, 1, 0.0, 0.0, 240, 80, 1.0);
 
-        let arranged = arranged_import_world(
+        let arranged = arrange_rect_world(
             &library,
             eframe::egui::pos2(172.0, 0.0),
             test_viewport_world(),
-            80,
-            80,
-            1.0,
+            80.0,
+            80.0,
             12.0,
         )
         .unwrap();
@@ -753,13 +745,12 @@ mod tests {
             eframe::egui::pos2(260.0, 60.0),
         );
 
-        let arranged = arranged_import_world(
+        let arranged = arrange_rect_world(
             &library,
             eframe::egui::pos2(172.0, 0.0),
             viewport,
-            80,
-            80,
-            1.0,
+            80.0,
+            80.0,
             12.0,
         )
         .unwrap();
