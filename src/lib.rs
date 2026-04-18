@@ -1,9 +1,9 @@
 mod app;
 mod canvas;
 mod data;
-mod dev_harness;
 mod jobs;
 mod native_capture;
+mod screenshot;
 mod storage;
 mod theme;
 

@@ -18,7 +18,6 @@ pub struct ArchivedSidebarEntry {
 
 #[derive(Clone, Debug)]
 pub struct Library {
-    root: PathBuf,
     originals_dir: PathBuf,
     _thumbs_dir: PathBuf,
     db_path: PathBuf,
@@ -36,17 +35,12 @@ impl Library {
             .map_err(|error| format!("failed to create thumbs dir: {error}"))?;
 
         let library = Self {
-            root,
             originals_dir,
             _thumbs_dir: thumbs_dir,
             db_path,
         };
         library.initialize_schema()?;
         Ok(library)
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
     }
 
     pub fn store_original(&self, source_path: &Path) -> Result<PathBuf, String> {
@@ -440,38 +434,6 @@ impl Library {
             .map_err(|error| format!("failed to commit duplicate transaction: {error}"))?;
 
         Ok(duplicated)
-    }
-
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub fn delete_board_items(&self, item_ids: &[i64]) -> Result<(), String> {
-        if item_ids.is_empty() {
-            return Ok(());
-        }
-
-        let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("failed to start delete transaction: {error}"))?;
-
-        for item_id in item_ids {
-            transaction
-                .execute("DELETE FROM board_items WHERE id = ?1", params![item_id])
-                .map_err(|error| format!("failed to delete board item {item_id}: {error}"))?;
-        }
-
-        transaction
-            .execute(
-                "DELETE FROM assets
-                 WHERE id NOT IN (SELECT asset_id FROM board_items)",
-                [],
-            )
-            .map_err(|error| format!("failed to prune orphaned assets: {error}"))?;
-
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit delete transaction: {error}"))?;
-
-        Ok(())
     }
 
     pub fn load_user_session(&self) -> Result<UserSession, String> {
