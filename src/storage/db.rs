@@ -139,6 +139,73 @@ impl Library {
         Ok(asset)
     }
 
+    pub fn restore_board_item_and_maybe_remove_asset(
+        &self,
+        item: &BoardItem,
+        removed_asset_id: i64,
+    ) -> Result<Option<PathBuf>, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start restore transaction: {error}"))?;
+
+        transaction
+            .execute(
+                "UPDATE board_items
+                 SET asset_id = ?1, x = ?2, y = ?3, scale = ?4, rotation = ?5, z_index = ?6, archived = ?7
+                 WHERE id = ?8",
+                params![
+                    item.asset_id,
+                    item.x,
+                    item.y,
+                    item.scale,
+                    item.rotation,
+                    item.z_index,
+                    if item.archived { 1_i64 } else { 0_i64 },
+                    item.id,
+                ],
+            )
+            .map_err(|error| format!("failed to restore board item {}: {error}", item.id))?;
+
+        let removed_asset_path = transaction
+            .query_row(
+                "SELECT original_path
+                 FROM assets
+                 WHERE id = ?1",
+                params![removed_asset_id],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .map(PathBuf::from);
+
+        let asset_still_used: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*)
+                 FROM board_items
+                 WHERE asset_id = ?1",
+                params![removed_asset_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| {
+                format!("failed to inspect asset references for {removed_asset_id}: {error}")
+            })?;
+
+        let removed_asset_path = if asset_still_used == 0 {
+            transaction
+                .execute("DELETE FROM assets WHERE id = ?1", params![removed_asset_id])
+                .map_err(|error| format!("failed to delete asset {removed_asset_id}: {error}"))?;
+            removed_asset_path
+        } else {
+            None
+        };
+
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit restore transaction: {error}"))?;
+
+        Ok(removed_asset_path)
+    }
+
     pub fn load_board_items(&self) -> Result<Vec<BoardItemWithAsset>, String> {
         let connection = self.connection()?;
         let mut statement = connection

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use eframe::egui;
 
 use crate::data::{BoardItemWithAsset, UserSession};
@@ -10,6 +12,7 @@ pub struct CanvasState {
     pan: egui::Vec2,
     zoom: f32,
     images: Vec<CanvasImage>,
+    asset_rgba_cache: HashMap<i64, Vec<u8>>,
     selected_item_ids: Vec<i64>,
     drag_state: Option<DragState>,
     marquee_state: Option<MarqueeState>,
@@ -62,6 +65,7 @@ pub struct PixelCropRect {
 pub struct CanvasCropRequest {
     pub item_id: i64,
     pub source_asset: crate::data::ImageAsset,
+    pub source_rgba: Vec<u8>,
     pub crop_rect: PixelCropRect,
     pub crop_offset_local: egui::Vec2,
 }
@@ -72,6 +76,7 @@ impl Default for CanvasState {
             pan: egui::Vec2::ZERO,
             zoom: 1.0,
             images: Vec::new(),
+            asset_rgba_cache: HashMap::new(),
             selected_item_ids: Vec::new(),
             drag_state: None,
             marquee_state: None,
@@ -86,6 +91,8 @@ impl Default for CanvasState {
 
 impl CanvasState {
     pub fn add_loaded_item(&mut self, ctx: &egui::Context, loaded: LoadedCanvasItem) {
+        self.asset_rgba_cache
+            .insert(loaded.record.asset.id, loaded.rgba.clone());
         let size = [
             loaded.record.asset.width as usize,
             loaded.record.asset.height as usize,
@@ -122,6 +129,21 @@ impl CanvasState {
         Ok(())
     }
 
+    pub fn snapshot_item_image(
+        &self,
+        item_id: i64,
+    ) -> Result<(BoardItemWithAsset, Vec<u8>), String> {
+        let image = self
+            .image_by_item_id(item_id)
+            .ok_or_else(|| format!("missing canvas item {}", item_id))?;
+        let rgba = self
+            .asset_rgba_cache
+            .get(&image.record.asset.id)
+            .cloned()
+            .ok_or_else(|| format!("missing cached pixels for asset {}", image.record.asset.id))?;
+        Ok((image.record.clone(), rgba))
+    }
+
     pub fn projected_cropped_item(
         &self,
         cropped: &CroppedCanvasItem,
@@ -145,6 +167,7 @@ impl CanvasState {
     ) -> Result<(), String> {
         let size = [asset.width as usize, asset.height as usize];
         let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &cropped.rgba);
+        self.asset_rgba_cache.insert(asset.id, cropped.rgba.clone());
         let texture = ctx.load_texture(
             format!("asset-{}-item-{}", asset.id, cropped.item_id),
             color_image,
@@ -227,6 +250,10 @@ impl CanvasState {
 
     pub fn clear_crop_pending(&mut self, item_id: i64) {
         self.crop_pending_item_ids.retain(|pending_id| *pending_id != item_id);
+    }
+
+    pub fn evict_cached_asset(&mut self, asset_id: i64) {
+        self.asset_rgba_cache.remove(&asset_id);
     }
 
     pub fn take_dirty_items(&mut self) -> Vec<crate::data::BoardItem> {
@@ -493,6 +520,7 @@ impl CanvasState {
         Some(CanvasCropRequest {
             item_id: image.record.item.id,
             source_asset: image.record.asset.clone(),
+            source_rgba: self.asset_rgba_cache.get(&image.record.asset.id)?.clone(),
             crop_rect,
             crop_offset_local,
         })
@@ -804,11 +832,6 @@ fn paint_crop_marquee(painter: &egui::Painter, rect: egui::Rect, state: &CanvasS
         0.0,
         egui::Stroke::new(1.0, crate::theme::SHADE_BASE),
         egui::StrokeKind::Outside,
-    );
-    painter.rect_filled(
-        crop_rect,
-        0.0,
-        egui::Color32::from_rgba_premultiplied(255, 255, 255, 24),
     );
     painter.rect_stroke(
         crop_rect,

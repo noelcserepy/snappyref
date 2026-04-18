@@ -13,6 +13,7 @@ const SHORTCUT_SECTION_CARD_RADIUS: u8 = 12;
 const ARCHIVE_ICON: egui::ImageSource<'static> =
     egui::include_image!("../assets/icons/iconoir-archive.svg");
 const COPY_PAYLOAD_KIND: &str = "reference-board-items";
+const MAX_CROP_UNDO_ENTRIES: usize = 32;
 
 #[derive(Clone, Copy)]
 struct ShortcutSection {
@@ -80,6 +81,11 @@ const SHORTCUT_SECTIONS: &[ShortcutSection] = &[
                 action: "Save",
                 windows: "Ctrl+S",
                 mac: "⌘S",
+            },
+            ShortcutRow {
+                action: "Undo crop",
+                windows: "Ctrl+Z",
+                mac: "⌘Z",
             },
         ],
     },
@@ -323,6 +329,13 @@ struct ClipboardBoardSelection {
     item_ids: Vec<i64>,
 }
 
+#[derive(Clone, Debug)]
+struct CropUndoEntry {
+    previous_record: crate::data::BoardItemWithAsset,
+    previous_rgba: Vec<u8>,
+    removed_asset_id: i64,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct AppConfig {
     pub screenshot_path: Option<std::path::PathBuf>,
@@ -352,6 +365,7 @@ pub struct ReferenceApp {
     wgpu_render_state: Option<eframe::egui_wgpu::RenderState>,
     library: Option<crate::storage::Library>,
     import_worker: Option<crate::jobs::ImportWorker>,
+    crop_undo_stack: Vec<CropUndoEntry>,
     drawer_open: bool,
     status: String,
 }
@@ -376,6 +390,7 @@ impl ReferenceApp {
                     wgpu_render_state: cc.wgpu_render_state.clone(),
                     library: Some(library.clone()),
                     import_worker: Some(import_worker),
+                    crop_undo_stack: Vec::new(),
                     drawer_open: false,
                     status,
                 };
@@ -394,6 +409,7 @@ impl ReferenceApp {
                 wgpu_render_state: cc.wgpu_render_state.clone(),
                 library: None,
                 import_worker: None,
+                crop_undo_stack: Vec::new(),
                 drawer_open: false,
                 status: format!("Storage unavailable: {error}"),
             },
@@ -629,6 +645,15 @@ impl ReferenceApp {
                     self.status = "Imported image".to_owned();
                 }
                 crate::jobs::ImportResult::Cropped(cropped) => {
+                    let previous_snapshot = match self.canvas.snapshot_item_image(cropped.item_id) {
+                        Ok(snapshot) => snapshot,
+                        Err(error) => {
+                            let _ = std::fs::remove_file(&cropped.stored_path);
+                            self.canvas.clear_crop_pending(cropped.item_id);
+                            self.status = error;
+                            continue;
+                        }
+                    };
                     let Some(library) = &self.library else {
                         let _ = std::fs::remove_file(&cropped.stored_path);
                         self.canvas.clear_crop_pending(cropped.item_id);
@@ -667,8 +692,16 @@ impl ReferenceApp {
                     updated_item.asset_id = asset.id;
 
                     let updated_item_id = updated_item.id;
-                    match self.canvas.apply_cropped_item(ctx, cropped, asset, updated_item) {
+                    match self
+                        .canvas
+                        .apply_cropped_item(ctx, cropped, asset.clone(), updated_item)
+                    {
                         Ok(()) => {
+                            self.push_crop_undo_entry(CropUndoEntry {
+                                previous_record: previous_snapshot.0,
+                                previous_rgba: previous_snapshot.1,
+                                removed_asset_id: asset.id,
+                            });
                             self.canvas.clear_crop_pending(updated_item_id);
                             self.status = "Cropped image".to_owned();
                         }
@@ -690,6 +723,51 @@ impl ReferenceApp {
                 }
             }
         }
+    }
+
+    fn handle_crop_undo(&mut self, ctx: &egui::Context) {
+        let undo_requested = ctx.input(|input| {
+            input.modifiers.command
+                && !input.modifiers.shift
+                && input.key_pressed(egui::Key::Z)
+        });
+        if !undo_requested {
+            return;
+        }
+
+        let Some(library) = &self.library else {
+            self.status = "Storage unavailable".to_owned();
+            return;
+        };
+        let Some(entry) = self.crop_undo_stack.pop() else {
+            return;
+        };
+
+        let removed_path = match library.restore_board_item_and_maybe_remove_asset(
+            &entry.previous_record.item,
+            entry.removed_asset_id,
+        ) {
+            Ok(path) => path,
+            Err(error) => {
+                self.crop_undo_stack.push(entry);
+                self.status = error;
+                return;
+            }
+        };
+
+        if let Some(path) = removed_path {
+            let _ = std::fs::remove_file(&path);
+            self.canvas.evict_cached_asset(entry.removed_asset_id);
+        }
+
+        self.canvas.add_loaded_item(
+            ctx,
+            crate::jobs::LoadedCanvasItem {
+                record: entry.previous_record,
+                rgba: entry.previous_rgba,
+            },
+        );
+        self.status = "Undid crop".to_owned();
     }
 
     fn handle_pending_crop_requests(&mut self) {
@@ -779,6 +857,13 @@ impl ReferenceApp {
             ),
         )
     }
+
+    fn push_crop_undo_entry(&mut self, entry: CropUndoEntry) {
+        self.crop_undo_stack.push(entry);
+        if self.crop_undo_stack.len() > MAX_CROP_UNDO_ENTRIES {
+            self.crop_undo_stack.remove(0);
+        }
+    }
 }
 
 impl eframe::App for ReferenceApp {
@@ -788,6 +873,7 @@ impl eframe::App for ReferenceApp {
         ui.expand_to_include_rect(screen_rect);
 
         self.handle_import_results(ui.ctx());
+        self.handle_crop_undo(ui.ctx());
 
         if self.screenshot_capture.is_pending()
             && let Some(render_state) = &self.wgpu_render_state

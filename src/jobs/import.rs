@@ -214,20 +214,10 @@ fn load_existing(record: BoardItemWithAsset) -> ImportResult {
 
 fn crop_item(library: &Library, request: crate::canvas::CanvasCropRequest) -> ImportResult {
     let source_context = request.source_asset.original_path.display().to_string();
-    let decoded = match decode_image_file(&request.source_asset.original_path) {
-        Ok(decoded) => decoded,
-        Err(error) => {
-            return ImportResult::Failed {
-                item_id: Some(request.item_id),
-                context: source_context,
-                error,
-            };
-        }
-    };
     let image = match RgbaImage::from_vec(
         request.source_asset.width,
         request.source_asset.height,
-        decoded.rgba,
+        request.source_rgba,
     ) {
         Some(image) => image,
         None => {
