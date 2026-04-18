@@ -22,6 +22,12 @@ enum ArrangementAction {
     Vertical,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SupportedShortcutAction {
+    DeleteSelection,
+    Arrange(ArrangementAction),
+}
+
 #[derive(Clone, Copy)]
 struct ShortcutSection {
     title: &'static str,
@@ -48,7 +54,7 @@ struct SupportedShortcut {
     windows: &'static str,
     mac: &'static str,
     binding: Option<ShortcutBinding>,
-    arrangement: Option<ArrangementAction>,
+    shortcut_action: Option<SupportedShortcutAction>,
 }
 
 const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
@@ -57,21 +63,28 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         windows: "Ctrl+C",
         mac: "⌘C",
         binding: None,
-        arrangement: None,
+        shortcut_action: None,
     },
     SupportedShortcut {
         action: "Paste image",
         windows: "Ctrl+V",
         mac: "⌘V",
         binding: None,
-        arrangement: None,
+        shortcut_action: None,
     },
     SupportedShortcut {
         action: "Drag image",
         windows: "Drag",
         mac: "Drag",
         binding: None,
-        arrangement: None,
+        shortcut_action: None,
+    },
+    SupportedShortcut {
+        action: "Delete image",
+        windows: "Delete",
+        mac: "Backspace",
+        binding: None,
+        shortcut_action: Some(SupportedShortcutAction::DeleteSelection),
     },
     SupportedShortcut {
         action: "Compact arrange",
@@ -82,7 +95,7 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
             command: true,
             shift: false,
         }),
-        arrangement: Some(ArrangementAction::Compact),
+        shortcut_action: Some(SupportedShortcutAction::Arrange(ArrangementAction::Compact)),
     },
     SupportedShortcut {
         action: "Row arrange",
@@ -93,7 +106,9 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
             command: true,
             shift: false,
         }),
-        arrangement: Some(ArrangementAction::Horizontal),
+        shortcut_action: Some(SupportedShortcutAction::Arrange(
+            ArrangementAction::Horizontal,
+        )),
     },
     SupportedShortcut {
         action: "Column arrange",
@@ -104,7 +119,9 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
             command: true,
             shift: false,
         }),
-        arrangement: Some(ArrangementAction::Vertical),
+        shortcut_action: Some(SupportedShortcutAction::Arrange(
+            ArrangementAction::Vertical,
+        )),
     },
 ];
 
@@ -159,8 +176,8 @@ const SHORTCUT_SECTIONS: &[ShortcutSection] = &[
         rows: &[
             ShortcutRow {
                 action: "Delete",
-                windows: "Del",
-                mac: "⌦",
+                windows: "Delete",
+                mac: "Backspace",
             },
             ShortcutRow {
                 action: "Crop image",
@@ -846,24 +863,45 @@ impl ReferenceApp {
         self.status = "Undid crop".to_owned();
     }
 
-    fn handle_arrangement_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.canvas.selected_item_ids().len() <= 1 || ctx.egui_wants_keyboard_input() {
+    fn handle_selection_shortcuts(&mut self, ctx: &egui::Context) {
+        if !self.canvas.has_selection() || ctx.egui_wants_keyboard_input() {
             return;
         }
 
         for shortcut in SUPPORTED_SHORTCUTS {
-            let (Some(binding), Some(action)) = (shortcut.binding, shortcut.arrangement) else {
+            let Some(shortcut_action) = shortcut.shortcut_action else {
                 continue;
             };
-            if shortcut_pressed(ctx, binding) {
-                apply_arrangement_action(
-                    &mut self.canvas,
-                    action,
-                    self.import_gap,
-                    &mut self.status,
-                );
-                break;
+            let triggered = match shortcut_action {
+                SupportedShortcutAction::DeleteSelection => delete_shortcut_pressed(ctx),
+                SupportedShortcutAction::Arrange(_) => shortcut
+                    .binding
+                    .is_some_and(|binding| shortcut_pressed(ctx, binding)),
+            };
+            if !triggered {
+                continue;
             }
+
+            match shortcut_action {
+                SupportedShortcutAction::DeleteSelection => {
+                    delete_selected_items(
+                        &mut self.canvas,
+                        self.library.as_ref(),
+                        &mut self.status,
+                    );
+                }
+                SupportedShortcutAction::Arrange(action) => {
+                    if self.canvas.selected_item_ids().len() > 1 {
+                        apply_arrangement_action(
+                            &mut self.canvas,
+                            action,
+                            self.import_gap,
+                            &mut self.status,
+                        );
+                    }
+                }
+            }
+            break;
         }
     }
 
@@ -1009,7 +1047,7 @@ impl eframe::App for ReferenceApp {
         self.handle_clipboard_copy(ui.ctx());
         self.handle_clipboard_paste(ui.ctx(), screen_rect);
         self.handle_dropped_files(ui, screen_rect);
-        self.handle_arrangement_shortcuts(ui.ctx());
+        self.handle_selection_shortcuts(ui.ctx());
         let drawer_open = self.drawer_open;
         let drawer_height = if drawer_open {
             self.drawer_height(screen_rect)
@@ -1063,6 +1101,43 @@ fn shortcut_pressed(ctx: &egui::Context, binding: ShortcutBinding) -> bool {
             && input.modifiers.shift == binding.shift
             && input.key_pressed(binding.key)
     })
+}
+
+fn delete_shortcut_pressed(ctx: &egui::Context) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        ctx.input(|input| input.key_pressed(egui::Key::Backspace))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        ctx.input(|input| input.key_pressed(egui::Key::Delete))
+    }
+}
+
+fn delete_selected_items(
+    canvas: &mut crate::canvas::CanvasState,
+    library: Option<&crate::storage::Library>,
+    status: &mut String,
+) {
+    let archived_ids = canvas.delete_selected();
+    if archived_ids.is_empty() {
+        return;
+    }
+
+    if let Some(library) = library
+        && let Err(error) = library.archive_board_items(&archived_ids)
+    {
+        *status = error;
+        return;
+    }
+
+    let noun = if archived_ids.len() == 1 {
+        "image"
+    } else {
+        "images"
+    };
+    *status = format!("Archived {} {noun}", archived_ids.len());
 }
 
 fn apply_arrangement_action(
@@ -1187,24 +1262,7 @@ fn show_selection_toolbar(
                             .corner_radius(8);
 
                         if ui.add(archive_button).clicked() {
-                            let archived_ids = canvas.delete_selected();
-                            if archived_ids.is_empty() {
-                                return;
-                            }
-
-                            if let Some(library) = library {
-                                if let Err(error) = library.archive_board_items(&archived_ids) {
-                                    *status = error;
-                                    return;
-                                }
-                            }
-
-                            let noun = if archived_ids.len() == 1 {
-                                "image"
-                            } else {
-                                "images"
-                            };
-                            *status = format!("Archived {} {noun}", archived_ids.len());
+                            delete_selected_items(canvas, library, status);
                         }
                     });
                 });
