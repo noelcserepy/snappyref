@@ -9,17 +9,21 @@ use crate::data::BoardItemWithAsset;
 use crate::jobs::image_formats::decode_image_file;
 use crate::storage::Library;
 
+pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
+
 #[derive(Clone, Debug)]
 pub enum ImportRequest {
     ImportPath {
         source_path: PathBuf,
         desired_world: egui::Pos2,
+        auto_scale: bool,
     },
     ImportClipboard {
         rgba: Vec<u8>,
         width: u32,
         height: u32,
         desired_world: egui::Pos2,
+        auto_scale: bool,
     },
     Crop {
         request: crate::canvas::CanvasCropRequest,
@@ -73,13 +77,15 @@ impl ImportWorker {
                     ImportRequest::ImportPath {
                         source_path,
                         desired_world,
-                    } => import_path(&library, source_path, desired_world),
+                        auto_scale,
+                    } => import_path(&library, source_path, desired_world, auto_scale),
                     ImportRequest::ImportClipboard {
                         rgba,
                         width,
                         height,
                         desired_world,
-                    } => import_clipboard(&library, rgba, width, height, desired_world),
+                        auto_scale,
+                    } => import_clipboard(&library, rgba, width, height, desired_world, auto_scale),
                     ImportRequest::Crop { request } => crop_item(&library, request),
                     ImportRequest::LoadExisting { record } => load_existing(record),
                 };
@@ -109,6 +115,7 @@ pub fn import_path_sync(
     library: &Library,
     source_path: PathBuf,
     desired_world: egui::Pos2,
+    auto_scale: bool,
 ) -> Result<LoadedCanvasItem, String> {
     let decoded = decode_image_file(&source_path)
         .map_err(|error| format!("{}: {error}", source_path.display()))?;
@@ -125,6 +132,7 @@ pub fn import_path_sync(
             decoded.height,
             decoded.file_size,
             desired_world,
+            initial_import_scale(decoded.width, decoded.height, auto_scale),
         )
         .map_err(|error| format!("{}: {error}", stored_path.display()))?;
 
@@ -134,8 +142,13 @@ pub fn import_path_sync(
     })
 }
 
-fn import_path(library: &Library, source_path: PathBuf, desired_world: egui::Pos2) -> ImportResult {
-    match import_path_sync(library, source_path.clone(), desired_world) {
+fn import_path(
+    library: &Library,
+    source_path: PathBuf,
+    desired_world: egui::Pos2,
+    auto_scale: bool,
+) -> ImportResult {
+    match import_path_sync(library, source_path.clone(), desired_world, auto_scale) {
         Ok(loaded) => ImportResult::Loaded(loaded),
         Err(error) => ImportResult::Failed {
             item_id: None,
@@ -151,6 +164,7 @@ fn import_clipboard(
     width: u32,
     height: u32,
     desired_world: egui::Pos2,
+    auto_scale: bool,
 ) -> ImportResult {
     let stored_path = match library.store_clipboard_image(&rgba, width, height) {
         Ok(path) => path,
@@ -181,6 +195,7 @@ fn import_clipboard(
         height,
         file_size,
         desired_world,
+        initial_import_scale(width, height, auto_scale),
     ) {
         Ok(record) => record,
         Err(error) => {
@@ -282,4 +297,151 @@ fn crop_item(library: &Library, request: crate::canvas::CanvasCropRequest) -> Im
         rgba: cropped_rgba,
         crop_offset_local: request.crop_offset_local,
     })
+}
+
+fn initial_import_scale(asset_width: u32, asset_height: u32, auto_scale: bool) -> f32 {
+    if !auto_scale || asset_width == 0 || asset_height == 0 {
+        return 1.0;
+    }
+
+    let asset_area = asset_width as f32 * asset_height as f32;
+    (DEFAULT_IMPORT_TARGET_CANVAS_AREA / asset_area).sqrt().min(1.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImportResult, import_clipboard, import_path_sync,
+        initial_import_scale,
+    };
+    use crate::storage::Library;
+    use image::{ColorType, ImageFormat};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn scales_down_large_portrait_images_to_target_area() {
+        let scale = initial_import_scale(1000, 1500, true);
+        assert!(
+            (scale - (DEFAULT_IMPORT_TARGET_CANVAS_AREA / 1_500_000.0).sqrt()).abs()
+                < f32::EPSILON
+        );
+    }
+
+    #[test]
+    fn scales_down_large_landscape_images_by_area_cap() {
+        let scale = initial_import_scale(1920, 1080, true);
+        assert!(
+            (scale - (DEFAULT_IMPORT_TARGET_CANVAS_AREA / 2_073_600.0).sqrt()).abs()
+                < f32::EPSILON
+        );
+    }
+
+    #[test]
+    fn keeps_smaller_images_at_full_scale() {
+        assert_eq!(initial_import_scale(180, 240, true), 1.0);
+    }
+
+    #[test]
+    fn disabling_auto_scale_keeps_full_scale() {
+        assert_eq!(initial_import_scale(1200, 2000, false), 1.0);
+    }
+
+    #[test]
+    fn file_imports_land_in_same_area_band() {
+        let root = temp_library_root("file-import-scaling");
+        let library = Library::initialize(root.clone()).unwrap();
+
+        let portrait_path = write_png(&root, "portrait.png", 1000, 1500);
+        let landscape_path = write_png(&root, "landscape.png", 1920, 1080);
+        let square_path = write_png(&root, "square.png", 1000, 1000);
+        let small_path = write_png(&root, "small.png", 180, 240);
+
+        let portrait = import_path_sync(&library, portrait_path, eframe::egui::Pos2::ZERO, true)
+            .unwrap();
+        let landscape =
+            import_path_sync(&library, landscape_path, eframe::egui::Pos2::ZERO, true).unwrap();
+        let square = import_path_sync(&library, square_path, eframe::egui::Pos2::ZERO, true)
+            .unwrap();
+        let small = import_path_sync(&library, small_path, eframe::egui::Pos2::ZERO, true).unwrap();
+
+        assert!((displayed_area(&portrait) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
+        assert!((displayed_area(&landscape) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
+        assert!((displayed_area(&square) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
+        assert_eq!(small.record.item.scale, 1.0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
+        let root = temp_library_root("clipboard-import-scaling");
+        let library = Library::initialize(root.clone()).unwrap();
+
+        let tall_rgba = solid_rgba(390, 844);
+        let small_rgba = solid_rgba(160, 200);
+
+        let tall = match import_clipboard(
+            &library,
+            tall_rgba,
+            390,
+            844,
+            eframe::egui::Pos2::ZERO,
+            true,
+        ) {
+            ImportResult::Loaded(loaded) => loaded,
+            other => panic!("expected loaded tall clipboard image, got {other:?}"),
+        };
+        let small = match import_clipboard(
+            &library,
+            small_rgba,
+            160,
+            200,
+            eframe::egui::Pos2::ZERO,
+            false,
+        ) {
+            ImportResult::Loaded(loaded) => loaded,
+            other => panic!("expected loaded small clipboard image, got {other:?}"),
+        };
+
+        assert!((displayed_area(&tall) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
+        assert_eq!(small.record.item.scale, 1.0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn temp_library_root(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("reference-{label}-{unique}"))
+    }
+
+    fn write_png(root: &Path, filename: &str, width: u32, height: u32) -> PathBuf {
+        let path = root.join(filename);
+        let rgba = solid_rgba(width, height);
+        image::save_buffer_with_format(
+            &path,
+            &rgba,
+            width,
+            height,
+            ColorType::Rgba8,
+            ImageFormat::Png,
+        )
+        .unwrap();
+        path
+    }
+
+    fn solid_rgba(width: u32, height: u32) -> Vec<u8> {
+        vec![255; width as usize * height as usize * 4]
+    }
+
+    fn displayed_area(loaded: &super::LoadedCanvasItem) -> f32 {
+        loaded.record.asset.width as f32
+            * loaded.record.asset.height as f32
+            * loaded.record.item.scale
+            * loaded.record.item.scale
+    }
 }

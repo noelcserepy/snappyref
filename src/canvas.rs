@@ -207,6 +207,7 @@ impl CanvasState {
             camera_pan_x: self.pan.x,
             camera_pan_y: self.pan.y,
             camera_zoom: self.zoom,
+            auto_image_scaling: true,
         }
     }
 
