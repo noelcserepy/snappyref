@@ -90,12 +90,7 @@ impl ScreenshotCapture {
     }
 }
 
-fn save_egui_screenshot(
-    path: &Path,
-    pixels: &[u8],
-    width: u32,
-    height: u32,
-) -> Result<(), String> {
+fn save_egui_screenshot(path: &Path, pixels: &[u8], width: u32, height: u32) -> Result<(), String> {
     write_parent_dir(path)?;
     image::save_buffer_with_format(
         path,
