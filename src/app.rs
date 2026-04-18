@@ -689,8 +689,14 @@ impl ReferenceApp {
             0.0
         };
         egui::Rect::from_min_max(
-            egui::pos2(screen_rect.left(), screen_rect.bottom() - height),
-            screen_rect.max,
+            egui::pos2(
+                screen_rect.left() + SHORTCUT_DRAWER_MARGIN,
+                screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN - height,
+            ),
+            egui::pos2(
+                screen_rect.right() - SHORTCUT_DRAWER_MARGIN,
+                screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN,
+            ),
         )
     }
 }
@@ -907,8 +913,14 @@ fn show_shortcuts_drawer(
         target.min(available)
     };
     let drawer_rect = egui::Rect::from_min_max(
-        egui::pos2(screen_rect.left(), screen_rect.bottom() - drawer_height),
-        screen_rect.max,
+        egui::pos2(
+            screen_rect.left() + SHORTCUT_DRAWER_MARGIN,
+            screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN - drawer_height,
+        ),
+        egui::pos2(
+            screen_rect.right() - SHORTCUT_DRAWER_MARGIN,
+            screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN,
+        ),
     );
 
     egui::Area::new(egui::Id::new("shortcut_drawer"))
@@ -928,7 +940,8 @@ fn show_shortcuts_drawer(
                     bottom: 16,
                 })
                 .show(ui, |ui| {
-                    ui.set_width(drawer_rect.width());
+                    ui.set_width(ui.available_width());
+                    ui.set_max_width(ui.available_width());
                     ui.set_min_height(drawer_rect.height());
 
                     ui.horizontal(|ui| {
