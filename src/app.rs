@@ -663,11 +663,15 @@ impl ReferenceApp {
         pointer_screen_pos: Option<egui::Pos2>,
     ) -> egui::Pos2 {
         let drawer_rect = self.drawer_rect(screen_rect);
+        let canvas_center = egui::pos2(
+            screen_rect.center().x,
+            (screen_rect.top() + drawer_rect.top()) * 0.5,
+        );
         let import_screen_pos = pointer_screen_pos
             .filter(|screen_pos| {
                 screen_rect.contains(*screen_pos) && !drawer_rect.contains(*screen_pos)
             })
-            .unwrap_or(screen_rect.center());
+            .unwrap_or(canvas_center);
         self.canvas.screen_to_world(import_screen_pos, screen_rect)
     }
 
