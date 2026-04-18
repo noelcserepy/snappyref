@@ -78,7 +78,28 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: None,
     },
     SupportedShortcut {
-        action: "Delete image",
+        action: "Draw arrow",
+        windows: "A + Drag",
+        mac: "A + Drag",
+        binding: None,
+        shortcut_action: None,
+    },
+    SupportedShortcut {
+        action: "Draw line",
+        windows: "L + Drag",
+        mac: "L + Drag",
+        binding: None,
+        shortcut_action: None,
+    },
+    SupportedShortcut {
+        action: "Draw textbox",
+        windows: "T + Drag",
+        mac: "T + Drag",
+        binding: None,
+        shortcut_action: None,
+    },
+    SupportedShortcut {
+        action: "Delete selection",
         windows: "Delete",
         mac: "Backspace",
         binding: None,
@@ -255,29 +276,19 @@ const SHORTCUT_SECTIONS: &[ShortcutSection] = &[
         title: "Draw",
         rows: &[
             ShortcutRow {
-                action: "Cancel drawing",
-                windows: "Esc",
-                mac: "⎋",
+                action: "Draw arrow",
+                windows: "A + Drag",
+                mac: "A + Drag",
             },
             ShortcutRow {
-                action: "Select line tool",
-                windows: "L",
-                mac: "L",
+                action: "Draw line",
+                windows: "L + Drag",
+                mac: "L + Drag",
             },
             ShortcutRow {
-                action: "Select pen tool",
-                windows: "D",
-                mac: "D",
-            },
-            ShortcutRow {
-                action: "Select rectangle tool",
-                windows: "R",
-                mac: "R",
-            },
-            ShortcutRow {
-                action: "Select eraser tool",
-                windows: "E",
-                mac: "E",
+                action: "Draw textbox",
+                windows: "T + Drag",
+                mac: "T + Drag",
             },
         ],
     },
@@ -572,6 +583,11 @@ impl ReferenceApp {
                 self.status = error;
             }
         }
+
+        match library.load_canvas_annotations() {
+            Ok(annotations) => self.canvas.add_annotations(annotations),
+            Err(error) => self.status = error,
+        }
     }
 
     fn load_user_session(&mut self) {
@@ -686,7 +702,7 @@ impl ReferenceApp {
                 .iter()
                 .any(|event| matches!(event, egui::Event::Copy))
         });
-        if !copy_requested || !self.canvas.has_selection() {
+        if !copy_requested || !self.canvas.has_image_selection() {
             return;
         }
 
@@ -948,7 +964,7 @@ impl ReferenceApp {
                     );
                 }
                 SupportedShortcutAction::DuplicateSelection => {
-                    if !self.canvas.has_selection() {
+                    if !self.canvas.has_image_selection() {
                         continue;
                     }
                     self.duplicate_selection_with_gap(ctx, screen_rect);
@@ -1048,6 +1064,39 @@ impl ReferenceApp {
         }
     }
 
+    fn handle_pending_annotation_requests(&mut self) {
+        let Some(library) = &self.library else {
+            return;
+        };
+
+        while let Some(request) = self.canvas.take_pending_annotation() {
+            match library.create_canvas_annotation(
+                request.kind,
+                request.start_world,
+                request.end_world,
+                &request.text,
+            ) {
+                Ok(annotation) => {
+                    let should_focus_text =
+                        annotation.kind == crate::data::CanvasAnnotationKind::Textbox;
+                    let annotation_id = annotation.id;
+                    self.canvas.add_annotation(annotation);
+                    if should_focus_text {
+                        self.canvas.begin_textbox_edit(annotation_id);
+                    }
+                    self.status = match request.kind {
+                        crate::data::CanvasAnnotationKind::Arrow => "Added arrow".to_owned(),
+                        crate::data::CanvasAnnotationKind::Line => "Added line".to_owned(),
+                        crate::data::CanvasAnnotationKind::Textbox => "Added textbox".to_owned(),
+                    };
+                }
+                Err(error) => {
+                    self.status = error;
+                }
+            }
+        }
+    }
+
     fn persist_canvas_changes(&mut self) {
         let Some(library) = &self.library else {
             return;
@@ -1055,6 +1104,12 @@ impl ReferenceApp {
 
         for item in self.canvas.take_dirty_items() {
             if let Err(error) = library.update_board_item(&item) {
+                self.status = error;
+            }
+        }
+
+        for annotation in self.canvas.take_dirty_annotations() {
+            if let Err(error) = library.update_canvas_annotation(&annotation) {
                 self.status = error;
             }
         }
@@ -1192,15 +1247,11 @@ impl eframe::App for ReferenceApp {
             0.0
         };
         if drawer_open {
-            close_drawer_on_outside_click(
-                ui.ctx(),
-                self.drawer_rect(screen_rect),
-                &mut self.drawer_open,
-            );
             block_drawer_input(ui.ctx(), self.drawer_rect(screen_rect));
         }
         crate::canvas::show(ui, screen_rect, &mut self.canvas, false);
         self.handle_pending_crop_requests();
+        self.handle_pending_annotation_requests();
         show_selection_toolbar(
             ui.ctx(),
             screen_rect,
@@ -1210,14 +1261,27 @@ impl eframe::App for ReferenceApp {
             drawer_height,
         );
         self.persist_canvas_changes();
-        let settings_changed = show_shortcuts_drawer(
+        let drawer_result = show_shortcuts_drawer(
             ui.ctx(),
             screen_rect,
             drawer_open,
             &mut self.auto_image_scaling,
             &mut self.import_gap,
+            &mut self.canvas,
         );
-        self.persist_settings_if_changed(settings_changed);
+        if drawer_open {
+            close_drawer_on_outside_click(
+                ui.ctx(),
+                drawer_result
+                    .interactive_rect
+                    .unwrap_or_else(|| self.drawer_rect(screen_rect)),
+                &mut self.drawer_open,
+            );
+        }
+        if drawer_result.settings_changed {
+            self.drawer_open = true;
+        }
+        self.persist_settings_if_changed(drawer_result.settings_changed);
         show_drawer_toggle(ui.ctx(), screen_rect, drawer_open, &mut self.drawer_open);
         if self
             .screenshot_capture
@@ -1261,7 +1325,18 @@ fn delete_selected_items(
     library: Option<&crate::storage::Library>,
     status: &mut String,
 ) {
-    let archived_ids = canvas.delete_selected();
+    if let Some(annotation_id) = canvas.delete_selected_annotation() {
+        if let Some(library) = library
+            && let Err(error) = library.archive_canvas_annotations(&[annotation_id])
+        {
+            *status = error;
+            return;
+        }
+        *status = "Archived annotation".to_owned();
+        return;
+    }
+
+    let archived_ids = canvas.delete_selected_images();
     if archived_ids.is_empty() {
         return;
     }
@@ -1309,7 +1384,7 @@ fn show_selection_toolbar(
     status: &mut String,
     bottom_reserved_height: f32,
 ) {
-    if !canvas.has_selection() {
+    if !canvas.has_image_selection() {
         return;
     }
 
@@ -1390,16 +1465,29 @@ fn close_drawer_on_outside_click(
     drawer_open_state: &mut bool,
 ) {
     let clicked_outside = ctx.input(|input| {
-        input.pointer.any_pressed()
-            && input
-                .pointer
-                .interact_pos()
-                .is_some_and(|pos| !drawer_rect.contains(pos))
+        should_close_drawer(
+            input.pointer.any_click(),
+            input.pointer.interact_pos(),
+            drawer_rect,
+        )
     });
 
     if clicked_outside {
         *drawer_open_state = false;
     }
+}
+
+fn should_close_drawer(
+    pointer_clicked: bool,
+    pointer_pos: Option<egui::Pos2>,
+    drawer_rect: egui::Rect,
+) -> bool {
+    pointer_clicked && pointer_pos.is_some_and(|pos| !drawer_rect.contains(pos))
+}
+
+struct DrawerRenderResult {
+    settings_changed: bool,
+    interactive_rect: Option<egui::Rect>,
 }
 
 fn show_shortcuts_drawer(
@@ -1408,9 +1496,13 @@ fn show_shortcuts_drawer(
     drawer_open: bool,
     auto_image_scaling: &mut bool,
     import_gap: &mut f32,
-) -> bool {
+    canvas: &mut crate::canvas::CanvasState,
+) -> DrawerRenderResult {
     if !drawer_open {
-        return false;
+        return DrawerRenderResult {
+            settings_changed: false,
+            interactive_rect: None,
+        };
     }
 
     let mut settings_changed = false;
@@ -1432,7 +1524,7 @@ fn show_shortcuts_drawer(
         ),
     );
 
-    egui::Area::new(egui::Id::new("shortcut_drawer"))
+    let area_response = egui::Area::new(egui::Id::new("shortcut_drawer"))
         .order(egui::Order::Foreground)
         .fixed_pos(drawer_rect.min)
         .show(ctx, |ui| {
@@ -1456,7 +1548,7 @@ fn show_shortcuts_drawer(
                                 egui::vec2(0.0, crate::theme::SECTION_GAP);
                             paint_drawer_section_label(ui, "Options", None);
                             settings_changed |=
-                                paint_settings_section(ui, auto_image_scaling, import_gap);
+                                paint_settings_section(ui, auto_image_scaling, import_gap, canvas);
 
                             ui.add_space(crate::theme::SECTION_GAP);
 
@@ -1469,17 +1561,39 @@ fn show_shortcuts_drawer(
                 });
         });
 
-    settings_changed
+    DrawerRenderResult {
+        settings_changed,
+        interactive_rect: Some(area_response.response.rect),
+    }
 }
 
 fn paint_settings_section(
     ui: &mut egui::Ui,
     auto_image_scaling: &mut bool,
     import_gap: &mut f32,
+    canvas: &mut crate::canvas::CanvasState,
 ) -> bool {
     let mut changed = false;
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(crate::theme::SPACE_3, crate::theme::SPACE_2);
+
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = crate::theme::SPACE_2;
+            ui.label(
+                egui::RichText::new("Canvas background")
+                    .text_style(egui::TextStyle::Body)
+                    .strong()
+                    .color(crate::theme::TEXT),
+            );
+            ui.label(
+                egui::RichText::new("Quiet background guide for the board. Dots are the default.")
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_MUTED),
+            );
+            changed |= paint_background_mode_control(ui, canvas);
+        });
+
+        ui.add_space(crate::theme::SPACE_3);
 
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
@@ -1536,6 +1650,53 @@ fn paint_settings_section(
     });
 
     changed
+}
+
+fn paint_background_mode_control(
+    ui: &mut egui::Ui,
+    canvas: &mut crate::canvas::CanvasState,
+) -> bool {
+    let mut background = canvas.background();
+    let before = background;
+
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_1;
+        for (label, value) in [
+            ("Dots", crate::data::CanvasBackground::Dots),
+            ("Grid", crate::data::CanvasBackground::Grid),
+            ("None", crate::data::CanvasBackground::None),
+        ] {
+            let selected = background == value;
+            let button = egui::Button::new(
+                egui::RichText::new(label)
+                    .text_style(egui::TextStyle::Button)
+                    .color(crate::theme::TEXT),
+            )
+            .fill(if selected {
+                crate::theme::SURFACE_ELEVATED
+            } else {
+                crate::theme::SURFACE
+            })
+            .stroke(if selected {
+                crate::theme::stroke_strong()
+            } else {
+                crate::theme::stroke_subtle()
+            })
+            .corner_radius(crate::theme::CONTROL_RADIUS)
+            .min_size(egui::vec2(52.0, crate::theme::CONTROL_HEIGHT));
+
+            if ui.add(button).clicked() {
+                background = value;
+            }
+        }
+    });
+
+    if background != before {
+        canvas.set_background(background);
+        true
+    } else {
+        false
+    }
 }
 
 fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
@@ -1610,22 +1771,24 @@ fn show_drawer_toggle(
         .order(egui::Order::Foreground)
         .fixed_pos(egui::pos2(x, y))
         .show(ctx, |ui| {
-            ui.spacing_mut().button_padding =
-                egui::vec2(crate::theme::SPACE_3, crate::theme::SPACE_2);
             let shortcut_label = toggle_drawer_shortcut_label();
-            let button = egui::Button::new(
-                egui::RichText::new(shortcut_label)
-                    .text_style(egui::TextStyle::Body)
-                    .color(crate::theme::TEXT),
-            )
-            .min_size(button_size)
-            .fill(crate::theme::SURFACE)
-            .frame(true)
-            .frame_when_inactive(true)
-            .stroke(crate::theme::stroke_subtle())
-            .corner_radius(crate::theme::CONTROL_RADIUS);
-
-            let response = ui.add(button);
+            let (rect, response) = ui.allocate_exact_size(button_size, egui::Sense::click());
+            let visuals = ui.style().interact(&response);
+            ui.painter().rect(
+                rect,
+                crate::theme::CONTROL_RADIUS,
+                visuals.bg_fill,
+                visuals.bg_stroke,
+                egui::StrokeKind::Outside,
+            );
+            let content_rect = rect
+                .shrink2(egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1))
+                .translate(egui::vec2(0.0, -1.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    paint_shortcut_keys(ui, shortcut_label);
+                });
+            });
             let response = if drawer_open {
                 response.on_hover_text("Close shortcuts")
             } else {
@@ -1870,12 +2033,12 @@ fn paint_shortcut_section(ui: &mut egui::Ui, section: &ShortcutSection) {
 fn toggle_drawer_shortcut_label() -> &'static str {
     #[cfg(target_os = "macos")]
     {
-        "⌘ B"
+        "⌘B"
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        "Ctrl B"
+        "Ctrl+B"
     }
 }
 
@@ -1893,7 +2056,7 @@ fn drawer_toggle_width() -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ArrangementAction, ReferenceApp, apply_arrangement_action};
+    use super::{ArrangementAction, ReferenceApp, apply_arrangement_action, should_close_drawer};
     use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
     use crate::jobs::LoadedCanvasItem;
     use crate::storage::Library;
@@ -1927,12 +2090,18 @@ mod tests {
         let mut app = test_app(Some(library.clone()));
         app.auto_image_scaling = false;
         app.import_gap = 37.0;
+        app.canvas
+            .set_background(crate::data::CanvasBackground::Grid);
 
         app.save_user_session();
 
         let session = library.load_user_session().unwrap();
         assert!(!session.auto_image_scaling);
         assert_eq!(session.import_gap, 37.0);
+        assert_eq!(
+            session.canvas_background,
+            crate::data::CanvasBackground::Grid
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1997,6 +2166,29 @@ mod tests {
 
         assert!(arranged_area < legacy_area);
         assert_eq!(status, format!("Compacted {} images", fixture.len()));
+    }
+
+    #[test]
+    fn drawer_close_helper_only_closes_for_outside_clicks() {
+        let drawer_rect =
+            egui::Rect::from_min_max(egui::pos2(20.0, 30.0), egui::pos2(220.0, 180.0));
+
+        assert!(!should_close_drawer(
+            true,
+            Some(egui::pos2(60.0, 90.0)),
+            drawer_rect
+        ));
+        assert!(should_close_drawer(
+            true,
+            Some(egui::pos2(10.0, 90.0)),
+            drawer_rect
+        ));
+        assert!(!should_close_drawer(
+            false,
+            Some(egui::pos2(10.0, 90.0)),
+            drawer_rect
+        ));
+        assert!(!should_close_drawer(true, None, drawer_rect));
     }
 
     fn test_app(library: Option<Library>) -> ReferenceApp {
