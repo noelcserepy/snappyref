@@ -28,7 +28,7 @@ struct CanvasImage {
     texture: egui::TextureHandle,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct SelectedLayoutItem {
     id: i64,
     x: f32,
@@ -303,7 +303,7 @@ impl CanvasState {
             .collect();
     }
 
-    pub fn arrange_selected_horizontal(&mut self) -> usize {
+    pub fn arrange_selected_horizontal(&mut self, gap: f32) -> usize {
         let mut items = self.selected_layout_items();
         if items.len() <= 1 {
             return items.len();
@@ -311,26 +311,17 @@ impl CanvasState {
 
         items.sort_by(|left, right| left.x.total_cmp(&right.x));
         let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
-        let gap = 16.0;
-        let max_height = items.iter().map(|item| item.height).fold(0.0_f32, f32::max);
-
-        let mut x_cursor = 0.0;
-        let mut placements = Vec::with_capacity(items.len());
-        for item in &items {
-            let center = egui::pos2(x_cursor + item.width * 0.5, max_height - item.height * 0.5);
-            placements.push((item.id, center));
-            x_cursor += item.width + gap;
-        }
-
-        let total_width = x_cursor - gap;
-        let local_center = egui::pos2(total_width * 0.5, max_height * 0.5);
+        let Some((placements, total_width, total_height)) = horizontal_layout(&items, gap) else {
+            return 0;
+        };
+        let local_center = egui::pos2(total_width * 0.5, total_height * 0.5);
         self.apply_arrangement(
             placements,
             current_center.to_vec2() - local_center.to_vec2(),
         )
     }
 
-    pub fn arrange_selected_vertical(&mut self) -> usize {
+    pub fn arrange_selected_vertical(&mut self, gap: f32) -> usize {
         let mut items = self.selected_layout_items();
         if items.len() <= 1 {
             return items.len();
@@ -338,53 +329,33 @@ impl CanvasState {
 
         items.sort_by(|left, right| left.y.total_cmp(&right.y));
         let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
-        let gap = 16.0;
-        let max_width = items.iter().map(|item| item.width).fold(0.0_f32, f32::max);
-
-        let mut y_cursor = 0.0;
-        let mut placements = Vec::with_capacity(items.len());
-        for item in &items {
-            let center = egui::pos2(item.width * 0.5, y_cursor + item.height * 0.5);
-            placements.push((item.id, center));
-            y_cursor += item.height + gap;
-        }
-
-        let total_height = y_cursor - gap;
-        let local_center = egui::pos2(max_width * 0.5, total_height * 0.5);
+        let Some((placements, total_width, total_height)) = vertical_layout(&items, gap) else {
+            return 0;
+        };
+        let local_center = egui::pos2(total_width * 0.5, total_height * 0.5);
         self.apply_arrangement(
             placements,
             current_center.to_vec2() - local_center.to_vec2(),
         )
     }
 
-    pub fn arrange_selected_compact(&mut self) -> usize {
+    pub fn arrange_selected_compact(&mut self, gap: f32) -> usize {
         let mut items = self.selected_layout_items();
         if items.len() <= 1 {
             return items.len();
         }
 
         items.sort_by(|left, right| {
-            left.y
-                .total_cmp(&right.y)
-                .then_with(|| left.x.total_cmp(&right.x))
+            right
+                .width
+                .max(right.height)
+                .total_cmp(&left.width.max(left.height))
+                .then_with(|| (right.width * right.height).total_cmp(&(left.width * left.height)))
+                .then_with(|| left.id.cmp(&right.id))
         });
         let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
 
-        let mut best_layout: Option<(Vec<(i64, egui::Pos2)>, f32, f32, f32, f32)> = None;
-        for columns in 1..=items.len() {
-            let (placements, width, height) = compact_layout(&items, columns, 0.0);
-            let aspect_ratio = width.max(height) / width.min(height).max(1.0);
-            let area = width * height;
-
-            match &best_layout {
-                Some((_, _, _, best_ratio, best_area))
-                    if aspect_ratio > *best_ratio
-                        || ((aspect_ratio - *best_ratio).abs() < 0.001 && area >= *best_area) => {}
-                _ => best_layout = Some((placements, width, height, aspect_ratio, area)),
-            }
-        }
-
-        let Some((placements, width, height, _, _)) = best_layout else {
+        let Some((placements, width, height)) = best_compact_layout(&items, gap) else {
             return 0;
         };
         let local_center = egui::pos2(width * 0.5, height * 0.5);
@@ -542,31 +513,267 @@ impl CanvasState {
     }
 }
 
-fn compact_layout(
+fn horizontal_layout(
     items: &[SelectedLayoutItem],
-    columns: usize,
     gap: f32,
-) -> (Vec<(i64, egui::Pos2)>, f32, f32) {
+) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
+    if items.is_empty() {
+        return None;
+    }
+
+    let max_height = items.iter().map(|item| item.height).fold(0.0_f32, f32::max);
+    let mut x_cursor = 0.0;
     let mut placements = Vec::with_capacity(items.len());
+
+    for item in items {
+        let center = egui::pos2(x_cursor + item.width * 0.5, max_height - item.height * 0.5);
+        placements.push((item.id, center));
+        x_cursor += item.width + gap;
+    }
+
+    let total_width = (x_cursor - gap).max(0.0);
+    Some((placements, total_width, max_height))
+}
+
+fn vertical_layout(
+    items: &[SelectedLayoutItem],
+    gap: f32,
+) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
+    if items.is_empty() {
+        return None;
+    }
+
+    let max_width = items.iter().map(|item| item.width).fold(0.0_f32, f32::max);
     let mut y_cursor = 0.0;
-    let mut total_width = 0.0_f32;
+    let mut placements = Vec::with_capacity(items.len());
 
-    for row in items.chunks(columns) {
-        let row_height = row.iter().map(|item| item.height).fold(0.0_f32, f32::max);
-        let mut x_cursor = 0.0;
-
-        for item in row {
-            let center = egui::pos2(x_cursor + item.width * 0.5, y_cursor + item.height * 0.5);
-            placements.push((item.id, center));
-            x_cursor += item.width + gap;
-        }
-
-        total_width = total_width.max((x_cursor - gap).max(0.0));
-        y_cursor += row_height + gap;
+    for item in items {
+        let center = egui::pos2(item.width * 0.5, y_cursor + item.height * 0.5);
+        placements.push((item.id, center));
+        y_cursor += item.height + gap;
     }
 
     let total_height = (y_cursor - gap).max(0.0);
-    (placements, total_width, total_height)
+    Some((placements, max_width, total_height))
+}
+
+fn best_compact_layout(
+    items: &[SelectedLayoutItem],
+    gap: f32,
+) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
+    if items.is_empty() {
+        return None;
+    }
+
+    let mut best_layout: Option<(Vec<(i64, egui::Pos2)>, f32, f32, f32, f32, usize)> = None;
+    for (candidate_index, bin_width) in compact_candidate_widths(items, gap).into_iter().enumerate()
+    {
+        let Some((placements, width, height)) = skyline_pack_layout(items, bin_width, gap) else {
+            continue;
+        };
+        let squareness = width.max(height) / width.min(height).max(1.0);
+        let area = width * height;
+
+        match &best_layout {
+            Some((_, _, _, best_squareness, best_area, best_index))
+                if squareness > *best_squareness
+                    || ((squareness - *best_squareness).abs() < 0.001 && area > *best_area)
+                    || ((squareness - *best_squareness).abs() < 0.001
+                        && (area - *best_area).abs() < 0.001
+                        && candidate_index >= *best_index) => {}
+            _ => {
+                best_layout = Some((placements, width, height, squareness, area, candidate_index));
+            }
+        }
+    }
+
+    best_layout.map(|(placements, width, height, _, _, _)| (placements, width, height))
+}
+
+fn compact_candidate_widths(items: &[SelectedLayoutItem], gap: f32) -> Vec<f32> {
+    let total_area = items
+        .iter()
+        .map(|item| item.width * item.height)
+        .sum::<f32>();
+    let max_width = items.iter().map(|item| item.width).fold(0.0_f32, f32::max);
+    let ideal_width = total_area.sqrt().max(max_width);
+    let mut widths = vec![ideal_width];
+    let mut running_width = 0.0_f32;
+
+    for (index, item) in items.iter().enumerate() {
+        running_width += item.width;
+        if index > 0 {
+            running_width += gap;
+        }
+        widths.push(running_width.max(max_width));
+    }
+
+    widths.sort_by(|left, right| left.total_cmp(right));
+    widths.dedup_by(|left, right| (*left - *right).abs() < 0.5);
+    widths
+}
+
+fn skyline_pack_layout(
+    items: &[SelectedLayoutItem],
+    bin_width: f32,
+    gap: f32,
+) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
+    if items.is_empty() {
+        return None;
+    }
+
+    let mut skyline = vec![SkylineNode {
+        x: 0.0,
+        y: 0.0,
+        width: bin_width,
+    }];
+    let mut placements = Vec::with_capacity(items.len());
+
+    for item in items {
+        let occupied_width = item.width + gap;
+        let occupied_height = item.height + gap;
+        if occupied_width > bin_width + 0.001 {
+            return None;
+        }
+
+        let mut best_candidate: Option<(usize, f32, f32)> = None;
+        for node_index in 0..skyline.len() {
+            let Some(candidate_y) =
+                skyline_candidate_y(&skyline, node_index, occupied_width, bin_width)
+            else {
+                continue;
+            };
+            let candidate_x = skyline[node_index].x;
+            match best_candidate {
+                Some((_, best_y, best_x))
+                    if candidate_y > best_y
+                        || ((candidate_y - best_y).abs() < 0.001 && candidate_x >= best_x) => {}
+                _ => best_candidate = Some((node_index, candidate_y, candidate_x)),
+            }
+        }
+
+        let Some((node_index, place_y, place_x)) = best_candidate else {
+            return None;
+        };
+        skyline_insert(
+            &mut skyline,
+            node_index,
+            place_x,
+            place_y,
+            occupied_width,
+            occupied_height,
+        );
+        placements.push((
+            item.id,
+            egui::pos2(place_x + item.width * 0.5, place_y + item.height * 0.5),
+        ));
+    }
+
+    let (layout_width, layout_height) = placed_bounds(items, &placements)?;
+    Some((placements, layout_width, layout_height))
+}
+
+fn skyline_candidate_y(
+    skyline: &[SkylineNode],
+    start_index: usize,
+    occupied_width: f32,
+    bin_width: f32,
+) -> Option<f32> {
+    let start = skyline[start_index];
+    if start.x + occupied_width > bin_width + 0.001 {
+        return None;
+    }
+
+    let mut width_left = occupied_width;
+    let mut index = start_index;
+    let mut candidate_y = start.y;
+
+    while width_left > 0.0 {
+        let node = *skyline.get(index)?;
+        candidate_y = candidate_y.max(node.y);
+        width_left -= node.width;
+        index += 1;
+    }
+
+    Some(candidate_y)
+}
+
+fn skyline_insert(
+    skyline: &mut Vec<SkylineNode>,
+    node_index: usize,
+    x: f32,
+    y: f32,
+    occupied_width: f32,
+    occupied_height: f32,
+) {
+    let new_y = y + occupied_height;
+    skyline.insert(
+        node_index,
+        SkylineNode {
+            x,
+            y: new_y,
+            width: occupied_width,
+        },
+    );
+
+    let index = node_index + 1;
+    let end_x = x + occupied_width;
+    while index < skyline.len() {
+        let node = skyline[index];
+        if node.x >= end_x {
+            break;
+        }
+
+        let overlap = end_x - node.x;
+        if overlap >= node.width - 0.001 {
+            skyline.remove(index);
+        } else {
+            skyline[index].x += overlap;
+            skyline[index].width -= overlap;
+            break;
+        }
+    }
+
+    merge_skyline_nodes(skyline);
+}
+
+fn merge_skyline_nodes(skyline: &mut Vec<SkylineNode>) {
+    let mut index = 0;
+    while index + 1 < skyline.len() {
+        if (skyline[index].y - skyline[index + 1].y).abs() < 0.001 {
+            skyline[index].width += skyline[index + 1].width;
+            skyline.remove(index + 1);
+        } else {
+            index += 1;
+        }
+    }
+}
+
+fn placed_bounds(
+    items: &[SelectedLayoutItem],
+    placements: &[(i64, egui::Pos2)],
+) -> Option<(f32, f32)> {
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+
+    for (item_id, center) in placements {
+        let item = items.iter().find(|item| item.id == *item_id)?;
+        min_x = min_x.min(center.x - item.width * 0.5);
+        min_y = min_y.min(center.y - item.height * 0.5);
+        max_x = max_x.max(center.x + item.width * 0.5);
+        max_y = max_y.max(center.y + item.height * 0.5);
+    }
+
+    Some(((max_x - min_x).max(0.0), (max_y - min_y).max(0.0)))
+}
+
+#[derive(Clone, Copy)]
+struct SkylineNode {
+    x: f32,
+    y: f32,
+    width: f32,
 }
 
 pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut CanvasState, debug_labels: bool) {
@@ -955,8 +1162,9 @@ fn merge_cropped_item_fields(
 #[cfg(test)]
 mod tests {
     use super::{
-        crop_center_offset_local, merge_cropped_item_fields, pixel_crop_rect_from_local,
-        screen_rect_to_local_crop_rect,
+        SelectedLayoutItem, best_compact_layout, crop_center_offset_local, horizontal_layout,
+        merge_cropped_item_fields, pixel_crop_rect_from_local, screen_rect_to_local_crop_rect,
+        vertical_layout,
     };
     use crate::data::{BoardItem, ImageAsset};
     use std::path::PathBuf;
@@ -1055,5 +1263,129 @@ mod tests {
         assert!(!state.can_start_crop_on_item(42));
         state.clear_crop_pending(42);
         assert!(state.can_start_crop_on_item(42));
+    }
+
+    #[test]
+    fn horizontal_and_vertical_layouts_use_requested_gap() {
+        let items = vec![
+            layout_item(1, 80.0, 40.0),
+            layout_item(2, 60.0, 40.0),
+            layout_item(3, 40.0, 40.0),
+        ];
+        let gap = 18.0;
+
+        let (horizontal, _, _) = horizontal_layout(&items, gap).unwrap();
+        let (vertical, _, _) = vertical_layout(&items, gap).unwrap();
+
+        assert_eq!(center_gap_x(&items, &horizontal, 1, 2), gap);
+        assert_eq!(center_gap_y(&items, &vertical, 1, 2), gap);
+    }
+
+    #[test]
+    fn compact_layout_respects_gap() {
+        let items = vec![
+            layout_item(1, 80.0, 80.0),
+            layout_item(2, 80.0, 60.0),
+            layout_item(3, 60.0, 80.0),
+            layout_item(4, 60.0, 60.0),
+        ];
+        let gap = 12.0;
+
+        let (placements, _, _) = best_compact_layout(&items, gap).unwrap();
+
+        for left in &items {
+            for right in &items {
+                if left.id >= right.id {
+                    continue;
+                }
+                let left_rect = placement_rect(&items, &placements, left.id);
+                let right_rect = placement_rect(&items, &placements, right.id);
+                assert!(rectangles_respect_gap(left_rect, right_rect, gap));
+            }
+        }
+    }
+
+    #[test]
+    fn compact_layout_is_more_square_than_row_or_column_extremes() {
+        let items = vec![
+            layout_item(1, 180.0, 90.0),
+            layout_item(2, 140.0, 80.0),
+            layout_item(3, 110.0, 160.0),
+            layout_item(4, 90.0, 110.0),
+            layout_item(5, 70.0, 70.0),
+        ];
+        let gap = 12.0;
+
+        let (_, compact_width, compact_height) = best_compact_layout(&items, gap).unwrap();
+        let (_, row_width, row_height) = horizontal_layout(&items, gap).unwrap();
+        let (_, column_width, column_height) = vertical_layout(&items, gap).unwrap();
+
+        let compact_ratio = aspect_ratio(compact_width, compact_height);
+        let row_ratio = aspect_ratio(row_width, row_height);
+        let column_ratio = aspect_ratio(column_width, column_height);
+
+        assert!(compact_ratio < row_ratio);
+        assert!(compact_ratio < column_ratio);
+    }
+
+    fn layout_item(id: i64, width: f32, height: f32) -> SelectedLayoutItem {
+        SelectedLayoutItem {
+            id,
+            x: 0.0,
+            y: 0.0,
+            width,
+            height,
+        }
+    }
+
+    fn center_gap_x(
+        items: &[SelectedLayoutItem],
+        placements: &[(i64, eframe::egui::Pos2)],
+        left_id: i64,
+        right_id: i64,
+    ) -> f32 {
+        let left = placement_rect(items, placements, left_id);
+        let right = placement_rect(items, placements, right_id);
+        right.left() - left.right()
+    }
+
+    fn center_gap_y(
+        items: &[SelectedLayoutItem],
+        placements: &[(i64, eframe::egui::Pos2)],
+        top_id: i64,
+        bottom_id: i64,
+    ) -> f32 {
+        let top = placement_rect(items, placements, top_id);
+        let bottom = placement_rect(items, placements, bottom_id);
+        bottom.top() - top.bottom()
+    }
+
+    fn placement_rect(
+        items: &[SelectedLayoutItem],
+        placements: &[(i64, eframe::egui::Pos2)],
+        item_id: i64,
+    ) -> eframe::egui::Rect {
+        let item = items.iter().find(|item| item.id == item_id).unwrap();
+        let center = placements
+            .iter()
+            .find(|(placement_id, _)| *placement_id == item_id)
+            .map(|(_, center)| *center)
+            .unwrap();
+        eframe::egui::Rect::from_center_size(center, eframe::egui::vec2(item.width, item.height))
+    }
+
+    fn aspect_ratio(width: f32, height: f32) -> f32 {
+        width.max(height) / width.min(height).max(1.0)
+    }
+
+    fn rectangles_respect_gap(
+        left: eframe::egui::Rect,
+        right: eframe::egui::Rect,
+        gap: f32,
+    ) -> bool {
+        left.right() + gap <= right.left()
+            || right.right() + gap <= left.left()
+            || left.bottom() + gap <= right.top()
+            || right.bottom() + gap <= left.top()
     }
 }

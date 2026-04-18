@@ -15,6 +15,13 @@ const ARCHIVE_ICON: egui::ImageSource<'static> =
 const COPY_PAYLOAD_KIND: &str = "reference-board-items";
 const MAX_CROP_UNDO_ENTRIES: usize = 32;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArrangementAction {
+    Compact,
+    Horizontal,
+    Vertical,
+}
+
 #[derive(Clone, Copy)]
 struct ShortcutSection {
     title: &'static str,
@@ -27,6 +34,79 @@ struct ShortcutRow {
     windows: &'static str,
     mac: &'static str,
 }
+
+#[derive(Clone, Copy)]
+struct ShortcutBinding {
+    key: egui::Key,
+    command: bool,
+    shift: bool,
+}
+
+#[derive(Clone, Copy)]
+struct SupportedShortcut {
+    action: &'static str,
+    windows: &'static str,
+    mac: &'static str,
+    binding: Option<ShortcutBinding>,
+    arrangement: Option<ArrangementAction>,
+}
+
+const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
+    SupportedShortcut {
+        action: "Copy selection",
+        windows: "Ctrl+C",
+        mac: "⌘C",
+        binding: None,
+        arrangement: None,
+    },
+    SupportedShortcut {
+        action: "Paste image",
+        windows: "Ctrl+V",
+        mac: "⌘V",
+        binding: None,
+        arrangement: None,
+    },
+    SupportedShortcut {
+        action: "Drag image",
+        windows: "Drag",
+        mac: "Drag",
+        binding: None,
+        arrangement: None,
+    },
+    SupportedShortcut {
+        action: "Compact arrange",
+        windows: "Ctrl+P",
+        mac: "⌘P",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::P,
+            command: true,
+            shift: false,
+        }),
+        arrangement: Some(ArrangementAction::Compact),
+    },
+    SupportedShortcut {
+        action: "Row arrange",
+        windows: "Ctrl+H",
+        mac: "⌘H",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::H,
+            command: true,
+            shift: false,
+        }),
+        arrangement: Some(ArrangementAction::Horizontal),
+    },
+    SupportedShortcut {
+        action: "Column arrange",
+        windows: "Ctrl+B",
+        mac: "⌘B",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::B,
+            command: true,
+            shift: false,
+        }),
+        arrangement: Some(ArrangementAction::Vertical),
+    },
+];
 
 const SHORTCUT_SECTIONS: &[ShortcutSection] = &[
     ShortcutSection {
@@ -58,24 +138,9 @@ const SHORTCUT_SECTIONS: &[ShortcutSection] = &[
                 mac: "⌥⌘N",
             },
             ShortcutRow {
-                action: "Arrange optimal",
-                windows: "Ctrl+P",
-                mac: "⌘P",
-            },
-            ShortcutRow {
-                action: "Copy",
-                windows: "Ctrl+C",
-                mac: "⌘C",
-            },
-            ShortcutRow {
                 action: "Duplicate",
                 windows: "Ctrl+D",
                 mac: "⌘D",
-            },
-            ShortcutRow {
-                action: "Paste",
-                windows: "Ctrl+V",
-                mac: "⌘V",
             },
             ShortcutRow {
                 action: "Save",
@@ -116,11 +181,6 @@ const SHORTCUT_SECTIONS: &[ShortcutSection] = &[
                 action: "Focus image",
                 windows: "Space",
                 mac: "Space",
-            },
-            ShortcutRow {
-                action: "Move item",
-                windows: "Left MB",
-                mac: "Left MB",
             },
             ShortcutRow {
                 action: "Pan",
@@ -782,6 +842,27 @@ impl ReferenceApp {
         self.status = "Undid crop".to_owned();
     }
 
+    fn handle_arrangement_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.canvas.selected_item_ids().len() <= 1 || ctx.egui_wants_keyboard_input() {
+            return;
+        }
+
+        for shortcut in SUPPORTED_SHORTCUTS {
+            let (Some(binding), Some(action)) = (shortcut.binding, shortcut.arrangement) else {
+                continue;
+            };
+            if shortcut_pressed(ctx, binding) {
+                apply_arrangement_action(
+                    &mut self.canvas,
+                    action,
+                    self.import_gap,
+                    &mut self.status,
+                );
+                break;
+            }
+        }
+    }
+
     fn handle_pending_crop_requests(&mut self) {
         let Some(import_worker) = &self.import_worker else {
             return;
@@ -910,6 +991,7 @@ impl eframe::App for ReferenceApp {
         self.handle_clipboard_copy(ui.ctx());
         self.handle_clipboard_paste(ui.ctx(), screen_rect);
         self.handle_dropped_files(ui, screen_rect);
+        self.handle_arrangement_shortcuts(ui.ctx());
         let drawer_open = self.drawer_open;
         let drawer_height = if drawer_open {
             self.drawer_height(screen_rect)
@@ -926,6 +1008,7 @@ impl eframe::App for ReferenceApp {
             screen_rect,
             &mut self.canvas,
             self.library.as_ref(),
+            self.import_gap,
             &mut self.status,
             drawer_height,
         );
@@ -956,11 +1039,40 @@ impl eframe::App for ReferenceApp {
     }
 }
 
+fn shortcut_pressed(ctx: &egui::Context, binding: ShortcutBinding) -> bool {
+    ctx.input(|input| {
+        input.modifiers.command == binding.command
+            && input.modifiers.shift == binding.shift
+            && input.key_pressed(binding.key)
+    })
+}
+
+fn apply_arrangement_action(
+    canvas: &mut crate::canvas::CanvasState,
+    action: ArrangementAction,
+    gap: f32,
+    status: &mut String,
+) {
+    let arranged = match action {
+        ArrangementAction::Compact => canvas.arrange_selected_compact(gap),
+        ArrangementAction::Horizontal => canvas.arrange_selected_horizontal(gap),
+        ArrangementAction::Vertical => canvas.arrange_selected_vertical(gap),
+    };
+
+    let noun = if arranged == 1 { "image" } else { "images" };
+    *status = match action {
+        ArrangementAction::Compact => format!("Compacted {arranged} {noun}"),
+        ArrangementAction::Horizontal => format!("Arranged {arranged} {noun} in a row"),
+        ArrangementAction::Vertical => format!("Arranged {arranged} {noun} in a column"),
+    };
+}
+
 fn show_selection_toolbar(
     ctx: &egui::Context,
     screen_rect: egui::Rect,
     canvas: &mut crate::canvas::CanvasState,
     library: Option<&crate::storage::Library>,
+    gap: f32,
     status: &mut String,
     bottom_reserved_height: f32,
 ) {
@@ -1019,21 +1131,30 @@ fn show_selection_toolbar(
 
                         if selection_count > 1 {
                             if ui.add(action_button("Compact", 66.0)).clicked() {
-                                let arranged = canvas.arrange_selected_compact();
-                                let noun = if arranged == 1 { "image" } else { "images" };
-                                *status = format!("Compacted {arranged} {noun}");
+                                apply_arrangement_action(
+                                    canvas,
+                                    ArrangementAction::Compact,
+                                    gap,
+                                    status,
+                                );
                             }
 
                             if ui.add(action_button("Row", 44.0)).clicked() {
-                                let arranged = canvas.arrange_selected_horizontal();
-                                let noun = if arranged == 1 { "image" } else { "images" };
-                                *status = format!("Arranged {arranged} {noun} in a row");
+                                apply_arrangement_action(
+                                    canvas,
+                                    ArrangementAction::Horizontal,
+                                    gap,
+                                    status,
+                                );
                             }
 
                             if ui.add(action_button("Column", 62.0)).clicked() {
-                                let arranged = canvas.arrange_selected_vertical();
-                                let noun = if arranged == 1 { "image" } else { "images" };
-                                *status = format!("Arranged {arranged} {noun} in a column");
+                                apply_arrangement_action(
+                                    canvas,
+                                    ArrangementAction::Vertical,
+                                    gap,
+                                    status,
+                                );
                             }
                         }
 
@@ -1145,7 +1266,7 @@ fn show_shortcuts_drawer(
                                     .color(crate::theme::SHADE_BASE),
                             );
                             ui.label(
-                                egui::RichText::new("PureRef handbook defaults")
+                                egui::RichText::new("Implemented now + handbook reference")
                                     .size(11.0)
                                     .color(crate::theme::SHADE_30),
                             );
@@ -1182,6 +1303,7 @@ fn show_shortcuts_drawer(
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(0.0, 10.0);
                             paint_settings_section(ui, auto_image_scaling, import_gap);
+                            paint_supported_shortcuts_section(ui);
                             for section in SHORTCUT_SECTIONS {
                                 paint_shortcut_section(ui, section);
                             }
@@ -1237,7 +1359,7 @@ fn paint_settings_section(ui: &mut egui::Ui, auto_image_scaling: &mut bool, impo
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.toggle_value(auto_image_scaling, "");
+                    paint_switch(ui, auto_image_scaling);
                 });
             });
 
@@ -1268,6 +1390,119 @@ fn paint_settings_section(ui: &mut egui::Ui, auto_image_scaling: &mut bool, impo
                 });
             });
         });
+}
+
+fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
+    egui::Frame::new()
+        .fill(crate::theme::SHADE_90)
+        .stroke(egui::Stroke::new(1.0, crate::theme::SHADE_70))
+        .corner_radius(SHORTCUT_SECTION_CARD_RADIUS)
+        .inner_margin(egui::Margin {
+            left: 12,
+            right: 12,
+            top: 10,
+            bottom: 10,
+        })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Supported shortcuts")
+                        .size(12.0)
+                        .strong()
+                        .color(crate::theme::SHADE_BASE),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(format!("{} actions", SUPPORTED_SHORTCUTS.len()))
+                            .size(10.0)
+                            .color(crate::theme::SHADE_30),
+                    );
+                });
+            });
+            ui.add_space(8.0);
+
+            egui::Grid::new(egui::Id::new("supported_shortcuts_grid"))
+                .num_columns(3)
+                .striped(false)
+                .spacing(egui::vec2(12.0, 6.0))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("Action")
+                            .size(10.0)
+                            .color(crate::theme::SHADE_40)
+                            .strong(),
+                    );
+                    ui.label(
+                        egui::RichText::new("Windows/Linux")
+                            .size(10.0)
+                            .color(crate::theme::SHADE_40)
+                            .strong(),
+                    );
+                    ui.label(
+                        egui::RichText::new("Mac")
+                            .size(10.0)
+                            .color(crate::theme::SHADE_40)
+                            .strong(),
+                    );
+                    ui.end_row();
+
+                    for shortcut in SUPPORTED_SHORTCUTS {
+                        ui.label(
+                            egui::RichText::new(shortcut.action)
+                                .size(11.0)
+                                .color(crate::theme::SHADE_BASE),
+                        );
+                        ui.label(
+                            egui::RichText::new(shortcut.windows)
+                                .size(10.0)
+                                .color(crate::theme::SHADE_20),
+                        );
+                        ui.label(
+                            egui::RichText::new(shortcut.mac)
+                                .size(10.0)
+                                .color(crate::theme::SHADE_20),
+                        );
+                        ui.end_row();
+                    }
+                });
+        });
+}
+
+fn paint_switch(ui: &mut egui::Ui, value: &mut bool) -> egui::Response {
+    let desired_size = egui::vec2(40.0, 24.0);
+    let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    if response.clicked() {
+        *value = !*value;
+        response.mark_changed();
+    }
+
+    let visuals = ui.style().interact_selectable(&response, *value);
+    let track_color = if *value {
+        crate::theme::SHADE_BASE
+    } else {
+        crate::theme::SHADE_60
+    };
+    let knob_color = if *value {
+        crate::theme::SHADE_90
+    } else {
+        crate::theme::SHADE_BASE
+    };
+    let animation = ui.ctx().animate_bool(response.id, *value);
+    let knob_radius = 9.0;
+    let knob_x = egui::lerp((rect.left() + 12.0)..=(rect.right() - 12.0), animation);
+    let track_rect = rect.shrink2(egui::vec2(1.0, 3.0));
+
+    ui.painter().rect(
+        track_rect,
+        track_rect.height() * 0.5,
+        track_color,
+        egui::Stroke::new(1.0, visuals.bg_stroke.color),
+        egui::StrokeKind::Middle,
+    );
+    ui.painter()
+        .circle_filled(egui::pos2(knob_x, rect.center().y), knob_radius, knob_color);
+
+    response
 }
 
 fn show_drawer_toggle(

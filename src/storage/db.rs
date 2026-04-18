@@ -6,7 +6,7 @@ use eframe::egui;
 use image::{ColorType, ImageFormat};
 use rusqlite::{Connection, Transaction, params};
 
-use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset, UserSession};
+use crate::data::{BoardItem, BoardItemWithAsset, BoardLayoutItem, ImageAsset, UserSession};
 
 #[derive(Clone, Debug)]
 pub struct Library {
@@ -277,6 +277,39 @@ impl Library {
 
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("failed to collect board-items: {error}"))
+    }
+
+    pub fn load_board_layout_items(&self) -> Result<Vec<BoardLayoutItem>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT
+                    b.id,
+                    b.x,
+                    b.y,
+                    a.width * b.scale,
+                    a.height * b.scale
+                 FROM board_items b
+                 JOIN assets a ON a.id = b.asset_id
+                 WHERE b.archived = 0
+                 ORDER BY b.z_index ASC, b.id ASC",
+            )
+            .map_err(|error| format!("failed to prepare board-layout query: {error}"))?;
+
+        let rows = statement
+            .query_map([], |row| {
+                Ok(BoardLayoutItem {
+                    id: row.get(0)?,
+                    x: row.get(1)?,
+                    y: row.get(2)?,
+                    width: row.get(3)?,
+                    height: row.get(4)?,
+                })
+            })
+            .map_err(|error| format!("failed to read board-layout query: {error}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect board-layout items: {error}"))
     }
 
     pub fn update_board_item(&self, item: &BoardItem) -> Result<(), String> {

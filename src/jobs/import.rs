@@ -5,7 +5,7 @@ use std::thread;
 use eframe::egui;
 use image::RgbaImage;
 
-use crate::data::BoardItemWithAsset;
+use crate::data::{BoardItemWithAsset, BoardLayoutItem};
 use crate::jobs::image_formats::decode_image_file;
 use crate::storage::Library;
 
@@ -383,7 +383,7 @@ fn arranged_import_world(
         egui::vec2(item_width.max(0.0), item_height.max(0.0)),
     );
 
-    let existing_items = library.load_board_items()?;
+    let existing_items = library.load_board_layout_items()?;
     if existing_items.is_empty() {
         return Ok(desired_world);
     }
@@ -424,21 +424,22 @@ fn arranged_import_world(
                 continue;
             }
 
+            let squareness_score = occupied_bounds_squareness(&existing_rects, candidate_rect);
             let distance_score = candidate.center.distance_sq(desired_world);
-            let bounds_score = occupied_bounds_area(&existing_rects, candidate_rect);
             let score = (
+                squareness_score,
                 distance_score,
-                bounds_score,
                 candidate.generation_index,
                 candidate.center,
             );
 
             match best_candidate {
-                Some((best_distance, best_bounds, best_index, _))
-                    if distance_score > best_distance
-                        || (distance_score == best_distance && bounds_score > best_bounds)
-                        || (distance_score == best_distance
-                            && bounds_score == best_bounds
+                Some((best_squareness, best_distance, best_index, _))
+                    if squareness_score > best_squareness
+                        || ((squareness_score - best_squareness).abs() < 0.001
+                            && distance_score > best_distance)
+                        || ((squareness_score - best_squareness).abs() < 0.001
+                            && (distance_score - best_distance).abs() < 0.001
                             && candidate.generation_index >= best_index) => {}
                 _ => best_candidate = Some(score),
             }
@@ -450,14 +451,11 @@ fn arranged_import_world(
         .unwrap_or(desired_world))
 }
 
-fn displayed_layout_rect(record: &BoardItemWithAsset) -> LayoutRect {
-    let size = egui::vec2(
-        record.asset.width as f32 * record.item.scale.max(0.01),
-        record.asset.height as f32 * record.item.scale.max(0.01),
-    );
+fn displayed_layout_rect(record: &BoardLayoutItem) -> LayoutRect {
+    let size = egui::vec2(record.width.max(0.0), record.height.max(0.0));
     LayoutRect {
-        id: record.item.id,
-        rect: egui::Rect::from_center_size(egui::pos2(record.item.x, record.item.y), size),
+        id: record.id,
+        rect: egui::Rect::from_center_size(egui::pos2(record.x, record.y), size),
     }
 }
 
@@ -478,7 +476,7 @@ fn rects_overlap_with_gap(left: egui::Rect, right: egui::Rect, gap: f32) -> bool
         && left.bottom() > right.top() - gap
 }
 
-fn occupied_bounds_area(existing_rects: &[LayoutRect], candidate_rect: egui::Rect) -> f32 {
+fn occupied_bounds_squareness(existing_rects: &[LayoutRect], candidate_rect: egui::Rect) -> f32 {
     let mut min_x = candidate_rect.left();
     let mut min_y = candidate_rect.top();
     let mut max_x = candidate_rect.right();
@@ -491,7 +489,9 @@ fn occupied_bounds_area(existing_rects: &[LayoutRect], candidate_rect: egui::Rec
         max_y = max_y.max(existing.rect.bottom());
     }
 
-    (max_x - min_x) * (max_y - min_y)
+    let width = (max_x - min_x).max(1.0);
+    let height = (max_y - min_y).max(1.0);
+    width.max(height) / width.min(height)
 }
 
 #[cfg(test)]
@@ -672,6 +672,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(arranged, eframe::egui::pos2(112.0, 112.0));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn square_scoring_beats_anchor_distance_for_adjacent_imports() {
+        let root = temp_library_root("placement-square-scoring");
+        let library = Library::initialize(root.clone()).unwrap();
+        seed_board_item(&library, 1, 0.0, 0.0, 240, 80, 1.0);
+
+        let arranged =
+            arranged_import_world(&library, eframe::egui::pos2(172.0, 0.0), 80, 80, 1.0, 12.0)
+                .unwrap();
+
+        assert_eq!(arranged, eframe::egui::pos2(-80.0, 92.0));
         let _ = fs::remove_dir_all(root);
     }
 
