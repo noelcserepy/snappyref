@@ -290,6 +290,31 @@ impl CanvasState {
         selected_rect
     }
 
+    pub fn selected_bounds_world(&self) -> Option<egui::Rect> {
+        let mut selected_rect: Option<egui::Rect> = None;
+
+        for image in &self.images {
+            if !self.is_selected(image.record.item.id) {
+                continue;
+            }
+
+            let size = egui::vec2(
+                image.record.asset.width as f32 * image.record.item.scale.max(0.01),
+                image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+            );
+            let image_rect = egui::Rect::from_center_size(
+                egui::pos2(image.record.item.x, image.record.item.y),
+                size,
+            );
+            selected_rect = Some(match selected_rect {
+                Some(rect) => rect.union(image_rect),
+                None => image_rect,
+            });
+        }
+
+        selected_rect
+    }
+
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn select_items(&mut self, item_ids: &[i64]) {
         self.selected_item_ids = item_ids

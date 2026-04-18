@@ -25,6 +25,8 @@ enum ArrangementAction {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SupportedShortcutAction {
     DeleteSelection,
+    DuplicateSelection,
+    ToggleDrawer,
     Arrange(ArrangementAction),
 }
 
@@ -73,9 +75,9 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: None,
     },
     SupportedShortcut {
-        action: "Drag image",
-        windows: "Drag",
-        mac: "Drag",
+        action: "Crop image",
+        windows: "C + Drag",
+        mac: "C + Drag",
         binding: None,
         shortcut_action: None,
     },
@@ -85,6 +87,28 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         mac: "Backspace",
         binding: None,
         shortcut_action: Some(SupportedShortcutAction::DeleteSelection),
+    },
+    SupportedShortcut {
+        action: "Duplicate selection",
+        windows: "Ctrl+D",
+        mac: "⌘D",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::D,
+            command: true,
+            shift: false,
+        }),
+        shortcut_action: Some(SupportedShortcutAction::DuplicateSelection),
+    },
+    SupportedShortcut {
+        action: "Toggle drawer",
+        windows: "Ctrl+B",
+        mac: "⌘B",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::B,
+            command: true,
+            shift: false,
+        }),
+        shortcut_action: Some(SupportedShortcutAction::ToggleDrawer),
     },
     SupportedShortcut {
         action: "Compact arrange",
@@ -112,10 +136,10 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Column arrange",
-        windows: "Ctrl+B",
-        mac: "⌘B",
+        windows: "Ctrl+J",
+        mac: "⌘J",
         binding: Some(ShortcutBinding {
-            key: egui::Key::B,
+            key: egui::Key::J,
             command: true,
             shift: false,
         }),
@@ -160,6 +184,11 @@ const SHORTCUT_SECTIONS: &[ShortcutSection] = &[
                 mac: "⌘D",
             },
             ShortcutRow {
+                action: "Toggle drawer",
+                windows: "Ctrl+B",
+                mac: "⌘B",
+            },
+            ShortcutRow {
                 action: "Save",
                 windows: "Ctrl+S",
                 mac: "⌘S",
@@ -181,8 +210,8 @@ const SHORTCUT_SECTIONS: &[ShortcutSection] = &[
             },
             ShortcutRow {
                 action: "Crop image",
-                windows: "C + Left MB",
-                mac: "C + Left MB",
+                windows: "C + Drag",
+                mac: "C + Drag",
             },
             ShortcutRow {
                 action: "Edit item",
@@ -864,7 +893,7 @@ impl ReferenceApp {
     }
 
     fn handle_selection_shortcuts(&mut self, ctx: &egui::Context) {
-        if !self.canvas.has_selection() || ctx.egui_wants_keyboard_input() {
+        if ctx.egui_wants_keyboard_input() {
             return;
         }
 
@@ -874,6 +903,10 @@ impl ReferenceApp {
             };
             let triggered = match shortcut_action {
                 SupportedShortcutAction::DeleteSelection => delete_shortcut_pressed(ctx),
+                SupportedShortcutAction::DuplicateSelection
+                | SupportedShortcutAction::ToggleDrawer => shortcut
+                    .binding
+                    .is_some_and(|binding| shortcut_pressed(ctx, binding)),
                 SupportedShortcutAction::Arrange(_) => shortcut
                     .binding
                     .is_some_and(|binding| shortcut_pressed(ctx, binding)),
@@ -884,11 +917,23 @@ impl ReferenceApp {
 
             match shortcut_action {
                 SupportedShortcutAction::DeleteSelection => {
+                    if !self.canvas.has_selection() {
+                        continue;
+                    }
                     delete_selected_items(
                         &mut self.canvas,
                         self.library.as_ref(),
                         &mut self.status,
                     );
+                }
+                SupportedShortcutAction::DuplicateSelection => {
+                    if !self.canvas.has_selection() {
+                        continue;
+                    }
+                    self.duplicate_selection_with_gap();
+                }
+                SupportedShortcutAction::ToggleDrawer => {
+                    self.drawer_open = !self.drawer_open;
                 }
                 SupportedShortcutAction::Arrange(action) => {
                     if self.canvas.selected_item_ids().len() > 1 {
@@ -903,6 +948,52 @@ impl ReferenceApp {
             }
             break;
         }
+    }
+
+    fn duplicate_selection_with_gap(&mut self) {
+        let Some(library) = &self.library else {
+            self.status = "Storage unavailable".to_owned();
+            return;
+        };
+        let Some(source_center) = self.canvas.selected_center_world() else {
+            return;
+        };
+        let Some(source_bounds) = self.canvas.selected_bounds_world() else {
+            return;
+        };
+
+        let anchor_world = egui::pos2(
+            source_center.x + source_bounds.width() + self.import_gap,
+            source_center.y,
+        );
+        let duplicated = match library.duplicate_board_items(
+            &self.canvas.selected_item_ids(),
+            anchor_world,
+            source_center,
+        ) {
+            Ok(records) => records,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
+
+        let mut duplicated_ids = Vec::new();
+        for record in duplicated {
+            duplicated_ids.push(record.item.id);
+            if let Err(error) = self.canvas.add_reference_item(record) {
+                self.status = error;
+                return;
+            }
+        }
+
+        self.canvas.select_items(&duplicated_ids);
+        let noun = if duplicated_ids.len() == 1 {
+            "image"
+        } else {
+            "images"
+        };
+        self.status = format!("Duplicated {} {noun}", duplicated_ids.len());
     }
 
     fn handle_pending_crop_requests(&mut self) {
@@ -1587,7 +1678,7 @@ fn show_drawer_toggle(
     drawer_open: bool,
     drawer_open_state: &mut bool,
 ) {
-    let button_size = SHORTCUT_DRAWER_BUTTON_SIZE;
+    let button_size = egui::vec2(92.0, SHORTCUT_DRAWER_BUTTON_SIZE);
     let y = if drawer_open {
         let drawer_height = {
             let target = (screen_rect.height() * 0.42)
@@ -1595,23 +1686,22 @@ fn show_drawer_toggle(
             let available = (screen_rect.height() - 72.0).max(140.0);
             target.min(available)
         };
-        screen_rect.bottom() - drawer_height - SHORTCUT_DRAWER_MARGIN - button_size
+        screen_rect.bottom() - drawer_height - SHORTCUT_DRAWER_MARGIN - button_size.y
     } else {
-        screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN - button_size
+        screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN - button_size.y
     };
-    let x = screen_rect.right() - SHORTCUT_DRAWER_MARGIN - button_size;
+    let x = screen_rect.right() - SHORTCUT_DRAWER_MARGIN - button_size.x;
 
     egui::Area::new(egui::Id::new("shortcut_drawer_toggle"))
         .order(egui::Order::Foreground)
         .fixed_pos(egui::pos2(x, y))
         .show(ctx, |ui| {
-            let label = if drawer_open { "×" } else { "▲" };
             let button = egui::Button::new(
-                egui::RichText::new(label)
-                    .size(16.0)
+                egui::RichText::new("Command B")
+                    .size(12.0)
                     .color(crate::theme::SHADE_BASE),
             )
-            .min_size(egui::vec2(button_size, button_size))
+            .min_size(button_size)
             .frame(true)
             .frame_when_inactive(false)
             .stroke(egui::Stroke::NONE)
