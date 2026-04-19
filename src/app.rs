@@ -1,9 +1,6 @@
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
-const MULTI_SELECTION_TOOLBAR_WIDTH: f32 = 204.0;
-const SELECTION_TOOLBAR_HEIGHT: f32 = crate::theme::CONTROL_HEIGHT;
-const SELECTION_TOOLBAR_GAP: f32 = crate::theme::SPACE_3;
 const SHORTCUT_DRAWER_MIN_HEIGHT: f32 = 220.0;
 const SHORTCUT_DRAWER_MAX_HEIGHT: f32 = 360.0;
 const SHORTCUT_DRAWER_MARGIN: f32 = crate::theme::SPACE_3;
@@ -1248,25 +1245,12 @@ impl eframe::App for ReferenceApp {
         self.handle_dropped_files(ui, screen_rect);
         self.handle_selection_shortcuts(ui.ctx(), screen_rect);
         let drawer_open = self.drawer_open;
-        let drawer_height = if drawer_open {
-            self.drawer_height(screen_rect)
-        } else {
-            0.0
-        };
         if drawer_open {
             block_drawer_input(ui.ctx(), self.drawer_rect(screen_rect));
         }
         crate::canvas::show(ui, screen_rect, &mut self.canvas, false);
         self.handle_pending_crop_requests();
         self.handle_pending_annotation_requests();
-        show_selection_toolbar(
-            ui.ctx(),
-            screen_rect,
-            &mut self.canvas,
-            self.import_gap,
-            &mut self.status,
-            drawer_height,
-        );
         self.persist_canvas_changes();
         let drawer_result = show_shortcuts_drawer(
             ui.ctx(),
@@ -1381,75 +1365,6 @@ fn apply_arrangement_action(
         ArrangementAction::Horizontal => format!("Arranged {arranged} {noun} in a row"),
         ArrangementAction::Vertical => format!("Arranged {arranged} {noun} in a column"),
     };
-}
-
-fn show_selection_toolbar(
-    ctx: &egui::Context,
-    screen_rect: egui::Rect,
-    canvas: &mut crate::canvas::CanvasState,
-    gap: f32,
-    status: &mut String,
-    bottom_reserved_height: f32,
-) {
-    if !canvas.has_image_selection() {
-        return;
-    }
-
-    let selection_count = canvas.selected_item_ids().len();
-    if selection_count <= 1 {
-        return;
-    }
-    let Some(selection_rect) = canvas.selection_screen_rect(screen_rect) else {
-        return;
-    };
-
-    let min_x = screen_rect.min.x + crate::theme::SPACE_2;
-    let toolbar_width = MULTI_SELECTION_TOOLBAR_WIDTH;
-    let max_x = screen_rect.max.x - toolbar_width - crate::theme::SPACE_2;
-    let min_y = screen_rect.min.y + crate::theme::SPACE_2;
-    let max_y = (screen_rect.max.y
-        - bottom_reserved_height
-        - SELECTION_TOOLBAR_HEIGHT
-        - crate::theme::SPACE_2)
-        .max(min_y);
-
-    let toolbar_x = (selection_rect.center().x - toolbar_width * 0.5).clamp(min_x, max_x);
-    let toolbar_y = (selection_rect.min.y - SELECTION_TOOLBAR_HEIGHT - SELECTION_TOOLBAR_GAP)
-        .clamp(min_y, max_y);
-
-    egui::Area::new(egui::Id::new("selection_toolbar"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(egui::pos2(toolbar_x, toolbar_y))
-        .show(ctx, |ui| {
-            ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
-
-            let action_button = |label: &str, min_width: f32| {
-                egui::Button::new(
-                    egui::RichText::new(label)
-                        .text_style(egui::TextStyle::Body)
-                        .color(crate::theme::TEXT),
-                )
-                .min_size(egui::vec2(min_width, SELECTION_TOOLBAR_HEIGHT))
-                .frame(true)
-                .frame_when_inactive(false)
-                .stroke(egui::Stroke::NONE)
-                .corner_radius(crate::theme::CONTROL_RADIUS)
-            };
-
-            ui.horizontal(|ui| {
-                if ui.add(action_button("Compact", 66.0)).clicked() {
-                    apply_arrangement_action(canvas, ArrangementAction::Compact, gap, status);
-                }
-
-                if ui.add(action_button("Row", 44.0)).clicked() {
-                    apply_arrangement_action(canvas, ArrangementAction::Horizontal, gap, status);
-                }
-
-                if ui.add(action_button("Column", 62.0)).clicked() {
-                    apply_arrangement_action(canvas, ArrangementAction::Vertical, gap, status);
-                }
-            });
-        });
 }
 
 fn block_drawer_input(ctx: &egui::Context, drawer_rect: egui::Rect) {
