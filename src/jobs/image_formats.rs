@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use image::{ImageFormat, ImageReader, RgbaImage};
+use image::{ImageFormat, RgbaImage};
 
 pub const SUPPORTED_IMPORT_FORMATS: &[ImageFormat] = &[
     ImageFormat::Avif,
@@ -29,37 +29,23 @@ pub struct DecodedImage {
 }
 
 pub fn decode_image_file(path: &Path) -> Result<DecodedImage, String> {
-    let file_size = std::fs::metadata(path)
-        .map_err(|error| format!("failed to read file metadata: {error}"))?
-        .len();
-
-    let reader = ImageReader::open(path)
-        .map_err(|error| format!("failed to open image: {error}"))?
-        .with_guessed_format()
-        .map_err(|error| format!("failed to determine image format: {error}"))?;
-
-    let format = reader
-        .format()
-        .ok_or_else(|| unsupported_format_error(path, None))?;
+    let bytes = std::fs::read(path).map_err(|error| format!("failed to open image: {error}"))?;
+    let file_size = bytes.len() as u64;
+    let format =
+        image::guess_format(&bytes).map_err(|error| format!("failed to determine image format: {error}"))?;
 
     if !SUPPORTED_IMPORT_FORMATS.contains(&format) {
         return Err(unsupported_format_error(path, Some(format)));
     }
 
-    let image = reader
-        .decode()
-        .map_err(|error| format!("failed to decode {}: {error}", format_name(format)))?
-        .to_rgba8();
-    let width = image.width();
-    let height = image.height();
+    let decoded = if format == ImageFormat::Jpeg {
+        decode_jpeg_with_turbojpeg(&bytes, file_size)
+            .or_else(|_| decode_with_image_crate(&bytes, file_size, format))
+    } else {
+        decode_with_image_crate(&bytes, file_size, format)
+    }?;
 
-    Ok(DecodedImage {
-        rgba: image.into_raw(),
-        width,
-        height,
-        file_size,
-        format,
-    })
+    Ok(decoded)
 }
 
 pub struct PreviewImage {
@@ -156,9 +142,57 @@ fn format_name(format: ImageFormat) -> String {
     }
 }
 
+fn decode_with_image_crate(
+    bytes: &[u8],
+    file_size: u64,
+    format: ImageFormat,
+) -> Result<DecodedImage, String> {
+    let image = image::load_from_memory_with_format(bytes, format)
+        .map_err(|error| format!("failed to decode {}: {error}", format_name(format)))?
+        .to_rgba8();
+    let width = image.width();
+    let height = image.height();
+
+    Ok(DecodedImage {
+        rgba: image.into_raw(),
+        width,
+        height,
+        file_size,
+        format,
+    })
+}
+
+fn decode_jpeg_with_turbojpeg(bytes: &[u8], file_size: u64) -> Result<DecodedImage, String> {
+    let mut decompressor = turbojpeg::Decompressor::new()
+        .map_err(|error| format!("failed to initialize TurboJPEG: {error}"))?;
+    let header = decompressor
+        .read_header(bytes)
+        .map_err(|error| format!("failed to read JPEG header with TurboJPEG: {error}"))?;
+    let mut image = turbojpeg::Image {
+        pixels: vec![0; 4 * header.width * header.height],
+        width: header.width,
+        pitch: 4 * header.width,
+        height: header.height,
+        format: turbojpeg::PixelFormat::RGBA,
+    };
+    decompressor
+        .decompress(bytes, image.as_deref_mut())
+        .map_err(|error| format!("failed to decode JPEG with TurboJPEG: {error}"))?;
+
+    Ok(DecodedImage {
+        rgba: image.pixels,
+        width: header.width as u32,
+        height: header.height as u32,
+        file_size,
+        format: ImageFormat::Jpeg,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{fitted_texture_size, preview_image_from_rgba};
+    use super::{decode_image_file, fitted_texture_size, preview_image_from_rgba};
+    use image::codecs::jpeg::JpegEncoder;
+    use image::{ExtendedColorType, ImageEncoder};
 
     #[test]
     fn fitted_texture_size_clamps_to_max_texture_side() {
@@ -175,5 +209,36 @@ mod tests {
         assert_eq!(preview.width, 100);
         assert_eq!(preview.height, 50);
         assert_eq!(preview.rgba.len(), 100 * 50 * 4);
+    }
+
+    #[test]
+    fn decode_image_file_decodes_jpeg() {
+        let root = std::env::temp_dir().join(format!(
+            "reference-decode-jpeg-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("sample.jpg");
+        let rgba = vec![
+            255, 0, 0, 255, 0, 255, 0, 255,
+            0, 0, 255, 255, 255, 255, 255, 255,
+        ];
+        let file = std::fs::File::create(&path).unwrap();
+        let writer = std::io::BufWriter::new(file);
+        let encoder = JpegEncoder::new_with_quality(writer, 85);
+        encoder
+            .write_image(&rgba[..12], 2, 2, ExtendedColorType::Rgb8)
+            .unwrap();
+
+        let decoded = decode_image_file(&path).unwrap();
+        assert_eq!(decoded.format, image::ImageFormat::Jpeg);
+        assert_eq!(decoded.width, 2);
+        assert_eq!(decoded.height, 2);
+        assert_eq!(decoded.rgba.len(), 16);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
