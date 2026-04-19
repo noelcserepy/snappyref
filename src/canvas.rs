@@ -13,6 +13,7 @@ const MIN_CANVAS_ZOOM: f32 = 0.01;
 const MAX_CANVAS_ZOOM: f32 = 64.0;
 const MIN_IMAGE_WORLD_SIZE: f32 = 24.0;
 const IMAGE_CULL_MARGIN_SCREEN: f32 = 128.0;
+const ANNOTATION_CULL_MARGIN_SCREEN: f32 = 128.0;
 const IMAGE_RESIZE_HIT_RADIUS: f32 = 14.0;
 const MIN_TEXTBOX_WORLD_SIZE: egui::Vec2 = egui::vec2(240.0, 56.0);
 const TEXTBOX_FONT_SIZE: f32 = 20.0;
@@ -69,6 +70,13 @@ pub struct PaintPerfReport {
     pub legacy_drawn: usize,
     pub current_considered: usize,
     pub current_drawn: usize,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default)]
+struct AnnotationPaintStats {
+    considered: usize,
+    drawn: usize,
 }
 
 struct CanvasImage {
@@ -2228,6 +2236,16 @@ fn handle_textbox_primary_press(
 
     match region {
         TextboxPointerRegion::Resize(handle) => {
+            if state.single_selected_annotation_id() != Some(annotation.id) {
+                if state.editing_text_annotation_id == Some(annotation.id) {
+                    state.stop_textbox_edit_without_cleanup();
+                } else if state.editing_text_annotation_id.is_some() {
+                    state.finish_textbox_edit();
+                }
+                state.image_transform_state = None;
+                begin_textbox_pending_move(state, rect, annotation, pointer_pos);
+                return true;
+            }
             let world_rect = textbox_world_rect(annotation);
             state.selected_item_ids.clear();
             state.selected_annotation_ids = vec![annotation.id];
@@ -2352,6 +2370,31 @@ fn image_paint_stats_for_records(
         stats.considered += 1;
         let image_rect = image_screen_rect_for_record(record, rect, pan, zoom, rect.center());
         if !cull_offscreen || image_rect.intersects(cull_rect) {
+            stats.drawn += 1;
+        }
+    }
+    stats
+}
+
+#[cfg(test)]
+fn annotation_paint_stats_for_annotations(
+    annotations: &[CanvasAnnotation],
+    rect: egui::Rect,
+    pan: egui::Vec2,
+    zoom: f32,
+    cull_offscreen: bool,
+) -> AnnotationPaintStats {
+    let state = CanvasState {
+        pan,
+        zoom,
+        annotations: annotations.to_vec(),
+        ..CanvasState::default()
+    };
+    let cull_rect = rect.expand(ANNOTATION_CULL_MARGIN_SCREEN);
+    let mut stats = AnnotationPaintStats::default();
+    for annotation in annotations {
+        stats.considered += 1;
+        if !cull_offscreen || annotation_should_paint(&state, rect, cull_rect, annotation) {
             stats.drawn += 1;
         }
     }
@@ -2794,8 +2837,12 @@ fn paint_annotations(
     rect: egui::Rect,
     state: &mut CanvasState,
 ) {
+    let cull_rect = rect.expand(ANNOTATION_CULL_MARGIN_SCREEN);
     for index in 0..state.annotations.len() {
         let annotation = state.annotations[index].clone();
+        if !annotation_should_paint(state, rect, cull_rect, &annotation) {
+            continue;
+        }
         let selected = state.is_annotation_selected(annotation.id);
         let editing = state.editing_text_annotation_id == Some(annotation.id);
         let stroke = if selected || editing {
@@ -2860,6 +2907,15 @@ fn paint_annotations(
             }
         }
     }
+}
+
+fn annotation_should_paint(
+    state: &CanvasState,
+    rect: egui::Rect,
+    cull_rect: egui::Rect,
+    annotation: &CanvasAnnotation,
+) -> bool {
+    annotation_screen_rect(state, rect, annotation).intersects(cull_rect)
 }
 
 fn paint_textbox_text(
@@ -3431,7 +3487,7 @@ fn pending_annotation_from_draft(draft_state: AnnotationDraftState) -> Option<Pe
 mod tests {
     use super::{
         AnnotationDraftState, CanvasImage, CanvasState, ImageResizeHandle, SelectedLayoutItem,
-        TextboxPointerRegion, TextboxResizeHandle,
+        TextboxPointerRegion, TextboxResizeHandle, annotation_paint_stats_for_annotations,
         background_screen_step, background_world_step, best_compact_layout,
         crop_center_offset_local, handle_textbox_primary_press, hit_test_textbox_resize_handle,
         hit_test_image_resize_handle, horizontal_layout, image_screen_rect, min_image_scale,
@@ -4037,6 +4093,90 @@ mod tests {
     }
 
     #[test]
+    fn textbox_edge_press_on_unselected_textbox_selects_without_resizing() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut state = CanvasState::default();
+            let canvas_rect = eframe::egui::Rect::from_min_max(
+                eframe::egui::pos2(0.0, 0.0),
+                eframe::egui::pos2(800.0, 600.0),
+            );
+            state.add_annotation(CanvasAnnotation {
+                id: 18,
+                kind: CanvasAnnotationKind::Textbox,
+                start_x: 20.0,
+                start_y: 40.0,
+                end_x: 320.0,
+                end_y: 180.0,
+                text: "short".to_owned(),
+                archived: false,
+            });
+            state.selected_annotation_ids.clear();
+
+            let annotation = state.annotation_by_id(18).unwrap().clone();
+            let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
+            let pointer_pos =
+                eframe::egui::pos2(textbox_rect.right() + 8.0, textbox_rect.center().y);
+
+            assert!(handle_textbox_primary_press(
+                ui,
+                canvas_rect,
+                &mut state,
+                &annotation,
+                pointer_pos,
+            ));
+            assert_eq!(state.selected_annotation_ids, vec![18]);
+            assert!(matches!(
+                state.textbox_transform_state,
+                Some(super::TextboxTransformState::PendingMove { ref annotation_ids, .. })
+                    if annotation_ids == &vec![18]
+            ));
+        });
+    }
+
+    #[test]
+    fn textbox_edge_press_on_selected_textbox_starts_resize() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut state = CanvasState::default();
+            let canvas_rect = eframe::egui::Rect::from_min_max(
+                eframe::egui::pos2(0.0, 0.0),
+                eframe::egui::pos2(800.0, 600.0),
+            );
+            state.add_annotation(CanvasAnnotation {
+                id: 19,
+                kind: CanvasAnnotationKind::Textbox,
+                start_x: 20.0,
+                start_y: 40.0,
+                end_x: 320.0,
+                end_y: 180.0,
+                text: "short".to_owned(),
+                archived: false,
+            });
+            state.selected_annotation_ids = vec![19];
+
+            let annotation = state.annotation_by_id(19).unwrap().clone();
+            let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
+            let pointer_pos =
+                eframe::egui::pos2(textbox_rect.right() + 8.0, textbox_rect.center().y);
+
+            assert!(handle_textbox_primary_press(
+                ui,
+                canvas_rect,
+                &mut state,
+                &annotation,
+                pointer_pos,
+            ));
+            assert!(matches!(
+                state.textbox_transform_state,
+                Some(super::TextboxTransformState::Resizing {
+                    annotation_id: 19,
+                    dragged_handle: TextboxResizeHandle::Right,
+                    ..
+                })
+            ));
+        });
+    }
+
+    #[test]
     fn textbox_body_press_while_editing_empty_exits_edit_and_starts_pending_move() {
         eframe::egui::__run_test_ui(|ui| {
             let mut state = CanvasState::default();
@@ -4383,6 +4523,66 @@ mod tests {
         state.set_marquee_selection(Vec::new(), vec![13], true);
 
         assert_eq!(state.selected_annotation_ids, vec![12, 13]);
+    }
+
+    #[test]
+    fn annotation_paint_stats_cull_offscreen_textboxes() {
+        let rect = eframe::egui::Rect::from_min_max(
+            eframe::egui::pos2(0.0, 0.0),
+            eframe::egui::pos2(800.0, 600.0),
+        );
+        let annotations = vec![
+            CanvasAnnotation {
+                id: 30,
+                kind: CanvasAnnotationKind::Textbox,
+                start_x: 20.0,
+                start_y: 40.0,
+                end_x: 320.0,
+                end_y: 180.0,
+                text: "visible".to_owned(),
+                archived: false,
+            },
+            CanvasAnnotation {
+                id: 31,
+                kind: CanvasAnnotationKind::Textbox,
+                start_x: 2000.0,
+                start_y: 40.0,
+                end_x: 2300.0,
+                end_y: 180.0,
+                text: "offscreen-a".to_owned(),
+                archived: false,
+            },
+            CanvasAnnotation {
+                id: 32,
+                kind: CanvasAnnotationKind::Textbox,
+                start_x: 2400.0,
+                start_y: 260.0,
+                end_x: 2700.0,
+                end_y: 400.0,
+                text: "offscreen-b".to_owned(),
+                archived: false,
+            },
+            CanvasAnnotation {
+                id: 33,
+                kind: CanvasAnnotationKind::Textbox,
+                start_x: 2800.0,
+                start_y: -120.0,
+                end_x: 3100.0,
+                end_y: 20.0,
+                text: "offscreen-c".to_owned(),
+                archived: false,
+            },
+        ];
+
+        let legacy =
+            annotation_paint_stats_for_annotations(&annotations, rect, eframe::egui::Vec2::ZERO, 8.0, false);
+        let current =
+            annotation_paint_stats_for_annotations(&annotations, rect, eframe::egui::Vec2::ZERO, 8.0, true);
+
+        assert_eq!(legacy.considered, 4);
+        assert_eq!(legacy.drawn, 4);
+        assert_eq!(current.considered, 4);
+        assert_eq!(current.drawn, 1);
     }
 
     #[test]
