@@ -2,13 +2,11 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
-use eframe::egui;
-use image::RgbaImage;
-
 use crate::data::{
     BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, CanvasBackground, UserSession,
 };
 use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
+use eframe::egui;
 
 const MIN_CANVAS_ZOOM: f32 = 0.01;
 const MAX_CANVAS_ZOOM: f32 = 64.0;
@@ -84,7 +82,29 @@ struct AnnotationPaintStats {
 
 struct CanvasImage {
     record: BoardItemWithAsset,
-    texture: egui::TextureHandle,
+    texture: CanvasTexture,
+}
+
+#[derive(Clone)]
+enum CanvasTexture {
+    Managed(egui::TextureHandle),
+    Native(Arc<crate::jobs::NativeTextureHandle>),
+}
+
+impl CanvasTexture {
+    fn id(&self) -> egui::TextureId {
+        match self {
+            Self::Managed(texture) => texture.id(),
+            Self::Native(texture) => texture.texture_id(),
+        }
+    }
+
+    fn size(&self) -> [usize; 2] {
+        match self {
+            Self::Managed(texture) => texture.size(),
+            Self::Native(texture) => texture.size(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -211,7 +231,6 @@ pub struct PixelCropRect {
 pub struct CanvasCropRequest {
     pub item_id: i64,
     pub source_asset: crate::data::ImageAsset,
-    pub source_rgba: Vec<u8>,
     pub crop_rect: PixelCropRect,
     pub crop_offset_local: egui::Vec2,
 }
@@ -253,19 +272,17 @@ impl Default for CanvasState {
 impl CanvasState {
     pub fn add_loaded_item(&mut self, ctx: &egui::Context, loaded: LoadedCanvasItem) {
         self.asset_rgba_cache
-            .insert(loaded.record.asset.id, loaded.rgba.clone());
-        let texture = ctx.load_texture(
+            .insert(loaded.record.asset.id, loaded.preview_rgba.clone());
+        let texture = canvas_texture_from_preview(
+            ctx,
             format!(
                 "asset-{}-item-{}",
                 loaded.record.asset.id, loaded.record.item.id
             ),
-            color_image_for_texture_upload(
-                ctx,
-                loaded.record.asset.width,
-                loaded.record.asset.height,
-                &loaded.rgba,
-            ),
-            egui::TextureOptions::LINEAR,
+            &loaded.preview_rgba,
+            loaded.preview_width,
+            loaded.preview_height,
+            loaded.preview_texture,
         );
 
         self.images
@@ -293,7 +310,7 @@ impl CanvasState {
     pub fn snapshot_item_image(
         &self,
         item_id: i64,
-    ) -> Result<(BoardItemWithAsset, Vec<u8>), String> {
+    ) -> Result<(BoardItemWithAsset, Vec<u8>, u32, u32), String> {
         let image = self
             .image_by_item_id(item_id)
             .ok_or_else(|| format!("missing canvas item {}", item_id))?;
@@ -302,7 +319,12 @@ impl CanvasState {
             .get(&image.record.asset.id)
             .cloned()
             .ok_or_else(|| format!("missing cached pixels for asset {}", image.record.asset.id))?;
-        Ok((image.record.clone(), rgba))
+        Ok((
+            image.record.clone(),
+            rgba,
+            image.texture.size()[0] as u32,
+            image.texture.size()[1] as u32,
+        ))
     }
 
     pub fn projected_cropped_item(
@@ -326,11 +348,15 @@ impl CanvasState {
         asset: crate::data::ImageAsset,
         updated_item: crate::data::BoardItem,
     ) -> Result<(), String> {
-        self.asset_rgba_cache.insert(asset.id, cropped.rgba.clone());
-        let texture = ctx.load_texture(
+        self.asset_rgba_cache
+            .insert(asset.id, cropped.preview_rgba.clone());
+        let texture = canvas_texture_from_preview(
+            ctx,
             format!("asset-{}-item-{}", asset.id, cropped.item_id),
-            color_image_for_texture_upload(ctx, asset.width, asset.height, &cropped.rgba),
-            egui::TextureOptions::LINEAR,
+            &cropped.preview_rgba,
+            cropped.preview_width,
+            cropped.preview_height,
+            cropped.preview_texture,
         );
 
         let Some(image) = self
@@ -369,6 +395,8 @@ impl CanvasState {
             camera_zoom: self.zoom,
             auto_image_scaling: true,
             import_gap: crate::data::DEFAULT_IMPORT_GAP,
+            canvas_image_mode: crate::data::CanvasImageMode::default(),
+            canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             canvas_background: self.background,
             semantic_search_enabled: false,
         }
@@ -1071,7 +1099,6 @@ impl CanvasState {
         Some(CanvasCropRequest {
             item_id: image.record.item.id,
             source_asset: image.record.asset.clone(),
-            source_rgba: self.asset_rgba_cache.get(&image.record.asset.id)?.clone(),
             crop_rect,
             crop_offset_local,
         })
@@ -1093,46 +1120,6 @@ impl CanvasState {
         image.record.item.scale = normalized;
         true
     }
-}
-
-fn color_image_for_texture_upload(
-    ctx: &egui::Context,
-    width: u32,
-    height: u32,
-    rgba: &[u8],
-) -> egui::ColorImage {
-    let max_texture_side = ctx.input(|input| input.max_texture_side);
-    let (upload_width, upload_height) =
-        fitted_texture_size(width as usize, height as usize, max_texture_side);
-
-    if upload_width == width as usize && upload_height == height as usize {
-        return egui::ColorImage::from_rgba_unmultiplied([upload_width, upload_height], rgba);
-    }
-
-    let Some(image) = RgbaImage::from_raw(width, height, rgba.to_vec()) else {
-        return egui::ColorImage::from_rgba_unmultiplied([upload_width, upload_height], rgba);
-    };
-    let resized = image::imageops::resize(
-        &image,
-        upload_width as u32,
-        upload_height as u32,
-        image::imageops::FilterType::Triangle,
-    );
-    egui::ColorImage::from_rgba_unmultiplied([upload_width, upload_height], resized.as_raw())
-}
-
-fn fitted_texture_size(width: usize, height: usize, max_side: usize) -> (usize, usize) {
-    if width == 0 || height == 0 || max_side == 0 {
-        return (width.max(1), height.max(1));
-    }
-    if width <= max_side && height <= max_side {
-        return (width, height);
-    }
-
-    let scale = (max_side as f64 / width as f64).min(max_side as f64 / height as f64);
-    let scaled_width = ((width as f64 * scale).floor() as usize).clamp(1, max_side);
-    let scaled_height = ((height as f64 * scale).floor() as usize).clamp(1, max_side);
-    (scaled_width, scaled_height)
 }
 
 fn horizontal_layout(
@@ -2609,6 +2596,27 @@ fn paint_images(
     }
 }
 
+fn canvas_texture_from_preview(
+    ctx: &egui::Context,
+    texture_name: String,
+    preview_rgba: &[u8],
+    preview_width: u32,
+    preview_height: u32,
+    preview_texture: crate::jobs::ImportedPreviewTexture,
+) -> CanvasTexture {
+    match preview_texture {
+        crate::jobs::ImportedPreviewTexture::Cpu => CanvasTexture::Managed(ctx.load_texture(
+            texture_name,
+            egui::ColorImage::from_rgba_unmultiplied(
+                [preview_width as usize, preview_height as usize],
+                preview_rgba,
+            ),
+            egui::TextureOptions::LINEAR,
+        )),
+        crate::jobs::ImportedPreviewTexture::Native(texture) => CanvasTexture::Native(texture),
+    }
+}
+
 fn paint_background(painter: &egui::Painter, rect: egui::Rect, state: &mut CanvasState) {
     let base = crate::theme::TEXT;
     state.background_lod_level =
@@ -3554,24 +3562,29 @@ fn pending_annotation_from_draft(draft_state: AnnotationDraftState) -> Option<Pe
 #[cfg(test)]
 mod tests {
     use super::{
-        AnnotationDraftState, CanvasImage, CanvasState, ImageResizeHandle, MIN_CANVAS_ZOOM,
-        SelectedLayoutItem, TextboxPointerRegion, TextboxResizeHandle,
+        AnnotationDraftState, CanvasImage, CanvasState, CanvasTexture, ImageResizeHandle,
+        MIN_CANVAS_ZOOM, SelectedLayoutItem, TextboxPointerRegion, TextboxResizeHandle,
         annotation_paint_stats_for_annotations, background_screen_step, background_world_step,
-        best_compact_layout, crop_center_offset_local, fitted_texture_size,
-        handle_textbox_primary_press, hit_test_image_resize_handle, hit_test_textbox_resize_handle,
-        horizontal_layout, image_screen_rect, lattice_phase_screen, lattice_phase_world,
-        layout_textbox_galley, legacy_best_compact_layout, merge_cropped_item_fields,
-        min_image_scale, moved_textbox_rect, normalized_textbox_rect,
-        pending_annotation_from_draft, pixel_crop_rect_from_local, resized_image_scale,
-        resized_textbox_rect, screen_rect_to_local_crop_rect, settled_background_lod_level,
-        textbox_content_rect, textbox_empty_hotspot_rect, textbox_layout_cache_key,
-        textbox_pointer_region, textbox_required_world_height, textbox_screen_rect,
-        textbox_text_interactive_rect_from_galley, vertical_layout,
+        best_compact_layout, crop_center_offset_local, handle_textbox_primary_press,
+        hit_test_image_resize_handle, hit_test_textbox_resize_handle, horizontal_layout,
+        image_screen_rect, lattice_phase_screen, lattice_phase_world, layout_textbox_galley,
+        legacy_best_compact_layout, merge_cropped_item_fields, min_image_scale, moved_textbox_rect,
+        normalized_textbox_rect, pending_annotation_from_draft, pixel_crop_rect_from_local,
+        resized_image_scale, resized_textbox_rect, screen_rect_to_local_crop_rect,
+        settled_background_lod_level, textbox_content_rect, textbox_empty_hotspot_rect,
+        textbox_layout_cache_key, textbox_pointer_region, textbox_required_world_height,
+        textbox_screen_rect, textbox_text_interactive_rect_from_galley, vertical_layout,
     };
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, ImageAsset,
     };
-    use std::{path::PathBuf, sync::Arc};
+    use std::{
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
 
     fn push_test_image(
         ui: &eframe::egui::Ui,
@@ -3610,8 +3623,165 @@ mod tests {
                     imported_at: 0,
                 },
             },
-            texture,
+            texture: CanvasTexture::Managed(texture),
         });
+    }
+
+    fn test_record(item_id: i64, asset_id: i64, width: u32, height: u32) -> BoardItemWithAsset {
+        BoardItemWithAsset {
+            item: BoardItem {
+                id: item_id,
+                asset_id,
+                x: 0.0,
+                y: 0.0,
+                scale: 1.0,
+                rotation: 0.0,
+                z_index: item_id as i32,
+                archived: false,
+            },
+            asset: ImageAsset {
+                id: asset_id,
+                original_path: PathBuf::from(format!("image-{asset_id}.png")),
+                filename: format!("image-{asset_id}.png"),
+                mime_type: "image/png".to_owned(),
+                width,
+                height,
+                file_size: 0,
+                imported_at: 0,
+            },
+        }
+    }
+
+    fn native_loaded_item(
+        record: BoardItemWithAsset,
+        texture: Arc<crate::jobs::NativeTextureHandle>,
+    ) -> crate::jobs::LoadedCanvasItem {
+        crate::jobs::LoadedCanvasItem {
+            preview_rgba: vec![255; record.asset.width as usize * record.asset.height as usize * 4],
+            preview_width: record.asset.width,
+            preview_height: record.asset.height,
+            preview_texture: crate::jobs::ImportedPreviewTexture::Native(texture),
+            record,
+            origin: crate::jobs::ImportOrigin::Existing,
+            trace: None,
+        }
+    }
+
+    #[test]
+    fn deleting_last_shared_native_texture_triggers_single_cleanup() {
+        let ctx = eframe::egui::Context::default();
+        let mut state = CanvasState::default();
+        let cleanup_count = Arc::new(AtomicUsize::new(0));
+        let handle = crate::jobs::NativeTextureHandle::for_tests(
+            eframe::egui::TextureId::User(101),
+            [4, 4],
+            {
+                let cleanup_count = cleanup_count.clone();
+                move |_| {
+                    cleanup_count.fetch_add(1, Ordering::SeqCst);
+                }
+            },
+        );
+        let first = test_record(1, 1, 4, 4);
+
+        state.add_loaded_item(&ctx, native_loaded_item(first, handle.clone()));
+        state.add_reference_item(test_record(2, 1, 4, 4)).unwrap();
+        drop(handle);
+
+        state.delete_items(&[1]);
+        assert_eq!(cleanup_count.load(Ordering::SeqCst), 0);
+
+        state.delete_items(&[2]);
+        assert_eq!(cleanup_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn crop_replacement_keeps_old_native_texture_until_last_shared_reference_drops() {
+        let ctx = eframe::egui::Context::default();
+        let mut state = CanvasState::default();
+        let old_cleanup = Arc::new(AtomicUsize::new(0));
+        let new_cleanup = Arc::new(AtomicUsize::new(0));
+        let old_texture = crate::jobs::NativeTextureHandle::for_tests(
+            eframe::egui::TextureId::User(201),
+            [4, 4],
+            {
+                let old_cleanup = old_cleanup.clone();
+                move |_| {
+                    old_cleanup.fetch_add(1, Ordering::SeqCst);
+                }
+            },
+        );
+        let new_texture = crate::jobs::NativeTextureHandle::for_tests(
+            eframe::egui::TextureId::User(202),
+            [2, 2],
+            {
+                let new_cleanup = new_cleanup.clone();
+                move |_| {
+                    new_cleanup.fetch_add(1, Ordering::SeqCst);
+                }
+            },
+        );
+
+        state.add_loaded_item(
+            &ctx,
+            native_loaded_item(test_record(1, 1, 4, 4), old_texture.clone()),
+        );
+        state.add_reference_item(test_record(2, 1, 4, 4)).unwrap();
+        drop(old_texture);
+
+        state
+            .apply_cropped_item(
+                &ctx,
+                crate::jobs::CroppedCanvasItem {
+                    item_id: 1,
+                    stored_path: PathBuf::from("crop.png"),
+                    width: 2,
+                    height: 2,
+                    file_size: 0,
+                    canvas_rgba: vec![200; 16],
+                    canvas_width: 2,
+                    canvas_height: 2,
+                    preview_rgba: vec![200; 16],
+                    preview_width: 2,
+                    preview_height: 2,
+                    preview_texture: crate::jobs::ImportedPreviewTexture::Native(
+                        new_texture.clone(),
+                    ),
+                    crop_offset_local: eframe::egui::Vec2::ZERO,
+                },
+                ImageAsset {
+                    id: 2,
+                    original_path: PathBuf::from("crop.png"),
+                    filename: "crop.png".to_owned(),
+                    mime_type: "image/png".to_owned(),
+                    width: 2,
+                    height: 2,
+                    file_size: 0,
+                    imported_at: 0,
+                },
+                BoardItem {
+                    id: 1,
+                    asset_id: 2,
+                    x: 0.0,
+                    y: 0.0,
+                    scale: 1.0,
+                    rotation: 0.0,
+                    z_index: 1,
+                    archived: false,
+                },
+            )
+            .unwrap();
+        drop(new_texture);
+
+        assert_eq!(old_cleanup.load(Ordering::SeqCst), 0);
+        assert_eq!(new_cleanup.load(Ordering::SeqCst), 0);
+
+        state.delete_items(&[2]);
+        assert_eq!(old_cleanup.load(Ordering::SeqCst), 1);
+        assert_eq!(new_cleanup.load(Ordering::SeqCst), 0);
+
+        state.delete_items(&[1]);
+        assert_eq!(new_cleanup.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -3659,13 +3829,6 @@ mod tests {
         assert_eq!(merged_item.asset_id, 2);
         assert_eq!(merged_item.x, 150.0);
         assert_eq!(merged_item.y, 110.0);
-    }
-
-    #[test]
-    fn fitted_texture_size_clamps_to_max_texture_side() {
-        assert_eq!(fitted_texture_size(8403, 3952, 8192), (8192, 3852));
-        assert_eq!(fitted_texture_size(3952, 8403, 8192), (3852, 8192));
-        assert_eq!(fitted_texture_size(1024, 768, 8192), (1024, 768));
     }
 
     #[test]

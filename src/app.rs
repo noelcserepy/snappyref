@@ -17,6 +17,7 @@ const SHORTCUT_DRAWER_BUTTON_SIZE: f32 = crate::theme::CONTROL_HEIGHT;
 const COPY_PAYLOAD_KIND: &str = "reference-board-items";
 const MAX_CROP_UNDO_ENTRIES: usize = 32;
 const STARTUP_VIEWPORT_SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
+const MAX_IMPORT_RESULTS_PER_FRAME: usize = 4;
 #[cfg(feature = "semantic-search")]
 const SEARCH_DEBOUNCE_MS: f32 = 120.0;
 #[cfg(feature = "semantic-search")]
@@ -233,6 +234,8 @@ struct ClipboardBoardSelection {
 struct CropUndoEntry {
     previous_record: crate::data::BoardItemWithAsset,
     previous_rgba: Vec<u8>,
+    previous_preview_width: u32,
+    previous_preview_height: u32,
     removed_asset_id: i64,
 }
 
@@ -344,8 +347,11 @@ pub struct ReferenceApp {
     library: Option<crate::storage::Library>,
     import_worker: Option<crate::jobs::ImportWorker>,
     crop_undo_stack: Vec<CropUndoEntry>,
+    max_texture_side: usize,
     auto_image_scaling: bool,
     import_gap: f32,
+    canvas_image_mode: crate::data::CanvasImageMode,
+    canvas_image_max_side: u32,
     semantic_search_enabled: bool,
     #[cfg(feature = "semantic-search")]
     semantic_search: Option<SemanticSearchService>,
@@ -367,10 +373,15 @@ impl ReferenceApp {
         } else {
             crate::native_capture::NativeWindowCapture::from_creation_context(cc)
         };
+        let max_texture_side = cc.egui_ctx.input(|input| input.max_texture_side.max(1));
 
         match crate::storage::Library::initialize(library_root) {
             Ok(library) => {
-                let import_worker = crate::jobs::ImportWorker::new(library.clone());
+                let import_worker = crate::jobs::ImportWorker::new(
+                    library.clone(),
+                    cc.egui_ctx.clone(),
+                    cc.wgpu_render_state.clone(),
+                );
                 let status = "Library ready".to_owned();
                 let mut app = Self {
                     canvas: crate::canvas::CanvasState::default(),
@@ -382,8 +393,11 @@ impl ReferenceApp {
                     library: Some(library.clone()),
                     import_worker: Some(import_worker),
                     crop_undo_stack: Vec::new(),
+                    max_texture_side,
                     auto_image_scaling: true,
                     import_gap: crate::data::DEFAULT_IMPORT_GAP,
+                    canvas_image_mode: crate::data::CanvasImageMode::default(),
+                    canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
                     semantic_search_enabled: false,
                     #[cfg(feature = "semantic-search")]
                     semantic_search: None,
@@ -410,8 +424,11 @@ impl ReferenceApp {
                 library: None,
                 import_worker: None,
                 crop_undo_stack: Vec::new(),
+                max_texture_side,
                 auto_image_scaling: true,
                 import_gap: crate::data::DEFAULT_IMPORT_GAP,
+                canvas_image_mode: crate::data::CanvasImageMode::default(),
+                canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
                 semantic_search_enabled: false,
                 #[cfg(feature = "semantic-search")]
                 semantic_search: None,
@@ -443,7 +460,15 @@ impl ReferenceApp {
                     if let Err(error) =
                         import_worker.enqueue(crate::jobs::ImportRequest::LoadExisting {
                             record,
-                            trace: None,
+                            max_texture_side: self.max_texture_side,
+                            canvas_image_settings: crate::jobs::CanvasImageSettings {
+                                mode: self.canvas_image_mode,
+                                max_side: self.canvas_image_max_side,
+                            },
+                            trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
+                                queued_at: Instant::now(),
+                                timings: crate::jobs::ImportTimings::default(),
+                            }),
                         })
                     {
                         self.status = error;
@@ -472,6 +497,8 @@ impl ReferenceApp {
                 self.canvas.apply_user_session(&session);
                 self.auto_image_scaling = session.auto_image_scaling;
                 self.import_gap = session.import_gap;
+                self.canvas_image_mode = session.canvas_image_mode;
+                self.canvas_image_max_side = session.canvas_image_max_side;
                 self.semantic_search_enabled = session.semantic_search_enabled;
             }
             Err(error) => self.status = error,
@@ -508,10 +535,16 @@ impl ReferenceApp {
                 source_path: source_path.clone(),
                 desired_world,
                 viewport_world,
+                max_texture_side: self.max_texture_side,
+                canvas_image_settings: crate::jobs::CanvasImageSettings {
+                    mode: self.canvas_image_mode,
+                    max_side: self.canvas_image_max_side,
+                },
                 auto_scale: self.auto_image_scaling,
                 import_gap: self.import_gap,
                 trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
                     queued_at: Instant::now(),
+                    timings: crate::jobs::ImportTimings::default(),
                 }),
             }) {
                 self.status = error;
@@ -569,10 +602,16 @@ impl ReferenceApp {
             height,
             desired_world,
             viewport_world,
+            max_texture_side: self.max_texture_side,
+            canvas_image_settings: crate::jobs::CanvasImageSettings {
+                mode: self.canvas_image_mode,
+                max_side: self.canvas_image_max_side,
+            },
             auto_scale: self.auto_image_scaling,
             import_gap: self.import_gap,
             trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
                 queued_at: Instant::now(),
+                timings: crate::jobs::ImportTimings::default(),
             }),
         }) {
             self.status = error;
@@ -686,10 +725,14 @@ impl ReferenceApp {
             return;
         };
 
-        for result in import_worker.try_recv_all() {
+        let results = import_worker.try_recv_up_to(MAX_IMPORT_RESULTS_PER_FRAME);
+        let hit_result_cap = results.len() == MAX_IMPORT_RESULTS_PER_FRAME;
+
+        for result in results {
             match result {
                 crate::jobs::ImportResult::Loaded(loaded) => {
-                    self.log_loaded_timing(&loaded);
+                    let origin = loaded.origin;
+                    let mut trace = loaded.trace;
                     #[cfg(feature = "semantic-search")]
                     let queued_asset = (self.semantic_search_enabled
                         && self.semantic_search.is_some())
@@ -699,6 +742,7 @@ impl ReferenceApp {
                             loaded.record.asset.original_path.clone(),
                         )
                     });
+                    let ui_integration_started_at = Instant::now();
                     self.canvas.add_loaded_item(ctx, loaded);
                     #[cfg(feature = "semantic-search")]
                     if let Some((asset_id, original_path)) = queued_asset
@@ -707,6 +751,10 @@ impl ReferenceApp {
                         let _ = service.enqueue_asset_index(asset_id, original_path);
                         self.search_overlay.status = SearchOverlayStatus::Indexing;
                     }
+                    if let Some(trace) = &mut trace {
+                        trace.timings.ui_integration = ui_integration_started_at.elapsed();
+                    }
+                    self.log_loaded_timing(origin, trace);
                     self.status = "Imported image".to_owned();
                 }
                 crate::jobs::ImportResult::Cropped(cropped) => {
@@ -754,6 +802,14 @@ impl ReferenceApp {
                         }
                     };
 
+                    let _ = library.store_canvas_image_cache(
+                        asset.id,
+                        self.canvas_image_mode,
+                        self.canvas_image_max_side,
+                        &cropped.canvas_rgba,
+                        cropped.canvas_width,
+                        cropped.canvas_height,
+                    );
                     updated_item.asset_id = asset.id;
 
                     let updated_item_id = updated_item.id;
@@ -765,6 +821,8 @@ impl ReferenceApp {
                             self.push_crop_undo_entry(CropUndoEntry {
                                 previous_record: previous_snapshot.0,
                                 previous_rgba: previous_snapshot.1,
+                                previous_preview_width: previous_snapshot.2,
+                                previous_preview_height: previous_snapshot.3,
                                 removed_asset_id: asset.id,
                             });
                             self.canvas.clear_crop_pending(updated_item_id);
@@ -795,6 +853,10 @@ impl ReferenceApp {
                     self.status = format!("{context}: {error}");
                 }
             }
+        }
+
+        if hit_result_cap {
+            ctx.request_repaint();
         }
     }
 
@@ -828,14 +890,18 @@ impl ReferenceApp {
 
         if let Some(path) = removed_path {
             let _ = std::fs::remove_file(&path);
+            let _ = library.remove_asset_canvas_caches(entry.removed_asset_id);
             self.canvas.evict_cached_asset(entry.removed_asset_id);
         }
 
         self.canvas.add_loaded_item(
             ctx,
             crate::jobs::LoadedCanvasItem {
+                preview_width: entry.previous_preview_width,
+                preview_height: entry.previous_preview_height,
                 record: entry.previous_record,
-                rgba: entry.previous_rgba,
+                preview_rgba: entry.previous_rgba,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
             },
@@ -985,8 +1051,14 @@ impl ReferenceApp {
         while let Some(request) = self.canvas.take_pending_crop() {
             let item_id = request.item_id;
             self.canvas.mark_crop_pending(item_id);
-            if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::Crop { request })
-            {
+            if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::Crop {
+                request,
+                max_texture_side: self.max_texture_side,
+                canvas_image_settings: crate::jobs::CanvasImageSettings {
+                    mode: self.canvas_image_mode,
+                    max_side: self.canvas_image_max_side,
+                },
+            }) {
                 self.canvas.clear_crop_pending(item_id);
                 self.status = error;
                 continue;
@@ -1062,6 +1134,8 @@ impl ReferenceApp {
         let mut session = self.canvas.user_session();
         session.auto_image_scaling = self.auto_image_scaling;
         session.import_gap = self.import_gap;
+        session.canvas_image_mode = self.canvas_image_mode;
+        session.canvas_image_max_side = self.canvas_image_max_side;
         session.semantic_search_enabled = self.semantic_search_enabled;
         if let Err(error) = library.save_user_session(&session) {
             self.status = error;
@@ -1495,33 +1569,49 @@ impl ReferenceApp {
         }
     }
 
-    fn log_loaded_timing(&mut self, loaded: &crate::jobs::LoadedCanvasItem) {
+    fn log_loaded_timing(
+        &mut self,
+        origin: crate::jobs::ImportOrigin,
+        trace: Option<crate::jobs::ImportTrace>,
+    ) {
         let Some(perf_log) = &mut self.perf_log else {
             return;
         };
 
-        match loaded.origin {
+        let format_trace = |trace: crate::jobs::ImportTrace| {
+            format!(
+                " total_ms={:.2} queue_ms={:.2} decode_ms={:.2} store_ms={:.2} preview_ms={:.2} worker_ms={:.2} ui_ms={:.2}",
+                trace.queued_at.elapsed().as_secs_f64() * 1000.0,
+                trace.timings.queue_wait.as_secs_f64() * 1000.0,
+                trace.timings.decode_or_load.as_secs_f64() * 1000.0,
+                trace.timings.store_and_persist.as_secs_f64() * 1000.0,
+                trace.timings.preview_prepare.as_secs_f64() * 1000.0,
+                trace.timings.worker_total.as_secs_f64() * 1000.0,
+                trace.timings.ui_integration.as_secs_f64() * 1000.0,
+            )
+        };
+
+        match origin {
             crate::jobs::ImportOrigin::Existing if !perf_log.startup_logged => {
                 perf_log.startup_logged = true;
-                eprintln!(
-                    "[perf] startup_first_image_ms={:.2}",
-                    perf_log.app_started_at.elapsed().as_secs_f64() * 1000.0
-                );
+                let startup_ms = perf_log.app_started_at.elapsed().as_secs_f64() * 1000.0;
+                if let Some(trace) = trace {
+                    eprintln!(
+                        "[perf] startup_first_image_ms={startup_ms:.2}{}",
+                        format_trace(trace)
+                    );
+                } else {
+                    eprintln!("[perf] startup_first_image_ms={startup_ms:.2}");
+                }
             }
             crate::jobs::ImportOrigin::Clipboard => {
-                if let Some(trace) = loaded.trace {
-                    eprintln!(
-                        "[perf] clipboard_import_ms={:.2}",
-                        trace.queued_at.elapsed().as_secs_f64() * 1000.0
-                    );
+                if let Some(trace) = trace {
+                    eprintln!("[perf] clipboard_import{}", format_trace(trace));
                 }
             }
             crate::jobs::ImportOrigin::Path => {
-                if let Some(trace) = loaded.trace {
-                    eprintln!(
-                        "[perf] dropped_file_import_ms={:.2}",
-                        trace.queued_at.elapsed().as_secs_f64() * 1000.0
-                    );
+                if let Some(trace) = trace {
+                    eprintln!("[perf] dropped_file_import{}", format_trace(trace));
                 }
             }
             crate::jobs::ImportOrigin::Existing => {}
@@ -1576,6 +1666,8 @@ impl eframe::App for ReferenceApp {
             drawer_open,
             &mut self.auto_image_scaling,
             &mut self.import_gap,
+            &mut self.canvas_image_mode,
+            &mut self.canvas_image_max_side,
             &mut self.semantic_search_enabled,
             &mut self.canvas,
         );
@@ -1811,6 +1903,8 @@ fn show_shortcuts_drawer(
     drawer_open: bool,
     auto_image_scaling: &mut bool,
     import_gap: &mut f32,
+    canvas_image_mode: &mut crate::data::CanvasImageMode,
+    canvas_image_max_side: &mut u32,
     semantic_search_enabled: &mut bool,
     canvas: &mut crate::canvas::CanvasState,
 ) -> DrawerRenderResult {
@@ -1867,6 +1961,8 @@ fn show_shortcuts_drawer(
                                 ui,
                                 auto_image_scaling,
                                 import_gap,
+                                canvas_image_mode,
+                                canvas_image_max_side,
                                 semantic_search_enabled,
                                 canvas,
                             );
@@ -1892,6 +1988,8 @@ fn paint_settings_section(
     ui: &mut egui::Ui,
     auto_image_scaling: &mut bool,
     import_gap: &mut f32,
+    canvas_image_mode: &mut crate::data::CanvasImageMode,
+    canvas_image_max_side: &mut u32,
     semantic_search_enabled: &mut bool,
     canvas: &mut crate::canvas::CanvasState,
 ) -> bool {
@@ -1913,6 +2011,76 @@ fn paint_settings_section(
                     .color(crate::theme::TEXT_MUTED),
             );
             changed |= paint_background_mode_control(ui, canvas);
+        });
+
+        ui.add_space(crate::theme::SPACE_3);
+
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = crate::theme::SPACE_2;
+            ui.label(
+                egui::RichText::new("Canvas image resolution")
+                    .text_style(egui::TextStyle::Body)
+                    .strong()
+                    .color(crate::theme::TEXT),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "Downscale keeps the original for crop/edit but uses a smaller canvas copy. Default is 2000 px.",
+                )
+                .text_style(egui::TextStyle::Small)
+                .color(crate::theme::TEXT_MUTED),
+            );
+            ui.horizontal(|ui| {
+                changed |= ui
+                    .radio_value(
+                        canvas_image_mode,
+                        crate::data::CanvasImageMode::Downscale,
+                        "Downscale",
+                    )
+                    .changed();
+                changed |= ui
+                    .radio_value(
+                        canvas_image_mode,
+                        crate::data::CanvasImageMode::Original,
+                        "Original",
+                    )
+                    .changed();
+            });
+        });
+
+        ui.add_space(crate::theme::SPACE_3);
+
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(
+                    egui::RichText::new("Canvas max dimension")
+                        .text_style(egui::TextStyle::Body)
+                        .strong()
+                        .color(crate::theme::TEXT),
+                );
+                ui.label(
+                    egui::RichText::new("Largest width or height for the downscaled canvas copy.")
+                        .text_style(egui::TextStyle::Small)
+                        .color(crate::theme::TEXT_MUTED),
+                );
+            });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_enabled_ui(
+                    *canvas_image_mode == crate::data::CanvasImageMode::Downscale,
+                    |ui| {
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(canvas_image_max_side)
+                                    .speed(64.0)
+                                    .range(256..=8192)
+                                    .fixed_decimals(0)
+                                    .suffix(" px"),
+                            )
+                            .changed();
+                    },
+                );
+            });
         });
 
         ui.add_space(crate::theme::SPACE_3);
@@ -2455,6 +2623,8 @@ mod tests {
         let mut app = test_app(Some(library.clone()));
         app.auto_image_scaling = false;
         app.import_gap = 37.0;
+        app.canvas_image_mode = crate::data::CanvasImageMode::Original;
+        app.canvas_image_max_side = 4096;
         app.canvas
             .set_background(crate::data::CanvasBackground::Grid);
 
@@ -2463,6 +2633,11 @@ mod tests {
         let session = library.load_user_session().unwrap();
         assert!(!session.auto_image_scaling);
         assert_eq!(session.import_gap, 37.0);
+        assert_eq!(
+            session.canvas_image_mode,
+            crate::data::CanvasImageMode::Original
+        );
+        assert_eq!(session.canvas_image_max_side, 4096);
         assert_eq!(
             session.canvas_background,
             crate::data::CanvasBackground::Grid
@@ -2515,7 +2690,10 @@ mod tests {
                 &ctx,
                 LoadedCanvasItem {
                     record,
-                    rgba,
+                    preview_rgba: rgba,
+                    preview_width: *width,
+                    preview_height: *height,
+                    preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
                     origin: crate::jobs::ImportOrigin::Existing,
                     trace: None,
                 },
@@ -2656,8 +2834,11 @@ mod tests {
             library,
             import_worker: None,
             crop_undo_stack: Vec::new(),
+            max_texture_side: 8192,
             auto_image_scaling: true,
             import_gap: crate::data::DEFAULT_IMPORT_GAP,
+            canvas_image_mode: crate::data::CanvasImageMode::default(),
+            canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             semantic_search_enabled: false,
             #[cfg(feature = "semantic-search")]
             semantic_search: None,

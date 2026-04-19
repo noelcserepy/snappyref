@@ -8,13 +8,13 @@ use rusqlite::{Connection, Transaction, params, params_from_iter};
 
 use crate::data::{
     BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationKind,
-    CanvasBackground, ImageAsset, UserSession,
+    CanvasBackground, CanvasImageMode, ImageAsset, UserSession,
 };
 
 #[derive(Clone, Debug)]
 pub struct Library {
     originals_dir: PathBuf,
-    _thumbs_dir: PathBuf,
+    thumbs_dir: PathBuf,
     db_path: PathBuf,
 }
 
@@ -78,7 +78,7 @@ impl Library {
 
         let library = Self {
             originals_dir,
-            _thumbs_dir: thumbs_dir,
+            thumbs_dir,
             db_path,
         };
         library.initialize_schema()?;
@@ -128,6 +128,69 @@ impl Library {
         )
         .map_err(|error| format!("failed to write clipboard image: {error}"))?;
         Ok(destination)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn asset_thumb_path(&self, asset_id: i64) -> PathBuf {
+        self.thumbs_dir.join(format!("asset-{asset_id}.png"))
+    }
+
+    pub fn canvas_image_cache_path(
+        &self,
+        asset_id: i64,
+        mode: CanvasImageMode,
+        max_side: u32,
+    ) -> Option<PathBuf> {
+        match mode {
+            CanvasImageMode::Downscale => Some(self.thumbs_dir.join(format!(
+                "asset-{asset_id}-canvas-v1-downscale-{max_side}.png"
+            ))),
+            CanvasImageMode::Original => None,
+        }
+    }
+
+    pub fn store_canvas_image_cache(
+        &self,
+        asset_id: i64,
+        mode: CanvasImageMode,
+        max_side: u32,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<Option<PathBuf>, String> {
+        let Some(destination) = self.canvas_image_cache_path(asset_id, mode, max_side) else {
+            return Ok(None);
+        };
+        image::save_buffer_with_format(
+            &destination,
+            rgba,
+            width,
+            height,
+            ColorType::Rgba8,
+            ImageFormat::Png,
+        )
+        .map_err(|error| format!("failed to write asset preview: {error}"))?;
+        Ok(Some(destination))
+    }
+
+    pub fn remove_asset_canvas_caches(&self, asset_id: i64) -> Result<(), String> {
+        let prefix = format!("asset-{asset_id}-");
+        let entries = fs::read_dir(&self.thumbs_dir)
+            .map_err(|error| format!("failed to read thumbs dir: {error}"))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| format!("failed to read thumbs entry: {error}"))?;
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            if !file_name.starts_with(&prefix) {
+                continue;
+            }
+            match fs::remove_file(entry.path()) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("failed to remove asset preview: {error}")),
+            }
+        }
+        Ok(())
     }
 
     pub fn persist_imported_image(
@@ -730,7 +793,16 @@ impl Library {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap, canvas_background, semantic_search_enabled
+                "SELECT
+                    camera_pan_x,
+                    camera_pan_y,
+                    camera_zoom,
+                    auto_image_scaling,
+                    import_gap,
+                    canvas_background,
+                    semantic_search_enabled,
+                    canvas_image_mode,
+                    canvas_image_max_side
                  FROM user_session
                  WHERE id = 1",
             )
@@ -742,12 +814,23 @@ impl Library {
                 .ok()
                 .and_then(|value| CanvasBackground::from_str(&value))
                 .unwrap_or_default();
+            let canvas_image_mode = row
+                .get::<_, String>(7)
+                .ok()
+                .and_then(|value| CanvasImageMode::from_str(&value))
+                .unwrap_or_default();
             Ok(UserSession {
                 camera_pan_x: row.get(0)?,
                 camera_pan_y: row.get(1)?,
                 camera_zoom: row.get(2)?,
                 auto_image_scaling: row.get::<_, i64>(3)? != 0,
                 import_gap: row.get(4)?,
+                canvas_image_mode,
+                canvas_image_max_side: row
+                    .get::<_, i64>(8)
+                    .ok()
+                    .map(|value| value.max(1) as u32)
+                    .unwrap_or(crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE),
                 canvas_background: background,
                 semantic_search_enabled: row.get::<_, i64>(6).unwrap_or(0) != 0,
             })
@@ -764,8 +847,8 @@ impl Library {
         let connection = self.connection()?;
         connection
             .execute(
-                "INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap, canvas_background, semantic_search_enabled)
-                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap, canvas_background, semantic_search_enabled, canvas_image_mode, canvas_image_max_side)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                  ON CONFLICT(id) DO UPDATE SET
                     camera_pan_x = excluded.camera_pan_x,
                     camera_pan_y = excluded.camera_pan_y,
@@ -773,7 +856,9 @@ impl Library {
                     auto_image_scaling = excluded.auto_image_scaling,
                     import_gap = excluded.import_gap,
                     canvas_background = excluded.canvas_background,
-                    semantic_search_enabled = excluded.semantic_search_enabled",
+                    semantic_search_enabled = excluded.semantic_search_enabled,
+                    canvas_image_mode = excluded.canvas_image_mode,
+                    canvas_image_max_side = excluded.canvas_image_max_side",
                 params![
                     session.camera_pan_x,
                     session.camera_pan_y,
@@ -786,6 +871,8 @@ impl Library {
                     } else {
                         0_i64
                     },
+                    session.canvas_image_mode.as_str(),
+                    i64::from(session.canvas_image_max_side),
                 ],
             )
             .map_err(|error| format!("failed to save user session: {error}"))?;
@@ -966,7 +1053,9 @@ impl Library {
                     auto_image_scaling INTEGER NOT NULL DEFAULT 1,
                     import_gap    REAL NOT NULL DEFAULT 12.0,
                     canvas_background TEXT NOT NULL DEFAULT 'dots',
-                    semantic_search_enabled INTEGER NOT NULL DEFAULT 1
+                    semantic_search_enabled INTEGER NOT NULL DEFAULT 1,
+                    canvas_image_mode TEXT NOT NULL DEFAULT 'downscale',
+                    canvas_image_max_side INTEGER NOT NULL DEFAULT 2000
                 );
 
                 CREATE TABLE IF NOT EXISTS canvas_annotations (
@@ -1002,7 +1091,9 @@ impl Library {
         ensure_user_session_auto_image_scaling_column(&connection)?;
         ensure_user_session_import_gap_column(&connection)?;
         ensure_user_session_canvas_background_column(&connection)?;
-        ensure_user_session_semantic_search_enabled_column(&connection)
+        ensure_user_session_semantic_search_enabled_column(&connection)?;
+        ensure_user_session_canvas_image_mode_column(&connection)?;
+        ensure_user_session_canvas_image_max_side_column(&connection)
     }
 
     fn connection(&self) -> Result<Connection, String> {
@@ -1287,6 +1378,59 @@ fn ensure_user_session_semantic_search_enabled_column(
     Ok(())
 }
 
+fn ensure_user_session_canvas_image_mode_column(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(user_session)")
+        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read user_session schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
+
+    if columns.iter().any(|column| column == "canvas_image_mode") {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE user_session ADD COLUMN canvas_image_mode TEXT NOT NULL DEFAULT 'downscale'",
+            [],
+        )
+        .map_err(|error| format!("failed to add canvas_image_mode column: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_user_session_canvas_image_max_side_column(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(user_session)")
+        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read user_session schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
+
+    if columns
+        .iter()
+        .any(|column| column == "canvas_image_max_side")
+    {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE user_session ADD COLUMN canvas_image_max_side INTEGER NOT NULL DEFAULT 2000",
+            [],
+        )
+        .map_err(|error| format!("failed to add canvas_image_max_side column: {error}"))?;
+
+    Ok(())
+}
+
 #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
 fn encode_f32_slice(values: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(values.len() * std::mem::size_of::<f32>());
@@ -1299,7 +1443,7 @@ fn encode_f32_slice(values: &[f32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::Library;
-    use crate::data::{CanvasAnnotationKind, CanvasBackground};
+    use crate::data::{CanvasAnnotationKind, CanvasBackground, CanvasImageMode};
     use eframe::egui;
     use rusqlite::Connection;
     use std::fs;
@@ -1343,8 +1487,92 @@ mod tests {
         assert_eq!(session.camera_zoom, 1.5);
         assert!(session.auto_image_scaling);
         assert_eq!(session.import_gap, crate::data::DEFAULT_IMPORT_GAP);
+        assert_eq!(session.canvas_image_mode, CanvasImageMode::Downscale);
+        assert_eq!(
+            session.canvas_image_max_side,
+            crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE
+        );
         assert_eq!(session.canvas_background, CanvasBackground::Dots);
         assert!(session.semantic_search_enabled);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn canvas_image_cache_path_is_deterministic() {
+        let root = std::env::temp_dir().join(format!(
+            "reference-thumb-path-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let path = library
+            .canvas_image_cache_path(42, CanvasImageMode::Downscale, 2000)
+            .unwrap();
+
+        assert_eq!(
+            path,
+            root.join("thumbs")
+                .join("asset-42-canvas-v1-downscale-2000.png")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn store_and_remove_canvas_image_cache_round_trips_thumb_file() {
+        let root = std::env::temp_dir().join(format!(
+            "reference-thumb-store-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let preview_path = library
+            .store_canvas_image_cache(7, CanvasImageMode::Downscale, 2000, &[255, 0, 0, 255], 1, 1)
+            .unwrap()
+            .unwrap();
+
+        assert!(preview_path.is_file());
+
+        library.remove_asset_canvas_caches(7).unwrap();
+        assert!(!preview_path.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn remove_asset_canvas_caches_removes_all_variants_for_asset() {
+        let root = std::env::temp_dir().join(format!(
+            "reference-thumb-remove-variants-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library
+            .store_canvas_image_cache(7, CanvasImageMode::Downscale, 2000, &[255, 0, 0, 255], 1, 1)
+            .unwrap()
+            .unwrap();
+        let second = library
+            .store_canvas_image_cache(7, CanvasImageMode::Downscale, 4000, &[255, 0, 0, 255], 1, 1)
+            .unwrap()
+            .unwrap();
+
+        library.remove_asset_canvas_caches(7).unwrap();
+
+        assert!(!first.exists());
+        assert!(!second.exists());
 
         let _ = fs::remove_dir_all(root);
     }
