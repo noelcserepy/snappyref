@@ -2,6 +2,7 @@ mod image_formats;
 mod import;
 
 pub use import::{
-    CroppedCanvasItem, DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImportRequest, ImportResult,
-    ImportWorker, LoadedCanvasItem, arrange_rect_world,
+    CroppedCanvasItem, DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImportOrigin, ImportRequest,
+    ImportResult, ImportTrace, ImportWorker, LoadedCanvasItem, arrange_rect_world,
+    interactive_import_perf_report, sort_records_by_viewport_proximity, startup_perf_report,
 };

@@ -3,12 +3,21 @@ mod canvas;
 mod data;
 mod jobs;
 mod native_capture;
+mod perf;
 mod screenshot;
 mod storage;
 mod theme;
 
 pub fn run() -> eframe::Result<()> {
     let config = app::AppConfig::from_env();
+    if config.perf_report_requested() {
+        if let Err(error) = perf::print_report() {
+            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
+                error,
+            ))));
+        }
+        return Ok(());
+    }
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([960.0, 640.0])

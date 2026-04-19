@@ -1,5 +1,6 @@
 use eframe::egui;
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
 const SHORTCUT_DRAWER_MIN_HEIGHT: f32 = 220.0;
 const SHORTCUT_DRAWER_MAX_HEIGHT: f32 = 360.0;
@@ -7,6 +8,7 @@ const SHORTCUT_DRAWER_MARGIN: f32 = crate::theme::SPACE_3;
 const SHORTCUT_DRAWER_BUTTON_SIZE: f32 = crate::theme::CONTROL_HEIGHT;
 const COPY_PAYLOAD_KIND: &str = "reference-board-items";
 const MAX_CROP_UNDO_ENTRIES: usize = 32;
+const STARTUP_VIEWPORT_SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArrangementAction {
@@ -21,6 +23,8 @@ enum SupportedShortcutAction {
     DuplicateSelection,
     ToggleDrawer,
     Arrange(ArrangementAction),
+    ApplyDefaultAverageArea,
+    AverageSelectionArea,
 }
 
 #[derive(Clone, Copy)]
@@ -161,270 +165,42 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
             ArrangementAction::Vertical,
         )),
     },
+    SupportedShortcut {
+        action: "Apply default average area",
+        windows: "Ctrl+L",
+        mac: "⌘L",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::L,
+            command: true,
+            shift: false,
+        }),
+        shortcut_action: Some(SupportedShortcutAction::ApplyDefaultAverageArea),
+    },
+    SupportedShortcut {
+        action: "Average selection area",
+        windows: "Ctrl+Shift+L",
+        mac: "⇧⌘L",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::L,
+            command: true,
+            shift: true,
+        }),
+        shortcut_action: Some(SupportedShortcutAction::AverageSelectionArea),
+    },
+    SupportedShortcut {
+        action: "Undo crop",
+        windows: "Ctrl+Z",
+        mac: "⌘Z",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::Z,
+            command: true,
+            shift: false,
+        }),
+        shortcut_action: None,
+    },
 ];
 
-const SHORTCUT_SECTIONS: &[ShortcutSection] = &[
-    ShortcutSection {
-        title: "Actions",
-        rows: &[
-            ShortcutRow {
-                action: "Align bottom",
-                windows: "Ctrl+Down",
-                mac: "⌘↓",
-            },
-            ShortcutRow {
-                action: "Align left",
-                windows: "Ctrl+Left",
-                mac: "⌘←",
-            },
-            ShortcutRow {
-                action: "Align right",
-                windows: "Ctrl+Right",
-                mac: "⌘→",
-            },
-            ShortcutRow {
-                action: "Align top",
-                windows: "Ctrl+Up",
-                mac: "⌘↑",
-            },
-            ShortcutRow {
-                action: "Arrange by name",
-                windows: "Ctrl+Alt+N",
-                mac: "⌥⌘N",
-            },
-            ShortcutRow {
-                action: "Duplicate",
-                windows: "Ctrl+D",
-                mac: "⌘D",
-            },
-            ShortcutRow {
-                action: "Toggle drawer",
-                windows: "Ctrl+B",
-                mac: "⌘B",
-            },
-            ShortcutRow {
-                action: "Save",
-                windows: "Ctrl+S",
-                mac: "⌘S",
-            },
-            ShortcutRow {
-                action: "Undo crop",
-                windows: "Ctrl+Z",
-                mac: "⌘Z",
-            },
-        ],
-    },
-    ShortcutSection {
-        title: "Controls",
-        rows: &[
-            ShortcutRow {
-                action: "Delete",
-                windows: "Delete",
-                mac: "Backspace",
-            },
-            ShortcutRow {
-                action: "Crop image",
-                windows: "C + Drag",
-                mac: "C + Drag",
-            },
-            ShortcutRow {
-                action: "Edit item",
-                windows: "Return",
-                mac: "↵",
-            },
-            ShortcutRow {
-                action: "Focus canvas",
-                windows: "Ctrl+Space",
-                mac: "⌘Space",
-            },
-            ShortcutRow {
-                action: "Focus image",
-                windows: "Space",
-                mac: "Space",
-            },
-            ShortcutRow {
-                action: "Pan",
-                windows: "Left MB + Alt",
-                mac: "Left MB + ⌥",
-            },
-            ShortcutRow {
-                action: "Select all",
-                windows: "Ctrl+A",
-                mac: "⌘A",
-            },
-            ShortcutRow {
-                action: "Select items",
-                windows: "Left MB",
-                mac: "Left MB",
-            },
-            ShortcutRow {
-                action: "Zoom in",
-                windows: "Ctrl++",
-                mac: "⌘+",
-            },
-            ShortcutRow {
-                action: "Zoom out",
-                windows: "Ctrl+-",
-                mac: "⌘-",
-            },
-        ],
-    },
-    ShortcutSection {
-        title: "Draw",
-        rows: &[
-            ShortcutRow {
-                action: "Draw arrow",
-                windows: "A + Drag",
-                mac: "A + Drag",
-            },
-            ShortcutRow {
-                action: "Draw line",
-                windows: "L + Drag",
-                mac: "L + Drag",
-            },
-            ShortcutRow {
-                action: "Draw textbox",
-                windows: "T + Click/Drag",
-                mac: "T + Click/Drag",
-            },
-        ],
-    },
-    ShortcutSection {
-        title: "Group",
-        rows: &[
-            ShortcutRow {
-                action: "Group",
-                windows: "Ctrl+G",
-                mac: "⌘G",
-            },
-            ShortcutRow {
-                action: "Ungroup",
-                windows: "Ctrl+Shift+G",
-                mac: "⇧⌘G",
-            },
-        ],
-    },
-    ShortcutSection {
-        title: "Multi Note",
-        rows: &[
-            ShortcutRow {
-                action: "Toggle bold text",
-                windows: "None",
-                mac: "None",
-            },
-            ShortcutRow {
-                action: "Toggle italic text",
-                windows: "None",
-                mac: "None",
-            },
-            ShortcutRow {
-                action: "Toggle text underline",
-                windows: "None",
-                mac: "None",
-            },
-            ShortcutRow {
-                action: "Text highlight color",
-                windows: "None",
-                mac: "None",
-            },
-            ShortcutRow {
-                action: "Paste text formatting",
-                windows: "None",
-                mac: "None",
-            },
-        ],
-    },
-    ShortcutSection {
-        title: "Note",
-        rows: &[
-            ShortcutRow {
-                action: "Align text left",
-                windows: "Ctrl+Shift+L",
-                mac: "⇧⌘L",
-            },
-            ShortcutRow {
-                action: "Align text center",
-                windows: "Ctrl+Shift+E",
-                mac: "⇧⌘E",
-            },
-            ShortcutRow {
-                action: "Align text right",
-                windows: "Ctrl+Shift+R",
-                mac: "⇧⌘R",
-            },
-            ShortcutRow {
-                action: "Decrease font size",
-                windows: "Ctrl+Shift+,",
-                mac: "⇧⌘,",
-            },
-            ShortcutRow {
-                action: "Increase font size",
-                windows: "Ctrl+Shift+.",
-                mac: "⇧⌘.",
-            },
-            ShortcutRow {
-                action: "Insert link",
-                windows: "Ctrl+K",
-                mac: "⌘K",
-            },
-            ShortcutRow {
-                action: "Paste without formatting",
-                windows: "Ctrl+Shift+V",
-                mac: "⇧⌘V",
-            },
-            ShortcutRow {
-                action: "Toggle note auto size",
-                windows: "Ctrl+Shift+A",
-                mac: "⇧⌘A",
-            },
-            ShortcutRow {
-                action: "Toggle bulleted list",
-                windows: "Ctrl+Shift+B",
-                mac: "⇧⌘B",
-            },
-            ShortcutRow {
-                action: "Toggle numbered list",
-                windows: "Ctrl+Shift+N",
-                mac: "⇧⌘N",
-            },
-        ],
-    },
-    ShortcutSection {
-        title: "Playback",
-        rows: &[
-            ShortcutRow {
-                action: "Next frame",
-                windows: "None",
-                mac: "None",
-            },
-            ShortcutRow {
-                action: "Play / Pause",
-                windows: "None",
-                mac: "None",
-            },
-            ShortcutRow {
-                action: "Previous frame",
-                windows: "None",
-                mac: "None",
-            },
-        ],
-    },
-    ShortcutSection {
-        title: "System",
-        rows: &[
-            ShortcutRow {
-                action: "Move window",
-                windows: "Right MB",
-                mac: "Right MB",
-            },
-            ShortcutRow {
-                action: "Resize window",
-                windows: "Left MB",
-                mac: "Left MB",
-            },
-        ],
-    },
-];
+const SHORTCUT_SECTIONS: &[ShortcutSection] = &[];
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ClipboardBoardSelection {
@@ -444,8 +220,16 @@ struct CropUndoEntry {
 #[derive(Clone, Debug, Default)]
 pub struct AppConfig {
     pub screenshot_path: Option<std::path::PathBuf>,
+    perf_log: bool,
+    perf_report: bool,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
+}
+
+#[derive(Clone, Debug)]
+struct PerfLogState {
+    app_started_at: Instant,
+    startup_logged: bool,
 }
 
 #[cfg(debug_assertions)]
@@ -457,6 +241,8 @@ enum VerificationMode {
 impl AppConfig {
     pub fn from_env() -> Self {
         let mut screenshot_path = None;
+        let mut perf_log = false;
+        let mut perf_report = false;
         #[cfg(debug_assertions)]
         let mut verification_mode = None;
         let mut arguments = std::env::args().skip(1);
@@ -466,6 +252,10 @@ impl AppConfig {
                 screenshot_path = arguments.next().map(std::path::PathBuf::from);
             } else if let Some(path) = argument.strip_prefix("--screenshot=") {
                 screenshot_path = Some(std::path::PathBuf::from(path));
+            } else if argument == "--perf-log" {
+                perf_log = true;
+            } else if argument == "--perf-report" {
+                perf_report = true;
             } else if cfg!(debug_assertions) && argument == "--verify-open-drawer" {
                 #[cfg(debug_assertions)]
                 {
@@ -476,6 +266,8 @@ impl AppConfig {
 
         Self {
             screenshot_path,
+            perf_log,
+            perf_report,
             #[cfg(debug_assertions)]
             verification_mode,
         }
@@ -489,6 +281,14 @@ impl AppConfig {
     #[cfg(not(debug_assertions))]
     fn open_drawer_on_start(&self) -> bool {
         false
+    }
+
+    pub fn perf_log_enabled(&self) -> bool {
+        self.perf_log
+    }
+
+    pub fn perf_report_requested(&self) -> bool {
+        self.perf_report
     }
 }
 
@@ -504,6 +304,7 @@ pub struct ReferenceApp {
     import_gap: f32,
     drawer_open: bool,
     status: String,
+    perf_log: Option<PerfLogState>,
 }
 
 impl ReferenceApp {
@@ -536,6 +337,10 @@ impl ReferenceApp {
                     import_gap: crate::data::DEFAULT_IMPORT_GAP,
                     drawer_open: config.open_drawer_on_start(),
                     status,
+                    perf_log: config.perf_log_enabled().then(|| PerfLogState {
+                        app_started_at: Instant::now(),
+                        startup_logged: false,
+                    }),
                 };
                 app.load_user_session();
                 app.enqueue_existing_items();
@@ -553,6 +358,10 @@ impl ReferenceApp {
                 import_gap: crate::data::DEFAULT_IMPORT_GAP,
                 drawer_open: config.open_drawer_on_start(),
                 status: format!("Storage unavailable: {error}"),
+                perf_log: config.perf_log_enabled().then(|| PerfLogState {
+                    app_started_at: Instant::now(),
+                    startup_logged: false,
+                }),
             },
         }
     }
@@ -566,10 +375,15 @@ impl ReferenceApp {
         };
 
         match library.load_board_items() {
-            Ok(records) => {
+            Ok(mut records) => {
+                let viewport_world = self.startup_viewport_world_rect();
+                crate::jobs::sort_records_by_viewport_proximity(&mut records, viewport_world);
                 for record in records {
                     if let Err(error) =
-                        import_worker.enqueue(crate::jobs::ImportRequest::LoadExisting { record })
+                        import_worker.enqueue(crate::jobs::ImportRequest::LoadExisting {
+                            record,
+                            trace: None,
+                        })
                     {
                         self.status = error;
                         break;
@@ -602,6 +416,14 @@ impl ReferenceApp {
         }
     }
 
+    fn startup_viewport_world_rect(&self) -> egui::Rect {
+        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, STARTUP_VIEWPORT_SIZE);
+        egui::Rect::from_min_max(
+            self.canvas.screen_to_world(screen_rect.min, screen_rect),
+            self.canvas.screen_to_world(screen_rect.max, screen_rect),
+        )
+    }
+
     fn handle_dropped_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
         let Some(import_worker) = &self.import_worker else {
             return;
@@ -626,6 +448,10 @@ impl ReferenceApp {
                 viewport_world,
                 auto_scale: self.auto_image_scaling,
                 import_gap: self.import_gap,
+                trace: self
+                    .perf_log
+                    .as_ref()
+                    .map(|_| crate::jobs::ImportTrace { queued_at: Instant::now() }),
             }) {
                 self.status = error;
                 continue;
@@ -684,6 +510,10 @@ impl ReferenceApp {
             viewport_world,
             auto_scale: self.auto_image_scaling,
             import_gap: self.import_gap,
+            trace: self
+                .perf_log
+                .as_ref()
+                .map(|_| crate::jobs::ImportTrace { queued_at: Instant::now() }),
         }) {
             self.status = error;
             return;
@@ -799,6 +629,7 @@ impl ReferenceApp {
         for result in import_worker.try_recv_all() {
             match result {
                 crate::jobs::ImportResult::Loaded(loaded) => {
+                    self.log_loaded_timing(&loaded);
                     self.canvas.add_loaded_item(ctx, loaded);
                     self.status = "Imported image".to_owned();
                 }
@@ -921,6 +752,8 @@ impl ReferenceApp {
             crate::jobs::LoadedCanvasItem {
                 record: entry.previous_record,
                 rgba: entry.previous_rgba,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
             },
         );
         self.status = "Undid crop".to_owned();
@@ -938,10 +771,10 @@ impl ReferenceApp {
             let triggered = match shortcut_action {
                 SupportedShortcutAction::DeleteSelection => delete_shortcut_pressed(ctx),
                 SupportedShortcutAction::DuplicateSelection
-                | SupportedShortcutAction::ToggleDrawer => shortcut
-                    .binding
-                    .is_some_and(|binding| shortcut_pressed(ctx, binding)),
-                SupportedShortcutAction::Arrange(_) => shortcut
+                | SupportedShortcutAction::ToggleDrawer
+                | SupportedShortcutAction::ApplyDefaultAverageArea
+                | SupportedShortcutAction::AverageSelectionArea
+                | SupportedShortcutAction::Arrange(_) => shortcut
                     .binding
                     .is_some_and(|binding| shortcut_pressed(ctx, binding)),
             };
@@ -978,6 +811,19 @@ impl ReferenceApp {
                             &mut self.status,
                         );
                     }
+                }
+                SupportedShortcutAction::ApplyDefaultAverageArea => {
+                    if !self.canvas.has_image_selection() {
+                        continue;
+                    }
+                    apply_default_average_area_to_selection(&mut self.canvas, &mut self.status);
+                }
+                SupportedShortcutAction::AverageSelectionArea => {
+                    if self.canvas.selected_item_ids().len() < 2 {
+                        self.status = "Select 2 or more images to average their area".to_owned();
+                        continue;
+                    }
+                    apply_average_selection_area(&mut self.canvas, &mut self.status);
                 }
             }
             break;
@@ -1213,6 +1059,39 @@ impl ReferenceApp {
             self.crop_undo_stack.remove(0);
         }
     }
+
+    fn log_loaded_timing(&mut self, loaded: &crate::jobs::LoadedCanvasItem) {
+        let Some(perf_log) = &mut self.perf_log else {
+            return;
+        };
+
+        match loaded.origin {
+            crate::jobs::ImportOrigin::Existing if !perf_log.startup_logged => {
+                perf_log.startup_logged = true;
+                eprintln!(
+                    "[perf] startup_first_image_ms={:.2}",
+                    perf_log.app_started_at.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+            crate::jobs::ImportOrigin::Clipboard => {
+                if let Some(trace) = loaded.trace {
+                    eprintln!(
+                        "[perf] clipboard_import_ms={:.2}",
+                        trace.queued_at.elapsed().as_secs_f64() * 1000.0
+                    );
+                }
+            }
+            crate::jobs::ImportOrigin::Path => {
+                if let Some(trace) = loaded.trace {
+                    eprintln!(
+                        "[perf] dropped_file_import_ms={:.2}",
+                        trace.queued_at.elapsed().as_secs_f64() * 1000.0
+                    );
+                }
+            }
+            crate::jobs::ImportOrigin::Existing => {}
+        }
+    }
 }
 
 impl eframe::App for ReferenceApp {
@@ -1316,15 +1195,20 @@ fn delete_selected_items(
     library: Option<&crate::storage::Library>,
     status: &mut String,
 ) {
-    if let Some(annotation_id) = canvas.delete_selected_annotation() {
+    let annotation_ids = canvas.delete_selected_annotations();
+    if !annotation_ids.is_empty() {
         if let Some(library) = library
-            && let Err(error) = library.archive_canvas_annotations(&[annotation_id])
+            && let Err(error) = library.archive_canvas_annotations(&annotation_ids)
         {
             *status = error;
             return;
         }
-        *status = "Archived annotation".to_owned();
-        return;
+        let noun = if annotation_ids.len() == 1 {
+            "annotation"
+        } else {
+            "annotations"
+        };
+        *status = format!("Archived {} {noun}", annotation_ids.len());
     }
 
     let archived_ids = canvas.delete_selected_images();
@@ -1365,6 +1249,26 @@ fn apply_arrangement_action(
         ArrangementAction::Horizontal => format!("Arranged {arranged} {noun} in a row"),
         ArrangementAction::Vertical => format!("Arranged {arranged} {noun} in a column"),
     };
+}
+
+fn apply_default_average_area_to_selection(
+    canvas: &mut crate::canvas::CanvasState,
+    status: &mut String,
+) {
+    let changed =
+        canvas.apply_target_area_to_selected_images(crate::jobs::DEFAULT_IMPORT_TARGET_CANVAS_AREA);
+    let noun = if changed == 1 { "image" } else { "images" };
+    *status = format!("Applied default average area to {changed} {noun}");
+}
+
+fn apply_average_selection_area(canvas: &mut crate::canvas::CanvasState, status: &mut String) {
+    let Some(target_area) = canvas.average_selected_image_area() else {
+        *status = "Select 2 or more images to average their area".to_owned();
+        return;
+    };
+    let changed = canvas.apply_target_area_to_selected_images(target_area);
+    let noun = if changed == 1 { "image" } else { "images" };
+    *status = format!("Averaged area across {changed} {noun}");
 }
 
 fn block_drawer_input(ctx: &egui::Context, drawer_rect: egui::Rect) {
@@ -2068,7 +1972,15 @@ mod tests {
                 asset,
             };
             let rgba = vec![255; (*width as usize) * (*height as usize) * 4];
-            canvas.add_loaded_item(&ctx, LoadedCanvasItem { record, rgba });
+            canvas.add_loaded_item(
+                &ctx,
+                LoadedCanvasItem {
+                    record,
+                    rgba,
+                    origin: crate::jobs::ImportOrigin::Existing,
+                    trace: None,
+                },
+            );
         }
 
         canvas.select_items(&fixture.iter().map(|(id, _, _)| *id).collect::<Vec<_>>());
@@ -2126,6 +2038,7 @@ mod tests {
             import_gap: crate::data::DEFAULT_IMPORT_GAP,
             drawer_open: false,
             status: String::new(),
+            perf_log: None,
         }
     }
 

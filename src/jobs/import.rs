@@ -1,6 +1,9 @@
-use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
 use image::RgbaImage;
@@ -11,6 +14,39 @@ use crate::storage::Library;
 
 pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
 
+const PERF_STARTUP_IMAGE_SIZE: u32 = 1536;
+const PERF_BACKLOG_IMAGE_SIZE: u32 = 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportOrigin {
+    Existing,
+    Path,
+    Clipboard,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ImportPriority {
+    Interactive,
+    Background,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ImportTrace {
+    pub queued_at: Instant,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct StartupPerfReport {
+    pub legacy_first_visible_ms: f64,
+    pub current_first_visible_ms: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct InteractiveImportPerfReport {
+    pub legacy_interactive_import_under_backlog_ms: f64,
+    pub current_interactive_import_under_backlog_ms: f64,
+}
+
 #[derive(Clone, Debug)]
 pub enum ImportRequest {
     ImportPath {
@@ -19,6 +55,7 @@ pub enum ImportRequest {
         viewport_world: egui::Rect,
         auto_scale: bool,
         import_gap: f32,
+        trace: Option<ImportTrace>,
     },
     ImportClipboard {
         rgba: Vec<u8>,
@@ -28,12 +65,14 @@ pub enum ImportRequest {
         viewport_world: egui::Rect,
         auto_scale: bool,
         import_gap: f32,
+        trace: Option<ImportTrace>,
     },
     Crop {
         request: crate::canvas::CanvasCropRequest,
     },
     LoadExisting {
         record: BoardItemWithAsset,
+        trace: Option<ImportTrace>,
     },
 }
 
@@ -52,6 +91,8 @@ pub enum ImportResult {
 pub struct LoadedCanvasItem {
     pub record: BoardItemWithAsset,
     pub rgba: Vec<u8>,
+    pub origin: ImportOrigin,
+    pub trace: Option<ImportTrace>,
 }
 
 #[derive(Clone, Debug)]
@@ -66,17 +107,30 @@ pub struct CroppedCanvasItem {
 }
 
 pub struct ImportWorker {
-    sender: Sender<ImportRequest>,
+    queue: Arc<RequestQueue>,
     receiver: Receiver<ImportResult>,
+}
+
+struct RequestQueue {
+    state: Mutex<RequestQueueState>,
+    ready: Condvar,
+}
+
+#[derive(Default)]
+struct RequestQueueState {
+    interactive: VecDeque<ImportRequest>,
+    background: VecDeque<ImportRequest>,
 }
 
 impl ImportWorker {
     pub fn new(library: Library) -> Self {
-        let (request_tx, request_rx) = mpsc::channel::<ImportRequest>();
         let (result_tx, result_rx) = mpsc::channel::<ImportResult>();
+        let queue = Arc::new(RequestQueue::default());
+        let worker_queue = queue.clone();
 
         thread::spawn(move || {
-            while let Ok(request) = request_rx.recv() {
+            loop {
+                let request = worker_queue.pop();
                 let result = match request {
                     ImportRequest::ImportPath {
                         source_path,
@@ -84,6 +138,7 @@ impl ImportWorker {
                         viewport_world,
                         auto_scale,
                         import_gap,
+                        trace,
                     } => import_path(
                         &library,
                         source_path,
@@ -91,6 +146,7 @@ impl ImportWorker {
                         viewport_world,
                         auto_scale,
                         import_gap,
+                        trace,
                     ),
                     ImportRequest::ImportClipboard {
                         rgba,
@@ -100,6 +156,7 @@ impl ImportWorker {
                         viewport_world,
                         auto_scale,
                         import_gap,
+                        trace,
                     } => import_clipboard(
                         &library,
                         rgba,
@@ -109,9 +166,10 @@ impl ImportWorker {
                         viewport_world,
                         auto_scale,
                         import_gap,
+                        trace,
                     ),
                     ImportRequest::Crop { request } => crop_item(&library, request),
-                    ImportRequest::LoadExisting { record } => load_existing(record),
+                    ImportRequest::LoadExisting { record, trace } => load_existing(record, trace),
                 };
 
                 let _ = result_tx.send(result);
@@ -119,15 +177,14 @@ impl ImportWorker {
         });
 
         Self {
-            sender: request_tx,
+            queue,
             receiver: result_rx,
         }
     }
 
     pub fn enqueue(&self, request: ImportRequest) -> Result<(), String> {
-        self.sender
-            .send(request)
-            .map_err(|error| format!("failed to enqueue import request: {error}"))
+        self.queue.push(request);
+        Ok(())
     }
 
     pub fn try_recv_all(&self) -> Vec<ImportResult> {
@@ -135,6 +192,51 @@ impl ImportWorker {
     }
 }
 
+impl Default for RequestQueue {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(RequestQueueState::default()),
+            ready: Condvar::new(),
+        }
+    }
+}
+
+impl RequestQueue {
+    fn push(&self, request: ImportRequest) {
+        let mut state = self.state.lock().expect("request queue poisoned");
+        match request.priority() {
+            ImportPriority::Interactive => state.interactive.push_back(request),
+            ImportPriority::Background => state.background.push_back(request),
+        }
+        self.ready.notify_one();
+    }
+
+    fn pop(&self) -> ImportRequest {
+        let mut state = self.state.lock().expect("request queue poisoned");
+        loop {
+            if let Some(request) = state.interactive.pop_front() {
+                return request;
+            }
+            if let Some(request) = state.background.pop_front() {
+                return request;
+            }
+            state = self.ready.wait(state).expect("request queue poisoned");
+        }
+    }
+}
+
+impl ImportRequest {
+    fn priority(&self) -> ImportPriority {
+        match self {
+            ImportRequest::LoadExisting { .. } => ImportPriority::Background,
+            ImportRequest::ImportPath { .. }
+            | ImportRequest::ImportClipboard { .. }
+            | ImportRequest::Crop { .. } => ImportPriority::Interactive,
+        }
+    }
+}
+
+#[allow(dead_code)]
 pub fn import_path_sync(
     library: &Library,
     source_path: PathBuf,
@@ -142,6 +244,161 @@ pub fn import_path_sync(
     viewport_world: egui::Rect,
     auto_scale: bool,
     import_gap: f32,
+) -> Result<LoadedCanvasItem, String> {
+    import_path_sync_traced(
+        library,
+        source_path,
+        desired_world,
+        viewport_world,
+        auto_scale,
+        import_gap,
+        None,
+    )
+}
+
+pub fn import_clipboard_sync(
+    library: &Library,
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    desired_world: egui::Pos2,
+    viewport_world: egui::Rect,
+    auto_scale: bool,
+    import_gap: f32,
+) -> Result<LoadedCanvasItem, String> {
+    import_clipboard_sync_traced(
+        library,
+        rgba,
+        width,
+        height,
+        desired_world,
+        viewport_world,
+        auto_scale,
+        import_gap,
+        None,
+    )
+}
+
+pub fn sort_records_by_viewport_proximity(
+    records: &mut [BoardItemWithAsset],
+    viewport_world: egui::Rect,
+) {
+    records.sort_by(|left, right| {
+        record_viewport_distance_sq(left, viewport_world)
+            .total_cmp(&record_viewport_distance_sq(right, viewport_world))
+            .then_with(|| {
+                left.item
+                    .z_index
+                    .cmp(&right.item.z_index)
+                    .then_with(|| left.item.id.cmp(&right.item.id))
+            })
+    });
+}
+
+pub fn startup_perf_report() -> Result<StartupPerfReport, String> {
+    let root = temp_library_root("startup-perf");
+    let viewport_world =
+        egui::Rect::from_min_max(egui::pos2(-240.0, -180.0), egui::pos2(240.0, 180.0));
+    let paths = [
+        write_png(&root, "offscreen-a.png", PERF_STARTUP_IMAGE_SIZE, PERF_STARTUP_IMAGE_SIZE)?,
+        write_png(&root, "offscreen-b.png", PERF_STARTUP_IMAGE_SIZE, PERF_STARTUP_IMAGE_SIZE)?,
+        write_png(&root, "visible-a.png", PERF_STARTUP_IMAGE_SIZE, PERF_STARTUP_IMAGE_SIZE)?,
+        write_png(&root, "visible-b.png", PERF_STARTUP_IMAGE_SIZE, PERF_STARTUP_IMAGE_SIZE)?,
+    ];
+    let records = vec![
+        perf_record(
+            1,
+            &paths[0],
+            egui::pos2(-2200.0, -2200.0),
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        ),
+        perf_record(
+            2,
+            &paths[1],
+            egui::pos2(2200.0, 2200.0),
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        ),
+        perf_record(
+            3,
+            &paths[2],
+            egui::pos2(0.0, 0.0),
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        ),
+        perf_record(
+            4,
+            &paths[3],
+            egui::pos2(120.0, 60.0),
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        ),
+    ];
+    let legacy_first_visible_ms =
+        measure_first_visible_load_ms(records.clone(), viewport_world, false)?;
+    let current_first_visible_ms =
+        measure_first_visible_load_ms(records, viewport_world, true)?;
+    let _ = std::fs::remove_dir_all(root);
+
+    Ok(StartupPerfReport {
+        legacy_first_visible_ms,
+        current_first_visible_ms,
+    })
+}
+
+pub fn interactive_import_perf_report() -> Result<InteractiveImportPerfReport, String> {
+    let root = temp_library_root("interactive-import-perf");
+    let library = Library::initialize(root.clone())?;
+    let viewport_world =
+        egui::Rect::from_min_max(egui::pos2(-240.0, -180.0), egui::pos2(240.0, 180.0));
+    let mut backlog = Vec::new();
+    for index in 0..6 {
+        let path = write_png(
+            &root,
+            &format!("backlog-{index}.png"),
+            PERF_BACKLOG_IMAGE_SIZE,
+            PERF_BACKLOG_IMAGE_SIZE,
+        )?;
+        backlog.push(perf_record(
+            index as i64 + 1,
+            &path,
+            egui::pos2(2500.0 + index as f32 * 40.0, 2500.0),
+            PERF_BACKLOG_IMAGE_SIZE,
+            PERF_BACKLOG_IMAGE_SIZE,
+        ));
+    }
+
+    let legacy_interactive_import_under_backlog_ms = measure_interactive_import_ms(
+        &library,
+        &backlog,
+        viewport_world,
+        solid_rgba(1200, 900),
+        false,
+    )?;
+    let current_interactive_import_under_backlog_ms = measure_interactive_import_ms(
+        &library,
+        &backlog,
+        viewport_world,
+        solid_rgba(1200, 900),
+        true,
+    )?;
+
+    let _ = std::fs::remove_dir_all(root);
+    Ok(InteractiveImportPerfReport {
+        legacy_interactive_import_under_backlog_ms,
+        current_interactive_import_under_backlog_ms,
+    })
+}
+
+fn import_path_sync_traced(
+    library: &Library,
+    source_path: PathBuf,
+    desired_world: egui::Pos2,
+    viewport_world: egui::Rect,
+    auto_scale: bool,
+    import_gap: f32,
+    trace: Option<ImportTrace>,
 ) -> Result<LoadedCanvasItem, String> {
     let decoded = decode_image_file(&source_path)
         .map_err(|error| format!("{}: {error}", source_path.display()))?;
@@ -174,6 +431,8 @@ pub fn import_path_sync(
     Ok(LoadedCanvasItem {
         record,
         rgba: decoded.rgba,
+        origin: ImportOrigin::Path,
+        trace,
     })
 }
 
@@ -184,14 +443,16 @@ fn import_path(
     viewport_world: egui::Rect,
     auto_scale: bool,
     import_gap: f32,
+    trace: Option<ImportTrace>,
 ) -> ImportResult {
-    match import_path_sync(
+    match import_path_sync_traced(
         library,
         source_path.clone(),
         desired_world,
         viewport_world,
         auto_scale,
         import_gap,
+        trace,
     ) {
         Ok(loaded) => ImportResult::Loaded(loaded),
         Err(error) => ImportResult::Failed {
@@ -211,49 +472,55 @@ fn import_clipboard(
     viewport_world: egui::Rect,
     auto_scale: bool,
     import_gap: f32,
+    trace: Option<ImportTrace>,
 ) -> ImportResult {
-    let stored_path = match library.store_clipboard_image(&rgba, width, height) {
-        Ok(path) => path,
+    match import_clipboard_sync_traced(
+        library,
+        rgba,
+        width,
+        height,
+        desired_world,
+        viewport_world,
+        auto_scale,
+        import_gap,
+        trace,
+    ) {
+        Ok(loaded) => ImportResult::Loaded(loaded),
         Err(error) => {
-            return ImportResult::Failed {
+            ImportResult::Failed {
                 item_id: None,
                 context: "clipboard".to_owned(),
                 error,
-            };
+            }
         }
-    };
+    }
+}
 
-    let file_size = match std::fs::metadata(&stored_path) {
-        Ok(metadata) => metadata.len(),
-        Err(error) => {
-            return ImportResult::Failed {
-                item_id: None,
-                context: stored_path.display().to_string(),
-                error: format!("failed to read clipboard image metadata: {error}"),
-            };
-        }
-    };
-
+fn import_clipboard_sync_traced(
+    library: &Library,
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    desired_world: egui::Pos2,
+    viewport_world: egui::Rect,
+    auto_scale: bool,
+    import_gap: f32,
+    trace: Option<ImportTrace>,
+) -> Result<LoadedCanvasItem, String> {
+    let stored_path = library.store_clipboard_image(&rgba, width, height)?;
+    let file_size = std::fs::metadata(&stored_path)
+        .map_err(|error| format!("failed to read clipboard image metadata: {error}"))?
+        .len();
     let initial_scale = initial_import_scale(width, height, auto_scale);
-    let arranged_world = match arrange_rect_world(
+    let arranged_world = arrange_rect_world(
         library,
         desired_world,
         viewport_world,
         width as f32 * initial_scale.max(0.01),
         height as f32 * initial_scale.max(0.01),
         import_gap,
-    ) {
-        Ok(arranged_world) => arranged_world,
-        Err(error) => {
-            return ImportResult::Failed {
-                item_id: None,
-                context: "clipboard".to_owned(),
-                error,
-            };
-        }
-    };
-
-    let record = match library.persist_imported_image(
+    )?;
+    let record = library.persist_imported_image(
         &stored_path,
         image::ImageFormat::Png.to_mime_type(),
         width,
@@ -261,25 +528,23 @@ fn import_clipboard(
         file_size,
         arranged_world,
         initial_scale,
-    ) {
-        Ok(record) => record,
-        Err(error) => {
-            return ImportResult::Failed {
-                item_id: None,
-                context: stored_path.display().to_string(),
-                error,
-            };
-        }
-    };
+    )?;
 
-    ImportResult::Loaded(LoadedCanvasItem { record, rgba })
+    Ok(LoadedCanvasItem {
+        record,
+        rgba,
+        origin: ImportOrigin::Clipboard,
+        trace,
+    })
 }
 
-fn load_existing(record: BoardItemWithAsset) -> ImportResult {
+fn load_existing(record: BoardItemWithAsset, trace: Option<ImportTrace>) -> ImportResult {
     match decode_image_file(&record.asset.original_path) {
         Ok(decoded) => ImportResult::Loaded(LoadedCanvasItem {
             record,
             rgba: decoded.rgba,
+            origin: ImportOrigin::Existing,
+            trace,
         }),
         Err(error) => ImportResult::Failed {
             item_id: None,
@@ -287,6 +552,170 @@ fn load_existing(record: BoardItemWithAsset) -> ImportResult {
             error,
         },
     }
+}
+
+fn measure_first_visible_load_ms(
+    mut records: Vec<BoardItemWithAsset>,
+    viewport_world: egui::Rect,
+    prioritize: bool,
+) -> Result<f64, String> {
+    if prioritize {
+        sort_records_by_viewport_proximity(&mut records, viewport_world);
+    }
+    let started_at = Instant::now();
+    for record in records {
+        let loaded = load_existing(record.clone(), None);
+        match loaded {
+            ImportResult::Loaded(loaded) => {
+                if record_intersects_viewport_world(&loaded.record, viewport_world) {
+                    return Ok(started_at.elapsed().as_secs_f64() * 1000.0);
+                }
+            }
+            ImportResult::Failed { error, .. } => return Err(error),
+            ImportResult::Cropped(_) => {}
+        }
+    }
+    Ok(started_at.elapsed().as_secs_f64() * 1000.0)
+}
+
+fn measure_interactive_import_ms(
+    library: &Library,
+    backlog: &[BoardItemWithAsset],
+    viewport_world: egui::Rect,
+    clipboard_rgba: Vec<u8>,
+    prioritize: bool,
+) -> Result<f64, String> {
+    let started_at = Instant::now();
+    if prioritize {
+        import_clipboard_sync(
+            library,
+            clipboard_rgba,
+            1200,
+            900,
+            egui::Pos2::ZERO,
+            viewport_world,
+            true,
+            crate::data::DEFAULT_IMPORT_GAP,
+        )?;
+    } else {
+        for record in backlog {
+            match load_existing(record.clone(), None) {
+                ImportResult::Loaded(_) => {}
+                ImportResult::Failed { error, .. } => return Err(error),
+                ImportResult::Cropped(_) => {}
+            }
+        }
+        import_clipboard_sync(
+            library,
+            clipboard_rgba,
+            1200,
+            900,
+            egui::Pos2::ZERO,
+            viewport_world,
+            true,
+            crate::data::DEFAULT_IMPORT_GAP,
+        )?;
+    }
+    Ok(started_at.elapsed().as_secs_f64() * 1000.0)
+}
+
+fn record_viewport_distance_sq(record: &BoardItemWithAsset, viewport_world: egui::Rect) -> f32 {
+    let rect = record_world_rect(record);
+    if rect.intersects(viewport_world) {
+        return 0.0;
+    }
+    let center = rect.center();
+    let clamped = egui::pos2(
+        center.x.clamp(viewport_world.left(), viewport_world.right()),
+        center.y.clamp(viewport_world.top(), viewport_world.bottom()),
+    );
+    center.distance_sq(clamped)
+}
+
+fn record_intersects_viewport_world(
+    record: &BoardItemWithAsset,
+    viewport_world: egui::Rect,
+) -> bool {
+    record_world_rect(record).intersects(viewport_world)
+}
+
+fn record_world_rect(record: &BoardItemWithAsset) -> egui::Rect {
+    let size = egui::vec2(record.asset.width as f32, record.asset.height as f32)
+        * record.item.scale.max(0.01);
+    egui::Rect::from_center_size(egui::pos2(record.item.x, record.item.y), size)
+}
+
+fn perf_record(
+    item_id: i64,
+    path: &Path,
+    center: egui::Pos2,
+    width: u32,
+    height: u32,
+) -> BoardItemWithAsset {
+    BoardItemWithAsset {
+        item: crate::data::BoardItem {
+            id: item_id,
+            asset_id: item_id,
+            x: center.x,
+            y: center.y,
+            scale: 1.0,
+            rotation: 0.0,
+            z_index: item_id as i32,
+            archived: false,
+        },
+        asset: crate::data::ImageAsset {
+            id: item_id,
+            original_path: path.to_path_buf(),
+            filename: path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("image.png")
+                .to_owned(),
+            mime_type: "image/png".to_owned(),
+            width,
+            height,
+            file_size: std::fs::metadata(path)
+                .map(|metadata| metadata.len())
+                .unwrap_or(0),
+            imported_at: 0,
+        },
+    }
+}
+
+fn solid_rgba(width: u32, height: u32) -> Vec<u8> {
+    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+    for y in 0..height {
+        for x in 0..width {
+            let channel = ((x ^ y) & 0xFF) as u8;
+            rgba.extend_from_slice(&[channel, channel.wrapping_add(47), 255, 255]);
+        }
+    }
+    rgba
+}
+
+fn temp_library_root(label: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("reference-{label}-{unique}"))
+}
+
+fn write_png(root: &Path, filename: &str, width: u32, height: u32) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(root)
+        .map_err(|error| format!("failed to create temp perf root: {error}"))?;
+    let path = root.join(filename);
+    let rgba = solid_rgba(width, height);
+    image::save_buffer_with_format(
+        &path,
+        &rgba,
+        width,
+        height,
+        image::ColorType::Rgba8,
+        image::ImageFormat::Png,
+    )
+    .map_err(|error| format!("failed to write perf fixture image: {error}"))?;
+    Ok(path)
 }
 
 fn crop_item(library: &Library, request: crate::canvas::CanvasCropRequest) -> ImportResult {
@@ -636,6 +1065,7 @@ mod tests {
             test_viewport_world(),
             true,
             crate::data::DEFAULT_IMPORT_GAP,
+            None,
         ) {
             ImportResult::Loaded(loaded) => loaded,
             other => panic!("expected loaded tall clipboard image, got {other:?}"),
@@ -649,6 +1079,7 @@ mod tests {
             test_viewport_world(),
             false,
             crate::data::DEFAULT_IMPORT_GAP,
+            None,
         ) {
             ImportResult::Loaded(loaded) => loaded,
             other => panic!("expected loaded small clipboard image, got {other:?}"),
@@ -774,6 +1205,7 @@ mod tests {
             test_viewport_world(),
             false,
             gap,
+            None,
         ) {
             ImportResult::Loaded(loaded) => loaded,
             other => panic!("expected first loaded image, got {other:?}"),
@@ -788,6 +1220,7 @@ mod tests {
             test_viewport_world(),
             false,
             gap,
+            None,
         ) {
             ImportResult::Loaded(loaded) => loaded,
             other => panic!("expected second loaded image, got {other:?}"),
