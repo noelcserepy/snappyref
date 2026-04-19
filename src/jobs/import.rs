@@ -1,15 +1,17 @@
 use std::collections::VecDeque;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
 use image::RgbaImage;
 
 use crate::data::{BoardItemWithAsset, BoardLayoutItem};
-use crate::jobs::image_formats::decode_image_file;
+use crate::jobs::image_formats::{PreviewImage, decode_image_file, preview_image_from_rgba};
 use crate::storage::Library;
 
 pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
@@ -33,12 +35,24 @@ enum ImportPriority {
 #[derive(Clone, Copy, Debug)]
 pub struct ImportTrace {
     pub queued_at: Instant,
+    pub timings: ImportTimings,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ImportTimings {
+    pub queue_wait: Duration,
+    pub decode_or_load: Duration,
+    pub store_and_persist: Duration,
+    pub preview_prepare: Duration,
+    pub worker_total: Duration,
+    pub ui_integration: Duration,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct StartupPerfReport {
     pub legacy_first_visible_ms: f64,
     pub current_first_visible_ms: f64,
+    pub warm_cached_first_visible_ms: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -47,12 +61,37 @@ pub struct InteractiveImportPerfReport {
     pub current_interactive_import_under_backlog_ms: f64,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct WorkerInteractiveImportPerfReport {
+    pub legacy_single_worker_ms: f64,
+    pub current_pooled_ms: f64,
+    pub current_interactive_workers: usize,
+    pub current_background_workers: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CanvasImageSettings {
+    pub mode: crate::data::CanvasImageMode,
+    pub max_side: u32,
+}
+
+impl Default for CanvasImageSettings {
+    fn default() -> Self {
+        Self {
+            mode: crate::data::CanvasImageMode::default(),
+            max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum ImportRequest {
     ImportPath {
         source_path: PathBuf,
         desired_world: egui::Pos2,
         viewport_world: egui::Rect,
+        max_texture_side: usize,
+        canvas_image_settings: CanvasImageSettings,
         auto_scale: bool,
         import_gap: f32,
         trace: Option<ImportTrace>,
@@ -63,15 +102,21 @@ pub enum ImportRequest {
         height: u32,
         desired_world: egui::Pos2,
         viewport_world: egui::Rect,
+        max_texture_side: usize,
+        canvas_image_settings: CanvasImageSettings,
         auto_scale: bool,
         import_gap: f32,
         trace: Option<ImportTrace>,
     },
     Crop {
         request: crate::canvas::CanvasCropRequest,
+        max_texture_side: usize,
+        canvas_image_settings: CanvasImageSettings,
     },
     LoadExisting {
         record: BoardItemWithAsset,
+        max_texture_side: usize,
+        canvas_image_settings: CanvasImageSettings,
         trace: Option<ImportTrace>,
     },
 }
@@ -87,10 +132,96 @@ pub enum ImportResult {
     },
 }
 
+#[derive(Clone)]
+pub enum ImportedPreviewTexture {
+    Cpu,
+    Native(Arc<NativeTextureHandle>),
+}
+
+impl fmt::Debug for ImportedPreviewTexture {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Cpu => f.write_str("Cpu"),
+            Self::Native(handle) => f.debug_tuple("Native").field(handle).finish(),
+        }
+    }
+}
+
+pub struct NativeTextureHandle {
+    texture_id: egui::TextureId,
+    size: [usize; 2],
+    cleanup: Arc<dyn Fn(egui::TextureId) + Send + Sync>,
+    _texture: Option<eframe::wgpu::Texture>,
+    _view: Option<eframe::wgpu::TextureView>,
+}
+
+impl fmt::Debug for NativeTextureHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NativeTextureHandle")
+            .field("texture_id", &self.texture_id)
+            .field("size", &self.size)
+            .finish()
+    }
+}
+
+impl NativeTextureHandle {
+    fn from_registered_texture(
+        render_state: eframe::egui_wgpu::RenderState,
+        texture_id: egui::TextureId,
+        width: u32,
+        height: u32,
+        texture: eframe::wgpu::Texture,
+        view: eframe::wgpu::TextureView,
+    ) -> Self {
+        let cleanup = Arc::new(move |texture_id| {
+            render_state.renderer.write().free_texture(&texture_id);
+        });
+        Self {
+            texture_id,
+            size: [width as usize, height as usize],
+            cleanup,
+            _texture: Some(texture),
+            _view: Some(view),
+        }
+    }
+
+    pub fn texture_id(&self) -> egui::TextureId {
+        self.texture_id
+    }
+
+    pub fn size(&self) -> [usize; 2] {
+        self.size
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_tests(
+        texture_id: egui::TextureId,
+        size: [usize; 2],
+        cleanup: impl Fn(egui::TextureId) + Send + Sync + 'static,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            texture_id,
+            size,
+            cleanup: Arc::new(cleanup),
+            _texture: None,
+            _view: None,
+        })
+    }
+}
+
+impl Drop for NativeTextureHandle {
+    fn drop(&mut self) {
+        (self.cleanup)(self.texture_id);
+    }
+}
+
 #[derive(Debug)]
 pub struct LoadedCanvasItem {
     pub record: BoardItemWithAsset,
-    pub rgba: Vec<u8>,
+    pub preview_rgba: Vec<u8>,
+    pub preview_width: u32,
+    pub preview_height: u32,
+    pub preview_texture: ImportedPreviewTexture,
     pub origin: ImportOrigin,
     pub trace: Option<ImportTrace>,
 }
@@ -102,13 +233,20 @@ pub struct CroppedCanvasItem {
     pub width: u32,
     pub height: u32,
     pub file_size: u64,
-    pub rgba: Vec<u8>,
+    pub canvas_rgba: Vec<u8>,
+    pub canvas_width: u32,
+    pub canvas_height: u32,
+    pub preview_rgba: Vec<u8>,
+    pub preview_width: u32,
+    pub preview_height: u32,
+    pub preview_texture: ImportedPreviewTexture,
     pub crop_offset_local: egui::Vec2,
 }
 
 pub struct ImportWorker {
     queue: Arc<RequestQueue>,
     receiver: Receiver<ImportResult>,
+    workers: Vec<JoinHandle<()>>,
 }
 
 struct RequestQueue {
@@ -120,75 +258,152 @@ struct RequestQueue {
 struct RequestQueueState {
     interactive: VecDeque<ImportRequest>,
     background: VecDeque<ImportRequest>,
+    shutting_down: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorkerKind {
+    General,
+    Interactive,
+    Background,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ImportWorkerConfig {
+    general_workers: usize,
+    interactive_workers: usize,
+    background_workers: usize,
 }
 
 impl ImportWorker {
-    pub fn new(library: Library) -> Self {
+    pub fn new(
+        library: Library,
+        ctx: egui::Context,
+        wgpu_render_state: Option<eframe::egui_wgpu::RenderState>,
+    ) -> Self {
+        let parallelism = thread::available_parallelism()
+            .map(|available| available.get())
+            .unwrap_or(1);
+        Self::new_with_config(
+            library,
+            ctx,
+            wgpu_render_state,
+            ImportWorkerConfig::for_parallelism(parallelism),
+        )
+    }
+
+    fn new_with_config(
+        library: Library,
+        ctx: egui::Context,
+        wgpu_render_state: Option<eframe::egui_wgpu::RenderState>,
+        config: ImportWorkerConfig,
+    ) -> Self {
         let (result_tx, result_rx) = mpsc::channel::<ImportResult>();
         let queue = Arc::new(RequestQueue::default());
-        let worker_queue = queue.clone();
+        let mut workers = Vec::with_capacity(config.total_workers());
 
-        thread::spawn(move || {
-            loop {
-                let request = worker_queue.pop();
-                let result = match request {
-                    ImportRequest::ImportPath {
-                        source_path,
-                        desired_world,
-                        viewport_world,
-                        auto_scale,
-                        import_gap,
-                        trace,
-                    } => import_path(
-                        &library,
-                        source_path,
-                        desired_world,
-                        viewport_world,
-                        auto_scale,
-                        import_gap,
-                        trace,
-                    ),
-                    ImportRequest::ImportClipboard {
-                        rgba,
-                        width,
-                        height,
-                        desired_world,
-                        viewport_world,
-                        auto_scale,
-                        import_gap,
-                        trace,
-                    } => import_clipboard(
-                        &library,
-                        rgba,
-                        width,
-                        height,
-                        desired_world,
-                        viewport_world,
-                        auto_scale,
-                        import_gap,
-                        trace,
-                    ),
-                    ImportRequest::Crop { request } => crop_item(&library, request),
-                    ImportRequest::LoadExisting { record, trace } => load_existing(record, trace),
-                };
+        for kind in config.worker_kinds() {
+            let worker_queue = queue.clone();
+            let worker_library = library.clone();
+            let worker_ctx = ctx.clone();
+            let worker_render_state = wgpu_render_state.clone();
+            let worker_result_tx = result_tx.clone();
+            workers.push(thread::spawn(move || {
+                while let Some(request) = worker_queue.pop(kind) {
+                    let result = match request {
+                        ImportRequest::ImportPath {
+                            source_path,
+                            desired_world,
+                            viewport_world,
+                            max_texture_side,
+                            canvas_image_settings,
+                            auto_scale,
+                            import_gap,
+                            trace,
+                        } => import_path(
+                            &worker_library,
+                            source_path,
+                            desired_world,
+                            viewport_world,
+                            max_texture_side,
+                            canvas_image_settings,
+                            auto_scale,
+                            import_gap,
+                            trace,
+                            worker_render_state.as_ref(),
+                        ),
+                        ImportRequest::ImportClipboard {
+                            rgba,
+                            width,
+                            height,
+                            desired_world,
+                            viewport_world,
+                            max_texture_side,
+                            canvas_image_settings,
+                            auto_scale,
+                            import_gap,
+                            trace,
+                        } => import_clipboard(
+                            &worker_library,
+                            rgba,
+                            width,
+                            height,
+                            desired_world,
+                            viewport_world,
+                            max_texture_side,
+                            canvas_image_settings,
+                            auto_scale,
+                            import_gap,
+                            trace,
+                            worker_render_state.as_ref(),
+                        ),
+                        ImportRequest::Crop {
+                            request,
+                            max_texture_side,
+                            canvas_image_settings,
+                        } => crop_item(
+                            &worker_library,
+                            request,
+                            max_texture_side,
+                            canvas_image_settings,
+                            worker_render_state.as_ref(),
+                        ),
+                        ImportRequest::LoadExisting {
+                            record,
+                            max_texture_side,
+                            canvas_image_settings,
+                            trace,
+                        } => load_existing(
+                            &worker_library,
+                            record,
+                            max_texture_side,
+                            canvas_image_settings,
+                            trace,
+                            worker_render_state.as_ref(),
+                        ),
+                    };
 
-                let _ = result_tx.send(result);
-            }
-        });
+                    if worker_result_tx.send(result).is_ok() {
+                        worker_ctx.request_repaint();
+                    }
+                }
+            }));
+        }
+        drop(result_tx);
 
         Self {
             queue,
             receiver: result_rx,
+            workers,
         }
     }
 
     pub fn enqueue(&self, request: ImportRequest) -> Result<(), String> {
-        self.queue.push(request);
-        Ok(())
+        self.queue.push(request)
     }
 
-    pub fn try_recv_all(&self) -> Vec<ImportResult> {
-        self.receiver.try_iter().collect()
+    pub fn try_recv_up_to(&self, limit: usize) -> Vec<ImportResult> {
+        self.receiver.try_iter().take(limit).collect()
     }
 }
 
@@ -202,25 +417,104 @@ impl Default for RequestQueue {
 }
 
 impl RequestQueue {
-    fn push(&self, request: ImportRequest) {
+    fn push(&self, request: ImportRequest) -> Result<(), String> {
         let mut state = self.state.lock().expect("request queue poisoned");
+        if state.shutting_down {
+            return Err("import worker is shutting down".to_owned());
+        }
         match request.priority() {
             ImportPriority::Interactive => state.interactive.push_back(request),
             ImportPriority::Background => state.background.push_back(request),
         }
-        self.ready.notify_one();
+        self.ready.notify_all();
+        Ok(())
     }
 
-    fn pop(&self) -> ImportRequest {
+    fn pop(&self, kind: WorkerKind) -> Option<ImportRequest> {
         let mut state = self.state.lock().expect("request queue poisoned");
         loop {
-            if let Some(request) = state.interactive.pop_front() {
-                return request;
+            if state.shutting_down {
+                return None;
             }
-            if let Some(request) = state.background.pop_front() {
-                return request;
+            match kind {
+                WorkerKind::General => {
+                    if let Some(request) = state.interactive.pop_front() {
+                        return Some(request);
+                    }
+                    if let Some(request) = state.background.pop_front() {
+                        return Some(request);
+                    }
+                }
+                WorkerKind::Interactive => {
+                    if let Some(request) = state.interactive.pop_front() {
+                        return Some(request);
+                    }
+                }
+                WorkerKind::Background => {
+                    if let Some(request) = state.background.pop_front() {
+                        return Some(request);
+                    }
+                }
             }
             state = self.ready.wait(state).expect("request queue poisoned");
+        }
+    }
+
+    fn shutdown(&self) {
+        let mut state = self.state.lock().expect("request queue poisoned");
+        state.shutting_down = true;
+        self.ready.notify_all();
+    }
+}
+
+impl ImportWorkerConfig {
+    fn for_parallelism(parallelism: usize) -> Self {
+        if parallelism <= 1 {
+            return Self::legacy_single_worker();
+        }
+
+        Self {
+            general_workers: 0,
+            interactive_workers: parallelism.saturating_sub(1).clamp(1, 4),
+            background_workers: 1,
+        }
+    }
+
+    fn legacy_single_worker() -> Self {
+        Self {
+            general_workers: 1,
+            interactive_workers: 0,
+            background_workers: 0,
+        }
+    }
+
+    fn total_workers(self) -> usize {
+        self.general_workers + self.interactive_workers + self.background_workers
+    }
+
+    fn worker_kinds(self) -> Vec<WorkerKind> {
+        let mut kinds = Vec::with_capacity(self.total_workers());
+        kinds.extend(std::iter::repeat_n(
+            WorkerKind::General,
+            self.general_workers,
+        ));
+        kinds.extend(std::iter::repeat_n(
+            WorkerKind::Interactive,
+            self.interactive_workers,
+        ));
+        kinds.extend(std::iter::repeat_n(
+            WorkerKind::Background,
+            self.background_workers,
+        ));
+        kinds
+    }
+}
+
+impl Drop for ImportWorker {
+    fn drop(&mut self) {
+        self.queue.shutdown();
+        while let Some(worker) = self.workers.pop() {
+            let _ = worker.join();
         }
     }
 }
@@ -250,8 +544,11 @@ pub fn import_path_sync(
         source_path,
         desired_world,
         viewport_world,
+        usize::MAX,
+        CanvasImageSettings::default(),
         auto_scale,
         import_gap,
+        None,
         None,
     )
 }
@@ -273,8 +570,11 @@ pub fn import_clipboard_sync(
         height,
         desired_world,
         viewport_world,
+        usize::MAX,
+        CanvasImageSettings::default(),
         auto_scale,
         import_gap,
+        None,
         None,
     )
 }
@@ -296,73 +596,141 @@ pub fn sort_records_by_viewport_proximity(
 }
 
 pub fn startup_perf_report() -> Result<StartupPerfReport, String> {
-    let root = temp_library_root("startup-perf");
+    let legacy_root = temp_library_root("startup-perf-legacy");
+    let current_root = temp_library_root("startup-perf-current");
+    let legacy_library = Library::initialize(legacy_root.clone())?;
+    let current_library = Library::initialize(current_root.clone())?;
     let viewport_world =
         egui::Rect::from_min_max(egui::pos2(-240.0, -180.0), egui::pos2(240.0, 180.0));
-    let paths = [
+    let legacy_paths = [
         write_png(
-            &root,
+            &legacy_root,
             "offscreen-a.png",
             PERF_STARTUP_IMAGE_SIZE,
             PERF_STARTUP_IMAGE_SIZE,
         )?,
         write_png(
-            &root,
+            &legacy_root,
             "offscreen-b.png",
             PERF_STARTUP_IMAGE_SIZE,
             PERF_STARTUP_IMAGE_SIZE,
         )?,
         write_png(
-            &root,
+            &legacy_root,
             "visible-a.png",
             PERF_STARTUP_IMAGE_SIZE,
             PERF_STARTUP_IMAGE_SIZE,
         )?,
         write_png(
-            &root,
+            &legacy_root,
             "visible-b.png",
             PERF_STARTUP_IMAGE_SIZE,
             PERF_STARTUP_IMAGE_SIZE,
         )?,
     ];
-    let records = vec![
+    let legacy_records = vec![
         perf_record(
             1,
-            &paths[0],
+            &legacy_paths[0],
             egui::pos2(-2200.0, -2200.0),
             PERF_STARTUP_IMAGE_SIZE,
             PERF_STARTUP_IMAGE_SIZE,
         ),
         perf_record(
             2,
-            &paths[1],
+            &legacy_paths[1],
             egui::pos2(2200.0, 2200.0),
             PERF_STARTUP_IMAGE_SIZE,
             PERF_STARTUP_IMAGE_SIZE,
         ),
         perf_record(
             3,
-            &paths[2],
+            &legacy_paths[2],
             egui::pos2(0.0, 0.0),
             PERF_STARTUP_IMAGE_SIZE,
             PERF_STARTUP_IMAGE_SIZE,
         ),
         perf_record(
             4,
-            &paths[3],
+            &legacy_paths[3],
+            egui::pos2(120.0, 60.0),
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        ),
+    ];
+    let current_paths = [
+        write_png(
+            &current_root,
+            "offscreen-a.png",
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        )?,
+        write_png(
+            &current_root,
+            "offscreen-b.png",
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        )?,
+        write_png(
+            &current_root,
+            "visible-a.png",
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        )?,
+        write_png(
+            &current_root,
+            "visible-b.png",
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        )?,
+    ];
+    let current_records = vec![
+        perf_record(
+            1,
+            &current_paths[0],
+            egui::pos2(-2200.0, -2200.0),
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        ),
+        perf_record(
+            2,
+            &current_paths[1],
+            egui::pos2(2200.0, 2200.0),
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        ),
+        perf_record(
+            3,
+            &current_paths[2],
+            egui::pos2(0.0, 0.0),
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        ),
+        perf_record(
+            4,
+            &current_paths[3],
             egui::pos2(120.0, 60.0),
             PERF_STARTUP_IMAGE_SIZE,
             PERF_STARTUP_IMAGE_SIZE,
         ),
     ];
     let legacy_first_visible_ms =
-        measure_first_visible_load_ms(records.clone(), viewport_world, false)?;
-    let current_first_visible_ms = measure_first_visible_load_ms(records, viewport_world, true)?;
-    let _ = std::fs::remove_dir_all(root);
+        measure_first_visible_load_ms(&legacy_library, legacy_records, viewport_world, false)?;
+    let current_first_visible_ms = measure_first_visible_load_ms(
+        &current_library,
+        current_records.clone(),
+        viewport_world,
+        true,
+    )?;
+    let warm_cached_first_visible_ms =
+        measure_first_visible_load_ms(&current_library, current_records, viewport_world, true)?;
+    let _ = std::fs::remove_dir_all(legacy_root);
+    let _ = std::fs::remove_dir_all(current_root);
 
     Ok(StartupPerfReport {
         legacy_first_visible_ms,
         current_first_visible_ms,
+        warm_cached_first_visible_ms,
     })
 }
 
@@ -410,17 +778,49 @@ pub fn interactive_import_perf_report() -> Result<InteractiveImportPerfReport, S
     })
 }
 
+pub fn worker_interactive_import_perf_report() -> Result<WorkerInteractiveImportPerfReport, String>
+{
+    let parallelism = thread::available_parallelism()
+        .map(|available| available.get())
+        .unwrap_or(1);
+    let current_config = ImportWorkerConfig::for_parallelism(parallelism);
+
+    let legacy_single_worker_ms =
+        measure_worker_interactive_import_ms(ImportWorkerConfig::legacy_single_worker())?;
+    let current_pooled_ms = measure_worker_interactive_import_ms(current_config)?;
+
+    Ok(WorkerInteractiveImportPerfReport {
+        legacy_single_worker_ms,
+        current_pooled_ms,
+        current_interactive_workers: current_config.interactive_workers,
+        current_background_workers: current_config.background_workers,
+    })
+}
+
 fn import_path_sync_traced(
     library: &Library,
     source_path: PathBuf,
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
+    max_texture_side: usize,
+    canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
     import_gap: f32,
     trace: Option<ImportTrace>,
+    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> Result<LoadedCanvasItem, String> {
+    let worker_started_at = Instant::now();
+    let mut trace = trace;
+    if let Some(trace) = &mut trace {
+        trace.timings.queue_wait = worker_started_at.saturating_duration_since(trace.queued_at);
+    }
+
+    let decode_started_at = Instant::now();
     let decoded = decode_image_file(&source_path)
         .map_err(|error| format!("{}: {error}", source_path.display()))?;
+    if let Some(trace) = &mut trace {
+        trace.timings.decode_or_load = decode_started_at.elapsed();
+    }
     let initial_scale = initial_import_scale(decoded.width, decoded.height, auto_scale);
     let arranged_world = arrange_rect_world(
         library,
@@ -431,6 +831,7 @@ fn import_path_sync_traced(
         import_gap,
     )?;
 
+    let store_started_at = Instant::now();
     let stored_path = library
         .store_original(&source_path)
         .map_err(|error| format!("{}: {error}", source_path.display()))?;
@@ -446,10 +847,41 @@ fn import_path_sync_traced(
             initial_scale,
         )
         .map_err(|error| format!("{}: {error}", stored_path.display()))?;
+    let store_and_persist = store_started_at.elapsed();
+    let preview_started_at = Instant::now();
+    let canvas_source = canvas_source_image_from_rgba(
+        decoded.width,
+        decoded.height,
+        &decoded.rgba,
+        canvas_image_settings,
+    )?;
+    let _ = library.store_canvas_image_cache(
+        record.asset.id,
+        canvas_image_settings.mode,
+        canvas_image_settings.max_side,
+        &canvas_source.rgba,
+        canvas_source.width,
+        canvas_source.height,
+    );
+    let preview = preview_image_from_rgba(
+        canvas_source.width,
+        canvas_source.height,
+        &canvas_source.rgba,
+        max_texture_side,
+    )?;
+    let preview_texture = build_preview_texture(wgpu_render_state, &preview)?;
+    if let Some(trace) = &mut trace {
+        trace.timings.store_and_persist = store_and_persist;
+        trace.timings.preview_prepare = preview_started_at.elapsed();
+        trace.timings.worker_total = worker_started_at.elapsed();
+    }
 
     Ok(LoadedCanvasItem {
         record,
-        rgba: decoded.rgba,
+        preview_rgba: preview.rgba,
+        preview_width: preview.width,
+        preview_height: preview.height,
+        preview_texture,
         origin: ImportOrigin::Path,
         trace,
     })
@@ -460,18 +892,24 @@ fn import_path(
     source_path: PathBuf,
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
+    max_texture_side: usize,
+    canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
     import_gap: f32,
     trace: Option<ImportTrace>,
+    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> ImportResult {
     match import_path_sync_traced(
         library,
         source_path.clone(),
         desired_world,
         viewport_world,
+        max_texture_side,
+        canvas_image_settings,
         auto_scale,
         import_gap,
         trace,
+        wgpu_render_state,
     ) {
         Ok(loaded) => ImportResult::Loaded(loaded),
         Err(error) => ImportResult::Failed {
@@ -489,9 +927,12 @@ fn import_clipboard(
     height: u32,
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
+    max_texture_side: usize,
+    canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
     import_gap: f32,
     trace: Option<ImportTrace>,
+    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> ImportResult {
     match import_clipboard_sync_traced(
         library,
@@ -500,9 +941,12 @@ fn import_clipboard(
         height,
         desired_world,
         viewport_world,
+        max_texture_side,
+        canvas_image_settings,
         auto_scale,
         import_gap,
         trace,
+        wgpu_render_state,
     ) {
         Ok(loaded) => ImportResult::Loaded(loaded),
         Err(error) => ImportResult::Failed {
@@ -520,10 +964,20 @@ fn import_clipboard_sync_traced(
     height: u32,
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
+    max_texture_side: usize,
+    canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
     import_gap: f32,
     trace: Option<ImportTrace>,
+    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> Result<LoadedCanvasItem, String> {
+    let worker_started_at = Instant::now();
+    let mut trace = trace;
+    if let Some(trace) = &mut trace {
+        trace.timings.queue_wait = worker_started_at.saturating_duration_since(trace.queued_at);
+    }
+
+    let store_started_at = Instant::now();
     let stored_path = library.store_clipboard_image(&rgba, width, height)?;
     let file_size = std::fs::metadata(&stored_path)
         .map_err(|error| format!("failed to read clipboard image metadata: {error}"))?
@@ -546,23 +1000,85 @@ fn import_clipboard_sync_traced(
         arranged_world,
         initial_scale,
     )?;
+    let store_and_persist = store_started_at.elapsed();
+    let preview_started_at = Instant::now();
+    let canvas_source = canvas_source_image_from_rgba(width, height, &rgba, canvas_image_settings)?;
+    let _ = library.store_canvas_image_cache(
+        record.asset.id,
+        canvas_image_settings.mode,
+        canvas_image_settings.max_side,
+        &canvas_source.rgba,
+        canvas_source.width,
+        canvas_source.height,
+    );
+    let preview = preview_image_from_rgba(
+        canvas_source.width,
+        canvas_source.height,
+        &canvas_source.rgba,
+        max_texture_side,
+    )?;
+    let preview_texture = build_preview_texture(wgpu_render_state, &preview)?;
+    if let Some(trace) = &mut trace {
+        trace.timings.store_and_persist = store_and_persist;
+        trace.timings.preview_prepare = preview_started_at.elapsed();
+        trace.timings.worker_total = worker_started_at.elapsed();
+    }
 
     Ok(LoadedCanvasItem {
         record,
-        rgba,
+        preview_rgba: preview.rgba,
+        preview_width: preview.width,
+        preview_height: preview.height,
+        preview_texture,
         origin: ImportOrigin::Clipboard,
         trace,
     })
 }
 
-fn load_existing(record: BoardItemWithAsset, trace: Option<ImportTrace>) -> ImportResult {
-    match decode_image_file(&record.asset.original_path) {
-        Ok(decoded) => ImportResult::Loaded(LoadedCanvasItem {
-            record,
-            rgba: decoded.rgba,
-            origin: ImportOrigin::Existing,
-            trace,
-        }),
+fn load_existing(
+    library: &Library,
+    record: BoardItemWithAsset,
+    max_texture_side: usize,
+    canvas_image_settings: CanvasImageSettings,
+    trace: Option<ImportTrace>,
+    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
+) -> ImportResult {
+    let worker_started_at = Instant::now();
+    let mut trace = trace;
+    if let Some(trace) = &mut trace {
+        trace.timings.queue_wait = worker_started_at.saturating_duration_since(trace.queued_at);
+    }
+
+    let decode_started_at = Instant::now();
+    let preview_started_at = Instant::now();
+    match load_existing_preview(library, &record, canvas_image_settings, max_texture_side) {
+        Ok(preview) => {
+            let decode_or_load = decode_started_at.elapsed();
+            let preview_texture = match build_preview_texture(wgpu_render_state, &preview) {
+                Ok(preview_texture) => preview_texture,
+                Err(error) => {
+                    return ImportResult::Failed {
+                        item_id: None,
+                        context: record.asset.original_path.display().to_string(),
+                        error,
+                    };
+                }
+            };
+            if let Some(trace) = &mut trace {
+                trace.timings.decode_or_load = decode_or_load;
+                trace.timings.preview_prepare = preview_started_at.elapsed();
+                trace.timings.worker_total = worker_started_at.elapsed();
+            }
+            ImportResult::Loaded(LoadedCanvasItem {
+                record,
+                preview_rgba: preview.rgba,
+                preview_width: preview.width,
+                preview_height: preview.height,
+                preview_texture,
+                origin: ImportOrigin::Existing,
+                trace,
+            })
+        }
         Err(error) => ImportResult::Failed {
             item_id: None,
             context: record.asset.original_path.display().to_string(),
@@ -572,6 +1088,7 @@ fn load_existing(record: BoardItemWithAsset, trace: Option<ImportTrace>) -> Impo
 }
 
 fn measure_first_visible_load_ms(
+    library: &Library,
     mut records: Vec<BoardItemWithAsset>,
     viewport_world: egui::Rect,
     prioritize: bool,
@@ -581,7 +1098,14 @@ fn measure_first_visible_load_ms(
     }
     let started_at = Instant::now();
     for record in records {
-        let loaded = load_existing(record.clone(), None);
+        let loaded = load_existing(
+            library,
+            record.clone(),
+            usize::MAX,
+            CanvasImageSettings::default(),
+            None,
+            None,
+        );
         match loaded {
             ImportResult::Loaded(loaded) => {
                 if record_intersects_viewport_world(&loaded.record, viewport_world) {
@@ -616,7 +1140,14 @@ fn measure_interactive_import_ms(
         )?;
     } else {
         for record in backlog {
-            match load_existing(record.clone(), None) {
+            match load_existing(
+                library,
+                record.clone(),
+                usize::MAX,
+                CanvasImageSettings::default(),
+                None,
+                None,
+            ) {
                 ImportResult::Loaded(_) => {}
                 ImportResult::Failed { error, .. } => return Err(error),
                 ImportResult::Cropped(_) => {}
@@ -634,6 +1165,82 @@ fn measure_interactive_import_ms(
         )?;
     }
     Ok(started_at.elapsed().as_secs_f64() * 1000.0)
+}
+
+fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f64, String> {
+    let root = temp_library_root("worker-interactive-import-perf");
+    let library = Library::initialize(root.clone())?;
+    let worker = ImportWorker::new_with_config(library, egui::Context::default(), None, config);
+    let viewport_world =
+        egui::Rect::from_min_max(egui::pos2(-240.0, -180.0), egui::pos2(240.0, 180.0));
+
+    for index in 0..6 {
+        let path = write_png(
+            &root,
+            &format!("worker-backlog-{index}.png"),
+            PERF_BACKLOG_IMAGE_SIZE,
+            PERF_BACKLOG_IMAGE_SIZE,
+        )?;
+        worker.enqueue(ImportRequest::LoadExisting {
+            record: perf_record(
+                index as i64 + 1,
+                &path,
+                egui::pos2(2500.0 + index as f32 * 40.0, 2500.0),
+                PERF_BACKLOG_IMAGE_SIZE,
+                PERF_BACKLOG_IMAGE_SIZE,
+            ),
+            max_texture_side: usize::MAX,
+            canvas_image_settings: CanvasImageSettings::default(),
+            trace: None,
+        })?;
+    }
+
+    let started_at = Instant::now();
+    worker.enqueue(ImportRequest::ImportClipboard {
+        rgba: solid_rgba(1200, 900),
+        width: 1200,
+        height: 900,
+        desired_world: egui::Pos2::ZERO,
+        viewport_world,
+        max_texture_side: usize::MAX,
+        canvas_image_settings: CanvasImageSettings::default(),
+        auto_scale: true,
+        import_gap: crate::data::DEFAULT_IMPORT_GAP,
+        trace: Some(ImportTrace {
+            queued_at: started_at,
+            timings: ImportTimings::default(),
+        }),
+    })?;
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let result = loop {
+        let mut interactive_result = None;
+        for result in worker.try_recv_up_to(8) {
+            match result {
+                ImportResult::Loaded(loaded) if loaded.origin == ImportOrigin::Clipboard => {
+                    interactive_result = Some(Ok(started_at.elapsed().as_secs_f64() * 1000.0));
+                    break;
+                }
+                ImportResult::Failed { context, error, .. } if context == "clipboard" => {
+                    interactive_result = Some(Err(error));
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if let Some(result) = interactive_result {
+            break result;
+        }
+
+        if Instant::now() >= deadline {
+            break Err("timed out waiting for worker-backed interactive import".to_owned());
+        }
+
+        thread::sleep(Duration::from_millis(1));
+    };
+    drop(worker);
+    let _ = std::fs::remove_dir_all(&root);
+    result
 }
 
 fn record_viewport_distance_sq(record: &BoardItemWithAsset, viewport_world: egui::Rect) -> f32 {
@@ -739,13 +1346,25 @@ fn write_png(root: &Path, filename: &str, width: u32, height: u32) -> Result<Pat
     Ok(path)
 }
 
-fn crop_item(library: &Library, request: crate::canvas::CanvasCropRequest) -> ImportResult {
+fn crop_item(
+    library: &Library,
+    request: crate::canvas::CanvasCropRequest,
+    max_texture_side: usize,
+    canvas_image_settings: CanvasImageSettings,
+    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
+) -> ImportResult {
     let source_context = request.source_asset.original_path.display().to_string();
-    let image = match RgbaImage::from_vec(
-        request.source_asset.width,
-        request.source_asset.height,
-        request.source_rgba,
-    ) {
+    let decoded = match decode_image_file(&request.source_asset.original_path) {
+        Ok(decoded) => decoded,
+        Err(error) => {
+            return ImportResult::Failed {
+                item_id: Some(request.item_id),
+                context: source_context,
+                error,
+            };
+        }
+    };
+    let image = match RgbaImage::from_vec(decoded.width, decoded.height, decoded.rgba) {
         Some(image) => image,
         None => {
             return ImportResult::Failed {
@@ -799,6 +1418,45 @@ fn crop_item(library: &Library, request: crate::canvas::CanvasCropRequest) -> Im
             };
         }
     };
+    let canvas_source =
+        match canvas_source_image_from_rgba(width, height, &cropped_rgba, canvas_image_settings) {
+            Ok(preview) => preview,
+            Err(error) => {
+                let _ = std::fs::remove_file(&stored_path);
+                return ImportResult::Failed {
+                    item_id: Some(request.item_id),
+                    context: source_context,
+                    error,
+                };
+            }
+        };
+    let preview = match preview_image_from_rgba(
+        canvas_source.width,
+        canvas_source.height,
+        &canvas_source.rgba,
+        max_texture_side,
+    ) {
+        Ok(preview) => preview,
+        Err(error) => {
+            let _ = std::fs::remove_file(&stored_path);
+            return ImportResult::Failed {
+                item_id: Some(request.item_id),
+                context: source_context,
+                error,
+            };
+        }
+    };
+    let preview_texture = match build_preview_texture(wgpu_render_state, &preview) {
+        Ok(preview_texture) => preview_texture,
+        Err(error) => {
+            let _ = std::fs::remove_file(&stored_path);
+            return ImportResult::Failed {
+                item_id: Some(request.item_id),
+                context: source_context,
+                error,
+            };
+        }
+    };
 
     ImportResult::Cropped(CroppedCanvasItem {
         item_id: request.item_id,
@@ -806,9 +1464,163 @@ fn crop_item(library: &Library, request: crate::canvas::CanvasCropRequest) -> Im
         width,
         height,
         file_size,
-        rgba: cropped_rgba,
+        canvas_rgba: canvas_source.rgba,
+        canvas_width: canvas_source.width,
+        canvas_height: canvas_source.height,
+        preview_rgba: preview.rgba,
+        preview_width: preview.width,
+        preview_height: preview.height,
+        preview_texture,
         crop_offset_local: request.crop_offset_local,
     })
+}
+
+fn build_preview_texture(
+    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
+    preview: &crate::jobs::image_formats::PreviewImage,
+) -> Result<ImportedPreviewTexture, String> {
+    let Some(render_state) = wgpu_render_state else {
+        return Ok(ImportedPreviewTexture::Cpu);
+    };
+
+    if preview.rgba.len() != preview.width as usize * preview.height as usize * 4 {
+        return Err("preview pixel buffer did not match preview dimensions".to_owned());
+    }
+
+    let size = eframe::wgpu::Extent3d {
+        width: preview.width,
+        height: preview.height,
+        depth_or_array_layers: 1,
+    };
+    let texture = render_state
+        .device
+        .create_texture(&eframe::wgpu::TextureDescriptor {
+            label: Some("reference_import_preview"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: eframe::wgpu::TextureDimension::D2,
+            format: eframe::wgpu::TextureFormat::Rgba8Unorm,
+            usage: eframe::wgpu::TextureUsages::TEXTURE_BINDING
+                | eframe::wgpu::TextureUsages::COPY_DST,
+            view_formats: &[eframe::wgpu::TextureFormat::Rgba8Unorm],
+        });
+    render_state.queue.write_texture(
+        texture.as_image_copy(),
+        &preview.rgba,
+        eframe::wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * preview.width),
+            rows_per_image: Some(preview.height),
+        },
+        size,
+    );
+
+    let view = texture.create_view(&eframe::wgpu::TextureViewDescriptor::default());
+    let texture_id = render_state.renderer.write().register_native_texture(
+        &render_state.device,
+        &view,
+        eframe::wgpu::FilterMode::Linear,
+    );
+
+    Ok(ImportedPreviewTexture::Native(Arc::new(
+        NativeTextureHandle::from_registered_texture(
+            render_state.clone(),
+            texture_id,
+            preview.width,
+            preview.height,
+            texture,
+            view,
+        ),
+    )))
+}
+
+fn load_existing_preview(
+    library: &Library,
+    record: &BoardItemWithAsset,
+    canvas_image_settings: CanvasImageSettings,
+    max_texture_side: usize,
+) -> Result<PreviewImage, String> {
+    let canvas_source = match canvas_image_settings.mode {
+        crate::data::CanvasImageMode::Original => {
+            let decoded = decode_image_file(&record.asset.original_path)?;
+            PreviewImage {
+                rgba: decoded.rgba,
+                width: decoded.width,
+                height: decoded.height,
+            }
+        }
+        crate::data::CanvasImageMode::Downscale => {
+            if let Some(cache_path) = library.canvas_image_cache_path(
+                record.asset.id,
+                canvas_image_settings.mode,
+                canvas_image_settings.max_side,
+            ) && cache_path.is_file()
+            {
+                match decode_image_file(&cache_path) {
+                    Ok(decoded) => PreviewImage {
+                        rgba: decoded.rgba,
+                        width: decoded.width,
+                        height: decoded.height,
+                    },
+                    Err(_) => {
+                        let _ = std::fs::remove_file(&cache_path);
+                        backfill_canvas_image_cache(library, record, canvas_image_settings)?
+                    }
+                }
+            } else {
+                backfill_canvas_image_cache(library, record, canvas_image_settings)?
+            }
+        }
+    };
+
+    preview_image_from_rgba(
+        canvas_source.width,
+        canvas_source.height,
+        &canvas_source.rgba,
+        max_texture_side,
+    )
+}
+
+fn canvas_source_image_from_rgba(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    canvas_image_settings: CanvasImageSettings,
+) -> Result<PreviewImage, String> {
+    match canvas_image_settings.mode {
+        crate::data::CanvasImageMode::Downscale => {
+            preview_image_from_rgba(width, height, rgba, canvas_image_settings.max_side as usize)
+        }
+        crate::data::CanvasImageMode::Original => Ok(PreviewImage {
+            rgba: rgba.to_vec(),
+            width,
+            height,
+        }),
+    }
+}
+
+fn backfill_canvas_image_cache(
+    library: &Library,
+    record: &BoardItemWithAsset,
+    canvas_image_settings: CanvasImageSettings,
+) -> Result<PreviewImage, String> {
+    let decoded = decode_image_file(&record.asset.original_path)?;
+    let canvas_source = canvas_source_image_from_rgba(
+        decoded.width,
+        decoded.height,
+        &decoded.rgba,
+        canvas_image_settings,
+    )?;
+    let _ = library.store_canvas_image_cache(
+        record.asset.id,
+        canvas_image_settings.mode,
+        canvas_image_settings.max_side,
+        &canvas_source.rgba,
+        canvas_source.width,
+        canvas_source.height,
+    );
+    Ok(canvas_source)
 }
 
 fn initial_import_scale(asset_width: u32, asset_height: u32, auto_scale: bool) -> f32 {
@@ -979,14 +1791,25 @@ fn occupied_bounds_squareness(existing_rects: &[LayoutRect], candidate_rect: egu
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImportResult, arrange_rect_world, import_clipboard,
-        import_path_sync, initial_import_scale, rects_overlap_with_gap,
+        CanvasImageSettings, DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImportResult, ImportTimings,
+        ImportTrace, ImportWorker, ImportWorkerConfig, ImportedPreviewTexture, arrange_rect_world,
+        build_preview_texture, crop_item, import_clipboard, import_path_sync, initial_import_scale,
+        load_existing, rects_overlap_with_gap,
     };
     use crate::storage::Library;
     use image::{ColorType, ImageFormat};
+    use pollster::block_on;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::{Arc, mpsc};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    fn downscaled_canvas_settings(max_side: u32) -> CanvasImageSettings {
+        CanvasImageSettings {
+            mode: crate::data::CanvasImageMode::Downscale,
+            max_side,
+        }
+    }
 
     #[test]
     fn scales_down_large_portrait_images_to_target_area() {
@@ -1084,8 +1907,11 @@ mod tests {
             844,
             eframe::egui::Pos2::ZERO,
             test_viewport_world(),
+            usize::MAX,
+            CanvasImageSettings::default(),
             true,
             crate::data::DEFAULT_IMPORT_GAP,
+            None,
             None,
         ) {
             ImportResult::Loaded(loaded) => loaded,
@@ -1098,8 +1924,11 @@ mod tests {
             200,
             eframe::egui::Pos2::ZERO,
             test_viewport_world(),
+            usize::MAX,
+            CanvasImageSettings::default(),
             false,
             crate::data::DEFAULT_IMPORT_GAP,
+            None,
             None,
         ) {
             ImportResult::Loaded(loaded) => loaded,
@@ -1224,8 +2053,11 @@ mod tests {
             200,
             eframe::egui::Pos2::ZERO,
             test_viewport_world(),
+            usize::MAX,
+            CanvasImageSettings::default(),
             false,
             gap,
+            None,
             None,
         ) {
             ImportResult::Loaded(loaded) => loaded,
@@ -1239,8 +2071,11 @@ mod tests {
             200,
             eframe::egui::Pos2::ZERO,
             test_viewport_world(),
+            usize::MAX,
+            CanvasImageSettings::default(),
             false,
             gap,
+            None,
             None,
         ) {
             ImportResult::Loaded(loaded) => loaded,
@@ -1258,6 +2093,408 @@ mod tests {
 
         assert_eq!(second_rect.left() - first_rect.right(), gap);
         assert!(!rects_overlap_with_gap(first_rect, second_rect, gap));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_worker_drains_ready_results_in_capped_batches() {
+        let (result_tx, result_rx) = mpsc::channel();
+        let worker = ImportWorker {
+            queue: Arc::new(super::RequestQueue::default()),
+            receiver: result_rx,
+            workers: Vec::new(),
+        };
+
+        for index in 0..5 {
+            result_tx
+                .send(ImportResult::Failed {
+                    item_id: Some(index),
+                    context: format!("item-{index}"),
+                    error: "synthetic".to_owned(),
+                })
+                .unwrap();
+        }
+
+        let first_batch = worker.try_recv_up_to(4);
+        let second_batch = worker.try_recv_up_to(4);
+
+        assert_eq!(first_batch.len(), 4);
+        assert_eq!(second_batch.len(), 1);
+    }
+
+    #[test]
+    fn worker_config_derives_general_fallback_for_single_core() {
+        assert_eq!(
+            ImportWorkerConfig::for_parallelism(1),
+            ImportWorkerConfig {
+                general_workers: 1,
+                interactive_workers: 0,
+                background_workers: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn worker_config_reserves_background_worker_on_multi_core() {
+        assert_eq!(
+            ImportWorkerConfig::for_parallelism(4),
+            ImportWorkerConfig {
+                general_workers: 0,
+                interactive_workers: 3,
+                background_workers: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn traced_clipboard_import_populates_non_negative_timings() {
+        let root = temp_library_root("clipboard-trace");
+        let library = Library::initialize(root.clone()).unwrap();
+        let trace = ImportTrace {
+            queued_at: Instant::now()
+                .checked_sub(Duration::from_millis(1))
+                .unwrap_or_else(Instant::now),
+            timings: ImportTimings::default(),
+        };
+
+        let loaded = match import_clipboard(
+            &library,
+            solid_rgba(64, 64),
+            64,
+            64,
+            eframe::egui::Pos2::ZERO,
+            test_viewport_world(),
+            usize::MAX,
+            CanvasImageSettings::default(),
+            false,
+            crate::data::DEFAULT_IMPORT_GAP,
+            Some(trace),
+            None,
+        ) {
+            ImportResult::Loaded(loaded) => loaded,
+            other => panic!("expected traced clipboard import to load, got {other:?}"),
+        };
+
+        let trace = loaded
+            .trace
+            .expect("missing trace on loaded clipboard import");
+        assert!(trace.timings.queue_wait >= Duration::ZERO);
+        assert!(trace.timings.decode_or_load >= Duration::ZERO);
+        assert!(trace.timings.store_and_persist >= Duration::ZERO);
+        assert!(trace.timings.preview_prepare >= Duration::ZERO);
+        assert!(trace.timings.worker_total >= trace.timings.store_and_persist);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn native_preview_texture_stays_registered_until_last_reference_drops() {
+        let Some(render_state) = test_render_state() else {
+            eprintln!("skipping native preview texture lifecycle test: no wgpu adapter");
+            return;
+        };
+        let preview = crate::jobs::image_formats::preview_image_from_rgba(
+            8,
+            8,
+            &solid_rgba(8, 8),
+            usize::MAX,
+        )
+        .unwrap();
+
+        let handle = match build_preview_texture(Some(&render_state), &preview).unwrap() {
+            ImportedPreviewTexture::Native(handle) => handle,
+            ImportedPreviewTexture::Cpu => panic!("expected native preview texture"),
+        };
+        let texture_id = handle.texture_id();
+        assert!(render_state.renderer.read().texture(&texture_id).is_some());
+
+        let duplicate = handle.clone();
+        drop(handle);
+        assert!(render_state.renderer.read().texture(&texture_id).is_some());
+
+        std::thread::spawn(move || drop(duplicate)).join().unwrap();
+        assert!(render_state.renderer.read().texture(&texture_id).is_none());
+    }
+
+    #[test]
+    fn load_existing_backfills_versioned_canvas_cache_and_prefers_it_on_second_load() {
+        let root = temp_library_root("load-existing-canvas-cache");
+        let library = Library::initialize(root.clone()).unwrap();
+        let original_path = write_png(&root, "source.png", 4000, 3000);
+        let file_size = fs::metadata(&original_path).unwrap().len();
+        let record = library
+            .persist_imported_image(
+                &original_path,
+                "image/png",
+                4000,
+                3000,
+                file_size,
+                eframe::egui::Pos2::ZERO,
+                1.0,
+            )
+            .unwrap();
+
+        let settings = downscaled_canvas_settings(2000);
+        let cache_path = library
+            .canvas_image_cache_path(record.asset.id, settings.mode, settings.max_side)
+            .unwrap();
+        assert!(!cache_path.exists());
+
+        let first = match load_existing(&library, record.clone(), usize::MAX, settings, None, None)
+        {
+            ImportResult::Loaded(loaded) => loaded,
+            other => panic!("expected first load_existing to succeed, got {other:?}"),
+        };
+        assert!(cache_path.is_file());
+        assert_eq!(first.preview_width, 2000);
+        assert_eq!(first.preview_height, 1500);
+
+        fs::remove_file(&record.asset.original_path).unwrap();
+
+        let second = match load_existing(&library, record.clone(), usize::MAX, settings, None, None)
+        {
+            ImportResult::Loaded(loaded) => loaded,
+            other => {
+                panic!("expected second load_existing to use versioned canvas cache, got {other:?}")
+            }
+        };
+        assert_eq!(second.preview_width, 2000);
+        assert_eq!(second.preview_height, 1500);
+
+        let cached = crate::jobs::image_formats::decode_image_file(&cache_path).unwrap();
+        assert_eq!(cached.width, 2000);
+        assert_eq!(cached.height, 1500);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_existing_backfills_new_cache_when_canvas_max_side_changes() {
+        let root = temp_library_root("load-existing-canvas-cache-variants");
+        let library = Library::initialize(root.clone()).unwrap();
+        let original_path = write_png(&root, "source.png", 4000, 3000);
+        let file_size = fs::metadata(&original_path).unwrap().len();
+        let record = library
+            .persist_imported_image(
+                &original_path,
+                "image/png",
+                4000,
+                3000,
+                file_size,
+                eframe::egui::Pos2::ZERO,
+                1.0,
+            )
+            .unwrap();
+
+        let first_settings = downscaled_canvas_settings(2000);
+        let first_cache = library
+            .canvas_image_cache_path(
+                record.asset.id,
+                first_settings.mode,
+                first_settings.max_side,
+            )
+            .unwrap();
+        let second_settings = downscaled_canvas_settings(1000);
+        let second_cache = library
+            .canvas_image_cache_path(
+                record.asset.id,
+                second_settings.mode,
+                second_settings.max_side,
+            )
+            .unwrap();
+
+        assert_ne!(first_cache, second_cache);
+
+        match load_existing(
+            &library,
+            record.clone(),
+            usize::MAX,
+            first_settings,
+            None,
+            None,
+        ) {
+            ImportResult::Loaded(_) => {}
+            other => panic!("expected first cache backfill to succeed, got {other:?}"),
+        }
+        assert!(first_cache.is_file());
+        assert!(!second_cache.exists());
+
+        let second = match load_existing(
+            &library,
+            record.clone(),
+            usize::MAX,
+            second_settings,
+            None,
+            None,
+        ) {
+            ImportResult::Loaded(loaded) => loaded,
+            other => panic!("expected second cache backfill to succeed, got {other:?}"),
+        };
+        assert_eq!(second.preview_width, 1000);
+        assert_eq!(second.preview_height, 750);
+        assert!(second_cache.is_file());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn original_mode_bypasses_canvas_cache() {
+        let root = temp_library_root("load-existing-original-bypass");
+        let library = Library::initialize(root.clone()).unwrap();
+        let original_path = write_png(&root, "source.png", 4000, 3000);
+        let file_size = fs::metadata(&original_path).unwrap().len();
+        let record = library
+            .persist_imported_image(
+                &original_path,
+                "image/png",
+                4000,
+                3000,
+                file_size,
+                eframe::egui::Pos2::ZERO,
+                1.0,
+            )
+            .unwrap();
+
+        let downscaled_settings = downscaled_canvas_settings(2000);
+        let downscaled_cache = library
+            .canvas_image_cache_path(
+                record.asset.id,
+                downscaled_settings.mode,
+                downscaled_settings.max_side,
+            )
+            .unwrap();
+        let _ = library.store_canvas_image_cache(
+            record.asset.id,
+            downscaled_settings.mode,
+            downscaled_settings.max_side,
+            &solid_rgba(2000, 1500),
+            2000,
+            1500,
+        );
+        assert!(downscaled_cache.is_file());
+        fs::remove_file(&record.asset.original_path).unwrap();
+
+        match load_existing(
+            &library,
+            record,
+            usize::MAX,
+            CanvasImageSettings {
+                mode: crate::data::CanvasImageMode::Original,
+                max_side: 2000,
+            },
+            None,
+            None,
+        ) {
+            ImportResult::Failed { .. } => {}
+            other => {
+                panic!("expected original mode to fail without the original file, got {other:?}")
+            }
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn downscale_mode_ignores_legacy_thumb_cache_paths() {
+        let root = temp_library_root("load-existing-legacy-thumb");
+        let library = Library::initialize(root.clone()).unwrap();
+        let original_path = write_png(&root, "source.png", 4000, 3000);
+        let file_size = fs::metadata(&original_path).unwrap().len();
+        let record = library
+            .persist_imported_image(
+                &original_path,
+                "image/png",
+                4000,
+                3000,
+                file_size,
+                eframe::egui::Pos2::ZERO,
+                1.0,
+            )
+            .unwrap();
+
+        let legacy_thumb_path = library.asset_thumb_path(record.asset.id);
+        image::save_buffer_with_format(
+            &legacy_thumb_path,
+            &solid_rgba(64, 64),
+            64,
+            64,
+            ColorType::Rgba8,
+            ImageFormat::Png,
+        )
+        .unwrap();
+        fs::remove_file(&record.asset.original_path).unwrap();
+
+        match load_existing(
+            &library,
+            record,
+            usize::MAX,
+            downscaled_canvas_settings(2000),
+            None,
+            None,
+        ) {
+            ImportResult::Failed { .. } => {}
+            other => panic!("expected legacy thumb path to be ignored, got {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn crop_redecodes_original_path_and_preserves_exact_pixels() {
+        let root = temp_library_root("crop-redecode");
+        let library = Library::initialize(root.clone()).unwrap();
+        let source_rgba = vec![
+            1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255, 13, 14, 15, 255, 16, 17, 18,
+            255, 19, 20, 21, 255, 22, 23, 24, 255, 25, 26, 27, 255, 28, 29, 30, 255, 31, 32, 33,
+            255, 34, 35, 36, 255, 37, 38, 39, 255, 40, 41, 42, 255, 43, 44, 45, 255, 46, 47, 48,
+            255,
+        ];
+        let stored_path = library
+            .store_rgba_image("crop-source", &source_rgba, 4, 4)
+            .unwrap();
+        let file_size = fs::metadata(&stored_path).unwrap().len();
+        let request = crate::canvas::CanvasCropRequest {
+            item_id: 1,
+            source_asset: crate::data::ImageAsset {
+                id: 1,
+                original_path: stored_path.clone(),
+                filename: "crop-source.png".to_owned(),
+                mime_type: "image/png".to_owned(),
+                width: 4,
+                height: 4,
+                file_size,
+                imported_at: 0,
+            },
+            crop_rect: crate::canvas::PixelCropRect {
+                x: 1,
+                y: 1,
+                width: 2,
+                height: 2,
+            },
+            crop_offset_local: eframe::egui::Vec2::ZERO,
+        };
+
+        let cropped = match crop_item(
+            &library,
+            request,
+            usize::MAX,
+            CanvasImageSettings::default(),
+            None,
+        ) {
+            ImportResult::Cropped(cropped) => cropped,
+            other => panic!("expected cropped result, got {other:?}"),
+        };
+        let decoded = crate::jobs::image_formats::decode_image_file(&cropped.stored_path).unwrap();
+
+        assert_eq!(decoded.width, 2);
+        assert_eq!(decoded.height, 2);
+        assert_eq!(
+            decoded.rgba,
+            vec![
+                16, 17, 18, 255, 19, 20, 21, 255, 28, 29, 30, 255, 31, 32, 33, 255,
+            ]
+        );
+
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1332,5 +2569,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(record.item.id, id);
+    }
+
+    fn test_render_state() -> Option<eframe::egui_wgpu::RenderState> {
+        let instance = eframe::wgpu::Instance::new(
+            eframe::wgpu::InstanceDescriptor::new_without_display_handle(),
+        );
+        block_on(eframe::egui_wgpu::RenderState::create(
+            &eframe::egui_wgpu::WgpuConfiguration::default(),
+            &instance,
+            None,
+            eframe::egui_wgpu::RendererOptions::default(),
+        ))
+        .ok()
     }
 }

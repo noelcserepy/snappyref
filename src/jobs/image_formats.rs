@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use image::{ImageFormat, ImageReader};
+use image::{ImageFormat, ImageReader, RgbaImage};
 
 pub const SUPPORTED_IMPORT_FORMATS: &[ImageFormat] = &[
     ImageFormat::Avif,
@@ -62,6 +62,59 @@ pub fn decode_image_file(path: &Path) -> Result<DecodedImage, String> {
     })
 }
 
+pub struct PreviewImage {
+    pub rgba: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+pub fn preview_image_from_rgba(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    max_side: usize,
+) -> Result<PreviewImage, String> {
+    let (preview_width, preview_height) =
+        fitted_texture_size(width as usize, height as usize, max_side);
+
+    if preview_width == width as usize && preview_height == height as usize {
+        return Ok(PreviewImage {
+            rgba: rgba.to_vec(),
+            width,
+            height,
+        });
+    }
+
+    let image = RgbaImage::from_raw(width, height, rgba.to_vec())
+        .ok_or_else(|| "failed to rebuild RGBA image for preview resize".to_owned())?;
+    let resized = image::imageops::resize(
+        &image,
+        preview_width as u32,
+        preview_height as u32,
+        image::imageops::FilterType::Triangle,
+    );
+
+    Ok(PreviewImage {
+        rgba: resized.into_raw(),
+        width: preview_width as u32,
+        height: preview_height as u32,
+    })
+}
+
+pub fn fitted_texture_size(width: usize, height: usize, max_side: usize) -> (usize, usize) {
+    if width == 0 || height == 0 || max_side == 0 {
+        return (width.max(1), height.max(1));
+    }
+    if width <= max_side && height <= max_side {
+        return (width, height);
+    }
+
+    let scale = (max_side as f64 / width as f64).min(max_side as f64 / height as f64);
+    let scaled_width = ((width as f64 * scale).floor() as usize).clamp(1, max_side);
+    let scaled_height = ((height as f64 * scale).floor() as usize).clamp(1, max_side);
+    (scaled_width, scaled_height)
+}
+
 fn unsupported_format_error(path: &Path, format: Option<ImageFormat>) -> String {
     let format_description = format
         .map(format_name)
@@ -100,5 +153,27 @@ fn format_name(format: ImageFormat) -> String {
         ImageFormat::Tiff => "TIFF".to_owned(),
         ImageFormat::WebP => "WebP".to_owned(),
         _ => "unknown image format".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fitted_texture_size, preview_image_from_rgba};
+
+    #[test]
+    fn fitted_texture_size_clamps_to_max_texture_side() {
+        assert_eq!(fitted_texture_size(8403, 3952, 8192), (8192, 3852));
+        assert_eq!(fitted_texture_size(3952, 8403, 8192), (3852, 8192));
+        assert_eq!(fitted_texture_size(1024, 768, 8192), (1024, 768));
+    }
+
+    #[test]
+    fn preview_image_from_rgba_resizes_to_requested_bound() {
+        let rgba = vec![255; 400 * 200 * 4];
+        let preview = preview_image_from_rgba(400, 200, &rgba, 100).unwrap();
+
+        assert_eq!(preview.width, 100);
+        assert_eq!(preview.height, 50);
+        assert_eq!(preview.rgba.len(), 100 * 50 * 4);
     }
 }
