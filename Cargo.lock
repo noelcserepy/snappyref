@@ -4033,6 +4033,7 @@ name = "reference"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "bytemuck",
  "eframe",
  "egui_extras",
  "hf-hub",

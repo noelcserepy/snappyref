@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use eframe::egui;
 use image::RgbaImage;
 
-use crate::data::{BoardItemWithAsset, BoardLayoutItem};
+use crate::data::{BoardItemWithAsset, BoardLayoutItem, CanvasImageCacheTier};
 use crate::jobs::image_formats::{PreviewImage, decode_image_file, preview_image_from_rgba};
 use crate::storage::Library;
 
@@ -28,7 +28,14 @@ pub enum ImportOrigin {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ImportPriority {
+    Startup,
     Interactive,
+    Background,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExistingLoadPriority {
+    Startup,
     Background,
 }
 
@@ -84,6 +91,25 @@ impl Default for CanvasImageSettings {
     }
 }
 
+const OVERVIEW_CACHE_MAX_SIDE: u32 = 256;
+const DETAIL_CACHE_MAX_SIDE: u32 = 4096;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExistingLoadSourceKind {
+    Original,
+    Cache,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExistingLoadDiagnostics {
+    pub source_kind: ExistingLoadSourceKind,
+    pub source_path: PathBuf,
+    pub source_file_size: u64,
+    pub source_width: u32,
+    pub source_height: u32,
+    pub backfilled_cache: bool,
+}
+
 #[derive(Clone, Debug)]
 pub enum ImportRequest {
     ImportPath {
@@ -117,7 +143,14 @@ pub enum ImportRequest {
         record: BoardItemWithAsset,
         max_texture_side: usize,
         canvas_image_settings: CanvasImageSettings,
+        target_tier: CanvasImageCacheTier,
+        priority: ExistingLoadPriority,
         trace: Option<ImportTrace>,
+    },
+    BackfillTier {
+        record: BoardItemWithAsset,
+        canvas_image_settings: CanvasImageSettings,
+        tier: CanvasImageCacheTier,
     },
 }
 
@@ -125,6 +158,15 @@ pub enum ImportRequest {
 pub enum ImportResult {
     Loaded(LoadedCanvasItem),
     Cropped(CroppedCanvasItem),
+    CacheTierBackfilled {
+        asset_id: i64,
+        tier: CanvasImageCacheTier,
+    },
+    CacheTierBackfillFailed {
+        asset_id: i64,
+        tier: CanvasImageCacheTier,
+        error: String,
+    },
     Failed {
         item_id: Option<i64>,
         context: String,
@@ -152,7 +194,7 @@ pub struct NativeTextureHandle {
     size: [usize; 2],
     cleanup: Arc<dyn Fn(egui::TextureId) + Send + Sync>,
     _texture: Option<eframe::wgpu::Texture>,
-    _view: Option<eframe::wgpu::TextureView>,
+    view: Option<Arc<eframe::wgpu::TextureView>>,
 }
 
 impl fmt::Debug for NativeTextureHandle {
@@ -181,7 +223,7 @@ impl NativeTextureHandle {
             size: [width as usize, height as usize],
             cleanup,
             _texture: Some(texture),
-            _view: Some(view),
+            view: Some(Arc::new(view)),
         }
     }
 
@@ -191,6 +233,29 @@ impl NativeTextureHandle {
 
     pub fn size(&self) -> [usize; 2] {
         self.size
+    }
+
+    pub fn create_bind_group(
+        &self,
+        device: &eframe::wgpu::Device,
+        layout: &eframe::wgpu::BindGroupLayout,
+        sampler: &eframe::wgpu::Sampler,
+    ) -> Option<eframe::wgpu::BindGroup> {
+        let view = self.view.as_ref()?;
+        Some(device.create_bind_group(&eframe::wgpu::BindGroupDescriptor {
+            label: Some("reference_canvas_image_bind_group"),
+            layout,
+            entries: &[
+                eframe::wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: eframe::wgpu::BindingResource::TextureView(view.as_ref()),
+                },
+                eframe::wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: eframe::wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        }))
     }
 
     #[cfg(test)]
@@ -204,7 +269,7 @@ impl NativeTextureHandle {
             size,
             cleanup: Arc::new(cleanup),
             _texture: None,
-            _view: None,
+            view: None,
         })
     }
 }
@@ -222,6 +287,8 @@ pub struct LoadedCanvasItem {
     pub preview_width: u32,
     pub preview_height: u32,
     pub preview_texture: ImportedPreviewTexture,
+    pub loaded_tier: CanvasImageCacheTier,
+    pub existing_load_diagnostics: Option<ExistingLoadDiagnostics>,
     pub origin: ImportOrigin,
     pub trace: Option<ImportTrace>,
 }
@@ -240,7 +307,18 @@ pub struct CroppedCanvasItem {
     pub preview_width: u32,
     pub preview_height: u32,
     pub preview_texture: ImportedPreviewTexture,
+    pub loaded_tier: CanvasImageCacheTier,
     pub crop_offset_local: egui::Vec2,
+}
+
+#[derive(Clone, Debug)]
+pub struct StartupTraceEntry {
+    pub record: BoardItemWithAsset,
+    pub diagnostics: ExistingLoadDiagnostics,
+    pub timings: ImportTimings,
+    pub preview_width: u32,
+    pub preview_height: u32,
+    pub startup_elapsed: Duration,
 }
 
 pub struct ImportWorker {
@@ -256,6 +334,7 @@ struct RequestQueue {
 
 #[derive(Default)]
 struct RequestQueueState {
+    startup: VecDeque<ImportRequest>,
     interactive: VecDeque<ImportRequest>,
     background: VecDeque<ImportRequest>,
     shutting_down: bool,
@@ -372,14 +451,27 @@ impl ImportWorker {
                             record,
                             max_texture_side,
                             canvas_image_settings,
+                            target_tier,
+                            priority: _,
                             trace,
                         } => load_existing(
                             &worker_library,
                             record,
                             max_texture_side,
                             canvas_image_settings,
+                            target_tier,
                             trace,
                             worker_render_state.as_ref(),
+                        ),
+                        ImportRequest::BackfillTier {
+                            record,
+                            canvas_image_settings,
+                            tier,
+                        } => backfill_cache_tier(
+                            &worker_library,
+                            record,
+                            canvas_image_settings,
+                            tier,
                         ),
                     };
 
@@ -423,6 +515,7 @@ impl RequestQueue {
             return Err("import worker is shutting down".to_owned());
         }
         match request.priority() {
+            ImportPriority::Startup => state.startup.push_back(request),
             ImportPriority::Interactive => state.interactive.push_back(request),
             ImportPriority::Background => state.background.push_back(request),
         }
@@ -441,6 +534,9 @@ impl RequestQueue {
                     if let Some(request) = state.interactive.pop_front() {
                         return Some(request);
                     }
+                    if let Some(request) = state.startup.pop_front() {
+                        return Some(request);
+                    }
                     if let Some(request) = state.background.pop_front() {
                         return Some(request);
                     }
@@ -449,8 +545,14 @@ impl RequestQueue {
                     if let Some(request) = state.interactive.pop_front() {
                         return Some(request);
                     }
+                    if let Some(request) = state.startup.pop_front() {
+                        return Some(request);
+                    }
                 }
                 WorkerKind::Background => {
+                    if let Some(request) = state.startup.pop_front() {
+                        return Some(request);
+                    }
                     if let Some(request) = state.background.pop_front() {
                         return Some(request);
                     }
@@ -522,7 +624,11 @@ impl Drop for ImportWorker {
 impl ImportRequest {
     fn priority(&self) -> ImportPriority {
         match self {
-            ImportRequest::LoadExisting { .. } => ImportPriority::Background,
+            ImportRequest::LoadExisting { priority, .. } => match priority {
+                ExistingLoadPriority::Startup => ImportPriority::Startup,
+                ExistingLoadPriority::Background => ImportPriority::Background,
+            },
+            ImportRequest::BackfillTier { .. } => ImportPriority::Background,
             ImportRequest::ImportPath { .. }
             | ImportRequest::ImportClipboard { .. }
             | ImportRequest::Crop { .. } => ImportPriority::Interactive,
@@ -734,6 +840,55 @@ pub fn startup_perf_report() -> Result<StartupPerfReport, String> {
     })
 }
 
+pub fn startup_trace(
+    library: &Library,
+    viewport_world: egui::Rect,
+    canvas_image_settings: CanvasImageSettings,
+) -> Result<Vec<StartupTraceEntry>, String> {
+    let mut records = library.load_board_items()?;
+    sort_records_by_viewport_proximity(&mut records, viewport_world);
+    let started_at = Instant::now();
+    let mut entries = Vec::with_capacity(records.len());
+    for record in records {
+        let trace = ImportTrace {
+            queued_at: Instant::now(),
+            timings: ImportTimings::default(),
+        };
+        match load_existing(
+            library,
+            record.clone(),
+            usize::MAX,
+            canvas_image_settings,
+            CanvasImageCacheTier::Working,
+            Some(trace),
+            None,
+        ) {
+            ImportResult::Loaded(loaded) => {
+                let diagnostics = loaded
+                    .existing_load_diagnostics
+                    .ok_or_else(|| "missing existing-load diagnostics".to_owned())?;
+                let timings = loaded
+                    .trace
+                    .map(|trace| trace.timings)
+                    .ok_or_else(|| "missing existing-load trace".to_owned())?;
+                entries.push(StartupTraceEntry {
+                    record: loaded.record,
+                    diagnostics,
+                    timings,
+                    preview_width: loaded.preview_width,
+                    preview_height: loaded.preview_height,
+                    startup_elapsed: started_at.elapsed(),
+                });
+            }
+            ImportResult::Failed { error, .. } => return Err(error),
+            ImportResult::Cropped(_)
+            | ImportResult::CacheTierBackfilled { .. }
+            | ImportResult::CacheTierBackfillFailed { .. } => {}
+        }
+    }
+    Ok(entries)
+}
+
 pub fn interactive_import_perf_report() -> Result<InteractiveImportPerfReport, String> {
     let root = temp_library_root("interactive-import-perf");
     let library = Library::initialize(root.clone())?;
@@ -882,6 +1037,8 @@ fn import_path_sync_traced(
         preview_width: preview.width,
         preview_height: preview.height,
         preview_texture,
+        loaded_tier: CanvasImageCacheTier::Working,
+        existing_load_diagnostics: None,
         origin: ImportOrigin::Path,
         trace,
     })
@@ -1030,6 +1187,8 @@ fn import_clipboard_sync_traced(
         preview_width: preview.width,
         preview_height: preview.height,
         preview_texture,
+        loaded_tier: CanvasImageCacheTier::Working,
+        existing_load_diagnostics: None,
         origin: ImportOrigin::Clipboard,
         trace,
     })
@@ -1040,6 +1199,7 @@ fn load_existing(
     record: BoardItemWithAsset,
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
+    target_tier: CanvasImageCacheTier,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> ImportResult {
@@ -1051,14 +1211,20 @@ fn load_existing(
 
     let decode_started_at = Instant::now();
     let preview_started_at = Instant::now();
-    match load_existing_preview(library, &record, canvas_image_settings, max_texture_side) {
-        Ok(preview) => {
+    match load_existing_preview(
+        library,
+        &record,
+        canvas_image_settings,
+        target_tier,
+        max_texture_side,
+    ) {
+        Ok((preview, diagnostics)) => {
             let decode_or_load = decode_started_at.elapsed();
             let preview_texture = match build_preview_texture(wgpu_render_state, &preview) {
                 Ok(preview_texture) => preview_texture,
                 Err(error) => {
                     return ImportResult::Failed {
-                        item_id: None,
+                        item_id: Some(record.item.id),
                         context: record.asset.original_path.display().to_string(),
                         error,
                     };
@@ -1075,12 +1241,14 @@ fn load_existing(
                 preview_width: preview.width,
                 preview_height: preview.height,
                 preview_texture,
+                loaded_tier: target_tier,
+                existing_load_diagnostics: Some(diagnostics),
                 origin: ImportOrigin::Existing,
                 trace,
             })
         }
         Err(error) => ImportResult::Failed {
-            item_id: None,
+            item_id: Some(record.item.id),
             context: record.asset.original_path.display().to_string(),
             error,
         },
@@ -1103,6 +1271,7 @@ fn measure_first_visible_load_ms(
             record.clone(),
             usize::MAX,
             CanvasImageSettings::default(),
+            CanvasImageCacheTier::Working,
             None,
             None,
         );
@@ -1113,7 +1282,9 @@ fn measure_first_visible_load_ms(
                 }
             }
             ImportResult::Failed { error, .. } => return Err(error),
-            ImportResult::Cropped(_) => {}
+            ImportResult::Cropped(_)
+            | ImportResult::CacheTierBackfilled { .. }
+            | ImportResult::CacheTierBackfillFailed { .. } => {}
         }
     }
     Ok(started_at.elapsed().as_secs_f64() * 1000.0)
@@ -1145,12 +1316,15 @@ fn measure_interactive_import_ms(
                 record.clone(),
                 usize::MAX,
                 CanvasImageSettings::default(),
+                CanvasImageCacheTier::Working,
                 None,
                 None,
             ) {
                 ImportResult::Loaded(_) => {}
                 ImportResult::Failed { error, .. } => return Err(error),
-                ImportResult::Cropped(_) => {}
+                ImportResult::Cropped(_)
+                | ImportResult::CacheTierBackfilled { .. }
+                | ImportResult::CacheTierBackfillFailed { .. } => {}
             }
         }
         import_clipboard_sync(
@@ -1191,6 +1365,8 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
             ),
             max_texture_side: usize::MAX,
             canvas_image_settings: CanvasImageSettings::default(),
+            target_tier: CanvasImageCacheTier::Working,
+            priority: ExistingLoadPriority::Background,
             trace: None,
         })?;
     }
@@ -1471,6 +1647,7 @@ fn crop_item(
         preview_width: preview.width,
         preview_height: preview.height,
         preview_texture,
+        loaded_tier: CanvasImageCacheTier::Working,
         crop_offset_local: request.crop_offset_local,
     })
 }
@@ -1535,51 +1712,103 @@ fn build_preview_texture(
     )))
 }
 
+fn tier_max_side(
+    canvas_image_settings: CanvasImageSettings,
+    tier: CanvasImageCacheTier,
+) -> u32 {
+    match tier {
+        CanvasImageCacheTier::Overview => OVERVIEW_CACHE_MAX_SIDE.min(canvas_image_settings.max_side),
+        CanvasImageCacheTier::Working => canvas_image_settings.max_side,
+        CanvasImageCacheTier::Detail => DETAIL_CACHE_MAX_SIDE.max(canvas_image_settings.max_side),
+    }
+}
+
+fn tier_settings(
+    canvas_image_settings: CanvasImageSettings,
+    tier: CanvasImageCacheTier,
+) -> CanvasImageSettings {
+    CanvasImageSettings {
+        mode: canvas_image_settings.mode,
+        max_side: tier_max_side(canvas_image_settings, tier),
+    }
+}
+
 fn load_existing_preview(
     library: &Library,
     record: &BoardItemWithAsset,
     canvas_image_settings: CanvasImageSettings,
+    target_tier: CanvasImageCacheTier,
     max_texture_side: usize,
-) -> Result<PreviewImage, String> {
-    let canvas_source = match canvas_image_settings.mode {
+) -> Result<(PreviewImage, ExistingLoadDiagnostics), String> {
+    let tier_settings = tier_settings(canvas_image_settings, target_tier);
+    let (canvas_source, diagnostics) = match canvas_image_settings.mode {
         crate::data::CanvasImageMode::Original => {
             let decoded = decode_image_file(&record.asset.original_path)?;
-            PreviewImage {
-                rgba: decoded.rgba,
-                width: decoded.width,
-                height: decoded.height,
-            }
+            let source_path = record.asset.original_path.clone();
+            let source_file_size = decoded.file_size;
+            (
+                PreviewImage {
+                    rgba: decoded.rgba,
+                    width: decoded.width,
+                    height: decoded.height,
+                },
+                ExistingLoadDiagnostics {
+                    source_kind: ExistingLoadSourceKind::Original,
+                    source_path,
+                    source_file_size,
+                    source_width: decoded.width,
+                    source_height: decoded.height,
+                    backfilled_cache: false,
+                },
+            )
         }
         crate::data::CanvasImageMode::Downscale => {
-            if let Some(cache_path) = library.canvas_image_cache_path(
+            if let Some(cache_path) = library.canvas_image_cache_path_for_tier(
                 record.asset.id,
-                canvas_image_settings.mode,
-                canvas_image_settings.max_side,
+                tier_settings.mode,
+                tier_settings.max_side,
+                target_tier,
             ) && cache_path.is_file()
             {
                 match decode_image_file(&cache_path) {
-                    Ok(decoded) => PreviewImage {
-                        rgba: decoded.rgba,
-                        width: decoded.width,
-                        height: decoded.height,
-                    },
+                    Ok(decoded) => {
+                        let source_file_size = decoded.file_size;
+                        (
+                            PreviewImage {
+                                rgba: decoded.rgba,
+                                width: decoded.width,
+                                height: decoded.height,
+                            },
+                            ExistingLoadDiagnostics {
+                                source_kind: ExistingLoadSourceKind::Cache,
+                                source_path: cache_path,
+                                source_file_size,
+                                source_width: decoded.width,
+                                source_height: decoded.height,
+                                backfilled_cache: false,
+                            },
+                        )
+                    }
                     Err(_) => {
                         let _ = std::fs::remove_file(&cache_path);
-                        backfill_canvas_image_cache(library, record, canvas_image_settings)?
+                        backfill_canvas_image_cache(library, record, tier_settings, target_tier)?
                     }
                 }
             } else {
-                backfill_canvas_image_cache(library, record, canvas_image_settings)?
+                backfill_canvas_image_cache(library, record, tier_settings, target_tier)?
             }
         }
     };
 
-    preview_image_from_rgba(
-        canvas_source.width,
-        canvas_source.height,
-        &canvas_source.rgba,
-        max_texture_side,
-    )
+    Ok((
+        preview_image_from_rgba(
+            canvas_source.width,
+            canvas_source.height,
+            &canvas_source.rgba,
+            max_texture_side,
+        )?,
+        diagnostics,
+    ))
 }
 
 fn canvas_source_image_from_rgba(
@@ -1604,23 +1833,103 @@ fn backfill_canvas_image_cache(
     library: &Library,
     record: &BoardItemWithAsset,
     canvas_image_settings: CanvasImageSettings,
-) -> Result<PreviewImage, String> {
-    let decoded = decode_image_file(&record.asset.original_path)?;
+    tier: CanvasImageCacheTier,
+) -> Result<(PreviewImage, ExistingLoadDiagnostics), String> {
+    let decoded = if let Some(path) =
+        preferred_backfill_source_path(library, record, canvas_image_settings, tier)
+    {
+        decode_image_file(&path)?
+    } else {
+        decode_image_file(&record.asset.original_path)?
+    };
     let canvas_source = canvas_source_image_from_rgba(
         decoded.width,
         decoded.height,
         &decoded.rgba,
         canvas_image_settings,
     )?;
-    let _ = library.store_canvas_image_cache(
+    let source_path = library
+        .store_canvas_image_cache_for_tier(
         record.asset.id,
         canvas_image_settings.mode,
         canvas_image_settings.max_side,
+        tier,
         &canvas_source.rgba,
         canvas_source.width,
         canvas_source.height,
-    );
-    Ok(canvas_source)
+    )?
+    .unwrap_or_else(|| record.asset.original_path.clone());
+    let source_file_size = std::fs::metadata(&source_path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let source_width = canvas_source.width;
+    let source_height = canvas_source.height;
+    Ok((
+        canvas_source,
+        ExistingLoadDiagnostics {
+            source_kind: ExistingLoadSourceKind::Cache,
+            source_path,
+            source_file_size,
+            source_width,
+            source_height,
+            backfilled_cache: true,
+        },
+    ))
+}
+
+fn preferred_backfill_source_path(
+    library: &Library,
+    record: &BoardItemWithAsset,
+    canvas_image_settings: CanvasImageSettings,
+    tier: CanvasImageCacheTier,
+) -> Option<PathBuf> {
+    match tier {
+        CanvasImageCacheTier::Working => library
+            .legacy_canvas_image_cache_path_for_tier(
+                record.asset.id,
+                canvas_image_settings.mode,
+                canvas_image_settings.max_side,
+                tier,
+            )
+            .filter(|path| path.is_file()),
+        CanvasImageCacheTier::Overview => library
+            .canvas_image_cache_path_for_tier(
+                record.asset.id,
+                canvas_image_settings.mode,
+                canvas_image_settings.max_side,
+                CanvasImageCacheTier::Working,
+            )
+            .or_else(|| {
+                library.legacy_canvas_image_cache_path_for_tier(
+                    record.asset.id,
+                    canvas_image_settings.mode,
+                    canvas_image_settings.max_side,
+                    CanvasImageCacheTier::Working,
+                )
+            })
+            .filter(|path| path.is_file()),
+        CanvasImageCacheTier::Detail => None,
+    }
+}
+
+fn backfill_cache_tier(
+    library: &Library,
+    record: BoardItemWithAsset,
+    canvas_image_settings: CanvasImageSettings,
+    tier: CanvasImageCacheTier,
+) -> ImportResult {
+    let tier_settings = tier_settings(canvas_image_settings, tier);
+    match backfill_canvas_image_cache(library, &record, tier_settings, tier) {
+        Ok(_) => ImportResult::CacheTierBackfilled {
+            asset_id: record.asset.id,
+            tier,
+        },
+        Err(error) => ImportResult::CacheTierBackfillFailed {
+            asset_id: record.asset.id,
+            tier,
+            error,
+        },
+    }
 }
 
 fn initial_import_scale(asset_width: u32, asset_height: u32, auto_scale: bool) -> f32 {
@@ -1796,6 +2105,7 @@ mod tests {
         build_preview_texture, crop_item, import_clipboard, import_path_sync, initial_import_scale,
         load_existing, rects_overlap_with_gap,
     };
+    use crate::data::CanvasImageCacheTier;
     use crate::storage::Library;
     use image::{ColorType, ImageFormat};
     use pollster::block_on;
@@ -2235,24 +2545,42 @@ mod tests {
             .unwrap();
 
         let settings = downscaled_canvas_settings(2000);
-        let cache_path = library
-            .canvas_image_cache_path(record.asset.id, settings.mode, settings.max_side)
-            .unwrap();
-        assert!(!cache_path.exists());
+        assert!(
+            library
+                .canvas_image_cache_path(record.asset.id, settings.mode, settings.max_side)
+                .is_none()
+        );
 
-        let first = match load_existing(&library, record.clone(), usize::MAX, settings, None, None)
-        {
+        let first = match load_existing(
+            &library,
+            record.clone(),
+            usize::MAX,
+            settings,
+            CanvasImageCacheTier::Working,
+            None,
+            None,
+        ) {
             ImportResult::Loaded(loaded) => loaded,
             other => panic!("expected first load_existing to succeed, got {other:?}"),
         };
+        let cache_path = library
+            .canvas_image_cache_path(record.asset.id, settings.mode, settings.max_side)
+            .unwrap();
         assert!(cache_path.is_file());
         assert_eq!(first.preview_width, 2000);
         assert_eq!(first.preview_height, 1500);
 
         fs::remove_file(&record.asset.original_path).unwrap();
 
-        let second = match load_existing(&library, record.clone(), usize::MAX, settings, None, None)
-        {
+        let second = match load_existing(
+            &library,
+            record.clone(),
+            usize::MAX,
+            settings,
+            CanvasImageCacheTier::Working,
+            None,
+            None,
+        ) {
             ImportResult::Loaded(loaded) => loaded,
             other => {
                 panic!("expected second load_existing to use versioned canvas cache, got {other:?}")
@@ -2287,6 +2615,38 @@ mod tests {
             .unwrap();
 
         let first_settings = downscaled_canvas_settings(2000);
+        let second_settings = downscaled_canvas_settings(1000);
+        assert!(
+            library
+                .canvas_image_cache_path(
+                    record.asset.id,
+                    first_settings.mode,
+                    first_settings.max_side,
+                )
+                .is_none()
+        );
+        assert!(
+            library
+                .canvas_image_cache_path(
+                    record.asset.id,
+                    second_settings.mode,
+                    second_settings.max_side,
+                )
+                .is_none()
+        );
+
+        match load_existing(
+            &library,
+            record.clone(),
+            usize::MAX,
+            first_settings,
+            CanvasImageCacheTier::Working,
+            None,
+            None,
+        ) {
+            ImportResult::Loaded(_) => {}
+            other => panic!("expected first cache backfill to succeed, got {other:?}"),
+        }
         let first_cache = library
             .canvas_image_cache_path(
                 record.asset.id,
@@ -2294,36 +2654,23 @@ mod tests {
                 first_settings.max_side,
             )
             .unwrap();
-        let second_settings = downscaled_canvas_settings(1000);
-        let second_cache = library
-            .canvas_image_cache_path(
-                record.asset.id,
-                second_settings.mode,
-                second_settings.max_side,
-            )
-            .unwrap();
-
-        assert_ne!(first_cache, second_cache);
-
-        match load_existing(
-            &library,
-            record.clone(),
-            usize::MAX,
-            first_settings,
-            None,
-            None,
-        ) {
-            ImportResult::Loaded(_) => {}
-            other => panic!("expected first cache backfill to succeed, got {other:?}"),
-        }
         assert!(first_cache.is_file());
-        assert!(!second_cache.exists());
+        assert!(
+            library
+                .canvas_image_cache_path(
+                    record.asset.id,
+                    second_settings.mode,
+                    second_settings.max_side,
+                )
+                .is_none()
+        );
 
         let second = match load_existing(
             &library,
             record.clone(),
             usize::MAX,
             second_settings,
+            CanvasImageCacheTier::Working,
             None,
             None,
         ) {
@@ -2332,6 +2679,14 @@ mod tests {
         };
         assert_eq!(second.preview_width, 1000);
         assert_eq!(second.preview_height, 750);
+        let second_cache = library
+            .canvas_image_cache_path(
+                record.asset.id,
+                second_settings.mode,
+                second_settings.max_side,
+            )
+            .unwrap();
+        assert_ne!(first_cache, second_cache);
         assert!(second_cache.is_file());
 
         let _ = fs::remove_dir_all(root);
@@ -2357,20 +2712,16 @@ mod tests {
 
         let downscaled_settings = downscaled_canvas_settings(2000);
         let downscaled_cache = library
-            .canvas_image_cache_path(
-                record.asset.id,
-                downscaled_settings.mode,
-                downscaled_settings.max_side,
-            )
-            .unwrap();
-        let _ = library.store_canvas_image_cache(
+            .store_canvas_image_cache(
             record.asset.id,
             downscaled_settings.mode,
             downscaled_settings.max_side,
             &solid_rgba(2000, 1500),
             2000,
             1500,
-        );
+        )
+        .unwrap()
+        .unwrap();
         assert!(downscaled_cache.is_file());
         fs::remove_file(&record.asset.original_path).unwrap();
 
@@ -2382,6 +2733,7 @@ mod tests {
                 mode: crate::data::CanvasImageMode::Original,
                 max_side: 2000,
             },
+            CanvasImageCacheTier::Working,
             None,
             None,
         ) {
@@ -2429,6 +2781,7 @@ mod tests {
             record,
             usize::MAX,
             downscaled_canvas_settings(2000),
+            CanvasImageCacheTier::Working,
             None,
             None,
         ) {

@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "semantic-search")]
@@ -244,6 +246,7 @@ pub struct AppConfig {
     pub screenshot_path: Option<std::path::PathBuf>,
     perf_log: bool,
     perf_report: bool,
+    startup_trace: bool,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
 }
@@ -252,6 +255,13 @@ pub struct AppConfig {
 struct PerfLogState {
     app_started_at: Instant,
     startup_logged: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct FramePerfState {
+    import_results_drained: usize,
+    import_result_drain_ms: f64,
+    canvas: crate::canvas::CanvasFrameMetrics,
 }
 
 #[cfg(feature = "semantic-search")]
@@ -290,6 +300,7 @@ impl AppConfig {
         let mut screenshot_path = None;
         let mut perf_log = false;
         let mut perf_report = false;
+        let mut startup_trace = false;
         #[cfg(debug_assertions)]
         let mut verification_mode = None;
         let mut arguments = std::env::args().skip(1);
@@ -303,6 +314,8 @@ impl AppConfig {
                 perf_log = true;
             } else if argument == "--perf-report" {
                 perf_report = true;
+            } else if argument == "--startup-trace" {
+                startup_trace = true;
             } else if cfg!(debug_assertions) && argument == "--verify-open-drawer" {
                 #[cfg(debug_assertions)]
                 {
@@ -315,6 +328,7 @@ impl AppConfig {
             screenshot_path,
             perf_log,
             perf_report,
+            startup_trace,
             #[cfg(debug_assertions)]
             verification_mode,
         }
@@ -336,6 +350,10 @@ impl AppConfig {
 
     pub fn perf_report_requested(&self) -> bool {
         self.perf_report
+    }
+
+    pub fn startup_trace_requested(&self) -> bool {
+        self.startup_trace
     }
 }
 
@@ -360,6 +378,9 @@ pub struct ReferenceApp {
     drawer_open: bool,
     status: String,
     perf_log: Option<PerfLogState>,
+    frame_perf: FramePerfState,
+    pending_cache_backfills: HashSet<(i64, crate::data::CanvasImageCacheTier)>,
+    inflight_image_tier_loads: HashMap<i64, crate::data::CanvasImageCacheTier>,
 }
 
 impl ReferenceApp {
@@ -409,6 +430,9 @@ impl ReferenceApp {
                         app_started_at: Instant::now(),
                         startup_logged: false,
                     }),
+                    frame_perf: FramePerfState::default(),
+                    pending_cache_backfills: HashSet::new(),
+                    inflight_image_tier_loads: HashMap::new(),
                 };
                 app.load_user_session();
                 #[cfg(feature = "semantic-search")]
@@ -440,6 +464,9 @@ impl ReferenceApp {
                     app_started_at: Instant::now(),
                     startup_logged: false,
                 }),
+                frame_perf: FramePerfState::default(),
+                pending_cache_backfills: HashSet::new(),
+                inflight_image_tier_loads: HashMap::new(),
             },
         }
     }
@@ -465,6 +492,8 @@ impl ReferenceApp {
                                 mode: self.canvas_image_mode,
                                 max_side: self.canvas_image_max_side,
                             },
+                            target_tier: crate::data::CanvasImageCacheTier::Working,
+                            priority: crate::jobs::ExistingLoadPriority::Startup,
                             trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
                                 queued_at: Instant::now(),
                                 timings: crate::jobs::ImportTimings::default(),
@@ -725,13 +754,26 @@ impl ReferenceApp {
             return;
         };
 
+        let drain_started_at = Instant::now();
         let results = import_worker.try_recv_up_to(MAX_IMPORT_RESULTS_PER_FRAME);
+        let drained_count = results.len();
         let hit_result_cap = results.len() == MAX_IMPORT_RESULTS_PER_FRAME;
 
         for result in results {
             match result {
                 crate::jobs::ImportResult::Loaded(loaded) => {
                     let origin = loaded.origin;
+                    let loaded_tier = loaded.loaded_tier;
+                    let loaded_record = loaded.record.clone();
+                    let existing_load_diagnostics = loaded.existing_load_diagnostics.clone();
+                    self.inflight_image_tier_loads.remove(&loaded.record.item.id);
+                    if self
+                        .canvas
+                        .record_for_item_id(loaded.record.item.id)
+                        .is_some_and(|current| current.item.asset_id != loaded.record.item.asset_id)
+                    {
+                        continue;
+                    }
                     let mut trace = loaded.trace;
                     #[cfg(feature = "semantic-search")]
                     let queued_asset = (self.semantic_search_enabled
@@ -754,7 +796,18 @@ impl ReferenceApp {
                     if let Some(trace) = &mut trace {
                         trace.timings.ui_integration = ui_integration_started_at.elapsed();
                     }
-                    self.log_loaded_timing(origin, trace);
+                    self.log_loaded_timing(
+                        origin,
+                        Some(&loaded_record),
+                        existing_load_diagnostics.as_ref(),
+                        trace,
+                    );
+                    if loaded_tier == crate::data::CanvasImageCacheTier::Working {
+                        self.enqueue_cache_backfill(
+                            &loaded_record,
+                            crate::data::CanvasImageCacheTier::Overview,
+                        );
+                    }
                     self.status = "Imported image".to_owned();
                 }
                 crate::jobs::ImportResult::Cropped(cropped) => {
@@ -813,11 +866,17 @@ impl ReferenceApp {
                     updated_item.asset_id = asset.id;
 
                     let updated_item_id = updated_item.id;
+                    let updated_record = crate::data::BoardItemWithAsset {
+                        item: updated_item.clone(),
+                        asset: asset.clone(),
+                    };
                     match self
                         .canvas
                         .apply_cropped_item(ctx, cropped, asset.clone(), updated_item)
                     {
                         Ok(()) => {
+                            self.inflight_image_tier_loads.remove(&updated_item_id);
+                            self.canvas.clear_pending_image_tier_load(updated_item_id);
                             self.push_crop_undo_entry(CropUndoEntry {
                                 previous_record: previous_snapshot.0,
                                 previous_rgba: previous_snapshot.1,
@@ -834,6 +893,10 @@ impl ReferenceApp {
                                     .enqueue_asset_index(asset.id, asset.original_path.clone());
                                 self.search_overlay.status = SearchOverlayStatus::Indexing;
                             }
+                            self.enqueue_cache_backfill(
+                                &updated_record,
+                                crate::data::CanvasImageCacheTier::Overview,
+                            );
                             self.status = "Cropped image".to_owned();
                         }
                         Err(error) => {
@@ -842,17 +905,45 @@ impl ReferenceApp {
                         }
                     }
                 }
+                crate::jobs::ImportResult::CacheTierBackfilled { asset_id, tier } => {
+                    self.pending_cache_backfills.remove(&(asset_id, tier));
+                }
+                crate::jobs::ImportResult::CacheTierBackfillFailed {
+                    asset_id,
+                    tier,
+                    error,
+                } => {
+                    self.pending_cache_backfills.remove(&(asset_id, tier));
+                    self.status = error;
+                }
                 crate::jobs::ImportResult::Failed {
                     item_id,
                     context,
                     error,
                 } => {
                     if let Some(item_id) = item_id {
+                        self.inflight_image_tier_loads.remove(&item_id);
                         self.canvas.clear_crop_pending(item_id);
+                        self.canvas.clear_pending_image_tier_load(item_id);
                     }
                     self.status = format!("{context}: {error}");
                 }
             }
+        }
+
+        self.frame_perf.import_results_drained = drained_count;
+        self.frame_perf.import_result_drain_ms =
+            drain_started_at.elapsed().as_secs_f64() * 1000.0;
+        if drained_count > 0 && self.perf_log.is_some() {
+            eprintln!(
+                "[perf] import_result_drain count={} drain_ms={:.2} last_visible={} last_draw_calls={} last_groups={} last_fallback={}",
+                drained_count,
+                self.frame_perf.import_result_drain_ms,
+                self.frame_perf.canvas.image_pass.visible_images,
+                self.frame_perf.canvas.image_pass.draw_calls,
+                self.frame_perf.canvas.image_pass.texture_groups,
+                self.frame_perf.canvas.image_pass.fallback_images,
+            );
         }
 
         if hit_result_cap {
@@ -902,6 +993,8 @@ impl ReferenceApp {
                 record: entry.previous_record,
                 preview_rgba: entry.previous_rgba,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
             },
@@ -1065,6 +1158,71 @@ impl ReferenceApp {
             }
 
             self.status = "Cropping image".to_owned();
+        }
+    }
+
+    fn enqueue_cache_backfill(
+        &mut self,
+        record: &crate::data::BoardItemWithAsset,
+        tier: crate::data::CanvasImageCacheTier,
+    ) {
+        if self.canvas_image_mode != crate::data::CanvasImageMode::Downscale {
+            return;
+        }
+        let Some(import_worker) = &self.import_worker else {
+            return;
+        };
+        if !self.pending_cache_backfills.insert((record.asset.id, tier)) {
+            return;
+        }
+        if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::BackfillTier {
+            record: record.clone(),
+            canvas_image_settings: crate::jobs::CanvasImageSettings {
+                mode: self.canvas_image_mode,
+                max_side: self.canvas_image_max_side,
+            },
+            tier,
+        }) {
+            self.pending_cache_backfills.remove(&(record.asset.id, tier));
+            self.status = error;
+        }
+    }
+
+    fn handle_pending_image_tier_requests(&mut self) {
+        if self.canvas_image_mode != crate::data::CanvasImageMode::Downscale {
+            return;
+        }
+        let Some(import_worker) = &self.import_worker else {
+            return;
+        };
+
+        for (item_id, target_tier) in self.canvas.take_pending_image_tier_loads() {
+            if self
+                .inflight_image_tier_loads
+                .get(&item_id)
+                .is_some_and(|existing| *existing >= target_tier)
+            {
+                continue;
+            }
+            let Some(record) = self.canvas.record_for_item_id(item_id) else {
+                continue;
+            };
+            self.inflight_image_tier_loads.insert(item_id, target_tier);
+            if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::LoadExisting {
+                record,
+                max_texture_side: self.max_texture_side,
+                canvas_image_settings: crate::jobs::CanvasImageSettings {
+                    mode: self.canvas_image_mode,
+                    max_side: self.canvas_image_max_side,
+                },
+                target_tier,
+                priority: crate::jobs::ExistingLoadPriority::Background,
+                trace: None,
+            }) {
+                self.inflight_image_tier_loads.remove(&item_id);
+                self.canvas.clear_pending_image_tier_load(item_id);
+                self.status = error;
+            }
         }
     }
 
@@ -1572,6 +1730,8 @@ impl ReferenceApp {
     fn log_loaded_timing(
         &mut self,
         origin: crate::jobs::ImportOrigin,
+        record: Option<&crate::data::BoardItemWithAsset>,
+        diagnostics: Option<&crate::jobs::ExistingLoadDiagnostics>,
         trace: Option<crate::jobs::ImportTrace>,
     ) {
         let Some(perf_log) = &mut self.perf_log else {
@@ -1604,6 +1764,34 @@ impl ReferenceApp {
                     eprintln!("[perf] startup_first_image_ms={startup_ms:.2}");
                 }
             }
+            crate::jobs::ImportOrigin::Existing => {
+                let startup_ms = perf_log.app_started_at.elapsed().as_secs_f64() * 1000.0;
+                let asset = record.map(|record| {
+                    format!(
+                        " item_id={} asset_id={} file={}",
+                        record.item.id, record.asset.id, record.asset.filename
+                    )
+                });
+                let source = diagnostics.map(|diagnostics| {
+                    format!(
+                        " source_kind={:?} source_mb={:.2} backfilled_cache={} source={} source_dims={}x{}",
+                        diagnostics.source_kind,
+                        diagnostics.source_file_size as f64 / 1024.0 / 1024.0,
+                        diagnostics.backfilled_cache,
+                        diagnostics.source_path.display(),
+                        diagnostics.source_width,
+                        diagnostics.source_height
+                    )
+                });
+                let trace_text = trace.map(format_trace).unwrap_or_default();
+                eprintln!(
+                    "[perf] startup_image_visible startup_ms={startup_ms:.2}{}{}{}{}",
+                    asset.unwrap_or_default(),
+                    source.unwrap_or_default(),
+                    if trace_text.is_empty() { "" } else { " " },
+                    trace_text
+                );
+            }
             crate::jobs::ImportOrigin::Clipboard => {
                 if let Some(trace) = trace {
                     eprintln!("[perf] clipboard_import{}", format_trace(trace));
@@ -1614,7 +1802,6 @@ impl ReferenceApp {
                     eprintln!("[perf] dropped_file_import{}", format_trace(trace));
                 }
             }
-            crate::jobs::ImportOrigin::Existing => {}
         }
     }
 }
@@ -1624,6 +1811,8 @@ impl eframe::App for ReferenceApp {
         let screen_rect = ui.ctx().viewport_rect();
         ui.set_clip_rect(screen_rect);
         ui.expand_to_include_rect(screen_rect);
+        self.frame_perf.import_results_drained = 0;
+        self.frame_perf.import_result_drain_ms = 0.0;
 
         self.handle_import_results(ui.ctx());
         #[cfg(feature = "semantic-search")]
@@ -1656,7 +1845,15 @@ impl eframe::App for ReferenceApp {
         if drawer_open {
             block_drawer_input(ui.ctx(), self.drawer_rect(screen_rect));
         }
-        crate::canvas::show(ui, screen_rect, &mut self.canvas, false);
+        self.frame_perf.canvas = crate::canvas::show(
+            ui,
+            screen_rect,
+            &mut self.canvas,
+            self.wgpu_render_state.as_ref(),
+            self.canvas_image_mode == crate::data::CanvasImageMode::Downscale,
+            false,
+        );
+        self.handle_pending_image_tier_requests();
         self.handle_pending_crop_requests();
         self.handle_pending_annotation_requests();
         self.persist_canvas_changes();
@@ -2694,6 +2891,8 @@ mod tests {
                     preview_width: *width,
                     preview_height: *height,
                     preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                    loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                    existing_load_diagnostics: None,
                     origin: crate::jobs::ImportOrigin::Existing,
                     trace: None,
                 },
@@ -2844,6 +3043,9 @@ mod tests {
             semantic_search: None,
             #[cfg(feature = "semantic-search")]
             search_overlay: super::SearchOverlayState::default(),
+            frame_perf: super::FramePerfState::default(),
+            pending_cache_backfills: std::collections::HashSet::new(),
+            inflight_image_tier_loads: std::collections::HashMap::new(),
             drawer_open: false,
             status: String::new(),
             perf_log: None,

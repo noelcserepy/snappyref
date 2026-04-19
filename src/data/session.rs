@@ -3,6 +3,23 @@ use super::CanvasBackground;
 pub const DEFAULT_IMPORT_GAP: f32 = 12.0;
 pub const DEFAULT_CANVAS_IMAGE_MAX_SIDE: u32 = 2000;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CanvasImageCacheTier {
+    Overview,
+    Working,
+    Detail,
+}
+
+impl CanvasImageCacheTier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Overview => "overview",
+            Self::Working => "working",
+            Self::Detail => "detail",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CanvasImageMode {
     Downscale,

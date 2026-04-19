@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::data::{
-    BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, CanvasBackground, UserSession,
+    BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, CanvasBackground,
+    CanvasImageCacheTier, UserSession,
 };
 use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
 use eframe::egui;
@@ -26,6 +28,7 @@ const BACKGROUND_MIN_SCREEN_STEP: f32 = 40.0;
 const BACKGROUND_MAX_SCREEN_STEP: f32 = 112.0;
 const BACKGROUND_MIN_LOD_LEVEL: i32 = -12;
 const BACKGROUND_MAX_LOD_LEVEL: i32 = 12;
+const IMAGE_DETAIL_PROMOTION_THRESHOLD: f32 = 0.85;
 
 pub struct CanvasState {
     pan: egui::Vec2,
@@ -55,6 +58,7 @@ pub struct CanvasState {
     pending_annotation: Option<PendingAnnotation>,
     last_pointer_screen_pos: Option<egui::Pos2>,
     textbox_layout_cache: HashMap<i64, TextboxLayoutCacheEntry>,
+    pending_image_tier_loads: HashMap<i64, CanvasImageCacheTier>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -71,6 +75,21 @@ pub struct PaintPerfReport {
     pub legacy_drawn: usize,
     pub current_considered: usize,
     pub current_drawn: usize,
+    pub current_texture_groups: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ImagePassMetrics {
+    pub visible_images: usize,
+    pub fallback_images: usize,
+    pub texture_groups: usize,
+    pub draw_calls: usize,
+    pub build_time_ms: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CanvasFrameMetrics {
+    pub image_pass: ImagePassMetrics,
 }
 
 #[cfg(test)]
@@ -83,6 +102,7 @@ struct AnnotationPaintStats {
 struct CanvasImage {
     record: BoardItemWithAsset,
     texture: CanvasTexture,
+    loaded_tier: CanvasImageCacheTier,
 }
 
 #[derive(Clone)]
@@ -106,6 +126,78 @@ impl CanvasTexture {
         }
     }
 }
+
+#[derive(Clone)]
+struct ImagePassBatch {
+    texture: Arc<crate::jobs::NativeTextureHandle>,
+    instance_range: std::ops::Range<u32>,
+}
+
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct ImagePassVertex {
+    pos: [f32; 2],
+}
+
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct ImagePassInstance {
+    min_ndc: [f32; 2],
+    max_ndc: [f32; 2],
+    min_uv: [f32; 2],
+    max_uv: [f32; 2],
+}
+
+struct PreparedImagePass {
+    instance_buffer: eframe::wgpu::Buffer,
+    bind_groups: Vec<eframe::wgpu::BindGroup>,
+}
+
+struct ImagePassResources {
+    pipeline: eframe::wgpu::RenderPipeline,
+    vertex_buffer: eframe::wgpu::Buffer,
+    texture_bind_group_layout: eframe::wgpu::BindGroupLayout,
+    sampler: eframe::wgpu::Sampler,
+}
+
+struct ImagePassCallback {
+    target_format: eframe::wgpu::TextureFormat,
+    instances: Vec<ImagePassInstance>,
+    batches: Vec<ImagePassBatch>,
+    prepared: Mutex<Option<PreparedImagePass>>,
+}
+
+const IMAGE_PASS_SHADER: &str = r#"
+struct VsIn {
+    @location(0) unit_pos: vec2<f32>,
+    @location(1) min_ndc: vec2<f32>,
+    @location(2) max_ndc: vec2<f32>,
+    @location(3) min_uv: vec2<f32>,
+    @location(4) max_uv: vec2<f32>,
+};
+
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(input: VsIn) -> VsOut {
+    var output: VsOut;
+    let ndc = mix(input.min_ndc, input.max_ndc, input.unit_pos);
+    output.position = vec4<f32>(ndc, 0.0, 1.0);
+    output.uv = mix(input.min_uv, input.max_uv, input.unit_pos);
+    return output;
+}
+
+@group(0) @binding(0) var image_tex: texture_2d<f32>;
+@group(0) @binding(1) var image_sampler: sampler;
+
+@fragment
+fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
+    return textureSample(image_tex, image_sampler, input.uv);
+}
+"#;
 
 #[derive(Clone, Debug)]
 struct SelectedLayoutItem {
@@ -265,6 +357,7 @@ impl Default for CanvasState {
             pending_annotation: None,
             last_pointer_screen_pos: None,
             textbox_layout_cache: HashMap::new(),
+            pending_image_tier_loads: HashMap::new(),
         }
     }
 }
@@ -287,9 +380,11 @@ impl CanvasState {
 
         self.images
             .retain(|image| image.record.item.id != loaded.record.item.id);
+        self.pending_image_tier_loads.remove(&loaded.record.item.id);
         self.images.push(CanvasImage {
             record: loaded.record,
             texture,
+            loaded_tier: loaded.loaded_tier,
         });
         self.images.sort_by_key(|image| image.record.item.z_index);
     }
@@ -302,7 +397,11 @@ impl CanvasState {
             .map(|image| image.texture.clone())
             .ok_or_else(|| format!("missing source texture for asset {}", record.asset.id))?;
 
-        self.images.push(CanvasImage { record, texture });
+        self.images.push(CanvasImage {
+            record,
+            texture,
+            loaded_tier: CanvasImageCacheTier::Working,
+        });
         self.images.sort_by_key(|image| image.record.item.z_index);
         Ok(())
     }
@@ -370,6 +469,8 @@ impl CanvasState {
         image.record.item = updated_item;
         image.record.asset = asset;
         image.texture = texture;
+        image.loaded_tier = cropped.loaded_tier;
+        self.pending_image_tier_loads.remove(&cropped.item_id);
         Ok(())
     }
 
@@ -412,6 +513,13 @@ impl CanvasState {
 
     pub fn selected_item_ids(&self) -> Vec<i64> {
         self.selected_item_ids.clone()
+    }
+
+    pub fn record_for_item_id(&self, item_id: i64) -> Option<BoardItemWithAsset> {
+        self.images
+            .iter()
+            .find(|image| image.record.item.id == item_id)
+            .map(|image| image.record.clone())
     }
 
     pub fn background(&self) -> CanvasBackground {
@@ -471,6 +579,10 @@ impl CanvasState {
         self.pending_annotation.take()
     }
 
+    pub fn take_pending_image_tier_loads(&mut self) -> Vec<(i64, CanvasImageCacheTier)> {
+        self.pending_image_tier_loads.drain().collect()
+    }
+
     pub fn mark_crop_pending(&mut self, item_id: i64) {
         if !self.crop_pending_item_ids.contains(&item_id) {
             self.crop_pending_item_ids.push(item_id);
@@ -480,6 +592,10 @@ impl CanvasState {
     pub fn clear_crop_pending(&mut self, item_id: i64) {
         self.crop_pending_item_ids
             .retain(|pending_id| *pending_id != item_id);
+    }
+
+    pub fn clear_pending_image_tier_load(&mut self, item_id: i64) {
+        self.pending_image_tier_loads.remove(&item_id);
     }
 
     pub fn evict_cached_asset(&mut self, asset_id: i64) {
@@ -719,12 +835,29 @@ impl CanvasState {
         self.annotation_draft_state = None;
         self.crop_pending_item_ids
             .retain(|item_id| !removed_ids.contains(item_id));
+        self.pending_image_tier_loads
+            .retain(|item_id, _| !removed_ids.contains(item_id));
         self.pending_crop = None;
         removed_ids
     }
 
     fn is_selected(&self, item_id: i64) -> bool {
         self.selected_item_ids.contains(&item_id)
+    }
+
+    fn request_image_tier_load(&mut self, item_id: i64, tier: CanvasImageCacheTier) {
+        let Some(image) = self.image_by_item_id(item_id) else {
+            return;
+        };
+        if tier <= image.loaded_tier {
+            return;
+        }
+        match self.pending_image_tier_loads.get(&item_id).copied() {
+            Some(pending) if pending >= tier => {}
+            _ => {
+                self.pending_image_tier_loads.insert(item_id, tier);
+            }
+        }
     }
 
     fn set_single_selection(&mut self, item_id: i64) {
@@ -1756,7 +1889,216 @@ pub(crate) fn legacy_compact_layout_area_for_sizes(
     Some(width * height)
 }
 
-pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut CanvasState, debug_labels: bool) {
+impl ImagePassResources {
+    fn new(
+        device: &eframe::wgpu::Device,
+        target_format: eframe::wgpu::TextureFormat,
+    ) -> Self {
+        let shader = device.create_shader_module(eframe::wgpu::ShaderModuleDescriptor {
+            label: Some("reference_canvas_image_shader"),
+            source: eframe::wgpu::ShaderSource::Wgsl(IMAGE_PASS_SHADER.into()),
+        });
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&eframe::wgpu::BindGroupLayoutDescriptor {
+                label: Some("reference_canvas_image_bind_group_layout"),
+                entries: &[
+                    eframe::wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: eframe::wgpu::ShaderStages::FRAGMENT,
+                        ty: eframe::wgpu::BindingType::Texture {
+                            sample_type: eframe::wgpu::TextureSampleType::Float {
+                                filterable: true,
+                            },
+                            view_dimension: eframe::wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    eframe::wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: eframe::wgpu::ShaderStages::FRAGMENT,
+                        ty: eframe::wgpu::BindingType::Sampler(
+                            eframe::wgpu::SamplerBindingType::Filtering,
+                        ),
+                        count: None,
+                    },
+                ],
+            });
+        let sampler = device.create_sampler(&eframe::wgpu::SamplerDescriptor {
+            label: Some("reference_canvas_image_sampler"),
+            mag_filter: eframe::wgpu::FilterMode::Linear,
+            min_filter: eframe::wgpu::FilterMode::Linear,
+            mipmap_filter: eframe::wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
+        let pipeline_layout = device.create_pipeline_layout(&eframe::wgpu::PipelineLayoutDescriptor {
+            label: Some("reference_canvas_image_pipeline_layout"),
+            bind_group_layouts: &[Some(&texture_bind_group_layout)],
+            immediate_size: 0,
+        });
+        let vertex_attributes = eframe::wgpu::vertex_attr_array![0 => Float32x2];
+        let instance_attributes =
+            eframe::wgpu::vertex_attr_array![1 => Float32x2, 2 => Float32x2, 3 => Float32x2, 4 => Float32x2];
+        let pipeline = device.create_render_pipeline(&eframe::wgpu::RenderPipelineDescriptor {
+            label: Some("reference_canvas_image_pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: eframe::wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: eframe::wgpu::PipelineCompilationOptions::default(),
+                buffers: &[
+                    eframe::wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<ImagePassVertex>() as u64,
+                        step_mode: eframe::wgpu::VertexStepMode::Vertex,
+                        attributes: &vertex_attributes,
+                    },
+                    eframe::wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<ImagePassInstance>() as u64,
+                        step_mode: eframe::wgpu::VertexStepMode::Instance,
+                        attributes: &instance_attributes,
+                    },
+                ],
+            },
+            primitive: eframe::wgpu::PrimitiveState {
+                topology: eframe::wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: eframe::wgpu::MultisampleState::default(),
+            fragment: Some(eframe::wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: eframe::wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(eframe::wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(eframe::wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: eframe::wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let vertices = [
+            ImagePassVertex { pos: [0.0, 0.0] },
+            ImagePassVertex { pos: [1.0, 0.0] },
+            ImagePassVertex { pos: [1.0, 1.0] },
+            ImagePassVertex { pos: [0.0, 0.0] },
+            ImagePassVertex { pos: [1.0, 1.0] },
+            ImagePassVertex { pos: [0.0, 1.0] },
+        ];
+        let vertex_buffer = eframe::wgpu::util::DeviceExt::create_buffer_init(
+            device,
+            &eframe::wgpu::util::BufferInitDescriptor {
+                label: Some("reference_canvas_image_vertices"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: eframe::wgpu::BufferUsages::VERTEX,
+            },
+        );
+        Self {
+            pipeline,
+            vertex_buffer,
+            texture_bind_group_layout,
+            sampler,
+        }
+    }
+}
+
+impl ImagePassCallback {
+    fn new(
+        target_format: eframe::wgpu::TextureFormat,
+        instances: Vec<ImagePassInstance>,
+        batches: Vec<ImagePassBatch>,
+    ) -> Self {
+        Self {
+            target_format,
+            instances,
+            batches,
+            prepared: Mutex::new(None),
+        }
+    }
+}
+
+impl eframe::egui_wgpu::CallbackTrait for ImagePassCallback {
+    fn prepare(
+        &self,
+        device: &eframe::wgpu::Device,
+        _queue: &eframe::wgpu::Queue,
+        _screen_descriptor: &eframe::egui_wgpu::ScreenDescriptor,
+        _egui_encoder: &mut eframe::wgpu::CommandEncoder,
+        callback_resources: &mut eframe::egui_wgpu::CallbackResources,
+    ) -> Vec<eframe::wgpu::CommandBuffer> {
+        if callback_resources.get::<ImagePassResources>().is_none() {
+            callback_resources.insert(ImagePassResources::new(device, self.target_format));
+        }
+        let Some(resources) = callback_resources.get::<ImagePassResources>() else {
+            return Vec::new();
+        };
+        let instance_buffer = eframe::wgpu::util::DeviceExt::create_buffer_init(
+            device,
+            &eframe::wgpu::util::BufferInitDescriptor {
+                label: Some("reference_canvas_image_instances"),
+                contents: bytemuck::cast_slice(&self.instances),
+                usage: eframe::wgpu::BufferUsages::VERTEX,
+            },
+        );
+        let bind_groups = self
+            .batches
+            .iter()
+            .filter_map(|batch| {
+                batch.texture.create_bind_group(
+                    device,
+                    &resources.texture_bind_group_layout,
+                    &resources.sampler,
+                )
+            })
+            .collect::<Vec<_>>();
+        *self.prepared.lock().expect("image pass mutex poisoned") = Some(PreparedImagePass {
+            instance_buffer,
+            bind_groups,
+        });
+        Vec::new()
+    }
+
+    fn paint(
+        &self,
+        info: egui::PaintCallbackInfo,
+        render_pass: &mut eframe::wgpu::RenderPass<'static>,
+        callback_resources: &eframe::egui_wgpu::CallbackResources,
+    ) {
+        let Some(resources) = callback_resources.get::<ImagePassResources>() else {
+            return;
+        };
+        let Some(prepared) = self.prepared.lock().expect("image pass mutex poisoned").take() else {
+            return;
+        };
+        if prepared.bind_groups.len() != self.batches.len() {
+            return;
+        }
+        let clip = info.clip_rect_in_pixels();
+        render_pass.set_scissor_rect(
+            clip.left_px.max(0) as u32,
+            clip.top_px.max(0) as u32,
+            clip.width_px.max(0) as u32,
+            clip.height_px.max(0) as u32,
+        );
+        render_pass.set_pipeline(&resources.pipeline);
+        render_pass.set_vertex_buffer(0, resources.vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, prepared.instance_buffer.slice(..));
+        for (index, batch) in self.batches.iter().enumerate() {
+            render_pass.set_bind_group(0, &prepared.bind_groups[index], &[]);
+            render_pass.draw(0..6, batch.instance_range.clone());
+        }
+    }
+}
+
+pub fn show(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    state: &mut CanvasState,
+    render_state: Option<&eframe::egui_wgpu::RenderState>,
+    allow_tier_promotion: bool,
+    debug_labels: bool,
+) -> CanvasFrameMetrics {
     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
     handle_input(ui, rect, state, &response);
 
@@ -1764,13 +2106,21 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, state: &mut CanvasState, debug_
 
     painter.rect_filled(rect, 0.0, crate::theme::BACKGROUND);
     paint_background(&painter, rect, state);
-    paint_images(&painter, rect, state, debug_labels);
+    let image_pass = paint_images(
+        &painter,
+        rect,
+        state,
+        render_state,
+        allow_tier_promotion,
+        debug_labels,
+    );
     paint_annotations(&painter, ui, rect, state);
     paint_selection_bounds(&painter, rect, state);
     paint_crop_marquee(&painter, rect, state);
     paint_annotation_draft(&painter, rect, state);
     paint_marquee(&painter, state);
     show_textbox_editor(ui, rect, state);
+    CanvasFrameMetrics { image_pass }
 }
 
 fn handle_input(
@@ -2394,6 +2744,7 @@ pub fn paint_perf_report() -> PaintPerfReport {
     let current_started_at = std::time::Instant::now();
     let current_stats = image_paint_stats_for_records(&records, rect, pan, zoom, true);
     let current_visibility_pass_ms = current_started_at.elapsed().as_secs_f64() * 1000.0;
+    let current_texture_groups = image_texture_group_count_for_records(&records, rect, pan, zoom);
 
     PaintPerfReport {
         legacy_visibility_pass_ms,
@@ -2402,6 +2753,7 @@ pub fn paint_perf_report() -> PaintPerfReport {
         legacy_drawn: legacy_stats.drawn,
         current_considered: current_stats.considered,
         current_drawn: current_stats.drawn,
+        current_texture_groups,
     }
 }
 
@@ -2422,6 +2774,28 @@ fn image_paint_stats_for_records(
         }
     }
     stats
+}
+
+fn image_texture_group_count_for_records(
+    records: &[crate::data::BoardItemWithAsset],
+    rect: egui::Rect,
+    pan: egui::Vec2,
+    zoom: f32,
+) -> usize {
+    let cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
+    let mut groups = 0;
+    let mut previous_asset_id = None;
+    for record in records {
+        let image_rect = image_screen_rect_for_record(record, rect, pan, zoom, rect.center());
+        if !image_rect.intersects(cull_rect) {
+            continue;
+        }
+        if previous_asset_id != Some(record.asset.id) {
+            groups += 1;
+            previous_asset_id = Some(record.asset.id);
+        }
+    }
+    groups
 }
 
 #[cfg(test)]
@@ -2537,62 +2911,200 @@ fn zoom_around_pointer(
 fn paint_images(
     painter: &egui::Painter,
     rect: egui::Rect,
-    state: &CanvasState,
+    state: &mut CanvasState,
+    render_state: Option<&eframe::egui_wgpu::RenderState>,
+    allow_tier_promotion: bool,
     debug_labels: bool,
-) {
+) -> ImagePassMetrics {
+    let build_started_at = Instant::now();
     let cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
-    for image in &state.images {
-        let image_rect = image_screen_rect(state, rect, image);
-        if !image_rect.intersects(cull_rect) {
-            continue;
-        }
+    let mut metrics = ImagePassMetrics::default();
+    let visible_images = state
+        .images
+        .iter()
+        .filter_map(|image| {
+            let image_rect = image_screen_rect(state, rect, image);
+            image_rect.intersects(cull_rect).then_some((image, image_rect))
+        })
+        .collect::<Vec<_>>();
+    metrics.visible_images = visible_images.len();
 
+    let use_native_pass = render_state.is_some()
+        && visible_images
+            .iter()
+            .all(|(image, _)| matches!(image.texture, CanvasTexture::Native(_)));
+
+    for (_, image_rect) in &visible_images {
         painter.rect_filled(
             image_rect.expand(2.0),
             0.0,
             egui::Color32::from_rgba_premultiplied(0, 0, 0, 120),
         );
-        painter.image(
-            image.texture.id(),
-            image_rect,
-            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-            egui::Color32::WHITE,
-        );
-        if state.search_match_item_ids.contains(&image.record.item.id) {
-            let stroke = if state.active_search_item_id == Some(image.record.item.id) {
-                egui::Stroke::new(3.0, egui::Color32::from_rgb(255, 170, 72))
-            } else {
-                egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 215, 140))
-            };
-            painter.rect_stroke(
-                image_rect.expand(2.0),
-                0.0,
-                stroke,
-                egui::StrokeKind::Outside,
-            );
-        }
-        if state.is_selected(image.record.item.id) {
-            painter.rect_stroke(
-                image_rect,
-                0.0,
-                crate::theme::stroke_strong(),
-                egui::StrokeKind::Outside,
-            );
-        }
+    }
 
-        if debug_labels {
-            let label = format!(
-                "#{}  ({:.0}, {:.0})",
-                image.record.item.id, image.record.item.x, image.record.item.y
-            );
-            painter.text(
-                image_rect.min + egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2),
-                egui::Align2::LEFT_TOP,
-                label,
-                egui::TextStyle::Body.resolve(&painter.ctx().global_style()),
-                crate::theme::TEXT,
+    if use_native_pass {
+        let mut native_instances = Vec::with_capacity(visible_images.len());
+        let mut native_batches = Vec::new();
+        let mut current_batch: Option<(
+            egui::TextureId,
+            Arc<crate::jobs::NativeTextureHandle>,
+            u32,
+        )> = None;
+        for (image, image_rect) in &visible_images {
+            let CanvasTexture::Native(texture) = &image.texture else {
+                continue;
+            };
+            let instance_index = native_instances.len() as u32;
+            native_instances.push(image_pass_instance(rect, *image_rect));
+            match &current_batch {
+                Some((texture_id, _, _)) if *texture_id == texture.texture_id() => {}
+                Some((_, previous_texture, start)) => {
+                    native_batches.push(ImagePassBatch {
+                        texture: previous_texture.clone(),
+                        instance_range: *start..instance_index,
+                    });
+                    current_batch = Some((texture.texture_id(), texture.clone(), instance_index));
+                }
+                None => {
+                    current_batch = Some((texture.texture_id(), texture.clone(), instance_index));
+                }
+            }
+        }
+        if let Some((_, texture, start)) = current_batch {
+            native_batches.push(ImagePassBatch {
+                texture,
+                instance_range: start..native_instances.len() as u32,
+            });
+        }
+        metrics.texture_groups = native_batches.len();
+        metrics.draw_calls = native_batches.len();
+        if let Some(render_state) = render_state {
+            painter.add(eframe::egui_wgpu::Callback::new_paint_callback(
+                rect,
+                ImagePassCallback::new(
+                    render_state.target_format,
+                    native_instances,
+                    native_batches,
+                ),
+            ));
+        }
+    } else {
+        metrics.fallback_images = visible_images.len();
+        for (image, image_rect) in &visible_images {
+            painter.image(
+                image.texture.id(),
+                *image_rect,
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
             );
         }
+    }
+
+    metrics.build_time_ms = build_started_at.elapsed().as_secs_f64() * 1000.0;
+
+    if allow_tier_promotion {
+        let promotion_requests = visible_images
+            .into_iter()
+            .filter_map(|(image, _)| {
+                desired_image_tier(state, rect, image.record.item.id)
+                    .map(|tier| (image.record.item.id, tier))
+            })
+            .collect::<Vec<_>>();
+        for (item_id, tier) in promotion_requests {
+            state.request_image_tier_load(item_id, tier);
+        }
+    }
+
+    for image in &state.images {
+        let image_rect = image_screen_rect(state, rect, image);
+        if !image_rect.intersects(cull_rect) {
+            continue;
+        }
+        paint_image_overlay(painter, state, image, image_rect, debug_labels);
+    }
+
+    metrics
+}
+
+fn image_pass_instance(rect: egui::Rect, image_rect: egui::Rect) -> ImagePassInstance {
+    let local_min = image_rect.min - rect.min;
+    let local_max = image_rect.max - rect.min;
+    let width = rect.width().max(1.0);
+    let height = rect.height().max(1.0);
+    let min_ndc = [
+        (local_min.x / width) * 2.0 - 1.0,
+        1.0 - (local_max.y / height) * 2.0,
+    ];
+    let max_ndc = [
+        (local_max.x / width) * 2.0 - 1.0,
+        1.0 - (local_min.y / height) * 2.0,
+    ];
+    ImagePassInstance {
+        min_ndc,
+        max_ndc,
+        min_uv: [0.0, 1.0],
+        max_uv: [1.0, 0.0],
+    }
+}
+
+fn desired_image_tier(
+    state: &CanvasState,
+    rect: egui::Rect,
+    item_id: i64,
+) -> Option<CanvasImageCacheTier> {
+    let image = state.image_by_item_id(item_id)?;
+    if image.loaded_tier >= CanvasImageCacheTier::Detail {
+        return None;
+    }
+    let image_rect = image_screen_rect(state, rect, image);
+    let on_screen_max_side = image_rect.width().max(image_rect.height());
+    let texture_max_side = image.texture.size()[0].max(image.texture.size()[1]) as f32;
+    (texture_max_side > 0.0
+        && on_screen_max_side >= texture_max_side * IMAGE_DETAIL_PROMOTION_THRESHOLD)
+        .then_some(CanvasImageCacheTier::Detail)
+}
+
+fn paint_image_overlay(
+    painter: &egui::Painter,
+    state: &CanvasState,
+    image: &CanvasImage,
+    image_rect: egui::Rect,
+    debug_labels: bool,
+) {
+    if state.search_match_item_ids.contains(&image.record.item.id) {
+        let stroke = if state.active_search_item_id == Some(image.record.item.id) {
+            egui::Stroke::new(3.0, egui::Color32::from_rgb(255, 170, 72))
+        } else {
+            egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 215, 140))
+        };
+        painter.rect_stroke(
+            image_rect.expand(2.0),
+            0.0,
+            stroke,
+            egui::StrokeKind::Outside,
+        );
+    }
+    if state.is_selected(image.record.item.id) {
+        painter.rect_stroke(
+            image_rect,
+            0.0,
+            crate::theme::stroke_strong(),
+            egui::StrokeKind::Outside,
+        );
+    }
+
+    if debug_labels {
+        let label = format!(
+            "#{}  ({:.0}, {:.0})",
+            image.record.item.id, image.record.item.x, image.record.item.y
+        );
+        painter.text(
+            image_rect.min + egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2),
+            egui::Align2::LEFT_TOP,
+            label,
+            egui::TextStyle::Body.resolve(&painter.ctx().global_style()),
+            crate::theme::TEXT,
+        );
     }
 }
 
@@ -3576,7 +4088,8 @@ mod tests {
         textbox_screen_rect, textbox_text_interactive_rect_from_galley, vertical_layout,
     };
     use crate::data::{
-        BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, ImageAsset,
+        BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind,
+        CanvasImageCacheTier, ImageAsset,
     };
     use std::{
         path::PathBuf,
@@ -3624,6 +4137,7 @@ mod tests {
                 },
             },
             texture: CanvasTexture::Managed(texture),
+            loaded_tier: CanvasImageCacheTier::Working,
         });
     }
 
@@ -3661,6 +4175,8 @@ mod tests {
             preview_width: record.asset.width,
             preview_height: record.asset.height,
             preview_texture: crate::jobs::ImportedPreviewTexture::Native(texture),
+            loaded_tier: CanvasImageCacheTier::Working,
+            existing_load_diagnostics: None,
             record,
             origin: crate::jobs::ImportOrigin::Existing,
             trace: None,
@@ -3747,6 +4263,7 @@ mod tests {
                     preview_texture: crate::jobs::ImportedPreviewTexture::Native(
                         new_texture.clone(),
                     ),
+                    loaded_tier: CanvasImageCacheTier::Working,
                     crop_offset_local: eframe::egui::Vec2::ZERO,
                 },
                 ImageAsset {
