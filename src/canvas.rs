@@ -9,7 +9,7 @@ use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
 
 const MIN_CANVAS_ZOOM: f32 = 0.01;
 const MAX_CANVAS_ZOOM: f32 = 64.0;
-const MIN_TEXTBOX_WORLD_SIZE: egui::Vec2 = egui::vec2(160.0, 64.0);
+const MIN_TEXTBOX_WORLD_SIZE: egui::Vec2 = egui::vec2(240.0, 40.0);
 const ANNOTATION_HIT_RADIUS: f32 = 10.0;
 const BACKGROUND_BASE_WORLD_STEP: f32 = 64.0;
 const BACKGROUND_MIN_SCREEN_STEP: f32 = 40.0;
@@ -37,6 +37,7 @@ pub struct CanvasState {
     pending_crop: Option<CanvasCropRequest>,
     dirty_item_ids: Vec<i64>,
     dirty_annotation_ids: Vec<i64>,
+    pending_archived_annotation_ids: Vec<i64>,
     pending_annotation: Option<PendingAnnotation>,
     last_pointer_screen_pos: Option<egui::Pos2>,
 }
@@ -125,6 +126,7 @@ impl Default for CanvasState {
             pending_crop: None,
             dirty_item_ids: Vec::new(),
             dirty_annotation_ids: Vec::new(),
+            pending_archived_annotation_ids: Vec::new(),
             pending_annotation: None,
             last_pointer_screen_pos: None,
         }
@@ -370,6 +372,10 @@ impl CanvasState {
             .collect()
     }
 
+    pub fn take_archived_annotation_ids(&mut self) -> Vec<i64> {
+        std::mem::take(&mut self.pending_archived_annotation_ids)
+    }
+
     pub fn selection_screen_rect(&self, rect: egui::Rect) -> Option<egui::Rect> {
         let mut selected_rect: Option<egui::Rect> = None;
 
@@ -423,6 +429,7 @@ impl CanvasState {
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn select_items(&mut self, item_ids: &[i64]) {
+        self.finish_textbox_edit();
         self.selected_item_ids = item_ids
             .iter()
             .copied()
@@ -506,15 +513,7 @@ impl CanvasState {
 
     pub fn delete_selected_annotation(&mut self) -> Option<i64> {
         let selected_id = self.selected_annotation_id?;
-        self.annotations
-            .retain(|annotation| annotation.id != selected_id);
-        self.selected_annotation_id = None;
-        if self.editing_text_annotation_id == Some(selected_id) {
-            self.editing_text_annotation_id = None;
-            self.focus_text_editor = false;
-        }
-        self.dirty_annotation_ids
-            .retain(|annotation_id| *annotation_id != selected_id);
+        self.remove_annotation_locally(selected_id);
         Some(selected_id)
     }
 
@@ -551,6 +550,7 @@ impl CanvasState {
     }
 
     fn set_single_selection(&mut self, item_id: i64) {
+        self.finish_textbox_edit();
         self.selected_item_ids.clear();
         self.selected_item_ids.push(item_id);
         self.selected_annotation_id = None;
@@ -558,18 +558,21 @@ impl CanvasState {
     }
 
     fn add_to_selection(&mut self, item_id: i64) {
+        self.finish_textbox_edit();
         if !self.selected_item_ids.contains(&item_id) {
             self.selected_item_ids.push(item_id);
         }
     }
 
     fn clear_selection(&mut self) {
+        self.finish_textbox_edit();
         self.selected_item_ids.clear();
         self.selected_annotation_id = None;
         self.editing_text_annotation_id = None;
     }
 
     fn set_selection(&mut self, item_ids: Vec<i64>) {
+        self.finish_textbox_edit();
         self.selected_item_ids = item_ids;
         self.selected_annotation_id = None;
         self.editing_text_annotation_id = None;
@@ -584,6 +587,52 @@ impl CanvasState {
     fn mark_annotation_dirty(&mut self, annotation_id: i64) {
         if annotation_id > 0 && !self.dirty_annotation_ids.contains(&annotation_id) {
             self.dirty_annotation_ids.push(annotation_id);
+        }
+    }
+
+    fn remove_annotation_locally(&mut self, annotation_id: i64) {
+        self.annotations
+            .retain(|annotation| annotation.id != annotation_id);
+        if self.selected_annotation_id == Some(annotation_id) {
+            self.selected_annotation_id = None;
+        }
+        if self.editing_text_annotation_id == Some(annotation_id) {
+            self.editing_text_annotation_id = None;
+        }
+        self.focus_text_editor = false;
+        self.dirty_annotation_ids
+            .retain(|dirty_id| *dirty_id != annotation_id);
+    }
+
+    fn finish_textbox_edit(&mut self) {
+        let Some(annotation_id) = self.editing_text_annotation_id else {
+            self.focus_text_editor = false;
+            return;
+        };
+
+        self.editing_text_annotation_id = None;
+        self.focus_text_editor = false;
+
+        let Some(annotation) = self
+            .annotations
+            .iter()
+            .find(|annotation| annotation.id == annotation_id)
+        else {
+            if self.selected_annotation_id == Some(annotation_id) {
+                self.selected_annotation_id = None;
+            }
+            return;
+        };
+
+        if annotation.kind == CanvasAnnotationKind::Textbox && annotation.text.trim().is_empty() {
+            self.remove_annotation_locally(annotation_id);
+            if annotation_id > 0
+                && !self
+                    .pending_archived_annotation_ids
+                    .contains(&annotation_id)
+            {
+                self.pending_archived_annotation_ids.push(annotation_id);
+            }
         }
     }
 
@@ -1372,6 +1421,9 @@ fn handle_input(
                 current_screen: pointer_pos,
             });
         } else if let Some(annotation_id) = hit_test_annotation(state, rect, pointer_pos) {
+            if state.editing_text_annotation_id != Some(annotation_id) {
+                state.finish_textbox_edit();
+            }
             state.selected_item_ids.clear();
             state.selected_annotation_id = Some(annotation_id);
             if state.editing_text_annotation_id != Some(annotation_id) {
@@ -1762,6 +1814,50 @@ fn lattice_phase_screen(screen_origin: f32, screen_position: f32, screen_step: f
     (screen_position - screen_origin).rem_euclid(screen_step) / screen_step
 }
 
+fn textbox_padding() -> egui::Vec2 {
+    egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2)
+}
+
+fn textbox_font_id(ui: &egui::Ui, zoom: f32) -> egui::FontId {
+    let mut font_id = egui::TextStyle::Body.resolve(ui.style());
+    font_id.size *= zoom.max(MIN_CANVAS_ZOOM);
+    font_id
+}
+
+fn textbox_required_world_height(galley_height_screen: f32, zoom: f32) -> f32 {
+    let padding = textbox_padding();
+    let screen_height = galley_height_screen + padding.y * 2.0;
+    (screen_height / zoom.max(MIN_CANVAS_ZOOM)).max(MIN_TEXTBOX_WORLD_SIZE.y)
+}
+
+fn expand_textbox_to_height(state: &mut CanvasState, index: usize, required_height: f32) -> bool {
+    let annotation = &state.annotations[index];
+    if annotation.kind != CanvasAnnotationKind::Textbox {
+        return false;
+    }
+
+    let world_rect = normalized_textbox_rect(
+        egui::pos2(annotation.start_x, annotation.start_y),
+        egui::pos2(annotation.end_x, annotation.end_y),
+    );
+    if required_height <= world_rect.height() + 0.5 {
+        return false;
+    }
+
+    let annotation_id = annotation.id;
+    let new_rect = egui::Rect::from_min_size(
+        world_rect.min,
+        egui::vec2(world_rect.width(), required_height),
+    );
+    let annotation = &mut state.annotations[index];
+    annotation.start_x = new_rect.min.x;
+    annotation.start_y = new_rect.min.y;
+    annotation.end_x = new_rect.max.x;
+    annotation.end_y = new_rect.max.y;
+    state.mark_annotation_dirty(annotation_id);
+    true
+}
+
 fn paint_annotations(
     painter: &egui::Painter,
     ui: &egui::Ui,
@@ -1770,7 +1866,8 @@ fn paint_annotations(
 ) {
     for annotation in &state.annotations {
         let selected = state.selected_annotation_id == Some(annotation.id);
-        let stroke = if selected {
+        let editing = state.editing_text_annotation_id == Some(annotation.id);
+        let stroke = if selected || editing {
             crate::theme::stroke_strong()
         } else {
             egui::Stroke::new(
@@ -1795,6 +1892,7 @@ fn paint_annotations(
             }
             CanvasAnnotationKind::Textbox => {
                 let textbox_rect = annotation_screen_rect(state, rect, annotation);
+                let fill_alpha = if selected || editing { 184 } else { 112 };
                 painter.rect_filled(
                     textbox_rect,
                     crate::theme::CONTROL_RADIUS,
@@ -1802,17 +1900,19 @@ fn paint_annotations(
                         crate::theme::BACKGROUND.r(),
                         crate::theme::BACKGROUND.g(),
                         crate::theme::BACKGROUND.b(),
-                        168,
+                        fill_alpha,
                     ),
                 );
-                painter.rect_stroke(
-                    textbox_rect,
-                    crate::theme::CONTROL_RADIUS,
-                    stroke,
-                    egui::StrokeKind::Outside,
-                );
-                if state.editing_text_annotation_id != Some(annotation.id) {
-                    paint_textbox_text(painter, ui, textbox_rect, &annotation.text);
+                if selected || editing {
+                    painter.rect_stroke(
+                        textbox_rect,
+                        crate::theme::CONTROL_RADIUS,
+                        stroke,
+                        egui::StrokeKind::Outside,
+                    );
+                }
+                if !editing {
+                    paint_textbox_text(painter, ui, textbox_rect, state.zoom, &annotation.text);
                 }
             }
         }
@@ -1823,28 +1923,22 @@ fn paint_textbox_text(
     painter: &egui::Painter,
     ui: &egui::Ui,
     textbox_rect: egui::Rect,
+    zoom: f32,
     text: &str,
 ) {
-    let text = if text.trim().is_empty() { "Text" } else { text };
-    let color = if text == "Text" {
-        crate::theme::TEXT_MUTED
-    } else {
-        crate::theme::TEXT
-    };
-    let mut job = egui::text::LayoutJob::default();
-    job.wrap.max_width = (textbox_rect.width() - crate::theme::SPACE_4).max(24.0);
-    job.append(
-        text,
-        0.0,
-        egui::TextFormat {
-            font_id: egui::TextStyle::Body.resolve(ui.style()),
-            color,
-            ..Default::default()
-        },
+    if text.trim().is_empty() {
+        return;
+    }
+
+    let padding = textbox_padding();
+    let galley = painter.layout(
+        text.to_owned(),
+        textbox_font_id(ui, zoom),
+        crate::theme::TEXT,
+        (textbox_rect.width() - padding.x * 2.0).max(24.0),
     );
-    let galley = painter.layout_job(job);
-    let text_pos = textbox_rect.min + egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2);
-    painter.galley(text_pos, galley, color);
+    let text_pos = textbox_rect.min + padding;
+    painter.galley(text_pos, galley, crate::theme::TEXT);
 }
 
 fn paint_annotation_draft(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) {
@@ -1918,32 +2012,36 @@ fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut CanvasState)
         return;
     };
     let textbox_rect = annotation_screen_rect(state, rect, &state.annotations[index]);
-    let text_size = textbox_rect.size().max(egui::vec2(
-        MIN_TEXTBOX_WORLD_SIZE.x * state.zoom * 0.25,
-        40.0,
-    )) - egui::vec2(crate::theme::SPACE_4, crate::theme::SPACE_4);
+    let padding = textbox_padding();
+    let text_size = (textbox_rect.size() - padding * 2.0).max(egui::vec2(24.0, 24.0));
 
     egui::Area::new(egui::Id::new(("textbox-editor", annotation_id)))
         .order(egui::Order::Foreground)
-        .fixed_pos(textbox_rect.min + egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2))
+        .fixed_pos(textbox_rect.min + padding)
         .show(ui.ctx(), |ui| {
-            ui.set_min_size(text_size.max(egui::vec2(24.0, 24.0)));
-            let response = ui.add_sized(
-                text_size.max(egui::vec2(24.0, 24.0)),
-                egui::TextEdit::multiline(&mut state.annotations[index].text)
-                    .desired_width(text_size.x.max(24.0))
-                    .hint_text("Text"),
-            );
+            let output = ui
+                .allocate_ui(text_size, |ui| {
+                    ui.set_min_size(text_size);
+                    egui::TextEdit::multiline(&mut state.annotations[index].text)
+                        .desired_width(text_size.x)
+                        .font(textbox_font_id(ui, state.zoom))
+                        .hint_text("Text")
+                        .show(ui)
+                })
+                .inner;
+            let required_height = textbox_required_world_height(output.galley.size().y, state.zoom);
+            expand_textbox_to_height(state, index, required_height);
             if state.focus_text_editor {
-                response.request_focus();
+                output.response.request_focus();
                 state.focus_text_editor = false;
             }
-            if response.changed() {
+            if output.response.changed() {
                 state.mark_annotation_dirty(annotation_id);
             }
-            if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                state.editing_text_annotation_id = None;
-                state.focus_text_editor = false;
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) && output.response.has_focus() {
+                state.finish_textbox_edit();
+            } else if output.response.lost_focus() {
+                state.finish_textbox_edit();
             }
         });
 }
@@ -2190,13 +2288,14 @@ fn pending_annotation_from_draft(draft_state: AnnotationDraftState) -> Option<Pe
 #[cfg(test)]
 mod tests {
     use super::{
-        CanvasState, SelectedLayoutItem, background_screen_step, background_world_step,
-        best_compact_layout, crop_center_offset_local, horizontal_layout, lattice_phase_screen,
-        lattice_phase_world, legacy_best_compact_layout, merge_cropped_item_fields,
-        normalized_textbox_rect, pixel_crop_rect_from_local, screen_rect_to_local_crop_rect,
-        settled_background_lod_level, vertical_layout,
+        AnnotationDraftState, CanvasState, SelectedLayoutItem, background_screen_step,
+        background_world_step, best_compact_layout, crop_center_offset_local, horizontal_layout,
+        lattice_phase_screen, lattice_phase_world, legacy_best_compact_layout,
+        merge_cropped_item_fields, normalized_textbox_rect, pending_annotation_from_draft,
+        pixel_crop_rect_from_local, screen_rect_to_local_crop_rect, settled_background_lod_level,
+        textbox_required_world_height, vertical_layout,
     };
-    use crate::data::{BoardItem, ImageAsset};
+    use crate::data::{BoardItem, CanvasAnnotation, CanvasAnnotationKind, ImageAsset};
     use std::path::PathBuf;
 
     #[test]
@@ -2268,8 +2367,71 @@ mod tests {
         );
 
         assert_eq!(rect.min, eframe::egui::pos2(20.0, 40.0));
-        assert_eq!(rect.width(), 160.0);
-        assert_eq!(rect.height(), 64.0);
+        assert_eq!(rect.width(), 240.0);
+        assert_eq!(rect.height(), 40.0);
+    }
+
+    #[test]
+    fn textbox_click_draft_uses_default_note_size() {
+        let pending = pending_annotation_from_draft(AnnotationDraftState {
+            kind: CanvasAnnotationKind::Textbox,
+            start_world: eframe::egui::pos2(20.0, 40.0),
+            current_world: eframe::egui::pos2(20.0, 40.0),
+        })
+        .unwrap();
+
+        assert_eq!(pending.start_world, eframe::egui::pos2(20.0, 40.0));
+        assert_eq!(pending.end_world, eframe::egui::pos2(260.0, 80.0));
+    }
+
+    #[test]
+    fn textbox_drag_draft_preserves_explicit_size() {
+        let pending = pending_annotation_from_draft(AnnotationDraftState {
+            kind: CanvasAnnotationKind::Textbox,
+            start_world: eframe::egui::pos2(20.0, 40.0),
+            current_world: eframe::egui::pos2(340.0, 120.0),
+        })
+        .unwrap();
+
+        assert_eq!(pending.start_world, eframe::egui::pos2(20.0, 40.0));
+        assert_eq!(pending.end_world, eframe::egui::pos2(340.0, 120.0));
+    }
+
+    #[test]
+    fn textbox_multiline_content_requires_more_than_min_height() {
+        assert!(textbox_required_world_height(60.0, 1.0) > 40.0);
+
+        eframe::egui::__run_test_ui(|ui| {
+            let mut text =
+                "First line\nSecond line\nThird line\nFourth line\nFifth line".to_owned();
+            let output = eframe::egui::TextEdit::multiline(&mut text)
+                .desired_width(80.0)
+                .font(eframe::egui::FontId::proportional(24.0))
+                .show(ui);
+
+            assert!(output.galley.rows.len() >= 5);
+        });
+    }
+
+    #[test]
+    fn finishing_empty_textbox_edit_removes_and_archives_annotation() {
+        let mut state = CanvasState::default();
+        state.add_annotation(CanvasAnnotation {
+            id: 7,
+            kind: CanvasAnnotationKind::Textbox,
+            start_x: 20.0,
+            start_y: 40.0,
+            end_x: 260.0,
+            end_y: 80.0,
+            text: String::new(),
+            archived: false,
+        });
+
+        state.begin_textbox_edit(7);
+        state.finish_textbox_edit();
+
+        assert!(state.annotations.is_empty());
+        assert_eq!(state.take_archived_annotation_ids(), vec![7]);
     }
 
     #[test]

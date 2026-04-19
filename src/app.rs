@@ -93,8 +93,8 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Draw textbox",
-        windows: "T + Drag",
-        mac: "T + Drag",
+        windows: "T + Click/Drag",
+        mac: "T + Click/Drag",
         binding: None,
         shortcut_action: None,
     },
@@ -287,8 +287,8 @@ const SHORTCUT_SECTIONS: &[ShortcutSection] = &[
             },
             ShortcutRow {
                 action: "Draw textbox",
-                windows: "T + Drag",
-                mac: "T + Drag",
+                windows: "T + Click/Drag",
+                mac: "T + Click/Drag",
             },
         ],
     },
@@ -1101,6 +1101,13 @@ impl ReferenceApp {
         let Some(library) = &self.library else {
             return;
         };
+
+        let archived_annotation_ids = self.canvas.take_archived_annotation_ids();
+        if !archived_annotation_ids.is_empty()
+            && let Err(error) = library.archive_canvas_annotations(&archived_annotation_ids)
+        {
+            self.status = error;
+        }
 
         for item in self.canvas.take_dirty_items() {
             if let Err(error) = library.update_board_item(&item) {
