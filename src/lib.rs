@@ -5,6 +5,8 @@ mod jobs;
 mod native_capture;
 mod perf;
 mod screenshot;
+#[cfg(feature = "semantic-search")]
+mod semantic_search;
 mod storage;
 mod theme;
 

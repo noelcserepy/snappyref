@@ -1,6 +1,14 @@
 use eframe::egui;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "semantic-search")]
+use std::time::Duration;
 use std::time::Instant;
+
+#[cfg(feature = "semantic-search")]
+use crate::semantic_search::{
+    DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, SearchResultGroup,
+    SemanticSearchConfig, SemanticSearchService,
+};
 
 const SHORTCUT_DRAWER_MIN_HEIGHT: f32 = 220.0;
 const SHORTCUT_DRAWER_MAX_HEIGHT: f32 = 360.0;
@@ -9,6 +17,10 @@ const SHORTCUT_DRAWER_BUTTON_SIZE: f32 = crate::theme::CONTROL_HEIGHT;
 const COPY_PAYLOAD_KIND: &str = "reference-board-items";
 const MAX_CROP_UNDO_ENTRIES: usize = 32;
 const STARTUP_VIEWPORT_SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
+#[cfg(feature = "semantic-search")]
+const SEARCH_DEBOUNCE_MS: f32 = 120.0;
+#[cfg(feature = "semantic-search")]
+const SEARCH_RESULT_ROW_HEIGHT: f32 = 20.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArrangementAction {
@@ -68,6 +80,13 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         action: "Paste image",
         windows: "Ctrl+V",
         mac: "⌘V",
+        binding: None,
+        shortcut_action: None,
+    },
+    SupportedShortcut {
+        action: "Search images",
+        windows: "Ctrl+F",
+        mac: "⌘F",
         binding: None,
         shortcut_action: None,
     },
@@ -232,6 +251,31 @@ struct PerfLogState {
     startup_logged: bool,
 }
 
+#[cfg(feature = "semantic-search")]
+#[derive(Default)]
+struct SearchOverlayState {
+    open: bool,
+    query: String,
+    last_submitted_query: String,
+    last_query_edit_at: Option<Instant>,
+    active_result_index: usize,
+    active_instance_index: usize,
+    results: Vec<SearchResultGroup>,
+    status: SearchOverlayStatus,
+    focus_requested: bool,
+}
+
+#[cfg(feature = "semantic-search")]
+#[derive(Default)]
+enum SearchOverlayStatus {
+    #[default]
+    Idle,
+    Loading(String),
+    Indexing,
+    Ready,
+    Error(String),
+}
+
 #[cfg(debug_assertions)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerificationMode {
@@ -302,6 +346,11 @@ pub struct ReferenceApp {
     crop_undo_stack: Vec<CropUndoEntry>,
     auto_image_scaling: bool,
     import_gap: f32,
+    semantic_search_enabled: bool,
+    #[cfg(feature = "semantic-search")]
+    semantic_search: Option<SemanticSearchService>,
+    #[cfg(feature = "semantic-search")]
+    search_overlay: SearchOverlayState,
     drawer_open: bool,
     status: String,
     perf_log: Option<PerfLogState>,
@@ -335,6 +384,11 @@ impl ReferenceApp {
                     crop_undo_stack: Vec::new(),
                     auto_image_scaling: true,
                     import_gap: crate::data::DEFAULT_IMPORT_GAP,
+                    semantic_search_enabled: false,
+                    #[cfg(feature = "semantic-search")]
+                    semantic_search: None,
+                    #[cfg(feature = "semantic-search")]
+                    search_overlay: SearchOverlayState::default(),
                     drawer_open: config.open_drawer_on_start(),
                     status,
                     perf_log: config.perf_log_enabled().then(|| PerfLogState {
@@ -343,6 +397,8 @@ impl ReferenceApp {
                     }),
                 };
                 app.load_user_session();
+                #[cfg(feature = "semantic-search")]
+                app.sync_semantic_search_service();
                 app.enqueue_existing_items();
                 app
             }
@@ -356,6 +412,11 @@ impl ReferenceApp {
                 crop_undo_stack: Vec::new(),
                 auto_image_scaling: true,
                 import_gap: crate::data::DEFAULT_IMPORT_GAP,
+                semantic_search_enabled: false,
+                #[cfg(feature = "semantic-search")]
+                semantic_search: None,
+                #[cfg(feature = "semantic-search")]
+                search_overlay: SearchOverlayState::default(),
                 drawer_open: config.open_drawer_on_start(),
                 status: format!("Storage unavailable: {error}"),
                 perf_log: config.perf_log_enabled().then(|| PerfLogState {
@@ -411,6 +472,7 @@ impl ReferenceApp {
                 self.canvas.apply_user_session(&session);
                 self.auto_image_scaling = session.auto_image_scaling;
                 self.import_gap = session.import_gap;
+                self.semantic_search_enabled = session.semantic_search_enabled;
             }
             Err(error) => self.status = error,
         }
@@ -448,10 +510,9 @@ impl ReferenceApp {
                 viewport_world,
                 auto_scale: self.auto_image_scaling,
                 import_gap: self.import_gap,
-                trace: self
-                    .perf_log
-                    .as_ref()
-                    .map(|_| crate::jobs::ImportTrace { queued_at: Instant::now() }),
+                trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
+                    queued_at: Instant::now(),
+                }),
             }) {
                 self.status = error;
                 continue;
@@ -510,10 +571,9 @@ impl ReferenceApp {
             viewport_world,
             auto_scale: self.auto_image_scaling,
             import_gap: self.import_gap,
-            trace: self
-                .perf_log
-                .as_ref()
-                .map(|_| crate::jobs::ImportTrace { queued_at: Instant::now() }),
+            trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
+                queued_at: Instant::now(),
+            }),
         }) {
             self.status = error;
             return;
@@ -630,7 +690,23 @@ impl ReferenceApp {
             match result {
                 crate::jobs::ImportResult::Loaded(loaded) => {
                     self.log_loaded_timing(&loaded);
+                    #[cfg(feature = "semantic-search")]
+                    let queued_asset = (self.semantic_search_enabled
+                        && self.semantic_search.is_some())
+                    .then(|| {
+                        (
+                            loaded.record.asset.id,
+                            loaded.record.asset.original_path.clone(),
+                        )
+                    });
                     self.canvas.add_loaded_item(ctx, loaded);
+                    #[cfg(feature = "semantic-search")]
+                    if let Some((asset_id, original_path)) = queued_asset
+                        && let Some(service) = &self.semantic_search
+                    {
+                        let _ = service.enqueue_asset_index(asset_id, original_path);
+                        self.search_overlay.status = SearchOverlayStatus::Indexing;
+                    }
                     self.status = "Imported image".to_owned();
                 }
                 crate::jobs::ImportResult::Cropped(cropped) => {
@@ -692,6 +768,14 @@ impl ReferenceApp {
                                 removed_asset_id: asset.id,
                             });
                             self.canvas.clear_crop_pending(updated_item_id);
+                            #[cfg(feature = "semantic-search")]
+                            if self.semantic_search_enabled
+                                && let Some(service) = &self.semantic_search
+                            {
+                                let _ = service
+                                    .enqueue_asset_index(asset.id, asset.original_path.clone());
+                                self.search_overlay.status = SearchOverlayStatus::Indexing;
+                            }
                             self.status = "Cropped image".to_owned();
                         }
                         Err(error) => {
@@ -760,6 +844,11 @@ impl ReferenceApp {
     }
 
     fn handle_selection_shortcuts(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
+        #[cfg(feature = "semantic-search")]
+        if self.search_overlay.open {
+            return;
+        }
+
         if ctx.egui_wants_keyboard_input() {
             return;
         }
@@ -973,8 +1062,354 @@ impl ReferenceApp {
         let mut session = self.canvas.user_session();
         session.auto_image_scaling = self.auto_image_scaling;
         session.import_gap = self.import_gap;
+        session.semantic_search_enabled = self.semantic_search_enabled;
         if let Err(error) = library.save_user_session(&session) {
             self.status = error;
+        }
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn sync_semantic_search_service(&mut self) {
+        if !self.semantic_search_enabled {
+            self.semantic_search = None;
+            self.close_search_overlay();
+            return;
+        }
+
+        if self.semantic_search.is_some() {
+            return;
+        }
+
+        let Some(library) = &self.library else {
+            self.search_overlay.status =
+                SearchOverlayStatus::Error("Storage unavailable".to_owned());
+            return;
+        };
+
+        match SemanticSearchService::new(
+            library.clone(),
+            SemanticSearchConfig {
+                enabled: true,
+                model: DEFAULT_SEMANTIC_SEARCH_MODEL,
+                max_results: 5,
+            },
+        ) {
+            Ok(service) => {
+                self.search_overlay.status =
+                    SearchOverlayStatus::Loading("Preparing semantic search…".to_owned());
+                let _ = service.enqueue_startup_backfill();
+                self.semantic_search = Some(service);
+            }
+            Err(error) => {
+                self.search_overlay.status = SearchOverlayStatus::Error(error.clone());
+                self.status = format!("Semantic search unavailable: {error}");
+            }
+        }
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn handle_search_results(&mut self) {
+        let Some(service) = &self.semantic_search else {
+            return;
+        };
+
+        for result in service.try_recv_all() {
+            match result {
+                SearchIndexResult::Progress { message } => {
+                    if !matches!(self.search_overlay.status, SearchOverlayStatus::Error(_)) {
+                        self.search_overlay.status = SearchOverlayStatus::Loading(message);
+                    }
+                }
+                SearchIndexResult::ModelReady => {
+                    if !self.search_overlay.query.trim().is_empty() {
+                        self.search_overlay.last_submitted_query.clear();
+                    }
+                    if !matches!(self.search_overlay.status, SearchOverlayStatus::Error(_)) {
+                        self.search_overlay.status = SearchOverlayStatus::Ready;
+                    }
+                }
+                SearchIndexResult::Indexed => {
+                    if !self.search_overlay.query.trim().is_empty() {
+                        self.search_overlay.last_submitted_query.clear();
+                    }
+                }
+                SearchIndexResult::Failed { error } => {
+                    self.search_overlay.status = SearchOverlayStatus::Error(error);
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn handle_search_shortcut(&mut self, ctx: &egui::Context) {
+        if !self.semantic_search_enabled {
+            return;
+        }
+
+        let triggered =
+            ctx.input(|input| input.modifiers.command && input.key_pressed(egui::Key::F));
+        if !triggered {
+            return;
+        }
+
+        self.sync_semantic_search_service();
+        self.search_overlay.open = true;
+        self.search_overlay.focus_requested = true;
+        if !matches!(self.search_overlay.status, SearchOverlayStatus::Error(_)) {
+            let status = self
+                .semantic_search
+                .as_ref()
+                .map(|service| {
+                    if service.is_ready() {
+                        SearchOverlayStatus::Ready
+                    } else {
+                        SearchOverlayStatus::Loading("Preparing semantic search…".to_owned())
+                    }
+                })
+                .unwrap_or_else(|| {
+                    SearchOverlayStatus::Loading("Preparing semantic search…".to_owned())
+                });
+            self.search_overlay.status = status;
+        }
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn close_search_overlay(&mut self) {
+        self.search_overlay = SearchOverlayState::default();
+        self.canvas.clear_search_matches();
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn submit_search_query(&mut self) {
+        let query = self.search_overlay.query.trim().to_owned();
+        if query.is_empty() {
+            self.search_overlay.results.clear();
+            self.search_overlay.last_submitted_query.clear();
+            self.search_overlay.active_result_index = 0;
+            self.search_overlay.active_instance_index = 0;
+            self.search_overlay.status = SearchOverlayStatus::Ready;
+            self.canvas.clear_search_matches();
+            return;
+        }
+
+        let Some(service) = &self.semantic_search else {
+            self.search_overlay.status =
+                SearchOverlayStatus::Error("Semantic search unavailable".to_owned());
+            return;
+        };
+
+        match service.search(&query) {
+            Ok(results) => {
+                self.search_overlay.last_submitted_query = query;
+                self.search_overlay.results = results;
+                self.search_overlay.active_result_index = 0;
+                self.search_overlay.active_instance_index = 0;
+                self.search_overlay.status = SearchOverlayStatus::Ready;
+                self.apply_search_matches();
+            }
+            Err(error) if error == "Loading model…" => {
+                if !matches!(self.search_overlay.status, SearchOverlayStatus::Loading(_)) {
+                    self.search_overlay.status =
+                        SearchOverlayStatus::Loading("Preparing semantic search…".to_owned());
+                }
+            }
+            Err(error) => {
+                self.search_overlay.status = SearchOverlayStatus::Error(error);
+                self.search_overlay.results.clear();
+                self.canvas.clear_search_matches();
+            }
+        }
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn apply_search_matches(&mut self) {
+        let item_ids = self
+            .search_overlay
+            .results
+            .iter()
+            .flat_map(|group| group.item_ids.iter().copied())
+            .collect::<Vec<_>>();
+        let active_item_id = self
+            .search_overlay
+            .results
+            .get(self.search_overlay.active_result_index)
+            .and_then(|group| {
+                if group.item_ids.is_empty() {
+                    None
+                } else {
+                    Some(
+                        group.item_ids
+                            [self.search_overlay.active_instance_index % group.item_ids.len()],
+                    )
+                }
+            });
+        self.canvas.set_search_matches(item_ids, active_item_id);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn focus_active_search_result(&mut self) {
+        let Some(group) = self
+            .search_overlay
+            .results
+            .get(self.search_overlay.active_result_index)
+        else {
+            return;
+        };
+        if group.item_ids.is_empty() {
+            return;
+        }
+
+        let item_id =
+            group.item_ids[self.search_overlay.active_instance_index % group.item_ids.len()];
+        self.canvas.focus_item(item_id);
+        self.search_overlay.active_instance_index =
+            (self.search_overlay.active_instance_index + 1) % group.item_ids.len();
+        self.apply_search_matches();
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn show_search_overlay(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
+        if !self.search_overlay.open {
+            return;
+        }
+
+        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.close_search_overlay();
+            return;
+        }
+
+        let width = (screen_rect.width() * 0.52).clamp(280.0, 520.0);
+        let area_pos = egui::pos2(
+            screen_rect.center().x - width * 0.5,
+            screen_rect.top() + 24.0,
+        );
+        let input_id = egui::Id::new("semantic_search_input");
+        let compact_margin = egui::Margin {
+            left: 10,
+            right: 10,
+            top: 8,
+            bottom: 8,
+        };
+        let area_response = egui::Area::new(egui::Id::new("semantic_search_overlay"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(area_pos)
+            .show(ctx, |ui| {
+                ui.set_min_width(width);
+                egui::Frame::new()
+                    .fill(crate::theme::SURFACE)
+                    .stroke(crate::theme::stroke_subtle())
+                    .corner_radius(crate::theme::CARD_RADIUS)
+                    .inner_margin(compact_margin)
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing =
+                            egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1);
+
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.search_overlay.query)
+                                .id(input_id)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("Search images"),
+                        );
+                        if self.search_overlay.focus_requested {
+                            response.request_focus();
+                            self.search_overlay.focus_requested =
+                                !ctx.memory(|memory| memory.has_focus(input_id));
+                            if self.search_overlay.focus_requested {
+                                ctx.request_repaint_after(Duration::from_millis(16));
+                            }
+                        }
+                        if response.changed() {
+                            self.search_overlay.last_query_edit_at = Some(Instant::now());
+                            self.search_overlay.active_result_index = 0;
+                            self.search_overlay.active_instance_index = 0;
+                            if self.search_overlay.query.trim().is_empty() {
+                                self.search_overlay.results.clear();
+                                self.canvas.clear_search_matches();
+                            }
+                        }
+
+                        ui.add_space(crate::theme::SPACE_1);
+                        let status = match &self.search_overlay.status {
+                            SearchOverlayStatus::Idle => "Idle".to_owned(),
+                            SearchOverlayStatus::Loading(message) => message.clone(),
+                            SearchOverlayStatus::Indexing => "Indexing…".to_owned(),
+                            SearchOverlayStatus::Ready => {
+                                format!("{} matches", self.search_overlay.results.len())
+                            }
+                            SearchOverlayStatus::Error(error) => error.clone(),
+                        };
+                        ui.label(
+                            egui::RichText::new(status)
+                                .text_style(egui::TextStyle::Small)
+                                .color(crate::theme::TEXT_SUBTLE),
+                        );
+
+                        if !self.search_overlay.results.is_empty() {
+                            ui.add_space(crate::theme::SPACE_1);
+                            let mut clicked_index = None;
+                            ui.scope(|ui| {
+                                ui.spacing_mut().item_spacing.y = 2.0;
+                                for (index, group) in self.search_overlay.results.iter().enumerate()
+                                {
+                                    let active = index == self.search_overlay.active_result_index;
+                                    let response = search_result_row(ui, group, active);
+                                    if response.clicked() {
+                                        clicked_index = Some(index);
+                                    }
+                                }
+                            });
+                            if let Some(index) = clicked_index {
+                                self.search_overlay.active_result_index = index;
+                                self.search_overlay.active_instance_index = 0;
+                                self.apply_search_matches();
+                            }
+                        }
+                    });
+            });
+
+        let overlay_rect = area_response.response.rect;
+        let clicked_outside = ctx.input(|input| {
+            input.pointer.any_click()
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|pointer_pos| !overlay_rect.contains(pointer_pos))
+        });
+        if clicked_outside {
+            self.close_search_overlay();
+            return;
+        }
+
+        if let Some(changed_at) = self.search_overlay.last_query_edit_at
+            && changed_at.elapsed().as_secs_f32() * 1000.0 >= SEARCH_DEBOUNCE_MS
+            && self.search_overlay.query.trim() != self.search_overlay.last_submitted_query
+        {
+            self.submit_search_query();
+        } else if self.search_overlay.last_query_edit_at.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(16));
+        }
+
+        if !self.search_overlay.results.is_empty() {
+            if ctx.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
+                self.search_overlay.active_result_index = (self.search_overlay.active_result_index
+                    + 1)
+                    % self.search_overlay.results.len();
+                self.search_overlay.active_instance_index = 0;
+                self.apply_search_matches();
+            } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
+                self.search_overlay.active_result_index =
+                    if self.search_overlay.active_result_index == 0 {
+                        self.search_overlay.results.len() - 1
+                    } else {
+                        self.search_overlay.active_result_index - 1
+                    };
+                self.search_overlay.active_instance_index = 0;
+                self.apply_search_matches();
+            }
+
+            if ctx.input(|input| input.key_pressed(egui::Key::Enter)) {
+                self.focus_active_search_result();
+            }
         }
     }
 
@@ -1101,6 +1536,8 @@ impl eframe::App for ReferenceApp {
         ui.expand_to_include_rect(screen_rect);
 
         self.handle_import_results(ui.ctx());
+        #[cfg(feature = "semantic-search")]
+        self.handle_search_results();
         self.handle_crop_undo(ui.ctx());
 
         if self.screenshot_capture.is_pending()
@@ -1122,6 +1559,8 @@ impl eframe::App for ReferenceApp {
         self.handle_clipboard_copy(ui.ctx());
         self.handle_clipboard_paste(ui.ctx(), screen_rect);
         self.handle_dropped_files(ui, screen_rect);
+        #[cfg(feature = "semantic-search")]
+        self.handle_search_shortcut(ui.ctx());
         self.handle_selection_shortcuts(ui.ctx(), screen_rect);
         let drawer_open = self.drawer_open;
         if drawer_open {
@@ -1137,6 +1576,7 @@ impl eframe::App for ReferenceApp {
             drawer_open,
             &mut self.auto_image_scaling,
             &mut self.import_gap,
+            &mut self.semantic_search_enabled,
             &mut self.canvas,
         );
         if drawer_open {
@@ -1150,9 +1590,13 @@ impl eframe::App for ReferenceApp {
         }
         if drawer_result.settings_changed {
             self.drawer_open = true;
+            #[cfg(feature = "semantic-search")]
+            self.sync_semantic_search_service();
         }
         self.persist_settings_if_changed(drawer_result.settings_changed);
         show_drawer_toggle(ui.ctx(), screen_rect, drawer_open, &mut self.drawer_open);
+        #[cfg(feature = "semantic-search")]
+        self.show_search_overlay(ui.ctx(), screen_rect);
         if self
             .screenshot_capture
             .handle_event(ui.ctx(), &mut self.status)
@@ -1311,6 +1755,51 @@ fn should_close_drawer(
     pointer_clicked && pointer_pos.is_some_and(|pos| !drawer_rect.contains(pos))
 }
 
+#[cfg(feature = "semantic-search")]
+fn search_result_row(ui: &mut egui::Ui, group: &SearchResultGroup, active: bool) -> egui::Response {
+    let available_width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(available_width, SEARCH_RESULT_ROW_HEIGHT),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let hovered = response.hovered();
+
+    let primary_color = if active || hovered {
+        crate::theme::TEXT
+    } else {
+        crate::theme::TEXT_MUTED
+    };
+    let metadata_color = if active || hovered {
+        crate::theme::TEXT_MUTED
+    } else {
+        crate::theme::TEXT_SUBTLE
+    };
+
+    let primary_text = format!("#{}", group.asset_id);
+    let metadata_text = format!("{}x  ·  {:.2}", group.instance_count, group.similarity);
+    let primary_font = ui.style().text_styles[&egui::TextStyle::Body].clone();
+    let metadata_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
+    let painter = ui.painter();
+    let primary_galley = painter.layout_no_wrap(primary_text, primary_font, primary_color);
+    let metadata_galley = painter.layout_no_wrap(metadata_text, metadata_font, metadata_color);
+
+    let content_rect = rect.shrink2(egui::vec2(crate::theme::SPACE_1, 0.0));
+    let primary_pos = egui::pos2(
+        content_rect.left(),
+        content_rect.center().y - primary_galley.size().y * 0.5,
+    );
+    let metadata_pos = egui::pos2(
+        content_rect.right() - metadata_galley.size().x,
+        content_rect.center().y - metadata_galley.size().y * 0.5,
+    );
+
+    painter.galley(primary_pos, primary_galley, primary_color);
+    painter.galley(metadata_pos, metadata_galley, metadata_color);
+
+    response
+}
+
 struct DrawerRenderResult {
     settings_changed: bool,
     interactive_rect: Option<egui::Rect>,
@@ -1322,6 +1811,7 @@ fn show_shortcuts_drawer(
     drawer_open: bool,
     auto_image_scaling: &mut bool,
     import_gap: &mut f32,
+    semantic_search_enabled: &mut bool,
     canvas: &mut crate::canvas::CanvasState,
 ) -> DrawerRenderResult {
     if !drawer_open {
@@ -1373,8 +1863,13 @@ fn show_shortcuts_drawer(
                             ui.spacing_mut().item_spacing =
                                 egui::vec2(0.0, crate::theme::SECTION_GAP);
                             paint_drawer_section_label(ui, "Options", None);
-                            settings_changed |=
-                                paint_settings_section(ui, auto_image_scaling, import_gap, canvas);
+                            settings_changed |= paint_settings_section(
+                                ui,
+                                auto_image_scaling,
+                                import_gap,
+                                semantic_search_enabled,
+                                canvas,
+                            );
 
                             ui.add_space(crate::theme::SECTION_GAP);
 
@@ -1397,6 +1892,7 @@ fn paint_settings_section(
     ui: &mut egui::Ui,
     auto_image_scaling: &mut bool,
     import_gap: &mut f32,
+    semantic_search_enabled: &mut bool,
     canvas: &mut crate::canvas::CanvasState,
 ) -> bool {
     let mut changed = false;
@@ -1471,6 +1967,49 @@ fn paint_settings_section(
                             .suffix(" units"),
                     )
                     .changed();
+            });
+        });
+
+        ui.add_space(crate::theme::SPACE_3);
+
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(
+                    egui::RichText::new("Semantic search")
+                        .text_style(egui::TextStyle::Body)
+                        .strong()
+                        .color(crate::theme::TEXT),
+                );
+                #[cfg(feature = "semantic-search")]
+                ui.label(
+                    egui::RichText::new(
+                        "Experimental. Downloads the active retrieval model on first use and indexes visible images in the background.",
+                    )
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_MUTED),
+                );
+                #[cfg(not(feature = "semantic-search"))]
+                ui.label(
+                    egui::RichText::new(
+                        "Unavailable in this build. Rebuild with the semantic-search feature to enable it.",
+                    )
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_MUTED),
+                );
+            });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                #[cfg(feature = "semantic-search")]
+                {
+                    changed |= paint_switch(ui, semantic_search_enabled).changed();
+                }
+                #[cfg(not(feature = "semantic-search"))]
+                {
+                    ui.add_enabled(
+                        false,
+                        egui::widgets::Checkbox::without_text(semantic_search_enabled),
+                    );
+                }
             });
         });
     });
@@ -2025,6 +2564,89 @@ mod tests {
         assert!(!should_close_drawer(true, None, drawer_rect));
     }
 
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_shortcut_opens_overlay_when_enabled() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.semantic_search_enabled = true;
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                modifiers: egui::Modifiers {
+                    command: true,
+                    ..Default::default()
+                },
+                events: vec![egui::Event::Key {
+                    key: egui::Key::F,
+                    physical_key: Some(egui::Key::F),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        ..Default::default()
+                    },
+                }],
+                ..Default::default()
+            },
+            |ui| app.handle_search_shortcut(ui.ctx()),
+        );
+
+        assert!(app.search_overlay.open);
+        assert!(app.search_overlay.focus_requested);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn escape_closes_search_overlay_and_clears_matches() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.search_overlay.open = true;
+        app.search_overlay.query = "cat".to_owned();
+        app.canvas.set_search_matches(vec![1, 2], Some(1));
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: Some(egui::Key::Escape),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::default(),
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                app.show_search_overlay(
+                    ui.ctx(),
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),
+                )
+            },
+        );
+
+        assert!(!app.search_overlay.open);
+        assert!(app.search_overlay.query.is_empty());
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_overlay_focuses_text_input_when_requested() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.search_overlay.open = true;
+        app.search_overlay.focus_requested = true;
+
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.show_search_overlay(
+                ui.ctx(),
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),
+            )
+        });
+
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("semantic_search_input"))));
+        assert!(!app.search_overlay.focus_requested);
+    }
+
     fn test_app(library: Option<Library>) -> ReferenceApp {
         ReferenceApp {
             canvas: crate::canvas::CanvasState::default(),
@@ -2036,6 +2658,11 @@ mod tests {
             crop_undo_stack: Vec::new(),
             auto_image_scaling: true,
             import_gap: crate::data::DEFAULT_IMPORT_GAP,
+            semantic_search_enabled: false,
+            #[cfg(feature = "semantic-search")]
+            semantic_search: None,
+            #[cfg(feature = "semantic-search")]
+            search_overlay: super::SearchOverlayState::default(),
             drawer_open: false,
             status: String::new(),
             perf_log: None,

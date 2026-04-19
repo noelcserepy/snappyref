@@ -24,10 +24,7 @@ pub fn print_report() -> Result<(), String> {
     );
     println!(
         "paint_counts legacy_considered={} legacy_drawn={} current_considered={} current_drawn={}",
-        paint.legacy_considered,
-        paint.legacy_drawn,
-        paint.current_considered,
-        paint.current_drawn,
+        paint.legacy_considered, paint.legacy_drawn, paint.current_considered, paint.current_drawn,
     );
 
     Ok(())

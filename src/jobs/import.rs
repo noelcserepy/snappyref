@@ -300,10 +300,30 @@ pub fn startup_perf_report() -> Result<StartupPerfReport, String> {
     let viewport_world =
         egui::Rect::from_min_max(egui::pos2(-240.0, -180.0), egui::pos2(240.0, 180.0));
     let paths = [
-        write_png(&root, "offscreen-a.png", PERF_STARTUP_IMAGE_SIZE, PERF_STARTUP_IMAGE_SIZE)?,
-        write_png(&root, "offscreen-b.png", PERF_STARTUP_IMAGE_SIZE, PERF_STARTUP_IMAGE_SIZE)?,
-        write_png(&root, "visible-a.png", PERF_STARTUP_IMAGE_SIZE, PERF_STARTUP_IMAGE_SIZE)?,
-        write_png(&root, "visible-b.png", PERF_STARTUP_IMAGE_SIZE, PERF_STARTUP_IMAGE_SIZE)?,
+        write_png(
+            &root,
+            "offscreen-a.png",
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        )?,
+        write_png(
+            &root,
+            "offscreen-b.png",
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        )?,
+        write_png(
+            &root,
+            "visible-a.png",
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        )?,
+        write_png(
+            &root,
+            "visible-b.png",
+            PERF_STARTUP_IMAGE_SIZE,
+            PERF_STARTUP_IMAGE_SIZE,
+        )?,
     ];
     let records = vec![
         perf_record(
@@ -337,8 +357,7 @@ pub fn startup_perf_report() -> Result<StartupPerfReport, String> {
     ];
     let legacy_first_visible_ms =
         measure_first_visible_load_ms(records.clone(), viewport_world, false)?;
-    let current_first_visible_ms =
-        measure_first_visible_load_ms(records, viewport_world, true)?;
+    let current_first_visible_ms = measure_first_visible_load_ms(records, viewport_world, true)?;
     let _ = std::fs::remove_dir_all(root);
 
     Ok(StartupPerfReport {
@@ -486,13 +505,11 @@ fn import_clipboard(
         trace,
     ) {
         Ok(loaded) => ImportResult::Loaded(loaded),
-        Err(error) => {
-            ImportResult::Failed {
-                item_id: None,
-                context: "clipboard".to_owned(),
-                error,
-            }
-        }
+        Err(error) => ImportResult::Failed {
+            item_id: None,
+            context: "clipboard".to_owned(),
+            error,
+        },
     }
 }
 
@@ -626,8 +643,12 @@ fn record_viewport_distance_sq(record: &BoardItemWithAsset, viewport_world: egui
     }
     let center = rect.center();
     let clamped = egui::pos2(
-        center.x.clamp(viewport_world.left(), viewport_world.right()),
-        center.y.clamp(viewport_world.top(), viewport_world.bottom()),
+        center
+            .x
+            .clamp(viewport_world.left(), viewport_world.right()),
+        center
+            .y
+            .clamp(viewport_world.top(), viewport_world.bottom()),
     );
     center.distance_sq(clamped)
 }
