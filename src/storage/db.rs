@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
 use image::{ColorType, ImageFormat};
-use rusqlite::{Connection, Transaction, params};
+use rusqlite::{Connection, Transaction, params, params_from_iter};
 
 use crate::data::{
     BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationKind,
@@ -16,6 +16,53 @@ pub struct Library {
     originals_dir: PathBuf,
     _thumbs_dir: PathBuf,
     db_path: PathBuf,
+}
+
+#[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmbeddingStatus {
+    Pending,
+    Ready,
+    Failed,
+}
+
+impl EmbeddingStatus {
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+#[derive(Clone, Debug)]
+pub struct ImageEmbeddingJob {
+    pub asset_id: i64,
+    pub original_path: PathBuf,
+}
+
+#[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+#[derive(Clone, Debug)]
+pub struct ActiveCanvasEmbedding {
+    pub asset_id: i64,
+    pub embedding_blob: Vec<u8>,
+}
+
+#[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+#[derive(Clone, Debug)]
+pub struct AssetSearchHit {
+    pub asset_id: i64,
+    pub similarity: f32,
+}
+
+#[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+#[derive(Clone, Debug)]
+pub struct BoardSearchInstance {
+    pub item_id: i64,
+    pub asset_id: i64,
 }
 
 impl Library {
@@ -487,11 +534,203 @@ impl Library {
         Ok(duplicated)
     }
 
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn upsert_asset_embedding_status(
+        &self,
+        asset_id: i64,
+        model_key: &str,
+        dimension: usize,
+        status: EmbeddingStatus,
+        last_error: Option<&str>,
+    ) -> Result<(), String> {
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "INSERT INTO asset_embeddings (
+                    asset_id,
+                    model_key,
+                    dimension,
+                    status,
+                    last_error,
+                    updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(asset_id, model_key) DO UPDATE SET
+                    dimension = excluded.dimension,
+                    status = excluded.status,
+                    last_error = excluded.last_error,
+                    updated_at = excluded.updated_at",
+                params![
+                    asset_id,
+                    model_key,
+                    dimension as i64,
+                    status.as_str(),
+                    last_error,
+                    unix_timestamp_seconds(),
+                ],
+            )
+            .map_err(|error| {
+                format!("failed to upsert embedding status for asset {asset_id}: {error}")
+            })?;
+        Ok(())
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn upsert_asset_embedding_blob(
+        &self,
+        asset_id: i64,
+        model_key: &str,
+        embedding: &[f32],
+    ) -> Result<(), String> {
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "INSERT INTO asset_embeddings (
+                    asset_id,
+                    model_key,
+                    dimension,
+                    status,
+                    last_error,
+                    embedding_blob,
+                    updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)
+                 ON CONFLICT(asset_id, model_key) DO UPDATE SET
+                    dimension = excluded.dimension,
+                    status = excluded.status,
+                    last_error = NULL,
+                    embedding_blob = excluded.embedding_blob,
+                    updated_at = excluded.updated_at",
+                params![
+                    asset_id,
+                    model_key,
+                    embedding.len() as i64,
+                    EmbeddingStatus::Ready.as_str(),
+                    encode_f32_slice(embedding),
+                    unix_timestamp_seconds(),
+                ],
+            )
+            .map_err(|error| {
+                format!("failed to upsert embedding blob for asset {asset_id}: {error}")
+            })?;
+        Ok(())
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn missing_live_canvas_asset_jobs_for_model(
+        &self,
+        model_key: &str,
+    ) -> Result<Vec<ImageEmbeddingJob>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT
+                    a.id,
+                    a.original_path
+                 FROM assets a
+                 JOIN board_items b ON b.asset_id = a.id
+                 LEFT JOIN asset_embeddings e
+                    ON e.asset_id = a.id
+                    AND e.model_key = ?1
+                    AND e.status = 'ready'
+                 WHERE b.archived = 0
+                   AND e.asset_id IS NULL
+                 GROUP BY a.id, a.original_path
+                 ORDER BY a.id ASC",
+            )
+            .map_err(|error| format!("failed to prepare embedding-backfill query: {error}"))?;
+
+        let rows = statement
+            .query_map(params![model_key], |row| {
+                Ok(ImageEmbeddingJob {
+                    asset_id: row.get(0)?,
+                    original_path: PathBuf::from(row.get::<_, String>(1)?),
+                })
+            })
+            .map_err(|error| format!("failed to read embedding-backfill query: {error}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect embedding backfill jobs: {error}"))
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn load_active_canvas_embeddings(
+        &self,
+        model_key: &str,
+    ) -> Result<Vec<ActiveCanvasEmbedding>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT
+                    e.asset_id,
+                    e.embedding_blob
+                 FROM asset_embeddings e
+                 JOIN board_items b ON b.asset_id = e.asset_id
+                 WHERE b.archived = 0
+                   AND e.model_key = ?1
+                   AND e.status = 'ready'
+                   AND e.embedding_blob IS NOT NULL
+                 GROUP BY e.asset_id, e.embedding_blob
+                 ORDER BY e.asset_id ASC",
+            )
+            .map_err(|error| format!("failed to prepare active-embedding query: {error}"))?;
+
+        let rows = statement
+            .query_map(params![model_key], |row| {
+                Ok(ActiveCanvasEmbedding {
+                    asset_id: row.get(0)?,
+                    embedding_blob: row.get(1)?,
+                })
+            })
+            .map_err(|error| format!("failed to read active-embedding query: {error}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect active embeddings: {error}"))
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn board_item_instances_for_assets(
+        &self,
+        asset_ids: &[i64],
+    ) -> Result<Vec<BoardSearchInstance>, String> {
+        if asset_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let connection = self.connection()?;
+        let placeholders = std::iter::repeat_n("?", asset_ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT
+                id,
+                asset_id
+             FROM board_items
+             WHERE archived = 0
+               AND asset_id IN ({placeholders})
+             ORDER BY z_index ASC, id ASC"
+        );
+
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| format!("failed to prepare board-search-instance query: {error}"))?;
+
+        let rows = statement
+            .query_map(params_from_iter(asset_ids.iter().copied()), |row| {
+                Ok(BoardSearchInstance {
+                    item_id: row.get(0)?,
+                    asset_id: row.get(1)?,
+                })
+            })
+            .map_err(|error| format!("failed to read board-search-instance query: {error}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect board-search instances: {error}"))
+    }
+
     pub fn load_user_session(&self) -> Result<UserSession, String> {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap, canvas_background
+                "SELECT camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap, canvas_background, semantic_search_enabled
                  FROM user_session
                  WHERE id = 1",
             )
@@ -510,6 +749,7 @@ impl Library {
                 auto_image_scaling: row.get::<_, i64>(3)? != 0,
                 import_gap: row.get(4)?,
                 canvas_background: background,
+                semantic_search_enabled: row.get::<_, i64>(6).unwrap_or(0) != 0,
             })
         });
 
@@ -524,15 +764,16 @@ impl Library {
         let connection = self.connection()?;
         connection
             .execute(
-                "INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap, canvas_background)
-                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+                "INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap, canvas_background, semantic_search_enabled)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(id) DO UPDATE SET
                     camera_pan_x = excluded.camera_pan_x,
                     camera_pan_y = excluded.camera_pan_y,
                     camera_zoom = excluded.camera_zoom,
                     auto_image_scaling = excluded.auto_image_scaling,
                     import_gap = excluded.import_gap,
-                    canvas_background = excluded.canvas_background",
+                    canvas_background = excluded.canvas_background,
+                    semantic_search_enabled = excluded.semantic_search_enabled",
                 params![
                     session.camera_pan_x,
                     session.camera_pan_y,
@@ -540,6 +781,11 @@ impl Library {
                     if session.auto_image_scaling { 1_i64 } else { 0_i64 },
                     session.import_gap,
                     session.canvas_background.as_str(),
+                    if session.semantic_search_enabled {
+                        1_i64
+                    } else {
+                        0_i64
+                    },
                 ],
             )
             .map_err(|error| format!("failed to save user session: {error}"))?;
@@ -719,7 +965,8 @@ impl Library {
                     camera_zoom   REAL NOT NULL,
                     auto_image_scaling INTEGER NOT NULL DEFAULT 1,
                     import_gap    REAL NOT NULL DEFAULT 12.0,
-                    canvas_background TEXT NOT NULL DEFAULT 'dots'
+                    canvas_background TEXT NOT NULL DEFAULT 'dots',
+                    semantic_search_enabled INTEGER NOT NULL DEFAULT 1
                 );
 
                 CREATE TABLE IF NOT EXISTS canvas_annotations (
@@ -732,6 +979,21 @@ impl Library {
                     text      TEXT NOT NULL DEFAULT '',
                     archived  INTEGER NOT NULL DEFAULT 0
                 );
+
+                CREATE TABLE IF NOT EXISTS asset_embeddings (
+                    asset_id        INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+                    model_key       TEXT NOT NULL,
+                    dimension       INTEGER NOT NULL,
+                    status          TEXT NOT NULL,
+                    last_error      TEXT,
+                    embedding_blob  BLOB,
+                    updated_at      INTEGER NOT NULL,
+                    PRIMARY KEY (asset_id, model_key),
+                    CHECK (status IN ('pending', 'ready', 'failed'))
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_asset_embeddings_model_status
+                ON asset_embeddings(model_key, status);
                 ",
             )
             .map_err(|error| format!("failed to initialize database schema: {error}"))?;
@@ -739,7 +1001,8 @@ impl Library {
         ensure_board_items_archived_column(&connection)?;
         ensure_user_session_auto_image_scaling_column(&connection)?;
         ensure_user_session_import_gap_column(&connection)?;
-        ensure_user_session_canvas_background_column(&connection)
+        ensure_user_session_canvas_background_column(&connection)?;
+        ensure_user_session_semantic_search_enabled_column(&connection)
     }
 
     fn connection(&self) -> Result<Connection, String> {
@@ -992,6 +1255,47 @@ fn ensure_user_session_canvas_background_column(connection: &Connection) -> Resu
     Ok(())
 }
 
+fn ensure_user_session_semantic_search_enabled_column(
+    connection: &Connection,
+) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(user_session)")
+        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read user_session schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
+
+    if columns
+        .iter()
+        .any(|column| column == "semantic_search_enabled")
+    {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE user_session ADD COLUMN semantic_search_enabled INTEGER NOT NULL DEFAULT 1",
+            [],
+        )
+        .map_err(|error| {
+            format!("failed to add semantic_search_enabled column to user_session: {error}")
+        })?;
+
+    Ok(())
+}
+
+#[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+fn encode_f32_slice(values: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(values.len() * std::mem::size_of::<f32>());
+    for value in values {
+        bytes.extend_from_slice(&value.to_ne_bytes());
+    }
+    bytes
+}
+
 #[cfg(test)]
 mod tests {
     use super::Library;
@@ -1040,6 +1344,127 @@ mod tests {
         assert!(session.auto_image_scaling);
         assert_eq!(session.import_gap, crate::data::DEFAULT_IMPORT_GAP);
         assert_eq!(session.canvas_background, CanvasBackground::Dots);
+        assert!(session.semantic_search_enabled);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn live_canvas_embedding_backfill_skips_ready_assets_and_archived_items() {
+        let root = std::env::temp_dir().join(format!(
+            "reference-embedding-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let ready_path = library
+            .store_rgba_image("ready", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let pending_path = library
+            .store_rgba_image("pending", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+        let archived_path = library
+            .store_rgba_image("archived", &[0, 0, 255, 255], 1, 1)
+            .unwrap();
+
+        let ready = library
+            .persist_imported_image(&ready_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let pending = library
+            .persist_imported_image(
+                &pending_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let archived = library
+            .persist_imported_image(
+                &archived_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(20.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+
+        library.archive_board_items(&[archived.item.id]).unwrap();
+        library
+            .upsert_asset_embedding_blob(ready.asset.id, "mobileclip_s0", &[1.0, 0.0])
+            .unwrap();
+
+        let jobs = library
+            .missing_live_canvas_asset_jobs_for_model("mobileclip_s0")
+            .unwrap();
+
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].asset_id, pending.asset.id);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn embedding_helpers_scope_to_requested_model_key() {
+        let root = std::env::temp_dir().join(format!(
+            "reference-embedding-model-key-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_path = library
+            .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let second_path = library
+            .store_rgba_image("second", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+
+        let first = library
+            .persist_imported_image(&first_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let second = library
+            .persist_imported_image(
+                &second_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+
+        library
+            .upsert_asset_embedding_blob(first.asset.id, "clip_key", &[1.0, 0.0])
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(second.asset.id, "clip_key", &[0.0, 1.0])
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(first.asset.id, "siglip_key", &[0.5, 0.5])
+            .unwrap();
+
+        let jobs = library
+            .missing_live_canvas_asset_jobs_for_model("siglip_key")
+            .unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].asset_id, second.asset.id);
+
+        let embeddings = library.load_active_canvas_embeddings("siglip_key").unwrap();
+        assert_eq!(embeddings.len(), 1);
+        assert_eq!(embeddings[0].asset_id, first.asset.id);
 
         let _ = fs::remove_dir_all(root);
     }

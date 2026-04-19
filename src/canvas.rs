@@ -3,6 +3,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use eframe::egui;
+use image::RgbaImage;
 
 use crate::data::{
     BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, CanvasBackground, UserSession,
@@ -38,6 +39,8 @@ pub struct CanvasState {
     asset_rgba_cache: HashMap<i64, Vec<u8>>,
     selected_item_ids: Vec<i64>,
     selected_annotation_ids: Vec<i64>,
+    search_match_item_ids: Vec<i64>,
+    active_search_item_id: Option<i64>,
     editing_text_annotation_id: Option<i64>,
     focus_text_editor: bool,
     drag_state: Option<DragState>,
@@ -225,6 +228,8 @@ impl Default for CanvasState {
             asset_rgba_cache: HashMap::new(),
             selected_item_ids: Vec::new(),
             selected_annotation_ids: Vec::new(),
+            search_match_item_ids: Vec::new(),
+            active_search_item_id: None,
             editing_text_annotation_id: None,
             focus_text_editor: false,
             drag_state: None,
@@ -249,17 +254,17 @@ impl CanvasState {
     pub fn add_loaded_item(&mut self, ctx: &egui::Context, loaded: LoadedCanvasItem) {
         self.asset_rgba_cache
             .insert(loaded.record.asset.id, loaded.rgba.clone());
-        let size = [
-            loaded.record.asset.width as usize,
-            loaded.record.asset.height as usize,
-        ];
-        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &loaded.rgba);
         let texture = ctx.load_texture(
             format!(
                 "asset-{}-item-{}",
                 loaded.record.asset.id, loaded.record.item.id
             ),
-            color_image,
+            color_image_for_texture_upload(
+                ctx,
+                loaded.record.asset.width,
+                loaded.record.asset.height,
+                &loaded.rgba,
+            ),
             egui::TextureOptions::LINEAR,
         );
 
@@ -321,12 +326,10 @@ impl CanvasState {
         asset: crate::data::ImageAsset,
         updated_item: crate::data::BoardItem,
     ) -> Result<(), String> {
-        let size = [asset.width as usize, asset.height as usize];
-        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &cropped.rgba);
         self.asset_rgba_cache.insert(asset.id, cropped.rgba.clone());
         let texture = ctx.load_texture(
             format!("asset-{}-item-{}", asset.id, cropped.item_id),
-            color_image,
+            color_image_for_texture_upload(ctx, asset.width, asset.height, &cropped.rgba),
             egui::TextureOptions::LINEAR,
         );
 
@@ -367,6 +370,7 @@ impl CanvasState {
             auto_image_scaling: true,
             import_gap: crate::data::DEFAULT_IMPORT_GAP,
             canvas_background: self.background,
+            semantic_search_enabled: false,
         }
     }
 
@@ -388,6 +392,27 @@ impl CanvasState {
 
     pub fn set_background(&mut self, background: CanvasBackground) {
         self.background = background;
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn set_search_matches(&mut self, item_ids: Vec<i64>, active_item_id: Option<i64>) {
+        self.search_match_item_ids = item_ids;
+        self.active_search_item_id = active_item_id;
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn clear_search_matches(&mut self) {
+        self.search_match_item_ids.clear();
+        self.active_search_item_id = None;
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn focus_item(&mut self, item_id: i64) {
+        let Some(image) = self.image_by_item_id(item_id) else {
+            return;
+        };
+        let center = egui::vec2(image.record.item.x, image.record.item.y);
+        self.pan = -center * self.zoom;
     }
 
     pub fn selected_center_world(&self) -> Option<egui::Pos2> {
@@ -843,10 +868,11 @@ impl CanvasState {
         self.selected_annotation_ids
             .iter()
             .filter_map(|annotation_id| {
-                self.annotation_by_id(*annotation_id).and_then(|annotation| {
-                    (annotation.kind == CanvasAnnotationKind::Textbox)
-                        .then_some((*annotation_id, textbox_world_rect(annotation)))
-                })
+                self.annotation_by_id(*annotation_id)
+                    .and_then(|annotation| {
+                        (annotation.kind == CanvasAnnotationKind::Textbox)
+                            .then_some((*annotation_id, textbox_world_rect(annotation)))
+                    })
             })
             .collect()
     }
@@ -869,7 +895,8 @@ impl CanvasState {
             required_world_height: textbox_required_world_height(galley.size().y, zoom),
             galley,
         };
-        self.textbox_layout_cache.insert(annotation_id, entry.clone());
+        self.textbox_layout_cache
+            .insert(annotation_id, entry.clone());
         entry
     }
 
@@ -1066,6 +1093,46 @@ impl CanvasState {
         image.record.item.scale = normalized;
         true
     }
+}
+
+fn color_image_for_texture_upload(
+    ctx: &egui::Context,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> egui::ColorImage {
+    let max_texture_side = ctx.input(|input| input.max_texture_side);
+    let (upload_width, upload_height) =
+        fitted_texture_size(width as usize, height as usize, max_texture_side);
+
+    if upload_width == width as usize && upload_height == height as usize {
+        return egui::ColorImage::from_rgba_unmultiplied([upload_width, upload_height], rgba);
+    }
+
+    let Some(image) = RgbaImage::from_raw(width, height, rgba.to_vec()) else {
+        return egui::ColorImage::from_rgba_unmultiplied([upload_width, upload_height], rgba);
+    };
+    let resized = image::imageops::resize(
+        &image,
+        upload_width as u32,
+        upload_height as u32,
+        image::imageops::FilterType::Triangle,
+    );
+    egui::ColorImage::from_rgba_unmultiplied([upload_width, upload_height], resized.as_raw())
+}
+
+fn fitted_texture_size(width: usize, height: usize, max_side: usize) -> (usize, usize) {
+    if width == 0 || height == 0 || max_side == 0 {
+        return (width.max(1), height.max(1));
+    }
+    if width <= max_side && height <= max_side {
+        return (width, height);
+    }
+
+    let scale = (max_side as f64 / width as f64).min(max_side as f64 / height as f64);
+    let scaled_width = ((width as f64 * scale).floor() as usize).clamp(1, max_side);
+    let scaled_height = ((height as f64 * scale).floor() as usize).clamp(1, max_side);
+    (scaled_width, scaled_height)
 }
 
 fn horizontal_layout(
@@ -2290,13 +2357,7 @@ fn hit_test_annotation(
 }
 
 fn image_screen_rect(state: &CanvasState, rect: egui::Rect, image: &CanvasImage) -> egui::Rect {
-    image_screen_rect_for_record(
-        &image.record,
-        rect,
-        state.pan,
-        state.zoom,
-        rect.center(),
-    )
+    image_screen_rect_for_record(&image.record, rect, state.pan, state.zoom, rect.center())
 }
 
 pub fn paint_perf_report() -> PaintPerfReport {
@@ -2422,10 +2483,7 @@ fn min_image_scale(asset: &crate::data::ImageAsset) -> f32 {
     width_scale.max(height_scale)
 }
 
-fn image_resize_handle_screen_pos(
-    image_rect: egui::Rect,
-    handle: ImageResizeHandle,
-) -> egui::Pos2 {
+fn image_resize_handle_screen_pos(image_rect: egui::Rect, handle: ImageResizeHandle) -> egui::Pos2 {
     match handle {
         ImageResizeHandle::TopLeft => image_rect.left_top(),
         ImageResizeHandle::TopRight => image_rect.right_top(),
@@ -2436,12 +2494,8 @@ fn image_resize_handle_screen_pos(
 
 fn image_resize_cursor_icon(handle: ImageResizeHandle) -> egui::CursorIcon {
     match handle {
-        ImageResizeHandle::TopLeft | ImageResizeHandle::BottomRight => {
-            egui::CursorIcon::ResizeNwSe
-        }
-        ImageResizeHandle::TopRight | ImageResizeHandle::BottomLeft => {
-            egui::CursorIcon::ResizeNeSw
-        }
+        ImageResizeHandle::TopLeft | ImageResizeHandle::BottomRight => egui::CursorIcon::ResizeNwSe,
+        ImageResizeHandle::TopRight | ImageResizeHandle::BottomLeft => egui::CursorIcon::ResizeNeSw,
     }
 }
 
@@ -2517,6 +2571,19 @@ fn paint_images(
             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
+        if state.search_match_item_ids.contains(&image.record.item.id) {
+            let stroke = if state.active_search_item_id == Some(image.record.item.id) {
+                egui::Stroke::new(3.0, egui::Color32::from_rgb(255, 170, 72))
+            } else {
+                egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 215, 140))
+            };
+            painter.rect_stroke(
+                image_rect.expand(2.0),
+                0.0,
+                stroke,
+                egui::StrokeKind::Outside,
+            );
+        }
         if state.is_selected(image.record.item.id) {
             painter.rect_stroke(
                 image_rect,
@@ -2687,10 +2754,13 @@ fn textbox_content_rect(textbox_rect: egui::Rect) -> egui::Rect {
     );
     let available_size = (textbox_rect.max - min).max(egui::Vec2::ZERO);
     let desired_size = (textbox_rect.size() - padding * 2.0).max(egui::Vec2::ZERO);
-    egui::Rect::from_min_size(min, egui::vec2(
-        desired_size.x.min(available_size.x),
-        desired_size.y.min(available_size.y),
-    ))
+    egui::Rect::from_min_size(
+        min,
+        egui::vec2(
+            desired_size.x.min(available_size.x),
+            desired_size.y.min(available_size.y),
+        ),
+    )
 }
 
 fn textbox_row_height(ui: &egui::Ui, zoom: f32) -> f32 {
@@ -2698,15 +2768,15 @@ fn textbox_row_height(ui: &egui::Ui, zoom: f32) -> f32 {
     ui.fonts_mut(|fonts| fonts.row_height(&font_id))
 }
 
-fn textbox_empty_hotspot_rect(
-    ui: &egui::Ui,
-    content_rect: egui::Rect,
-    zoom: f32,
-) -> egui::Rect {
-    let width = content_rect
-        .width()
-        .clamp(TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH, TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH);
-    let size = egui::vec2(width, textbox_row_height(ui, zoom).min(content_rect.height()));
+fn textbox_empty_hotspot_rect(ui: &egui::Ui, content_rect: egui::Rect, zoom: f32) -> egui::Rect {
+    let width = content_rect.width().clamp(
+        TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH,
+        TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH,
+    );
+    let size = egui::vec2(
+        width,
+        textbox_row_height(ui, zoom).min(content_rect.height()),
+    );
     egui::Rect::from_min_size(content_rect.min, size.min(content_rect.size()))
 }
 
@@ -2893,14 +2963,15 @@ fn paint_annotations(
                 if !editing && !annotation.text.trim().is_empty() {
                     paint_textbox_text(
                         painter,
-                        &state.cached_textbox_layout(
-                            ui,
-                            annotation.id,
-                            &annotation.text,
-                            content_rect.width(),
-                            state.zoom,
-                        )
-                        .galley,
+                        &state
+                            .cached_textbox_layout(
+                                ui,
+                                annotation.id,
+                                &annotation.text,
+                                content_rect.width(),
+                                state.zoom,
+                            )
+                            .galley,
                         content_rect,
                     );
                 }
@@ -2923,9 +2994,11 @@ fn paint_textbox_text(
     galley: &Arc<egui::Galley>,
     content_rect: egui::Rect,
 ) {
-    painter
-        .with_clip_rect(content_rect)
-        .galley(content_rect.min, galley.clone(), crate::theme::TEXT);
+    painter.with_clip_rect(content_rect).galley(
+        content_rect.min,
+        galley.clone(),
+        crate::theme::TEXT,
+    );
 }
 
 fn paint_annotation_draft(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) {
@@ -3001,13 +3074,8 @@ fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut CanvasState)
     let textbox_rect = annotation_screen_rect(state, rect, &state.annotations[index]);
     let content_rect = textbox_content_rect(textbox_rect);
     let text = state.annotations[index].text.clone();
-    let layout = state.cached_textbox_layout(
-        ui,
-        annotation_id,
-        &text,
-        content_rect.width(),
-        state.zoom,
-    );
+    let layout =
+        state.cached_textbox_layout(ui, annotation_id, &text, content_rect.width(), state.zoom);
     let text_rect = textbox_text_interactive_rect_from_galley(
         ui,
         content_rect,
@@ -3486,20 +3554,23 @@ fn pending_annotation_from_draft(draft_state: AnnotationDraftState) -> Option<Pe
 #[cfg(test)]
 mod tests {
     use super::{
-        AnnotationDraftState, CanvasImage, CanvasState, ImageResizeHandle, SelectedLayoutItem,
-        TextboxPointerRegion, TextboxResizeHandle, annotation_paint_stats_for_annotations,
-        background_screen_step, background_world_step, best_compact_layout,
-        crop_center_offset_local, handle_textbox_primary_press, hit_test_textbox_resize_handle,
-        hit_test_image_resize_handle, horizontal_layout, image_screen_rect, min_image_scale,
-        resized_image_scale, MIN_CANVAS_ZOOM, lattice_phase_screen, lattice_phase_world,
+        AnnotationDraftState, CanvasImage, CanvasState, ImageResizeHandle, MIN_CANVAS_ZOOM,
+        SelectedLayoutItem, TextboxPointerRegion, TextboxResizeHandle,
+        annotation_paint_stats_for_annotations, background_screen_step, background_world_step,
+        best_compact_layout, crop_center_offset_local, fitted_texture_size,
+        handle_textbox_primary_press, hit_test_image_resize_handle, hit_test_textbox_resize_handle,
+        horizontal_layout, image_screen_rect, lattice_phase_screen, lattice_phase_world,
         layout_textbox_galley, legacy_best_compact_layout, merge_cropped_item_fields,
-        moved_textbox_rect, normalized_textbox_rect, pending_annotation_from_draft,
-        pixel_crop_rect_from_local, resized_textbox_rect, screen_rect_to_local_crop_rect,
-        settled_background_lod_level, textbox_content_rect, textbox_empty_hotspot_rect,
-        textbox_layout_cache_key, textbox_pointer_region, textbox_required_world_height,
-        textbox_screen_rect, textbox_text_interactive_rect_from_galley, vertical_layout,
+        min_image_scale, moved_textbox_rect, normalized_textbox_rect,
+        pending_annotation_from_draft, pixel_crop_rect_from_local, resized_image_scale,
+        resized_textbox_rect, screen_rect_to_local_crop_rect, settled_background_lod_level,
+        textbox_content_rect, textbox_empty_hotspot_rect, textbox_layout_cache_key,
+        textbox_pointer_region, textbox_required_world_height, textbox_screen_rect,
+        textbox_text_interactive_rect_from_galley, vertical_layout,
     };
-    use crate::data::{BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, ImageAsset};
+    use crate::data::{
+        BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, ImageAsset,
+    };
     use std::{path::PathBuf, sync::Arc};
 
     fn push_test_image(
@@ -3588,6 +3659,13 @@ mod tests {
         assert_eq!(merged_item.asset_id, 2);
         assert_eq!(merged_item.x, 150.0);
         assert_eq!(merged_item.y, 110.0);
+    }
+
+    #[test]
+    fn fitted_texture_size_clamps_to_max_texture_side() {
+        assert_eq!(fitted_texture_size(8403, 3952, 8192), (8192, 3852));
+        assert_eq!(fitted_texture_size(3952, 8403, 8192), (3852, 8192));
+        assert_eq!(fitted_texture_size(1024, 768, 8192), (1024, 768));
     }
 
     #[test]
@@ -3746,9 +3824,10 @@ mod tests {
             );
             let text_rect = textbox_content_rect(textbox_rect);
             let mut text = "updated text".to_owned();
-            let mut layouter = |ui: &eframe::egui::Ui,
-                                text: &dyn eframe::egui::TextBuffer,
-                                width: f32| { layout_textbox_galley(ui, text.as_str(), width, 1.0) };
+            let mut layouter =
+                |ui: &eframe::egui::Ui, text: &dyn eframe::egui::TextBuffer, width: f32| {
+                    layout_textbox_galley(ui, text.as_str(), width, 1.0)
+                };
 
             state.cache_textbox_layout(
                 9,
@@ -3768,7 +3847,10 @@ mod tests {
                 .inner;
             let entry = state.cache_textbox_layout(9, &text, text_rect.width(), 1.0, output.galley);
 
-            assert_eq!(entry.key, textbox_layout_cache_key(&text, text_rect.width(), 1.0));
+            assert_eq!(
+                entry.key,
+                textbox_layout_cache_key(&text, text_rect.width(), 1.0)
+            );
             assert_eq!(
                 state.textbox_layout_cache.get(&9).unwrap().key,
                 textbox_layout_cache_key(&text, text_rect.width(), 1.0)
@@ -4074,7 +4156,8 @@ mod tests {
 
             let annotation = state.annotation_by_id(15).unwrap().clone();
             let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
-            let pointer_pos = eframe::egui::pos2(textbox_rect.center().x, textbox_rect.bottom() - 32.0);
+            let pointer_pos =
+                eframe::egui::pos2(textbox_rect.center().x, textbox_rect.bottom() - 32.0);
 
             assert!(handle_textbox_primary_press(
                 ui,
@@ -4198,7 +4281,8 @@ mod tests {
 
             let annotation = state.annotation_by_id(16).unwrap().clone();
             let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
-            let pointer_pos = eframe::egui::pos2(textbox_rect.center().x, textbox_rect.bottom() - 32.0);
+            let pointer_pos =
+                eframe::egui::pos2(textbox_rect.center().x, textbox_rect.bottom() - 32.0);
 
             assert!(handle_textbox_primary_press(
                 ui,
@@ -4574,10 +4658,20 @@ mod tests {
             },
         ];
 
-        let legacy =
-            annotation_paint_stats_for_annotations(&annotations, rect, eframe::egui::Vec2::ZERO, 8.0, false);
-        let current =
-            annotation_paint_stats_for_annotations(&annotations, rect, eframe::egui::Vec2::ZERO, 8.0, true);
+        let legacy = annotation_paint_stats_for_annotations(
+            &annotations,
+            rect,
+            eframe::egui::Vec2::ZERO,
+            8.0,
+            false,
+        );
+        let current = annotation_paint_stats_for_annotations(
+            &annotations,
+            rect,
+            eframe::egui::Vec2::ZERO,
+            8.0,
+            true,
+        );
 
         assert_eq!(legacy.considered, 4);
         assert_eq!(legacy.drawn, 4);

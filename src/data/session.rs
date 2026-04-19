@@ -10,6 +10,7 @@ pub struct UserSession {
     pub auto_image_scaling: bool,
     pub import_gap: f32,
     pub canvas_background: CanvasBackground,
+    pub semantic_search_enabled: bool,
 }
 
 impl Default for UserSession {
@@ -21,6 +22,7 @@ impl Default for UserSession {
             auto_image_scaling: true,
             import_gap: DEFAULT_IMPORT_GAP,
             canvas_background: CanvasBackground::default(),
+            semantic_search_enabled: true,
         }
     }
 }
