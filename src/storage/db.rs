@@ -1,14 +1,17 @@
-use std::fs;
+use std::fs::{self, File};
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
-use image::{ColorType, ImageFormat};
+use image::codecs::jpeg::JpegEncoder;
+use image::codecs::webp::WebPEncoder;
+use image::{ColorType, ExtendedColorType, ImageEncoder, ImageFormat};
 use rusqlite::{Connection, Transaction, params, params_from_iter};
 
 use crate::data::{
     BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationKind,
-    CanvasBackground, CanvasImageMode, ImageAsset, UserSession,
+    CanvasBackground, CanvasImageCacheTier, CanvasImageMode, ImageAsset, UserSession,
 };
 
 #[derive(Clone, Debug)]
@@ -63,6 +66,45 @@ pub struct AssetSearchHit {
 pub struct BoardSearchInstance {
     pub item_id: i64,
     pub asset_id: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CanvasImageCacheEncoding {
+    Jpeg,
+    WebpLossless,
+}
+
+impl CanvasImageCacheEncoding {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Jpeg => "jpg",
+            Self::WebpLossless => "webp",
+        }
+    }
+}
+
+fn choose_canvas_image_cache_encoding(rgba: &[u8]) -> CanvasImageCacheEncoding {
+    if rgba.chunks_exact(4).all(|pixel| pixel[3] == u8::MAX) {
+        CanvasImageCacheEncoding::Jpeg
+    } else {
+        CanvasImageCacheEncoding::WebpLossless
+    }
+}
+
+fn canvas_image_cache_quality(tier: CanvasImageCacheTier) -> u8 {
+    match tier {
+        CanvasImageCacheTier::Overview => 72,
+        CanvasImageCacheTier::Working => 82,
+        CanvasImageCacheTier::Detail => 88,
+    }
+}
+
+fn rgba_to_rgb(rgba: &[u8]) -> Vec<u8> {
+    let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
+    for pixel in rgba.chunks_exact(4) {
+        rgb.extend_from_slice(&pixel[..3]);
+    }
+    rgb
 }
 
 impl Library {
@@ -130,20 +172,73 @@ impl Library {
         Ok(destination)
     }
 
+    fn canvas_image_cache_destination_for_tier(
+        &self,
+        asset_id: i64,
+        mode: CanvasImageMode,
+        max_side: u32,
+        tier: CanvasImageCacheTier,
+        encoding: CanvasImageCacheEncoding,
+    ) -> Option<PathBuf> {
+        match mode {
+            CanvasImageMode::Downscale => Some(self.thumbs_dir.join(format!(
+                "asset-{asset_id}-canvas-v3-downscale-{}-{max_side}.{}",
+                tier.as_str(),
+                encoding.extension()
+            ))),
+            CanvasImageMode::Original => None,
+        }
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn asset_thumb_path(&self, asset_id: i64) -> PathBuf {
         self.thumbs_dir.join(format!("asset-{asset_id}.png"))
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn canvas_image_cache_path(
         &self,
         asset_id: i64,
         mode: CanvasImageMode,
         max_side: u32,
     ) -> Option<PathBuf> {
+        self.canvas_image_cache_path_for_tier(asset_id, mode, max_side, CanvasImageCacheTier::Working)
+    }
+
+    pub fn canvas_image_cache_path_for_tier(
+        &self,
+        asset_id: i64,
+        mode: CanvasImageMode,
+        max_side: u32,
+        tier: CanvasImageCacheTier,
+    ) -> Option<PathBuf> {
+        match mode {
+            CanvasImageMode::Downscale => [
+                CanvasImageCacheEncoding::Jpeg,
+                CanvasImageCacheEncoding::WebpLossless,
+            ]
+            .into_iter()
+            .filter_map(|encoding| {
+                self.canvas_image_cache_destination_for_tier(
+                    asset_id, mode, max_side, tier, encoding,
+                )
+            })
+            .find(|path| path.is_file()),
+            CanvasImageMode::Original => None,
+        }
+    }
+
+    pub fn legacy_canvas_image_cache_path_for_tier(
+        &self,
+        asset_id: i64,
+        mode: CanvasImageMode,
+        max_side: u32,
+        tier: CanvasImageCacheTier,
+    ) -> Option<PathBuf> {
         match mode {
             CanvasImageMode::Downscale => Some(self.thumbs_dir.join(format!(
-                "asset-{asset_id}-canvas-v1-downscale-{max_side}.png"
+                "asset-{asset_id}-canvas-v2-downscale-{}-{max_side}.png",
+                tier.as_str()
             ))),
             CanvasImageMode::Original => None,
         }
@@ -158,18 +253,52 @@ impl Library {
         width: u32,
         height: u32,
     ) -> Result<Option<PathBuf>, String> {
-        let Some(destination) = self.canvas_image_cache_path(asset_id, mode, max_side) else {
-            return Ok(None);
-        };
-        image::save_buffer_with_format(
-            &destination,
+        self.store_canvas_image_cache_for_tier(
+            asset_id,
+            mode,
+            max_side,
+            CanvasImageCacheTier::Working,
             rgba,
             width,
             height,
-            ColorType::Rgba8,
-            ImageFormat::Png,
         )
-        .map_err(|error| format!("failed to write asset preview: {error}"))?;
+    }
+
+    pub fn store_canvas_image_cache_for_tier(
+        &self,
+        asset_id: i64,
+        mode: CanvasImageMode,
+        max_side: u32,
+        tier: CanvasImageCacheTier,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<Option<PathBuf>, String> {
+        let encoding = choose_canvas_image_cache_encoding(rgba);
+        let destination =
+            self.canvas_image_cache_destination_for_tier(asset_id, mode, max_side, tier, encoding);
+        let Some(destination) = destination
+        else {
+            return Ok(None);
+        };
+        let file = File::create(&destination)
+            .map_err(|error| format!("failed to create asset preview: {error}"))?;
+        let writer = BufWriter::new(file);
+        match encoding {
+            CanvasImageCacheEncoding::Jpeg => {
+                let rgb = rgba_to_rgb(rgba);
+                let encoder = JpegEncoder::new_with_quality(writer, canvas_image_cache_quality(tier));
+                encoder
+                    .write_image(&rgb, width, height, ExtendedColorType::Rgb8)
+                    .map_err(|error| format!("failed to write asset preview: {error}"))?;
+            }
+            CanvasImageCacheEncoding::WebpLossless => {
+                let encoder = WebPEncoder::new_lossless(writer);
+                encoder
+                    .write_image(rgba, width, height, ExtendedColorType::Rgba8)
+                    .map_err(|error| format!("failed to write asset preview: {error}"))?;
+            }
+        }
         Ok(Some(destination))
     }
 
@@ -1511,13 +1640,21 @@ mod tests {
 
         let library = Library::initialize(root.clone()).unwrap();
         let path = library
-            .canvas_image_cache_path(42, CanvasImageMode::Downscale, 2000)
+            .store_canvas_image_cache(
+                42,
+                CanvasImageMode::Downscale,
+                2000,
+                &[255, 0, 0, 255],
+                1,
+                1,
+            )
             .unwrap();
+        let path = path.unwrap();
 
         assert_eq!(
             path,
             root.join("thumbs")
-                .join("asset-42-canvas-v1-downscale-2000.png")
+                .join("asset-42-canvas-v3-downscale-working-2000.jpg")
         );
 
         let _ = fs::remove_dir_all(root);

@@ -12,6 +12,14 @@ mod theme;
 
 pub fn run() -> eframe::Result<()> {
     let config = app::AppConfig::from_env();
+    if config.startup_trace_requested() {
+        if let Err(error) = perf::print_startup_trace() {
+            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
+                error,
+            ))));
+        }
+        return Ok(());
+    }
     if config.perf_report_requested() {
         if let Err(error) = perf::print_report() {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
