@@ -3064,7 +3064,8 @@ fn paint_images(
         .collect::<Vec<_>>();
     metrics.visible_images = visible_images.len();
 
-    let use_native_pass = render_state.is_some()
+    let use_native_pass = !visible_images.is_empty()
+        && render_state.is_some()
         && visible_images
             .iter()
             .all(|(image, _)| matches!(image.texture, CanvasTexture::Native(_)));

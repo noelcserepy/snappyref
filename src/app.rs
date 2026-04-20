@@ -2440,14 +2440,14 @@ fn paint_settings_section(
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.label(
-                        egui::RichText::new("Textbox size")
+                        egui::RichText::new("Text size")
                             .text_style(egui::TextStyle::Body)
                             .strong()
                             .color(crate::theme::TEXT),
                     );
                     ui.label(
                         egui::RichText::new(
-                            "Apply S/M/L/XL to the selected textboxes. New textboxes default to M.",
+                            "Apply S/M/L/XL to text inside the selected textboxes. New textboxes default to M.",
                         )
                         .text_style(egui::TextStyle::Small)
                         .color(crate::theme::TEXT_MUTED),
