@@ -1944,9 +1944,11 @@ impl eframe::App for ReferenceApp {
         if drawer_open {
             block_drawer_input(ui.ctx(), self.drawer_rect(screen_rect));
         }
+        let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         self.frame_perf.canvas = crate::canvas::show(
             ui,
             screen_rect,
+            visible_canvas_rect,
             &mut self.canvas,
             self.wgpu_render_state.as_ref(),
             self.canvas_image_mode == crate::data::CanvasImageMode::Downscale,

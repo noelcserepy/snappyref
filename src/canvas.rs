@@ -2226,13 +2226,14 @@ impl eframe::egui_wgpu::CallbackTrait for ImagePassCallback {
 pub fn show(
     ui: &mut egui::Ui,
     rect: egui::Rect,
+    input_rect: egui::Rect,
     state: &mut CanvasState,
     render_state: Option<&eframe::egui_wgpu::RenderState>,
     allow_tier_promotion: bool,
     debug_labels: bool,
 ) -> CanvasFrameMetrics {
     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
-    handle_input(ui, rect, state, &response);
+    handle_input(ui, rect, input_rect, state, &response);
 
     let painter = ui.painter_at(rect);
 
@@ -2259,6 +2260,7 @@ pub fn show(
 fn handle_input(
     ui: &egui::Ui,
     rect: egui::Rect,
+    input_rect: egui::Rect,
     state: &mut CanvasState,
     response: &egui::Response,
 ) {
@@ -2274,7 +2276,7 @@ fn handle_input(
     let draw_kind = drawing_annotation_kind(ui);
     let shift_held = ui.input(|i| i.modifiers.shift);
     let pointer_in_canvas_rect = pointer_pos
-        .map(|pointer_pos| rect.contains(pointer_pos))
+        .map(|pointer_pos| input_rect.contains(pointer_pos))
         .unwrap_or(false);
 
     if pointer_in_canvas_rect && response.dragged_by(egui::PointerButton::Middle) {
