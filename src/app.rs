@@ -37,6 +37,7 @@ enum SupportedShortcutAction {
     DeleteSelection,
     DuplicateSelection,
     ToggleDrawer,
+    FocusSelection,
     Arrange(ArrangementAction),
     ApplyDefaultAverageArea,
     AverageSelectionArea,
@@ -120,6 +121,17 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         mac: "T + Click/Drag",
         binding: None,
         shortcut_action: None,
+    },
+    SupportedShortcut {
+        action: "Focus selection",
+        windows: "Space",
+        mac: "Space",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::Space,
+            command: false,
+            shift: false,
+        }),
+        shortcut_action: Some(SupportedShortcutAction::FocusSelection),
     },
     SupportedShortcut {
         action: "Delete selection",
@@ -381,6 +393,7 @@ pub struct ReferenceApp {
     frame_perf: FramePerfState,
     pending_cache_backfills: HashSet<(i64, crate::data::CanvasImageCacheTier)>,
     inflight_image_tier_loads: HashMap<i64, crate::data::CanvasImageCacheTier>,
+    next_import_queue_id: u64,
 }
 
 impl ReferenceApp {
@@ -433,6 +446,7 @@ impl ReferenceApp {
                     frame_perf: FramePerfState::default(),
                     pending_cache_backfills: HashSet::new(),
                     inflight_image_tier_loads: HashMap::new(),
+                    next_import_queue_id: 1,
                 };
                 app.load_user_session();
                 #[cfg(feature = "semantic-search")]
@@ -467,6 +481,7 @@ impl ReferenceApp {
                 frame_perf: FramePerfState::default(),
                 pending_cache_backfills: HashSet::new(),
                 inflight_image_tier_loads: HashMap::new(),
+                next_import_queue_id: 1,
             },
         }
     }
@@ -542,10 +557,41 @@ impl ReferenceApp {
         )
     }
 
+    fn next_import_queue_id(&mut self) -> u64 {
+        let queue_id = self.next_import_queue_id;
+        self.next_import_queue_id = self.next_import_queue_id.saturating_add(1);
+        queue_id
+    }
+
+    fn visible_canvas_screen_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
+        let drawer_rect = self.drawer_rect(screen_rect);
+        egui::Rect::from_min_max(
+            screen_rect.min,
+            egui::pos2(screen_rect.max.x, drawer_rect.top()),
+        )
+    }
+
+    fn queue_import_placeholder(
+        &mut self,
+        queue_id: u64,
+        label: String,
+        desired_world: egui::Pos2,
+        width: u32,
+        height: u32,
+    ) {
+        let scale = crate::jobs::initial_import_scale(width, height, self.auto_image_scaling);
+        self.canvas.add_import_placeholder(
+            queue_id,
+            desired_world,
+            egui::vec2(width as f32 * scale, height as f32 * scale),
+            label,
+        );
+    }
+
     fn handle_dropped_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
-        let Some(import_worker) = &self.import_worker else {
+        if self.import_worker.is_none() {
             return;
-        };
+        }
 
         let dropped_files = ui.input(|input| input.raw.dropped_files.clone());
         if dropped_files.is_empty() {
@@ -560,27 +606,46 @@ impl ReferenceApp {
                 continue;
             };
 
-            if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::ImportPath {
-                source_path: source_path.clone(),
-                desired_world,
-                viewport_world,
-                max_texture_side: self.max_texture_side,
-                canvas_image_settings: crate::jobs::CanvasImageSettings {
-                    mode: self.canvas_image_mode,
-                    max_side: self.canvas_image_max_side,
-                },
-                auto_scale: self.auto_image_scaling,
-                import_gap: self.import_gap,
-                trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
-                    queued_at: Instant::now(),
-                    timings: crate::jobs::ImportTimings::default(),
-                }),
-            }) {
+            let source_path_for_status = source_path.clone();
+            let queue_id = self.next_import_queue_id();
+            let label = source_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("image")
+                .to_owned();
+            let dimensions = image::image_dimensions(&source_path).ok();
+            if let Some((width, height)) = dimensions {
+                self.queue_import_placeholder(queue_id, label, desired_world, width, height);
+            }
+
+            if let Err(error) = self
+                .import_worker
+                .as_ref()
+                .expect("checked import worker")
+                .enqueue(crate::jobs::ImportRequest::ImportPath {
+                    queue_id,
+                    source_path: source_path.clone(),
+                    desired_world,
+                    viewport_world,
+                    max_texture_side: self.max_texture_side,
+                    canvas_image_settings: crate::jobs::CanvasImageSettings {
+                        mode: self.canvas_image_mode,
+                        max_side: self.canvas_image_max_side,
+                    },
+                    auto_scale: self.auto_image_scaling,
+                    import_gap: self.import_gap,
+                    trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
+                        queued_at: Instant::now(),
+                        timings: crate::jobs::ImportTimings::default(),
+                    }),
+                })
+            {
+                self.canvas.remove_import_placeholder(queue_id);
                 self.status = error;
                 continue;
             }
 
-            self.status = format!("Queued import: {}", source_path.display());
+            self.status = format!("Queued import: {}", source_path_for_status.display());
         }
     }
 
@@ -599,9 +664,9 @@ impl ReferenceApp {
             return;
         }
 
-        let Some(import_worker) = &self.import_worker else {
+        if self.import_worker.is_none() {
             return;
-        };
+        }
 
         let mut clipboard = match arboard::Clipboard::new() {
             Ok(clipboard) => clipboard,
@@ -624,25 +689,40 @@ impl ReferenceApp {
         let rgba = clipboard_image.bytes.into_owned();
         let width = clipboard_image.width as u32;
         let height = clipboard_image.height as u32;
-
-        if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::ImportClipboard {
-            rgba,
+        let queue_id = self.next_import_queue_id();
+        self.queue_import_placeholder(
+            queue_id,
+            "Clipboard".to_owned(),
+            desired_world,
             width,
             height,
-            desired_world,
-            viewport_world,
-            max_texture_side: self.max_texture_side,
-            canvas_image_settings: crate::jobs::CanvasImageSettings {
-                mode: self.canvas_image_mode,
-                max_side: self.canvas_image_max_side,
-            },
-            auto_scale: self.auto_image_scaling,
-            import_gap: self.import_gap,
-            trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
-                queued_at: Instant::now(),
-                timings: crate::jobs::ImportTimings::default(),
-            }),
-        }) {
+        );
+
+        if let Err(error) = self
+            .import_worker
+            .as_ref()
+            .expect("checked import worker")
+            .enqueue(crate::jobs::ImportRequest::ImportClipboard {
+                queue_id,
+                rgba,
+                width,
+                height,
+                desired_world,
+                viewport_world,
+                max_texture_side: self.max_texture_side,
+                canvas_image_settings: crate::jobs::CanvasImageSettings {
+                    mode: self.canvas_image_mode,
+                    max_side: self.canvas_image_max_side,
+                },
+                auto_scale: self.auto_image_scaling,
+                import_gap: self.import_gap,
+                trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
+                    queued_at: Instant::now(),
+                    timings: crate::jobs::ImportTimings::default(),
+                }),
+            })
+        {
+            self.canvas.remove_import_placeholder(queue_id);
             self.status = error;
             return;
         }
@@ -762,11 +842,15 @@ impl ReferenceApp {
         for result in results {
             match result {
                 crate::jobs::ImportResult::Loaded(loaded) => {
+                    if let Some(queue_id) = loaded.queue_id {
+                        self.canvas.remove_import_placeholder(queue_id);
+                    }
                     let origin = loaded.origin;
                     let loaded_tier = loaded.loaded_tier;
                     let loaded_record = loaded.record.clone();
                     let existing_load_diagnostics = loaded.existing_load_diagnostics.clone();
-                    self.inflight_image_tier_loads.remove(&loaded.record.item.id);
+                    self.inflight_image_tier_loads
+                        .remove(&loaded.record.item.id);
                     if self
                         .canvas
                         .record_for_item_id(loaded.record.item.id)
@@ -917,10 +1001,14 @@ impl ReferenceApp {
                     self.status = error;
                 }
                 crate::jobs::ImportResult::Failed {
+                    queue_id,
                     item_id,
                     context,
                     error,
                 } => {
+                    if let Some(queue_id) = queue_id {
+                        self.canvas.remove_import_placeholder(queue_id);
+                    }
                     if let Some(item_id) = item_id {
                         self.inflight_image_tier_loads.remove(&item_id);
                         self.canvas.clear_crop_pending(item_id);
@@ -932,8 +1020,7 @@ impl ReferenceApp {
         }
 
         self.frame_perf.import_results_drained = drained_count;
-        self.frame_perf.import_result_drain_ms =
-            drain_started_at.elapsed().as_secs_f64() * 1000.0;
+        self.frame_perf.import_result_drain_ms = drain_started_at.elapsed().as_secs_f64() * 1000.0;
         if drained_count > 0 && self.perf_log.is_some() {
             eprintln!(
                 "[perf] import_result_drain count={} drain_ms={:.2} last_visible={} last_draw_calls={} last_groups={} last_fallback={}",
@@ -988,6 +1075,7 @@ impl ReferenceApp {
         self.canvas.add_loaded_item(
             ctx,
             crate::jobs::LoadedCanvasItem {
+                queue_id: None,
                 preview_width: entry.previous_preview_width,
                 preview_height: entry.previous_preview_height,
                 record: entry.previous_record,
@@ -1018,7 +1106,8 @@ impl ReferenceApp {
             };
             let triggered = match shortcut_action {
                 SupportedShortcutAction::DeleteSelection => delete_shortcut_pressed(ctx),
-                SupportedShortcutAction::DuplicateSelection
+                SupportedShortcutAction::FocusSelection
+                | SupportedShortcutAction::DuplicateSelection
                 | SupportedShortcutAction::ToggleDrawer
                 | SupportedShortcutAction::ApplyDefaultAverageArea
                 | SupportedShortcutAction::AverageSelectionArea
@@ -1046,6 +1135,18 @@ impl ReferenceApp {
                         continue;
                     }
                     self.duplicate_selection_with_gap(ctx, screen_rect);
+                }
+                SupportedShortcutAction::FocusSelection => {
+                    if !self.canvas.has_selection() {
+                        continue;
+                    }
+                    let visible_rect = self.visible_canvas_screen_rect(screen_rect);
+                    if self
+                        .canvas
+                        .focus_selection_in_view(screen_rect, visible_rect)
+                    {
+                        self.status = "Focused selection".to_owned();
+                    }
                 }
                 SupportedShortcutAction::ToggleDrawer => {
                     self.drawer_open = !self.drawer_open;
@@ -1183,7 +1284,8 @@ impl ReferenceApp {
             },
             tier,
         }) {
-            self.pending_cache_backfills.remove(&(record.asset.id, tier));
+            self.pending_cache_backfills
+                .remove(&(record.asset.id, tier));
             self.status = error;
         }
     }
@@ -1237,6 +1339,7 @@ impl ReferenceApp {
                 request.start_world,
                 request.end_world,
                 &request.text,
+                request.text_size,
             ) {
                 Ok(annotation) => {
                     let should_focus_text =
@@ -1664,11 +1767,7 @@ impl ReferenceApp {
     }
 
     fn import_viewport_world_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
-        let drawer_rect = self.drawer_rect(screen_rect);
-        let visible_screen_rect = egui::Rect::from_min_max(
-            screen_rect.min,
-            egui::pos2(screen_rect.max.x, drawer_rect.top()),
-        );
+        let visible_screen_rect = self.visible_canvas_screen_rect(screen_rect);
         egui::Rect::from_two_pos(
             self.canvas
                 .screen_to_world(visible_screen_rect.min, screen_rect),
@@ -2337,6 +2436,32 @@ fn paint_settings_section(
 
         ui.add_space(crate::theme::SPACE_3);
 
+        if canvas.has_selected_textboxes() {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("Textbox size")
+                            .text_style(egui::TextStyle::Body)
+                            .strong()
+                            .color(crate::theme::TEXT),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "Apply S/M/L/XL to the selected textboxes. New textboxes default to M.",
+                        )
+                        .text_style(egui::TextStyle::Small)
+                        .color(crate::theme::TEXT_MUTED),
+                    );
+                });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    changed |= paint_text_size_control(ui, canvas);
+                });
+            });
+
+            ui.add_space(crate::theme::SPACE_3);
+        }
+
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label(
@@ -2427,6 +2552,47 @@ fn paint_background_mode_control(
     } else {
         false
     }
+}
+
+fn paint_text_size_control(ui: &mut egui::Ui, canvas: &mut crate::canvas::CanvasState) -> bool {
+    let selected = canvas.selected_textbox_size();
+    let mut next_size = None;
+
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_1;
+        for size in [
+            crate::data::CanvasTextSize::S,
+            crate::data::CanvasTextSize::M,
+            crate::data::CanvasTextSize::L,
+            crate::data::CanvasTextSize::Xl,
+        ] {
+            let button = egui::Button::new(
+                egui::RichText::new(size.label())
+                    .text_style(egui::TextStyle::Button)
+                    .color(crate::theme::TEXT),
+            )
+            .fill(if selected == Some(size) {
+                crate::theme::SURFACE_ELEVATED
+            } else {
+                crate::theme::SURFACE
+            })
+            .stroke(if selected == Some(size) {
+                crate::theme::stroke_strong()
+            } else {
+                crate::theme::stroke_subtle()
+            })
+            .corner_radius(crate::theme::CONTROL_RADIUS)
+            .min_size(egui::vec2(44.0, crate::theme::CONTROL_HEIGHT));
+
+            if ui.add(button).clicked() {
+                next_size = Some(size);
+            }
+        }
+    });
+
+    next_size
+        .map(|text_size| canvas.apply_text_size_to_selected_textboxes(text_size) > 0)
+        .unwrap_or(false)
 }
 
 fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
@@ -2886,6 +3052,7 @@ mod tests {
             canvas.add_loaded_item(
                 &ctx,
                 LoadedCanvasItem {
+                    queue_id: None,
                     record,
                     preview_rgba: rgba,
                     preview_width: *width,
@@ -3024,6 +3191,18 @@ mod tests {
         assert!(!app.search_overlay.focus_requested);
     }
 
+    #[test]
+    fn queued_import_placeholders_replace_and_cleanup_by_queue_id() {
+        let mut app = test_app(None);
+
+        app.queue_import_placeholder(7, "first".to_owned(), egui::pos2(10.0, 20.0), 300, 200);
+        app.queue_import_placeholder(7, "second".to_owned(), egui::pos2(30.0, 40.0), 120, 90);
+
+        assert_eq!(app.canvas.import_placeholder_count(), 1);
+        app.canvas.remove_import_placeholder(7);
+        assert_eq!(app.canvas.import_placeholder_count(), 0);
+    }
+
     fn test_app(library: Option<Library>) -> ReferenceApp {
         ReferenceApp {
             canvas: crate::canvas::CanvasState::default(),
@@ -3049,6 +3228,7 @@ mod tests {
             drawer_open: false,
             status: String::new(),
             perf_log: None,
+            next_import_queue_id: 1,
         }
     }
 
