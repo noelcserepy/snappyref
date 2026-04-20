@@ -2438,32 +2438,6 @@ fn paint_settings_section(
 
         ui.add_space(crate::theme::SPACE_3);
 
-        if canvas.has_selected_textboxes() {
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(
-                        egui::RichText::new("Text size")
-                            .text_style(egui::TextStyle::Body)
-                            .strong()
-                            .color(crate::theme::TEXT),
-                    );
-                    ui.label(
-                        egui::RichText::new(
-                            "Apply S/M/L/XL to text inside the selected textboxes. New textboxes default to M.",
-                        )
-                        .text_style(egui::TextStyle::Small)
-                        .color(crate::theme::TEXT_MUTED),
-                    );
-                });
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    changed |= paint_text_size_control(ui, canvas);
-                });
-            });
-
-            ui.add_space(crate::theme::SPACE_3);
-        }
-
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label(
@@ -2554,47 +2528,6 @@ fn paint_background_mode_control(
     } else {
         false
     }
-}
-
-fn paint_text_size_control(ui: &mut egui::Ui, canvas: &mut crate::canvas::CanvasState) -> bool {
-    let selected = canvas.selected_textbox_size();
-    let mut next_size = None;
-
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_1;
-        for size in [
-            crate::data::CanvasTextSize::S,
-            crate::data::CanvasTextSize::M,
-            crate::data::CanvasTextSize::L,
-            crate::data::CanvasTextSize::Xl,
-        ] {
-            let button = egui::Button::new(
-                egui::RichText::new(size.label())
-                    .text_style(egui::TextStyle::Button)
-                    .color(crate::theme::TEXT),
-            )
-            .fill(if selected == Some(size) {
-                crate::theme::SURFACE_ELEVATED
-            } else {
-                crate::theme::SURFACE
-            })
-            .stroke(if selected == Some(size) {
-                crate::theme::stroke_strong()
-            } else {
-                crate::theme::stroke_subtle()
-            })
-            .corner_radius(crate::theme::CONTROL_RADIUS)
-            .min_size(egui::vec2(44.0, crate::theme::CONTROL_HEIGHT));
-
-            if ui.add(button).clicked() {
-                next_size = Some(size);
-            }
-        }
-    });
-
-    next_size
-        .map(|text_size| canvas.apply_text_size_to_selected_textboxes(text_size) > 0)
-        .unwrap_or(false)
 }
 
 fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {

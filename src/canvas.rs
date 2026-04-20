@@ -21,6 +21,12 @@ const TEXTBOX_RESIZE_HIT_RADIUS: f32 = 14.0;
 const TEXTBOX_DRAG_THRESHOLD_SCREEN: f32 = 4.0;
 const TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH: f32 = 80.0;
 const TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH: f32 = 120.0;
+const TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH: f32 = 44.0;
+const TEXTBOX_EDITOR_TOOLBAR_HEIGHT: f32 = crate::theme::CONTROL_HEIGHT + crate::theme::SPACE_2;
+const TEXTBOX_EDITOR_TOOLBAR_LABEL_WIDTH: f32 = 56.0;
+const TEXTBOX_EDITOR_TOOLBAR_INNER_PADDING_X: f32 = crate::theme::SPACE_2;
+const TEXTBOX_EDITOR_TOOLBAR_INNER_PADDING_Y: f32 = crate::theme::SPACE_1;
+const TEXTBOX_EDITOR_TOOLBAR_GAP: f32 = crate::theme::SPACE_2;
 const ANNOTATION_HIT_RADIUS: f32 = 10.0;
 const FOCUS_SELECTION_PADDING_SCREEN: f32 = 48.0;
 const BACKGROUND_BASE_WORLD_STEP: f32 = 64.0;
@@ -774,56 +780,29 @@ impl CanvasState {
         selected_rect
     }
 
-    pub fn has_selected_textboxes(&self) -> bool {
-        self.selected_annotation_ids.iter().any(|annotation_id| {
-            self.annotation_by_id(*annotation_id)
-                .is_some_and(|annotation| annotation.kind == CanvasAnnotationKind::Textbox)
-        })
+    pub fn editing_textbox_size(&self) -> Option<CanvasTextSize> {
+        let annotation_id = self.editing_text_annotation_id?;
+        self.annotation_by_id(annotation_id)
+            .filter(|annotation| annotation.kind == CanvasAnnotationKind::Textbox)
+            .map(|annotation| annotation.text_size)
     }
 
-    pub fn selected_textbox_size(&self) -> Option<CanvasTextSize> {
-        let mut selected_size = None;
-        let mut saw_textbox = false;
-
-        for annotation_id in &self.selected_annotation_ids {
-            let Some(annotation) = self.annotation_by_id(*annotation_id) else {
-                continue;
-            };
-            if annotation.kind != CanvasAnnotationKind::Textbox {
-                continue;
-            }
-
-            saw_textbox = true;
-            match selected_size {
-                Some(current) if current != annotation.text_size => return None,
-                Some(_) => {}
-                None => selected_size = Some(annotation.text_size),
-            }
+    pub fn apply_text_size_to_editing_textbox(&mut self, text_size: CanvasTextSize) -> bool {
+        let Some(annotation_id) = self.editing_text_annotation_id else {
+            return false;
+        };
+        let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
+            return false;
+        };
+        if annotation.kind != CanvasAnnotationKind::Textbox || annotation.text_size == text_size {
+            return false;
         }
 
-        saw_textbox.then_some(selected_size).flatten()
-    }
-
-    pub fn apply_text_size_to_selected_textboxes(&mut self, text_size: CanvasTextSize) -> usize {
-        let selected_ids = self.selected_annotation_ids.clone();
-        let mut changed = 0;
-
-        for annotation_id in selected_ids {
-            let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
-                continue;
-            };
-            if annotation.kind != CanvasAnnotationKind::Textbox || annotation.text_size == text_size
-            {
-                continue;
-            }
-
-            annotation.text_size = text_size;
-            self.invalidate_textbox_layout_cache(annotation_id);
-            self.mark_annotation_dirty(annotation_id);
-            changed += 1;
-        }
-
-        changed
+        annotation.text_size = text_size;
+        self.invalidate_textbox_layout_cache(annotation_id);
+        self.mark_annotation_dirty(annotation_id);
+        self.focus_text_editor = true;
+        true
     }
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
@@ -2232,8 +2211,9 @@ pub fn show(
     allow_tier_promotion: bool,
     debug_labels: bool,
 ) -> CanvasFrameMetrics {
+    let toolbar_rect = editing_textbox_toolbar_rect(state, rect);
     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
-    handle_input(ui, rect, input_rect, state, &response);
+    handle_input(ui, rect, input_rect, toolbar_rect, state, &response);
 
     let painter = ui.painter_at(rect);
 
@@ -2261,6 +2241,7 @@ fn handle_input(
     ui: &egui::Ui,
     rect: egui::Rect,
     input_rect: egui::Rect,
+    overlay_rect: Option<egui::Rect>,
     state: &mut CanvasState,
     response: &egui::Response,
 ) {
@@ -2276,7 +2257,10 @@ fn handle_input(
     let draw_kind = drawing_annotation_kind(ui);
     let shift_held = ui.input(|i| i.modifiers.shift);
     let pointer_in_canvas_rect = pointer_pos
-        .map(|pointer_pos| input_rect.contains(pointer_pos))
+        .map(|pointer_pos| {
+            input_rect.contains(pointer_pos)
+                && !overlay_rect.is_some_and(|overlay_rect| overlay_rect.contains(pointer_pos))
+        })
         .unwrap_or(false);
 
     if pointer_in_canvas_rect && response.dragged_by(egui::PointerButton::Middle) {
@@ -3757,6 +3741,7 @@ fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut CanvasState)
         return;
     };
     let textbox_rect = annotation_screen_rect(state, rect, &state.annotations[index]);
+    let toolbar_rect = editing_textbox_toolbar_rect(state, rect);
     let content_rect = textbox_content_rect(textbox_rect);
     let text = state.annotations[index].text.clone();
     let layout = state.cached_textbox_layout(
@@ -3775,6 +3760,9 @@ fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut CanvasState)
         state.zoom,
         text.is_empty(),
     );
+    let toolbar_interacting = toolbar_rect
+        .map(|toolbar_rect| show_textbox_editor_toolbar(ui, toolbar_rect, state))
+        .unwrap_or(false);
 
     egui::Area::new(egui::Id::new(("textbox-editor", annotation_id)))
         .order(egui::Order::Foreground)
@@ -3823,10 +3811,119 @@ fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut CanvasState)
             }
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) && output.response.has_focus() {
                 state.finish_textbox_edit();
-            } else if output.response.lost_focus() {
+            } else if output.response.lost_focus() && !toolbar_interacting {
                 state.finish_textbox_edit();
             }
         });
+}
+
+fn editing_textbox_toolbar_rect(state: &CanvasState, rect: egui::Rect) -> Option<egui::Rect> {
+    let annotation_id = state.editing_text_annotation_id?;
+    let annotation = state.annotation_by_id(annotation_id)?;
+    if annotation.kind != CanvasAnnotationKind::Textbox {
+        return None;
+    }
+
+    let textbox_rect = annotation_screen_rect(state, rect, annotation);
+    let button_count = 4.0;
+    let button_span = TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH * button_count
+        + crate::theme::SPACE_1 * (button_count - 1.0);
+    let width = TEXTBOX_EDITOR_TOOLBAR_INNER_PADDING_X * 2.0
+        + TEXTBOX_EDITOR_TOOLBAR_LABEL_WIDTH
+        + TEXTBOX_EDITOR_TOOLBAR_GAP
+        + button_span;
+    let size = egui::vec2(width, TEXTBOX_EDITOR_TOOLBAR_HEIGHT);
+    let min_x = rect.left() + crate::theme::SPACE_2;
+    let max_x = (rect.right() - crate::theme::SPACE_2 - size.x).max(min_x);
+    let x = (textbox_rect.center().x - size.x * 0.5).clamp(min_x, max_x);
+    let y = (textbox_rect.top() - crate::theme::SPACE_2 - size.y)
+        .max(rect.top() + crate::theme::SPACE_2);
+    Some(egui::Rect::from_min_size(egui::pos2(x, y), size))
+}
+
+fn show_textbox_editor_toolbar(
+    ui: &egui::Ui,
+    toolbar_rect: egui::Rect,
+    state: &mut CanvasState,
+) -> bool {
+    let selected = state.editing_textbox_size();
+    let mut next_size = None;
+    let pointer_interacting = ui.input(|input| {
+        input.pointer.latest_pos().is_some_and(|pointer_pos| {
+            toolbar_rect.contains(pointer_pos)
+                && (input.pointer.any_pressed()
+                    || input.pointer.any_down()
+                    || input.pointer.any_released())
+        })
+    });
+
+    egui::Area::new(egui::Id::new("textbox-editor-toolbar"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(toolbar_rect.min)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(crate::theme::SURFACE)
+                .stroke(crate::theme::stroke_subtle())
+                .corner_radius(crate::theme::CONTROL_RADIUS)
+                .inner_margin(egui::Margin::symmetric(
+                    TEXTBOX_EDITOR_TOOLBAR_INNER_PADDING_X as i8,
+                    TEXTBOX_EDITOR_TOOLBAR_INNER_PADDING_Y as i8,
+                ))
+                .show(ui, |ui| {
+                    ui.set_width(toolbar_rect.width());
+                    ui.set_height(toolbar_rect.height());
+                    ui.spacing_mut().item_spacing.x = crate::theme::SPACE_1;
+                    ui.horizontal(|ui| {
+                        ui.add_sized(
+                            egui::vec2(
+                                TEXTBOX_EDITOR_TOOLBAR_LABEL_WIDTH,
+                                crate::theme::CONTROL_HEIGHT,
+                            ),
+                            egui::Label::new(
+                                egui::RichText::new("Text size")
+                                    .text_style(egui::TextStyle::Small)
+                                    .color(crate::theme::TEXT_MUTED),
+                            ),
+                        );
+                        ui.add_space(TEXTBOX_EDITOR_TOOLBAR_GAP - crate::theme::SPACE_1);
+                        for size in [
+                            CanvasTextSize::S,
+                            CanvasTextSize::M,
+                            CanvasTextSize::L,
+                            CanvasTextSize::Xl,
+                        ] {
+                            let button = egui::Button::new(
+                                egui::RichText::new(size.label())
+                                    .text_style(egui::TextStyle::Button)
+                                    .color(crate::theme::TEXT),
+                            )
+                            .fill(if selected == Some(size) {
+                                crate::theme::SURFACE_ELEVATED
+                            } else {
+                                crate::theme::SURFACE
+                            })
+                            .stroke(if selected == Some(size) {
+                                crate::theme::stroke_strong()
+                            } else {
+                                crate::theme::stroke_subtle()
+                            })
+                            .corner_radius(crate::theme::CONTROL_RADIUS)
+                            .min_size(egui::vec2(
+                                TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
+                                crate::theme::CONTROL_HEIGHT,
+                            ));
+                            if ui.add(button).clicked() {
+                                next_size = Some(size);
+                            }
+                        }
+                    });
+                });
+        });
+
+    let changed = next_size
+        .map(|text_size| state.apply_text_size_to_editing_textbox(text_size))
+        .unwrap_or(false);
+    pointer_interacting || changed
 }
 
 fn paint_marquee(painter: &egui::Painter, state: &CanvasState) {
