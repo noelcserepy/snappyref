@@ -38,12 +38,16 @@ pub fn decode_image_file(path: &Path) -> Result<DecodedImage, String> {
         return Err(unsupported_format_error(path, Some(format)));
     }
 
+    #[cfg(feature = "turbojpeg-native")]
     let decoded = if format == ImageFormat::Jpeg {
         decode_jpeg_with_turbojpeg(&bytes, file_size)
             .or_else(|_| decode_with_image_crate(&bytes, file_size, format))
     } else {
         decode_with_image_crate(&bytes, file_size, format)
     }?;
+
+    #[cfg(not(feature = "turbojpeg-native"))]
+    let decoded = decode_with_image_crate(&bytes, file_size, format)?;
 
     Ok(decoded)
 }
@@ -162,6 +166,7 @@ fn decode_with_image_crate(
     })
 }
 
+#[cfg(feature = "turbojpeg-native")]
 fn decode_jpeg_with_turbojpeg(bytes: &[u8], file_size: u64) -> Result<DecodedImage, String> {
     let mut decompressor = turbojpeg::Decompressor::new()
         .map_err(|error| format!("failed to initialize TurboJPEG: {error}"))?;

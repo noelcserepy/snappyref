@@ -16,7 +16,7 @@ This repo uses GitHub Actions for verification and packaging.
 
 - Open a PR into `main`
 - The `CI` workflow runs on both Windows and macOS
-- It checks formatting and runs the test suite
+- It checks formatting and runs a lightweight `cargo check`
 - Nothing is published from PRs
 
 ### Manual test builds

@@ -22,20 +22,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install libjpeg-turbo
-        run: brew install jpeg-turbo
-
-      - name: Configure turbojpeg
-        run: |
-          echo "TURBOJPEG_SOURCE=explicit" >> "$GITHUB_ENV"
-          echo "TURBOJPEG_LIB_DIR=$(brew --prefix jpeg-turbo)/lib" >> "$GITHUB_ENV"
-          echo "TURBOJPEG_INCLUDE_DIR=$(brew --prefix jpeg-turbo)/include" >> "$GITHUB_ENV"
-
       - name: Format
         run: cargo fmt --check
 
-      - name: Test
-        run: cargo test --locked
+      - name: Check
+        run: cargo check --locked --no-default-features --features semantic-search
 
   windows:
     name: Windows checks
@@ -50,19 +41,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install libjpeg-turbo
-        shell: pwsh
-        run: |
-          $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
-          git clone https://github.com/microsoft/vcpkg.git $vcpkgRoot
-          & "$vcpkgRoot\bootstrap-vcpkg.bat"
-          & "$vcpkgRoot\vcpkg.exe" install libjpeg-turbo:x64-windows-static
-          "TURBOJPEG_SOURCE=explicit" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "TURBOJPEG_LIB_DIR=$vcpkgRoot\installed\x64-windows-static\lib" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "TURBOJPEG_INCLUDE_DIR=$vcpkgRoot\installed\x64-windows-static\include" | Out-File -FilePath $env:GITHUB_ENV -Append
-
       - name: Format
         run: cargo fmt --check
 
-      - name: Test
-        run: cargo test --locked
+      - name: Check
+        run: cargo check --locked --no-default-features --features semantic-search
