@@ -3387,8 +3387,8 @@ fn textbox_font_size(text_size: CanvasTextSize) -> f32 {
     match text_size {
         CanvasTextSize::S => baseline * (16.0 / 300.0),
         CanvasTextSize::M => baseline * (20.0 / 300.0),
-        CanvasTextSize::L => baseline * (28.0 / 300.0),
-        CanvasTextSize::Xl => baseline * (40.0 / 300.0),
+        CanvasTextSize::L => baseline * (40.0 / 300.0),
+        CanvasTextSize::Xl => baseline * (64.0 / 300.0),
     }
 }
 
@@ -4827,6 +4827,8 @@ mod tests {
     fn larger_text_sizes_require_more_textbox_height() {
         assert!(textbox_font_size(CanvasTextSize::Xl) > textbox_font_size(CanvasTextSize::S));
         assert!(textbox_font_size(CanvasTextSize::M) > textbox_font_size(CanvasTextSize::S));
+        assert!(textbox_font_size(CanvasTextSize::L) > textbox_font_size(CanvasTextSize::M));
+        assert!(textbox_font_size(CanvasTextSize::Xl) > textbox_font_size(CanvasTextSize::L));
     }
 
     #[test]
