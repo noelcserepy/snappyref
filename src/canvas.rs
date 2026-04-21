@@ -3841,11 +3841,10 @@ fn editing_textbox_toolbar_rect(
     }
 
     let textbox_rect = annotation_screen_rect(state, rect, annotation);
-    let content_rect = textbox_content_rect(textbox_rect);
     let metrics = textbox_editor_toolbar_metrics(ui);
     let min_x = rect.left() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN;
     let max_x = (rect.right() - TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN - metrics.size.x).max(min_x);
-    let preferred_x = content_rect.left();
+    let preferred_x = textbox_rect.left();
     let x = preferred_x.clamp(min_x, max_x);
 
     let min_y = rect.top() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN;
@@ -4896,10 +4895,9 @@ mod tests {
 
             let annotation = state.annotation_by_id(71).unwrap().clone();
             let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
-            let content_rect = textbox_content_rect(textbox_rect);
             let toolbar_rect = editing_textbox_toolbar_rect(ui, &state, canvas_rect).unwrap();
 
-            assert!((toolbar_rect.left() - content_rect.left()).abs() < 0.1);
+            assert!((toolbar_rect.left() - textbox_rect.left()).abs() < 0.1);
         });
     }
 
