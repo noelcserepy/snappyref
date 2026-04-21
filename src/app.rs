@@ -12,14 +12,10 @@ use crate::semantic_search::{
     SemanticSearchConfig, SemanticSearchService,
 };
 
-const SHORTCUT_DRAWER_MIN_HEIGHT: f32 = 352.0;
-const SHORTCUT_DRAWER_MAX_HEIGHT: f32 = 392.0;
-const SHORTCUT_DRAWER_HEIGHT_RATIO: f32 = 0.40;
-const SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH: f32 = 900.0;
-const SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH: f32 = 360.0;
-const SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH: f32 = 420.0;
-const SHORTCUT_DRAWER_MARGIN: f32 = crate::theme::SPACE_3;
-const SHORTCUT_DRAWER_BUTTON_SIZE: f32 = crate::theme::CONTROL_HEIGHT;
+const SIDEBAR_WIDTH: f32 = 268.0;
+const SIDEBAR_TOP_MARGIN: f32 = 40.0;
+const SIDEBAR_BOTTOM_MARGIN: f32 = 16.0;
+const SIDEBAR_HINT_MARGIN: f32 = crate::theme::SPACE_3;
 const COPY_PAYLOAD_KIND: &str = "reference-board-items";
 const MAX_CROP_UNDO_ENTRIES: usize = 32;
 const STARTUP_VIEWPORT_SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
@@ -27,27 +23,23 @@ const MAX_IMPORT_RESULTS_PER_FRAME: usize = 4;
 #[cfg(feature = "semantic-search")]
 const SEARCH_DEBOUNCE_MS: f32 = 120.0;
 #[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_MAX_SCREEN_WIDTH_RATIO: f32 = 0.78;
-#[cfg(feature = "semantic-search")]
 const SEARCH_OVERLAY_MAX_SCREEN_HEIGHT_RATIO: f32 = 0.8;
 #[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_TOP_MARGIN: f32 = 28.0;
+const SEARCH_OVERLAY_TOP_MARGIN: f32 = 56.0;
 #[cfg(feature = "semantic-search")]
 const SEARCH_OVERLAY_BOTTOM_MARGIN: f32 = 24.0;
 #[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_MIN_WIDTH: f32 = 480.0;
+const PALETTE_WIDTH: f32 = 660.0;
 #[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_EMPTY_WIDTH_RATIO: f32 = 0.52;
+const PALETTE_GRID_COLUMNS: usize = 5;
 #[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_EMPTY_MAX_WIDTH: f32 = 760.0;
+const PALETTE_GRID_MAX_HEIGHT: f32 = 360.0;
 #[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_GRID_CHROME_HEIGHT: f32 = 108.0;
+const SEARCH_OVERLAY_EMPTY_MAX_WIDTH: f32 = PALETTE_WIDTH;
 #[cfg(feature = "semantic-search")]
-const SEARCH_RESULT_TILE_MIN_WIDTH: f32 = 180.0;
+const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 144.0;
 #[cfg(feature = "semantic-search")]
-const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 320.0;
-#[cfg(feature = "semantic-search")]
-const SEARCH_RESULT_TILE_FOOTER_HEIGHT: f32 = 32.0;
+const SEARCH_RESULT_TILE_FOOTER_HEIGHT: f32 = 0.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArrangementAction {
@@ -60,7 +52,7 @@ enum ArrangementAction {
 enum SupportedShortcutAction {
     DeleteSelection,
     DuplicateSelection,
-    ToggleDrawer,
+    ToggleSidebar,
     FocusSelection,
     Arrange(ArrangementAction),
     ApplyDefaultAverageArea,
@@ -170,7 +162,7 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: Some(SupportedShortcutAction::DuplicateSelection),
     },
     SupportedShortcut {
-        action: "Toggle drawer",
+        action: "Toggle sidebar",
         windows: "Ctrl+B",
         mac: "⌘B",
         binding: Some(ShortcutBinding {
@@ -178,7 +170,7 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
             command: true,
             shift: false,
         }),
-        shortcut_action: Some(SupportedShortcutAction::ToggleDrawer),
+        shortcut_action: Some(SupportedShortcutAction::ToggleSidebar),
     },
     SupportedShortcut {
         action: "Compact arrange",
@@ -322,16 +314,25 @@ enum SearchOverlayStatus {
 #[cfg(debug_assertions)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerificationMode {
-    OpenDrawer,
-    OpenDrawerHot,
-    OpenDrawerNarrow,
+    OpenSidebar,
+    OpenSidebarHot,
+    OpenSidebarNarrow,
+    OpenSidebarBoards,
+    OpenPalette,
     DrawArrow,
     EditTextbox,
 }
 
-enum DrawerLayoutMode {
-    Split { left_width: f32, right_width: f32 },
-    Stacked,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SidebarTab {
+    Boards,
+    Options,
+}
+
+impl Default for SidebarTab {
+    fn default() -> Self {
+        SidebarTab::Options
+    }
 }
 
 impl AppConfig {
@@ -357,20 +358,30 @@ impl AppConfig {
                 perf_report = true;
             } else if argument == "--startup-trace" {
                 startup_trace = true;
-            } else if cfg!(debug_assertions) && argument == "--verify-open-drawer" {
+            } else if cfg!(debug_assertions) && argument == "--verify-sidebar" {
                 #[cfg(debug_assertions)]
                 {
-                    verification_mode = Some(VerificationMode::OpenDrawer);
+                    verification_mode = Some(VerificationMode::OpenSidebar);
                 }
-            } else if cfg!(debug_assertions) && argument == "--verify-open-drawer-hot" {
+            } else if cfg!(debug_assertions) && argument == "--verify-sidebar-hot" {
                 #[cfg(debug_assertions)]
                 {
-                    verification_mode = Some(VerificationMode::OpenDrawerHot);
+                    verification_mode = Some(VerificationMode::OpenSidebarHot);
                 }
-            } else if cfg!(debug_assertions) && argument == "--verify-open-drawer-narrow" {
+            } else if cfg!(debug_assertions) && argument == "--verify-sidebar-narrow" {
                 #[cfg(debug_assertions)]
                 {
-                    verification_mode = Some(VerificationMode::OpenDrawerNarrow);
+                    verification_mode = Some(VerificationMode::OpenSidebarNarrow);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-sidebar-boards" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::OpenSidebarBoards);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-palette" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::OpenPalette);
                 }
             } else if cfg!(debug_assertions) && argument == "--verify-arrow" {
                 #[cfg(debug_assertions)]
@@ -408,31 +419,45 @@ impl AppConfig {
     }
 
     #[cfg(debug_assertions)]
-    fn open_drawer_on_start(&self) -> bool {
+    fn open_sidebar_on_start(&self) -> bool {
         matches!(
             self.verification_mode,
             Some(
-                VerificationMode::OpenDrawer
-                    | VerificationMode::OpenDrawerHot
-                    | VerificationMode::OpenDrawerNarrow
+                VerificationMode::OpenSidebar
+                    | VerificationMode::OpenSidebarHot
+                    | VerificationMode::OpenSidebarNarrow
+                    | VerificationMode::OpenSidebarBoards
             )
         )
     }
 
     #[cfg(debug_assertions)]
-    fn open_drawer_hot_on_start(&self) -> bool {
+    fn open_sidebar_hot_on_start(&self) -> bool {
         matches!(
             self.verification_mode,
-            Some(VerificationMode::OpenDrawerHot)
+            Some(VerificationMode::OpenSidebarHot)
         )
     }
 
     #[cfg(debug_assertions)]
-    fn open_drawer_narrow_on_start(&self) -> bool {
+    fn open_sidebar_narrow_on_start(&self) -> bool {
         matches!(
             self.verification_mode,
-            Some(VerificationMode::OpenDrawerNarrow)
+            Some(VerificationMode::OpenSidebarNarrow)
         )
+    }
+
+    #[cfg(debug_assertions)]
+    fn open_sidebar_boards_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(VerificationMode::OpenSidebarBoards)
+        )
+    }
+
+    #[cfg(debug_assertions)]
+    fn open_palette_on_start(&self) -> bool {
+        matches!(self.verification_mode, Some(VerificationMode::OpenPalette))
     }
 
     #[cfg(debug_assertions)]
@@ -452,7 +477,7 @@ impl AppConfig {
 
     #[cfg(debug_assertions)]
     pub(crate) fn startup_viewport_size(&self) -> egui::Vec2 {
-        if self.open_drawer_narrow_on_start() {
+        if self.open_sidebar_narrow_on_start() {
             egui::vec2(780.0, STARTUP_VIEWPORT_SIZE.y)
         } else {
             STARTUP_VIEWPORT_SIZE
@@ -460,17 +485,22 @@ impl AppConfig {
     }
 
     #[cfg(not(debug_assertions))]
-    fn open_drawer_on_start(&self) -> bool {
+    fn open_sidebar_on_start(&self) -> bool {
         false
     }
 
     #[cfg(not(debug_assertions))]
-    fn open_drawer_hot_on_start(&self) -> bool {
+    fn open_sidebar_hot_on_start(&self) -> bool {
         false
     }
 
     #[cfg(not(debug_assertions))]
-    fn open_drawer_narrow_on_start(&self) -> bool {
+    fn open_sidebar_boards_on_start(&self) -> bool {
+        false
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn open_palette_on_start(&self) -> bool {
         false
     }
 
@@ -525,7 +555,8 @@ pub struct ReferenceApp {
     semantic_search: Option<SemanticSearchService>,
     #[cfg(feature = "semantic-search")]
     search_overlay: SearchOverlayState,
-    drawer_open: bool,
+    sidebar_open: bool,
+    sidebar_tab: SidebarTab,
     status: String,
     perf_log: Option<PerfLogState>,
     frame_perf: FramePerfState,
@@ -535,7 +566,7 @@ pub struct ReferenceApp {
     #[cfg(debug_assertions)]
     verification_search_query: Option<String>,
     #[cfg(debug_assertions)]
-    drawer_hot_preview: bool,
+    sidebar_hot_preview: bool,
 }
 
 impl ReferenceApp {
@@ -579,7 +610,12 @@ impl ReferenceApp {
                     semantic_search: None,
                     #[cfg(feature = "semantic-search")]
                     search_overlay: SearchOverlayState::default(),
-                    drawer_open: config.open_drawer_on_start(),
+                    sidebar_open: config.open_sidebar_on_start(),
+                    sidebar_tab: if config.open_sidebar_boards_on_start() {
+                        SidebarTab::Boards
+                    } else {
+                        SidebarTab::Options
+                    },
                     status,
                     perf_log: config.perf_log_enabled().then(|| PerfLogState {
                         app_started_at: Instant::now(),
@@ -592,7 +628,7 @@ impl ReferenceApp {
                     #[cfg(debug_assertions)]
                     verification_search_query: None,
                     #[cfg(debug_assertions)]
-                    drawer_hot_preview: config.open_drawer_hot_on_start(),
+                    sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                 };
                 app.load_user_session();
                 #[cfg(feature = "semantic-search")]
@@ -649,7 +685,7 @@ impl ReferenceApp {
                         config.verification_search_query().map(ToOwned::to_owned);
                 }
                 #[cfg(debug_assertions)]
-                if app.drawer_hot_preview {
+                if app.sidebar_hot_preview {
                     app.auto_image_scaling = false;
                     app.import_gap = 32.0;
                     app.canvas_image_mode = crate::data::CanvasImageMode::Original;
@@ -659,6 +695,16 @@ impl ReferenceApp {
                     app.semantic_search_enabled = true;
                     #[cfg(feature = "semantic-search")]
                     app.sync_semantic_search_service();
+                }
+                #[cfg(debug_assertions)]
+                if config.open_palette_on_start() {
+                    app.semantic_search_enabled = true;
+                    #[cfg(feature = "semantic-search")]
+                    {
+                        app.sync_semantic_search_service();
+                        app.search_overlay.open = true;
+                        app.search_overlay.focus_requested = true;
+                    }
                 }
                 app
             }
@@ -680,7 +726,12 @@ impl ReferenceApp {
                 semantic_search: None,
                 #[cfg(feature = "semantic-search")]
                 search_overlay: SearchOverlayState::default(),
-                drawer_open: config.open_drawer_on_start(),
+                sidebar_open: config.open_sidebar_on_start(),
+                sidebar_tab: if config.open_sidebar_boards_on_start() {
+                    SidebarTab::Boards
+                } else {
+                    SidebarTab::Options
+                },
                 status: format!("Storage unavailable: {error}"),
                 perf_log: config.perf_log_enabled().then(|| PerfLogState {
                     app_started_at: Instant::now(),
@@ -693,7 +744,7 @@ impl ReferenceApp {
                 #[cfg(debug_assertions)]
                 verification_search_query: None,
                 #[cfg(debug_assertions)]
-                drawer_hot_preview: config.open_drawer_hot_on_start(),
+                sidebar_hot_preview: config.open_sidebar_hot_on_start(),
             },
         }
     }
@@ -776,11 +827,13 @@ impl ReferenceApp {
     }
 
     fn visible_canvas_screen_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
-        let drawer_rect = self.drawer_rect(screen_rect);
-        egui::Rect::from_min_max(
-            screen_rect.min,
-            egui::pos2(screen_rect.max.x, drawer_rect.top()),
-        )
+        let sidebar_rect = self.sidebar_rect(screen_rect);
+        let left = if self.sidebar_open {
+            sidebar_rect.right()
+        } else {
+            screen_rect.left()
+        };
+        egui::Rect::from_min_max(egui::pos2(left, screen_rect.top()), screen_rect.max)
     }
 
     fn queue_import_placeholder(
@@ -1320,7 +1373,7 @@ impl ReferenceApp {
                 SupportedShortcutAction::DeleteSelection => delete_shortcut_pressed(ctx),
                 SupportedShortcutAction::FocusSelection
                 | SupportedShortcutAction::DuplicateSelection
-                | SupportedShortcutAction::ToggleDrawer
+                | SupportedShortcutAction::ToggleSidebar
                 | SupportedShortcutAction::ApplyDefaultAverageArea
                 | SupportedShortcutAction::AverageSelectionArea
                 | SupportedShortcutAction::Arrange(_) => shortcut
@@ -1360,8 +1413,8 @@ impl ReferenceApp {
                         self.status = "Focused selection".to_owned();
                     }
                 }
-                SupportedShortcutAction::ToggleDrawer => {
-                    self.drawer_open = !self.drawer_open;
+                SupportedShortcutAction::ToggleSidebar => {
+                    self.sidebar_open = !self.sidebar_open;
                 }
                 SupportedShortcutAction::Arrange(action) => {
                     if self.canvas.selected_item_ids().len() > 1 {
@@ -1873,23 +1926,14 @@ impl ReferenceApp {
         }
 
         let input_id = egui::Id::new("semantic_search_input");
-        let shell_margin = egui::Margin {
-            left: 16,
-            right: 16,
-            top: 14,
-            bottom: 12,
-        };
-        let overlay_max_height = search_overlay_max_height(screen_rect);
-        let width = search_overlay_width(screen_rect, self.search_overlay.results.len());
-        let shell_content_width = width - shell_margin.left as f32 - shell_margin.right as f32;
-        let grid_max_height = search_overlay_grid_max_height(overlay_max_height);
-        let grid_layout =
-            search_result_grid_layout(shell_content_width, self.search_overlay.results.len());
-        let grid_content_height = search_result_grid_content_height(
-            self.search_overlay.results.len(),
-            grid_layout.columns,
-        );
-        let grid_viewport_height = grid_content_height.min(grid_max_height);
+        let width = PALETTE_WIDTH;
+        let result_count = self.search_overlay.results.len();
+        let body_h_pad = 12.0_f32;
+        let grid_inner_width = width - body_h_pad * 2.0;
+        let grid_layout = search_result_grid_layout(grid_inner_width, result_count);
+        let grid_content_height =
+            search_result_grid_content_height(result_count, grid_layout.columns);
+        let grid_viewport_height = grid_content_height.min(PALETTE_GRID_MAX_HEIGHT);
         let area_response = egui::Area::new(egui::Id::new("semantic_search_overlay"))
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::CENTER_TOP)
@@ -1903,35 +1947,19 @@ impl ReferenceApp {
                 ui.set_max_width(width);
                 egui::Frame::new()
                     .fill(crate::theme::SURFACE)
-                    .stroke(crate::theme::stroke_subtle())
-                    .corner_radius(crate::theme::CARD_RADIUS)
-                    .inner_margin(shell_margin)
+                    .stroke(crate::theme::stroke_strong())
+                    .corner_radius(egui::CornerRadius::same(12))
+                    .shadow(egui::epaint::Shadow {
+                        offset: [0, 12],
+                        blur: 40,
+                        spread: 0,
+                        color: egui::Color32::from_black_alpha(180),
+                    })
                     .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing =
-                            egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2);
+                        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
 
-                        let response = ui
-                            .scope(|ui| {
-                                let visuals = &mut ui.style_mut().visuals;
-                                visuals.extreme_bg_color = crate::theme::SURFACE;
-                                visuals.widgets.inactive.bg_fill = egui::Color32::TRANSPARENT;
-                                visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
-                                visuals.widgets.active.bg_fill = egui::Color32::TRANSPARENT;
-                                visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
-                                visuals.widgets.hovered.bg_fill = egui::Color32::TRANSPARENT;
-                                visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
-                                visuals.selection.bg_fill = crate::theme::SURFACE_ELEVATED;
-                                ui.add_sized(
-                                    egui::vec2(ui.available_width(), 30.0),
-                                    egui::TextEdit::singleline(&mut self.search_overlay.query)
-                                        .id(input_id)
-                                        .desired_width(f32::INFINITY)
-                                        .hint_text("Search images")
-                                        .frame(egui::Frame::NONE)
-                                        .margin(egui::vec2(0.0, 0.0)),
-                                )
-                            })
-                            .inner;
+                        let response =
+                            paint_palette_input_row(ui, &mut self.search_overlay.query, input_id);
                         if self.search_overlay.focus_requested {
                             response.request_focus();
                             self.search_overlay.focus_requested =
@@ -1950,97 +1978,79 @@ impl ReferenceApp {
                             }
                         }
 
-                        ui.add_space(crate::theme::SPACE_1);
-                        let status = match &self.search_overlay.status {
-                            SearchOverlayStatus::Idle => "Idle".to_owned(),
-                            SearchOverlayStatus::Loading(message) => message.clone(),
-                            SearchOverlayStatus::Indexing => "Indexing…".to_owned(),
-                            SearchOverlayStatus::Ready => {
-                                format!("{} matches", self.search_overlay.results.len())
-                            }
-                            SearchOverlayStatus::Error(error) => error.clone(),
-                        };
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(status)
-                                    .text_style(egui::TextStyle::Small)
-                                    .color(crate::theme::TEXT_SUBTLE),
-                            );
+                        paint_palette_facet_row(ui, result_count);
+                        paint_palette_divider(ui);
 
-                            let helper = if self.search_overlay.results.is_empty() {
-                                ""
-                            } else {
-                                "Arrow keys to browse"
-                            };
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(
-                                        egui::RichText::new(helper)
-                                            .text_style(egui::TextStyle::Small)
-                                            .color(crate::theme::TEXT_SUBTLE),
-                                    );
-                                },
-                            );
-                        });
-                        if !self.search_overlay.results.is_empty() {
-                            ui.add_space(crate::theme::SPACE_2);
+                        if result_count == 0 {
+                            paint_palette_empty_state(ui);
+                        } else {
                             let mut clicked_index = None;
-                            let mut render_grid = |ui: &mut egui::Ui| {
-                                ui.spacing_mut().item_spacing =
-                                    egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2);
-                                for (row_index, row_groups) in self
-                                    .search_overlay
-                                    .results
-                                    .chunks(grid_layout.columns.max(1))
-                                    .enumerate()
-                                {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
-                                        for (column_index, group) in row_groups.iter().enumerate() {
-                                            let index =
-                                                row_index * grid_layout.columns + column_index;
-                                            let active =
-                                                index == self.search_overlay.active_result_index;
-                                            let response = search_result_tile(
-                                                ui,
-                                                &self.canvas,
-                                                group,
-                                                active,
-                                                grid_layout.tile_width,
-                                            );
-                                            if response.clicked() {
-                                                clicked_index = Some(index);
-                                            }
+                            egui::Frame::new()
+                                .inner_margin(egui::Margin {
+                                    left: body_h_pad as i8,
+                                    right: body_h_pad as i8,
+                                    top: body_h_pad as i8,
+                                    bottom: body_h_pad as i8,
+                                })
+                                .show(ui, |ui| {
+                                    ui.set_min_width(grid_inner_width);
+                                    ui.set_max_width(grid_inner_width);
+                                    let mut render_grid = |ui: &mut egui::Ui| {
+                                        ui.spacing_mut().item_spacing = egui::vec2(
+                                            crate::theme::SPACE_2,
+                                            crate::theme::SPACE_2,
+                                        );
+                                        for (row_index, row_groups) in self
+                                            .search_overlay
+                                            .results
+                                            .chunks(grid_layout.columns.max(1))
+                                            .enumerate()
+                                        {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x =
+                                                    crate::theme::SPACE_2;
+                                                for (column_index, group) in
+                                                    row_groups.iter().enumerate()
+                                                {
+                                                    let index = row_index * grid_layout.columns
+                                                        + column_index;
+                                                    let active = index
+                                                        == self
+                                                            .search_overlay
+                                                            .active_result_index;
+                                                    let response = search_result_tile(
+                                                        ui,
+                                                        &self.canvas,
+                                                        group,
+                                                        active,
+                                                        grid_layout.tile_width,
+                                                    );
+                                                    if response.clicked() {
+                                                        clicked_index = Some(index);
+                                                    }
+                                                }
+                                            });
                                         }
-                                    });
-                                }
-                            };
+                                    };
 
-                            if grid_content_height <= grid_max_height {
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(shell_content_width, grid_content_height),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| render_grid(ui),
-                                );
-                            } else {
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(shell_content_width, grid_viewport_height),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| {
+                                    if grid_content_height <= PALETTE_GRID_MAX_HEIGHT {
+                                        render_grid(ui);
+                                    } else {
                                         egui::ScrollArea::vertical()
                                             .max_height(grid_viewport_height)
                                             .auto_shrink([false, false])
                                             .show(ui, |ui| render_grid(ui));
-                                    },
-                                );
-                            }
+                                    }
+                                });
                             if let Some(index) = clicked_index {
                                 self.search_overlay.active_result_index = index;
                                 self.search_overlay.active_instance_index = 0;
                                 self.apply_search_matches();
                             }
                         }
+
+                        paint_palette_divider(ui);
+                        paint_palette_footer(ui, result_count, &self.search_overlay.status);
                     });
             });
 
@@ -2131,38 +2141,20 @@ impl ReferenceApp {
         screen_rect: egui::Rect,
         pointer_screen_pos: Option<egui::Pos2>,
     ) -> egui::Pos2 {
-        let drawer_rect = self.drawer_rect(screen_rect);
-        let canvas_center = egui::pos2(
-            screen_rect.center().x,
-            (screen_rect.top() + drawer_rect.top()) * 0.5,
-        );
+        let visible_rect = self.visible_canvas_screen_rect(screen_rect);
+        let canvas_center = visible_rect.center();
         let import_screen_pos = pointer_screen_pos
-            .filter(|screen_pos| {
-                screen_rect.contains(*screen_pos) && !drawer_rect.contains(*screen_pos)
-            })
+            .filter(|screen_pos| visible_rect.contains(*screen_pos))
             .unwrap_or(canvas_center);
         self.canvas.screen_to_world(import_screen_pos, screen_rect)
     }
 
-    fn drawer_height(&self, screen_rect: egui::Rect) -> f32 {
-        shortcut_drawer_height(screen_rect)
-    }
-
-    fn drawer_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
-        let height = if self.drawer_open {
-            self.drawer_height(screen_rect)
-        } else {
-            0.0
-        };
+    fn sidebar_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
+        let top = screen_rect.top() + SIDEBAR_TOP_MARGIN;
+        let bottom = (screen_rect.bottom() - SIDEBAR_BOTTOM_MARGIN).max(top);
         egui::Rect::from_min_max(
-            egui::pos2(
-                screen_rect.left() + SHORTCUT_DRAWER_MARGIN,
-                screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN - height,
-            ),
-            egui::pos2(
-                screen_rect.right() - SHORTCUT_DRAWER_MARGIN,
-                screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN,
-            ),
+            egui::pos2(screen_rect.left(), top),
+            egui::pos2(screen_rect.left() + SIDEBAR_WIDTH, bottom),
         )
     }
 
@@ -2294,9 +2286,9 @@ impl eframe::App for ReferenceApp {
         #[cfg(feature = "semantic-search")]
         self.handle_search_shortcut(ui.ctx());
         self.handle_selection_shortcuts(ui.ctx(), screen_rect);
-        let drawer_open = self.drawer_open;
-        if drawer_open {
-            block_drawer_input(ui.ctx(), self.drawer_rect(screen_rect));
+        let sidebar_open = self.sidebar_open;
+        if sidebar_open {
+            block_sidebar_input(ui.ctx(), self.sidebar_rect(screen_rect));
         }
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         self.frame_perf.canvas = crate::canvas::show(
@@ -2312,10 +2304,11 @@ impl eframe::App for ReferenceApp {
         self.handle_pending_crop_requests();
         self.handle_pending_annotation_requests();
         self.persist_canvas_changes();
-        let drawer_result = show_shortcuts_drawer(
+        let sidebar_result = show_sidebar(
             ui.ctx(),
             screen_rect,
-            drawer_open,
+            sidebar_open,
+            &mut self.sidebar_tab,
             &mut self.auto_image_scaling,
             &mut self.import_gap,
             &mut self.canvas_image_mode,
@@ -2323,22 +2316,22 @@ impl eframe::App for ReferenceApp {
             &mut self.semantic_search_enabled,
             &mut self.canvas,
         );
-        if drawer_open {
-            close_drawer_on_outside_click(
+        if sidebar_open {
+            close_sidebar_on_outside_click(
                 ui.ctx(),
-                drawer_result
+                sidebar_result
                     .interactive_rect
-                    .unwrap_or_else(|| self.drawer_rect(screen_rect)),
-                &mut self.drawer_open,
+                    .unwrap_or_else(|| self.sidebar_rect(screen_rect)),
+                &mut self.sidebar_open,
             );
         }
-        if drawer_result.settings_changed {
-            self.drawer_open = true;
+        if sidebar_result.settings_changed {
+            self.sidebar_open = true;
             #[cfg(feature = "semantic-search")]
             self.sync_semantic_search_service();
         }
-        self.persist_settings_if_changed(drawer_result.settings_changed);
-        show_drawer_toggle(ui.ctx(), screen_rect, drawer_open, &mut self.drawer_open);
+        self.persist_settings_if_changed(sidebar_result.settings_changed);
+        show_sidebar_hint(ui.ctx(), screen_rect, sidebar_open);
         #[cfg(feature = "semantic-search")]
         self.show_search_overlay(ui.ctx(), screen_rect);
         if self
@@ -2459,44 +2452,44 @@ fn apply_average_selection_area(canvas: &mut crate::canvas::CanvasState, status:
     *status = format!("Averaged area across {changed} {noun}");
 }
 
-fn block_drawer_input(ctx: &egui::Context, drawer_rect: egui::Rect) {
-    if drawer_rect.height() <= 0.0 || drawer_rect.width() <= 0.0 {
+fn block_sidebar_input(ctx: &egui::Context, sidebar_rect: egui::Rect) {
+    if sidebar_rect.height() <= 0.0 || sidebar_rect.width() <= 0.0 {
         return;
     }
 
-    egui::Area::new(egui::Id::new("shortcut_drawer_blocker"))
+    egui::Area::new(egui::Id::new("sidebar_blocker"))
         .order(egui::Order::Foreground)
-        .fixed_pos(drawer_rect.min)
+        .fixed_pos(sidebar_rect.min)
         .show(ctx, |ui| {
-            ui.set_min_size(drawer_rect.size());
+            ui.set_min_size(sidebar_rect.size());
             ui.allocate_rect(ui.max_rect(), egui::Sense::hover());
         });
 }
 
-fn close_drawer_on_outside_click(
+fn close_sidebar_on_outside_click(
     ctx: &egui::Context,
-    drawer_rect: egui::Rect,
-    drawer_open_state: &mut bool,
+    sidebar_rect: egui::Rect,
+    sidebar_open_state: &mut bool,
 ) {
     let clicked_outside = ctx.input(|input| {
-        should_close_drawer(
+        should_close_sidebar(
             input.pointer.any_click(),
             input.pointer.interact_pos(),
-            drawer_rect,
+            sidebar_rect,
         )
     });
 
     if clicked_outside {
-        *drawer_open_state = false;
+        *sidebar_open_state = false;
     }
 }
 
-fn should_close_drawer(
+fn should_close_sidebar(
     pointer_clicked: bool,
     pointer_pos: Option<egui::Pos2>,
-    drawer_rect: egui::Rect,
+    sidebar_rect: egui::Rect,
 ) -> bool {
-    pointer_clicked && pointer_pos.is_some_and(|pos| !drawer_rect.contains(pos))
+    pointer_clicked && pointer_pos.is_some_and(|pos| !sidebar_rect.contains(pos))
 }
 
 #[cfg(feature = "semantic-search")]
@@ -2513,31 +2506,19 @@ fn search_overlay_max_height(screen_rect: egui::Rect) -> f32 {
 }
 
 #[cfg(feature = "semantic-search")]
-fn search_overlay_grid_max_height(overlay_max_height: f32) -> f32 {
-    (overlay_max_height - SEARCH_OVERLAY_GRID_CHROME_HEIGHT)
-        .max(SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT)
-}
-
-#[cfg(feature = "semantic-search")]
 fn search_result_tile_height() -> f32 {
     SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT
 }
 
 #[cfg(feature = "semantic-search")]
-fn search_overlay_width(screen_rect: egui::Rect, _result_count: usize) -> f32 {
-    let screen_width = screen_rect.width();
-    let max_width =
-        (screen_width * SEARCH_OVERLAY_MAX_SCREEN_WIDTH_RATIO).min(SEARCH_OVERLAY_EMPTY_MAX_WIDTH);
-    (screen_width * SEARCH_OVERLAY_EMPTY_WIDTH_RATIO).clamp(SEARCH_OVERLAY_MIN_WIDTH, max_width)
+fn search_overlay_width(_screen_rect: egui::Rect, _result_count: usize) -> f32 {
+    PALETTE_WIDTH
 }
 
 #[cfg(feature = "semantic-search")]
 fn search_result_grid_layout(available_width: f32, result_count: usize) -> SearchResultGridLayout {
     let gap = crate::theme::SPACE_2;
-    let columns = (((available_width + gap) / (SEARCH_RESULT_TILE_MIN_WIDTH + gap)).floor()
-        as usize)
-        .max(1)
-        .min(result_count.max(1));
+    let columns = PALETTE_GRID_COLUMNS.min(result_count.max(1));
     let tile_width = (available_width - gap * (columns.saturating_sub(1) as f32)) / columns as f32;
     SearchResultGridLayout {
         columns,
@@ -2663,24 +2644,358 @@ fn search_result_tile(
     response
 }
 
-struct DrawerRenderResult {
+#[cfg(feature = "semantic-search")]
+fn paint_palette_input_row(
+    ui: &mut egui::Ui,
+    query: &mut String,
+    input_id: egui::Id,
+) -> egui::Response {
+    let mut response = None;
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: 18,
+            right: 14,
+            top: 14,
+            bottom: 12,
+        })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                let (icon_rect, _) =
+                    ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                paint_search_icon(ui, icon_rect, crate::theme::TEXT_SUBTLE);
+
+                let mut visuals = ui.style_mut().visuals.clone();
+                visuals.extreme_bg_color = egui::Color32::TRANSPARENT;
+                visuals.widgets.inactive.bg_fill = egui::Color32::TRANSPARENT;
+                visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                visuals.widgets.active.bg_fill = egui::Color32::TRANSPARENT;
+                visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+                visuals.widgets.hovered.bg_fill = egui::Color32::TRANSPARENT;
+                visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                visuals.selection.bg_fill = crate::theme::SURFACE_ELEVATED;
+                ui.style_mut().visuals = visuals;
+
+                let resp = ui.add_sized(
+                    egui::vec2(ui.available_width() - 44.0, 24.0),
+                    egui::TextEdit::singleline(query)
+                        .id(input_id)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Search images, tags, boards")
+                        .frame(egui::Frame::NONE)
+                        .margin(egui::vec2(0.0, 0.0)),
+                );
+                paint_kbd_pill(ui, "esc");
+                response = Some(resp);
+            });
+        });
+    response.expect("palette input row allocated")
+}
+
+#[cfg(feature = "semantic-search")]
+fn paint_search_icon(ui: &mut egui::Ui, rect: egui::Rect, color: egui::Color32) {
+    let painter = ui.painter();
+    let center = rect.center();
+    let r = rect.width() * 0.28;
+    let stroke = egui::Stroke::new(1.4, color);
+    painter.circle_stroke(center - egui::vec2(r * 0.3, r * 0.3), r, stroke);
+    painter.line_segment(
+        [
+            center + egui::vec2(r * 0.4, r * 0.4),
+            center + egui::vec2(r * 1.1, r * 1.1),
+        ],
+        stroke,
+    );
+}
+
+#[cfg(feature = "semantic-search")]
+fn paint_kbd_pill(ui: &mut egui::Ui, label: &str) {
+    egui::Frame::new()
+        .fill(crate::theme::SURFACE_ELEVATED)
+        .stroke(crate::theme::stroke_subtle())
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin {
+            left: 5,
+            right: 5,
+            top: 2,
+            bottom: 2,
+        })
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(label)
+                    .text_style(egui::TextStyle::Monospace)
+                    .color(crate::theme::TEXT_MUTED)
+                    .size(10.0),
+            );
+        });
+}
+
+#[cfg(feature = "semantic-search")]
+fn paint_palette_facet_row(ui: &mut egui::Ui, result_count: usize) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: 18,
+            right: 18,
+            top: 0,
+            bottom: 10,
+        })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.label(
+                    egui::RichText::new("filter")
+                        .text_style(egui::TextStyle::Monospace)
+                        .color(crate::theme::TEXT_SUBTLE)
+                        .size(10.0),
+                );
+                paint_facet_btn(ui, "Color", Some(egui::Color32::from_rgb(228, 206, 176)));
+                paint_facet_btn(ui, "Kind", None);
+                paint_facet_btn(ui, "Orientation", None);
+                paint_facet_btn(ui, "Source", None);
+                paint_facet_btn(ui, "Visual", None);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(format!("{result_count}"))
+                            .text_style(egui::TextStyle::Monospace)
+                            .color(crate::theme::TEXT_SUBTLE)
+                            .size(10.0),
+                    );
+                });
+            });
+        });
+}
+
+#[cfg(feature = "semantic-search")]
+fn paint_facet_btn(ui: &mut egui::Ui, label: &str, dot: Option<egui::Color32>) -> egui::Response {
+    let label_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
+    let label_galley =
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), label_font, crate::theme::TEXT_MUTED);
+    let mut content_w = label_galley.size().x + 4.0 + 8.0;
+    if dot.is_some() {
+        content_w += 8.0 + 4.0;
+    }
+    let pad_x = 8.0_f32;
+    let btn_size = egui::vec2(content_w + pad_x * 2.0 - 4.0, 20.0);
+    let (rect, response) = ui.allocate_exact_size(btn_size, egui::Sense::click());
+    ui.painter().rect(
+        rect,
+        egui::CornerRadius::same(4),
+        egui::Color32::from_white_alpha(10),
+        crate::theme::stroke_subtle(),
+        egui::StrokeKind::Inside,
+    );
+    let mut x = rect.left() + pad_x;
+    let center_y = rect.center().y;
+    if let Some(dot_color) = dot {
+        ui.painter()
+            .circle_filled(egui::pos2(x + 4.0, center_y), 4.0, dot_color);
+        x += 12.0;
+    }
+    ui.painter().galley(
+        egui::pos2(x, center_y - label_galley.size().y * 0.5),
+        label_galley,
+        crate::theme::TEXT_MUTED,
+    );
+    let chev_x = rect.right() - pad_x + 2.0;
+    let chev_stroke = egui::Stroke::new(1.2, crate::theme::TEXT_SUBTLE);
+    ui.painter().line_segment(
+        [
+            egui::pos2(chev_x - 4.0, center_y - 2.0),
+            egui::pos2(chev_x - 1.0, center_y + 1.0),
+        ],
+        chev_stroke,
+    );
+    ui.painter().line_segment(
+        [
+            egui::pos2(chev_x - 1.0, center_y + 1.0),
+            egui::pos2(chev_x + 2.0, center_y - 2.0),
+        ],
+        chev_stroke,
+    );
+    response
+}
+
+#[cfg(feature = "semantic-search")]
+fn paint_palette_divider(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 1.0),
+        egui::Sense::hover(),
+    );
+    ui.painter()
+        .rect_filled(rect, 0, egui::Color32::from_white_alpha(14));
+}
+
+#[cfg(feature = "semantic-search")]
+fn paint_palette_empty_state(ui: &mut egui::Ui) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: 8,
+            right: 8,
+            top: 12,
+            bottom: 6,
+        })
+        .show(ui, |ui| {
+            paint_palette_empty_group(ui, "RECENT", &["boat", "forest path", "still life"]);
+            paint_palette_empty_group(ui, "SAVED SEARCHES", &["Warm tones", "Cold tones"]);
+            paint_palette_empty_group(ui, "BOARDS", &["All images"]);
+        });
+}
+
+#[cfg(feature = "semantic-search")]
+fn paint_palette_empty_group(ui: &mut egui::Ui, title: &str, rows: &[&str]) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: 6,
+            right: 6,
+            top: 4,
+            bottom: 4,
+        })
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(title)
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_SUBTLE)
+                    .size(9.0),
+            );
+        });
+    for row in rows {
+        egui::Frame::new()
+            .inner_margin(egui::Margin {
+                left: 14,
+                right: 14,
+                top: 6,
+                bottom: 6,
+            })
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(*row)
+                        .text_style(egui::TextStyle::Body)
+                        .color(crate::theme::TEXT),
+                );
+            });
+    }
+    ui.add_space(4.0);
+}
+
+#[cfg(feature = "semantic-search")]
+fn paint_palette_footer(ui: &mut egui::Ui, result_count: usize, status: &SearchOverlayStatus) {
+    egui::Frame::new()
+        .fill(egui::Color32::from_black_alpha(38))
+        .inner_margin(egui::Margin {
+            left: 16,
+            right: 16,
+            top: 9,
+            bottom: 9,
+        })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                if result_count > 0 {
+                    paint_create_board_pill(ui, result_count);
+                    ui.label(
+                        egui::RichText::new("or drag individual images")
+                            .text_style(egui::TextStyle::Small)
+                            .color(crate::theme::TEXT_SUBTLE)
+                            .size(11.0),
+                    );
+                } else {
+                    let idle_text = match status {
+                        SearchOverlayStatus::Idle => "Ready".to_owned(),
+                        SearchOverlayStatus::Indexing => "Indexing…".to_owned(),
+                        SearchOverlayStatus::Loading(msg) => msg.clone(),
+                        SearchOverlayStatus::Ready => "Ready".to_owned(),
+                        SearchOverlayStatus::Error(err) => err.clone(),
+                    };
+                    let dot_rect = ui
+                        .allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover())
+                        .0;
+                    ui.painter().circle_filled(
+                        dot_rect.center(),
+                        3.0,
+                        egui::Color32::from_rgb(122, 201, 122),
+                    );
+                    ui.label(
+                        egui::RichText::new(idle_text)
+                            .text_style(egui::TextStyle::Small)
+                            .color(crate::theme::TEXT_SUBTLE)
+                            .size(11.0),
+                    );
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.label(
+                        egui::RichText::new("board")
+                            .text_style(egui::TextStyle::Small)
+                            .color(crate::theme::TEXT_SUBTLE)
+                            .size(11.0),
+                    );
+                    paint_kbd_pill(ui, "↵");
+                    paint_kbd_pill(ui, "⌘");
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new("open")
+                            .text_style(egui::TextStyle::Small)
+                            .color(crate::theme::TEXT_SUBTLE)
+                            .size(11.0),
+                    );
+                    paint_kbd_pill(ui, "↵");
+                });
+            });
+        });
+}
+
+#[cfg(feature = "semantic-search")]
+fn paint_create_board_pill(ui: &mut egui::Ui, result_count: usize) {
+    let accent = egui::Color32::from_rgb(228, 206, 176);
+    let bg = egui::Color32::from_rgba_unmultiplied(228, 206, 176, 30);
+    let stroke = egui::Stroke::new(
+        1.0,
+        egui::Color32::from_rgba_unmultiplied(228, 206, 176, 90),
+    );
+    egui::Frame::new()
+        .fill(bg)
+        .stroke(stroke)
+        .corner_radius(egui::CornerRadius::same(5))
+        .inner_margin(egui::Margin {
+            left: 10,
+            right: 10,
+            top: 4,
+            bottom: 4,
+        })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.label(egui::RichText::new("+").color(accent).strong().size(11.0));
+                ui.label(
+                    egui::RichText::new(format!("Create board from {result_count} results"))
+                        .color(accent)
+                        .strong()
+                        .size(11.0),
+                );
+            });
+        });
+}
+
+struct SidebarRenderResult {
     settings_changed: bool,
     interactive_rect: Option<egui::Rect>,
 }
 
-fn show_shortcuts_drawer(
+fn show_sidebar(
     ctx: &egui::Context,
     screen_rect: egui::Rect,
-    drawer_open: bool,
+    sidebar_open: bool,
+    sidebar_tab: &mut SidebarTab,
     auto_image_scaling: &mut bool,
     import_gap: &mut f32,
     canvas_image_mode: &mut crate::data::CanvasImageMode,
     canvas_image_max_side: &mut u32,
     semantic_search_enabled: &mut bool,
     canvas: &mut crate::canvas::CanvasState,
-) -> DrawerRenderResult {
-    if !drawer_open {
-        return DrawerRenderResult {
+) -> SidebarRenderResult {
+    if !sidebar_open {
+        return SidebarRenderResult {
             settings_changed: false,
             interactive_rect: None,
         };
@@ -2688,216 +3003,405 @@ fn show_shortcuts_drawer(
 
     let mut settings_changed = false;
 
-    let drawer_height = shortcut_drawer_height(screen_rect);
-    let drawer_rect = egui::Rect::from_min_max(
-        egui::pos2(
-            screen_rect.left() + SHORTCUT_DRAWER_MARGIN,
-            screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN - drawer_height,
-        ),
-        egui::pos2(
-            screen_rect.right() - SHORTCUT_DRAWER_MARGIN,
-            screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN,
-        ),
+    let top = screen_rect.top() + SIDEBAR_TOP_MARGIN;
+    let bottom = (screen_rect.bottom() - SIDEBAR_BOTTOM_MARGIN).max(top);
+    let sidebar_rect = egui::Rect::from_min_max(
+        egui::pos2(screen_rect.left(), top),
+        egui::pos2(screen_rect.left() + SIDEBAR_WIDTH, bottom),
     );
 
-    let area_response = egui::Area::new(egui::Id::new("shortcut_drawer"))
+    let area_response = egui::Area::new(egui::Id::new("sidebar"))
         .order(egui::Order::Foreground)
-        .fixed_pos(drawer_rect.min)
+        .fixed_pos(sidebar_rect.min)
         .show(ctx, |ui| {
-            ui.set_min_size(drawer_rect.size());
+            ui.set_min_size(sidebar_rect.size());
+            let shape_rect = sidebar_rect;
+            let radius = egui::CornerRadius {
+                nw: 0,
+                ne: crate::theme::CARD_RADIUS,
+                sw: 0,
+                se: crate::theme::CARD_RADIUS,
+            };
+            ui.painter().rect(
+                shape_rect,
+                radius,
+                crate::theme::SURFACE,
+                crate::theme::stroke_subtle(),
+                egui::StrokeKind::Inside,
+            );
 
-            egui::Frame::new()
-                .fill(crate::theme::SURFACE)
-                .stroke(crate::theme::stroke_subtle())
-                .corner_radius(crate::theme::CARD_RADIUS)
-                .inner_margin(crate::theme::PANEL_PADDING)
-                .show(ui, |ui| {
-                    let inner_width = (drawer_rect.width()
-                        - crate::theme::PANEL_PADDING.left as f32
-                        - crate::theme::PANEL_PADDING.right as f32)
-                        .max(0.0);
-                    let inner_height = (drawer_rect.height()
-                        - crate::theme::PANEL_PADDING.top as f32
-                        - crate::theme::PANEL_PADDING.bottom as f32)
-                        .max(0.0);
-                    ui.set_width(inner_width);
-                    ui.set_min_height(inner_height);
-
-                    match drawer_layout_mode(inner_width) {
-                        DrawerLayoutMode::Split {
-                            left_width,
-                            right_width,
-                        } => {
-                            ui.horizontal_top(|ui| {
-                                paint_drawer_section(
-                                    ui,
-                                    left_width,
-                                    inner_height,
-                                    "Options",
-                                    Some("Board defaults"),
-                                    Some(inner_height),
-                                    |ui| {
-                                        settings_changed |= paint_settings_section(
-                                            ui,
-                                            auto_image_scaling,
-                                            import_gap,
-                                            canvas_image_mode,
-                                            canvas_image_max_side,
-                                            semantic_search_enabled,
-                                            canvas,
-                                        );
-                                    },
-                                );
-
-                                ui.add_space(crate::theme::SPACE_3);
-
-                                paint_drawer_section(
-                                    ui,
-                                    right_width,
-                                    inner_height,
-                                    "Shortcuts",
-                                    None,
-                                    Some(inner_height),
-                                    |ui| {
-                                        paint_supported_shortcuts_section(ui);
-                                    },
-                                );
-                            });
-                        }
-                        DrawerLayoutMode::Stacked => {
-                            let stacked_card_height = (inner_height * 0.4).max(140.0);
-                            ui.vertical(|ui| {
-                                paint_drawer_section(
-                                    ui,
-                                    inner_width,
-                                    stacked_card_height,
-                                    "Options",
-                                    Some("Board defaults"),
-                                    Some(stacked_card_height),
-                                    |ui| {
-                                        settings_changed |= paint_settings_section(
-                                            ui,
-                                            auto_image_scaling,
-                                            import_gap,
-                                            canvas_image_mode,
-                                            canvas_image_max_side,
-                                            semantic_search_enabled,
-                                            canvas,
-                                        );
-                                    },
-                                );
-
-                                ui.add_space(crate::theme::SPACE_3);
-
-                                paint_drawer_section(
-                                    ui,
-                                    inner_width,
-                                    stacked_card_height,
-                                    "Shortcuts",
-                                    None,
-                                    Some(stacked_card_height),
-                                    |ui| {
-                                        paint_supported_shortcuts_section(ui);
-                                    },
-                                );
-                            });
-                        }
+            let inner_rect = shape_rect.shrink2(egui::vec2(0.0, 0.0));
+            let ui_builder = egui::UiBuilder::new().max_rect(inner_rect);
+            ui.scope_builder(ui_builder, |ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                paint_sidebar_header(ui);
+                paint_sidebar_tabs(ui, sidebar_tab);
+                ui.add_space(crate::theme::SPACE_2);
+                match *sidebar_tab {
+                    SidebarTab::Boards => paint_sidebar_boards(ui, canvas),
+                    SidebarTab::Options => {
+                        settings_changed |= paint_sidebar_options(
+                            ui,
+                            auto_image_scaling,
+                            import_gap,
+                            canvas_image_mode,
+                            canvas_image_max_side,
+                            semantic_search_enabled,
+                            canvas,
+                        );
                     }
-                });
+                }
+            });
         });
 
-    DrawerRenderResult {
+    SidebarRenderResult {
         settings_changed,
         interactive_rect: Some(area_response.response.rect),
     }
 }
 
-fn drawer_layout_mode(content_width: f32) -> DrawerLayoutMode {
-    let wide_threshold = SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH;
-    let split_width = SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH
-        + SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH
-        + crate::theme::SPACE_3;
-    if content_width < wide_threshold || content_width < split_width {
-        DrawerLayoutMode::Stacked
-    } else {
-        let left_width = SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH;
-        let right_width = (content_width - left_width - crate::theme::SPACE_3).max(0.0);
-        if right_width < SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH {
-            DrawerLayoutMode::Stacked
-        } else {
-            DrawerLayoutMode::Split {
-                left_width,
-                right_width,
-            }
-        }
-    }
-}
+fn paint_sidebar_header(ui: &mut egui::Ui) {
+    let rect = ui
+        .allocate_space(egui::vec2(
+            ui.available_width(),
+            crate::theme::CONTROL_HEIGHT + crate::theme::SPACE_2,
+        ))
+        .1;
+    let pad_x = crate::theme::SPACE_4;
+    let center_y = rect.center().y;
+    let badge_size = 22.0;
+    let badge_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + pad_x + badge_size * 0.5, center_y),
+        egui::vec2(badge_size, badge_size),
+    );
+    ui.painter().rect_filled(
+        badge_rect,
+        egui::CornerRadius::same(5),
+        crate::theme::ACCENT,
+    );
+    let badge_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
+    let badge_galley =
+        ui.painter()
+            .layout_no_wrap("R".to_owned(), badge_font, crate::theme::BACKGROUND);
+    let badge_pos = egui::pos2(
+        badge_rect.center().x - badge_galley.size().x * 0.5,
+        badge_rect.center().y - badge_galley.size().y * 0.5,
+    );
+    ui.painter()
+        .galley(badge_pos, badge_galley, crate::theme::BACKGROUND);
 
-fn paint_drawer_section(
-    ui: &mut egui::Ui,
-    width: f32,
-    _max_height: f32,
-    title: &str,
-    detail: Option<&str>,
-    card_max_height: Option<f32>,
-    add_contents: impl FnOnce(&mut egui::Ui),
-) {
-    let scroll_id = card_max_height
-        .is_some()
-        .then(|| egui::Id::new(("drawer_card_scroll", title)));
-    let section_height = if card_max_height.is_some() {
-        _max_height
-    } else {
-        0.0
-    };
-    ui.allocate_ui_with_layout(
-        egui::vec2(width, section_height),
-        egui::Layout::top_down(egui::Align::Min),
-        |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_1);
-            paint_drawer_section_label(ui, title, detail);
-            ui.add_space(crate::theme::SPACE_1);
-            paint_drawer_card(ui, card_max_height, scroll_id, add_contents);
-        },
+    let name_font = ui.style().text_styles[&egui::TextStyle::Body].clone();
+    let name_galley = ui.painter().layout_no_wrap(
+        "Reference".to_owned(),
+        name_font,
+        crate::theme::TEXT,
+    );
+    let name_pos = egui::pos2(
+        badge_rect.right() + crate::theme::SPACE_2,
+        center_y - name_galley.size().y * 0.5,
+    );
+    ui.painter().galley(name_pos, name_galley, crate::theme::TEXT);
+
+    let kbd_label = sidebar_shortcut_label();
+    let kbd_font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
+    let kbd_galley =
+        ui.painter()
+            .layout_no_wrap(kbd_label.to_owned(), kbd_font, crate::theme::TEXT_SUBTLE);
+    let kbd_pad = egui::vec2(crate::theme::SPACE_1 + 1.0, 2.0);
+    let kbd_size = kbd_galley.size() + kbd_pad * 2.0;
+    let kbd_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.right() - pad_x - kbd_size.x, center_y - kbd_size.y * 0.5),
+        kbd_size,
+    );
+    ui.painter().rect(
+        kbd_rect,
+        egui::CornerRadius::same(4),
+        crate::theme::SURFACE_ELEVATED,
+        crate::theme::stroke_subtle(),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().galley(
+        kbd_rect.min + kbd_pad,
+        kbd_galley,
+        crate::theme::TEXT_SUBTLE,
     );
 }
 
-fn paint_drawer_card(
+fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
+    let bar_height = 32.0;
+    let (_id, rect) =
+        ui.allocate_space(egui::vec2(ui.available_width(), bar_height + 1.0));
+    let pad_x = crate::theme::SPACE_3;
+    let tab_rect =
+        egui::Rect::from_min_max(egui::pos2(rect.left() + pad_x, rect.top()), rect.max);
+    let tabs: [(&str, SidebarTab); 2] = [
+        ("Boards", SidebarTab::Boards),
+        ("Options", SidebarTab::Options),
+    ];
+    let tab_width = (tab_rect.width() - pad_x) / tabs.len() as f32;
+    for (index, (label, tab_value)) in tabs.iter().enumerate() {
+        let cell_min = egui::pos2(tab_rect.left() + tab_width * index as f32, tab_rect.top());
+        let cell = egui::Rect::from_min_size(cell_min, egui::vec2(tab_width, bar_height));
+        let selected = *sidebar_tab == *tab_value;
+        let response = ui.interact(
+            cell,
+            egui::Id::new(("sidebar_tab", label)),
+            egui::Sense::click(),
+        );
+        if response.clicked() {
+            *sidebar_tab = *tab_value;
+        }
+        let label_color = if selected {
+            crate::theme::TEXT
+        } else if response.hovered() {
+            crate::theme::TEXT_MUTED
+        } else {
+            crate::theme::TEXT_SUBTLE
+        };
+        let font = ui.style().text_styles[&egui::TextStyle::Body].clone();
+        let galley = ui
+            .painter()
+            .layout_no_wrap((*label).to_owned(), font, label_color);
+        let label_pos = egui::pos2(
+            cell.center().x - galley.size().x * 0.5,
+            cell.center().y - galley.size().y * 0.5 - 2.0,
+        );
+        ui.painter().galley(label_pos, galley, label_color);
+        if selected {
+            let underline_y = cell.bottom();
+            let underline = egui::Rect::from_min_max(
+                egui::pos2(cell.center().x - 18.0, underline_y - 1.5),
+                egui::pos2(cell.center().x + 18.0, underline_y),
+            );
+            ui.painter()
+                .rect_filled(underline, 0, crate::theme::TEXT);
+        }
+    }
+    ui.painter().hline(
+        rect.left()..=rect.right(),
+        rect.bottom(),
+        crate::theme::stroke_subtle(),
+    );
+}
+
+fn paint_sidebar_options(
     ui: &mut egui::Ui,
-    max_height: Option<f32>,
-    scroll_id: Option<egui::Id>,
-    add_contents: impl FnOnce(&mut egui::Ui),
-) {
-    egui::Frame::new()
-        .fill(crate::theme::SURFACE)
-        .stroke(crate::theme::stroke_subtle())
-        .corner_radius(crate::theme::CARD_RADIUS)
-        .inner_margin(egui::Margin {
-            left: crate::theme::SPACE_2 as i8,
-            right: crate::theme::SPACE_2 as i8,
-            top: crate::theme::SPACE_1 as i8,
-            bottom: crate::theme::SPACE_1 as i8,
-        })
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing =
-                egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1);
-            if let Some(max_height) = max_height {
-                let mut scroll_area = egui::ScrollArea::vertical();
-                if let Some(scroll_id) = scroll_id {
-                    scroll_area = scroll_area.id_salt(scroll_id);
-                }
-                scroll_area
-                    .max_height(max_height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing =
-                            egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1);
-                        add_contents(ui);
-                    });
-            } else {
-                add_contents(ui);
+    auto_image_scaling: &mut bool,
+    import_gap: &mut f32,
+    canvas_image_mode: &mut crate::data::CanvasImageMode,
+    canvas_image_max_side: &mut u32,
+    semantic_search_enabled: &mut bool,
+    canvas: &mut crate::canvas::CanvasState,
+) -> bool {
+    let mut changed = false;
+    let content_rect = ui.available_rect_before_wrap();
+    ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_2);
+        egui::ScrollArea::vertical()
+            .id_salt("sidebar_options_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_3);
+                ui.add_space(crate::theme::SPACE_2);
+                paint_sidebar_section_header(ui, "Options", Some("Board defaults"));
+                paint_sidebar_subcard(ui, |ui| {
+                    changed |= paint_settings_section(
+                        ui,
+                        auto_image_scaling,
+                        import_gap,
+                        canvas_image_mode,
+                        canvas_image_max_side,
+                        semantic_search_enabled,
+                        canvas,
+                    );
+                });
+                ui.add_space(crate::theme::SPACE_4);
+                paint_sidebar_section_header(ui, "Shortcuts", None);
+                paint_supported_shortcuts_section(ui);
+                ui.add_space(crate::theme::SPACE_4);
+            });
+    });
+    changed
+}
+
+fn paint_sidebar_boards(ui: &mut egui::Ui, _canvas: &mut crate::canvas::CanvasState) {
+    let content_rect = ui.available_rect_before_wrap();
+    ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("sidebar_boards_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_1);
+                ui.add_space(crate::theme::SPACE_2);
+                let indent = crate::theme::SPACE_2;
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
+                        egui::pos2(ui.max_rect().left() + indent, ui.max_rect().top()),
+                        egui::pos2(ui.max_rect().right() - indent, ui.max_rect().bottom()),
+                    )),
+                    |ui| {
+                        paint_board_row(
+                            ui,
+                            "Current board",
+                            "All images",
+                            true,
+                        );
+                        ui.add_space(crate::theme::SPACE_2);
+                        paint_create_board_button(ui);
+                        ui.add_space(crate::theme::SPACE_3);
+                        ui.label(
+                            egui::RichText::new("Boards help you split your canvas into focused collections.")
+                                .text_style(egui::TextStyle::Small)
+                                .color(crate::theme::TEXT_SUBTLE),
+                        );
+                    },
+                );
+            });
+    });
+}
+
+fn paint_board_row(ui: &mut egui::Ui, name: &str, detail: &str, active: bool) {
+    let height = 36.0;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::click(),
+    );
+    let fill = if active {
+        crate::theme::SURFACE_ELEVATED
+    } else if response.hovered() {
+        crate::theme::SURFACE_ELEVATED
+    } else {
+        crate::theme::SURFACE
+    };
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(5), fill);
+
+    let swatch_size = 22.0;
+    let swatch_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.left() + crate::theme::SPACE_2,
+            rect.center().y - swatch_size * 0.5,
+        ),
+        egui::vec2(swatch_size, swatch_size),
+    );
+    ui.painter().rect_filled(
+        swatch_rect,
+        egui::CornerRadius::same(3),
+        crate::theme::BORDER,
+    );
+
+    let name_font = ui.style().text_styles[&egui::TextStyle::Body].clone();
+    let detail_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
+    let name_galley = ui
+        .painter()
+        .layout_no_wrap(name.to_owned(), name_font, crate::theme::TEXT);
+    let detail_galley = ui.painter().layout_no_wrap(
+        detail.to_owned(),
+        detail_font,
+        crate::theme::TEXT_SUBTLE,
+    );
+
+    let text_x = swatch_rect.right() + crate::theme::SPACE_2;
+    let name_pos = egui::pos2(text_x, rect.center().y - name_galley.size().y - 1.0);
+    let detail_pos = egui::pos2(text_x, rect.center().y + 1.0);
+    ui.painter().galley(name_pos, name_galley, crate::theme::TEXT);
+    ui.painter()
+        .galley(detail_pos, detail_galley, crate::theme::TEXT_SUBTLE);
+
+    if active {
+        let dot = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - crate::theme::SPACE_3, rect.center().y),
+            egui::vec2(5.0, 5.0),
+        );
+        ui.painter()
+            .rect_filled(dot, egui::CornerRadius::same(3), crate::theme::ACCENT);
+    }
+}
+
+fn paint_create_board_button(ui: &mut egui::Ui) {
+    let height = 30.0;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::click(),
+    );
+    let dash_stroke = egui::Stroke::new(1.0, crate::theme::BORDER);
+    ui.painter().rect(
+        rect,
+        egui::CornerRadius::same(5),
+        if response.hovered() {
+            crate::theme::SURFACE_ELEVATED
+        } else {
+            egui::Color32::TRANSPARENT
+        },
+        dash_stroke,
+        egui::StrokeKind::Inside,
+    );
+
+    let plus_font = ui.style().text_styles[&egui::TextStyle::Body].clone();
+    let plus_galley = ui.painter().layout_no_wrap(
+        "+  Create new board".to_owned(),
+        plus_font,
+        crate::theme::TEXT_SUBTLE,
+    );
+    let pos = egui::pos2(
+        rect.center().x - plus_galley.size().x * 0.5,
+        rect.center().y - plus_galley.size().y * 0.5 - 1.0,
+    );
+    ui.painter()
+        .galley(pos, plus_galley, crate::theme::TEXT_SUBTLE);
+}
+
+fn paint_sidebar_section_header(ui: &mut egui::Ui, title: &str, detail: Option<&str>) {
+    let pad = crate::theme::SPACE_3;
+    let indent_rect = egui::Rect::from_min_max(
+        egui::pos2(ui.max_rect().left() + pad, ui.cursor().top()),
+        egui::pos2(ui.max_rect().right() - pad, ui.cursor().top() + 22.0),
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(indent_rect), |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+            ui.label(
+                egui::RichText::new(title)
+                    .text_style(crate::theme::display_text_style())
+                    .color(crate::theme::TEXT),
+            );
+            if let Some(detail) = detail {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(detail)
+                            .text_style(egui::TextStyle::Small)
+                            .color(crate::theme::TEXT_SUBTLE),
+                    );
+                });
             }
         });
+    });
+    ui.add_space(22.0);
+}
+
+fn paint_sidebar_subcard(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    let pad = crate::theme::SPACE_2;
+    let indent_rect = egui::Rect::from_min_max(
+        egui::pos2(ui.max_rect().left() + pad, ui.cursor().top()),
+        egui::pos2(ui.max_rect().right() - pad, ui.max_rect().bottom()),
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(indent_rect), |ui| {
+        egui::Frame::new()
+            .fill(crate::theme::BACKGROUND)
+            .stroke(crate::theme::stroke_subtle())
+            .corner_radius(egui::CornerRadius::same(7))
+            .inner_margin(egui::Margin {
+                left: crate::theme::SPACE_3 as i8,
+                right: crate::theme::SPACE_3 as i8,
+                top: crate::theme::SPACE_2 as i8,
+                bottom: crate::theme::SPACE_2 as i8,
+            })
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing =
+                    egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1);
+                add_contents(ui);
+            });
+    });
 }
 
 fn paint_settings_section(
@@ -2913,7 +3417,7 @@ fn paint_settings_section(
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_1);
 
-        paint_drawer_subsection_label(ui, "Canvas");
+        paint_sidebar_subsection_label(ui, "Canvas");
         ui.add_space(crate::theme::SPACE_1);
 
         changed |= paint_setting_row(ui, "Canvas background", "Quiet board guide.", |ui| {
@@ -2948,7 +3452,7 @@ fn paint_settings_section(
         );
 
         ui.add_space(crate::theme::SPACE_1);
-        paint_drawer_subsection_label(ui, "Import + search");
+        paint_sidebar_subsection_label(ui, "Import + search");
         ui.add_space(crate::theme::SPACE_1);
 
         let auto_scale_detail = "Caps new imports to a default area.";
@@ -3015,25 +3519,22 @@ fn paint_setting_row(
     add_control: impl FnOnce(&mut egui::Ui) -> bool,
 ) -> bool {
     let mut changed = false;
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1);
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = crate::theme::SPACE_1;
-            ui.label(
-                egui::RichText::new(title)
-                    .text_style(egui::TextStyle::Body)
-                    .strong()
-                    .color(crate::theme::TEXT),
-            );
-            ui.label(
-                egui::RichText::new(detail)
-                    .text_style(egui::TextStyle::Small)
-                    .color(crate::theme::TEXT_MUTED),
-            );
-        });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            changed |= add_control(ui);
-        });
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        ui.label(
+            egui::RichText::new(title)
+                .text_style(egui::TextStyle::Body)
+                .strong()
+                .color(crate::theme::TEXT),
+        );
+        ui.label(
+            egui::RichText::new(detail)
+                .text_style(egui::TextStyle::Small)
+                .color(crate::theme::TEXT_MUTED),
+        );
+        ui.add_space(crate::theme::SPACE_1);
+        changed |= add_control(ui);
+        ui.add_space(crate::theme::SPACE_2);
     });
     changed
 }
@@ -3110,7 +3611,7 @@ fn paint_background_mode_control(
 }
 
 fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
-    paint_drawer_subsection_label(ui, "Implemented");
+    paint_sidebar_subsection_label(ui, "Implemented");
     ui.add_space(crate::theme::SPACE_1);
     ui.label(
         egui::RichText::new("Bindings grouped by task.")
@@ -3129,7 +3630,7 @@ fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
 fn paint_shortcut_table_section(ui: &mut egui::Ui, title: &str, shortcuts: &[SupportedShortcut]) {
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_1);
-        paint_drawer_subsection_label(ui, title);
+        paint_sidebar_subsection_label(ui, title);
         ui.add_space(crate::theme::SPACE_1);
         paint_shortcut_grid(
             ui,
@@ -3188,73 +3689,43 @@ fn paint_switch(ui: &mut egui::Ui, value: &mut bool) -> egui::Response {
     response
 }
 
-fn show_drawer_toggle(
-    ctx: &egui::Context,
-    screen_rect: egui::Rect,
-    drawer_open: bool,
-    drawer_open_state: &mut bool,
-) {
-    if drawer_open {
+fn show_sidebar_hint(ctx: &egui::Context, screen_rect: egui::Rect, sidebar_open: bool) {
+    if sidebar_open {
         return;
     }
 
-    let button_size = egui::vec2(drawer_toggle_width(), SHORTCUT_DRAWER_BUTTON_SIZE);
-    let y = screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN - button_size.y;
-    let x = screen_rect.right() - SHORTCUT_DRAWER_MARGIN - button_size.x;
-
-    egui::Area::new(egui::Id::new("shortcut_drawer_toggle"))
+    egui::Area::new(egui::Id::new("sidebar_hint"))
         .order(egui::Order::Foreground)
-        .fixed_pos(egui::pos2(x, y))
+        .fixed_pos(egui::pos2(
+            screen_rect.right() - crate::theme::SPACE_4,
+            screen_rect.bottom() - crate::theme::SPACE_4,
+        ))
+        .anchor(
+            egui::Align2::RIGHT_BOTTOM,
+            egui::vec2(-crate::theme::SPACE_4, -crate::theme::SPACE_4),
+        )
         .show(ctx, |ui| {
-            let shortcut_label = toggle_drawer_shortcut_label();
-            let (rect, response) = ui.allocate_exact_size(button_size, egui::Sense::click());
-            let visuals = ui.style().interact(&response);
-            ui.painter().rect(
-                rect,
-                crate::theme::CONTROL_RADIUS,
-                visuals.bg_fill,
-                visuals.bg_stroke,
-                egui::StrokeKind::Outside,
-            );
-            let content_rect = rect
-                .shrink2(egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1))
-                .translate(egui::vec2(0.0, -1.0));
-            ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    paint_shortcut_keys(ui, shortcut_label);
+            egui::Frame::new()
+                .fill(crate::theme::SURFACE_ELEVATED)
+                .stroke(crate::theme::stroke_subtle())
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(egui::Margin {
+                    left: 8,
+                    right: 8,
+                    top: 6,
+                    bottom: 6,
+                })
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(sidebar_shortcut_label())
+                            .text_style(egui::TextStyle::Monospace)
+                            .color(crate::theme::TEXT_MUTED),
+                    );
                 });
-            });
-            let response = if drawer_open {
-                response.on_hover_text("Close shortcuts")
-            } else {
-                response.on_hover_text("Open shortcuts")
-            };
-            if response.clicked() {
-                *drawer_open_state = !*drawer_open_state;
-            }
         });
 }
 
-fn paint_drawer_section_label(ui: &mut egui::Ui, title: &str, detail: Option<&str>) {
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(title)
-                .text_style(crate::theme::display_text_style())
-                .color(crate::theme::TEXT),
-        );
-        if let Some(detail) = detail {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(detail)
-                        .text_style(egui::TextStyle::Small)
-                        .color(crate::theme::TEXT_MUTED),
-                );
-            });
-        }
-    });
-}
-
-fn paint_drawer_subsection_label(ui: &mut egui::Ui, title: &str) {
+fn paint_sidebar_subsection_label(ui: &mut egui::Ui, title: &str) {
     ui.label(
         egui::RichText::new(title)
             .text_style(egui::TextStyle::Small)
@@ -3336,7 +3807,7 @@ fn paint_shortcut_keys(ui: &mut egui::Ui, shortcut: &str) {
         });
 }
 
-fn toggle_drawer_shortcut_label() -> &'static str {
+fn sidebar_shortcut_label() -> &'static str {
     #[cfg(target_os = "macos")]
     {
         "⌘B"
@@ -3348,33 +3819,12 @@ fn toggle_drawer_shortcut_label() -> &'static str {
     }
 }
 
-fn shortcut_drawer_height(screen_rect: egui::Rect) -> f32 {
-    let target = (screen_rect.height() * SHORTCUT_DRAWER_HEIGHT_RATIO)
-        .clamp(SHORTCUT_DRAWER_MIN_HEIGHT, SHORTCUT_DRAWER_MAX_HEIGHT);
-    let available = (screen_rect.height() - SHORTCUT_DRAWER_MARGIN * 2.0).max(0.0);
-    target.min(available)
-}
-
-fn drawer_toggle_width() -> f32 {
-    #[cfg(target_os = "macos")]
-    {
-        62.0
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        78.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        ArrangementAction, DrawerLayoutMode, ReferenceApp, SEARCH_OVERLAY_EMPTY_MAX_WIDTH,
-        SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH, SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH,
-        SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH, apply_arrangement_action, drawer_layout_mode,
+        ArrangementAction, ReferenceApp, SEARCH_OVERLAY_EMPTY_MAX_WIDTH, apply_arrangement_action,
         search_overlay_width, search_result_grid_content_height, search_result_grid_layout,
-        search_result_tile_height, should_close_drawer,
+        search_result_tile_height, should_close_sidebar,
     };
     use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
     use crate::jobs::LoadedCanvasItem;
@@ -3509,48 +3959,26 @@ mod tests {
     }
 
     #[test]
-    fn drawer_close_helper_only_closes_for_outside_clicks() {
-        let drawer_rect =
+    fn sidebar_close_helper_only_closes_for_outside_clicks() {
+        let sidebar_rect =
             egui::Rect::from_min_max(egui::pos2(20.0, 30.0), egui::pos2(220.0, 180.0));
 
-        assert!(!should_close_drawer(
+        assert!(!should_close_sidebar(
             true,
             Some(egui::pos2(60.0, 90.0)),
-            drawer_rect
+            sidebar_rect
         ));
-        assert!(should_close_drawer(
+        assert!(should_close_sidebar(
             true,
-            Some(egui::pos2(10.0, 90.0)),
-            drawer_rect
+            Some(egui::pos2(300.0, 90.0)),
+            sidebar_rect
         ));
-        assert!(!should_close_drawer(
+        assert!(!should_close_sidebar(
             false,
-            Some(egui::pos2(10.0, 90.0)),
-            drawer_rect
+            Some(egui::pos2(300.0, 90.0)),
+            sidebar_rect
         ));
-        assert!(!should_close_drawer(true, None, drawer_rect));
-    }
-
-    #[test]
-    fn drawer_layout_stacks_below_the_breakpoint() {
-        assert!(matches!(
-            drawer_layout_mode(SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH - 1.0),
-            DrawerLayoutMode::Stacked
-        ));
-    }
-
-    #[test]
-    fn drawer_layout_uses_a_fixed_split_above_the_breakpoint() {
-        match drawer_layout_mode(SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH + 120.0) {
-            DrawerLayoutMode::Split {
-                left_width,
-                right_width,
-            } => {
-                assert!((left_width - SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH).abs() < f32::EPSILON);
-                assert!(right_width >= SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH);
-            }
-            DrawerLayoutMode::Stacked => panic!("expected split layout above breakpoint"),
-        }
+        assert!(!should_close_sidebar(true, None, sidebar_rect));
     }
 
     #[cfg(feature = "semantic-search")]
@@ -3648,19 +4076,19 @@ mod tests {
 
     #[cfg(feature = "semantic-search")]
     #[test]
-    fn search_result_grid_layout_balances_five_results_into_three_columns() {
+    fn search_result_grid_layout_balances_five_results_into_five_columns() {
         let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(2048.0, 1280.0));
         let width = search_overlay_width(screen_rect, 5);
-        let shell_content_width = width - 32.0;
+        let shell_content_width = width - 24.0;
         let grid_layout = search_result_grid_layout(shell_content_width, 5);
 
-        assert_eq!(grid_layout.columns, 3);
+        assert_eq!(grid_layout.columns, 5);
     }
 
     #[cfg(feature = "semantic-search")]
     #[test]
     fn search_result_grid_content_height_grows_by_rows() {
-        let height = search_result_grid_content_height(5, 3);
+        let height = search_result_grid_content_height(6, 5);
 
         assert_eq!(
             height,
@@ -3702,14 +4130,15 @@ mod tests {
             frame_perf: super::FramePerfState::default(),
             pending_cache_backfills: std::collections::HashSet::new(),
             inflight_image_tier_loads: std::collections::HashMap::new(),
-            drawer_open: false,
+            sidebar_open: false,
+            sidebar_tab: super::SidebarTab::default(),
             status: String::new(),
             perf_log: None,
             next_import_queue_id: 1,
             #[cfg(debug_assertions)]
             verification_search_query: None,
             #[cfg(debug_assertions)]
-            drawer_hot_preview: false,
+            sidebar_hot_preview: false,
         }
     }
 
