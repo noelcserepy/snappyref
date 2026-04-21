@@ -22,11 +22,8 @@ const TEXTBOX_DRAG_THRESHOLD_SCREEN: f32 = 4.0;
 const TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH: f32 = 80.0;
 const TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH: f32 = 120.0;
 const TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH: f32 = 44.0;
-const TEXTBOX_EDITOR_TOOLBAR_CLEARANCE: f32 = crate::theme::SPACE_3;
+const TEXTBOX_EDITOR_TOOLBAR_CLEARANCE: f32 = crate::theme::SPACE_2;
 const TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN: f32 = crate::theme::SPACE_2;
-const TEXTBOX_EDITOR_TOOLBAR_INNER_PADDING_X: f32 = crate::theme::SPACE_3;
-const TEXTBOX_EDITOR_TOOLBAR_INNER_PADDING_Y: f32 = crate::theme::SPACE_2;
-const TEXTBOX_EDITOR_TOOLBAR_LABEL_GAP: f32 = crate::theme::SPACE_3;
 const TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP: f32 = crate::theme::SPACE_1;
 const ANNOTATION_HIT_RADIUS: f32 = 10.0;
 const FOCUS_SELECTION_PADDING_SCREEN: f32 = 48.0;
@@ -3821,29 +3818,14 @@ fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut CanvasState)
 #[derive(Clone, Copy)]
 struct TextboxEditorToolbarMetrics {
     size: egui::Vec2,
-    label_width: f32,
 }
 
-fn textbox_editor_toolbar_metrics(ui: &egui::Ui) -> TextboxEditorToolbarMetrics {
-    let label_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
-    let label_galley =
-        ui.painter()
-            .layout_no_wrap("Text size".to_owned(), label_font, crate::theme::TEXT_MUTED);
+fn textbox_editor_toolbar_metrics(_ui: &egui::Ui) -> TextboxEditorToolbarMetrics {
     let button_count = 4.0;
     let button_span = TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH * button_count
         + TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP * (button_count - 1.0);
-    let content_height = crate::theme::CONTROL_HEIGHT.max(label_galley.size().y);
-    let size = egui::vec2(
-        TEXTBOX_EDITOR_TOOLBAR_INNER_PADDING_X * 2.0
-            + label_galley.size().x
-            + TEXTBOX_EDITOR_TOOLBAR_LABEL_GAP
-            + button_span,
-        TEXTBOX_EDITOR_TOOLBAR_INNER_PADDING_Y * 2.0 + content_height,
-    );
-
     TextboxEditorToolbarMetrics {
-        size,
-        label_width: label_galley.size().x,
+        size: egui::vec2(button_span, crate::theme::CONTROL_HEIGHT),
     }
 }
 
@@ -3863,21 +3845,12 @@ fn editing_textbox_toolbar_rect(
     let metrics = textbox_editor_toolbar_metrics(ui);
     let min_x = rect.left() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN;
     let max_x = (rect.right() - TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN - metrics.size.x).max(min_x);
-    let preferred_x = content_rect.left() - TEXTBOX_EDITOR_TOOLBAR_INNER_PADDING_X;
+    let preferred_x = content_rect.left();
     let x = preferred_x.clamp(min_x, max_x);
 
     let min_y = rect.top() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN;
-    let max_y =
-        (rect.bottom() - TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN - metrics.size.y).max(min_y);
     let above_y = textbox_rect.top() - TEXTBOX_EDITOR_TOOLBAR_CLEARANCE - metrics.size.y;
-    let below_y = textbox_rect.bottom() + TEXTBOX_EDITOR_TOOLBAR_CLEARANCE;
-    let y = if above_y >= min_y {
-        above_y
-    } else if below_y <= max_y {
-        below_y
-    } else {
-        below_y.clamp(min_y, max_y)
-    };
+    let y = above_y.max(min_y);
 
     Some(egui::Rect::from_min_size(egui::pos2(x, y), metrics.size))
 }
@@ -3887,7 +3860,6 @@ fn show_textbox_editor_toolbar(
     toolbar_rect: egui::Rect,
     state: &mut CanvasState,
 ) -> bool {
-    let metrics = textbox_editor_toolbar_metrics(ui);
     let selected = state.editing_textbox_size();
     let mut next_size = None;
     let pointer_interacting = ui.input(|input| {
@@ -3903,64 +3875,40 @@ fn show_textbox_editor_toolbar(
         .order(egui::Order::Foreground)
         .fixed_pos(toolbar_rect.min)
         .show(ui.ctx(), |ui| {
-            egui::Frame::new()
-                .fill(crate::theme::SURFACE)
-                .stroke(crate::theme::stroke_subtle())
-                .corner_radius(crate::theme::CONTROL_RADIUS)
-                .inner_margin(egui::Margin::symmetric(
-                    TEXTBOX_EDITOR_TOOLBAR_INNER_PADDING_X as i8,
-                    TEXTBOX_EDITOR_TOOLBAR_INNER_PADDING_Y as i8,
-                ))
-                .show(ui, |ui| {
-                    ui.set_min_size(toolbar_rect.size());
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 0.0;
-                        ui.add_sized(
-                            egui::vec2(metrics.label_width, crate::theme::CONTROL_HEIGHT),
-                            egui::Label::new(
-                                egui::RichText::new("Text size")
-                                    .text_style(egui::TextStyle::Small)
-                                    .color(crate::theme::TEXT_MUTED),
-                            ),
-                        );
-                        ui.add_space(TEXTBOX_EDITOR_TOOLBAR_LABEL_GAP);
-                        ui.scope(|ui| {
-                            ui.spacing_mut().item_spacing.x = TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP;
-                            ui.horizontal(|ui| {
-                                for size in [
-                                    CanvasTextSize::S,
-                                    CanvasTextSize::M,
-                                    CanvasTextSize::L,
-                                    CanvasTextSize::Xl,
-                                ] {
-                                    let button = egui::Button::new(
-                                        egui::RichText::new(size.label())
-                                            .text_style(egui::TextStyle::Button)
-                                            .color(crate::theme::TEXT),
-                                    )
-                                    .fill(if selected == Some(size) {
-                                        crate::theme::SURFACE_ELEVATED
-                                    } else {
-                                        crate::theme::SURFACE
-                                    })
-                                    .stroke(if selected == Some(size) {
-                                        crate::theme::stroke_strong()
-                                    } else {
-                                        crate::theme::stroke_subtle()
-                                    })
-                                    .corner_radius(crate::theme::CONTROL_RADIUS)
-                                    .min_size(egui::vec2(
-                                        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
-                                        crate::theme::CONTROL_HEIGHT,
-                                    ));
-                                    if ui.add(button).clicked() {
-                                        next_size = Some(size);
-                                    }
-                                }
-                            });
-                        });
-                    });
-                });
+            ui.set_min_size(toolbar_rect.size());
+            ui.spacing_mut().item_spacing.x = TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP;
+            ui.horizontal(|ui| {
+                for size in [
+                    CanvasTextSize::S,
+                    CanvasTextSize::M,
+                    CanvasTextSize::L,
+                    CanvasTextSize::Xl,
+                ] {
+                    let button = egui::Button::new(
+                        egui::RichText::new(size.label())
+                            .text_style(egui::TextStyle::Button)
+                            .color(crate::theme::TEXT),
+                    )
+                    .fill(if selected == Some(size) {
+                        crate::theme::SURFACE_ELEVATED
+                    } else {
+                        crate::theme::SURFACE
+                    })
+                    .stroke(if selected == Some(size) {
+                        crate::theme::stroke_strong()
+                    } else {
+                        crate::theme::stroke_subtle()
+                    })
+                    .corner_radius(crate::theme::CONTROL_RADIUS)
+                    .min_size(egui::vec2(
+                        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
+                        crate::theme::CONTROL_HEIGHT,
+                    ));
+                    if ui.add(button).clicked() {
+                        next_size = Some(size);
+                    }
+                }
+            });
         });
 
     let changed = next_size
@@ -4452,19 +4400,19 @@ mod tests {
     use super::{
         AnnotationDraftState, CanvasImage, CanvasState, CanvasTexture,
         FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, SelectedLayoutItem,
-        TEXTBOX_EDITOR_TOOLBAR_CLEARANCE, TEXTBOX_EDITOR_TOOLBAR_INNER_PADDING_X,
-        TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion, TextboxResizeHandle,
-        annotation_paint_stats_for_annotations, background_screen_step, background_world_step,
-        best_compact_layout, crop_center_offset_local, editing_textbox_toolbar_rect,
-        handle_textbox_primary_press, hit_test_image_resize_handle, hit_test_textbox_resize_handle,
-        horizontal_layout, image_screen_rect, lattice_phase_screen, lattice_phase_world,
-        layout_textbox_galley, legacy_best_compact_layout, merge_cropped_item_fields,
-        min_image_scale, moved_textbox_rect, normalized_textbox_rect,
-        pending_annotation_from_draft, pixel_crop_rect_from_local, resized_image_scale,
-        resized_textbox_rect, screen_rect_to_local_crop_rect, settled_background_lod_level,
-        textbox_content_rect, textbox_empty_hotspot_rect, textbox_font_size,
-        textbox_layout_cache_key, textbox_pointer_region, textbox_required_world_height,
-        textbox_screen_rect, textbox_text_interactive_rect_from_galley, vertical_layout,
+        TEXTBOX_EDITOR_TOOLBAR_CLEARANCE, TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN,
+        TextboxPointerRegion, TextboxResizeHandle, annotation_paint_stats_for_annotations,
+        background_screen_step, background_world_step, best_compact_layout,
+        crop_center_offset_local, editing_textbox_toolbar_rect, handle_textbox_primary_press,
+        hit_test_image_resize_handle, hit_test_textbox_resize_handle, horizontal_layout,
+        image_screen_rect, lattice_phase_screen, lattice_phase_world, layout_textbox_galley,
+        legacy_best_compact_layout, merge_cropped_item_fields, min_image_scale, moved_textbox_rect,
+        normalized_textbox_rect, pending_annotation_from_draft, pixel_crop_rect_from_local,
+        resized_image_scale, resized_textbox_rect, screen_rect_to_local_crop_rect,
+        settled_background_lod_level, textbox_content_rect, textbox_empty_hotspot_rect,
+        textbox_font_size, textbox_layout_cache_key, textbox_pointer_region,
+        textbox_required_world_height, textbox_screen_rect,
+        textbox_text_interactive_rect_from_galley, vertical_layout,
     };
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind,
@@ -4951,12 +4899,7 @@ mod tests {
             let content_rect = textbox_content_rect(textbox_rect);
             let toolbar_rect = editing_textbox_toolbar_rect(ui, &state, canvas_rect).unwrap();
 
-            assert!(
-                (toolbar_rect.left()
-                    - (content_rect.left() - TEXTBOX_EDITOR_TOOLBAR_INNER_PADDING_X))
-                    .abs()
-                    < 0.1
-            );
+            assert!((toolbar_rect.left() - content_rect.left()).abs() < 0.1);
         });
     }
 
@@ -4994,7 +4937,7 @@ mod tests {
     }
 
     #[test]
-    fn textbox_toolbar_falls_below_when_top_edge_blocks_gap() {
+    fn textbox_toolbar_clamps_to_top_margin_when_above_gap_does_not_fit() {
         eframe::egui::__run_test_ui(|ui| {
             let mut state = CanvasState::default();
             let canvas_rect = eframe::egui::Rect::from_min_max(
@@ -5014,12 +4957,10 @@ mod tests {
             });
             state.begin_textbox_edit(72);
 
-            let annotation = state.annotation_by_id(72).unwrap().clone();
-            let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
             let toolbar_rect = editing_textbox_toolbar_rect(ui, &state, canvas_rect).unwrap();
 
             assert!(
-                (toolbar_rect.top() - textbox_rect.bottom() - TEXTBOX_EDITOR_TOOLBAR_CLEARANCE)
+                (toolbar_rect.top() - (canvas_rect.top() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN))
                     .abs()
                     < 0.1
             );
