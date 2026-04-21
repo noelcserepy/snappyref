@@ -281,6 +281,8 @@ pub struct AppConfig {
     startup_trace: bool,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
+    #[cfg(debug_assertions)]
+    verification_search_query: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -325,6 +327,8 @@ enum SearchOverlayStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerificationMode {
     OpenDrawer,
+    DrawArrow,
+    EditTextbox,
 }
 
 impl AppConfig {
@@ -335,6 +339,8 @@ impl AppConfig {
         let mut startup_trace = false;
         #[cfg(debug_assertions)]
         let mut verification_mode = None;
+        #[cfg(debug_assertions)]
+        let mut verification_search_query = None;
         let mut arguments = std::env::args().skip(1);
 
         while let Some(argument) = arguments.next() {
@@ -353,6 +359,26 @@ impl AppConfig {
                 {
                     verification_mode = Some(VerificationMode::OpenDrawer);
                 }
+            } else if cfg!(debug_assertions) && argument == "--verify-arrow" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::DrawArrow);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-textbox" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::EditTextbox);
+                }
+            } else if let Some(query) = argument.strip_prefix("--verify-search=") {
+                #[cfg(debug_assertions)]
+                {
+                    verification_search_query = Some(query.to_owned());
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-search" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_search_query = arguments.next();
+                }
             }
         }
 
@@ -363,6 +389,8 @@ impl AppConfig {
             startup_trace,
             #[cfg(debug_assertions)]
             verification_mode,
+            #[cfg(debug_assertions)]
+            verification_search_query,
         }
     }
 
@@ -371,9 +399,39 @@ impl AppConfig {
         matches!(self.verification_mode, Some(VerificationMode::OpenDrawer))
     }
 
+    #[cfg(debug_assertions)]
+    fn draw_arrow_on_start(&self) -> bool {
+        matches!(self.verification_mode, Some(VerificationMode::DrawArrow))
+    }
+
+    #[cfg(debug_assertions)]
+    fn edit_textbox_on_start(&self) -> bool {
+        matches!(self.verification_mode, Some(VerificationMode::EditTextbox))
+    }
+
+    #[cfg(debug_assertions)]
+    fn verification_search_query(&self) -> Option<&str> {
+        self.verification_search_query.as_deref()
+    }
+
     #[cfg(not(debug_assertions))]
     fn open_drawer_on_start(&self) -> bool {
         false
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn draw_arrow_on_start(&self) -> bool {
+        false
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn edit_textbox_on_start(&self) -> bool {
+        false
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn verification_search_query(&self) -> Option<&str> {
+        None
     }
 
     pub fn perf_log_enabled(&self) -> bool {
@@ -414,6 +472,8 @@ pub struct ReferenceApp {
     pending_cache_backfills: HashSet<(i64, crate::data::CanvasImageCacheTier)>,
     inflight_image_tier_loads: HashMap<i64, crate::data::CanvasImageCacheTier>,
     next_import_queue_id: u64,
+    #[cfg(debug_assertions)]
+    verification_search_query: Option<String>,
 }
 
 impl ReferenceApp {
@@ -467,11 +527,63 @@ impl ReferenceApp {
                     pending_cache_backfills: HashSet::new(),
                     inflight_image_tier_loads: HashMap::new(),
                     next_import_queue_id: 1,
+                    #[cfg(debug_assertions)]
+                    verification_search_query: None,
                 };
                 app.load_user_session();
                 #[cfg(feature = "semantic-search")]
                 app.sync_semantic_search_service();
                 app.enqueue_existing_items();
+                #[cfg(debug_assertions)]
+                if config.draw_arrow_on_start() {
+                    app.canvas
+                        .apply_user_session(&crate::data::UserSession::default());
+                    app.canvas.add_annotation(crate::data::CanvasAnnotation {
+                        id: -1,
+                        kind: crate::data::CanvasAnnotationKind::Arrow,
+                        start_x: -220.0,
+                        start_y: -120.0,
+                        end_x: 220.0,
+                        end_y: 120.0,
+                        text: String::new(),
+                        text_size: crate::data::CanvasTextSize::default(),
+                        archived: false,
+                    });
+                    app.status = "Added debug arrow".to_owned();
+                }
+                #[cfg(debug_assertions)]
+                if config.edit_textbox_on_start() {
+                    app.canvas
+                        .apply_user_session(&crate::data::UserSession::default());
+                    app.canvas.add_annotation(crate::data::CanvasAnnotation {
+                        id: -2,
+                        kind: crate::data::CanvasAnnotationKind::Textbox,
+                        start_x: -160.0,
+                        start_y: -80.0,
+                        end_x: 160.0,
+                        end_y: 80.0,
+                        text: "debug textbox".to_owned(),
+                        text_size: crate::data::CanvasTextSize::default(),
+                        archived: false,
+                    });
+                    app.canvas.begin_textbox_edit(-2);
+                    app.status = "Editing debug textbox".to_owned();
+                }
+                #[cfg(debug_assertions)]
+                if let Some(query) = config.verification_search_query().map(ToOwned::to_owned) {
+                    app.semantic_search_enabled = true;
+                    #[cfg(feature = "semantic-search")]
+                    app.sync_semantic_search_service();
+                    #[cfg(feature = "semantic-search")]
+                    {
+                        app.search_overlay.open = true;
+                        app.search_overlay.focus_requested = true;
+                        app.search_overlay.query = query;
+                        app.search_overlay.last_query_edit_at = Some(Instant::now());
+                    }
+                    app.verification_search_query =
+                        config.verification_search_query().map(ToOwned::to_owned);
+                }
                 app
             }
             Err(error) => Self {
@@ -502,6 +614,8 @@ impl ReferenceApp {
                 pending_cache_backfills: HashSet::new(),
                 inflight_image_tier_loads: HashMap::new(),
                 next_import_queue_id: 1,
+                #[cfg(debug_assertions)]
+                verification_search_query: None,
             },
         }
     }
@@ -1423,6 +1537,53 @@ impl ReferenceApp {
         }
     }
 
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    fn drive_verification_search(&mut self) {
+        let Some(query) = self.verification_search_query.clone() else {
+            return;
+        };
+
+        if !self.semantic_search_enabled {
+            self.semantic_search_enabled = true;
+            self.sync_semantic_search_service();
+        }
+
+        self.search_overlay.open = true;
+        self.search_overlay.focus_requested = true;
+        if self.search_overlay.query.trim() != query.trim() {
+            self.search_overlay.query = query.clone();
+            self.search_overlay.last_query_edit_at = None;
+            self.search_overlay.last_submitted_query.clear();
+            self.search_overlay.results.clear();
+            self.canvas.clear_search_matches();
+        }
+
+        self.submit_search_query();
+    }
+
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    fn verification_search_settled(&self) -> bool {
+        let Some(query) = self.verification_search_query.as_deref() else {
+            return true;
+        };
+
+        self.search_overlay.open
+            && self.search_overlay.query.trim() == query.trim()
+            && self.search_overlay.last_submitted_query == query.trim()
+            && matches!(
+                self.search_overlay.status,
+                SearchOverlayStatus::Ready | SearchOverlayStatus::Error(_)
+            )
+    }
+
+    #[cfg(not(all(debug_assertions, feature = "semantic-search")))]
+    fn drive_verification_search(&mut self) {}
+
+    #[cfg(not(all(debug_assertions, feature = "semantic-search")))]
+    fn verification_search_settled(&self) -> bool {
+        true
+    }
+
     #[cfg(feature = "semantic-search")]
     fn sync_semantic_search_service(&mut self) {
         if !self.semantic_search_enabled {
@@ -2028,6 +2189,13 @@ impl eframe::App for ReferenceApp {
         #[cfg(feature = "semantic-search")]
         self.handle_search_results();
         self.handle_crop_undo(ui.ctx());
+        self.drive_verification_search();
+
+        if !self.verification_search_settled() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(16));
+            return;
+        }
 
         if self.screenshot_capture.is_pending()
             && let Some(render_state) = &self.wgpu_render_state
@@ -3430,6 +3598,8 @@ mod tests {
             status: String::new(),
             perf_log: None,
             next_import_queue_id: 1,
+            #[cfg(debug_assertions)]
+            verification_search_query: None,
         }
     }
 

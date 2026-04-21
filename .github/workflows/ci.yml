@@ -9,28 +9,9 @@ permissions:
   contents: read
 
 jobs:
-  macos:
-    name: macOS checks
-    runs-on: macos-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Format
-        run: cargo fmt --check
-
-      - name: Check
-        run: cargo check --locked --no-default-features --features semantic-search
-
-  windows:
-    name: Windows checks
-    runs-on: windows-latest
+  rust:
+    name: Rust checks
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
