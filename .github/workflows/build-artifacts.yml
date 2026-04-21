@@ -1,0 +1,89 @@
+name: Build Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows artifact
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install libjpeg-turbo
+        shell: pwsh
+        run: |
+          $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
+          git clone https://github.com/microsoft/vcpkg.git $vcpkgRoot
+          & "$vcpkgRoot\bootstrap-vcpkg.bat"
+          & "$vcpkgRoot\vcpkg.exe" install libjpeg-turbo:x64-windows-static
+          "TURBOJPEG_SOURCE=explicit" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TURBOJPEG_LIB_DIR=$vcpkgRoot\installed\x64-windows-static\lib" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TURBOJPEG_INCLUDE_DIR=$vcpkgRoot\installed\x64-windows-static\include" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package artifact
+        shell: pwsh
+        run: |
+          $zipPath = Join-Path $env:RUNNER_TEMP "reference-windows-${{ github.sha }}.zip"
+          Compress-Archive -Path target\release\reference.exe -DestinationPath $zipPath -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reference-windows-${{ github.sha }}
+          path: ${{ runner.temp }}/reference-windows-${{ github.sha }}.zip
+          retention-days: 7
+
+  macos:
+    name: macOS artifact
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install libjpeg-turbo
+        run: brew install jpeg-turbo
+
+      - name: Configure turbojpeg
+        run: |
+          echo "TURBOJPEG_SOURCE=explicit" >> "$GITHUB_ENV"
+          echo "TURBOJPEG_LIB_DIR=$(brew --prefix jpeg-turbo)/lib" >> "$GITHUB_ENV"
+          echo "TURBOJPEG_INCLUDE_DIR=$(brew --prefix jpeg-turbo)/include" >> "$GITHUB_ENV"
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package artifact
+        run: |
+          zip_path="${RUNNER_TEMP}/reference-macos-${{ github.sha }}.zip"
+          (cd target/release && zip -9 "$zip_path" reference)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reference-macos-${{ github.sha }}
+          path: ${{ runner.temp }}/reference-macos-${{ github.sha }}.zip
+          retention-days: 7

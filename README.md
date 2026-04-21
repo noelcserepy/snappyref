@@ -7,3 +7,34 @@
 3. Immediate and shortcut-driven. The app is meant to be used through well-designed shortcuts, with interactions that are direct and available without friction.
 4. Sensible defaults. Repeated flows should be handled automatically whenever possible, so users do not need to repeatedly make the same decisions.
 5. Simplicity. Keep both the product and the codebase as lightweight and direct as possible. If something feels complex, first ask whether it can be done in a simpler way.
+
+## Builds And Releases
+
+This repo uses GitHub Actions for verification and packaging.
+
+### Pull requests
+
+- Open a PR into `main`
+- The `CI` workflow runs on both Windows and macOS
+- It checks formatting and runs the test suite
+- Nothing is published from PRs
+
+### Manual test builds
+
+- Open the `Build Artifacts` workflow in GitHub Actions
+- Trigger it manually with the branch or tag you want to test
+- It produces two zip files:
+  - `reference-windows-<sha>.zip`
+  - `reference-macos-<sha>.zip`
+
+### Tagged releases
+
+- Push a version tag like `v0.1.0`
+- The `Release Artifacts` workflow builds Windows and macOS artifacts
+- It uploads both zip files to the GitHub Release for that tag
+
+### Notes
+
+- The Windows build is produced on a Windows runner.
+- The macOS build is produced on a macOS runner.
+- The semantic-search model is not bundled into the binaries; it is downloaded on first use from Hugging Face.
