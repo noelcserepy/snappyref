@@ -11,7 +11,6 @@ pub(crate) const PALETTE_GRID_COLUMNS: usize = 5;
 pub(crate) const PALETTE_GRID_MAX_HEIGHT: f32 = 360.0;
 
 const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 144.0;
-const SEARCH_RESULT_TILE_FOOTER_HEIGHT: f32 = 0.0;
 
 #[derive(Default)]
 pub(crate) struct SearchOverlayState {
@@ -43,7 +42,7 @@ pub(crate) struct SearchResultGridLayout {
 }
 
 pub(crate) fn search_result_tile_height() -> f32 {
-    SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT
+    SEARCH_RESULT_TILE_PREVIEW_HEIGHT
 }
 
 pub(crate) fn search_result_grid_layout(
@@ -76,35 +75,18 @@ pub(crate) fn search_result_tile(
     active: bool,
     tile_width: f32,
 ) -> egui::Response {
-    let tile_size = egui::vec2(
-        tile_width,
-        SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT,
-    );
+    let tile_size = egui::vec2(tile_width, SEARCH_RESULT_TILE_PREVIEW_HEIGHT);
     let (rect, response) = ui.allocate_exact_size(tile_size, egui::Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    let hovered = response.hovered();
     let tile_radius = if active { 0 } else { crate::theme::CARD_RADIUS };
 
     ui.painter()
         .rect_filled(rect, tile_radius, crate::theme::SURFACE);
-    if active {
-        ui.painter().rect_stroke(
-            rect,
-            tile_radius,
-            crate::theme::stroke_strong(),
-            egui::StrokeKind::Outside,
-        );
-    }
-
-    let preview_rect = egui::Rect::from_min_max(
-        rect.min,
-        egui::pos2(rect.max.x, rect.min.y + SEARCH_RESULT_TILE_PREVIEW_HEIGHT),
-    );
 
     if let Some(item_id) = group.item_ids.first().copied()
         && let Some(preview) = canvas.preview_for_item_id(item_id)
     {
-        let preview_aspect = preview_rect.width() / preview_rect.height().max(1.0);
+        let preview_aspect = rect.width() / rect.height().max(1.0);
         let texture_aspect = preview.texture_size.x / preview.texture_size.y.max(1.0);
         let uv_rect = if texture_aspect > preview_aspect {
             let visible_u = preview_aspect / texture_aspect;
@@ -115,62 +97,21 @@ pub(crate) fn search_result_tile(
             let inset = (1.0 - visible_v) * 0.5;
             egui::Rect::from_min_max(egui::pos2(0.0, inset), egui::pos2(1.0, 1.0 - inset))
         };
-        ui.painter().image(
-            preview.texture_id,
-            preview_rect,
-            uv_rect,
-            egui::Color32::WHITE,
-        );
+        ui.painter()
+            .image(preview.texture_id, rect, uv_rect, egui::Color32::WHITE);
     } else {
         ui.painter()
-            .rect_filled(preview_rect, 0, crate::theme::BACKGROUND);
+            .rect_filled(rect, tile_radius, crate::theme::BACKGROUND);
     }
 
-    let primary_color = if active || hovered {
-        crate::theme::TEXT
-    } else {
-        crate::theme::TEXT_MUTED
-    };
-    let metadata_color = if active || hovered {
-        crate::theme::TEXT_MUTED
-    } else {
-        crate::theme::TEXT_SUBTLE
-    };
-
-    let primary_text = format!("#{}", group.asset_id);
-    let metadata_text = format!("{}x  ·  {:.2}", group.instance_count, group.similarity);
-    let primary_font = ui.style().text_styles[&egui::TextStyle::Body].clone();
-    let metadata_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
-    let primary_galley = ui
-        .painter()
-        .layout_no_wrap(primary_text, primary_font, primary_color);
-    let metadata_galley = ui
-        .painter()
-        .layout_no_wrap(metadata_text, metadata_font, metadata_color);
-
-    let content_rect = egui::Rect::from_min_max(
-        egui::pos2(
-            rect.left() + crate::theme::SPACE_2,
-            preview_rect.bottom() + crate::theme::SPACE_1,
-        ),
-        egui::pos2(
-            rect.right() - crate::theme::SPACE_2,
-            rect.bottom() - crate::theme::SPACE_1,
-        ),
-    );
-    let primary_pos = egui::pos2(
-        content_rect.left(),
-        content_rect.center().y - primary_galley.size().y * 0.5,
-    );
-    let metadata_pos = egui::pos2(
-        content_rect.right() - metadata_galley.size().x,
-        content_rect.center().y - metadata_galley.size().y * 0.5,
-    );
-
-    ui.painter()
-        .galley(primary_pos, primary_galley, primary_color);
-    ui.painter()
-        .galley(metadata_pos, metadata_galley, metadata_color);
+    if active {
+        ui.painter().rect_stroke(
+            rect,
+            tile_radius,
+            crate::theme::stroke_strong(),
+            egui::StrokeKind::Outside,
+        );
+    }
 
     response
 }

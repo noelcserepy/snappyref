@@ -16,9 +16,12 @@ pub struct SemanticSearchConfig {
 
 #[derive(Clone, Debug)]
 pub struct SearchResultGroup {
+    #[allow(dead_code)]
     pub asset_id: i64,
+    #[allow(dead_code)]
     pub similarity: f32,
     pub item_ids: Vec<i64>,
+    #[allow(dead_code)]
     pub instance_count: usize,
 }
 

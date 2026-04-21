@@ -1879,6 +1879,17 @@ impl ReferenceApp {
         let grid_content_height =
             search_result_grid_content_height(result_count, grid_layout.columns);
         let grid_viewport_height = grid_content_height.min(PALETTE_GRID_MAX_HEIGHT);
+        egui::Area::new(egui::Id::new("semantic_search_scrim"))
+            .order(egui::Order::Middle)
+            .fixed_pos(screen_rect.min)
+            .show(ctx, |ui| {
+                let painter = ui.painter();
+                painter.rect_filled(
+                    screen_rect,
+                    0,
+                    egui::Color32::from_black_alpha(170),
+                );
+            });
         let area_response = egui::Area::new(egui::Id::new("semantic_search_overlay"))
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::CENTER_TOP)
