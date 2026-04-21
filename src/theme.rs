@@ -2,13 +2,13 @@ use eframe::egui::{self, FontData, FontDefinitions, FontFamily, FontId, TextStyl
 
 const DM_SANS_VARIABLE: &[u8] = include_bytes!("../assets/fonts/DMSans-Variable.ttf");
 
-const SHADE_20: egui::Color32 = color(0xAE, 0xAC, 0xA4);
-const SHADE_30: egui::Color32 = color(0x99, 0x97, 0x90);
-const SHADE_40: egui::Color32 = color(0x83, 0x81, 0x7B);
-const SHADE_60: egui::Color32 = color(0x57, 0x56, 0x52);
-const SHADE_70: egui::Color32 = color(0x41, 0x41, 0x3E);
-const SHADE_80: egui::Color32 = color(0x2C, 0x2B, 0x29);
-const SHADE_90: egui::Color32 = color(0x16, 0x16, 0x15);
+const SHELL_BG: egui::Color32 = color(0x0A, 0x0A, 0x0A);
+const PANEL_BG: egui::Color32 = color(0x16, 0x15, 0x14);
+const PANEL_BG_PALETTE: egui::Color32 = color(0x17, 0x16, 0x15);
+const PANEL_BG_ELEVATED: egui::Color32 = color(0x22, 0x21, 0x1F);
+const ACCENT_GOLD: egui::Color32 = color(0xE4, 0xCE, 0xB0);
+const BADGE_WARM: egui::Color32 = color(0xC4, 0x85, 0x5A);
+const INDEXED_GREEN: egui::Color32 = color(0x7A, 0xC9, 0x7A);
 
 const DISPLAY_TEXT_STYLE_NAME: &str = "display";
 
@@ -50,10 +50,12 @@ pub const CARD_RADIUS: u8 = 12;
 /// Usage:
 /// - `BACKGROUND` for the canvas and app-level backdrop
 /// - `SURFACE` for panels, drawers, and resting controls
+/// - `PALETTE_SURFACE` for the command palette panel (slightly warmer than `SURFACE`)
 /// - `SURFACE_ELEVATED` for hover states and selected surfaces that need separation
-pub const BACKGROUND: egui::Color32 = SHADE_90;
-pub const SURFACE: egui::Color32 = SHADE_80;
-pub const SURFACE_ELEVATED: egui::Color32 = SHADE_70;
+pub const BACKGROUND: egui::Color32 = SHELL_BG;
+pub const SURFACE: egui::Color32 = PANEL_BG;
+pub const PALETTE_SURFACE: egui::Color32 = PANEL_BG_PALETTE;
+pub const SURFACE_ELEVATED: egui::Color32 = PANEL_BG_ELEVATED;
 
 /// Border and text roles.
 ///
@@ -64,12 +66,15 @@ pub const SURFACE_ELEVATED: egui::Color32 = SHADE_70;
 /// - `TEXT_MUTED` for helper text and secondary values
 /// - `TEXT_SUBTLE` for section labels, table headers, and low-emphasis metadata
 /// - `ACCENT` for active fills and the few states that need emphasis without adding a new hue
-pub const BORDER: egui::Color32 = SHADE_60;
-pub const BORDER_STRONG: egui::Color32 = SHADE_40;
-pub const TEXT: egui::Color32 = color(0xDA, 0xD7, 0xCD);
-pub const TEXT_MUTED: egui::Color32 = SHADE_30;
-pub const TEXT_SUBTLE: egui::Color32 = SHADE_60;
-pub const ACCENT: egui::Color32 = SHADE_20;
+/// - `BADGE`  for the warm "R" app-mark and similar accent swatches
+pub const BORDER: egui::Color32 = egui::Color32::from_rgba_premultiplied(20, 20, 20, 20);
+pub const BORDER_STRONG: egui::Color32 = egui::Color32::from_rgba_premultiplied(31, 31, 31, 31);
+pub const TEXT: egui::Color32 = color(0xF0, 0xF0, 0xF0);
+pub const TEXT_MUTED: egui::Color32 = color(0x8C, 0x8C, 0x8C);
+pub const TEXT_SUBTLE: egui::Color32 = color(0x66, 0x66, 0x66);
+pub const ACCENT: egui::Color32 = ACCENT_GOLD;
+pub const BADGE: egui::Color32 = BADGE_WARM;
+pub const INDEXED_DOT: egui::Color32 = INDEXED_GREEN;
 
 pub fn configure_theme(ctx: &egui::Context) {
     configure_fonts(ctx);

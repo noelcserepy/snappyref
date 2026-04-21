@@ -1946,8 +1946,8 @@ impl ReferenceApp {
                 ui.set_min_width(width);
                 ui.set_max_width(width);
                 egui::Frame::new()
-                    .fill(crate::theme::SURFACE)
-                    .stroke(crate::theme::stroke_strong())
+                    .fill(crate::theme::PALETTE_SURFACE)
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(33)))
                     .corner_radius(egui::CornerRadius::same(12))
                     .shadow(egui::epaint::Shadow {
                         offset: [0, 12],
@@ -2711,8 +2711,8 @@ fn paint_search_icon(ui: &mut egui::Ui, rect: egui::Rect, color: egui::Color32) 
 #[cfg(feature = "semantic-search")]
 fn paint_kbd_pill(ui: &mut egui::Ui, label: &str) {
     egui::Frame::new()
-        .fill(crate::theme::SURFACE_ELEVATED)
-        .stroke(crate::theme::stroke_subtle())
+        .fill(egui::Color32::from_white_alpha(15))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(15)))
         .corner_radius(egui::CornerRadius::same(4))
         .inner_margin(egui::Margin {
             left: 5,
@@ -2748,7 +2748,7 @@ fn paint_palette_facet_row(ui: &mut egui::Ui, result_count: usize) {
                         .color(crate::theme::TEXT_SUBTLE)
                         .size(10.0),
                 );
-                paint_facet_btn(ui, "Color", Some(egui::Color32::from_rgb(228, 206, 176)));
+                paint_facet_btn(ui, "Color", Some(crate::theme::ACCENT));
                 paint_facet_btn(ui, "Kind", None);
                 paint_facet_btn(ui, "Orientation", None);
                 paint_facet_btn(ui, "Source", None);
@@ -2781,8 +2781,8 @@ fn paint_facet_btn(ui: &mut egui::Ui, label: &str, dot: Option<egui::Color32>) -
     ui.painter().rect(
         rect,
         egui::CornerRadius::same(4),
-        egui::Color32::from_white_alpha(10),
-        crate::theme::stroke_subtle(),
+        egui::Color32::from_white_alpha(9),
+        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(15)),
         egui::StrokeKind::Inside,
     );
     let mut x = rect.left() + pad_x;
@@ -2913,7 +2913,7 @@ fn paint_palette_footer(ui: &mut egui::Ui, result_count: usize, status: &SearchO
                     ui.painter().circle_filled(
                         dot_rect.center(),
                         3.0,
-                        egui::Color32::from_rgb(122, 201, 122),
+                        crate::theme::INDEXED_DOT,
                     );
                     ui.label(
                         egui::RichText::new(idle_text)
@@ -2947,11 +2947,11 @@ fn paint_palette_footer(ui: &mut egui::Ui, result_count: usize, status: &SearchO
 
 #[cfg(feature = "semantic-search")]
 fn paint_create_board_pill(ui: &mut egui::Ui, result_count: usize) {
-    let accent = egui::Color32::from_rgb(228, 206, 176);
-    let bg = egui::Color32::from_rgba_unmultiplied(228, 206, 176, 30);
+    let accent = crate::theme::ACCENT;
+    let bg = egui::Color32::from_rgba_unmultiplied(228, 206, 176, 31);
     let stroke = egui::Stroke::new(
         1.0,
-        egui::Color32::from_rgba_unmultiplied(228, 206, 176, 90),
+        egui::Color32::from_rgba_unmultiplied(228, 206, 176, 89),
     );
     egui::Frame::new()
         .fill(bg)
@@ -3077,18 +3077,19 @@ fn paint_sidebar_header(ui: &mut egui::Ui) {
     ui.painter().rect_filled(
         badge_rect,
         egui::CornerRadius::same(5),
-        crate::theme::ACCENT,
+        crate::theme::BADGE,
     );
+    let badge_text_color = egui::Color32::from_rgb(0x1A, 0x19, 0x17);
     let badge_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
-    let badge_galley =
-        ui.painter()
-            .layout_no_wrap("R".to_owned(), badge_font, crate::theme::BACKGROUND);
+    let badge_galley = ui
+        .painter()
+        .layout_no_wrap("R".to_owned(), badge_font, badge_text_color);
     let badge_pos = egui::pos2(
         badge_rect.center().x - badge_galley.size().x * 0.5,
         badge_rect.center().y - badge_galley.size().y * 0.5,
     );
     ui.painter()
-        .galley(badge_pos, badge_galley, crate::theme::BACKGROUND);
+        .galley(badge_pos, badge_galley, badge_text_color);
 
     let name_font = ui.style().text_styles[&egui::TextStyle::Body].clone();
     let name_galley = ui.painter().layout_no_wrap(
@@ -3174,7 +3175,7 @@ fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
                 egui::pos2(cell.center().x + 18.0, underline_y),
             );
             ui.painter()
-                .rect_filled(underline, 0, crate::theme::TEXT);
+                .rect_filled(underline, 0, crate::theme::ACCENT);
         }
     }
     ui.painter().hline(
@@ -3387,7 +3388,7 @@ fn paint_sidebar_subcard(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui:
     );
     ui.scope_builder(egui::UiBuilder::new().max_rect(indent_rect), |ui| {
         egui::Frame::new()
-            .fill(crate::theme::BACKGROUND)
+            .fill(egui::Color32::from_white_alpha(5))
             .stroke(crate::theme::stroke_subtle())
             .corner_radius(egui::CornerRadius::same(7))
             .inner_margin(egui::Margin {
