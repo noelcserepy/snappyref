@@ -9,7 +9,6 @@ pub(crate) const SEARCH_OVERLAY_TOP_MARGIN: f32 = 56.0;
 pub(crate) const PALETTE_WIDTH: f32 = 660.0;
 pub(crate) const PALETTE_GRID_COLUMNS: usize = 5;
 pub(crate) const PALETTE_GRID_MAX_HEIGHT: f32 = 360.0;
-pub(crate) const SEARCH_OVERLAY_EMPTY_MAX_WIDTH: f32 = PALETTE_WIDTH;
 
 const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 144.0;
 const SEARCH_RESULT_TILE_FOOTER_HEIGHT: f32 = 0.0;
@@ -45,10 +44,6 @@ pub(crate) struct SearchResultGridLayout {
 
 pub(crate) fn search_result_tile_height() -> f32 {
     SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT
-}
-
-pub(crate) fn search_overlay_width(_screen_rect: egui::Rect, _result_count: usize) -> f32 {
-    PALETTE_WIDTH
 }
 
 pub(crate) fn search_result_grid_layout(

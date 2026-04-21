@@ -109,6 +109,6 @@ impl CanvasBackground {
 
 impl Default for CanvasBackground {
     fn default() -> Self {
-        Self::Dots
+        Self::None
     }
 }

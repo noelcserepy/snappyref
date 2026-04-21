@@ -24,11 +24,13 @@ pub const SPACE_2: f32 = 8.0;
 pub const SPACE_3: f32 = 12.0;
 pub const SPACE_4: f32 = 16.0;
 pub const SPACE_5: f32 = 20.0;
+#[allow(dead_code)]
 pub const SPACE_6: f32 = 24.0;
 #[allow(dead_code)]
 pub const SPACE_8: f32 = 32.0;
 
 /// Standard drawer and panel padding.
+#[allow(dead_code)]
 pub const PANEL_PADDING: egui::Margin = egui::Margin {
     left: SPACE_4 as i8,
     right: SPACE_4 as i8,
@@ -37,6 +39,7 @@ pub const PANEL_PADDING: egui::Margin = egui::Margin {
 };
 
 /// Preferred gap between stacked sections.
+#[allow(dead_code)]
 pub const SECTION_GAP: f32 = SPACE_6;
 
 /// Standard control height for compact toolbar and drawer controls.

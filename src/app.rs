@@ -56,7 +56,9 @@ struct ShortcutBinding {
 #[derive(Clone, Copy)]
 pub(crate) struct SupportedShortcut {
     pub action: &'static str,
+    #[allow(dead_code)]
     pub windows: &'static str,
+    #[allow(dead_code)]
     pub mac: &'static str,
     binding: Option<ShortcutBinding>,
     shortcut_action: Option<SupportedShortcutAction>,
@@ -2393,8 +2395,8 @@ mod tests {
     use crate::sidebar::should_close_sidebar;
     #[cfg(feature = "semantic-search")]
     use crate::palette::{
-        SEARCH_OVERLAY_EMPTY_MAX_WIDTH, search_overlay_width, search_result_grid_content_height,
-        search_result_grid_layout, search_result_tile_height,
+        PALETTE_WIDTH, search_result_grid_content_height, search_result_grid_layout,
+        search_result_tile_height,
     };
     use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
     use crate::jobs::LoadedCanvasItem;
@@ -2636,20 +2638,8 @@ mod tests {
 
     #[cfg(feature = "semantic-search")]
     #[test]
-    fn search_overlay_width_stays_compact_without_results() {
-        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(2048.0, 1280.0));
-
-        let width = search_overlay_width(screen_rect, 0);
-
-        assert_eq!(width, SEARCH_OVERLAY_EMPTY_MAX_WIDTH);
-    }
-
-    #[cfg(feature = "semantic-search")]
-    #[test]
     fn search_result_grid_layout_balances_five_results_into_five_columns() {
-        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(2048.0, 1280.0));
-        let width = search_overlay_width(screen_rect, 5);
-        let shell_content_width = width - 24.0;
+        let shell_content_width = PALETTE_WIDTH - 24.0;
         let grid_layout = search_result_grid_layout(shell_content_width, 5);
 
         assert_eq!(grid_layout.columns, 5);
