@@ -31,8 +31,8 @@ pub struct DecodedImage {
 pub fn decode_image_file(path: &Path) -> Result<DecodedImage, String> {
     let bytes = std::fs::read(path).map_err(|error| format!("failed to open image: {error}"))?;
     let file_size = bytes.len() as u64;
-    let format =
-        image::guess_format(&bytes).map_err(|error| format!("failed to determine image format: {error}"))?;
+    let format = image::guess_format(&bytes)
+        .map_err(|error| format!("failed to determine image format: {error}"))?;
 
     if !SUPPORTED_IMPORT_FORMATS.contains(&format) {
         return Err(unsupported_format_error(path, Some(format)));
@@ -223,8 +223,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("sample.jpg");
         let rgba = vec![
-            255, 0, 0, 255, 0, 255, 0, 255,
-            0, 0, 255, 255, 255, 255, 255, 255,
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
         ];
         let file = std::fs::File::create(&path).unwrap();
         let writer = std::io::BufWriter::new(file);

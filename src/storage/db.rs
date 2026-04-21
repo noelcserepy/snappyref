@@ -11,7 +11,8 @@ use rusqlite::{Connection, Transaction, params, params_from_iter};
 
 use crate::data::{
     BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationKind,
-    CanvasBackground, CanvasImageCacheTier, CanvasImageMode, ImageAsset, UserSession,
+    CanvasBackground, CanvasImageCacheTier, CanvasImageMode, CanvasTextSize, ImageAsset,
+    UserSession,
 };
 
 #[derive(Clone, Debug)]
@@ -202,7 +203,12 @@ impl Library {
         mode: CanvasImageMode,
         max_side: u32,
     ) -> Option<PathBuf> {
-        self.canvas_image_cache_path_for_tier(asset_id, mode, max_side, CanvasImageCacheTier::Working)
+        self.canvas_image_cache_path_for_tier(
+            asset_id,
+            mode,
+            max_side,
+            CanvasImageCacheTier::Working,
+        )
     }
 
     pub fn canvas_image_cache_path_for_tier(
@@ -277,8 +283,7 @@ impl Library {
         let encoding = choose_canvas_image_cache_encoding(rgba);
         let destination =
             self.canvas_image_cache_destination_for_tier(asset_id, mode, max_side, tier, encoding);
-        let Some(destination) = destination
-        else {
+        let Some(destination) = destination else {
             return Ok(None);
         };
         let file = File::create(&destination)
@@ -287,7 +292,8 @@ impl Library {
         match encoding {
             CanvasImageCacheEncoding::Jpeg => {
                 let rgb = rgba_to_rgb(rgba);
-                let encoder = JpegEncoder::new_with_quality(writer, canvas_image_cache_quality(tier));
+                let encoder =
+                    JpegEncoder::new_with_quality(writer, canvas_image_cache_quality(tier));
                 encoder
                     .write_image(&rgb, width, height, ExtendedColorType::Rgb8)
                     .map_err(|error| format!("failed to write asset preview: {error}"))?;
@@ -1013,7 +1019,7 @@ impl Library {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT id, kind, start_x, start_y, end_x, end_y, text
+                "SELECT id, kind, start_x, start_y, end_x, end_y, text, text_size
                  FROM canvas_annotations
                  WHERE archived = 0
                  ORDER BY id ASC",
@@ -1040,6 +1046,18 @@ impl Library {
                     end_x: row.get(4)?,
                     end_y: row.get(5)?,
                     text: row.get(6)?,
+                    text_size: CanvasTextSize::from_str(&row.get::<_, String>(7)?).ok_or_else(
+                        || {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                7,
+                                rusqlite::types::Type::Text,
+                                Box::new(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "unknown canvas text size",
+                                )),
+                            )
+                        },
+                    )?,
                     archived: false,
                 })
             })
@@ -1055,6 +1073,7 @@ impl Library {
         start: egui::Pos2,
         end: egui::Pos2,
         text: &str,
+        text_size: CanvasTextSize,
     ) -> Result<CanvasAnnotation, String> {
         let connection = self.connection()?;
         connection
@@ -1066,9 +1085,19 @@ impl Library {
                     end_x,
                     end_y,
                     text,
+                    text_size,
                     archived
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![kind.as_str(), start.x, start.y, end.x, end.y, text, 0_i64],
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    kind.as_str(),
+                    start.x,
+                    start.y,
+                    end.x,
+                    end.y,
+                    text,
+                    text_size.as_str(),
+                    0_i64
+                ],
             )
             .map_err(|error| format!("failed to create canvas annotation: {error}"))?;
 
@@ -1080,6 +1109,7 @@ impl Library {
             end_x: end.x,
             end_y: end.y,
             text: text.to_owned(),
+            text_size,
             archived: false,
         })
     }
@@ -1094,14 +1124,16 @@ impl Library {
                      end_x = ?3,
                      end_y = ?4,
                      text = ?5,
-                     archived = ?6
-                 WHERE id = ?7",
+                     text_size = ?6,
+                     archived = ?7
+                 WHERE id = ?8",
                 params![
                     annotation.start_x,
                     annotation.start_y,
                     annotation.end_x,
                     annotation.end_y,
                     annotation.text,
+                    annotation.text_size.as_str(),
                     if annotation.archived { 1_i64 } else { 0_i64 },
                     annotation.id,
                 ],
@@ -1195,6 +1227,7 @@ impl Library {
                     end_x     REAL NOT NULL,
                     end_y     REAL NOT NULL,
                     text      TEXT NOT NULL DEFAULT '',
+                    text_size TEXT NOT NULL DEFAULT 'm',
                     archived  INTEGER NOT NULL DEFAULT 0
                 );
 
@@ -1222,7 +1255,8 @@ impl Library {
         ensure_user_session_canvas_background_column(&connection)?;
         ensure_user_session_semantic_search_enabled_column(&connection)?;
         ensure_user_session_canvas_image_mode_column(&connection)?;
-        ensure_user_session_canvas_image_max_side_column(&connection)
+        ensure_user_session_canvas_image_max_side_column(&connection)?;
+        ensure_canvas_annotations_text_size_column(&connection)
     }
 
     fn connection(&self) -> Result<Connection, String> {
@@ -1299,6 +1333,33 @@ fn ensure_board_items_archived_column(connection: &Connection) -> Result<(), Str
             [],
         )
         .map_err(|error| format!("failed to add archived column to board_items: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_canvas_annotations_text_size_column(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(canvas_annotations)")
+        .map_err(|error| format!("failed to inspect canvas_annotations schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read canvas_annotations schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect canvas_annotations schema: {error}"))?;
+
+    if columns.iter().any(|column| column == "text_size") {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE canvas_annotations ADD COLUMN text_size TEXT NOT NULL DEFAULT 'm'",
+            [],
+        )
+        .map_err(|error| {
+            format!("failed to add text_size column to canvas_annotations: {error}")
+        })?;
 
     Ok(())
 }
@@ -1572,7 +1633,7 @@ fn encode_f32_slice(values: &[f32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::Library;
-    use crate::data::{CanvasAnnotationKind, CanvasBackground, CanvasImageMode};
+    use crate::data::{CanvasAnnotationKind, CanvasBackground, CanvasImageMode, CanvasTextSize};
     use eframe::egui;
     use rusqlite::Connection;
     use std::fs;
@@ -1852,12 +1913,14 @@ mod tests {
                 egui::pos2(10.0, 12.0),
                 egui::pos2(110.0, 72.0),
                 "hello",
+                CanvasTextSize::default(),
             )
             .unwrap();
 
         let loaded = library.load_canvas_annotations().unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0], created);
+        assert_eq!(loaded[0].text_size, CanvasTextSize::default());
 
         let mut updated = loaded[0].clone();
         updated.text = "updated".to_owned();
@@ -1868,6 +1931,49 @@ mod tests {
 
         library.archive_canvas_annotations(&[created.id]).unwrap();
         assert!(library.load_canvas_annotations().unwrap().is_empty());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn existing_canvas_annotations_rows_migrate_text_size_to_default_m() {
+        let root = std::env::temp_dir().join(format!(
+            "reference-annotation-migration-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let db_path = root.join("library.db");
+        let connection = Connection::open(&db_path).unwrap();
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE canvas_annotations (
+                    id INTEGER PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    start_x REAL NOT NULL,
+                    start_y REAL NOT NULL,
+                    end_x REAL NOT NULL,
+                    end_y REAL NOT NULL,
+                    text TEXT NOT NULL DEFAULT '',
+                    archived INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO canvas_annotations (
+                    id, kind, start_x, start_y, end_x, end_y, text, archived
+                ) VALUES (1, 'textbox', 10.0, 12.0, 110.0, 72.0, 'hello', 0);
+                ",
+            )
+            .unwrap();
+        drop(connection);
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let loaded = library.load_canvas_annotations().unwrap();
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].text_size, CanvasTextSize::M);
 
         let _ = fs::remove_dir_all(root);
     }

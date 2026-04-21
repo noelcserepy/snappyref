@@ -23,7 +23,27 @@ const MAX_IMPORT_RESULTS_PER_FRAME: usize = 4;
 #[cfg(feature = "semantic-search")]
 const SEARCH_DEBOUNCE_MS: f32 = 120.0;
 #[cfg(feature = "semantic-search")]
-const SEARCH_RESULT_ROW_HEIGHT: f32 = 20.0;
+const SEARCH_OVERLAY_MAX_SCREEN_WIDTH_RATIO: f32 = 0.78;
+#[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_MAX_SCREEN_HEIGHT_RATIO: f32 = 0.8;
+#[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_TOP_MARGIN: f32 = 28.0;
+#[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_BOTTOM_MARGIN: f32 = 24.0;
+#[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_MIN_WIDTH: f32 = 480.0;
+#[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_EMPTY_WIDTH_RATIO: f32 = 0.52;
+#[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_EMPTY_MAX_WIDTH: f32 = 760.0;
+#[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_GRID_CHROME_HEIGHT: f32 = 108.0;
+#[cfg(feature = "semantic-search")]
+const SEARCH_RESULT_TILE_MIN_WIDTH: f32 = 180.0;
+#[cfg(feature = "semantic-search")]
+const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 320.0;
+#[cfg(feature = "semantic-search")]
+const SEARCH_RESULT_TILE_FOOTER_HEIGHT: f32 = 32.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArrangementAction {
@@ -37,6 +57,7 @@ enum SupportedShortcutAction {
     DeleteSelection,
     DuplicateSelection,
     ToggleDrawer,
+    FocusSelection,
     Arrange(ArrangementAction),
     ApplyDefaultAverageArea,
     AverageSelectionArea,
@@ -120,6 +141,17 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         mac: "T + Click/Drag",
         binding: None,
         shortcut_action: None,
+    },
+    SupportedShortcut {
+        action: "Focus selection",
+        windows: "Space",
+        mac: "Space",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::Space,
+            command: false,
+            shift: false,
+        }),
+        shortcut_action: Some(SupportedShortcutAction::FocusSelection),
     },
     SupportedShortcut {
         action: "Delete selection",
@@ -381,6 +413,7 @@ pub struct ReferenceApp {
     frame_perf: FramePerfState,
     pending_cache_backfills: HashSet<(i64, crate::data::CanvasImageCacheTier)>,
     inflight_image_tier_loads: HashMap<i64, crate::data::CanvasImageCacheTier>,
+    next_import_queue_id: u64,
 }
 
 impl ReferenceApp {
@@ -433,6 +466,7 @@ impl ReferenceApp {
                     frame_perf: FramePerfState::default(),
                     pending_cache_backfills: HashSet::new(),
                     inflight_image_tier_loads: HashMap::new(),
+                    next_import_queue_id: 1,
                 };
                 app.load_user_session();
                 #[cfg(feature = "semantic-search")]
@@ -467,6 +501,7 @@ impl ReferenceApp {
                 frame_perf: FramePerfState::default(),
                 pending_cache_backfills: HashSet::new(),
                 inflight_image_tier_loads: HashMap::new(),
+                next_import_queue_id: 1,
             },
         }
     }
@@ -542,10 +577,41 @@ impl ReferenceApp {
         )
     }
 
+    fn next_import_queue_id(&mut self) -> u64 {
+        let queue_id = self.next_import_queue_id;
+        self.next_import_queue_id = self.next_import_queue_id.saturating_add(1);
+        queue_id
+    }
+
+    fn visible_canvas_screen_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
+        let drawer_rect = self.drawer_rect(screen_rect);
+        egui::Rect::from_min_max(
+            screen_rect.min,
+            egui::pos2(screen_rect.max.x, drawer_rect.top()),
+        )
+    }
+
+    fn queue_import_placeholder(
+        &mut self,
+        queue_id: u64,
+        label: String,
+        desired_world: egui::Pos2,
+        width: u32,
+        height: u32,
+    ) {
+        let scale = crate::jobs::initial_import_scale(width, height, self.auto_image_scaling);
+        self.canvas.add_import_placeholder(
+            queue_id,
+            desired_world,
+            egui::vec2(width as f32 * scale, height as f32 * scale),
+            label,
+        );
+    }
+
     fn handle_dropped_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
-        let Some(import_worker) = &self.import_worker else {
+        if self.import_worker.is_none() {
             return;
-        };
+        }
 
         let dropped_files = ui.input(|input| input.raw.dropped_files.clone());
         if dropped_files.is_empty() {
@@ -560,27 +626,46 @@ impl ReferenceApp {
                 continue;
             };
 
-            if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::ImportPath {
-                source_path: source_path.clone(),
-                desired_world,
-                viewport_world,
-                max_texture_side: self.max_texture_side,
-                canvas_image_settings: crate::jobs::CanvasImageSettings {
-                    mode: self.canvas_image_mode,
-                    max_side: self.canvas_image_max_side,
-                },
-                auto_scale: self.auto_image_scaling,
-                import_gap: self.import_gap,
-                trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
-                    queued_at: Instant::now(),
-                    timings: crate::jobs::ImportTimings::default(),
-                }),
-            }) {
+            let source_path_for_status = source_path.clone();
+            let queue_id = self.next_import_queue_id();
+            let label = source_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("image")
+                .to_owned();
+            let dimensions = image::image_dimensions(&source_path).ok();
+            if let Some((width, height)) = dimensions {
+                self.queue_import_placeholder(queue_id, label, desired_world, width, height);
+            }
+
+            if let Err(error) = self
+                .import_worker
+                .as_ref()
+                .expect("checked import worker")
+                .enqueue(crate::jobs::ImportRequest::ImportPath {
+                    queue_id,
+                    source_path: source_path.clone(),
+                    desired_world,
+                    viewport_world,
+                    max_texture_side: self.max_texture_side,
+                    canvas_image_settings: crate::jobs::CanvasImageSettings {
+                        mode: self.canvas_image_mode,
+                        max_side: self.canvas_image_max_side,
+                    },
+                    auto_scale: self.auto_image_scaling,
+                    import_gap: self.import_gap,
+                    trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
+                        queued_at: Instant::now(),
+                        timings: crate::jobs::ImportTimings::default(),
+                    }),
+                })
+            {
+                self.canvas.remove_import_placeholder(queue_id);
                 self.status = error;
                 continue;
             }
 
-            self.status = format!("Queued import: {}", source_path.display());
+            self.status = format!("Queued import: {}", source_path_for_status.display());
         }
     }
 
@@ -599,9 +684,9 @@ impl ReferenceApp {
             return;
         }
 
-        let Some(import_worker) = &self.import_worker else {
+        if self.import_worker.is_none() {
             return;
-        };
+        }
 
         let mut clipboard = match arboard::Clipboard::new() {
             Ok(clipboard) => clipboard,
@@ -624,25 +709,40 @@ impl ReferenceApp {
         let rgba = clipboard_image.bytes.into_owned();
         let width = clipboard_image.width as u32;
         let height = clipboard_image.height as u32;
-
-        if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::ImportClipboard {
-            rgba,
+        let queue_id = self.next_import_queue_id();
+        self.queue_import_placeholder(
+            queue_id,
+            "Clipboard".to_owned(),
+            desired_world,
             width,
             height,
-            desired_world,
-            viewport_world,
-            max_texture_side: self.max_texture_side,
-            canvas_image_settings: crate::jobs::CanvasImageSettings {
-                mode: self.canvas_image_mode,
-                max_side: self.canvas_image_max_side,
-            },
-            auto_scale: self.auto_image_scaling,
-            import_gap: self.import_gap,
-            trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
-                queued_at: Instant::now(),
-                timings: crate::jobs::ImportTimings::default(),
-            }),
-        }) {
+        );
+
+        if let Err(error) = self
+            .import_worker
+            .as_ref()
+            .expect("checked import worker")
+            .enqueue(crate::jobs::ImportRequest::ImportClipboard {
+                queue_id,
+                rgba,
+                width,
+                height,
+                desired_world,
+                viewport_world,
+                max_texture_side: self.max_texture_side,
+                canvas_image_settings: crate::jobs::CanvasImageSettings {
+                    mode: self.canvas_image_mode,
+                    max_side: self.canvas_image_max_side,
+                },
+                auto_scale: self.auto_image_scaling,
+                import_gap: self.import_gap,
+                trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
+                    queued_at: Instant::now(),
+                    timings: crate::jobs::ImportTimings::default(),
+                }),
+            })
+        {
+            self.canvas.remove_import_placeholder(queue_id);
             self.status = error;
             return;
         }
@@ -762,11 +862,15 @@ impl ReferenceApp {
         for result in results {
             match result {
                 crate::jobs::ImportResult::Loaded(loaded) => {
+                    if let Some(queue_id) = loaded.queue_id {
+                        self.canvas.remove_import_placeholder(queue_id);
+                    }
                     let origin = loaded.origin;
                     let loaded_tier = loaded.loaded_tier;
                     let loaded_record = loaded.record.clone();
                     let existing_load_diagnostics = loaded.existing_load_diagnostics.clone();
-                    self.inflight_image_tier_loads.remove(&loaded.record.item.id);
+                    self.inflight_image_tier_loads
+                        .remove(&loaded.record.item.id);
                     if self
                         .canvas
                         .record_for_item_id(loaded.record.item.id)
@@ -917,10 +1021,14 @@ impl ReferenceApp {
                     self.status = error;
                 }
                 crate::jobs::ImportResult::Failed {
+                    queue_id,
                     item_id,
                     context,
                     error,
                 } => {
+                    if let Some(queue_id) = queue_id {
+                        self.canvas.remove_import_placeholder(queue_id);
+                    }
                     if let Some(item_id) = item_id {
                         self.inflight_image_tier_loads.remove(&item_id);
                         self.canvas.clear_crop_pending(item_id);
@@ -932,8 +1040,7 @@ impl ReferenceApp {
         }
 
         self.frame_perf.import_results_drained = drained_count;
-        self.frame_perf.import_result_drain_ms =
-            drain_started_at.elapsed().as_secs_f64() * 1000.0;
+        self.frame_perf.import_result_drain_ms = drain_started_at.elapsed().as_secs_f64() * 1000.0;
         if drained_count > 0 && self.perf_log.is_some() {
             eprintln!(
                 "[perf] import_result_drain count={} drain_ms={:.2} last_visible={} last_draw_calls={} last_groups={} last_fallback={}",
@@ -988,6 +1095,7 @@ impl ReferenceApp {
         self.canvas.add_loaded_item(
             ctx,
             crate::jobs::LoadedCanvasItem {
+                queue_id: None,
                 preview_width: entry.previous_preview_width,
                 preview_height: entry.previous_preview_height,
                 record: entry.previous_record,
@@ -1018,7 +1126,8 @@ impl ReferenceApp {
             };
             let triggered = match shortcut_action {
                 SupportedShortcutAction::DeleteSelection => delete_shortcut_pressed(ctx),
-                SupportedShortcutAction::DuplicateSelection
+                SupportedShortcutAction::FocusSelection
+                | SupportedShortcutAction::DuplicateSelection
                 | SupportedShortcutAction::ToggleDrawer
                 | SupportedShortcutAction::ApplyDefaultAverageArea
                 | SupportedShortcutAction::AverageSelectionArea
@@ -1046,6 +1155,18 @@ impl ReferenceApp {
                         continue;
                     }
                     self.duplicate_selection_with_gap(ctx, screen_rect);
+                }
+                SupportedShortcutAction::FocusSelection => {
+                    if !self.canvas.has_selection() {
+                        continue;
+                    }
+                    let visible_rect = self.visible_canvas_screen_rect(screen_rect);
+                    if self
+                        .canvas
+                        .focus_selection_in_view(screen_rect, visible_rect)
+                    {
+                        self.status = "Focused selection".to_owned();
+                    }
                 }
                 SupportedShortcutAction::ToggleDrawer => {
                     self.drawer_open = !self.drawer_open;
@@ -1183,7 +1304,8 @@ impl ReferenceApp {
             },
             tier,
         }) {
-            self.pending_cache_backfills.remove(&(record.asset.id, tier));
+            self.pending_cache_backfills
+                .remove(&(record.asset.id, tier));
             self.status = error;
         }
     }
@@ -1237,6 +1359,7 @@ impl ReferenceApp {
                 request.start_world,
                 request.end_world,
                 &request.text,
+                request.text_size,
             ) {
                 Ok(annotation) => {
                     let should_focus_text =
@@ -1510,38 +1633,66 @@ impl ReferenceApp {
             return;
         }
 
-        let width = (screen_rect.width() * 0.52).clamp(280.0, 520.0);
-        let area_pos = egui::pos2(
-            screen_rect.center().x - width * 0.5,
-            screen_rect.top() + 24.0,
-        );
         let input_id = egui::Id::new("semantic_search_input");
-        let compact_margin = egui::Margin {
-            left: 10,
-            right: 10,
-            top: 8,
-            bottom: 8,
+        let shell_margin = egui::Margin {
+            left: 16,
+            right: 16,
+            top: 14,
+            bottom: 12,
         };
+        let overlay_max_height = search_overlay_max_height(screen_rect);
+        let width = search_overlay_width(screen_rect, self.search_overlay.results.len());
+        let shell_content_width = width - shell_margin.left as f32 - shell_margin.right as f32;
+        let grid_max_height = search_overlay_grid_max_height(overlay_max_height);
+        let grid_layout =
+            search_result_grid_layout(shell_content_width, self.search_overlay.results.len());
+        let grid_content_height = search_result_grid_content_height(
+            self.search_overlay.results.len(),
+            grid_layout.columns,
+        );
+        let grid_viewport_height = grid_content_height.min(grid_max_height);
         let area_response = egui::Area::new(egui::Id::new("semantic_search_overlay"))
             .order(egui::Order::Foreground)
-            .fixed_pos(area_pos)
+            .pivot(egui::Align2::CENTER_TOP)
+            .fixed_pos(egui::pos2(
+                screen_rect.center().x,
+                screen_rect.top() + SEARCH_OVERLAY_TOP_MARGIN,
+            ))
             .show(ctx, |ui| {
+                ui.set_width(width);
                 ui.set_min_width(width);
+                ui.set_max_width(width);
                 egui::Frame::new()
                     .fill(crate::theme::SURFACE)
                     .stroke(crate::theme::stroke_subtle())
                     .corner_radius(crate::theme::CARD_RADIUS)
-                    .inner_margin(compact_margin)
+                    .inner_margin(shell_margin)
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing =
-                            egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1);
+                            egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2);
 
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut self.search_overlay.query)
-                                .id(input_id)
-                                .desired_width(f32::INFINITY)
-                                .hint_text("Search images"),
-                        );
+                        let response = ui
+                            .scope(|ui| {
+                                let visuals = &mut ui.style_mut().visuals;
+                                visuals.extreme_bg_color = crate::theme::SURFACE;
+                                visuals.widgets.inactive.bg_fill = egui::Color32::TRANSPARENT;
+                                visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                                visuals.widgets.active.bg_fill = egui::Color32::TRANSPARENT;
+                                visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+                                visuals.widgets.hovered.bg_fill = egui::Color32::TRANSPARENT;
+                                visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                                visuals.selection.bg_fill = crate::theme::SURFACE_ELEVATED;
+                                ui.add_sized(
+                                    egui::vec2(ui.available_width(), 30.0),
+                                    egui::TextEdit::singleline(&mut self.search_overlay.query)
+                                        .id(input_id)
+                                        .desired_width(f32::INFINITY)
+                                        .hint_text("Search images")
+                                        .frame(egui::Frame::NONE)
+                                        .margin(egui::vec2(0.0, 0.0)),
+                                )
+                            })
+                            .inner;
                         if self.search_overlay.focus_requested {
                             response.request_focus();
                             self.search_overlay.focus_requested =
@@ -1570,26 +1721,81 @@ impl ReferenceApp {
                             }
                             SearchOverlayStatus::Error(error) => error.clone(),
                         };
-                        ui.label(
-                            egui::RichText::new(status)
-                                .text_style(egui::TextStyle::Small)
-                                .color(crate::theme::TEXT_SUBTLE),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(status)
+                                    .text_style(egui::TextStyle::Small)
+                                    .color(crate::theme::TEXT_SUBTLE),
+                            );
 
+                            let helper = if self.search_overlay.results.is_empty() {
+                                ""
+                            } else {
+                                "Arrow keys to browse"
+                            };
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        egui::RichText::new(helper)
+                                            .text_style(egui::TextStyle::Small)
+                                            .color(crate::theme::TEXT_SUBTLE),
+                                    );
+                                },
+                            );
+                        });
                         if !self.search_overlay.results.is_empty() {
-                            ui.add_space(crate::theme::SPACE_1);
+                            ui.add_space(crate::theme::SPACE_2);
                             let mut clicked_index = None;
-                            ui.scope(|ui| {
-                                ui.spacing_mut().item_spacing.y = 2.0;
-                                for (index, group) in self.search_overlay.results.iter().enumerate()
+                            let mut render_grid = |ui: &mut egui::Ui| {
+                                ui.spacing_mut().item_spacing =
+                                    egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2);
+                                for (row_index, row_groups) in self
+                                    .search_overlay
+                                    .results
+                                    .chunks(grid_layout.columns.max(1))
+                                    .enumerate()
                                 {
-                                    let active = index == self.search_overlay.active_result_index;
-                                    let response = search_result_row(ui, group, active);
-                                    if response.clicked() {
-                                        clicked_index = Some(index);
-                                    }
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+                                        for (column_index, group) in row_groups.iter().enumerate() {
+                                            let index =
+                                                row_index * grid_layout.columns + column_index;
+                                            let active =
+                                                index == self.search_overlay.active_result_index;
+                                            let response = search_result_tile(
+                                                ui,
+                                                &self.canvas,
+                                                group,
+                                                active,
+                                                grid_layout.tile_width,
+                                            );
+                                            if response.clicked() {
+                                                clicked_index = Some(index);
+                                            }
+                                        }
+                                    });
                                 }
-                            });
+                            };
+
+                            if grid_content_height <= grid_max_height {
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(shell_content_width, grid_content_height),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| render_grid(ui),
+                                );
+                            } else {
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(shell_content_width, grid_viewport_height),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        egui::ScrollArea::vertical()
+                                            .max_height(grid_viewport_height)
+                                            .auto_shrink([false, false])
+                                            .show(ui, |ui| render_grid(ui));
+                                    },
+                                );
+                            }
                             if let Some(index) = clicked_index {
                                 self.search_overlay.active_result_index = index;
                                 self.search_overlay.active_instance_index = 0;
@@ -1622,19 +1828,27 @@ impl ReferenceApp {
         }
 
         if !self.search_overlay.results.is_empty() {
-            if ctx.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
-                self.search_overlay.active_result_index = (self.search_overlay.active_result_index
-                    + 1)
-                    % self.search_overlay.results.len();
+            let last_index = self.search_overlay.results.len() - 1;
+            if ctx.input(|input| input.key_pressed(egui::Key::ArrowRight)) {
+                self.search_overlay.active_result_index =
+                    (self.search_overlay.active_result_index + 1).min(last_index);
+                self.search_overlay.active_instance_index = 0;
+                self.apply_search_matches();
+            } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowLeft)) {
+                self.search_overlay.active_result_index =
+                    self.search_overlay.active_result_index.saturating_sub(1);
+                self.search_overlay.active_instance_index = 0;
+                self.apply_search_matches();
+            } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
+                self.search_overlay.active_result_index =
+                    (self.search_overlay.active_result_index + grid_layout.columns).min(last_index);
                 self.search_overlay.active_instance_index = 0;
                 self.apply_search_matches();
             } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
-                self.search_overlay.active_result_index =
-                    if self.search_overlay.active_result_index == 0 {
-                        self.search_overlay.results.len() - 1
-                    } else {
-                        self.search_overlay.active_result_index - 1
-                    };
+                self.search_overlay.active_result_index = self
+                    .search_overlay
+                    .active_result_index
+                    .saturating_sub(grid_layout.columns);
                 self.search_overlay.active_instance_index = 0;
                 self.apply_search_matches();
             }
@@ -1664,11 +1878,7 @@ impl ReferenceApp {
     }
 
     fn import_viewport_world_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
-        let drawer_rect = self.drawer_rect(screen_rect);
-        let visible_screen_rect = egui::Rect::from_min_max(
-            screen_rect.min,
-            egui::pos2(screen_rect.max.x, drawer_rect.top()),
-        );
+        let visible_screen_rect = self.visible_canvas_screen_rect(screen_rect);
         egui::Rect::from_two_pos(
             self.canvas
                 .screen_to_world(visible_screen_rect.min, screen_rect),
@@ -1845,9 +2055,11 @@ impl eframe::App for ReferenceApp {
         if drawer_open {
             block_drawer_input(ui.ctx(), self.drawer_rect(screen_rect));
         }
+        let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         self.frame_perf.canvas = crate::canvas::show(
             ui,
             screen_rect,
+            visible_canvas_rect,
             &mut self.canvas,
             self.wgpu_render_state.as_ref(),
             self.canvas_image_mode == crate::data::CanvasImageMode::Downscale,
@@ -2045,14 +2257,119 @@ fn should_close_drawer(
 }
 
 #[cfg(feature = "semantic-search")]
-fn search_result_row(ui: &mut egui::Ui, group: &SearchResultGroup, active: bool) -> egui::Response {
-    let available_width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(available_width, SEARCH_RESULT_ROW_HEIGHT),
-        egui::Sense::click(),
+#[derive(Clone, Copy)]
+struct SearchResultGridLayout {
+    columns: usize,
+    tile_width: f32,
+}
+
+#[cfg(feature = "semantic-search")]
+fn search_overlay_max_height(screen_rect: egui::Rect) -> f32 {
+    (screen_rect.height() * SEARCH_OVERLAY_MAX_SCREEN_HEIGHT_RATIO)
+        .min(screen_rect.height() - SEARCH_OVERLAY_TOP_MARGIN - SEARCH_OVERLAY_BOTTOM_MARGIN)
+}
+
+#[cfg(feature = "semantic-search")]
+fn search_overlay_grid_max_height(overlay_max_height: f32) -> f32 {
+    (overlay_max_height - SEARCH_OVERLAY_GRID_CHROME_HEIGHT)
+        .max(SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT)
+}
+
+#[cfg(feature = "semantic-search")]
+fn search_result_tile_height() -> f32 {
+    SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT
+}
+
+#[cfg(feature = "semantic-search")]
+fn search_overlay_width(screen_rect: egui::Rect, _result_count: usize) -> f32 {
+    let screen_width = screen_rect.width();
+    let max_width =
+        (screen_width * SEARCH_OVERLAY_MAX_SCREEN_WIDTH_RATIO).min(SEARCH_OVERLAY_EMPTY_MAX_WIDTH);
+    (screen_width * SEARCH_OVERLAY_EMPTY_WIDTH_RATIO).clamp(SEARCH_OVERLAY_MIN_WIDTH, max_width)
+}
+
+#[cfg(feature = "semantic-search")]
+fn search_result_grid_layout(available_width: f32, result_count: usize) -> SearchResultGridLayout {
+    let gap = crate::theme::SPACE_2;
+    let columns = (((available_width + gap) / (SEARCH_RESULT_TILE_MIN_WIDTH + gap)).floor()
+        as usize)
+        .max(1)
+        .min(result_count.max(1));
+    let tile_width = (available_width - gap * (columns.saturating_sub(1) as f32)) / columns as f32;
+    SearchResultGridLayout {
+        columns,
+        tile_width,
+    }
+}
+
+#[cfg(feature = "semantic-search")]
+fn search_result_grid_content_height(result_count: usize, columns: usize) -> f32 {
+    if result_count == 0 {
+        return 0.0;
+    }
+
+    let rows = result_count.div_ceil(columns.max(1));
+    rows as f32 * search_result_tile_height()
+        + (rows.saturating_sub(1) as f32) * crate::theme::SPACE_2
+}
+
+#[cfg(feature = "semantic-search")]
+fn search_result_tile(
+    ui: &mut egui::Ui,
+    canvas: &crate::canvas::CanvasState,
+    group: &SearchResultGroup,
+    active: bool,
+    tile_width: f32,
+) -> egui::Response {
+    let tile_size = egui::vec2(
+        tile_width,
+        SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT,
     );
+    let (rect, response) = ui.allocate_exact_size(tile_size, egui::Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     let hovered = response.hovered();
+    let tile_radius = if active { 0 } else { crate::theme::CARD_RADIUS };
+
+    ui.painter()
+        .rect_filled(rect, tile_radius, crate::theme::SURFACE);
+    if active {
+        ui.painter().rect_stroke(
+            rect,
+            tile_radius,
+            crate::theme::stroke_strong(),
+            egui::StrokeKind::Outside,
+        );
+    }
+
+    let preview_rect = egui::Rect::from_min_max(
+        rect.min,
+        egui::pos2(rect.max.x, rect.min.y + SEARCH_RESULT_TILE_PREVIEW_HEIGHT),
+    );
+
+    if let Some(item_id) = group.item_ids.first().copied()
+        && let Some(preview) = canvas.preview_for_item_id(item_id)
+    {
+        let preview_aspect = preview_rect.width() / preview_rect.height().max(1.0);
+        let texture_aspect = preview.texture_size.x / preview.texture_size.y.max(1.0);
+        let uv_rect = if texture_aspect > preview_aspect {
+            let visible_u = preview_aspect / texture_aspect;
+            let inset = (1.0 - visible_u) * 0.5;
+            egui::Rect::from_min_max(egui::pos2(inset, 0.0), egui::pos2(1.0 - inset, 1.0))
+        } else {
+            let visible_v = texture_aspect / preview_aspect;
+            let inset = (1.0 - visible_v) * 0.5;
+            egui::Rect::from_min_max(egui::pos2(0.0, inset), egui::pos2(1.0, 1.0 - inset))
+        };
+        ui.painter().image(
+            preview.texture_id,
+            preview_rect,
+            uv_rect,
+            egui::Color32::WHITE,
+        );
+    } else {
+        ui.painter()
+            .rect_filled(preview_rect, 0, crate::theme::BACKGROUND);
+    }
 
     let primary_color = if active || hovered {
         crate::theme::TEXT
@@ -2069,11 +2386,23 @@ fn search_result_row(ui: &mut egui::Ui, group: &SearchResultGroup, active: bool)
     let metadata_text = format!("{}x  ·  {:.2}", group.instance_count, group.similarity);
     let primary_font = ui.style().text_styles[&egui::TextStyle::Body].clone();
     let metadata_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
-    let painter = ui.painter();
-    let primary_galley = painter.layout_no_wrap(primary_text, primary_font, primary_color);
-    let metadata_galley = painter.layout_no_wrap(metadata_text, metadata_font, metadata_color);
+    let primary_galley = ui
+        .painter()
+        .layout_no_wrap(primary_text, primary_font, primary_color);
+    let metadata_galley = ui
+        .painter()
+        .layout_no_wrap(metadata_text, metadata_font, metadata_color);
 
-    let content_rect = rect.shrink2(egui::vec2(crate::theme::SPACE_1, 0.0));
+    let content_rect = egui::Rect::from_min_max(
+        egui::pos2(
+            rect.left() + crate::theme::SPACE_2,
+            preview_rect.bottom() + crate::theme::SPACE_1,
+        ),
+        egui::pos2(
+            rect.right() - crate::theme::SPACE_2,
+            rect.bottom() - crate::theme::SPACE_1,
+        ),
+    );
     let primary_pos = egui::pos2(
         content_rect.left(),
         content_rect.center().y - primary_galley.size().y * 0.5,
@@ -2083,8 +2412,10 @@ fn search_result_row(ui: &mut egui::Ui, group: &SearchResultGroup, active: bool)
         content_rect.center().y - metadata_galley.size().y * 0.5,
     );
 
-    painter.galley(primary_pos, primary_galley, primary_color);
-    painter.galley(metadata_pos, metadata_galley, metadata_color);
+    ui.painter()
+        .galley(primary_pos, primary_galley, primary_color);
+    ui.painter()
+        .galley(metadata_pos, metadata_galley, metadata_color);
 
     response
 }
@@ -2786,7 +3117,11 @@ fn drawer_toggle_width() -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ArrangementAction, ReferenceApp, apply_arrangement_action, should_close_drawer};
+    use super::{
+        ArrangementAction, ReferenceApp, SEARCH_OVERLAY_EMPTY_MAX_WIDTH, apply_arrangement_action,
+        search_overlay_width, search_result_grid_content_height, search_result_grid_layout,
+        search_result_tile_height, should_close_drawer,
+    };
     use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
     use crate::jobs::LoadedCanvasItem;
     use crate::storage::Library;
@@ -2886,6 +3221,7 @@ mod tests {
             canvas.add_loaded_item(
                 &ctx,
                 LoadedCanvasItem {
+                    queue_id: None,
                     record,
                     preview_rgba: rgba,
                     preview_width: *width,
@@ -3024,6 +3360,50 @@ mod tests {
         assert!(!app.search_overlay.focus_requested);
     }
 
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_overlay_width_stays_compact_without_results() {
+        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(2048.0, 1280.0));
+
+        let width = search_overlay_width(screen_rect, 0);
+
+        assert_eq!(width, SEARCH_OVERLAY_EMPTY_MAX_WIDTH);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_result_grid_layout_balances_five_results_into_three_columns() {
+        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(2048.0, 1280.0));
+        let width = search_overlay_width(screen_rect, 5);
+        let shell_content_width = width - 32.0;
+        let grid_layout = search_result_grid_layout(shell_content_width, 5);
+
+        assert_eq!(grid_layout.columns, 3);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_result_grid_content_height_grows_by_rows() {
+        let height = search_result_grid_content_height(5, 3);
+
+        assert_eq!(
+            height,
+            search_result_tile_height() * 2.0 + crate::theme::SPACE_2
+        );
+    }
+
+    #[test]
+    fn queued_import_placeholders_replace_and_cleanup_by_queue_id() {
+        let mut app = test_app(None);
+
+        app.queue_import_placeholder(7, "first".to_owned(), egui::pos2(10.0, 20.0), 300, 200);
+        app.queue_import_placeholder(7, "second".to_owned(), egui::pos2(30.0, 40.0), 120, 90);
+
+        assert_eq!(app.canvas.import_placeholder_count(), 1);
+        app.canvas.remove_import_placeholder(7);
+        assert_eq!(app.canvas.import_placeholder_count(), 0);
+    }
+
     fn test_app(library: Option<Library>) -> ReferenceApp {
         ReferenceApp {
             canvas: crate::canvas::CanvasState::default(),
@@ -3049,6 +3429,7 @@ mod tests {
             drawer_open: false,
             status: String::new(),
             perf_log: None,
+            next_import_queue_id: 1,
         }
     }
 

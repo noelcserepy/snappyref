@@ -16,6 +16,10 @@ use crate::storage::Library;
 
 pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
 
+pub fn default_import_reference_span() -> f32 {
+    DEFAULT_IMPORT_TARGET_CANVAS_AREA.sqrt()
+}
+
 const PERF_STARTUP_IMAGE_SIZE: u32 = 1536;
 const PERF_BACKLOG_IMAGE_SIZE: u32 = 1024;
 
@@ -113,6 +117,7 @@ pub struct ExistingLoadDiagnostics {
 #[derive(Clone, Debug)]
 pub enum ImportRequest {
     ImportPath {
+        queue_id: u64,
         source_path: PathBuf,
         desired_world: egui::Pos2,
         viewport_world: egui::Rect,
@@ -123,6 +128,7 @@ pub enum ImportRequest {
         trace: Option<ImportTrace>,
     },
     ImportClipboard {
+        queue_id: u64,
         rgba: Vec<u8>,
         width: u32,
         height: u32,
@@ -168,6 +174,7 @@ pub enum ImportResult {
         error: String,
     },
     Failed {
+        queue_id: Option<u64>,
         item_id: Option<i64>,
         context: String,
         error: String,
@@ -242,20 +249,22 @@ impl NativeTextureHandle {
         sampler: &eframe::wgpu::Sampler,
     ) -> Option<eframe::wgpu::BindGroup> {
         let view = self.view.as_ref()?;
-        Some(device.create_bind_group(&eframe::wgpu::BindGroupDescriptor {
-            label: Some("reference_canvas_image_bind_group"),
-            layout,
-            entries: &[
-                eframe::wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: eframe::wgpu::BindingResource::TextureView(view.as_ref()),
-                },
-                eframe::wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: eframe::wgpu::BindingResource::Sampler(sampler),
-                },
-            ],
-        }))
+        Some(
+            device.create_bind_group(&eframe::wgpu::BindGroupDescriptor {
+                label: Some("reference_canvas_image_bind_group"),
+                layout,
+                entries: &[
+                    eframe::wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: eframe::wgpu::BindingResource::TextureView(view.as_ref()),
+                    },
+                    eframe::wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: eframe::wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            }),
+        )
     }
 
     #[cfg(test)]
@@ -282,6 +291,7 @@ impl Drop for NativeTextureHandle {
 
 #[derive(Debug)]
 pub struct LoadedCanvasItem {
+    pub queue_id: Option<u64>,
     pub record: BoardItemWithAsset,
     pub preview_rgba: Vec<u8>,
     pub preview_width: u32,
@@ -391,6 +401,7 @@ impl ImportWorker {
                 while let Some(request) = worker_queue.pop(kind) {
                     let result = match request {
                         ImportRequest::ImportPath {
+                            queue_id,
                             source_path,
                             desired_world,
                             viewport_world,
@@ -401,6 +412,7 @@ impl ImportWorker {
                             trace,
                         } => import_path(
                             &worker_library,
+                            queue_id,
                             source_path,
                             desired_world,
                             viewport_world,
@@ -412,6 +424,7 @@ impl ImportWorker {
                             worker_render_state.as_ref(),
                         ),
                         ImportRequest::ImportClipboard {
+                            queue_id,
                             rgba,
                             width,
                             height,
@@ -424,6 +437,7 @@ impl ImportWorker {
                             trace,
                         } => import_clipboard(
                             &worker_library,
+                            queue_id,
                             rgba,
                             width,
                             height,
@@ -647,6 +661,7 @@ pub fn import_path_sync(
 ) -> Result<LoadedCanvasItem, String> {
     import_path_sync_traced(
         library,
+        None,
         source_path,
         desired_world,
         viewport_world,
@@ -671,6 +686,7 @@ pub fn import_clipboard_sync(
 ) -> Result<LoadedCanvasItem, String> {
     import_clipboard_sync_traced(
         library,
+        0,
         rgba,
         width,
         height,
@@ -954,6 +970,7 @@ pub fn worker_interactive_import_perf_report() -> Result<WorkerInteractiveImport
 
 fn import_path_sync_traced(
     library: &Library,
+    queue_id: Option<u64>,
     source_path: PathBuf,
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
@@ -1032,6 +1049,7 @@ fn import_path_sync_traced(
     }
 
     Ok(LoadedCanvasItem {
+        queue_id,
         record,
         preview_rgba: preview.rgba,
         preview_width: preview.width,
@@ -1046,6 +1064,7 @@ fn import_path_sync_traced(
 
 fn import_path(
     library: &Library,
+    queue_id: u64,
     source_path: PathBuf,
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
@@ -1058,6 +1077,7 @@ fn import_path(
 ) -> ImportResult {
     match import_path_sync_traced(
         library,
+        Some(queue_id),
         source_path.clone(),
         desired_world,
         viewport_world,
@@ -1070,6 +1090,7 @@ fn import_path(
     ) {
         Ok(loaded) => ImportResult::Loaded(loaded),
         Err(error) => ImportResult::Failed {
+            queue_id: Some(queue_id),
             item_id: None,
             context: source_path.display().to_string(),
             error,
@@ -1079,6 +1100,7 @@ fn import_path(
 
 fn import_clipboard(
     library: &Library,
+    queue_id: u64,
     rgba: Vec<u8>,
     width: u32,
     height: u32,
@@ -1093,6 +1115,7 @@ fn import_clipboard(
 ) -> ImportResult {
     match import_clipboard_sync_traced(
         library,
+        queue_id,
         rgba,
         width,
         height,
@@ -1107,6 +1130,7 @@ fn import_clipboard(
     ) {
         Ok(loaded) => ImportResult::Loaded(loaded),
         Err(error) => ImportResult::Failed {
+            queue_id: Some(queue_id),
             item_id: None,
             context: "clipboard".to_owned(),
             error,
@@ -1116,6 +1140,7 @@ fn import_clipboard(
 
 fn import_clipboard_sync_traced(
     library: &Library,
+    queue_id: u64,
     rgba: Vec<u8>,
     width: u32,
     height: u32,
@@ -1182,6 +1207,7 @@ fn import_clipboard_sync_traced(
     }
 
     Ok(LoadedCanvasItem {
+        queue_id: Some(queue_id),
         record,
         preview_rgba: preview.rgba,
         preview_width: preview.width,
@@ -1224,6 +1250,7 @@ fn load_existing(
                 Ok(preview_texture) => preview_texture,
                 Err(error) => {
                     return ImportResult::Failed {
+                        queue_id: None,
                         item_id: Some(record.item.id),
                         context: record.asset.original_path.display().to_string(),
                         error,
@@ -1236,6 +1263,7 @@ fn load_existing(
                 trace.timings.worker_total = worker_started_at.elapsed();
             }
             ImportResult::Loaded(LoadedCanvasItem {
+                queue_id: None,
                 record,
                 preview_rgba: preview.rgba,
                 preview_width: preview.width,
@@ -1248,6 +1276,7 @@ fn load_existing(
             })
         }
         Err(error) => ImportResult::Failed {
+            queue_id: None,
             item_id: Some(record.item.id),
             context: record.asset.original_path.display().to_string(),
             error,
@@ -1373,6 +1402,7 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
 
     let started_at = Instant::now();
     worker.enqueue(ImportRequest::ImportClipboard {
+        queue_id: 1,
         rgba: solid_rgba(1200, 900),
         width: 1200,
         height: 900,
@@ -1534,6 +1564,7 @@ fn crop_item(
         Ok(decoded) => decoded,
         Err(error) => {
             return ImportResult::Failed {
+                queue_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
                 error,
@@ -1544,6 +1575,7 @@ fn crop_item(
         Some(image) => image,
         None => {
             return ImportResult::Failed {
+                queue_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
                 error: "failed to rebuild source image pixels for crop".to_owned(),
@@ -1576,6 +1608,7 @@ fn crop_item(
         Ok(path) => path,
         Err(error) => {
             return ImportResult::Failed {
+                queue_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
                 error,
@@ -1588,6 +1621,7 @@ fn crop_item(
         Err(error) => {
             let _ = std::fs::remove_file(&stored_path);
             return ImportResult::Failed {
+                queue_id: None,
                 item_id: Some(request.item_id),
                 context: stored_path.display().to_string(),
                 error: format!("failed to read cropped image metadata: {error}"),
@@ -1600,6 +1634,7 @@ fn crop_item(
             Err(error) => {
                 let _ = std::fs::remove_file(&stored_path);
                 return ImportResult::Failed {
+                    queue_id: None,
                     item_id: Some(request.item_id),
                     context: source_context,
                     error,
@@ -1616,6 +1651,7 @@ fn crop_item(
         Err(error) => {
             let _ = std::fs::remove_file(&stored_path);
             return ImportResult::Failed {
+                queue_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
                 error,
@@ -1627,6 +1663,7 @@ fn crop_item(
         Err(error) => {
             let _ = std::fs::remove_file(&stored_path);
             return ImportResult::Failed {
+                queue_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
                 error,
@@ -1712,12 +1749,11 @@ fn build_preview_texture(
     )))
 }
 
-fn tier_max_side(
-    canvas_image_settings: CanvasImageSettings,
-    tier: CanvasImageCacheTier,
-) -> u32 {
+fn tier_max_side(canvas_image_settings: CanvasImageSettings, tier: CanvasImageCacheTier) -> u32 {
     match tier {
-        CanvasImageCacheTier::Overview => OVERVIEW_CACHE_MAX_SIDE.min(canvas_image_settings.max_side),
+        CanvasImageCacheTier::Overview => {
+            OVERVIEW_CACHE_MAX_SIDE.min(canvas_image_settings.max_side)
+        }
         CanvasImageCacheTier::Working => canvas_image_settings.max_side,
         CanvasImageCacheTier::Detail => DETAIL_CACHE_MAX_SIDE.max(canvas_image_settings.max_side),
     }
@@ -1850,15 +1886,15 @@ fn backfill_canvas_image_cache(
     )?;
     let source_path = library
         .store_canvas_image_cache_for_tier(
-        record.asset.id,
-        canvas_image_settings.mode,
-        canvas_image_settings.max_side,
-        tier,
-        &canvas_source.rgba,
-        canvas_source.width,
-        canvas_source.height,
-    )?
-    .unwrap_or_else(|| record.asset.original_path.clone());
+            record.asset.id,
+            canvas_image_settings.mode,
+            canvas_image_settings.max_side,
+            tier,
+            &canvas_source.rgba,
+            canvas_source.width,
+            canvas_source.height,
+        )?
+        .unwrap_or_else(|| record.asset.original_path.clone());
     let source_file_size = std::fs::metadata(&source_path)
         .map(|metadata| metadata.len())
         .unwrap_or(0);
@@ -1932,7 +1968,7 @@ fn backfill_cache_tier(
     }
 }
 
-fn initial_import_scale(asset_width: u32, asset_height: u32, auto_scale: bool) -> f32 {
+pub fn initial_import_scale(asset_width: u32, asset_height: u32, auto_scale: bool) -> f32 {
     if !auto_scale || asset_width == 0 || asset_height == 0 {
         return 1.0;
     }
@@ -2212,6 +2248,7 @@ mod tests {
 
         let tall = match import_clipboard(
             &library,
+            1,
             tall_rgba,
             390,
             844,
@@ -2229,6 +2266,7 @@ mod tests {
         };
         let small = match import_clipboard(
             &library,
+            2,
             small_rgba,
             160,
             200,
@@ -2358,6 +2396,7 @@ mod tests {
 
         let first = match import_clipboard(
             &library,
+            1,
             solid_rgba(200, 200),
             200,
             200,
@@ -2376,6 +2415,7 @@ mod tests {
 
         let second = match import_clipboard(
             &library,
+            2,
             solid_rgba(200, 200),
             200,
             200,
@@ -2418,6 +2458,7 @@ mod tests {
         for index in 0..5 {
             result_tx
                 .send(ImportResult::Failed {
+                    queue_id: None,
                     item_id: Some(index),
                     context: format!("item-{index}"),
                     error: "synthetic".to_owned(),
@@ -2469,6 +2510,7 @@ mod tests {
 
         let loaded = match import_clipboard(
             &library,
+            1,
             solid_rgba(64, 64),
             64,
             64,
@@ -2713,15 +2755,15 @@ mod tests {
         let downscaled_settings = downscaled_canvas_settings(2000);
         let downscaled_cache = library
             .store_canvas_image_cache(
-            record.asset.id,
-            downscaled_settings.mode,
-            downscaled_settings.max_side,
-            &solid_rgba(2000, 1500),
-            2000,
-            1500,
-        )
-        .unwrap()
-        .unwrap();
+                record.asset.id,
+                downscaled_settings.mode,
+                downscaled_settings.max_side,
+                &solid_rgba(2000, 1500),
+                2000,
+                1500,
+            )
+            .unwrap()
+            .unwrap();
         assert!(downscaled_cache.is_file());
         fs::remove_file(&record.asset.original_path).unwrap();
 

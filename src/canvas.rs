@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crate::data::{
     BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, CanvasBackground,
-    CanvasImageCacheTier, UserSession,
+    CanvasImageCacheTier, CanvasTextSize, UserSession,
 };
 use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
 use eframe::egui;
@@ -17,12 +17,16 @@ const IMAGE_CULL_MARGIN_SCREEN: f32 = 128.0;
 const ANNOTATION_CULL_MARGIN_SCREEN: f32 = 128.0;
 const IMAGE_RESIZE_HIT_RADIUS: f32 = 14.0;
 const MIN_TEXTBOX_WORLD_SIZE: egui::Vec2 = egui::vec2(240.0, 56.0);
-const TEXTBOX_FONT_SIZE: f32 = 20.0;
 const TEXTBOX_RESIZE_HIT_RADIUS: f32 = 14.0;
 const TEXTBOX_DRAG_THRESHOLD_SCREEN: f32 = 4.0;
 const TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH: f32 = 80.0;
 const TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH: f32 = 120.0;
+const TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH: f32 = 44.0;
+const TEXTBOX_EDITOR_TOOLBAR_CLEARANCE: f32 = crate::theme::SPACE_2;
+const TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN: f32 = crate::theme::SPACE_2;
+const TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP: f32 = crate::theme::SPACE_1;
 const ANNOTATION_HIT_RADIUS: f32 = 10.0;
+const FOCUS_SELECTION_PADDING_SCREEN: f32 = 48.0;
 const BACKGROUND_BASE_WORLD_STEP: f32 = 64.0;
 const BACKGROUND_MIN_SCREEN_STEP: f32 = 40.0;
 const BACKGROUND_MAX_SCREEN_STEP: f32 = 112.0;
@@ -56,6 +60,7 @@ pub struct CanvasState {
     dirty_annotation_ids: Vec<i64>,
     pending_archived_annotation_ids: Vec<i64>,
     pending_annotation: Option<PendingAnnotation>,
+    import_placeholders: Vec<ImportPlaceholder>,
     last_pointer_screen_pos: Option<egui::Pos2>,
     textbox_layout_cache: HashMap<i64, TextboxLayoutCacheEntry>,
     pending_image_tier_loads: HashMap<i64, CanvasImageCacheTier>,
@@ -90,6 +95,12 @@ pub struct ImagePassMetrics {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CanvasFrameMetrics {
     pub image_pass: ImagePassMetrics,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CanvasImagePreview {
+    pub texture_id: egui::TextureId,
+    pub texture_size: egui::Vec2,
 }
 
 #[cfg(test)]
@@ -274,6 +285,7 @@ enum TextboxPointerRegion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TextboxLayoutCacheKey {
     text_hash: u64,
+    text_size: CanvasTextSize,
     wrap_width_bits: u32,
     zoom_bits: u32,
 }
@@ -283,6 +295,14 @@ struct TextboxLayoutCacheEntry {
     key: TextboxLayoutCacheKey,
     galley: Arc<egui::Galley>,
     required_world_height: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ImportPlaceholder {
+    queue_id: u64,
+    center_world: egui::Pos2,
+    size_world: egui::Vec2,
+    label: String,
 }
 
 struct MarqueeState {
@@ -309,6 +329,7 @@ pub struct PendingAnnotation {
     pub start_world: egui::Pos2,
     pub end_world: egui::Pos2,
     pub text: String,
+    pub text_size: CanvasTextSize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -355,6 +376,7 @@ impl Default for CanvasState {
             dirty_annotation_ids: Vec::new(),
             pending_archived_annotation_ids: Vec::new(),
             pending_annotation: None,
+            import_placeholders: Vec::new(),
             last_pointer_screen_pos: None,
             textbox_layout_cache: HashMap::new(),
             pending_image_tier_loads: HashMap::new(),
@@ -522,6 +544,16 @@ impl CanvasState {
             .map(|image| image.record.clone())
     }
 
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn preview_for_item_id(&self, item_id: i64) -> Option<CanvasImagePreview> {
+        let image = self.image_by_item_id(item_id)?;
+        let [width, height] = image.texture.size();
+        Some(CanvasImagePreview {
+            texture_id: image.texture.id(),
+            texture_size: egui::vec2(width as f32, height as f32),
+        })
+    }
+
     pub fn background(&self) -> CanvasBackground {
         self.background
     }
@@ -551,6 +583,30 @@ impl CanvasState {
         self.pan = -center * self.zoom;
     }
 
+    pub fn focus_selection_in_view(
+        &mut self,
+        canvas_rect: egui::Rect,
+        target_rect: egui::Rect,
+    ) -> bool {
+        let Some(bounds) = self.selected_world_bounds() else {
+            return false;
+        };
+
+        let padded_size = target_rect
+            .shrink(FOCUS_SELECTION_PADDING_SCREEN)
+            .size()
+            .max(egui::vec2(1.0, 1.0));
+        let width_zoom = padded_size.x / bounds.width().max(1.0);
+        let height_zoom = padded_size.y / bounds.height().max(1.0);
+        self.zoom = width_zoom
+            .min(height_zoom)
+            .clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
+
+        let center_world = bounds.center().to_vec2();
+        self.pan = target_rect.center() - canvas_rect.center() - center_world * self.zoom;
+        true
+    }
+
     pub fn selected_center_world(&self) -> Option<egui::Pos2> {
         let mut min = egui::Pos2::new(f32::INFINITY, f32::INFINITY);
         let mut max = egui::Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
@@ -577,6 +633,32 @@ impl CanvasState {
 
     pub fn take_pending_annotation(&mut self) -> Option<PendingAnnotation> {
         self.pending_annotation.take()
+    }
+
+    pub fn add_import_placeholder(
+        &mut self,
+        queue_id: u64,
+        center_world: egui::Pos2,
+        size_world: egui::Vec2,
+        label: String,
+    ) {
+        self.remove_import_placeholder(queue_id);
+        self.import_placeholders.push(ImportPlaceholder {
+            queue_id,
+            center_world,
+            size_world,
+            label,
+        });
+    }
+
+    pub fn remove_import_placeholder(&mut self, queue_id: u64) {
+        self.import_placeholders
+            .retain(|placeholder| placeholder.queue_id != queue_id);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn import_placeholder_count(&self) -> usize {
+        self.import_placeholders.len()
     }
 
     pub fn take_pending_image_tier_loads(&mut self) -> Vec<(i64, CanvasImageCacheTier)> {
@@ -710,6 +792,31 @@ impl CanvasState {
         }
 
         selected_rect
+    }
+
+    pub fn editing_textbox_size(&self) -> Option<CanvasTextSize> {
+        let annotation_id = self.editing_text_annotation_id?;
+        self.annotation_by_id(annotation_id)
+            .filter(|annotation| annotation.kind == CanvasAnnotationKind::Textbox)
+            .map(|annotation| annotation.text_size)
+    }
+
+    pub fn apply_text_size_to_editing_textbox(&mut self, text_size: CanvasTextSize) -> bool {
+        let Some(annotation_id) = self.editing_text_annotation_id else {
+            return false;
+        };
+        let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
+            return false;
+        };
+        if annotation.kind != CanvasAnnotationKind::Textbox || annotation.text_size == text_size {
+            return false;
+        }
+
+        annotation.text_size = text_size;
+        self.invalidate_textbox_layout_cache(annotation_id);
+        self.mark_annotation_dirty(annotation_id);
+        self.focus_text_editor = true;
+        true
     }
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
@@ -1046,11 +1153,12 @@ impl CanvasState {
         &mut self,
         annotation_id: i64,
         text: &str,
+        text_size: CanvasTextSize,
         wrap_width: f32,
         zoom: f32,
         galley: Arc<egui::Galley>,
     ) -> TextboxLayoutCacheEntry {
-        let key = textbox_layout_cache_key(text, wrap_width, zoom);
+        let key = textbox_layout_cache_key(text, text_size, wrap_width, zoom);
         let entry = TextboxLayoutCacheEntry {
             key,
             required_world_height: textbox_required_world_height(galley.size().y, zoom),
@@ -1066,18 +1174,19 @@ impl CanvasState {
         ui: &egui::Ui,
         annotation_id: i64,
         text: &str,
+        text_size: CanvasTextSize,
         wrap_width: f32,
         zoom: f32,
     ) -> TextboxLayoutCacheEntry {
-        let key = textbox_layout_cache_key(text, wrap_width, zoom);
+        let key = textbox_layout_cache_key(text, text_size, wrap_width, zoom);
         if let Some(entry) = self.textbox_layout_cache.get(&annotation_id)
             && entry.key == key
         {
             return entry.clone();
         }
 
-        let galley = layout_textbox_galley(ui, text, wrap_width, zoom);
-        self.cache_textbox_layout(annotation_id, text, wrap_width, zoom, galley)
+        let galley = layout_textbox_galley(ui, text, text_size, wrap_width, zoom);
+        self.cache_textbox_layout(annotation_id, text, text_size, wrap_width, zoom, galley)
     }
 
     fn selected_layout_items(&self) -> Vec<SelectedLayoutItem> {
@@ -1183,6 +1292,20 @@ impl CanvasState {
             .iter()
             .filter(|annotation| self.is_annotation_selected(annotation.id))
             .collect()
+    }
+
+    fn selected_world_bounds(&self) -> Option<egui::Rect> {
+        let mut selected_rect = self.selected_bounds_world();
+
+        for annotation in self.selected_annotations() {
+            let annotation_rect = annotation_world_rect(annotation);
+            selected_rect = Some(match selected_rect {
+                Some(existing) => existing.union(annotation_rect),
+                None => annotation_rect,
+            });
+        }
+
+        selected_rect
     }
 
     fn selected_annotation(&self) -> Option<&CanvasAnnotation> {
@@ -1318,10 +1441,10 @@ fn best_compact_layout(
 
         match &best_layout {
             Some((_, _, _, best_squareness, best_area, best_index))
-                if area > *best_area
-                    || ((area - *best_area).abs() < 0.001 && squareness > *best_squareness)
-                    || ((area - *best_area).abs() < 0.001
-                        && (squareness - *best_squareness).abs() < 0.001
+                if squareness > *best_squareness
+                    || ((squareness - *best_squareness).abs() < 0.001 && area > *best_area)
+                    || ((squareness - *best_squareness).abs() < 0.001
+                        && (area - *best_area).abs() < 0.001
                         && candidate_index >= *best_index) => {}
             _ => {
                 best_layout = Some((placements, width, height, squareness, area, candidate_index));
@@ -1890,10 +2013,7 @@ pub(crate) fn legacy_compact_layout_area_for_sizes(
 }
 
 impl ImagePassResources {
-    fn new(
-        device: &eframe::wgpu::Device,
-        target_format: eframe::wgpu::TextureFormat,
-    ) -> Self {
+    fn new(device: &eframe::wgpu::Device, target_format: eframe::wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(eframe::wgpu::ShaderModuleDescriptor {
             label: Some("reference_canvas_image_shader"),
             source: eframe::wgpu::ShaderSource::Wgsl(IMAGE_PASS_SHADER.into()),
@@ -1931,14 +2051,14 @@ impl ImagePassResources {
             mipmap_filter: eframe::wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
-        let pipeline_layout = device.create_pipeline_layout(&eframe::wgpu::PipelineLayoutDescriptor {
-            label: Some("reference_canvas_image_pipeline_layout"),
-            bind_group_layouts: &[Some(&texture_bind_group_layout)],
-            immediate_size: 0,
-        });
+        let pipeline_layout =
+            device.create_pipeline_layout(&eframe::wgpu::PipelineLayoutDescriptor {
+                label: Some("reference_canvas_image_pipeline_layout"),
+                bind_group_layouts: &[Some(&texture_bind_group_layout)],
+                immediate_size: 0,
+            });
         let vertex_attributes = eframe::wgpu::vertex_attr_array![0 => Float32x2];
-        let instance_attributes =
-            eframe::wgpu::vertex_attr_array![1 => Float32x2, 2 => Float32x2, 3 => Float32x2, 4 => Float32x2];
+        let instance_attributes = eframe::wgpu::vertex_attr_array![1 => Float32x2, 2 => Float32x2, 3 => Float32x2, 4 => Float32x2];
         let pipeline = device.create_render_pipeline(&eframe::wgpu::RenderPipelineDescriptor {
             label: Some("reference_canvas_image_pipeline"),
             layout: Some(&pipeline_layout),
@@ -2068,7 +2188,12 @@ impl eframe::egui_wgpu::CallbackTrait for ImagePassCallback {
         let Some(resources) = callback_resources.get::<ImagePassResources>() else {
             return;
         };
-        let Some(prepared) = self.prepared.lock().expect("image pass mutex poisoned").take() else {
+        let Some(prepared) = self
+            .prepared
+            .lock()
+            .expect("image pass mutex poisoned")
+            .take()
+        else {
             return;
         };
         if prepared.bind_groups.len() != self.batches.len() {
@@ -2094,18 +2219,21 @@ impl eframe::egui_wgpu::CallbackTrait for ImagePassCallback {
 pub fn show(
     ui: &mut egui::Ui,
     rect: egui::Rect,
+    input_rect: egui::Rect,
     state: &mut CanvasState,
     render_state: Option<&eframe::egui_wgpu::RenderState>,
     allow_tier_promotion: bool,
     debug_labels: bool,
 ) -> CanvasFrameMetrics {
+    let toolbar_rect = editing_textbox_toolbar_rect(ui, state, rect);
     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
-    handle_input(ui, rect, state, &response);
+    handle_input(ui, rect, input_rect, toolbar_rect, state, &response);
 
     let painter = ui.painter_at(rect);
 
     painter.rect_filled(rect, 0.0, crate::theme::BACKGROUND);
     paint_background(&painter, rect, state);
+    paint_import_placeholders(&painter, rect, state);
     let image_pass = paint_images(
         &painter,
         rect,
@@ -2126,6 +2254,8 @@ pub fn show(
 fn handle_input(
     ui: &egui::Ui,
     rect: egui::Rect,
+    input_rect: egui::Rect,
+    overlay_rect: Option<egui::Rect>,
     state: &mut CanvasState,
     response: &egui::Response,
 ) {
@@ -2141,7 +2271,10 @@ fn handle_input(
     let draw_kind = drawing_annotation_kind(ui);
     let shift_held = ui.input(|i| i.modifiers.shift);
     let pointer_in_canvas_rect = pointer_pos
-        .map(|pointer_pos| rect.contains(pointer_pos))
+        .map(|pointer_pos| {
+            input_rect.contains(pointer_pos)
+                && !overlay_rect.is_some_and(|overlay_rect| overlay_rect.contains(pointer_pos))
+        })
         .unwrap_or(false);
 
     if pointer_in_canvas_rect && response.dragged_by(egui::PointerButton::Middle) {
@@ -2924,12 +3057,15 @@ fn paint_images(
         .iter()
         .filter_map(|image| {
             let image_rect = image_screen_rect(state, rect, image);
-            image_rect.intersects(cull_rect).then_some((image, image_rect))
+            image_rect
+                .intersects(cull_rect)
+                .then_some((image, image_rect))
         })
         .collect::<Vec<_>>();
     metrics.visible_images = visible_images.len();
 
-    let use_native_pass = render_state.is_some()
+    let use_native_pass = !visible_images.is_empty()
+        && render_state.is_some()
         && visible_images
             .iter()
             .all(|(image, _)| matches!(image.texture, CanvasTexture::Native(_)));
@@ -3262,8 +3398,18 @@ fn textbox_padding() -> egui::Vec2 {
     egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2)
 }
 
-fn textbox_font_id(_ui: &egui::Ui, zoom: f32) -> egui::FontId {
-    egui::FontId::proportional(TEXTBOX_FONT_SIZE * zoom.max(MIN_CANVAS_ZOOM))
+fn textbox_font_size(text_size: CanvasTextSize) -> f32 {
+    let baseline = crate::jobs::default_import_reference_span();
+    match text_size {
+        CanvasTextSize::S => baseline * (16.0 / 300.0),
+        CanvasTextSize::M => baseline * (20.0 / 300.0),
+        CanvasTextSize::L => baseline * (40.0 / 300.0),
+        CanvasTextSize::Xl => baseline * (64.0 / 300.0),
+    }
+}
+
+fn textbox_font_id(text_size: CanvasTextSize, zoom: f32) -> egui::FontId {
+    egui::FontId::proportional(textbox_font_size(text_size) * zoom.max(MIN_CANVAS_ZOOM))
 }
 
 fn textbox_content_rect(textbox_rect: egui::Rect) -> egui::Rect {
@@ -3283,19 +3429,24 @@ fn textbox_content_rect(textbox_rect: egui::Rect) -> egui::Rect {
     )
 }
 
-fn textbox_row_height(ui: &egui::Ui, zoom: f32) -> f32 {
-    let font_id = textbox_font_id(ui, zoom);
+fn textbox_row_height(ui: &egui::Ui, text_size: CanvasTextSize, zoom: f32) -> f32 {
+    let font_id = textbox_font_id(text_size, zoom);
     ui.fonts_mut(|fonts| fonts.row_height(&font_id))
 }
 
-fn textbox_empty_hotspot_rect(ui: &egui::Ui, content_rect: egui::Rect, zoom: f32) -> egui::Rect {
+fn textbox_empty_hotspot_rect(
+    ui: &egui::Ui,
+    content_rect: egui::Rect,
+    text_size: CanvasTextSize,
+    zoom: f32,
+) -> egui::Rect {
     let width = content_rect.width().clamp(
         TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH,
         TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH,
     );
     let size = egui::vec2(
         width,
-        textbox_row_height(ui, zoom).min(content_rect.height()),
+        textbox_row_height(ui, text_size, zoom).min(content_rect.height()),
     );
     egui::Rect::from_min_size(content_rect.min, size.min(content_rect.size()))
 }
@@ -3304,11 +3455,12 @@ fn textbox_text_interactive_rect_from_galley(
     ui: &egui::Ui,
     content_rect: egui::Rect,
     galley: &egui::Galley,
+    text_size: CanvasTextSize,
     zoom: f32,
     is_empty: bool,
 ) -> egui::Rect {
     if is_empty {
-        return textbox_empty_hotspot_rect(ui, content_rect, zoom);
+        return textbox_empty_hotspot_rect(ui, content_rect, text_size, zoom);
     }
 
     egui::Rect::from_min_size(content_rect.min, galley.size()).intersect(content_rect)
@@ -3336,6 +3488,7 @@ fn textbox_pointer_region(
             ui,
             annotation.id,
             &annotation.text,
+            annotation.text_size,
             content_rect.width(),
             state.zoom,
         );
@@ -3343,6 +3496,7 @@ fn textbox_pointer_region(
             ui,
             content_rect,
             &layout.galley,
+            annotation.text_size,
             state.zoom,
             annotation.text.is_empty(),
         );
@@ -3358,11 +3512,17 @@ fn textbox_pointer_region(
     Some(TextboxPointerRegion::Body)
 }
 
-fn textbox_layout_cache_key(text: &str, wrap_width: f32, zoom: f32) -> TextboxLayoutCacheKey {
+fn textbox_layout_cache_key(
+    text: &str,
+    text_size: CanvasTextSize,
+    wrap_width: f32,
+    zoom: f32,
+) -> TextboxLayoutCacheKey {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
     TextboxLayoutCacheKey {
         text_hash: hasher.finish(),
+        text_size,
         wrap_width_bits: wrap_width.max(24.0).to_bits(),
         zoom_bits: zoom.to_bits(),
     }
@@ -3371,6 +3531,7 @@ fn textbox_layout_cache_key(text: &str, wrap_width: f32, zoom: f32) -> TextboxLa
 fn layout_textbox_galley(
     ui: &egui::Ui,
     text: &str,
+    text_size: CanvasTextSize,
     wrap_width: f32,
     zoom: f32,
 ) -> Arc<egui::Galley> {
@@ -3380,7 +3541,7 @@ fn layout_textbox_galley(
         } else {
             text.to_owned()
         },
-        textbox_font_id(ui, zoom),
+        textbox_font_id(text_size, zoom),
         crate::theme::TEXT,
         wrap_width.max(24.0),
     );
@@ -3488,6 +3649,7 @@ fn paint_annotations(
                                 ui,
                                 annotation.id,
                                 &annotation.text,
+                                annotation.text_size,
                                 content_rect.width(),
                                 state.zoom,
                             )
@@ -3530,6 +3692,7 @@ fn paint_annotation_draft(painter: &egui::Painter, rect: egui::Rect, state: &Can
         start_world: draft_state.start_world,
         end_world: draft_state.current_world,
         text: String::new(),
+        text_size: CanvasTextSize::default(),
     });
     let stroke = crate::theme::stroke_strong();
     match draft.kind {
@@ -3592,17 +3755,28 @@ fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut CanvasState)
         return;
     };
     let textbox_rect = annotation_screen_rect(state, rect, &state.annotations[index]);
+    let toolbar_rect = editing_textbox_toolbar_rect(ui, state, rect);
     let content_rect = textbox_content_rect(textbox_rect);
     let text = state.annotations[index].text.clone();
-    let layout =
-        state.cached_textbox_layout(ui, annotation_id, &text, content_rect.width(), state.zoom);
+    let layout = state.cached_textbox_layout(
+        ui,
+        annotation_id,
+        &text,
+        state.annotations[index].text_size,
+        content_rect.width(),
+        state.zoom,
+    );
     let text_rect = textbox_text_interactive_rect_from_galley(
         ui,
         content_rect,
         &layout.galley,
+        state.annotations[index].text_size,
         state.zoom,
         text.is_empty(),
     );
+    let toolbar_interacting = toolbar_rect
+        .map(|toolbar_rect| show_textbox_editor_toolbar(ui, toolbar_rect, state))
+        .unwrap_or(false);
 
     egui::Area::new(egui::Id::new(("textbox-editor", annotation_id)))
         .order(egui::Order::Foreground)
@@ -3611,20 +3785,21 @@ fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut CanvasState)
             // Keep live text rendering inside the textbox body while zoom changes.
             ui.set_clip_rect(content_rect);
             let zoom = state.zoom;
+            let text_size = state.annotations[index].text_size;
             let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, width: f32| {
                 let wrap_width = if content_rect.width() > 0.0 {
                     content_rect.width()
                 } else {
                     width
                 };
-                layout_textbox_galley(ui, text.as_str(), wrap_width, zoom)
+                layout_textbox_galley(ui, text.as_str(), text_size, wrap_width, zoom)
             };
             let output = ui
                 .allocate_ui(text_rect.size(), |ui| {
                     ui.set_min_size(text_rect.size());
                     egui::TextEdit::multiline(&mut state.annotations[index].text)
                         .desired_width(content_rect.width())
-                        .font(textbox_font_id(ui, state.zoom))
+                        .font(textbox_font_id(text_size, state.zoom))
                         .layouter(&mut layouter)
                         .frame(egui::Frame::NONE)
                         .show(ui)
@@ -3634,6 +3809,7 @@ fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut CanvasState)
             let entry = state.cache_textbox_layout(
                 annotation_id,
                 &text,
+                text_size,
                 content_rect.width(),
                 state.zoom,
                 output.galley.clone(),
@@ -3649,10 +3825,111 @@ fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut CanvasState)
             }
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) && output.response.has_focus() {
                 state.finish_textbox_edit();
-            } else if output.response.lost_focus() {
+            } else if output.response.lost_focus() && !toolbar_interacting {
                 state.finish_textbox_edit();
             }
         });
+}
+
+#[derive(Clone, Copy)]
+struct TextboxEditorToolbarMetrics {
+    size: egui::Vec2,
+}
+
+fn textbox_editor_toolbar_metrics(_ui: &egui::Ui) -> TextboxEditorToolbarMetrics {
+    let button_count = 4.0;
+    let button_span = TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH * button_count
+        + TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP * (button_count - 1.0);
+    TextboxEditorToolbarMetrics {
+        size: egui::vec2(button_span, crate::theme::CONTROL_HEIGHT),
+    }
+}
+
+fn editing_textbox_toolbar_rect(
+    ui: &egui::Ui,
+    state: &CanvasState,
+    rect: egui::Rect,
+) -> Option<egui::Rect> {
+    let annotation_id = state.editing_text_annotation_id?;
+    let annotation = state.annotation_by_id(annotation_id)?;
+    if annotation.kind != CanvasAnnotationKind::Textbox {
+        return None;
+    }
+
+    let textbox_rect = annotation_screen_rect(state, rect, annotation);
+    let metrics = textbox_editor_toolbar_metrics(ui);
+    let min_x = rect.left() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN;
+    let max_x = (rect.right() - TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN - metrics.size.x).max(min_x);
+    let preferred_x = textbox_rect.left();
+    let x = preferred_x.clamp(min_x, max_x);
+
+    let min_y = rect.top() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN;
+    let above_y = textbox_rect.top() - TEXTBOX_EDITOR_TOOLBAR_CLEARANCE - metrics.size.y;
+    let y = above_y.max(min_y);
+
+    Some(egui::Rect::from_min_size(egui::pos2(x, y), metrics.size))
+}
+
+fn show_textbox_editor_toolbar(
+    ui: &egui::Ui,
+    toolbar_rect: egui::Rect,
+    state: &mut CanvasState,
+) -> bool {
+    let selected = state.editing_textbox_size();
+    let mut next_size = None;
+    let pointer_interacting = ui.input(|input| {
+        input.pointer.latest_pos().is_some_and(|pointer_pos| {
+            toolbar_rect.contains(pointer_pos)
+                && (input.pointer.any_pressed()
+                    || input.pointer.any_down()
+                    || input.pointer.any_released())
+        })
+    });
+
+    egui::Area::new(egui::Id::new("textbox-editor-toolbar"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(toolbar_rect.min)
+        .show(ui.ctx(), |ui| {
+            ui.set_min_size(toolbar_rect.size());
+            ui.spacing_mut().item_spacing.x = TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP;
+            ui.horizontal(|ui| {
+                for size in [
+                    CanvasTextSize::S,
+                    CanvasTextSize::M,
+                    CanvasTextSize::L,
+                    CanvasTextSize::Xl,
+                ] {
+                    let button = egui::Button::new(
+                        egui::RichText::new(size.label())
+                            .text_style(egui::TextStyle::Button)
+                            .color(crate::theme::TEXT),
+                    )
+                    .fill(if selected == Some(size) {
+                        crate::theme::SURFACE_ELEVATED
+                    } else {
+                        crate::theme::SURFACE
+                    })
+                    .stroke(if selected == Some(size) {
+                        crate::theme::stroke_strong()
+                    } else {
+                        crate::theme::stroke_subtle()
+                    })
+                    .corner_radius(crate::theme::CONTROL_RADIUS)
+                    .min_size(egui::vec2(
+                        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
+                        crate::theme::CONTROL_HEIGHT,
+                    ));
+                    if ui.add(button).clicked() {
+                        next_size = Some(size);
+                    }
+                }
+            });
+        });
+
+    let changed = next_size
+        .map(|text_size| state.apply_text_size_to_editing_textbox(text_size))
+        .unwrap_or(false);
+    pointer_interacting || changed
 }
 
 fn paint_marquee(painter: &egui::Painter, state: &CanvasState) {
@@ -3722,6 +3999,56 @@ fn paint_selection_bounds(painter: &egui::Painter, rect: egui::Rect, state: &Can
         crate::theme::stroke_strong(),
         egui::StrokeKind::Outside,
     );
+}
+
+fn paint_import_placeholders(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) {
+    for placeholder in &state.import_placeholders {
+        let placeholder_rect = egui::Rect::from_center_size(
+            state.world_to_screen(placeholder.center_world, rect),
+            placeholder.size_world * state.zoom,
+        );
+        let fill = egui::Color32::from_rgba_premultiplied(
+            crate::theme::SURFACE.r(),
+            crate::theme::SURFACE.g(),
+            crate::theme::SURFACE.b(),
+            144,
+        );
+        let stripe = egui::Color32::from_rgba_premultiplied(
+            crate::theme::ACCENT.r(),
+            crate::theme::ACCENT.g(),
+            crate::theme::ACCENT.b(),
+            112,
+        );
+        painter.rect_filled(placeholder_rect, crate::theme::CONTROL_RADIUS, fill);
+        painter.rect_stroke(
+            placeholder_rect,
+            crate::theme::CONTROL_RADIUS,
+            egui::Stroke::new(1.5, crate::theme::ACCENT),
+            egui::StrokeKind::Outside,
+        );
+
+        let stripe_spacing = 18.0;
+        let mut x = placeholder_rect.left() - placeholder_rect.height();
+        while x < placeholder_rect.right() {
+            painter.line_segment(
+                [
+                    egui::pos2(x, placeholder_rect.top()),
+                    egui::pos2(x + placeholder_rect.height(), placeholder_rect.bottom()),
+                ],
+                egui::Stroke::new(1.0, stripe),
+            );
+            x += stripe_spacing;
+        }
+
+        let label = format!("Importing {}", placeholder.label);
+        painter.text(
+            placeholder_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(14.0),
+            crate::theme::TEXT,
+        );
+    }
 }
 
 fn clamped_crop_screen_rect(
@@ -3821,6 +4148,16 @@ fn textbox_world_rect(annotation: &CanvasAnnotation) -> egui::Rect {
         egui::pos2(annotation.start_x, annotation.start_y),
         egui::pos2(annotation.end_x, annotation.end_y),
     )
+}
+
+fn annotation_world_rect(annotation: &CanvasAnnotation) -> egui::Rect {
+    match annotation.kind {
+        CanvasAnnotationKind::Textbox => textbox_world_rect(annotation),
+        CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow => egui::Rect::from_two_pos(
+            egui::pos2(annotation.start_x, annotation.start_y),
+            egui::pos2(annotation.end_x, annotation.end_y),
+        ),
+    }
 }
 
 fn textbox_screen_rect(
@@ -4057,6 +4394,7 @@ fn pending_annotation_from_draft(draft_state: AnnotationDraftState) -> Option<Pe
                 start_world: draft_state.start_world,
                 end_world: draft_state.current_world,
                 text: String::new(),
+                text_size: CanvasTextSize::default(),
             })
         }
         CanvasAnnotationKind::Textbox => {
@@ -4066,6 +4404,7 @@ fn pending_annotation_from_draft(draft_state: AnnotationDraftState) -> Option<Pe
                 start_world: rect.min,
                 end_world: rect.max,
                 text: String::new(),
+                text_size: CanvasTextSize::default(),
             })
         }
     }
@@ -4074,22 +4413,25 @@ fn pending_annotation_from_draft(draft_state: AnnotationDraftState) -> Option<Pe
 #[cfg(test)]
 mod tests {
     use super::{
-        AnnotationDraftState, CanvasImage, CanvasState, CanvasTexture, ImageResizeHandle,
-        MIN_CANVAS_ZOOM, SelectedLayoutItem, TextboxPointerRegion, TextboxResizeHandle,
-        annotation_paint_stats_for_annotations, background_screen_step, background_world_step,
-        best_compact_layout, crop_center_offset_local, handle_textbox_primary_press,
+        AnnotationDraftState, CanvasImage, CanvasState, CanvasTexture,
+        FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, SelectedLayoutItem,
+        TEXTBOX_EDITOR_TOOLBAR_CLEARANCE, TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN,
+        TextboxPointerRegion, TextboxResizeHandle, annotation_paint_stats_for_annotations,
+        background_screen_step, background_world_step, best_compact_layout,
+        crop_center_offset_local, editing_textbox_toolbar_rect, handle_textbox_primary_press,
         hit_test_image_resize_handle, hit_test_textbox_resize_handle, horizontal_layout,
         image_screen_rect, lattice_phase_screen, lattice_phase_world, layout_textbox_galley,
         legacy_best_compact_layout, merge_cropped_item_fields, min_image_scale, moved_textbox_rect,
         normalized_textbox_rect, pending_annotation_from_draft, pixel_crop_rect_from_local,
         resized_image_scale, resized_textbox_rect, screen_rect_to_local_crop_rect,
         settled_background_lod_level, textbox_content_rect, textbox_empty_hotspot_rect,
-        textbox_layout_cache_key, textbox_pointer_region, textbox_required_world_height,
-        textbox_screen_rect, textbox_text_interactive_rect_from_galley, vertical_layout,
+        textbox_font_size, textbox_layout_cache_key, textbox_pointer_region,
+        textbox_required_world_height, textbox_screen_rect,
+        textbox_text_interactive_rect_from_galley, vertical_layout,
     };
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind,
-        CanvasImageCacheTier, ImageAsset,
+        CanvasImageCacheTier, CanvasTextSize, ImageAsset,
     };
     use std::{
         path::PathBuf,
@@ -4141,6 +4483,10 @@ mod tests {
         });
     }
 
+    fn default_text_size() -> CanvasTextSize {
+        CanvasTextSize::default()
+    }
+
     fn test_record(item_id: i64, asset_id: i64, width: u32, height: u32) -> BoardItemWithAsset {
         BoardItemWithAsset {
             item: BoardItem {
@@ -4171,6 +4517,7 @@ mod tests {
         texture: Arc<crate::jobs::NativeTextureHandle>,
     ) -> crate::jobs::LoadedCanvasItem {
         crate::jobs::LoadedCanvasItem {
+            queue_id: None,
             preview_rgba: vec![255; record.asset.width as usize * record.asset.height as usize * 4],
             preview_width: record.asset.width,
             preview_height: record.asset.height,
@@ -4401,6 +4748,82 @@ mod tests {
     }
 
     #[test]
+    fn focus_selection_in_view_noops_without_selection() {
+        let mut state = CanvasState::default();
+        let canvas_rect = eframe::egui::Rect::from_min_size(
+            eframe::egui::Pos2::ZERO,
+            eframe::egui::vec2(960.0, 640.0),
+        );
+        let target_rect = canvas_rect.shrink2(eframe::egui::vec2(0.0, 120.0));
+
+        assert!(!state.focus_selection_in_view(canvas_rect, target_rect));
+    }
+
+    #[test]
+    fn focus_selection_in_view_fits_selected_bounds_inside_target_rect() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut state = CanvasState::default();
+            let canvas_rect = eframe::egui::Rect::from_min_size(
+                eframe::egui::Pos2::ZERO,
+                eframe::egui::vec2(960.0, 640.0),
+            );
+            let target_rect = eframe::egui::Rect::from_min_max(
+                eframe::egui::pos2(0.0, 0.0),
+                eframe::egui::pos2(960.0, 420.0),
+            );
+            push_test_image(
+                ui,
+                &mut state,
+                1,
+                300,
+                180,
+                1.0,
+                eframe::egui::pos2(-300.0, -120.0),
+            );
+            push_test_image(
+                ui,
+                &mut state,
+                2,
+                180,
+                320,
+                1.0,
+                eframe::egui::pos2(260.0, 180.0),
+            );
+            state.select_items(&[1, 2]);
+
+            assert!(state.focus_selection_in_view(canvas_rect, target_rect));
+
+            let selection_rect = state.selection_screen_rect(canvas_rect).unwrap();
+            assert!(
+                target_rect
+                    .shrink(FOCUS_SELECTION_PADDING_SCREEN)
+                    .contains_rect(selection_rect)
+            );
+        });
+    }
+
+    #[test]
+    fn import_placeholders_replace_by_queue_id_and_remove_cleanly() {
+        let mut state = CanvasState::default();
+        state.add_import_placeholder(
+            7,
+            eframe::egui::pos2(10.0, 20.0),
+            eframe::egui::vec2(100.0, 80.0),
+            "first".to_owned(),
+        );
+        state.add_import_placeholder(
+            7,
+            eframe::egui::pos2(30.0, 40.0),
+            eframe::egui::vec2(120.0, 90.0),
+            "updated".to_owned(),
+        );
+
+        assert_eq!(state.import_placeholder_count(), 1);
+        state.remove_import_placeholder(7);
+        assert_eq!(state.import_placeholder_count(), 0);
+    }
+
+    #[test]
     fn textbox_multiline_content_requires_more_than_min_height() {
         assert!(textbox_required_world_height(80.0, 1.0) > 56.0);
 
@@ -4414,6 +4837,14 @@ mod tests {
 
             assert!(output.galley.rows.len() >= 5);
         });
+    }
+
+    #[test]
+    fn larger_text_sizes_require_more_textbox_height() {
+        assert!(textbox_font_size(CanvasTextSize::Xl) > textbox_font_size(CanvasTextSize::S));
+        assert!(textbox_font_size(CanvasTextSize::M) > textbox_font_size(CanvasTextSize::S));
+        assert!(textbox_font_size(CanvasTextSize::L) > textbox_font_size(CanvasTextSize::M));
+        assert!(textbox_font_size(CanvasTextSize::Xl) > textbox_font_size(CanvasTextSize::L));
     }
 
     #[test]
@@ -4446,6 +4877,7 @@ mod tests {
             end_x: 260.0,
             end_y: 96.0,
             text: "zoomed out".to_owned(),
+            text_size: default_text_size(),
             archived: false,
         };
 
@@ -4459,11 +4891,140 @@ mod tests {
     }
 
     #[test]
+    fn textbox_toolbar_aligns_to_content_start_when_space_allows() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut state = CanvasState::default();
+            let canvas_rect = eframe::egui::Rect::from_min_max(
+                eframe::egui::pos2(0.0, 0.0),
+                eframe::egui::pos2(960.0, 640.0),
+            );
+            state.add_annotation(CanvasAnnotation {
+                id: 71,
+                kind: CanvasAnnotationKind::Textbox,
+                start_x: 80.0,
+                start_y: 200.0,
+                end_x: 420.0,
+                end_y: 320.0,
+                text: "toolbar".to_owned(),
+                text_size: default_text_size(),
+                archived: false,
+            });
+            state.begin_textbox_edit(71);
+
+            let annotation = state.annotation_by_id(71).unwrap().clone();
+            let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
+            let toolbar_rect = editing_textbox_toolbar_rect(ui, &state, canvas_rect).unwrap();
+
+            assert!((toolbar_rect.left() - textbox_rect.left()).abs() < 0.1);
+        });
+    }
+
+    #[test]
+    fn textbox_toolbar_preserves_gap_above_when_space_allows() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut state = CanvasState::default();
+            let canvas_rect = eframe::egui::Rect::from_min_max(
+                eframe::egui::pos2(0.0, 0.0),
+                eframe::egui::pos2(960.0, 640.0),
+            );
+            state.add_annotation(CanvasAnnotation {
+                id: 74,
+                kind: CanvasAnnotationKind::Textbox,
+                start_x: 80.0,
+                start_y: 200.0,
+                end_x: 420.0,
+                end_y: 320.0,
+                text: "toolbar".to_owned(),
+                text_size: default_text_size(),
+                archived: false,
+            });
+            state.begin_textbox_edit(74);
+
+            let annotation = state.annotation_by_id(74).unwrap().clone();
+            let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
+            let toolbar_rect = editing_textbox_toolbar_rect(ui, &state, canvas_rect).unwrap();
+
+            assert!(
+                (textbox_rect.top() - toolbar_rect.bottom() - TEXTBOX_EDITOR_TOOLBAR_CLEARANCE)
+                    .abs()
+                    < 0.1
+            );
+        });
+    }
+
+    #[test]
+    fn textbox_toolbar_clamps_to_top_margin_when_above_gap_does_not_fit() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut state = CanvasState::default();
+            let canvas_rect = eframe::egui::Rect::from_min_max(
+                eframe::egui::pos2(0.0, 0.0),
+                eframe::egui::pos2(960.0, 640.0),
+            );
+            state.add_annotation(CanvasAnnotation {
+                id: 72,
+                kind: CanvasAnnotationKind::Textbox,
+                start_x: 80.0,
+                start_y: -300.0,
+                end_x: 420.0,
+                end_y: -180.0,
+                text: "toolbar".to_owned(),
+                text_size: default_text_size(),
+                archived: false,
+            });
+            state.begin_textbox_edit(72);
+
+            let toolbar_rect = editing_textbox_toolbar_rect(ui, &state, canvas_rect).unwrap();
+
+            assert!(
+                (toolbar_rect.top() - (canvas_rect.top() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN))
+                    .abs()
+                    < 0.1
+            );
+        });
+    }
+
+    #[test]
+    fn textbox_toolbar_clamps_right_without_unnecessary_shift() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut state = CanvasState::default();
+            let canvas_rect = eframe::egui::Rect::from_min_max(
+                eframe::egui::pos2(0.0, 0.0),
+                eframe::egui::pos2(420.0, 320.0),
+            );
+            state.add_annotation(CanvasAnnotation {
+                id: 73,
+                kind: CanvasAnnotationKind::Textbox,
+                start_x: 220.0,
+                start_y: 140.0,
+                end_x: 460.0,
+                end_y: 240.0,
+                text: "toolbar".to_owned(),
+                text_size: default_text_size(),
+                archived: false,
+            });
+            state.begin_textbox_edit(73);
+
+            let toolbar_rect = editing_textbox_toolbar_rect(ui, &state, canvas_rect).unwrap();
+
+            assert!(
+                toolbar_rect.right()
+                    <= canvas_rect.right() - TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN + 0.1
+            );
+            assert!(
+                toolbar_rect.left()
+                    >= canvas_rect.left() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN - 0.1
+            );
+        });
+    }
+
+    #[test]
     fn textbox_layout_cache_reuses_entry_for_identical_inputs() {
         eframe::egui::__run_test_ui(|ui| {
             let mut state = CanvasState::default();
-            let first = state.cached_textbox_layout(ui, 1, "cache me", 120.0, 1.0);
-            let second = state.cached_textbox_layout(ui, 1, "cache me", 120.0, 1.0);
+            let first =
+                state.cached_textbox_layout(ui, 1, "cache me", default_text_size(), 120.0, 1.0);
+            let second =
+                state.cached_textbox_layout(ui, 1, "cache me", default_text_size(), 120.0, 1.0);
 
             assert!(Arc::ptr_eq(&first.galley, &second.galley));
             assert_eq!(first.key, second.key);
@@ -4474,8 +5035,10 @@ mod tests {
     fn textbox_layout_cache_replaces_entry_when_text_changes() {
         eframe::egui::__run_test_ui(|ui| {
             let mut state = CanvasState::default();
-            let first = state.cached_textbox_layout(ui, 1, "before", 120.0, 1.0);
-            let second = state.cached_textbox_layout(ui, 1, "after", 120.0, 1.0);
+            let first =
+                state.cached_textbox_layout(ui, 1, "before", default_text_size(), 120.0, 1.0);
+            let second =
+                state.cached_textbox_layout(ui, 1, "after", default_text_size(), 120.0, 1.0);
 
             assert!(!Arc::ptr_eq(&first.galley, &second.galley));
             assert_ne!(first.key, second.key);
@@ -4486,8 +5049,9 @@ mod tests {
     fn textbox_layout_cache_replaces_entry_when_zoom_changes() {
         eframe::egui::__run_test_ui(|ui| {
             let mut state = CanvasState::default();
-            let first = state.cached_textbox_layout(ui, 1, "zoom", 120.0, 1.0);
-            let second = state.cached_textbox_layout(ui, 1, "zoom", 120.0, 2.0);
+            let first = state.cached_textbox_layout(ui, 1, "zoom", default_text_size(), 120.0, 1.0);
+            let second =
+                state.cached_textbox_layout(ui, 1, "zoom", default_text_size(), 120.0, 2.0);
 
             assert!(!Arc::ptr_eq(&first.galley, &second.galley));
             assert_ne!(first.key, second.key);
@@ -4506,15 +5070,16 @@ mod tests {
             let mut text = "updated text".to_owned();
             let mut layouter =
                 |ui: &eframe::egui::Ui, text: &dyn eframe::egui::TextBuffer, width: f32| {
-                    layout_textbox_galley(ui, text.as_str(), width, 1.0)
+                    layout_textbox_galley(ui, text.as_str(), default_text_size(), width, 1.0)
                 };
 
             state.cache_textbox_layout(
                 9,
                 "stale",
+                default_text_size(),
                 text_rect.width(),
                 1.0,
-                layout_textbox_galley(ui, "stale", text_rect.width(), 1.0),
+                layout_textbox_galley(ui, "stale", default_text_size(), text_rect.width(), 1.0),
             );
 
             let output = ui
@@ -4525,15 +5090,22 @@ mod tests {
                         .show(ui)
                 })
                 .inner;
-            let entry = state.cache_textbox_layout(9, &text, text_rect.width(), 1.0, output.galley);
+            let entry = state.cache_textbox_layout(
+                9,
+                &text,
+                default_text_size(),
+                text_rect.width(),
+                1.0,
+                output.galley,
+            );
 
             assert_eq!(
                 entry.key,
-                textbox_layout_cache_key(&text, text_rect.width(), 1.0)
+                textbox_layout_cache_key(&text, default_text_size(), text_rect.width(), 1.0)
             );
             assert_eq!(
                 state.textbox_layout_cache.get(&9).unwrap().key,
-                textbox_layout_cache_key(&text, text_rect.width(), 1.0)
+                textbox_layout_cache_key(&text, default_text_size(), text_rect.width(), 1.0)
             );
         });
     }
@@ -4601,6 +5173,7 @@ mod tests {
             end_x: 260.0,
             end_y: 96.0,
             text: String::new(),
+            text_size: default_text_size(),
             archived: false,
         };
 
@@ -4770,6 +5343,7 @@ mod tests {
                 end_x: 320.0,
                 end_y: 160.0,
                 text: "short".to_owned(),
+                text_size: default_text_size(),
                 archived: false,
             };
 
@@ -4779,6 +5353,7 @@ mod tests {
                 ui,
                 annotation.id,
                 &annotation.text,
+                default_text_size(),
                 content_rect.width(),
                 1.0,
             );
@@ -4786,6 +5361,7 @@ mod tests {
                 ui,
                 content_rect,
                 &layout.galley,
+                default_text_size(),
                 1.0,
                 false,
             );
@@ -4803,7 +5379,7 @@ mod tests {
                 eframe::egui::pos2(24.0, 24.0),
                 eframe::egui::vec2(280.0, 96.0),
             );
-            let hotspot = textbox_empty_hotspot_rect(ui, content_rect, 1.0);
+            let hotspot = textbox_empty_hotspot_rect(ui, content_rect, default_text_size(), 1.0);
 
             assert!(hotspot.width() < content_rect.width());
             assert!(hotspot.height() < content_rect.height());
@@ -4831,6 +5407,7 @@ mod tests {
                 end_x: 320.0,
                 end_y: 180.0,
                 text: "short".to_owned(),
+                text_size: default_text_size(),
                 archived: false,
             });
 
@@ -4871,6 +5448,7 @@ mod tests {
                 end_x: 320.0,
                 end_y: 180.0,
                 text: "short".to_owned(),
+                text_size: default_text_size(),
                 archived: false,
             });
             state.selected_annotation_ids.clear();
@@ -4912,6 +5490,7 @@ mod tests {
                 end_x: 320.0,
                 end_y: 180.0,
                 text: "short".to_owned(),
+                text_size: default_text_size(),
                 archived: false,
             });
             state.selected_annotation_ids = vec![19];
@@ -4955,6 +5534,7 @@ mod tests {
                 end_x: 320.0,
                 end_y: 180.0,
                 text: String::new(),
+                text_size: default_text_size(),
                 archived: false,
             });
             state.begin_textbox_edit(16);
@@ -4998,6 +5578,7 @@ mod tests {
                     end_x: start_x + 220.0,
                     end_y: 140.0,
                     text: "group".to_owned(),
+                    text_size: default_text_size(),
                     archived: false,
                 });
             }
@@ -5040,6 +5621,7 @@ mod tests {
                 end_x: 320.0,
                 end_y: 180.0,
                 text: "hello world".to_owned(),
+                text_size: default_text_size(),
                 archived: false,
             });
             state.begin_textbox_edit(17);
@@ -5051,6 +5633,7 @@ mod tests {
                 ui,
                 annotation.id,
                 &annotation.text,
+                default_text_size(),
                 content_rect.width(),
                 1.0,
             );
@@ -5058,6 +5641,7 @@ mod tests {
                 ui,
                 content_rect,
                 &layout.galley,
+                default_text_size(),
                 1.0,
                 false,
             );
@@ -5091,6 +5675,7 @@ mod tests {
             end_x: 260.0,
             end_y: 96.0,
             text: String::new(),
+            text_size: default_text_size(),
             archived: false,
         });
 
@@ -5116,6 +5701,7 @@ mod tests {
             end_x: 260.0,
             end_y: 80.0,
             text: String::new(),
+            text_size: default_text_size(),
             archived: false,
         });
 
@@ -5133,9 +5719,10 @@ mod tests {
             state.cache_textbox_layout(
                 5,
                 "cached",
+                default_text_size(),
                 120.0,
                 1.0,
-                layout_textbox_galley(ui, "cached", 120.0, 1.0),
+                layout_textbox_galley(ui, "cached", default_text_size(), 120.0, 1.0),
             );
 
             state.add_annotation(CanvasAnnotation {
@@ -5146,6 +5733,7 @@ mod tests {
                 end_x: 260.0,
                 end_y: 96.0,
                 text: String::new(),
+                text_size: default_text_size(),
                 archived: false,
             });
 
@@ -5160,16 +5748,18 @@ mod tests {
             state.cache_textbox_layout(
                 1,
                 "one",
+                default_text_size(),
                 120.0,
                 1.0,
-                layout_textbox_galley(ui, "one", 120.0, 1.0),
+                layout_textbox_galley(ui, "one", default_text_size(), 120.0, 1.0),
             );
             state.cache_textbox_layout(
                 2,
                 "two",
+                default_text_size(),
                 120.0,
                 1.0,
-                layout_textbox_galley(ui, "two", 120.0, 1.0),
+                layout_textbox_galley(ui, "two", default_text_size(), 120.0, 1.0),
             );
 
             state.add_annotations(Vec::new());
@@ -5190,14 +5780,16 @@ mod tests {
                 end_x: 260.0,
                 end_y: 96.0,
                 text: "hello".to_owned(),
+                text_size: default_text_size(),
                 archived: false,
             });
             state.cache_textbox_layout(
                 3,
                 "hello",
+                default_text_size(),
                 120.0,
                 1.0,
-                layout_textbox_galley(ui, "hello", 120.0, 1.0),
+                layout_textbox_galley(ui, "hello", default_text_size(), 120.0, 1.0),
             );
 
             state.remove_annotation_locally(3);
@@ -5218,14 +5810,16 @@ mod tests {
                 end_x: 260.0,
                 end_y: 96.0,
                 text: "resize".to_owned(),
+                text_size: default_text_size(),
                 archived: false,
             });
             state.cache_textbox_layout(
                 4,
                 "resize",
+                default_text_size(),
                 120.0,
                 1.0,
-                layout_textbox_galley(ui, "resize", 120.0, 1.0),
+                layout_textbox_galley(ui, "resize", default_text_size(), 120.0, 1.0),
             );
 
             assert!(state.set_textbox_world_rect(
@@ -5250,6 +5844,7 @@ mod tests {
             end_x: 260.0,
             end_y: 96.0,
             text: "textbox".to_owned(),
+            text_size: default_text_size(),
             archived: false,
         });
 
@@ -5270,6 +5865,7 @@ mod tests {
             end_x: 260.0,
             end_y: 96.0,
             text: "textbox".to_owned(),
+            text_size: default_text_size(),
             archived: false,
         });
         state.add_annotation(CanvasAnnotation {
@@ -5280,6 +5876,7 @@ mod tests {
             end_x: 420.0,
             end_y: 96.0,
             text: "textbox".to_owned(),
+            text_size: default_text_size(),
             archived: false,
         });
 
@@ -5304,6 +5901,7 @@ mod tests {
                 end_x: 320.0,
                 end_y: 180.0,
                 text: "visible".to_owned(),
+                text_size: default_text_size(),
                 archived: false,
             },
             CanvasAnnotation {
@@ -5314,6 +5912,7 @@ mod tests {
                 end_x: 2300.0,
                 end_y: 180.0,
                 text: "offscreen-a".to_owned(),
+                text_size: default_text_size(),
                 archived: false,
             },
             CanvasAnnotation {
@@ -5324,6 +5923,7 @@ mod tests {
                 end_x: 2700.0,
                 end_y: 400.0,
                 text: "offscreen-b".to_owned(),
+                text_size: default_text_size(),
                 archived: false,
             },
             CanvasAnnotation {
@@ -5334,6 +5934,7 @@ mod tests {
                 end_x: 3100.0,
                 end_y: 20.0,
                 text: "offscreen-c".to_owned(),
+                text_size: default_text_size(),
                 archived: false,
             },
         ];
