@@ -1,6 +1,6 @@
 use super::CanvasBackground;
 
-pub const DEFAULT_IMPORT_GAP: f32 = 12.0;
+pub const DEFAULT_IMPORT_GAP: f32 = 24.0;
 pub const DEFAULT_CANVAS_IMAGE_MAX_SIDE: u32 = 2000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

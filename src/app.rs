@@ -7,47 +7,27 @@ use std::time::Duration;
 use std::time::Instant;
 
 #[cfg(feature = "semantic-search")]
+use crate::palette::{
+    ImageSearchPivot, PALETTE_GRID_MAX_HEIGHT, PALETTE_WIDTH, SEARCH_DEBOUNCE_MS,
+    SEARCH_OVERLAY_TOP_MARGIN, SearchOverlayState, SearchOverlayStatus, paint_palette_divider,
+    paint_palette_empty_state, paint_palette_facet_row, paint_palette_footer,
+    paint_palette_input_row, search_result_grid_content_height, search_result_grid_layout,
+    search_result_tile,
+};
+#[cfg(feature = "semantic-search")]
 use crate::semantic_search::{
-    DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, SearchResultGroup,
-    SemanticSearchConfig, SemanticSearchService,
+    DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, SemanticSearchConfig,
+    SemanticSearchService,
+};
+use crate::sidebar::{
+    SidebarTab, block_sidebar_input, close_sidebar_on_outside_click, show_sidebar,
+    show_sidebar_hint, sidebar_rect,
 };
 
-const SHORTCUT_DRAWER_MIN_HEIGHT: f32 = 352.0;
-const SHORTCUT_DRAWER_MAX_HEIGHT: f32 = 392.0;
-const SHORTCUT_DRAWER_HEIGHT_RATIO: f32 = 0.40;
-const SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH: f32 = 900.0;
-const SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH: f32 = 360.0;
-const SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH: f32 = 420.0;
-const SHORTCUT_DRAWER_MARGIN: f32 = crate::theme::SPACE_3;
-const SHORTCUT_DRAWER_BUTTON_SIZE: f32 = crate::theme::CONTROL_HEIGHT;
 const COPY_PAYLOAD_KIND: &str = "reference-board-items";
 const MAX_CROP_UNDO_ENTRIES: usize = 32;
 const STARTUP_VIEWPORT_SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
 const MAX_IMPORT_RESULTS_PER_FRAME: usize = 4;
-#[cfg(feature = "semantic-search")]
-const SEARCH_DEBOUNCE_MS: f32 = 120.0;
-#[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_MAX_SCREEN_WIDTH_RATIO: f32 = 0.78;
-#[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_MAX_SCREEN_HEIGHT_RATIO: f32 = 0.8;
-#[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_TOP_MARGIN: f32 = 28.0;
-#[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_BOTTOM_MARGIN: f32 = 24.0;
-#[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_MIN_WIDTH: f32 = 480.0;
-#[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_EMPTY_WIDTH_RATIO: f32 = 0.52;
-#[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_EMPTY_MAX_WIDTH: f32 = 760.0;
-#[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_GRID_CHROME_HEIGHT: f32 = 108.0;
-#[cfg(feature = "semantic-search")]
-const SEARCH_RESULT_TILE_MIN_WIDTH: f32 = 180.0;
-#[cfg(feature = "semantic-search")]
-const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 320.0;
-#[cfg(feature = "semantic-search")]
-const SEARCH_RESULT_TILE_FOOTER_HEIGHT: f32 = 32.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArrangementAction {
@@ -60,18 +40,11 @@ enum ArrangementAction {
 enum SupportedShortcutAction {
     DeleteSelection,
     DuplicateSelection,
-    ToggleDrawer,
+    ToggleSidebar,
     FocusSelection,
     Arrange(ArrangementAction),
     ApplyDefaultAverageArea,
     AverageSelectionArea,
-}
-
-#[derive(Clone, Copy)]
-struct ShortcutRow {
-    action: &'static str,
-    windows: &'static str,
-    mac: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -82,15 +55,17 @@ struct ShortcutBinding {
 }
 
 #[derive(Clone, Copy)]
-struct SupportedShortcut {
-    action: &'static str,
-    windows: &'static str,
-    mac: &'static str,
+pub(crate) struct SupportedShortcut {
+    pub action: &'static str,
+    #[allow(dead_code)]
+    pub windows: &'static str,
+    #[allow(dead_code)]
+    pub mac: &'static str,
     binding: Option<ShortcutBinding>,
     shortcut_action: Option<SupportedShortcutAction>,
 }
 
-const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
+pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     SupportedShortcut {
         action: "Copy selection",
         windows: "Ctrl+C",
@@ -170,7 +145,7 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: Some(SupportedShortcutAction::DuplicateSelection),
     },
     SupportedShortcut {
-        action: "Toggle drawer",
+        action: "Toggle sidebar",
         windows: "Ctrl+B",
         mac: "⌘B",
         binding: Some(ShortcutBinding {
@@ -178,7 +153,7 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
             command: true,
             shift: false,
         }),
-        shortcut_action: Some(SupportedShortcutAction::ToggleDrawer),
+        shortcut_action: Some(SupportedShortcutAction::ToggleSidebar),
     },
     SupportedShortcut {
         action: "Compact arrange",
@@ -294,44 +269,17 @@ struct FramePerfState {
     canvas: crate::canvas::CanvasFrameMetrics,
 }
 
-#[cfg(feature = "semantic-search")]
-#[derive(Default)]
-struct SearchOverlayState {
-    open: bool,
-    query: String,
-    last_submitted_query: String,
-    last_query_edit_at: Option<Instant>,
-    active_result_index: usize,
-    active_instance_index: usize,
-    results: Vec<SearchResultGroup>,
-    status: SearchOverlayStatus,
-    focus_requested: bool,
-}
-
-#[cfg(feature = "semantic-search")]
-#[derive(Default)]
-enum SearchOverlayStatus {
-    #[default]
-    Idle,
-    Loading(String),
-    Indexing,
-    Ready,
-    Error(String),
-}
-
 #[cfg(debug_assertions)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerificationMode {
-    OpenDrawer,
-    OpenDrawerHot,
-    OpenDrawerNarrow,
+    OpenSidebar,
+    OpenSidebarHot,
+    OpenSidebarNarrow,
+    OpenSidebarBoards,
+    OpenPalette,
+    OpenPaletteImagePivot,
     DrawArrow,
     EditTextbox,
-}
-
-enum DrawerLayoutMode {
-    Split { left_width: f32, right_width: f32 },
-    Stacked,
 }
 
 impl AppConfig {
@@ -357,20 +305,35 @@ impl AppConfig {
                 perf_report = true;
             } else if argument == "--startup-trace" {
                 startup_trace = true;
-            } else if cfg!(debug_assertions) && argument == "--verify-open-drawer" {
+            } else if cfg!(debug_assertions) && argument == "--verify-sidebar" {
                 #[cfg(debug_assertions)]
                 {
-                    verification_mode = Some(VerificationMode::OpenDrawer);
+                    verification_mode = Some(VerificationMode::OpenSidebar);
                 }
-            } else if cfg!(debug_assertions) && argument == "--verify-open-drawer-hot" {
+            } else if cfg!(debug_assertions) && argument == "--verify-sidebar-hot" {
                 #[cfg(debug_assertions)]
                 {
-                    verification_mode = Some(VerificationMode::OpenDrawerHot);
+                    verification_mode = Some(VerificationMode::OpenSidebarHot);
                 }
-            } else if cfg!(debug_assertions) && argument == "--verify-open-drawer-narrow" {
+            } else if cfg!(debug_assertions) && argument == "--verify-sidebar-narrow" {
                 #[cfg(debug_assertions)]
                 {
-                    verification_mode = Some(VerificationMode::OpenDrawerNarrow);
+                    verification_mode = Some(VerificationMode::OpenSidebarNarrow);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-sidebar-boards" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::OpenSidebarBoards);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-palette" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::OpenPalette);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-palette-image-pivot" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::OpenPaletteImagePivot);
                 }
             } else if cfg!(debug_assertions) && argument == "--verify-arrow" {
                 #[cfg(debug_assertions)]
@@ -408,30 +371,55 @@ impl AppConfig {
     }
 
     #[cfg(debug_assertions)]
-    fn open_drawer_on_start(&self) -> bool {
+    fn open_sidebar_on_start(&self) -> bool {
         matches!(
             self.verification_mode,
             Some(
-                VerificationMode::OpenDrawer
-                    | VerificationMode::OpenDrawerHot
-                    | VerificationMode::OpenDrawerNarrow
+                VerificationMode::OpenSidebar
+                    | VerificationMode::OpenSidebarHot
+                    | VerificationMode::OpenSidebarNarrow
+                    | VerificationMode::OpenSidebarBoards
             )
         )
     }
 
     #[cfg(debug_assertions)]
-    fn open_drawer_hot_on_start(&self) -> bool {
+    fn open_sidebar_hot_on_start(&self) -> bool {
         matches!(
             self.verification_mode,
-            Some(VerificationMode::OpenDrawerHot)
+            Some(VerificationMode::OpenSidebarHot)
         )
     }
 
     #[cfg(debug_assertions)]
-    fn open_drawer_narrow_on_start(&self) -> bool {
+    fn open_sidebar_narrow_on_start(&self) -> bool {
         matches!(
             self.verification_mode,
-            Some(VerificationMode::OpenDrawerNarrow)
+            Some(VerificationMode::OpenSidebarNarrow)
+        )
+    }
+
+    #[cfg(debug_assertions)]
+    fn open_sidebar_boards_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(VerificationMode::OpenSidebarBoards)
+        )
+    }
+
+    #[cfg(debug_assertions)]
+    fn open_palette_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(VerificationMode::OpenPalette | VerificationMode::OpenPaletteImagePivot)
+        )
+    }
+
+    #[cfg(debug_assertions)]
+    fn open_palette_image_pivot_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(VerificationMode::OpenPaletteImagePivot)
         )
     }
 
@@ -452,7 +440,7 @@ impl AppConfig {
 
     #[cfg(debug_assertions)]
     pub(crate) fn startup_viewport_size(&self) -> egui::Vec2 {
-        if self.open_drawer_narrow_on_start() {
+        if self.open_sidebar_narrow_on_start() {
             egui::vec2(780.0, STARTUP_VIEWPORT_SIZE.y)
         } else {
             STARTUP_VIEWPORT_SIZE
@@ -460,17 +448,27 @@ impl AppConfig {
     }
 
     #[cfg(not(debug_assertions))]
-    fn open_drawer_on_start(&self) -> bool {
+    fn open_sidebar_on_start(&self) -> bool {
         false
     }
 
     #[cfg(not(debug_assertions))]
-    fn open_drawer_hot_on_start(&self) -> bool {
+    fn open_sidebar_hot_on_start(&self) -> bool {
         false
     }
 
     #[cfg(not(debug_assertions))]
-    fn open_drawer_narrow_on_start(&self) -> bool {
+    fn open_sidebar_boards_on_start(&self) -> bool {
+        false
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn open_palette_on_start(&self) -> bool {
+        false
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn open_palette_image_pivot_on_start(&self) -> bool {
         false
     }
 
@@ -525,7 +523,8 @@ pub struct ReferenceApp {
     semantic_search: Option<SemanticSearchService>,
     #[cfg(feature = "semantic-search")]
     search_overlay: SearchOverlayState,
-    drawer_open: bool,
+    sidebar_open: bool,
+    sidebar_tab: SidebarTab,
     status: String,
     perf_log: Option<PerfLogState>,
     frame_perf: FramePerfState,
@@ -535,7 +534,7 @@ pub struct ReferenceApp {
     #[cfg(debug_assertions)]
     verification_search_query: Option<String>,
     #[cfg(debug_assertions)]
-    drawer_hot_preview: bool,
+    sidebar_hot_preview: bool,
 }
 
 impl ReferenceApp {
@@ -579,7 +578,12 @@ impl ReferenceApp {
                     semantic_search: None,
                     #[cfg(feature = "semantic-search")]
                     search_overlay: SearchOverlayState::default(),
-                    drawer_open: config.open_drawer_on_start(),
+                    sidebar_open: config.open_sidebar_on_start(),
+                    sidebar_tab: if config.open_sidebar_boards_on_start() {
+                        SidebarTab::Boards
+                    } else {
+                        SidebarTab::Options
+                    },
                     status,
                     perf_log: config.perf_log_enabled().then(|| PerfLogState {
                         app_started_at: Instant::now(),
@@ -592,7 +596,7 @@ impl ReferenceApp {
                     #[cfg(debug_assertions)]
                     verification_search_query: None,
                     #[cfg(debug_assertions)]
-                    drawer_hot_preview: config.open_drawer_hot_on_start(),
+                    sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                 };
                 app.load_user_session();
                 #[cfg(feature = "semantic-search")]
@@ -649,7 +653,7 @@ impl ReferenceApp {
                         config.verification_search_query().map(ToOwned::to_owned);
                 }
                 #[cfg(debug_assertions)]
-                if app.drawer_hot_preview {
+                if app.sidebar_hot_preview {
                     app.auto_image_scaling = false;
                     app.import_gap = 32.0;
                     app.canvas_image_mode = crate::data::CanvasImageMode::Original;
@@ -659,6 +663,26 @@ impl ReferenceApp {
                     app.semantic_search_enabled = true;
                     #[cfg(feature = "semantic-search")]
                     app.sync_semantic_search_service();
+                }
+                #[cfg(debug_assertions)]
+                if config.open_palette_on_start() {
+                    app.semantic_search_enabled = true;
+                    #[cfg(feature = "semantic-search")]
+                    {
+                        app.sync_semantic_search_service();
+                        app.search_overlay.open = true;
+                        app.search_overlay.focus_requested = true;
+                    }
+                }
+                #[cfg(debug_assertions)]
+                if config.open_palette_image_pivot_on_start() {
+                    #[cfg(feature = "semantic-search")]
+                    {
+                        app.search_overlay.image_pivot = Some(ImageSearchPivot {
+                            asset_id: 42,
+                            item_id: -1,
+                        });
+                    }
                 }
                 app
             }
@@ -680,7 +704,12 @@ impl ReferenceApp {
                 semantic_search: None,
                 #[cfg(feature = "semantic-search")]
                 search_overlay: SearchOverlayState::default(),
-                drawer_open: config.open_drawer_on_start(),
+                sidebar_open: config.open_sidebar_on_start(),
+                sidebar_tab: if config.open_sidebar_boards_on_start() {
+                    SidebarTab::Boards
+                } else {
+                    SidebarTab::Options
+                },
                 status: format!("Storage unavailable: {error}"),
                 perf_log: config.perf_log_enabled().then(|| PerfLogState {
                     app_started_at: Instant::now(),
@@ -693,7 +722,7 @@ impl ReferenceApp {
                 #[cfg(debug_assertions)]
                 verification_search_query: None,
                 #[cfg(debug_assertions)]
-                drawer_hot_preview: config.open_drawer_hot_on_start(),
+                sidebar_hot_preview: config.open_sidebar_hot_on_start(),
             },
         }
     }
@@ -776,11 +805,13 @@ impl ReferenceApp {
     }
 
     fn visible_canvas_screen_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
-        let drawer_rect = self.drawer_rect(screen_rect);
-        egui::Rect::from_min_max(
-            screen_rect.min,
-            egui::pos2(screen_rect.max.x, drawer_rect.top()),
-        )
+        let sidebar_rect = sidebar_rect(screen_rect);
+        let left = if self.sidebar_open {
+            sidebar_rect.right()
+        } else {
+            screen_rect.left()
+        };
+        egui::Rect::from_min_max(egui::pos2(left, screen_rect.top()), screen_rect.max)
     }
 
     fn queue_import_placeholder(
@@ -1320,7 +1351,7 @@ impl ReferenceApp {
                 SupportedShortcutAction::DeleteSelection => delete_shortcut_pressed(ctx),
                 SupportedShortcutAction::FocusSelection
                 | SupportedShortcutAction::DuplicateSelection
-                | SupportedShortcutAction::ToggleDrawer
+                | SupportedShortcutAction::ToggleSidebar
                 | SupportedShortcutAction::ApplyDefaultAverageArea
                 | SupportedShortcutAction::AverageSelectionArea
                 | SupportedShortcutAction::Arrange(_) => shortcut
@@ -1360,8 +1391,8 @@ impl ReferenceApp {
                         self.status = "Focused selection".to_owned();
                     }
                 }
-                SupportedShortcutAction::ToggleDrawer => {
-                    self.drawer_open = !self.drawer_open;
+                SupportedShortcutAction::ToggleSidebar => {
+                    self.sidebar_open = !self.sidebar_open;
                 }
                 SupportedShortcutAction::Arrange(action) => {
                     if self.canvas.selected_item_ids().len() > 1 {
@@ -1633,6 +1664,8 @@ impl ReferenceApp {
             self.search_overlay.last_query_edit_at = None;
             self.search_overlay.last_submitted_query.clear();
             self.search_overlay.results.clear();
+            self.search_overlay.active_result_index = 0;
+            self.search_overlay.active_instance_index = 0;
             self.canvas.clear_search_matches();
         }
 
@@ -1747,6 +1780,33 @@ impl ReferenceApp {
         }
 
         self.sync_semantic_search_service();
+
+        let pivot = {
+            let selected = self.canvas.selected_item_ids();
+            if selected.len() == 1
+                && let Some(record) = self.canvas.record_for_item_id(selected[0])
+            {
+                Some(ImageSearchPivot {
+                    asset_id: record.asset.id,
+                    item_id: record.item.id,
+                })
+            } else {
+                None
+            }
+        };
+
+        if pivot.is_some() && self.search_overlay.image_pivot != pivot {
+            self.search_overlay.query.clear();
+            self.search_overlay.last_submitted_query.clear();
+            self.search_overlay.results.clear();
+            self.search_overlay.active_result_index = 0;
+            self.search_overlay.active_instance_index = 0;
+            self.search_overlay.image_pivot = pivot;
+            self.search_overlay.last_query_edit_at = None;
+            self.canvas.clear_search_matches();
+            self.submit_search_query();
+        }
+
         self.search_overlay.open = true;
         self.search_overlay.focus_requested = true;
         if !matches!(self.search_overlay.status, SearchOverlayStatus::Error(_)) {
@@ -1776,7 +1836,8 @@ impl ReferenceApp {
     #[cfg(feature = "semantic-search")]
     fn submit_search_query(&mut self) {
         let query = self.search_overlay.query.trim().to_owned();
-        if query.is_empty() {
+        let pivot = self.search_overlay.image_pivot;
+        if query.is_empty() && pivot.is_none() {
             self.search_overlay.results.clear();
             self.search_overlay.last_submitted_query.clear();
             self.search_overlay.active_result_index = 0;
@@ -1792,12 +1853,33 @@ impl ReferenceApp {
             return;
         };
 
-        match service.search(&query) {
+        let search_result = match pivot {
+            Some(pivot) => {
+                let text = if query.is_empty() {
+                    None
+                } else {
+                    Some(query.as_str())
+                };
+                service.search_with_image_pivot(pivot.asset_id, text)
+            }
+            None => service.search(&query),
+        };
+
+        match search_result {
             Ok(results) => {
                 self.search_overlay.last_submitted_query = query;
+                let last_index = results.len().saturating_sub(1);
                 self.search_overlay.results = results;
-                self.search_overlay.active_result_index = 0;
-                self.search_overlay.active_instance_index = 0;
+                self.search_overlay.active_result_index =
+                    self.search_overlay.active_result_index.min(last_index);
+                let instance_last = self
+                    .search_overlay
+                    .results
+                    .get(self.search_overlay.active_result_index)
+                    .map(|group| group.item_ids.len().saturating_sub(1))
+                    .unwrap_or(0);
+                self.search_overlay.active_instance_index =
+                    self.search_overlay.active_instance_index.min(instance_last);
                 self.search_overlay.status = SearchOverlayStatus::Ready;
                 self.apply_search_matches();
             }
@@ -1873,23 +1955,21 @@ impl ReferenceApp {
         }
 
         let input_id = egui::Id::new("semantic_search_input");
-        let shell_margin = egui::Margin {
-            left: 16,
-            right: 16,
-            top: 14,
-            bottom: 12,
-        };
-        let overlay_max_height = search_overlay_max_height(screen_rect);
-        let width = search_overlay_width(screen_rect, self.search_overlay.results.len());
-        let shell_content_width = width - shell_margin.left as f32 - shell_margin.right as f32;
-        let grid_max_height = search_overlay_grid_max_height(overlay_max_height);
-        let grid_layout =
-            search_result_grid_layout(shell_content_width, self.search_overlay.results.len());
-        let grid_content_height = search_result_grid_content_height(
-            self.search_overlay.results.len(),
-            grid_layout.columns,
-        );
-        let grid_viewport_height = grid_content_height.min(grid_max_height);
+        let width = PALETTE_WIDTH;
+        let result_count = self.search_overlay.results.len();
+        let body_h_pad = 12.0_f32;
+        let grid_inner_width = width - body_h_pad * 2.0;
+        let grid_layout = search_result_grid_layout(grid_inner_width, result_count);
+        let grid_content_height =
+            search_result_grid_content_height(result_count, grid_layout.columns);
+        let grid_viewport_height = grid_content_height.min(PALETTE_GRID_MAX_HEIGHT);
+        egui::Area::new(egui::Id::new("semantic_search_scrim"))
+            .order(egui::Order::Middle)
+            .fixed_pos(screen_rect.min)
+            .show(ctx, |ui| {
+                let painter = ui.painter();
+                painter.rect_filled(screen_rect, 0, egui::Color32::from_black_alpha(170));
+            });
         let area_response = egui::Area::new(egui::Id::new("semantic_search_overlay"))
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::CENTER_TOP)
@@ -1902,36 +1982,35 @@ impl ReferenceApp {
                 ui.set_min_width(width);
                 ui.set_max_width(width);
                 egui::Frame::new()
-                    .fill(crate::theme::SURFACE)
-                    .stroke(crate::theme::stroke_subtle())
-                    .corner_radius(crate::theme::CARD_RADIUS)
-                    .inner_margin(shell_margin)
+                    .fill(crate::theme::PALETTE_SURFACE)
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(33)))
+                    .corner_radius(egui::CornerRadius::same(12))
+                    .shadow(egui::epaint::Shadow {
+                        offset: [0, 12],
+                        blur: 40,
+                        spread: 0,
+                        color: egui::Color32::from_black_alpha(180),
+                    })
                     .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing =
-                            egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2);
+                        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
 
-                        let response = ui
-                            .scope(|ui| {
-                                let visuals = &mut ui.style_mut().visuals;
-                                visuals.extreme_bg_color = crate::theme::SURFACE;
-                                visuals.widgets.inactive.bg_fill = egui::Color32::TRANSPARENT;
-                                visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
-                                visuals.widgets.active.bg_fill = egui::Color32::TRANSPARENT;
-                                visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
-                                visuals.widgets.hovered.bg_fill = egui::Color32::TRANSPARENT;
-                                visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
-                                visuals.selection.bg_fill = crate::theme::SURFACE_ELEVATED;
-                                ui.add_sized(
-                                    egui::vec2(ui.available_width(), 30.0),
-                                    egui::TextEdit::singleline(&mut self.search_overlay.query)
-                                        .id(input_id)
-                                        .desired_width(f32::INFINITY)
-                                        .hint_text("Search images")
-                                        .frame(egui::Frame::NONE)
-                                        .margin(egui::vec2(0.0, 0.0)),
-                                )
-                            })
-                            .inner;
+                        let input_result = paint_palette_input_row(
+                            ui,
+                            &mut self.search_overlay.query,
+                            input_id,
+                            self.search_overlay.image_pivot.as_ref(),
+                            &self.canvas,
+                        );
+                        let response = input_result.response;
+                        if input_result.pivot_dismissed {
+                            self.search_overlay.image_pivot = None;
+                            self.search_overlay.last_submitted_query.clear();
+                            self.search_overlay.results.clear();
+                            self.search_overlay.active_result_index = 0;
+                            self.search_overlay.active_instance_index = 0;
+                            self.canvas.clear_search_matches();
+                            self.search_overlay.last_query_edit_at = Some(Instant::now());
+                        }
                         if self.search_overlay.focus_requested {
                             response.request_focus();
                             self.search_overlay.focus_requested =
@@ -1944,103 +2023,85 @@ impl ReferenceApp {
                             self.search_overlay.last_query_edit_at = Some(Instant::now());
                             self.search_overlay.active_result_index = 0;
                             self.search_overlay.active_instance_index = 0;
-                            if self.search_overlay.query.trim().is_empty() {
+                            if self.search_overlay.query.trim().is_empty()
+                                && self.search_overlay.image_pivot.is_none()
+                            {
                                 self.search_overlay.results.clear();
                                 self.canvas.clear_search_matches();
                             }
                         }
 
-                        ui.add_space(crate::theme::SPACE_1);
-                        let status = match &self.search_overlay.status {
-                            SearchOverlayStatus::Idle => "Idle".to_owned(),
-                            SearchOverlayStatus::Loading(message) => message.clone(),
-                            SearchOverlayStatus::Indexing => "Indexing…".to_owned(),
-                            SearchOverlayStatus::Ready => {
-                                format!("{} matches", self.search_overlay.results.len())
-                            }
-                            SearchOverlayStatus::Error(error) => error.clone(),
-                        };
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(status)
-                                    .text_style(egui::TextStyle::Small)
-                                    .color(crate::theme::TEXT_SUBTLE),
-                            );
+                        paint_palette_facet_row(ui, result_count);
+                        paint_palette_divider(ui);
 
-                            let helper = if self.search_overlay.results.is_empty() {
-                                ""
-                            } else {
-                                "Arrow keys to browse"
-                            };
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(
-                                        egui::RichText::new(helper)
-                                            .text_style(egui::TextStyle::Small)
-                                            .color(crate::theme::TEXT_SUBTLE),
-                                    );
-                                },
-                            );
-                        });
-                        if !self.search_overlay.results.is_empty() {
-                            ui.add_space(crate::theme::SPACE_2);
+                        if result_count == 0 {
+                            paint_palette_empty_state(ui);
+                        } else {
                             let mut clicked_index = None;
-                            let mut render_grid = |ui: &mut egui::Ui| {
-                                ui.spacing_mut().item_spacing =
-                                    egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2);
-                                for (row_index, row_groups) in self
-                                    .search_overlay
-                                    .results
-                                    .chunks(grid_layout.columns.max(1))
-                                    .enumerate()
-                                {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
-                                        for (column_index, group) in row_groups.iter().enumerate() {
-                                            let index =
-                                                row_index * grid_layout.columns + column_index;
-                                            let active =
-                                                index == self.search_overlay.active_result_index;
-                                            let response = search_result_tile(
-                                                ui,
-                                                &self.canvas,
-                                                group,
-                                                active,
-                                                grid_layout.tile_width,
-                                            );
-                                            if response.clicked() {
-                                                clicked_index = Some(index);
-                                            }
+                            egui::Frame::new()
+                                .inner_margin(egui::Margin {
+                                    left: body_h_pad as i8,
+                                    right: body_h_pad as i8,
+                                    top: body_h_pad as i8,
+                                    bottom: body_h_pad as i8,
+                                })
+                                .show(ui, |ui| {
+                                    ui.set_min_width(grid_inner_width);
+                                    ui.set_max_width(grid_inner_width);
+                                    let mut render_grid = |ui: &mut egui::Ui| {
+                                        ui.spacing_mut().item_spacing = egui::vec2(
+                                            crate::theme::SPACE_2,
+                                            crate::theme::SPACE_2,
+                                        );
+                                        for (row_index, row_groups) in self
+                                            .search_overlay
+                                            .results
+                                            .chunks(grid_layout.columns.max(1))
+                                            .enumerate()
+                                        {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x =
+                                                    crate::theme::SPACE_2;
+                                                for (column_index, group) in
+                                                    row_groups.iter().enumerate()
+                                                {
+                                                    let index = row_index * grid_layout.columns
+                                                        + column_index;
+                                                    let active = index
+                                                        == self.search_overlay.active_result_index;
+                                                    let response = search_result_tile(
+                                                        ui,
+                                                        &self.canvas,
+                                                        group,
+                                                        active,
+                                                        grid_layout.tile_width,
+                                                    );
+                                                    if response.clicked() {
+                                                        clicked_index = Some(index);
+                                                    }
+                                                }
+                                            });
                                         }
-                                    });
-                                }
-                            };
+                                    };
 
-                            if grid_content_height <= grid_max_height {
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(shell_content_width, grid_content_height),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| render_grid(ui),
-                                );
-                            } else {
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(shell_content_width, grid_viewport_height),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| {
+                                    if grid_content_height <= PALETTE_GRID_MAX_HEIGHT {
+                                        render_grid(ui);
+                                    } else {
                                         egui::ScrollArea::vertical()
                                             .max_height(grid_viewport_height)
                                             .auto_shrink([false, false])
                                             .show(ui, |ui| render_grid(ui));
-                                    },
-                                );
-                            }
+                                    }
+                                });
                             if let Some(index) = clicked_index {
                                 self.search_overlay.active_result_index = index;
                                 self.search_overlay.active_instance_index = 0;
                                 self.apply_search_matches();
                             }
                         }
+
+                        paint_palette_divider(ui);
+                        paint_palette_footer(ui, result_count, &self.search_overlay.status);
                     });
             });
 
@@ -2131,39 +2192,12 @@ impl ReferenceApp {
         screen_rect: egui::Rect,
         pointer_screen_pos: Option<egui::Pos2>,
     ) -> egui::Pos2 {
-        let drawer_rect = self.drawer_rect(screen_rect);
-        let canvas_center = egui::pos2(
-            screen_rect.center().x,
-            (screen_rect.top() + drawer_rect.top()) * 0.5,
-        );
+        let visible_rect = self.visible_canvas_screen_rect(screen_rect);
+        let canvas_center = visible_rect.center();
         let import_screen_pos = pointer_screen_pos
-            .filter(|screen_pos| {
-                screen_rect.contains(*screen_pos) && !drawer_rect.contains(*screen_pos)
-            })
+            .filter(|screen_pos| visible_rect.contains(*screen_pos))
             .unwrap_or(canvas_center);
         self.canvas.screen_to_world(import_screen_pos, screen_rect)
-    }
-
-    fn drawer_height(&self, screen_rect: egui::Rect) -> f32 {
-        shortcut_drawer_height(screen_rect)
-    }
-
-    fn drawer_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
-        let height = if self.drawer_open {
-            self.drawer_height(screen_rect)
-        } else {
-            0.0
-        };
-        egui::Rect::from_min_max(
-            egui::pos2(
-                screen_rect.left() + SHORTCUT_DRAWER_MARGIN,
-                screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN - height,
-            ),
-            egui::pos2(
-                screen_rect.right() - SHORTCUT_DRAWER_MARGIN,
-                screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN,
-            ),
-        )
     }
 
     fn push_crop_undo_entry(&mut self, entry: CropUndoEntry) {
@@ -2294,9 +2328,9 @@ impl eframe::App for ReferenceApp {
         #[cfg(feature = "semantic-search")]
         self.handle_search_shortcut(ui.ctx());
         self.handle_selection_shortcuts(ui.ctx(), screen_rect);
-        let drawer_open = self.drawer_open;
-        if drawer_open {
-            block_drawer_input(ui.ctx(), self.drawer_rect(screen_rect));
+        let sidebar_open = self.sidebar_open;
+        if sidebar_open {
+            block_sidebar_input(ui.ctx(), sidebar_rect(screen_rect));
         }
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         self.frame_perf.canvas = crate::canvas::show(
@@ -2312,10 +2346,11 @@ impl eframe::App for ReferenceApp {
         self.handle_pending_crop_requests();
         self.handle_pending_annotation_requests();
         self.persist_canvas_changes();
-        let drawer_result = show_shortcuts_drawer(
+        let sidebar_result = show_sidebar(
             ui.ctx(),
             screen_rect,
-            drawer_open,
+            sidebar_open,
+            &mut self.sidebar_tab,
             &mut self.auto_image_scaling,
             &mut self.import_gap,
             &mut self.canvas_image_mode,
@@ -2323,22 +2358,22 @@ impl eframe::App for ReferenceApp {
             &mut self.semantic_search_enabled,
             &mut self.canvas,
         );
-        if drawer_open {
-            close_drawer_on_outside_click(
+        if sidebar_open {
+            close_sidebar_on_outside_click(
                 ui.ctx(),
-                drawer_result
+                sidebar_result
                     .interactive_rect
-                    .unwrap_or_else(|| self.drawer_rect(screen_rect)),
-                &mut self.drawer_open,
+                    .unwrap_or_else(|| sidebar_rect(screen_rect)),
+                &mut self.sidebar_open,
             );
         }
-        if drawer_result.settings_changed {
-            self.drawer_open = true;
+        if sidebar_result.settings_changed {
+            self.sidebar_open = true;
             #[cfg(feature = "semantic-search")]
             self.sync_semantic_search_service();
         }
-        self.persist_settings_if_changed(drawer_result.settings_changed);
-        show_drawer_toggle(ui.ctx(), screen_rect, drawer_open, &mut self.drawer_open);
+        self.persist_settings_if_changed(sidebar_result.settings_changed);
+        show_sidebar_hint(ui.ctx(), screen_rect, sidebar_open);
         #[cfg(feature = "semantic-search")]
         self.show_search_overlay(ui.ctx(), screen_rect);
         if self
@@ -2459,925 +2494,17 @@ fn apply_average_selection_area(canvas: &mut crate::canvas::CanvasState, status:
     *status = format!("Averaged area across {changed} {noun}");
 }
 
-fn block_drawer_input(ctx: &egui::Context, drawer_rect: egui::Rect) {
-    if drawer_rect.height() <= 0.0 || drawer_rect.width() <= 0.0 {
-        return;
-    }
-
-    egui::Area::new(egui::Id::new("shortcut_drawer_blocker"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(drawer_rect.min)
-        .show(ctx, |ui| {
-            ui.set_min_size(drawer_rect.size());
-            ui.allocate_rect(ui.max_rect(), egui::Sense::hover());
-        });
-}
-
-fn close_drawer_on_outside_click(
-    ctx: &egui::Context,
-    drawer_rect: egui::Rect,
-    drawer_open_state: &mut bool,
-) {
-    let clicked_outside = ctx.input(|input| {
-        should_close_drawer(
-            input.pointer.any_click(),
-            input.pointer.interact_pos(),
-            drawer_rect,
-        )
-    });
-
-    if clicked_outside {
-        *drawer_open_state = false;
-    }
-}
-
-fn should_close_drawer(
-    pointer_clicked: bool,
-    pointer_pos: Option<egui::Pos2>,
-    drawer_rect: egui::Rect,
-) -> bool {
-    pointer_clicked && pointer_pos.is_some_and(|pos| !drawer_rect.contains(pos))
-}
-
-#[cfg(feature = "semantic-search")]
-#[derive(Clone, Copy)]
-struct SearchResultGridLayout {
-    columns: usize,
-    tile_width: f32,
-}
-
-#[cfg(feature = "semantic-search")]
-fn search_overlay_max_height(screen_rect: egui::Rect) -> f32 {
-    (screen_rect.height() * SEARCH_OVERLAY_MAX_SCREEN_HEIGHT_RATIO)
-        .min(screen_rect.height() - SEARCH_OVERLAY_TOP_MARGIN - SEARCH_OVERLAY_BOTTOM_MARGIN)
-}
-
-#[cfg(feature = "semantic-search")]
-fn search_overlay_grid_max_height(overlay_max_height: f32) -> f32 {
-    (overlay_max_height - SEARCH_OVERLAY_GRID_CHROME_HEIGHT)
-        .max(SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT)
-}
-
-#[cfg(feature = "semantic-search")]
-fn search_result_tile_height() -> f32 {
-    SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT
-}
-
-#[cfg(feature = "semantic-search")]
-fn search_overlay_width(screen_rect: egui::Rect, _result_count: usize) -> f32 {
-    let screen_width = screen_rect.width();
-    let max_width =
-        (screen_width * SEARCH_OVERLAY_MAX_SCREEN_WIDTH_RATIO).min(SEARCH_OVERLAY_EMPTY_MAX_WIDTH);
-    (screen_width * SEARCH_OVERLAY_EMPTY_WIDTH_RATIO).clamp(SEARCH_OVERLAY_MIN_WIDTH, max_width)
-}
-
-#[cfg(feature = "semantic-search")]
-fn search_result_grid_layout(available_width: f32, result_count: usize) -> SearchResultGridLayout {
-    let gap = crate::theme::SPACE_2;
-    let columns = (((available_width + gap) / (SEARCH_RESULT_TILE_MIN_WIDTH + gap)).floor()
-        as usize)
-        .max(1)
-        .min(result_count.max(1));
-    let tile_width = (available_width - gap * (columns.saturating_sub(1) as f32)) / columns as f32;
-    SearchResultGridLayout {
-        columns,
-        tile_width,
-    }
-}
-
-#[cfg(feature = "semantic-search")]
-fn search_result_grid_content_height(result_count: usize, columns: usize) -> f32 {
-    if result_count == 0 {
-        return 0.0;
-    }
-
-    let rows = result_count.div_ceil(columns.max(1));
-    rows as f32 * search_result_tile_height()
-        + (rows.saturating_sub(1) as f32) * crate::theme::SPACE_2
-}
-
-#[cfg(feature = "semantic-search")]
-fn search_result_tile(
-    ui: &mut egui::Ui,
-    canvas: &crate::canvas::CanvasState,
-    group: &SearchResultGroup,
-    active: bool,
-    tile_width: f32,
-) -> egui::Response {
-    let tile_size = egui::vec2(
-        tile_width,
-        SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT,
-    );
-    let (rect, response) = ui.allocate_exact_size(tile_size, egui::Sense::click());
-    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    let hovered = response.hovered();
-    let tile_radius = if active { 0 } else { crate::theme::CARD_RADIUS };
-
-    ui.painter()
-        .rect_filled(rect, tile_radius, crate::theme::SURFACE);
-    if active {
-        ui.painter().rect_stroke(
-            rect,
-            tile_radius,
-            crate::theme::stroke_strong(),
-            egui::StrokeKind::Outside,
-        );
-    }
-
-    let preview_rect = egui::Rect::from_min_max(
-        rect.min,
-        egui::pos2(rect.max.x, rect.min.y + SEARCH_RESULT_TILE_PREVIEW_HEIGHT),
-    );
-
-    if let Some(item_id) = group.item_ids.first().copied()
-        && let Some(preview) = canvas.preview_for_item_id(item_id)
-    {
-        let preview_aspect = preview_rect.width() / preview_rect.height().max(1.0);
-        let texture_aspect = preview.texture_size.x / preview.texture_size.y.max(1.0);
-        let uv_rect = if texture_aspect > preview_aspect {
-            let visible_u = preview_aspect / texture_aspect;
-            let inset = (1.0 - visible_u) * 0.5;
-            egui::Rect::from_min_max(egui::pos2(inset, 0.0), egui::pos2(1.0 - inset, 1.0))
-        } else {
-            let visible_v = texture_aspect / preview_aspect;
-            let inset = (1.0 - visible_v) * 0.5;
-            egui::Rect::from_min_max(egui::pos2(0.0, inset), egui::pos2(1.0, 1.0 - inset))
-        };
-        ui.painter().image(
-            preview.texture_id,
-            preview_rect,
-            uv_rect,
-            egui::Color32::WHITE,
-        );
-    } else {
-        ui.painter()
-            .rect_filled(preview_rect, 0, crate::theme::BACKGROUND);
-    }
-
-    let primary_color = if active || hovered {
-        crate::theme::TEXT
-    } else {
-        crate::theme::TEXT_MUTED
-    };
-    let metadata_color = if active || hovered {
-        crate::theme::TEXT_MUTED
-    } else {
-        crate::theme::TEXT_SUBTLE
-    };
-
-    let primary_text = format!("#{}", group.asset_id);
-    let metadata_text = format!("{}x  ·  {:.2}", group.instance_count, group.similarity);
-    let primary_font = ui.style().text_styles[&egui::TextStyle::Body].clone();
-    let metadata_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
-    let primary_galley = ui
-        .painter()
-        .layout_no_wrap(primary_text, primary_font, primary_color);
-    let metadata_galley = ui
-        .painter()
-        .layout_no_wrap(metadata_text, metadata_font, metadata_color);
-
-    let content_rect = egui::Rect::from_min_max(
-        egui::pos2(
-            rect.left() + crate::theme::SPACE_2,
-            preview_rect.bottom() + crate::theme::SPACE_1,
-        ),
-        egui::pos2(
-            rect.right() - crate::theme::SPACE_2,
-            rect.bottom() - crate::theme::SPACE_1,
-        ),
-    );
-    let primary_pos = egui::pos2(
-        content_rect.left(),
-        content_rect.center().y - primary_galley.size().y * 0.5,
-    );
-    let metadata_pos = egui::pos2(
-        content_rect.right() - metadata_galley.size().x,
-        content_rect.center().y - metadata_galley.size().y * 0.5,
-    );
-
-    ui.painter()
-        .galley(primary_pos, primary_galley, primary_color);
-    ui.painter()
-        .galley(metadata_pos, metadata_galley, metadata_color);
-
-    response
-}
-
-struct DrawerRenderResult {
-    settings_changed: bool,
-    interactive_rect: Option<egui::Rect>,
-}
-
-fn show_shortcuts_drawer(
-    ctx: &egui::Context,
-    screen_rect: egui::Rect,
-    drawer_open: bool,
-    auto_image_scaling: &mut bool,
-    import_gap: &mut f32,
-    canvas_image_mode: &mut crate::data::CanvasImageMode,
-    canvas_image_max_side: &mut u32,
-    semantic_search_enabled: &mut bool,
-    canvas: &mut crate::canvas::CanvasState,
-) -> DrawerRenderResult {
-    if !drawer_open {
-        return DrawerRenderResult {
-            settings_changed: false,
-            interactive_rect: None,
-        };
-    }
-
-    let mut settings_changed = false;
-
-    let drawer_height = shortcut_drawer_height(screen_rect);
-    let drawer_rect = egui::Rect::from_min_max(
-        egui::pos2(
-            screen_rect.left() + SHORTCUT_DRAWER_MARGIN,
-            screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN - drawer_height,
-        ),
-        egui::pos2(
-            screen_rect.right() - SHORTCUT_DRAWER_MARGIN,
-            screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN,
-        ),
-    );
-
-    let area_response = egui::Area::new(egui::Id::new("shortcut_drawer"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(drawer_rect.min)
-        .show(ctx, |ui| {
-            ui.set_min_size(drawer_rect.size());
-
-            egui::Frame::new()
-                .fill(crate::theme::SURFACE)
-                .stroke(crate::theme::stroke_subtle())
-                .corner_radius(crate::theme::CARD_RADIUS)
-                .inner_margin(crate::theme::PANEL_PADDING)
-                .show(ui, |ui| {
-                    let inner_width = (drawer_rect.width()
-                        - crate::theme::PANEL_PADDING.left as f32
-                        - crate::theme::PANEL_PADDING.right as f32)
-                        .max(0.0);
-                    let inner_height = (drawer_rect.height()
-                        - crate::theme::PANEL_PADDING.top as f32
-                        - crate::theme::PANEL_PADDING.bottom as f32)
-                        .max(0.0);
-                    ui.set_width(inner_width);
-                    ui.set_min_height(inner_height);
-
-                    match drawer_layout_mode(inner_width) {
-                        DrawerLayoutMode::Split {
-                            left_width,
-                            right_width,
-                        } => {
-                            ui.horizontal_top(|ui| {
-                                paint_drawer_section(
-                                    ui,
-                                    left_width,
-                                    inner_height,
-                                    "Options",
-                                    Some("Board defaults"),
-                                    Some(inner_height),
-                                    |ui| {
-                                        settings_changed |= paint_settings_section(
-                                            ui,
-                                            auto_image_scaling,
-                                            import_gap,
-                                            canvas_image_mode,
-                                            canvas_image_max_side,
-                                            semantic_search_enabled,
-                                            canvas,
-                                        );
-                                    },
-                                );
-
-                                ui.add_space(crate::theme::SPACE_3);
-
-                                paint_drawer_section(
-                                    ui,
-                                    right_width,
-                                    inner_height,
-                                    "Shortcuts",
-                                    None,
-                                    Some(inner_height),
-                                    |ui| {
-                                        paint_supported_shortcuts_section(ui);
-                                    },
-                                );
-                            });
-                        }
-                        DrawerLayoutMode::Stacked => {
-                            let stacked_card_height = (inner_height * 0.4).max(140.0);
-                            ui.vertical(|ui| {
-                                paint_drawer_section(
-                                    ui,
-                                    inner_width,
-                                    stacked_card_height,
-                                    "Options",
-                                    Some("Board defaults"),
-                                    Some(stacked_card_height),
-                                    |ui| {
-                                        settings_changed |= paint_settings_section(
-                                            ui,
-                                            auto_image_scaling,
-                                            import_gap,
-                                            canvas_image_mode,
-                                            canvas_image_max_side,
-                                            semantic_search_enabled,
-                                            canvas,
-                                        );
-                                    },
-                                );
-
-                                ui.add_space(crate::theme::SPACE_3);
-
-                                paint_drawer_section(
-                                    ui,
-                                    inner_width,
-                                    stacked_card_height,
-                                    "Shortcuts",
-                                    None,
-                                    Some(stacked_card_height),
-                                    |ui| {
-                                        paint_supported_shortcuts_section(ui);
-                                    },
-                                );
-                            });
-                        }
-                    }
-                });
-        });
-
-    DrawerRenderResult {
-        settings_changed,
-        interactive_rect: Some(area_response.response.rect),
-    }
-}
-
-fn drawer_layout_mode(content_width: f32) -> DrawerLayoutMode {
-    let wide_threshold = SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH;
-    let split_width = SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH
-        + SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH
-        + crate::theme::SPACE_3;
-    if content_width < wide_threshold || content_width < split_width {
-        DrawerLayoutMode::Stacked
-    } else {
-        let left_width = SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH;
-        let right_width = (content_width - left_width - crate::theme::SPACE_3).max(0.0);
-        if right_width < SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH {
-            DrawerLayoutMode::Stacked
-        } else {
-            DrawerLayoutMode::Split {
-                left_width,
-                right_width,
-            }
-        }
-    }
-}
-
-fn paint_drawer_section(
-    ui: &mut egui::Ui,
-    width: f32,
-    _max_height: f32,
-    title: &str,
-    detail: Option<&str>,
-    card_max_height: Option<f32>,
-    add_contents: impl FnOnce(&mut egui::Ui),
-) {
-    let scroll_id = card_max_height
-        .is_some()
-        .then(|| egui::Id::new(("drawer_card_scroll", title)));
-    let section_height = if card_max_height.is_some() {
-        _max_height
-    } else {
-        0.0
-    };
-    ui.allocate_ui_with_layout(
-        egui::vec2(width, section_height),
-        egui::Layout::top_down(egui::Align::Min),
-        |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_1);
-            paint_drawer_section_label(ui, title, detail);
-            ui.add_space(crate::theme::SPACE_1);
-            paint_drawer_card(ui, card_max_height, scroll_id, add_contents);
-        },
-    );
-}
-
-fn paint_drawer_card(
-    ui: &mut egui::Ui,
-    max_height: Option<f32>,
-    scroll_id: Option<egui::Id>,
-    add_contents: impl FnOnce(&mut egui::Ui),
-) {
-    egui::Frame::new()
-        .fill(crate::theme::SURFACE)
-        .stroke(crate::theme::stroke_subtle())
-        .corner_radius(crate::theme::CARD_RADIUS)
-        .inner_margin(egui::Margin {
-            left: crate::theme::SPACE_2 as i8,
-            right: crate::theme::SPACE_2 as i8,
-            top: crate::theme::SPACE_1 as i8,
-            bottom: crate::theme::SPACE_1 as i8,
-        })
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing =
-                egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1);
-            if let Some(max_height) = max_height {
-                let mut scroll_area = egui::ScrollArea::vertical();
-                if let Some(scroll_id) = scroll_id {
-                    scroll_area = scroll_area.id_salt(scroll_id);
-                }
-                scroll_area
-                    .max_height(max_height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing =
-                            egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1);
-                        add_contents(ui);
-                    });
-            } else {
-                add_contents(ui);
-            }
-        });
-}
-
-fn paint_settings_section(
-    ui: &mut egui::Ui,
-    auto_image_scaling: &mut bool,
-    import_gap: &mut f32,
-    canvas_image_mode: &mut crate::data::CanvasImageMode,
-    canvas_image_max_side: &mut u32,
-    semantic_search_enabled: &mut bool,
-    canvas: &mut crate::canvas::CanvasState,
-) -> bool {
-    let mut changed = false;
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_1);
-
-        paint_drawer_subsection_label(ui, "Canvas");
-        ui.add_space(crate::theme::SPACE_1);
-
-        changed |= paint_setting_row(ui, "Canvas background", "Quiet board guide.", |ui| {
-            paint_background_mode_control(ui, canvas)
-        });
-        changed |= paint_setting_row(
-            ui,
-            "Canvas image resolution",
-            "Keeps originals for crop/edit.",
-            |ui| paint_canvas_image_mode_control(ui, canvas_image_mode),
-        );
-        changed |= paint_setting_row(
-            ui,
-            "Canvas max dimension",
-            "Largest side of the canvas copy.",
-            |ui| {
-                ui.add_enabled_ui(
-                    *canvas_image_mode == crate::data::CanvasImageMode::Downscale,
-                    |ui| {
-                        ui.add(
-                            egui::DragValue::new(canvas_image_max_side)
-                                .speed(64.0)
-                                .range(256..=8192)
-                                .fixed_decimals(0)
-                                .suffix(" px"),
-                        )
-                        .changed()
-                    },
-                )
-                .inner
-            },
-        );
-
-        ui.add_space(crate::theme::SPACE_1);
-        paint_drawer_subsection_label(ui, "Import + search");
-        ui.add_space(crate::theme::SPACE_1);
-
-        let auto_scale_detail = "Caps new imports to a default area.";
-        changed |= paint_setting_row(ui, "Auto-scale new images", auto_scale_detail, |ui| {
-            #[cfg(feature = "semantic-search")]
-            {
-                paint_switch(ui, auto_image_scaling).changed()
-            }
-            #[cfg(not(feature = "semantic-search"))]
-            {
-                ui.add_enabled(
-                    false,
-                    egui::widgets::Checkbox::without_text(auto_image_scaling),
-                )
-                .changed()
-            }
-        });
-        changed |= paint_setting_row(
-            ui,
-            "Import gap",
-            "Gap used when placing new images.",
-            |ui| {
-                ui.add(
-                    egui::DragValue::new(import_gap)
-                        .speed(0.5)
-                        .range(0.0..=128.0)
-                        .fixed_decimals(0)
-                        .suffix(" units"),
-                )
-                .changed()
-            },
-        );
-        changed |= paint_setting_row(
-            ui,
-            "Semantic search",
-            #[cfg(feature = "semantic-search")]
-            "Experimental; downloads a model on first use.",
-            #[cfg(not(feature = "semantic-search"))]
-            "Feature disabled in this build.",
-            |ui| {
-                #[cfg(feature = "semantic-search")]
-                {
-                    paint_switch(ui, semantic_search_enabled).changed()
-                }
-                #[cfg(not(feature = "semantic-search"))]
-                {
-                    ui.add_enabled(
-                        false,
-                        egui::widgets::Checkbox::without_text(semantic_search_enabled),
-                    )
-                    .changed()
-                }
-            },
-        );
-    });
-
-    changed
-}
-
-fn paint_setting_row(
-    ui: &mut egui::Ui,
-    title: &str,
-    detail: &str,
-    add_control: impl FnOnce(&mut egui::Ui) -> bool,
-) -> bool {
-    let mut changed = false;
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1);
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = crate::theme::SPACE_1;
-            ui.label(
-                egui::RichText::new(title)
-                    .text_style(egui::TextStyle::Body)
-                    .strong()
-                    .color(crate::theme::TEXT),
-            );
-            ui.label(
-                egui::RichText::new(detail)
-                    .text_style(egui::TextStyle::Small)
-                    .color(crate::theme::TEXT_MUTED),
-            );
-        });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            changed |= add_control(ui);
-        });
-    });
-    changed
-}
-
-fn paint_canvas_image_mode_control(
-    ui: &mut egui::Ui,
-    canvas_image_mode: &mut crate::data::CanvasImageMode,
-) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        changed |= ui
-            .radio_value(
-                canvas_image_mode,
-                crate::data::CanvasImageMode::Downscale,
-                "Downscale",
-            )
-            .changed();
-        changed |= ui
-            .radio_value(
-                canvas_image_mode,
-                crate::data::CanvasImageMode::Original,
-                "Original",
-            )
-            .changed();
-    });
-    changed
-}
-
-fn paint_background_mode_control(
-    ui: &mut egui::Ui,
-    canvas: &mut crate::canvas::CanvasState,
-) -> bool {
-    let mut background = canvas.background();
-    let before = background;
-
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_1;
-        for (label, value) in [
-            ("Dots", crate::data::CanvasBackground::Dots),
-            ("Grid", crate::data::CanvasBackground::Grid),
-            ("None", crate::data::CanvasBackground::None),
-        ] {
-            let selected = background == value;
-            let button = egui::Button::new(
-                egui::RichText::new(label)
-                    .text_style(egui::TextStyle::Button)
-                    .color(crate::theme::TEXT),
-            )
-            .fill(if selected {
-                crate::theme::SURFACE_ELEVATED
-            } else {
-                crate::theme::SURFACE
-            })
-            .stroke(if selected {
-                crate::theme::stroke_strong()
-            } else {
-                crate::theme::stroke_subtle()
-            })
-            .corner_radius(crate::theme::CONTROL_RADIUS)
-            .min_size(egui::vec2(44.0, crate::theme::CONTROL_HEIGHT));
-
-            if ui.add(button).clicked() {
-                background = value;
-            }
-        }
-    });
-
-    if background != before {
-        canvas.set_background(background);
-        true
-    } else {
-        false
-    }
-}
-
-fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
-    paint_drawer_subsection_label(ui, "Implemented");
-    ui.add_space(crate::theme::SPACE_1);
-    ui.label(
-        egui::RichText::new("Bindings grouped by task.")
-            .text_style(egui::TextStyle::Small)
-            .color(crate::theme::TEXT_MUTED),
-    );
-    ui.add_space(crate::theme::SPACE_2);
-    let (core_shortcuts, layout_shortcuts) = SUPPORTED_SHORTCUTS.split_at(8);
-
-    ui.columns(2, |columns| {
-        paint_shortcut_table_section(&mut columns[0], "Core actions", core_shortcuts);
-        paint_shortcut_table_section(&mut columns[1], "Layout + history", layout_shortcuts);
-    });
-}
-
-fn paint_shortcut_table_section(ui: &mut egui::Ui, title: &str, shortcuts: &[SupportedShortcut]) {
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_1);
-        paint_drawer_subsection_label(ui, title);
-        ui.add_space(crate::theme::SPACE_1);
-        paint_shortcut_grid(
-            ui,
-            egui::Id::new(("shortcut_section_grid", title)),
-            shortcuts.iter().copied().map(shortcut_to_row),
-        );
-    });
-}
-
-fn shortcut_to_row(shortcut: SupportedShortcut) -> ShortcutRow {
-    ShortcutRow {
-        action: shortcut.action,
-        windows: shortcut.windows,
-        mac: shortcut.mac,
-    }
-}
-
-fn paint_switch(ui: &mut egui::Ui, value: &mut bool) -> egui::Response {
-    let desired_size = egui::vec2(40.0, 24.0);
-    let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
-    if response.clicked() {
-        *value = !*value;
-        response.mark_changed();
-    }
-
-    let track_color = if *value {
-        crate::theme::ACCENT
-    } else {
-        crate::theme::SURFACE_ELEVATED
-    };
-    let knob_color = if *value {
-        crate::theme::TEXT
-    } else {
-        crate::theme::TEXT_MUTED
-    };
-    let animation = ui.ctx().animate_bool(response.id, *value);
-    let knob_radius = 9.0;
-    let knob_x = egui::lerp((rect.left() + 12.0)..=(rect.right() - 12.0), animation);
-    let track_rect = rect.shrink2(egui::vec2(1.0, 3.0));
-    let stroke_color = if response.hovered() {
-        crate::theme::BORDER_STRONG
-    } else {
-        crate::theme::BORDER
-    };
-
-    ui.painter().rect(
-        track_rect,
-        track_rect.height() * 0.5,
-        track_color,
-        egui::Stroke::new(1.0, stroke_color),
-        egui::StrokeKind::Middle,
-    );
-    ui.painter()
-        .circle_filled(egui::pos2(knob_x, rect.center().y), knob_radius, knob_color);
-
-    response
-}
-
-fn show_drawer_toggle(
-    ctx: &egui::Context,
-    screen_rect: egui::Rect,
-    drawer_open: bool,
-    drawer_open_state: &mut bool,
-) {
-    if drawer_open {
-        return;
-    }
-
-    let button_size = egui::vec2(drawer_toggle_width(), SHORTCUT_DRAWER_BUTTON_SIZE);
-    let y = screen_rect.bottom() - SHORTCUT_DRAWER_MARGIN - button_size.y;
-    let x = screen_rect.right() - SHORTCUT_DRAWER_MARGIN - button_size.x;
-
-    egui::Area::new(egui::Id::new("shortcut_drawer_toggle"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(egui::pos2(x, y))
-        .show(ctx, |ui| {
-            let shortcut_label = toggle_drawer_shortcut_label();
-            let (rect, response) = ui.allocate_exact_size(button_size, egui::Sense::click());
-            let visuals = ui.style().interact(&response);
-            ui.painter().rect(
-                rect,
-                crate::theme::CONTROL_RADIUS,
-                visuals.bg_fill,
-                visuals.bg_stroke,
-                egui::StrokeKind::Outside,
-            );
-            let content_rect = rect
-                .shrink2(egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1))
-                .translate(egui::vec2(0.0, -1.0));
-            ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    paint_shortcut_keys(ui, shortcut_label);
-                });
-            });
-            let response = if drawer_open {
-                response.on_hover_text("Close shortcuts")
-            } else {
-                response.on_hover_text("Open shortcuts")
-            };
-            if response.clicked() {
-                *drawer_open_state = !*drawer_open_state;
-            }
-        });
-}
-
-fn paint_drawer_section_label(ui: &mut egui::Ui, title: &str, detail: Option<&str>) {
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(title)
-                .text_style(crate::theme::display_text_style())
-                .color(crate::theme::TEXT),
-        );
-        if let Some(detail) = detail {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(detail)
-                        .text_style(egui::TextStyle::Small)
-                        .color(crate::theme::TEXT_MUTED),
-                );
-            });
-        }
-    });
-}
-
-fn paint_drawer_subsection_label(ui: &mut egui::Ui, title: &str) {
-    ui.label(
-        egui::RichText::new(title)
-            .text_style(egui::TextStyle::Small)
-            .strong()
-            .color(crate::theme::TEXT_SUBTLE),
-    );
-}
-
-fn paint_shortcut_grid(
-    ui: &mut egui::Ui,
-    id: egui::Id,
-    rows: impl IntoIterator<Item = ShortcutRow>,
-) {
-    egui::Grid::new(id)
-        .num_columns(3)
-        .striped(false)
-        .spacing(egui::vec2(crate::theme::SPACE_1, 2.0))
-        .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new("Action")
-                    .text_style(egui::TextStyle::Small)
-                    .color(crate::theme::TEXT_SUBTLE)
-                    .strong(),
-            );
-            ui.label(
-                egui::RichText::new("Win/Linux")
-                    .text_style(egui::TextStyle::Small)
-                    .color(crate::theme::TEXT_SUBTLE)
-                    .strong(),
-            );
-            ui.label(
-                egui::RichText::new("Mac")
-                    .text_style(egui::TextStyle::Small)
-                    .color(crate::theme::TEXT_SUBTLE)
-                    .strong(),
-            );
-            ui.end_row();
-
-            for row in rows {
-                ui.label(
-                    egui::RichText::new(row.action)
-                        .text_style(egui::TextStyle::Small)
-                        .color(crate::theme::TEXT),
-                );
-                paint_shortcut_keys(ui, row.windows);
-                paint_shortcut_keys(ui, row.mac);
-                ui.end_row();
-            }
-        });
-}
-
-fn paint_shortcut_keys(ui: &mut egui::Ui, shortcut: &str) {
-    if shortcut == "None" {
-        ui.label(
-            egui::RichText::new("None")
-                .text_style(egui::TextStyle::Small)
-                .color(crate::theme::TEXT_SUBTLE),
-        );
-        return;
-    }
-
-    egui::Frame::new()
-        .fill(crate::theme::SURFACE_ELEVATED)
-        .stroke(crate::theme::stroke_subtle())
-        .corner_radius(crate::theme::CONTROL_RADIUS.saturating_sub(2))
-        .inner_margin(egui::Margin {
-            left: 5,
-            right: 5,
-            top: 2,
-            bottom: 2,
-        })
-        .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(shortcut)
-                    .text_style(egui::TextStyle::Monospace)
-                    .color(crate::theme::TEXT)
-                    .strong(),
-            );
-        });
-}
-
-fn toggle_drawer_shortcut_label() -> &'static str {
-    #[cfg(target_os = "macos")]
-    {
-        "⌘B"
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        "Ctrl+B"
-    }
-}
-
-fn shortcut_drawer_height(screen_rect: egui::Rect) -> f32 {
-    let target = (screen_rect.height() * SHORTCUT_DRAWER_HEIGHT_RATIO)
-        .clamp(SHORTCUT_DRAWER_MIN_HEIGHT, SHORTCUT_DRAWER_MAX_HEIGHT);
-    let available = (screen_rect.height() - SHORTCUT_DRAWER_MARGIN * 2.0).max(0.0);
-    target.min(available)
-}
-
-fn drawer_toggle_width() -> f32 {
-    #[cfg(target_os = "macos")]
-    {
-        62.0
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        78.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        ArrangementAction, DrawerLayoutMode, ReferenceApp, SEARCH_OVERLAY_EMPTY_MAX_WIDTH,
-        SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH, SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH,
-        SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH, apply_arrangement_action, drawer_layout_mode,
-        search_overlay_width, search_result_grid_content_height, search_result_grid_layout,
-        search_result_tile_height, should_close_drawer,
-    };
+    use super::{ArrangementAction, ReferenceApp, apply_arrangement_action};
     use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
     use crate::jobs::LoadedCanvasItem;
+    #[cfg(feature = "semantic-search")]
+    use crate::palette::{
+        PALETTE_WIDTH, search_result_grid_content_height, search_result_grid_layout,
+        search_result_tile_height,
+    };
+    use crate::sidebar::should_close_sidebar;
     use crate::storage::Library;
     use eframe::egui;
     use std::fs;
@@ -3509,48 +2636,26 @@ mod tests {
     }
 
     #[test]
-    fn drawer_close_helper_only_closes_for_outside_clicks() {
-        let drawer_rect =
+    fn sidebar_close_helper_only_closes_for_outside_clicks() {
+        let sidebar_rect =
             egui::Rect::from_min_max(egui::pos2(20.0, 30.0), egui::pos2(220.0, 180.0));
 
-        assert!(!should_close_drawer(
+        assert!(!should_close_sidebar(
             true,
             Some(egui::pos2(60.0, 90.0)),
-            drawer_rect
+            sidebar_rect
         ));
-        assert!(should_close_drawer(
+        assert!(should_close_sidebar(
             true,
-            Some(egui::pos2(10.0, 90.0)),
-            drawer_rect
+            Some(egui::pos2(300.0, 90.0)),
+            sidebar_rect
         ));
-        assert!(!should_close_drawer(
+        assert!(!should_close_sidebar(
             false,
-            Some(egui::pos2(10.0, 90.0)),
-            drawer_rect
+            Some(egui::pos2(300.0, 90.0)),
+            sidebar_rect
         ));
-        assert!(!should_close_drawer(true, None, drawer_rect));
-    }
-
-    #[test]
-    fn drawer_layout_stacks_below_the_breakpoint() {
-        assert!(matches!(
-            drawer_layout_mode(SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH - 1.0),
-            DrawerLayoutMode::Stacked
-        ));
-    }
-
-    #[test]
-    fn drawer_layout_uses_a_fixed_split_above_the_breakpoint() {
-        match drawer_layout_mode(SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH + 120.0) {
-            DrawerLayoutMode::Split {
-                left_width,
-                right_width,
-            } => {
-                assert!((left_width - SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH).abs() < f32::EPSILON);
-                assert!(right_width >= SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH);
-            }
-            DrawerLayoutMode::Stacked => panic!("expected split layout above breakpoint"),
-        }
+        assert!(!should_close_sidebar(true, None, sidebar_rect));
     }
 
     #[cfg(feature = "semantic-search")]
@@ -3638,29 +2743,17 @@ mod tests {
 
     #[cfg(feature = "semantic-search")]
     #[test]
-    fn search_overlay_width_stays_compact_without_results() {
-        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(2048.0, 1280.0));
-
-        let width = search_overlay_width(screen_rect, 0);
-
-        assert_eq!(width, SEARCH_OVERLAY_EMPTY_MAX_WIDTH);
-    }
-
-    #[cfg(feature = "semantic-search")]
-    #[test]
-    fn search_result_grid_layout_balances_five_results_into_three_columns() {
-        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(2048.0, 1280.0));
-        let width = search_overlay_width(screen_rect, 5);
-        let shell_content_width = width - 32.0;
+    fn search_result_grid_layout_balances_five_results_into_five_columns() {
+        let shell_content_width = PALETTE_WIDTH - 24.0;
         let grid_layout = search_result_grid_layout(shell_content_width, 5);
 
-        assert_eq!(grid_layout.columns, 3);
+        assert_eq!(grid_layout.columns, 5);
     }
 
     #[cfg(feature = "semantic-search")]
     #[test]
     fn search_result_grid_content_height_grows_by_rows() {
-        let height = search_result_grid_content_height(5, 3);
+        let height = search_result_grid_content_height(6, 5);
 
         assert_eq!(
             height,
@@ -3702,14 +2795,15 @@ mod tests {
             frame_perf: super::FramePerfState::default(),
             pending_cache_backfills: std::collections::HashSet::new(),
             inflight_image_tier_loads: std::collections::HashMap::new(),
-            drawer_open: false,
+            sidebar_open: false,
+            sidebar_tab: super::SidebarTab::default(),
             status: String::new(),
             perf_log: None,
             next_import_queue_id: 1,
             #[cfg(debug_assertions)]
             verification_search_query: None,
             #[cfg(debug_assertions)]
-            drawer_hot_preview: false,
+            sidebar_hot_preview: false,
         }
     }
 

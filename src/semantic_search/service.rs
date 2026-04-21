@@ -5,8 +5,10 @@ use std::thread;
 
 use crate::storage::{EmbeddingStatus, Library};
 
-use super::index::{BruteForceIndex, VectorIndex};
+use super::index::{BruteForceIndex, VectorIndex, decode_f32_blob};
 use super::model::{EmbeddingModel, ModelSpec, OrtDualEncoderModel};
+
+const IMAGE_PIVOT_CANDIDATE_LIMIT: usize = 50;
 
 pub struct SemanticSearchConfig {
     pub enabled: bool,
@@ -16,9 +18,11 @@ pub struct SemanticSearchConfig {
 
 #[derive(Clone, Debug)]
 pub struct SearchResultGroup {
+    #[allow(dead_code)]
     pub asset_id: i64,
     pub similarity: f32,
     pub item_ids: Vec<i64>,
+    #[allow(dead_code)]
     pub instance_count: usize,
 }
 
@@ -165,6 +169,81 @@ impl SemanticSearchService {
         self.index_tx
             .send(IndexRequest::Backfill)
             .map_err(|error| format!("failed to queue embedding backfill: {error}"))
+    }
+
+    pub fn search_with_image_pivot(
+        &self,
+        source_asset_id: i64,
+        text_query: Option<&str>,
+    ) -> Result<Vec<SearchResultGroup>, String> {
+        let source_blob = self
+            .library
+            .load_asset_embedding(source_asset_id, self.model_key)?
+            .ok_or_else(|| "Source image not indexed yet".to_owned())?;
+        let source_embedding = decode_f32_blob(&source_blob)?;
+
+        let index = BruteForceIndex::new(self.library.clone());
+        let mut hits = index.search(
+            self.model_key,
+            &source_embedding,
+            IMAGE_PIVOT_CANDIDATE_LIMIT,
+        )?;
+        hits.retain(|hit| hit.asset_id != source_asset_id);
+
+        let text_query = text_query.map(str::trim).filter(|query| !query.is_empty());
+        if let Some(query) = text_query {
+            let model = self.ready_model().map_err(|error| {
+                if error == "Loading model…" {
+                    let _ = self.index_tx.send(IndexRequest::Init);
+                }
+                error
+            })?;
+            let query_embedding = model.embed_text(query)?;
+
+            let asset_ids = hits.iter().map(|hit| hit.asset_id).collect::<Vec<_>>();
+            let mut candidate_embeddings: HashMap<i64, Vec<f32>> = HashMap::new();
+            for asset_id in &asset_ids {
+                if let Some(blob) = self
+                    .library
+                    .load_asset_embedding(*asset_id, self.model_key)?
+                {
+                    candidate_embeddings.insert(*asset_id, decode_f32_blob(&blob)?);
+                }
+            }
+
+            for hit in hits.iter_mut() {
+                if let Some(embedding) = candidate_embeddings.get(&hit.asset_id) {
+                    hit.similarity = super::index::cosine_similarity(&query_embedding, embedding)?;
+                }
+            }
+            hits.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));
+        }
+
+        hits.truncate(self.max_results);
+        let asset_ids = hits.iter().map(|hit| hit.asset_id).collect::<Vec<_>>();
+        let instances = self.library.board_item_instances_for_assets(&asset_ids)?;
+
+        let mut instances_by_asset: HashMap<i64, Vec<i64>> = HashMap::new();
+        for instance in instances {
+            instances_by_asset
+                .entry(instance.asset_id)
+                .or_default()
+                .push(instance.item_id);
+        }
+
+        Ok(hits
+            .into_iter()
+            .map(|hit| {
+                let item_ids = instances_by_asset.remove(&hit.asset_id).unwrap_or_default();
+                SearchResultGroup {
+                    asset_id: hit.asset_id,
+                    similarity: hit.similarity,
+                    instance_count: item_ids.len(),
+                    item_ids,
+                }
+            })
+            .filter(|group| !group.item_ids.is_empty())
+            .collect())
     }
 
     pub fn search(&self, query: &str) -> Result<Vec<SearchResultGroup>, String> {

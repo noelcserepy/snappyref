@@ -3,10 +3,13 @@ mod canvas;
 mod data;
 mod jobs;
 mod native_capture;
+#[cfg(feature = "semantic-search")]
+mod palette;
 mod perf;
 mod screenshot;
 #[cfg(feature = "semantic-search")]
 mod semantic_search;
+mod sidebar;
 mod storage;
 mod theme;
 

@@ -885,6 +885,43 @@ impl Library {
     }
 
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn load_asset_embedding(
+        &self,
+        asset_id: i64,
+        model_key: &str,
+    ) -> Result<Option<Vec<u8>>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT embedding_blob
+                 FROM asset_embeddings
+                 WHERE asset_id = ?1
+                   AND model_key = ?2
+                   AND status = 'ready'
+                   AND embedding_blob IS NOT NULL
+                 LIMIT 1",
+            )
+            .map_err(|error| format!("failed to prepare asset-embedding query: {error}"))?;
+
+        let mut rows = statement
+            .query(params![asset_id, model_key])
+            .map_err(|error| format!("failed to read asset-embedding query: {error}"))?;
+
+        match rows
+            .next()
+            .map_err(|error| format!("failed to fetch asset embedding: {error}"))?
+        {
+            Some(row) => {
+                let blob: Vec<u8> = row
+                    .get(0)
+                    .map_err(|error| format!("failed to decode asset embedding: {error}"))?;
+                Ok(Some(blob))
+            }
+            None => Ok(None),
+        }
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn board_item_instances_for_assets(
         &self,
         asset_ids: &[i64],
@@ -1212,8 +1249,8 @@ impl Library {
                     camera_pan_y  REAL NOT NULL,
                     camera_zoom   REAL NOT NULL,
                     auto_image_scaling INTEGER NOT NULL DEFAULT 1,
-                    import_gap    REAL NOT NULL DEFAULT 12.0,
-                    canvas_background TEXT NOT NULL DEFAULT 'dots',
+                    import_gap    REAL NOT NULL DEFAULT 24.0,
+                    canvas_background TEXT NOT NULL DEFAULT 'none',
                     semantic_search_enabled INTEGER NOT NULL DEFAULT 1,
                     canvas_image_mode TEXT NOT NULL DEFAULT 'downscale',
                     canvas_image_max_side INTEGER NOT NULL DEFAULT 2000
@@ -1501,7 +1538,7 @@ fn ensure_user_session_import_gap_column(connection: &Connection) -> Result<(), 
 
     connection
         .execute(
-            "ALTER TABLE user_session ADD COLUMN import_gap REAL NOT NULL DEFAULT 12.0",
+            "ALTER TABLE user_session ADD COLUMN import_gap REAL NOT NULL DEFAULT 24.0",
             [],
         )
         .map_err(|error| format!("failed to add import_gap column to user_session: {error}"))?;
@@ -1526,7 +1563,7 @@ fn ensure_user_session_canvas_background_column(connection: &Connection) -> Resu
 
     connection
         .execute(
-            "ALTER TABLE user_session ADD COLUMN canvas_background TEXT NOT NULL DEFAULT 'dots'",
+            "ALTER TABLE user_session ADD COLUMN canvas_background TEXT NOT NULL DEFAULT 'none'",
             [],
         )
         .map_err(|error| {
@@ -1682,7 +1719,7 @@ mod tests {
             session.canvas_image_max_side,
             crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE
         );
-        assert_eq!(session.canvas_background, CanvasBackground::Dots);
+        assert_eq!(session.canvas_background, CanvasBackground::None);
         assert!(session.semantic_search_enabled);
 
         let _ = fs::remove_dir_all(root);
