@@ -183,8 +183,11 @@ impl SemanticSearchService {
         let source_embedding = decode_f32_blob(&source_blob)?;
 
         let index = BruteForceIndex::new(self.library.clone());
-        let mut hits =
-            index.search(self.model_key, &source_embedding, IMAGE_PIVOT_CANDIDATE_LIMIT)?;
+        let mut hits = index.search(
+            self.model_key,
+            &source_embedding,
+            IMAGE_PIVOT_CANDIDATE_LIMIT,
+        )?;
         hits.retain(|hit| hit.asset_id != source_asset_id);
 
         let text_query = text_query.map(str::trim).filter(|query| !query.is_empty());
@@ -210,8 +213,7 @@ impl SemanticSearchService {
 
             for hit in hits.iter_mut() {
                 if let Some(embedding) = candidate_embeddings.get(&hit.asset_id) {
-                    hit.similarity =
-                        super::index::cosine_similarity(&query_embedding, embedding)?;
+                    hit.similarity = super::index::cosine_similarity(&query_embedding, embedding)?;
                 }
             }
             hits.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));

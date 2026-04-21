@@ -164,11 +164,8 @@ fn paint_sidebar_header(ui: &mut egui::Ui) {
         egui::pos2(rect.left() + pad_x + badge_size * 0.5, center_y),
         egui::vec2(badge_size, badge_size),
     );
-    ui.painter().rect_filled(
-        badge_rect,
-        egui::CornerRadius::same(5),
-        crate::theme::BADGE,
-    );
+    ui.painter()
+        .rect_filled(badge_rect, egui::CornerRadius::same(5), crate::theme::BADGE);
     let badge_text_color = egui::Color32::from_rgb(0x1A, 0x19, 0x17);
     let badge_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
     let badge_galley = ui
@@ -182,16 +179,15 @@ fn paint_sidebar_header(ui: &mut egui::Ui) {
         .galley(badge_pos, badge_galley, badge_text_color);
 
     let name_font = ui.style().text_styles[&egui::TextStyle::Body].clone();
-    let name_galley = ui.painter().layout_no_wrap(
-        "Reference".to_owned(),
-        name_font,
-        crate::theme::TEXT,
-    );
+    let name_galley =
+        ui.painter()
+            .layout_no_wrap("Reference".to_owned(), name_font, crate::theme::TEXT);
     let name_pos = egui::pos2(
         badge_rect.right() + crate::theme::SPACE_2,
         center_y - name_galley.size().y * 0.5,
     );
-    ui.painter().galley(name_pos, name_galley, crate::theme::TEXT);
+    ui.painter()
+        .galley(name_pos, name_galley, crate::theme::TEXT);
 
     let kbd_label = sidebar_shortcut_label();
     let kbd_font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
@@ -201,7 +197,10 @@ fn paint_sidebar_header(ui: &mut egui::Ui) {
     let kbd_pad = egui::vec2(crate::theme::SPACE_1 + 1.0, 2.0);
     let kbd_size = kbd_galley.size() + kbd_pad * 2.0;
     let kbd_rect = egui::Rect::from_min_size(
-        egui::pos2(rect.right() - pad_x - kbd_size.x, center_y - kbd_size.y * 0.5),
+        egui::pos2(
+            rect.right() - pad_x - kbd_size.x,
+            center_y - kbd_size.y * 0.5,
+        ),
         kbd_size,
     );
     ui.painter().rect(
@@ -220,11 +219,9 @@ fn paint_sidebar_header(ui: &mut egui::Ui) {
 
 fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
     let bar_height = 32.0;
-    let (_id, rect) =
-        ui.allocate_space(egui::vec2(ui.available_width(), bar_height + 1.0));
+    let (_id, rect) = ui.allocate_space(egui::vec2(ui.available_width(), bar_height + 1.0));
     let pad_x = crate::theme::SPACE_3;
-    let tab_rect =
-        egui::Rect::from_min_max(egui::pos2(rect.left() + pad_x, rect.top()), rect.max);
+    let tab_rect = egui::Rect::from_min_max(egui::pos2(rect.left() + pad_x, rect.top()), rect.max);
     let tabs: [(&str, SidebarTab); 2] = [
         ("Boards", SidebarTab::Boards),
         ("Settings", SidebarTab::Options),
@@ -264,8 +261,7 @@ fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
                 egui::pos2(cell.center().x - 18.0, underline_y - 1.5),
                 egui::pos2(cell.center().x + 18.0, underline_y),
             );
-            ui.painter()
-                .rect_filled(underline, 0, crate::theme::ACCENT);
+            ui.painter().rect_filled(underline, 0, crate::theme::ACCENT);
         }
     }
     ui.painter().hline(
@@ -331,19 +327,16 @@ fn paint_sidebar_boards(ui: &mut egui::Ui, _canvas: &mut crate::canvas::CanvasSt
                         egui::pos2(ui.max_rect().right() - indent, ui.max_rect().bottom()),
                     )),
                     |ui| {
-                        paint_board_row(
-                            ui,
-                            "Current board",
-                            "All images",
-                            true,
-                        );
+                        paint_board_row(ui, "Current board", "All images", true);
                         ui.add_space(crate::theme::SPACE_2);
                         paint_create_board_button(ui);
                         ui.add_space(crate::theme::SPACE_3);
                         ui.label(
-                            egui::RichText::new("Boards help you split your canvas into focused collections.")
-                                .text_style(egui::TextStyle::Small)
-                                .color(crate::theme::TEXT_SUBTLE),
+                            egui::RichText::new(
+                                "Boards help you split your canvas into focused collections.",
+                            )
+                            .text_style(egui::TextStyle::Small)
+                            .color(crate::theme::TEXT_SUBTLE),
                         );
                     },
                 );
@@ -386,16 +379,15 @@ fn paint_board_row(ui: &mut egui::Ui, name: &str, detail: &str, active: bool) {
     let name_galley = ui
         .painter()
         .layout_no_wrap(name.to_owned(), name_font, crate::theme::TEXT);
-    let detail_galley = ui.painter().layout_no_wrap(
-        detail.to_owned(),
-        detail_font,
-        crate::theme::TEXT_SUBTLE,
-    );
+    let detail_galley =
+        ui.painter()
+            .layout_no_wrap(detail.to_owned(), detail_font, crate::theme::TEXT_SUBTLE);
 
     let text_x = swatch_rect.right() + crate::theme::SPACE_2;
     let name_pos = egui::pos2(text_x, rect.center().y - name_galley.size().y - 1.0);
     let detail_pos = egui::pos2(text_x, rect.center().y + 1.0);
-    ui.painter().galley(name_pos, name_galley, crate::theme::TEXT);
+    ui.painter()
+        .galley(name_pos, name_galley, crate::theme::TEXT);
     ui.painter()
         .galley(detail_pos, detail_galley, crate::theme::TEXT_SUBTLE);
 
@@ -603,25 +595,22 @@ fn paint_setting_row(
     ui.add_space(crate::theme::SPACE_2 + 2.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = crate::theme::SPACE_3;
-        ui.with_layout(
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
-                changed |= add_control(ui);
-                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
-                    ui.label(
-                        egui::RichText::new(title)
-                            .text_style(egui::TextStyle::Body)
-                            .color(crate::theme::TEXT),
-                    );
-                    ui.label(
-                        egui::RichText::new(detail)
-                            .text_style(egui::TextStyle::Small)
-                            .color(crate::theme::TEXT_SUBTLE),
-                    );
-                });
-            },
-        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            changed |= add_control(ui);
+            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
+                ui.label(
+                    egui::RichText::new(title)
+                        .text_style(egui::TextStyle::Body)
+                        .color(crate::theme::TEXT),
+                );
+                ui.label(
+                    egui::RichText::new(detail)
+                        .text_style(egui::TextStyle::Small)
+                        .color(crate::theme::TEXT_SUBTLE),
+                );
+            });
+        });
     });
     ui.add_space(crate::theme::SPACE_2 + 2.0);
     changed
@@ -630,10 +619,7 @@ fn paint_setting_row(
 fn paint_setting_divider(ui: &mut egui::Ui) {
     let available = ui.available_width();
     let pad = crate::theme::SPACE_3;
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(available, 1.0),
-        egui::Sense::hover(),
-    );
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(available, 1.0), egui::Sense::hover());
     let from = egui::pos2(rect.left() - pad, rect.center().y);
     let to = egui::pos2(rect.right() + pad, rect.center().y);
     ui.painter()
@@ -717,9 +703,9 @@ fn paint_background_mode_control(
     let mut seg_widths = [0.0_f32; 3];
     let mut total_w = 0.0_f32;
     for (i, (label, _)) in segments.iter().enumerate() {
-        let galley = ui
-            .painter()
-            .layout_no_wrap((*label).to_owned(), font.clone(), crate::theme::TEXT);
+        let galley =
+            ui.painter()
+                .layout_no_wrap((*label).to_owned(), font.clone(), crate::theme::TEXT);
         seg_widths[i] = galley.size().x + h_pad * 2.0;
         total_w += seg_widths[i];
     }
@@ -727,10 +713,7 @@ fn paint_background_mode_control(
     let inner_h = font.size + v_pad * 2.0;
     let outer_h = inner_h + outer_pad * 2.0;
 
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(total_w, outer_h),
-        egui::Sense::hover(),
-    );
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(total_w, outer_h), egui::Sense::hover());
     let container_bg = egui::Color32::from_black_alpha(64);
     ui.painter().rect(
         rect,
@@ -770,11 +753,9 @@ fn paint_background_mode_control(
         } else {
             crate::theme::TEXT_MUTED
         };
-        let galley = ui.painter().layout_no_wrap(
-            (*label).to_owned(),
-            font.clone(),
-            text_color,
-        );
+        let galley = ui
+            .painter()
+            .layout_no_wrap((*label).to_owned(), font.clone(), text_color);
         let text_pos = egui::pos2(
             seg_rect.center().x - galley.size().x * 0.5,
             seg_rect.center().y - galley.size().y * 0.5,
@@ -848,19 +829,16 @@ fn paint_shortcut_row(ui: &mut egui::Ui, shortcut: &SupportedShortcut) {
     ui.add_space(3.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
-        ui.with_layout(
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
-                paint_shortcut_pill(ui, keys);
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.label(
-                        egui::RichText::new(shortcut.action)
-                            .text_style(egui::TextStyle::Small)
-                            .color(crate::theme::TEXT),
-                    );
-                });
-            },
-        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            paint_shortcut_pill(ui, keys);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.label(
+                    egui::RichText::new(shortcut.action)
+                        .text_style(egui::TextStyle::Small)
+                        .color(crate::theme::TEXT),
+                );
+            });
+        });
     });
     ui.add_space(3.0);
 }
@@ -886,10 +864,7 @@ fn paint_shortcut_pill(ui: &mut egui::Ui, keys: &str) {
 
 fn paint_shortcut_divider(ui: &mut egui::Ui) {
     let available = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(available, 1.0),
-        egui::Sense::hover(),
-    );
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(available, 1.0), egui::Sense::hover());
     ui.painter().line_segment(
         [
             egui::pos2(rect.left(), rect.center().y),
