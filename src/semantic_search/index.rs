@@ -61,7 +61,7 @@ pub fn decode_f32_blob(blob: &[u8]) -> Result<Vec<f32>, String> {
         .collect()
 }
 
-fn cosine_similarity(left: &[f32], right: &[f32]) -> Result<f32, String> {
+pub fn cosine_similarity(left: &[f32], right: &[f32]) -> Result<f32, String> {
     if left.len() != right.len() {
         return Err("embedding dimensions do not match".to_owned());
     }

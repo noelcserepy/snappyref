@@ -8,10 +8,11 @@ use std::time::Instant;
 
 #[cfg(feature = "semantic-search")]
 use crate::palette::{
-    PALETTE_GRID_MAX_HEIGHT, PALETTE_WIDTH, SEARCH_DEBOUNCE_MS, SEARCH_OVERLAY_TOP_MARGIN,
-    SearchOverlayState, SearchOverlayStatus, paint_palette_divider, paint_palette_empty_state,
-    paint_palette_facet_row, paint_palette_footer, paint_palette_input_row,
-    search_result_grid_content_height, search_result_grid_layout, search_result_tile,
+    ImageSearchPivot, PALETTE_GRID_MAX_HEIGHT, PALETTE_WIDTH, SEARCH_DEBOUNCE_MS,
+    SEARCH_OVERLAY_TOP_MARGIN, SearchOverlayState, SearchOverlayStatus, paint_palette_divider,
+    paint_palette_empty_state, paint_palette_facet_row, paint_palette_footer,
+    paint_palette_input_row, search_result_grid_content_height, search_result_grid_layout,
+    search_result_tile,
 };
 #[cfg(feature = "semantic-search")]
 use crate::semantic_search::{
@@ -1747,6 +1748,33 @@ impl ReferenceApp {
         }
 
         self.sync_semantic_search_service();
+
+        let pivot = {
+            let selected = self.canvas.selected_item_ids();
+            if selected.len() == 1
+                && let Some(record) = self.canvas.record_for_item_id(selected[0])
+            {
+                Some(ImageSearchPivot {
+                    asset_id: record.asset.id,
+                    item_id: record.item.id,
+                })
+            } else {
+                None
+            }
+        };
+
+        if pivot.is_some() && self.search_overlay.image_pivot != pivot {
+            self.search_overlay.query.clear();
+            self.search_overlay.last_submitted_query.clear();
+            self.search_overlay.results.clear();
+            self.search_overlay.active_result_index = 0;
+            self.search_overlay.active_instance_index = 0;
+            self.search_overlay.image_pivot = pivot;
+            self.search_overlay.last_query_edit_at = None;
+            self.canvas.clear_search_matches();
+            self.submit_search_query();
+        }
+
         self.search_overlay.open = true;
         self.search_overlay.focus_requested = true;
         if !matches!(self.search_overlay.status, SearchOverlayStatus::Error(_)) {
@@ -1776,7 +1804,8 @@ impl ReferenceApp {
     #[cfg(feature = "semantic-search")]
     fn submit_search_query(&mut self) {
         let query = self.search_overlay.query.trim().to_owned();
-        if query.is_empty() {
+        let pivot = self.search_overlay.image_pivot;
+        if query.is_empty() && pivot.is_none() {
             self.search_overlay.results.clear();
             self.search_overlay.last_submitted_query.clear();
             self.search_overlay.active_result_index = 0;
@@ -1792,7 +1821,15 @@ impl ReferenceApp {
             return;
         };
 
-        match service.search(&query) {
+        let search_result = match pivot {
+            Some(pivot) => {
+                let text = if query.is_empty() { None } else { Some(query.as_str()) };
+                service.search_with_image_pivot(pivot.asset_id, text)
+            }
+            None => service.search(&query),
+        };
+
+        match search_result {
             Ok(results) => {
                 self.search_overlay.last_submitted_query = query;
                 let last_index = results.len().saturating_sub(1);
@@ -1925,8 +1962,23 @@ impl ReferenceApp {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
 
-                        let response =
-                            paint_palette_input_row(ui, &mut self.search_overlay.query, input_id);
+                        let input_result = paint_palette_input_row(
+                            ui,
+                            &mut self.search_overlay.query,
+                            input_id,
+                            self.search_overlay.image_pivot.as_ref(),
+                            &self.canvas,
+                        );
+                        let response = input_result.response;
+                        if input_result.pivot_dismissed {
+                            self.search_overlay.image_pivot = None;
+                            self.search_overlay.last_submitted_query.clear();
+                            self.search_overlay.results.clear();
+                            self.search_overlay.active_result_index = 0;
+                            self.search_overlay.active_instance_index = 0;
+                            self.canvas.clear_search_matches();
+                            self.search_overlay.last_query_edit_at = Some(Instant::now());
+                        }
                         if self.search_overlay.focus_requested {
                             response.request_focus();
                             self.search_overlay.focus_requested =
@@ -1939,7 +1991,9 @@ impl ReferenceApp {
                             self.search_overlay.last_query_edit_at = Some(Instant::now());
                             self.search_overlay.active_result_index = 0;
                             self.search_overlay.active_instance_index = 0;
-                            if self.search_overlay.query.trim().is_empty() {
+                            if self.search_overlay.query.trim().is_empty()
+                                && self.search_overlay.image_pivot.is_none()
+                            {
                                 self.search_overlay.results.clear();
                                 self.canvas.clear_search_matches();
                             }

@@ -23,6 +23,13 @@ pub(crate) struct SearchOverlayState {
     pub results: Vec<SearchResultGroup>,
     pub status: SearchOverlayStatus,
     pub focus_requested: bool,
+    pub image_pivot: Option<ImageSearchPivot>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ImageSearchPivot {
+    pub asset_id: i64,
+    pub item_id: i64,
 }
 
 #[derive(Default)]
@@ -104,6 +111,8 @@ pub(crate) fn search_result_tile(
             .rect_filled(rect, tile_radius, crate::theme::BACKGROUND);
     }
 
+    paint_tile_similarity_meter(ui, rect, group.similarity);
+
     if active {
         ui.painter().rect_stroke(
             rect,
@@ -116,12 +125,82 @@ pub(crate) fn search_result_tile(
     response
 }
 
+fn paint_tile_similarity_meter(ui: &mut egui::Ui, tile_rect: egui::Rect, similarity: f32) {
+    let normalized = similarity.clamp(0.0, 1.0);
+    let score = (similarity * 100.0).round().max(0.0) as i32;
+
+    let strip_height = 22.0;
+    let inset = 8.0;
+    let strip_rect = egui::Rect::from_min_max(
+        egui::pos2(
+            tile_rect.left() + inset,
+            tile_rect.bottom() - strip_height - inset,
+        ),
+        egui::pos2(tile_rect.right() - inset, tile_rect.bottom() - inset),
+    );
+
+    let painter = ui.painter();
+    painter.rect_filled(
+        strip_rect,
+        egui::CornerRadius::same(4),
+        egui::Color32::from_black_alpha(140),
+    );
+
+    let track_height = 3.0;
+    let track_padding_x = 8.0;
+    let score_font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
+    let score_galley = painter.layout_no_wrap(
+        format!("{score}"),
+        score_font,
+        crate::theme::TEXT,
+    );
+    let score_width = score_galley.size().x;
+    let gap = 8.0;
+
+    let track_left = strip_rect.left() + track_padding_x;
+    let track_right = strip_rect.right() - track_padding_x - score_width - gap;
+    if track_right > track_left {
+        let track_rect = egui::Rect::from_min_max(
+            egui::pos2(track_left, strip_rect.center().y - track_height * 0.5),
+            egui::pos2(track_right, strip_rect.center().y + track_height * 0.5),
+        );
+        painter.rect_filled(
+            track_rect,
+            egui::CornerRadius::same(2),
+            egui::Color32::from_white_alpha(40),
+        );
+        let fill_right = track_left + (track_right - track_left) * normalized;
+        let fill_rect = egui::Rect::from_min_max(
+            egui::pos2(track_left, track_rect.top()),
+            egui::pos2(fill_right.max(track_left), track_rect.bottom()),
+        );
+        painter.rect_filled(fill_rect, egui::CornerRadius::same(2), crate::theme::ACCENT);
+    }
+
+    painter.galley(
+        egui::pos2(
+            strip_rect.right() - track_padding_x - score_width,
+            strip_rect.center().y - score_galley.size().y * 0.5,
+        ),
+        score_galley,
+        crate::theme::TEXT,
+    );
+}
+
+pub(crate) struct PaletteInputResult {
+    pub response: egui::Response,
+    pub pivot_dismissed: bool,
+}
+
 pub(crate) fn paint_palette_input_row(
     ui: &mut egui::Ui,
     query: &mut String,
     input_id: egui::Id,
-) -> egui::Response {
+    pivot: Option<&ImageSearchPivot>,
+    canvas: &crate::canvas::CanvasState,
+) -> PaletteInputResult {
     let mut response = None;
+    let mut pivot_dismissed = false;
     egui::Frame::new()
         .inner_margin(egui::Margin {
             left: 18,
@@ -132,9 +211,17 @@ pub(crate) fn paint_palette_input_row(
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
-                let (icon_rect, _) =
-                    ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-                paint_search_icon(ui, icon_rect, crate::theme::TEXT_SUBTLE);
+                let placeholder = if let Some(pivot) = pivot {
+                    if paint_image_pivot_pill(ui, canvas, pivot) {
+                        pivot_dismissed = true;
+                    }
+                    "Refine with a term..."
+                } else {
+                    let (icon_rect, _) =
+                        ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                    paint_search_icon(ui, icon_rect, crate::theme::TEXT_SUBTLE);
+                    "Search images, tags, boards"
+                };
 
                 let mut visuals = ui.style_mut().visuals.clone();
                 visuals.extreme_bg_color = egui::Color32::TRANSPARENT;
@@ -152,7 +239,7 @@ pub(crate) fn paint_palette_input_row(
                     egui::TextEdit::singleline(query)
                         .id(input_id)
                         .desired_width(f32::INFINITY)
-                        .hint_text("Search images, tags, boards")
+                        .hint_text(placeholder)
                         .frame(egui::Frame::NONE)
                         .margin(egui::vec2(0.0, 0.0)),
                 );
@@ -160,7 +247,120 @@ pub(crate) fn paint_palette_input_row(
                 response = Some(resp);
             });
         });
-    response.expect("palette input row allocated")
+    PaletteInputResult {
+        response: response.expect("palette input row allocated"),
+        pivot_dismissed,
+    }
+}
+
+fn paint_image_pivot_pill(
+    ui: &mut egui::Ui,
+    canvas: &crate::canvas::CanvasState,
+    pivot: &ImageSearchPivot,
+) -> bool {
+    let thumb_size = 18.0;
+    let label = format!("similar to #{}", pivot.asset_id);
+    let label_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
+    let label_galley =
+        ui.painter()
+            .layout_no_wrap(label, label_font, crate::theme::TEXT);
+    let dismiss_size = 14.0;
+    let inner_gap = 6.0;
+    let pad_x = 6.0;
+    let pill_h = 24.0;
+    let content_w =
+        thumb_size + inner_gap + label_galley.size().x + inner_gap + dismiss_size;
+    let pill_size = egui::vec2(content_w + pad_x * 2.0, pill_h);
+    let (pill_rect, _) = ui.allocate_exact_size(pill_size, egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(
+        pill_rect,
+        egui::CornerRadius::same(6),
+        egui::Color32::from_white_alpha(18),
+    );
+    painter.rect_stroke(
+        pill_rect,
+        egui::CornerRadius::same(6),
+        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(28)),
+        egui::StrokeKind::Inside,
+    );
+
+    let thumb_rect = egui::Rect::from_center_size(
+        egui::pos2(
+            pill_rect.left() + pad_x + thumb_size * 0.5,
+            pill_rect.center().y,
+        ),
+        egui::vec2(thumb_size, thumb_size),
+    );
+    if let Some(preview) = canvas.preview_for_item_id(pivot.item_id) {
+        let preview_aspect = thumb_rect.width() / thumb_rect.height().max(1.0);
+        let texture_aspect = preview.texture_size.x / preview.texture_size.y.max(1.0);
+        let uv_rect = if texture_aspect > preview_aspect {
+            let visible_u = preview_aspect / texture_aspect;
+            let inset = (1.0 - visible_u) * 0.5;
+            egui::Rect::from_min_max(egui::pos2(inset, 0.0), egui::pos2(1.0 - inset, 1.0))
+        } else {
+            let visible_v = texture_aspect / preview_aspect;
+            let inset = (1.0 - visible_v) * 0.5;
+            egui::Rect::from_min_max(egui::pos2(0.0, inset), egui::pos2(1.0, 1.0 - inset))
+        };
+        painter.image(
+            preview.texture_id,
+            thumb_rect,
+            uv_rect,
+            egui::Color32::WHITE,
+        );
+    } else {
+        painter.rect_filled(
+            thumb_rect,
+            egui::CornerRadius::same(3),
+            crate::theme::SURFACE_ELEVATED,
+        );
+    }
+
+    let label_x = thumb_rect.right() + inner_gap;
+    painter.galley(
+        egui::pos2(label_x, pill_rect.center().y - label_galley.size().y * 0.5),
+        label_galley,
+        crate::theme::TEXT,
+    );
+
+    let dismiss_rect = egui::Rect::from_center_size(
+        egui::pos2(
+            pill_rect.right() - pad_x - dismiss_size * 0.5,
+            pill_rect.center().y,
+        ),
+        egui::vec2(dismiss_size, dismiss_size),
+    );
+    let dismiss_response = ui
+        .interact(
+            dismiss_rect,
+            ui.id().with(("palette-pivot-dismiss", pivot.asset_id)),
+            egui::Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let dismiss_color = if dismiss_response.hovered() {
+        crate::theme::TEXT
+    } else {
+        crate::theme::TEXT_MUTED
+    };
+    let stroke = egui::Stroke::new(1.2, dismiss_color);
+    let inset = 3.0;
+    ui.painter().line_segment(
+        [
+            egui::pos2(dismiss_rect.left() + inset, dismiss_rect.top() + inset),
+            egui::pos2(dismiss_rect.right() - inset, dismiss_rect.bottom() - inset),
+        ],
+        stroke,
+    );
+    ui.painter().line_segment(
+        [
+            egui::pos2(dismiss_rect.right() - inset, dismiss_rect.top() + inset),
+            egui::pos2(dismiss_rect.left() + inset, dismiss_rect.bottom() - inset),
+        ],
+        stroke,
+    );
+    dismiss_response.clicked()
 }
 
 fn paint_search_icon(ui: &mut egui::Ui, rect: egui::Rect, color: egui::Color32) {

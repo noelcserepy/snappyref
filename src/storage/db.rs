@@ -885,6 +885,43 @@ impl Library {
     }
 
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn load_asset_embedding(
+        &self,
+        asset_id: i64,
+        model_key: &str,
+    ) -> Result<Option<Vec<u8>>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT embedding_blob
+                 FROM asset_embeddings
+                 WHERE asset_id = ?1
+                   AND model_key = ?2
+                   AND status = 'ready'
+                   AND embedding_blob IS NOT NULL
+                 LIMIT 1",
+            )
+            .map_err(|error| format!("failed to prepare asset-embedding query: {error}"))?;
+
+        let mut rows = statement
+            .query(params![asset_id, model_key])
+            .map_err(|error| format!("failed to read asset-embedding query: {error}"))?;
+
+        match rows
+            .next()
+            .map_err(|error| format!("failed to fetch asset embedding: {error}"))?
+        {
+            Some(row) => {
+                let blob: Vec<u8> = row
+                    .get(0)
+                    .map_err(|error| format!("failed to decode asset embedding: {error}"))?;
+                Ok(Some(blob))
+            }
+            None => Ok(None),
+        }
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn board_item_instances_for_assets(
         &self,
         asset_ids: &[i64],
