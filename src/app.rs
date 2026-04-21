@@ -1697,7 +1697,7 @@ impl ReferenceApp {
                             );
 
                             let helper = if self.search_overlay.results.is_empty() {
-                                "Semantic search"
+                                ""
                             } else {
                                 "Up/Down to browse"
                             };
