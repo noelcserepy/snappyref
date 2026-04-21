@@ -9,6 +9,7 @@ mod perf;
 mod screenshot;
 #[cfg(feature = "semantic-search")]
 mod semantic_search;
+mod sidebar;
 mod storage;
 mod theme;
 
