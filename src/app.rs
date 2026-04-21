@@ -23,6 +23,8 @@ const MAX_IMPORT_RESULTS_PER_FRAME: usize = 4;
 #[cfg(feature = "semantic-search")]
 const SEARCH_DEBOUNCE_MS: f32 = 120.0;
 #[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_MAX_SCREEN_HEIGHT_RATIO: f32 = 0.8;
+#[cfg(feature = "semantic-search")]
 const SEARCH_RESULT_TILE_MIN_WIDTH: f32 = 180.0;
 #[cfg(feature = "semantic-search")]
 const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 320.0;
@@ -1622,6 +1624,8 @@ impl ReferenceApp {
             screen_rect.center().x - width * 0.5,
             screen_rect.top() + 28.0,
         );
+        let overlay_max_height = (screen_rect.height() * SEARCH_OVERLAY_MAX_SCREEN_HEIGHT_RATIO)
+            .min(screen_rect.bottom() - area_pos.y - 24.0);
         let input_id = egui::Id::new("semantic_search_input");
         let shell_margin = egui::Margin {
             left: 16,
@@ -1720,12 +1724,15 @@ impl ReferenceApp {
                         let shell_content_width =
                             width - shell_margin.left as f32 - shell_margin.right as f32;
                         let grid_layout = search_result_grid_layout(shell_content_width);
+                        let grid_max_height = (overlay_max_height - 108.0).max(
+                            SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT,
+                        );
 
                         if !self.search_overlay.results.is_empty() {
                             ui.add_space(crate::theme::SPACE_2);
                             let mut clicked_index = None;
                             egui::ScrollArea::vertical()
-                                .max_height(440.0)
+                                .max_height(grid_max_height)
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
                                     ui.spacing_mut().item_spacing =
@@ -2256,13 +2263,14 @@ fn search_result_tile(
     let (rect, response) = ui.allocate_exact_size(tile_size, egui::Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     let hovered = response.hovered();
+    let tile_radius = if active { 0 } else { crate::theme::CARD_RADIUS };
 
     ui.painter()
-        .rect_filled(rect, crate::theme::CARD_RADIUS, crate::theme::SURFACE);
+        .rect_filled(rect, tile_radius, crate::theme::SURFACE);
     if active {
         ui.painter().rect_stroke(
             rect,
-            crate::theme::CARD_RADIUS,
+            tile_radius,
             crate::theme::stroke_strong(),
             egui::StrokeKind::Outside,
         );
