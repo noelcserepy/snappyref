@@ -23,6 +23,8 @@ const MAX_IMPORT_RESULTS_PER_FRAME: usize = 4;
 #[cfg(feature = "semantic-search")]
 const SEARCH_DEBOUNCE_MS: f32 = 120.0;
 #[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_MAX_SCREEN_WIDTH_RATIO: f32 = 0.9;
+#[cfg(feature = "semantic-search")]
 const SEARCH_OVERLAY_MAX_SCREEN_HEIGHT_RATIO: f32 = 0.8;
 #[cfg(feature = "semantic-search")]
 const SEARCH_RESULT_TILE_MIN_WIDTH: f32 = 180.0;
@@ -1619,7 +1621,13 @@ impl ReferenceApp {
             return;
         }
 
-        let width = (screen_rect.width() * 0.58).clamp(320.0, 720.0);
+        let base_width = screen_rect.width() * 0.58;
+        let max_width = screen_rect.width() * SEARCH_OVERLAY_MAX_SCREEN_WIDTH_RATIO;
+        let width = if self.search_overlay.results.is_empty() {
+            base_width.clamp(320.0, max_width)
+        } else {
+            max_width
+        };
         let area_pos = egui::pos2(
             screen_rect.center().x - width * 0.5,
             screen_rect.top() + 28.0,
