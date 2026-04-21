@@ -97,6 +97,12 @@ pub struct CanvasFrameMetrics {
     pub image_pass: ImagePassMetrics,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct CanvasImagePreview {
+    pub texture_id: egui::TextureId,
+    pub texture_size: egui::Vec2,
+}
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Default)]
 struct AnnotationPaintStats {
@@ -536,6 +542,16 @@ impl CanvasState {
             .iter()
             .find(|image| image.record.item.id == item_id)
             .map(|image| image.record.clone())
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn preview_for_item_id(&self, item_id: i64) -> Option<CanvasImagePreview> {
+        let image = self.image_by_item_id(item_id)?;
+        let [width, height] = image.texture.size();
+        Some(CanvasImagePreview {
+            texture_id: image.texture.id(),
+            texture_size: egui::vec2(width as f32, height as f32),
+        })
     }
 
     pub fn background(&self) -> CanvasBackground {
