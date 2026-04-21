@@ -11,6 +11,8 @@ pub(crate) const PALETTE_GRID_COLUMNS: usize = 5;
 pub(crate) const PALETTE_GRID_MAX_HEIGHT: f32 = 360.0;
 
 const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 144.0;
+const SEARCH_RESULT_TILE_METER_HEIGHT: f32 = 18.0;
+const SEARCH_RESULT_TILE_METER_GAP: f32 = 6.0;
 
 #[derive(Default)]
 pub(crate) struct SearchOverlayState {
@@ -50,6 +52,8 @@ pub(crate) struct SearchResultGridLayout {
 
 pub(crate) fn search_result_tile_height() -> f32 {
     SEARCH_RESULT_TILE_PREVIEW_HEIGHT
+        + SEARCH_RESULT_TILE_METER_GAP
+        + SEARCH_RESULT_TILE_METER_HEIGHT
 }
 
 pub(crate) fn search_result_grid_layout(
@@ -82,18 +86,30 @@ pub(crate) fn search_result_tile(
     active: bool,
     tile_width: f32,
 ) -> egui::Response {
-    let tile_size = egui::vec2(tile_width, SEARCH_RESULT_TILE_PREVIEW_HEIGHT);
-    let (rect, response) = ui.allocate_exact_size(tile_size, egui::Sense::click());
+    let total_size = egui::vec2(tile_width, search_result_tile_height());
+    let (rect, response) = ui.allocate_exact_size(total_size, egui::Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     let tile_radius = if active { 0 } else { crate::theme::CARD_RADIUS };
 
+    let preview_rect = egui::Rect::from_min_size(
+        rect.min,
+        egui::vec2(tile_width, SEARCH_RESULT_TILE_PREVIEW_HEIGHT),
+    );
+    let meter_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.left(),
+            preview_rect.bottom() + SEARCH_RESULT_TILE_METER_GAP,
+        ),
+        egui::vec2(tile_width, SEARCH_RESULT_TILE_METER_HEIGHT),
+    );
+
     ui.painter()
-        .rect_filled(rect, tile_radius, crate::theme::SURFACE);
+        .rect_filled(preview_rect, tile_radius, crate::theme::SURFACE);
 
     if let Some(item_id) = group.item_ids.first().copied()
         && let Some(preview) = canvas.preview_for_item_id(item_id)
     {
-        let preview_aspect = rect.width() / rect.height().max(1.0);
+        let preview_aspect = preview_rect.width() / preview_rect.height().max(1.0);
         let texture_aspect = preview.texture_size.x / preview.texture_size.y.max(1.0);
         let uv_rect = if texture_aspect > preview_aspect {
             let visible_u = preview_aspect / texture_aspect;
@@ -104,18 +120,22 @@ pub(crate) fn search_result_tile(
             let inset = (1.0 - visible_v) * 0.5;
             egui::Rect::from_min_max(egui::pos2(0.0, inset), egui::pos2(1.0, 1.0 - inset))
         };
-        ui.painter()
-            .image(preview.texture_id, rect, uv_rect, egui::Color32::WHITE);
+        ui.painter().image(
+            preview.texture_id,
+            preview_rect,
+            uv_rect,
+            egui::Color32::WHITE,
+        );
     } else {
         ui.painter()
-            .rect_filled(rect, tile_radius, crate::theme::BACKGROUND);
+            .rect_filled(preview_rect, tile_radius, crate::theme::BACKGROUND);
     }
 
-    paint_tile_similarity_meter(ui, rect, group.similarity);
+    paint_tile_similarity_meter(ui, meter_rect, group.similarity);
 
     if active {
         ui.painter().rect_stroke(
-            rect,
+            preview_rect,
             tile_radius,
             crate::theme::stroke_strong(),
             egui::StrokeKind::Outside,
@@ -125,49 +145,30 @@ pub(crate) fn search_result_tile(
     response
 }
 
-fn paint_tile_similarity_meter(ui: &mut egui::Ui, tile_rect: egui::Rect, similarity: f32) {
+fn paint_tile_similarity_meter(ui: &mut egui::Ui, meter_rect: egui::Rect, similarity: f32) {
     let normalized = similarity.clamp(0.0, 1.0);
     let score = (similarity * 100.0).round().max(0.0) as i32;
 
-    let strip_height = 22.0;
-    let inset = 8.0;
-    let strip_rect = egui::Rect::from_min_max(
-        egui::pos2(
-            tile_rect.left() + inset,
-            tile_rect.bottom() - strip_height - inset,
-        ),
-        egui::pos2(tile_rect.right() - inset, tile_rect.bottom() - inset),
-    );
-
-    let painter = ui.painter();
-    painter.rect_filled(
-        strip_rect,
-        egui::CornerRadius::same(4),
-        egui::Color32::from_black_alpha(140),
-    );
-
     let track_height = 3.0;
-    let track_padding_x = 8.0;
-    let score_font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
-    let score_galley = painter.layout_no_wrap(
-        format!("{score}"),
-        score_font,
-        crate::theme::TEXT,
-    );
-    let score_width = score_galley.size().x;
     let gap = 8.0;
+    let painter = ui.painter();
 
-    let track_left = strip_rect.left() + track_padding_x;
-    let track_right = strip_rect.right() - track_padding_x - score_width - gap;
+    let score_font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
+    let score_galley =
+        painter.layout_no_wrap(format!("{score}"), score_font, crate::theme::TEXT_MUTED);
+    let score_width = score_galley.size().x;
+
+    let track_left = meter_rect.left();
+    let track_right = meter_rect.right() - score_width - gap;
     if track_right > track_left {
         let track_rect = egui::Rect::from_min_max(
-            egui::pos2(track_left, strip_rect.center().y - track_height * 0.5),
-            egui::pos2(track_right, strip_rect.center().y + track_height * 0.5),
+            egui::pos2(track_left, meter_rect.center().y - track_height * 0.5),
+            egui::pos2(track_right, meter_rect.center().y + track_height * 0.5),
         );
         painter.rect_filled(
             track_rect,
             egui::CornerRadius::same(2),
-            egui::Color32::from_white_alpha(40),
+            egui::Color32::from_white_alpha(22),
         );
         let fill_right = track_left + (track_right - track_left) * normalized;
         let fill_rect = egui::Rect::from_min_max(
@@ -179,11 +180,11 @@ fn paint_tile_similarity_meter(ui: &mut egui::Ui, tile_rect: egui::Rect, similar
 
     painter.galley(
         egui::pos2(
-            strip_rect.right() - track_padding_x - score_width,
-            strip_rect.center().y - score_galley.size().y * 0.5,
+            meter_rect.right() - score_width,
+            meter_rect.center().y - score_galley.size().y * 0.5,
         ),
         score_galley,
-        crate::theme::TEXT,
+        crate::theme::TEXT_MUTED,
     );
 }
 
@@ -234,14 +235,12 @@ pub(crate) fn paint_palette_input_row(
                 visuals.selection.bg_fill = crate::theme::SURFACE_ELEVATED;
                 ui.style_mut().visuals = visuals;
 
-                let resp = ui.add_sized(
-                    egui::vec2(ui.available_width() - 44.0, 24.0),
+                let resp = ui.add(
                     egui::TextEdit::singleline(query)
                         .id(input_id)
-                        .desired_width(f32::INFINITY)
+                        .desired_width(ui.available_width() - 44.0)
                         .hint_text(placeholder)
-                        .frame(egui::Frame::NONE)
-                        .margin(egui::vec2(0.0, 0.0)),
+                        .frame(egui::Frame::NONE),
                 );
                 paint_kbd_pill(ui, "esc");
                 response = Some(resp);
@@ -258,109 +257,98 @@ fn paint_image_pivot_pill(
     canvas: &crate::canvas::CanvasState,
     pivot: &ImageSearchPivot,
 ) -> bool {
+    let mut dismissed = false;
     let thumb_size = 18.0;
-    let label = format!("similar to #{}", pivot.asset_id);
-    let label_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
-    let label_galley =
-        ui.painter()
-            .layout_no_wrap(label, label_font, crate::theme::TEXT);
     let dismiss_size = 14.0;
-    let inner_gap = 6.0;
-    let pad_x = 6.0;
-    let pill_h = 24.0;
-    let content_w =
-        thumb_size + inner_gap + label_galley.size().x + inner_gap + dismiss_size;
-    let pill_size = egui::vec2(content_w + pad_x * 2.0, pill_h);
-    let (pill_rect, _) = ui.allocate_exact_size(pill_size, egui::Sense::hover());
-    let painter = ui.painter();
-    painter.rect_filled(
-        pill_rect,
-        egui::CornerRadius::same(6),
-        egui::Color32::from_white_alpha(18),
-    );
-    painter.rect_stroke(
-        pill_rect,
-        egui::CornerRadius::same(6),
-        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(28)),
-        egui::StrokeKind::Inside,
-    );
 
-    let thumb_rect = egui::Rect::from_center_size(
-        egui::pos2(
-            pill_rect.left() + pad_x + thumb_size * 0.5,
-            pill_rect.center().y,
-        ),
-        egui::vec2(thumb_size, thumb_size),
-    );
-    if let Some(preview) = canvas.preview_for_item_id(pivot.item_id) {
-        let preview_aspect = thumb_rect.width() / thumb_rect.height().max(1.0);
-        let texture_aspect = preview.texture_size.x / preview.texture_size.y.max(1.0);
-        let uv_rect = if texture_aspect > preview_aspect {
-            let visible_u = preview_aspect / texture_aspect;
-            let inset = (1.0 - visible_u) * 0.5;
-            egui::Rect::from_min_max(egui::pos2(inset, 0.0), egui::pos2(1.0 - inset, 1.0))
-        } else {
-            let visible_v = texture_aspect / preview_aspect;
-            let inset = (1.0 - visible_v) * 0.5;
-            egui::Rect::from_min_max(egui::pos2(0.0, inset), egui::pos2(1.0, 1.0 - inset))
-        };
-        painter.image(
-            preview.texture_id,
-            thumb_rect,
-            uv_rect,
-            egui::Color32::WHITE,
-        );
-    } else {
-        painter.rect_filled(
-            thumb_rect,
-            egui::CornerRadius::same(3),
-            crate::theme::SURFACE_ELEVATED,
-        );
-    }
+    egui::Frame::new()
+        .fill(egui::Color32::from_white_alpha(18))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(28)))
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin {
+            left: 4,
+            right: 4,
+            top: 3,
+            bottom: 3,
+        })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
 
-    let label_x = thumb_rect.right() + inner_gap;
-    painter.galley(
-        egui::pos2(label_x, pill_rect.center().y - label_galley.size().y * 0.5),
-        label_galley,
-        crate::theme::TEXT,
-    );
+                let (thumb_rect, _) = ui
+                    .allocate_exact_size(egui::vec2(thumb_size, thumb_size), egui::Sense::hover());
+                if let Some(preview) = canvas.preview_for_item_id(pivot.item_id) {
+                    let preview_aspect = thumb_rect.width() / thumb_rect.height().max(1.0);
+                    let texture_aspect = preview.texture_size.x / preview.texture_size.y.max(1.0);
+                    let uv_rect = if texture_aspect > preview_aspect {
+                        let visible_u = preview_aspect / texture_aspect;
+                        let inset = (1.0 - visible_u) * 0.5;
+                        egui::Rect::from_min_max(
+                            egui::pos2(inset, 0.0),
+                            egui::pos2(1.0 - inset, 1.0),
+                        )
+                    } else {
+                        let visible_v = texture_aspect / preview_aspect;
+                        let inset = (1.0 - visible_v) * 0.5;
+                        egui::Rect::from_min_max(
+                            egui::pos2(0.0, inset),
+                            egui::pos2(1.0, 1.0 - inset),
+                        )
+                    };
+                    ui.painter().image(
+                        preview.texture_id,
+                        thumb_rect,
+                        uv_rect,
+                        egui::Color32::WHITE,
+                    );
+                } else {
+                    ui.painter().rect_filled(
+                        thumb_rect,
+                        egui::CornerRadius::same(3),
+                        crate::theme::SURFACE_ELEVATED,
+                    );
+                }
 
-    let dismiss_rect = egui::Rect::from_center_size(
-        egui::pos2(
-            pill_rect.right() - pad_x - dismiss_size * 0.5,
-            pill_rect.center().y,
-        ),
-        egui::vec2(dismiss_size, dismiss_size),
-    );
-    let dismiss_response = ui
-        .interact(
-            dismiss_rect,
-            ui.id().with(("palette-pivot-dismiss", pivot.asset_id)),
-            egui::Sense::click(),
-        )
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
-    let dismiss_color = if dismiss_response.hovered() {
-        crate::theme::TEXT
-    } else {
-        crate::theme::TEXT_MUTED
-    };
-    let stroke = egui::Stroke::new(1.2, dismiss_color);
-    let inset = 3.0;
-    ui.painter().line_segment(
-        [
-            egui::pos2(dismiss_rect.left() + inset, dismiss_rect.top() + inset),
-            egui::pos2(dismiss_rect.right() - inset, dismiss_rect.bottom() - inset),
-        ],
-        stroke,
-    );
-    ui.painter().line_segment(
-        [
-            egui::pos2(dismiss_rect.right() - inset, dismiss_rect.top() + inset),
-            egui::pos2(dismiss_rect.left() + inset, dismiss_rect.bottom() - inset),
-        ],
-        stroke,
-    );
-    dismiss_response.clicked()
+                ui.label(
+                    egui::RichText::new(format!("similar to #{}", pivot.asset_id))
+                        .text_style(egui::TextStyle::Body)
+                        .color(crate::theme::TEXT),
+                );
+
+                let (dismiss_rect, dismiss_response) = ui.allocate_exact_size(
+                    egui::vec2(dismiss_size, dismiss_size),
+                    egui::Sense::click(),
+                );
+                let dismiss_response =
+                    dismiss_response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                let dismiss_color = if dismiss_response.hovered() {
+                    crate::theme::TEXT
+                } else {
+                    crate::theme::TEXT_MUTED
+                };
+                let stroke = egui::Stroke::new(1.2, dismiss_color);
+                let inset = 3.0;
+                ui.painter().line_segment(
+                    [
+                        egui::pos2(dismiss_rect.left() + inset, dismiss_rect.top() + inset),
+                        egui::pos2(dismiss_rect.right() - inset, dismiss_rect.bottom() - inset),
+                    ],
+                    stroke,
+                );
+                ui.painter().line_segment(
+                    [
+                        egui::pos2(dismiss_rect.right() - inset, dismiss_rect.top() + inset),
+                        egui::pos2(dismiss_rect.left() + inset, dismiss_rect.bottom() - inset),
+                    ],
+                    stroke,
+                );
+                if dismiss_response.clicked() {
+                    dismissed = true;
+                }
+            });
+        });
+
+    dismissed
 }
 
 fn paint_search_icon(ui: &mut egui::Ui, rect: egui::Rect, color: egui::Color32) {
@@ -484,10 +472,8 @@ fn paint_facet_btn(ui: &mut egui::Ui, label: &str, dot: Option<egui::Color32>) -
 }
 
 pub(crate) fn paint_palette_divider(ui: &mut egui::Ui) {
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 1.0),
-        egui::Sense::hover(),
-    );
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
     ui.painter()
         .rect_filled(rect, 0, egui::Color32::from_white_alpha(14));
 }
@@ -577,11 +563,8 @@ pub(crate) fn paint_palette_footer(
                     let dot_rect = ui
                         .allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover())
                         .0;
-                    ui.painter().circle_filled(
-                        dot_rect.center(),
-                        3.0,
-                        crate::theme::INDEXED_DOT,
-                    );
+                    ui.painter()
+                        .circle_filled(dot_rect.center(), 3.0, crate::theme::INDEXED_DOT);
                     ui.label(
                         egui::RichText::new(idle_text)
                             .text_style(egui::TextStyle::Small)

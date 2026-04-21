@@ -16,8 +16,8 @@ use crate::palette::{
 };
 #[cfg(feature = "semantic-search")]
 use crate::semantic_search::{
-    DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult,
-    SemanticSearchConfig, SemanticSearchService,
+    DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, SemanticSearchConfig,
+    SemanticSearchService,
 };
 use crate::sidebar::{
     SidebarTab, block_sidebar_input, close_sidebar_on_outside_click, show_sidebar,
@@ -277,6 +277,7 @@ enum VerificationMode {
     OpenSidebarNarrow,
     OpenSidebarBoards,
     OpenPalette,
+    OpenPaletteImagePivot,
     DrawArrow,
     EditTextbox,
 }
@@ -328,6 +329,11 @@ impl AppConfig {
                 #[cfg(debug_assertions)]
                 {
                     verification_mode = Some(VerificationMode::OpenPalette);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-palette-image-pivot" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::OpenPaletteImagePivot);
                 }
             } else if cfg!(debug_assertions) && argument == "--verify-arrow" {
                 #[cfg(debug_assertions)]
@@ -403,7 +409,18 @@ impl AppConfig {
 
     #[cfg(debug_assertions)]
     fn open_palette_on_start(&self) -> bool {
-        matches!(self.verification_mode, Some(VerificationMode::OpenPalette))
+        matches!(
+            self.verification_mode,
+            Some(VerificationMode::OpenPalette | VerificationMode::OpenPaletteImagePivot)
+        )
+    }
+
+    #[cfg(debug_assertions)]
+    fn open_palette_image_pivot_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(VerificationMode::OpenPaletteImagePivot)
+        )
     }
 
     #[cfg(debug_assertions)]
@@ -447,6 +464,11 @@ impl AppConfig {
 
     #[cfg(not(debug_assertions))]
     fn open_palette_on_start(&self) -> bool {
+        false
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn open_palette_image_pivot_on_start(&self) -> bool {
         false
     }
 
@@ -650,6 +672,16 @@ impl ReferenceApp {
                         app.sync_semantic_search_service();
                         app.search_overlay.open = true;
                         app.search_overlay.focus_requested = true;
+                    }
+                }
+                #[cfg(debug_assertions)]
+                if config.open_palette_image_pivot_on_start() {
+                    #[cfg(feature = "semantic-search")]
+                    {
+                        app.search_overlay.image_pivot = Some(ImageSearchPivot {
+                            asset_id: 42,
+                            item_id: -1,
+                        });
                     }
                 }
                 app
@@ -1823,7 +1855,11 @@ impl ReferenceApp {
 
         let search_result = match pivot {
             Some(pivot) => {
-                let text = if query.is_empty() { None } else { Some(query.as_str()) };
+                let text = if query.is_empty() {
+                    None
+                } else {
+                    Some(query.as_str())
+                };
                 service.search_with_image_pivot(pivot.asset_id, text)
             }
             None => service.search(&query),
@@ -1932,11 +1968,7 @@ impl ReferenceApp {
             .fixed_pos(screen_rect.min)
             .show(ctx, |ui| {
                 let painter = ui.painter();
-                painter.rect_filled(
-                    screen_rect,
-                    0,
-                    egui::Color32::from_black_alpha(170),
-                );
+                painter.rect_filled(screen_rect, 0, egui::Color32::from_black_alpha(170));
             });
         let area_response = egui::Area::new(egui::Id::new("semantic_search_overlay"))
             .order(egui::Order::Foreground)
@@ -2036,9 +2068,7 @@ impl ReferenceApp {
                                                     let index = row_index * grid_layout.columns
                                                         + column_index;
                                                     let active = index
-                                                        == self
-                                                            .search_overlay
-                                                            .active_result_index;
+                                                        == self.search_overlay.active_result_index;
                                                     let response = search_result_tile(
                                                         ui,
                                                         &self.canvas,
@@ -2464,18 +2494,17 @@ fn apply_average_selection_area(canvas: &mut crate::canvas::CanvasState, status:
     *status = format!("Averaged area across {changed} {noun}");
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{ArrangementAction, ReferenceApp, apply_arrangement_action};
-    use crate::sidebar::should_close_sidebar;
+    use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
+    use crate::jobs::LoadedCanvasItem;
     #[cfg(feature = "semantic-search")]
     use crate::palette::{
         PALETTE_WIDTH, search_result_grid_content_height, search_result_grid_layout,
         search_result_tile_height,
     };
-    use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
-    use crate::jobs::LoadedCanvasItem;
+    use crate::sidebar::should_close_sidebar;
     use crate::storage::Library;
     use eframe::egui;
     use std::fs;
