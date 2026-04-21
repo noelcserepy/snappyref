@@ -1631,6 +1631,8 @@ impl ReferenceApp {
             self.search_overlay.last_query_edit_at = None;
             self.search_overlay.last_submitted_query.clear();
             self.search_overlay.results.clear();
+            self.search_overlay.active_result_index = 0;
+            self.search_overlay.active_instance_index = 0;
             self.canvas.clear_search_matches();
         }
 
@@ -1793,9 +1795,18 @@ impl ReferenceApp {
         match service.search(&query) {
             Ok(results) => {
                 self.search_overlay.last_submitted_query = query;
+                let last_index = results.len().saturating_sub(1);
                 self.search_overlay.results = results;
-                self.search_overlay.active_result_index = 0;
-                self.search_overlay.active_instance_index = 0;
+                self.search_overlay.active_result_index =
+                    self.search_overlay.active_result_index.min(last_index);
+                let instance_last = self
+                    .search_overlay
+                    .results
+                    .get(self.search_overlay.active_result_index)
+                    .map(|group| group.item_ids.len().saturating_sub(1))
+                    .unwrap_or(0);
+                self.search_overlay.active_instance_index =
+                    self.search_overlay.active_instance_index.min(instance_last);
                 self.search_overlay.status = SearchOverlayStatus::Ready;
                 self.apply_search_matches();
             }
