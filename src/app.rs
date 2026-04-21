@@ -1785,10 +1785,16 @@ impl ReferenceApp {
                                     |ui| render_grid(ui),
                                 );
                             } else {
-                                egui::ScrollArea::vertical()
-                                    .max_height(grid_viewport_height)
-                                    .auto_shrink([false, false])
-                                    .show(ui, |ui| render_grid(ui));
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(shell_content_width, grid_viewport_height),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        egui::ScrollArea::vertical()
+                                            .max_height(grid_viewport_height)
+                                            .auto_shrink([false, false])
+                                            .show(ui, |ui| render_grid(ui));
+                                    },
+                                );
                             }
                             if let Some(index) = clicked_index {
                                 self.search_overlay.active_result_index = index;
