@@ -23,11 +23,11 @@ const MAX_IMPORT_RESULTS_PER_FRAME: usize = 4;
 #[cfg(feature = "semantic-search")]
 const SEARCH_DEBOUNCE_MS: f32 = 120.0;
 #[cfg(feature = "semantic-search")]
-const SEARCH_RESULT_TILE_MIN_WIDTH: f32 = 128.0;
+const SEARCH_RESULT_TILE_MIN_WIDTH: f32 = 180.0;
 #[cfg(feature = "semantic-search")]
-const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 92.0;
+const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 320.0;
 #[cfg(feature = "semantic-search")]
-const SEARCH_RESULT_TILE_FOOTER_HEIGHT: f32 = 28.0;
+const SEARCH_RESULT_TILE_FOOTER_HEIGHT: f32 = 32.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArrangementAction {
@@ -1725,7 +1725,7 @@ impl ReferenceApp {
                             ui.add_space(crate::theme::SPACE_2);
                             let mut clicked_index = None;
                             egui::ScrollArea::vertical()
-                                .max_height(320.0)
+                                .max_height(440.0)
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
                                     ui.spacing_mut().item_spacing =
@@ -2257,49 +2257,45 @@ fn search_result_tile(
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     let hovered = response.hovered();
 
-    let fill = if active {
-        crate::theme::SURFACE_ELEVATED
-    } else {
-        crate::theme::SURFACE
-    };
-    let stroke = if active {
-        crate::theme::stroke_strong()
-    } else {
-        crate::theme::stroke_subtle()
-    };
     ui.painter()
-        .rect_filled(rect, crate::theme::CARD_RADIUS, fill);
-    ui.painter().rect_stroke(
-        rect,
-        crate::theme::CARD_RADIUS,
-        stroke,
-        egui::StrokeKind::Outside,
-    );
+        .rect_filled(rect, crate::theme::CARD_RADIUS, crate::theme::SURFACE);
+    if active {
+        ui.painter().rect_stroke(
+            rect,
+            crate::theme::CARD_RADIUS,
+            crate::theme::stroke_strong(),
+            egui::StrokeKind::Outside,
+        );
+    }
 
     let preview_rect = egui::Rect::from_min_max(
         rect.min,
         egui::pos2(rect.max.x, rect.min.y + SEARCH_RESULT_TILE_PREVIEW_HEIGHT),
-    )
-    .shrink2(egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2));
-    ui.painter().rect_filled(
-        preview_rect,
-        crate::theme::CONTROL_RADIUS.saturating_sub(2),
-        crate::theme::BACKGROUND,
     );
 
     if let Some(item_id) = group.item_ids.first().copied()
         && let Some(preview) = canvas.preview_for_item_id(item_id)
     {
-        let scale = (preview_rect.width() / preview.texture_size.x)
-            .min(preview_rect.height() / preview.texture_size.y);
-        let image_size = preview.texture_size * scale.max(0.01);
-        let image_rect = egui::Rect::from_center_size(preview_rect.center(), image_size);
+        let preview_aspect = preview_rect.width() / preview_rect.height().max(1.0);
+        let texture_aspect = preview.texture_size.x / preview.texture_size.y.max(1.0);
+        let uv_rect = if texture_aspect > preview_aspect {
+            let visible_u = preview_aspect / texture_aspect;
+            let inset = (1.0 - visible_u) * 0.5;
+            egui::Rect::from_min_max(egui::pos2(inset, 0.0), egui::pos2(1.0 - inset, 1.0))
+        } else {
+            let visible_v = texture_aspect / preview_aspect;
+            let inset = (1.0 - visible_v) * 0.5;
+            egui::Rect::from_min_max(egui::pos2(0.0, inset), egui::pos2(1.0, 1.0 - inset))
+        };
         ui.painter().image(
             preview.texture_id,
-            image_rect,
-            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            preview_rect,
+            uv_rect,
             egui::Color32::WHITE,
         );
+    } else {
+        ui.painter()
+            .rect_filled(preview_rect, 0, crate::theme::BACKGROUND);
     }
 
     let primary_color = if active || hovered {
