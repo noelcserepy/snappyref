@@ -39,26 +39,6 @@ pub struct ModelSpec {
     pub resize_strategy: ResizeStrategy,
 }
 
-#[allow(dead_code)]
-pub const CLIP_VIT_BASE_PATCH32_INT8: ModelSpec = ModelSpec {
-    model_key: "clip_vit_base_patch32_int8",
-    dimension: 512,
-    input_size: 224,
-    repo_id: "Xenova/clip-vit-base-patch32",
-    text_model_file: "onnx/text_model_int8.onnx",
-    vision_model_file: "onnx/vision_model_int8.onnx",
-    tokenizer_file: "tokenizer.json",
-    token_length: 77,
-    pad_id: 0,
-    pad_token: "[PAD]",
-    text_output_name: "text_embeds",
-    vision_output_name: "image_embeds",
-    normalize_mean: Some([0.48145466, 0.4578275, 0.40821073]),
-    normalize_std: Some([0.26862954, 0.26130258, 0.27577711]),
-    resize_filter: FilterType::CatmullRom,
-    resize_strategy: ResizeStrategy::ShortestEdgeCenterCrop,
-};
-
 pub const SIGLIP2_BASE_PATCH16_224_INT8: ModelSpec = ModelSpec {
     model_key: "siglip2_base_patch16_224_int8",
     dimension: 768,
@@ -77,6 +57,9 @@ pub const SIGLIP2_BASE_PATCH16_224_INT8: ModelSpec = ModelSpec {
     resize_filter: FilterType::Triangle,
     resize_strategy: ResizeStrategy::Exact,
 };
+
+#[allow(dead_code)]
+pub const AVAILABLE_SEMANTIC_SEARCH_MODELS: &[ModelSpec] = &[SIGLIP2_BASE_PATCH16_224_INT8];
 
 pub const DEFAULT_SEMANTIC_SEARCH_MODEL: ModelSpec = SIGLIP2_BASE_PATCH16_224_INT8;
 
