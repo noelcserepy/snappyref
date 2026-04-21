@@ -12,8 +12,12 @@ use crate::semantic_search::{
     SemanticSearchConfig, SemanticSearchService,
 };
 
-const SHORTCUT_DRAWER_MIN_HEIGHT: f32 = 220.0;
-const SHORTCUT_DRAWER_MAX_HEIGHT: f32 = 360.0;
+const SHORTCUT_DRAWER_MIN_HEIGHT: f32 = 352.0;
+const SHORTCUT_DRAWER_MAX_HEIGHT: f32 = 392.0;
+const SHORTCUT_DRAWER_HEIGHT_RATIO: f32 = 0.40;
+const SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH: f32 = 900.0;
+const SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH: f32 = 360.0;
+const SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH: f32 = 420.0;
 const SHORTCUT_DRAWER_MARGIN: f32 = crate::theme::SPACE_3;
 const SHORTCUT_DRAWER_BUTTON_SIZE: f32 = crate::theme::CONTROL_HEIGHT;
 const COPY_PAYLOAD_KIND: &str = "reference-board-items";
@@ -61,12 +65,6 @@ enum SupportedShortcutAction {
     Arrange(ArrangementAction),
     ApplyDefaultAverageArea,
     AverageSelectionArea,
-}
-
-#[derive(Clone, Copy)]
-struct ShortcutSection {
-    title: &'static str,
-    rows: &'static [ShortcutRow],
 }
 
 #[derive(Clone, Copy)]
@@ -220,7 +218,7 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         )),
     },
     SupportedShortcut {
-        action: "Apply default average area",
+        action: "Default avg area",
         windows: "Ctrl+L",
         mac: "⌘L",
         binding: Some(ShortcutBinding {
@@ -231,7 +229,7 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: Some(SupportedShortcutAction::ApplyDefaultAverageArea),
     },
     SupportedShortcut {
-        action: "Average selection area",
+        action: "Selection avg area",
         windows: "Ctrl+Shift+L",
         mac: "⇧⌘L",
         binding: Some(ShortcutBinding {
@@ -253,8 +251,6 @@ const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: None,
     },
 ];
-
-const SHORTCUT_SECTIONS: &[ShortcutSection] = &[];
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ClipboardBoardSelection {
@@ -327,8 +323,15 @@ enum SearchOverlayStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerificationMode {
     OpenDrawer,
+    OpenDrawerHot,
+    OpenDrawerNarrow,
     DrawArrow,
     EditTextbox,
+}
+
+enum DrawerLayoutMode {
+    Split { left_width: f32, right_width: f32 },
+    Stacked,
 }
 
 impl AppConfig {
@@ -358,6 +361,16 @@ impl AppConfig {
                 #[cfg(debug_assertions)]
                 {
                     verification_mode = Some(VerificationMode::OpenDrawer);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-open-drawer-hot" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::OpenDrawerHot);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-open-drawer-narrow" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::OpenDrawerNarrow);
                 }
             } else if cfg!(debug_assertions) && argument == "--verify-arrow" {
                 #[cfg(debug_assertions)]
@@ -396,7 +409,30 @@ impl AppConfig {
 
     #[cfg(debug_assertions)]
     fn open_drawer_on_start(&self) -> bool {
-        matches!(self.verification_mode, Some(VerificationMode::OpenDrawer))
+        matches!(
+            self.verification_mode,
+            Some(
+                VerificationMode::OpenDrawer
+                    | VerificationMode::OpenDrawerHot
+                    | VerificationMode::OpenDrawerNarrow
+            )
+        )
+    }
+
+    #[cfg(debug_assertions)]
+    fn open_drawer_hot_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(VerificationMode::OpenDrawerHot)
+        )
+    }
+
+    #[cfg(debug_assertions)]
+    fn open_drawer_narrow_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(VerificationMode::OpenDrawerNarrow)
+        )
     }
 
     #[cfg(debug_assertions)]
@@ -414,8 +450,27 @@ impl AppConfig {
         self.verification_search_query.as_deref()
     }
 
+    #[cfg(debug_assertions)]
+    pub(crate) fn startup_viewport_size(&self) -> egui::Vec2 {
+        if self.open_drawer_narrow_on_start() {
+            egui::vec2(780.0, STARTUP_VIEWPORT_SIZE.y)
+        } else {
+            STARTUP_VIEWPORT_SIZE
+        }
+    }
+
     #[cfg(not(debug_assertions))]
     fn open_drawer_on_start(&self) -> bool {
+        false
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn open_drawer_hot_on_start(&self) -> bool {
+        false
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn open_drawer_narrow_on_start(&self) -> bool {
         false
     }
 
@@ -432,6 +487,11 @@ impl AppConfig {
     #[cfg(not(debug_assertions))]
     fn verification_search_query(&self) -> Option<&str> {
         None
+    }
+
+    #[cfg(not(debug_assertions))]
+    pub(crate) fn startup_viewport_size(&self) -> egui::Vec2 {
+        STARTUP_VIEWPORT_SIZE
     }
 
     pub fn perf_log_enabled(&self) -> bool {
@@ -474,6 +534,8 @@ pub struct ReferenceApp {
     next_import_queue_id: u64,
     #[cfg(debug_assertions)]
     verification_search_query: Option<String>,
+    #[cfg(debug_assertions)]
+    drawer_hot_preview: bool,
 }
 
 impl ReferenceApp {
@@ -529,6 +591,8 @@ impl ReferenceApp {
                     next_import_queue_id: 1,
                     #[cfg(debug_assertions)]
                     verification_search_query: None,
+                    #[cfg(debug_assertions)]
+                    drawer_hot_preview: config.open_drawer_hot_on_start(),
                 };
                 app.load_user_session();
                 #[cfg(feature = "semantic-search")]
@@ -584,6 +648,18 @@ impl ReferenceApp {
                     app.verification_search_query =
                         config.verification_search_query().map(ToOwned::to_owned);
                 }
+                #[cfg(debug_assertions)]
+                if app.drawer_hot_preview {
+                    app.auto_image_scaling = false;
+                    app.import_gap = 32.0;
+                    app.canvas_image_mode = crate::data::CanvasImageMode::Original;
+                    app.canvas_image_max_side = crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE;
+                    app.canvas
+                        .set_background(crate::data::CanvasBackground::Grid);
+                    app.semantic_search_enabled = true;
+                    #[cfg(feature = "semantic-search")]
+                    app.sync_semantic_search_service();
+                }
                 app
             }
             Err(error) => Self {
@@ -616,6 +692,8 @@ impl ReferenceApp {
                 next_import_queue_id: 1,
                 #[cfg(debug_assertions)]
                 verification_search_query: None,
+                #[cfg(debug_assertions)]
+                drawer_hot_preview: config.open_drawer_hot_on_start(),
             },
         }
     }
@@ -2067,10 +2145,7 @@ impl ReferenceApp {
     }
 
     fn drawer_height(&self, screen_rect: egui::Rect) -> f32 {
-        let target = (screen_rect.height() * 0.42)
-            .clamp(SHORTCUT_DRAWER_MIN_HEIGHT, SHORTCUT_DRAWER_MAX_HEIGHT);
-        let available = (screen_rect.height() - 72.0).max(140.0);
-        target.min(available)
+        shortcut_drawer_height(screen_rect)
     }
 
     fn drawer_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
@@ -2613,12 +2688,7 @@ fn show_shortcuts_drawer(
 
     let mut settings_changed = false;
 
-    let drawer_height = {
-        let target = (screen_rect.height() * 0.42)
-            .clamp(SHORTCUT_DRAWER_MIN_HEIGHT, SHORTCUT_DRAWER_MAX_HEIGHT);
-        let available = (screen_rect.height() - 72.0).max(140.0);
-        target.min(available)
-    };
+    let drawer_height = shortcut_drawer_height(screen_rect);
     let drawer_rect = egui::Rect::from_min_max(
         egui::pos2(
             screen_rect.left() + SHORTCUT_DRAWER_MARGIN,
@@ -2642,35 +2712,97 @@ fn show_shortcuts_drawer(
                 .corner_radius(crate::theme::CARD_RADIUS)
                 .inner_margin(crate::theme::PANEL_PADDING)
                 .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.set_max_width(ui.available_width());
-                    ui.set_min_height(drawer_rect.height());
+                    let inner_width = (drawer_rect.width()
+                        - crate::theme::PANEL_PADDING.left as f32
+                        - crate::theme::PANEL_PADDING.right as f32)
+                        .max(0.0);
+                    let inner_height = (drawer_rect.height()
+                        - crate::theme::PANEL_PADDING.top as f32
+                        - crate::theme::PANEL_PADDING.bottom as f32)
+                        .max(0.0);
+                    ui.set_width(inner_width);
+                    ui.set_min_height(inner_height);
 
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing =
-                                egui::vec2(0.0, crate::theme::SECTION_GAP);
-                            paint_drawer_section_label(ui, "Options", None);
-                            settings_changed |= paint_settings_section(
-                                ui,
-                                auto_image_scaling,
-                                import_gap,
-                                canvas_image_mode,
-                                canvas_image_max_side,
-                                semantic_search_enabled,
-                                canvas,
-                            );
+                    match drawer_layout_mode(inner_width) {
+                        DrawerLayoutMode::Split {
+                            left_width,
+                            right_width,
+                        } => {
+                            ui.horizontal_top(|ui| {
+                                paint_drawer_section(
+                                    ui,
+                                    left_width,
+                                    inner_height,
+                                    "Options",
+                                    Some("Board defaults"),
+                                    Some(inner_height),
+                                    |ui| {
+                                        settings_changed |= paint_settings_section(
+                                            ui,
+                                            auto_image_scaling,
+                                            import_gap,
+                                            canvas_image_mode,
+                                            canvas_image_max_side,
+                                            semantic_search_enabled,
+                                            canvas,
+                                        );
+                                    },
+                                );
 
-                            ui.add_space(crate::theme::SECTION_GAP);
+                                ui.add_space(crate::theme::SPACE_3);
 
-                            paint_drawer_section_label(ui, "Shortcuts", None);
-                            paint_supported_shortcuts_section(ui);
-                            for section in SHORTCUT_SECTIONS {
-                                paint_shortcut_section(ui, section);
-                            }
-                        });
+                                paint_drawer_section(
+                                    ui,
+                                    right_width,
+                                    inner_height,
+                                    "Shortcuts",
+                                    None,
+                                    Some(inner_height),
+                                    |ui| {
+                                        paint_supported_shortcuts_section(ui);
+                                    },
+                                );
+                            });
+                        }
+                        DrawerLayoutMode::Stacked => {
+                            let stacked_card_height = (inner_height * 0.4).max(140.0);
+                            ui.vertical(|ui| {
+                                paint_drawer_section(
+                                    ui,
+                                    inner_width,
+                                    stacked_card_height,
+                                    "Options",
+                                    Some("Board defaults"),
+                                    Some(stacked_card_height),
+                                    |ui| {
+                                        settings_changed |= paint_settings_section(
+                                            ui,
+                                            auto_image_scaling,
+                                            import_gap,
+                                            canvas_image_mode,
+                                            canvas_image_max_side,
+                                            semantic_search_enabled,
+                                            canvas,
+                                        );
+                                    },
+                                );
+
+                                ui.add_space(crate::theme::SPACE_3);
+
+                                paint_drawer_section(
+                                    ui,
+                                    inner_width,
+                                    stacked_card_height,
+                                    "Shortcuts",
+                                    None,
+                                    Some(stacked_card_height),
+                                    |ui| {
+                                        paint_supported_shortcuts_section(ui);
+                                    },
+                                );
+                            });
+                        }
+                    }
                 });
         });
 
@@ -2678,6 +2810,94 @@ fn show_shortcuts_drawer(
         settings_changed,
         interactive_rect: Some(area_response.response.rect),
     }
+}
+
+fn drawer_layout_mode(content_width: f32) -> DrawerLayoutMode {
+    let wide_threshold = SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH;
+    let split_width = SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH
+        + SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH
+        + crate::theme::SPACE_3;
+    if content_width < wide_threshold || content_width < split_width {
+        DrawerLayoutMode::Stacked
+    } else {
+        let left_width = SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH;
+        let right_width = (content_width - left_width - crate::theme::SPACE_3).max(0.0);
+        if right_width < SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH {
+            DrawerLayoutMode::Stacked
+        } else {
+            DrawerLayoutMode::Split {
+                left_width,
+                right_width,
+            }
+        }
+    }
+}
+
+fn paint_drawer_section(
+    ui: &mut egui::Ui,
+    width: f32,
+    _max_height: f32,
+    title: &str,
+    detail: Option<&str>,
+    card_max_height: Option<f32>,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    let scroll_id = card_max_height
+        .is_some()
+        .then(|| egui::Id::new(("drawer_card_scroll", title)));
+    let section_height = if card_max_height.is_some() {
+        _max_height
+    } else {
+        0.0
+    };
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, section_height),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_1);
+            paint_drawer_section_label(ui, title, detail);
+            ui.add_space(crate::theme::SPACE_1);
+            paint_drawer_card(ui, card_max_height, scroll_id, add_contents);
+        },
+    );
+}
+
+fn paint_drawer_card(
+    ui: &mut egui::Ui,
+    max_height: Option<f32>,
+    scroll_id: Option<egui::Id>,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    egui::Frame::new()
+        .fill(crate::theme::SURFACE)
+        .stroke(crate::theme::stroke_subtle())
+        .corner_radius(crate::theme::CARD_RADIUS)
+        .inner_margin(egui::Margin {
+            left: crate::theme::SPACE_2 as i8,
+            right: crate::theme::SPACE_2 as i8,
+            top: crate::theme::SPACE_1 as i8,
+            bottom: crate::theme::SPACE_1 as i8,
+        })
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing =
+                egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1);
+            if let Some(max_height) = max_height {
+                let mut scroll_area = egui::ScrollArea::vertical();
+                if let Some(scroll_id) = scroll_id {
+                    scroll_area = scroll_area.id_salt(scroll_id);
+                }
+                scroll_area
+                    .max_height(max_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing =
+                            egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1);
+                        add_contents(ui);
+                    });
+            } else {
+                add_contents(ui);
+            }
+        });
 }
 
 fn paint_settings_section(
@@ -2691,193 +2911,154 @@ fn paint_settings_section(
 ) -> bool {
     let mut changed = false;
     ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(crate::theme::SPACE_3, crate::theme::SPACE_2);
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_1);
 
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = crate::theme::SPACE_2;
-            ui.label(
-                egui::RichText::new("Canvas background")
-                    .text_style(egui::TextStyle::Body)
-                    .strong()
-                    .color(crate::theme::TEXT),
-            );
-            ui.label(
-                egui::RichText::new("Quiet background guide for the board. Dots are the default.")
-                    .text_style(egui::TextStyle::Small)
-                    .color(crate::theme::TEXT_MUTED),
-            );
-            changed |= paint_background_mode_control(ui, canvas);
+        paint_drawer_subsection_label(ui, "Canvas");
+        ui.add_space(crate::theme::SPACE_1);
+
+        changed |= paint_setting_row(ui, "Canvas background", "Quiet board guide.", |ui| {
+            paint_background_mode_control(ui, canvas)
         });
-
-        ui.add_space(crate::theme::SPACE_3);
-
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = crate::theme::SPACE_2;
-            ui.label(
-                egui::RichText::new("Canvas image resolution")
-                    .text_style(egui::TextStyle::Body)
-                    .strong()
-                    .color(crate::theme::TEXT),
-            );
-            ui.label(
-                egui::RichText::new(
-                    "Downscale keeps the original for crop/edit but uses a smaller canvas copy. Default is 2000 px.",
-                )
-                .text_style(egui::TextStyle::Small)
-                .color(crate::theme::TEXT_MUTED),
-            );
-            ui.horizontal(|ui| {
-                changed |= ui
-                    .radio_value(
-                        canvas_image_mode,
-                        crate::data::CanvasImageMode::Downscale,
-                        "Downscale",
-                    )
-                    .changed();
-                changed |= ui
-                    .radio_value(
-                        canvas_image_mode,
-                        crate::data::CanvasImageMode::Original,
-                        "Original",
-                    )
-                    .changed();
-            });
-        });
-
-        ui.add_space(crate::theme::SPACE_3);
-
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new("Canvas max dimension")
-                        .text_style(egui::TextStyle::Body)
-                        .strong()
-                        .color(crate::theme::TEXT),
-                );
-                ui.label(
-                    egui::RichText::new("Largest width or height for the downscaled canvas copy.")
-                        .text_style(egui::TextStyle::Small)
-                        .color(crate::theme::TEXT_MUTED),
-                );
-            });
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        changed |= paint_setting_row(
+            ui,
+            "Canvas image resolution",
+            "Keeps originals for crop/edit.",
+            |ui| paint_canvas_image_mode_control(ui, canvas_image_mode),
+        );
+        changed |= paint_setting_row(
+            ui,
+            "Canvas max dimension",
+            "Largest side of the canvas copy.",
+            |ui| {
                 ui.add_enabled_ui(
                     *canvas_image_mode == crate::data::CanvasImageMode::Downscale,
                     |ui| {
-                        changed |= ui
-                            .add(
-                                egui::DragValue::new(canvas_image_max_side)
-                                    .speed(64.0)
-                                    .range(256..=8192)
-                                    .fixed_decimals(0)
-                                    .suffix(" px"),
-                            )
-                            .changed();
+                        ui.add(
+                            egui::DragValue::new(canvas_image_max_side)
+                                .speed(64.0)
+                                .range(256..=8192)
+                                .fixed_decimals(0)
+                                .suffix(" px"),
+                        )
+                        .changed()
                     },
-                );
-            });
+                )
+                .inner
+            },
+        );
+
+        ui.add_space(crate::theme::SPACE_1);
+        paint_drawer_subsection_label(ui, "Import + search");
+        ui.add_space(crate::theme::SPACE_1);
+
+        let auto_scale_detail = "Caps new imports to a default area.";
+        changed |= paint_setting_row(ui, "Auto-scale new images", auto_scale_detail, |ui| {
+            #[cfg(feature = "semantic-search")]
+            {
+                paint_switch(ui, auto_image_scaling).changed()
+            }
+            #[cfg(not(feature = "semantic-search"))]
+            {
+                ui.add_enabled(
+                    false,
+                    egui::widgets::Checkbox::without_text(auto_image_scaling),
+                )
+                .changed()
+            }
         });
-
-        ui.add_space(crate::theme::SPACE_3);
-
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new("Auto-scale new images")
-                        .text_style(egui::TextStyle::Body)
-                        .strong()
-                        .color(crate::theme::TEXT),
-                );
-                ui.label(
-                    egui::RichText::new(format!(
-                        "Cap imported image area at {:.0} canvas sq units. Applies to new imports.",
-                        crate::jobs::DEFAULT_IMPORT_TARGET_CANVAS_AREA
-                    ))
-                    .text_style(egui::TextStyle::Small)
-                    .color(crate::theme::TEXT_MUTED),
-                );
-            });
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                changed |= paint_switch(ui, auto_image_scaling).changed();
-            });
-        });
-
-        ui.add_space(crate::theme::SPACE_3);
-
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new("Import gap")
-                        .text_style(egui::TextStyle::Body)
-                        .strong()
-                        .color(crate::theme::TEXT),
-                );
-                ui.label(
-                    egui::RichText::new("Gap used when placing new images.")
-                        .text_style(egui::TextStyle::Small)
-                        .color(crate::theme::TEXT_MUTED),
-                );
-            });
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                changed |= ui
-                    .add(
-                        egui::DragValue::new(import_gap)
-                            .speed(0.5)
-                            .range(0.0..=128.0)
-                            .fixed_decimals(0)
-                            .suffix(" units"),
-                    )
-                    .changed();
-            });
-        });
-
-        ui.add_space(crate::theme::SPACE_3);
-
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new("Semantic search")
-                        .text_style(egui::TextStyle::Body)
-                        .strong()
-                        .color(crate::theme::TEXT),
-                );
-                #[cfg(feature = "semantic-search")]
-                ui.label(
-                    egui::RichText::new(
-                        "Experimental. Downloads the active retrieval model on first use and indexes visible images in the background.",
-                    )
-                    .text_style(egui::TextStyle::Small)
-                    .color(crate::theme::TEXT_MUTED),
-                );
-                #[cfg(not(feature = "semantic-search"))]
-                ui.label(
-                    egui::RichText::new(
-                        "Unavailable in this build. Rebuild with the semantic-search feature to enable it.",
-                    )
-                    .text_style(egui::TextStyle::Small)
-                    .color(crate::theme::TEXT_MUTED),
-                );
-            });
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        changed |= paint_setting_row(
+            ui,
+            "Import gap",
+            "Gap used when placing new images.",
+            |ui| {
+                ui.add(
+                    egui::DragValue::new(import_gap)
+                        .speed(0.5)
+                        .range(0.0..=128.0)
+                        .fixed_decimals(0)
+                        .suffix(" units"),
+                )
+                .changed()
+            },
+        );
+        changed |= paint_setting_row(
+            ui,
+            "Semantic search",
+            #[cfg(feature = "semantic-search")]
+            "Experimental; downloads a model on first use.",
+            #[cfg(not(feature = "semantic-search"))]
+            "Feature disabled in this build.",
+            |ui| {
                 #[cfg(feature = "semantic-search")]
                 {
-                    changed |= paint_switch(ui, semantic_search_enabled).changed();
+                    paint_switch(ui, semantic_search_enabled).changed()
                 }
                 #[cfg(not(feature = "semantic-search"))]
                 {
                     ui.add_enabled(
                         false,
                         egui::widgets::Checkbox::without_text(semantic_search_enabled),
-                    );
+                    )
+                    .changed()
                 }
-            });
-        });
+            },
+        );
     });
 
+    changed
+}
+
+fn paint_setting_row(
+    ui: &mut egui::Ui,
+    title: &str,
+    detail: &str,
+    add_control: impl FnOnce(&mut egui::Ui) -> bool,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = crate::theme::SPACE_1;
+            ui.label(
+                egui::RichText::new(title)
+                    .text_style(egui::TextStyle::Body)
+                    .strong()
+                    .color(crate::theme::TEXT),
+            );
+            ui.label(
+                egui::RichText::new(detail)
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_MUTED),
+            );
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            changed |= add_control(ui);
+        });
+    });
+    changed
+}
+
+fn paint_canvas_image_mode_control(
+    ui: &mut egui::Ui,
+    canvas_image_mode: &mut crate::data::CanvasImageMode,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        changed |= ui
+            .radio_value(
+                canvas_image_mode,
+                crate::data::CanvasImageMode::Downscale,
+                "Downscale",
+            )
+            .changed();
+        changed |= ui
+            .radio_value(
+                canvas_image_mode,
+                crate::data::CanvasImageMode::Original,
+                "Original",
+            )
+            .changed();
+    });
     changed
 }
 
@@ -2888,7 +3069,7 @@ fn paint_background_mode_control(
     let mut background = canvas.background();
     let before = background;
 
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = crate::theme::SPACE_1;
         for (label, value) in [
             ("Dots", crate::data::CanvasBackground::Dots),
@@ -2912,7 +3093,7 @@ fn paint_background_mode_control(
                 crate::theme::stroke_subtle()
             })
             .corner_radius(crate::theme::CONTROL_RADIUS)
-            .min_size(egui::vec2(52.0, crate::theme::CONTROL_HEIGHT));
+            .min_size(egui::vec2(44.0, crate::theme::CONTROL_HEIGHT));
 
             if ui.add(button).clicked() {
                 background = value;
@@ -2930,15 +3111,40 @@ fn paint_background_mode_control(
 
 fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
     paint_drawer_subsection_label(ui, "Implemented");
-    paint_shortcut_grid(
-        ui,
-        egui::Id::new("supported_shortcuts_grid"),
-        SUPPORTED_SHORTCUTS.iter().map(|shortcut| ShortcutRow {
-            action: shortcut.action,
-            windows: shortcut.windows,
-            mac: shortcut.mac,
-        }),
+    ui.add_space(crate::theme::SPACE_1);
+    ui.label(
+        egui::RichText::new("Bindings grouped by task.")
+            .text_style(egui::TextStyle::Small)
+            .color(crate::theme::TEXT_MUTED),
     );
+    ui.add_space(crate::theme::SPACE_2);
+    let (core_shortcuts, layout_shortcuts) = SUPPORTED_SHORTCUTS.split_at(8);
+
+    ui.columns(2, |columns| {
+        paint_shortcut_table_section(&mut columns[0], "Core actions", core_shortcuts);
+        paint_shortcut_table_section(&mut columns[1], "Layout + history", layout_shortcuts);
+    });
+}
+
+fn paint_shortcut_table_section(ui: &mut egui::Ui, title: &str, shortcuts: &[SupportedShortcut]) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_1);
+        paint_drawer_subsection_label(ui, title);
+        ui.add_space(crate::theme::SPACE_1);
+        paint_shortcut_grid(
+            ui,
+            egui::Id::new(("shortcut_section_grid", title)),
+            shortcuts.iter().copied().map(shortcut_to_row),
+        );
+    });
+}
+
+fn shortcut_to_row(shortcut: SupportedShortcut) -> ShortcutRow {
+    ShortcutRow {
+        action: shortcut.action,
+        windows: shortcut.windows,
+        mac: shortcut.mac,
+    }
 }
 
 fn paint_switch(ui: &mut egui::Ui, value: &mut bool) -> egui::Response {
@@ -3065,7 +3271,7 @@ fn paint_shortcut_grid(
     egui::Grid::new(id)
         .num_columns(3)
         .striped(false)
-        .spacing(egui::vec2(crate::theme::SPACE_5, crate::theme::SPACE_2))
+        .spacing(egui::vec2(crate::theme::SPACE_1, 2.0))
         .show(ui, |ui| {
             ui.label(
                 egui::RichText::new("Action")
@@ -3074,7 +3280,7 @@ fn paint_shortcut_grid(
                     .strong(),
             );
             ui.label(
-                egui::RichText::new("Windows/Linux")
+                egui::RichText::new("Win/Linux")
                     .text_style(egui::TextStyle::Small)
                     .color(crate::theme::TEXT_SUBTLE)
                     .strong(),
@@ -3090,7 +3296,7 @@ fn paint_shortcut_grid(
             for row in rows {
                 ui.label(
                     egui::RichText::new(row.action)
-                        .text_style(egui::TextStyle::Body)
+                        .text_style(egui::TextStyle::Small)
                         .color(crate::theme::TEXT),
                 );
                 paint_shortcut_keys(ui, row.windows);
@@ -3098,12 +3304,6 @@ fn paint_shortcut_grid(
                 ui.end_row();
             }
         });
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ShortcutVisualPart {
-    Key(String),
-    Joiner,
 }
 
 fn paint_shortcut_keys(ui: &mut egui::Ui, shortcut: &str) {
@@ -3116,147 +3316,24 @@ fn paint_shortcut_keys(ui: &mut egui::Ui, shortcut: &str) {
         return;
     }
 
-    let parts = parse_shortcut_visual_parts(shortcut);
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(crate::theme::SPACE_1, crate::theme::SPACE_1);
-        for part in parts {
-            match part {
-                ShortcutVisualPart::Key(label) => paint_shortcut_keycap(ui, &label),
-                ShortcutVisualPart::Joiner => {
-                    ui.label(
-                        egui::RichText::new("+")
-                            .text_style(egui::TextStyle::Small)
-                            .color(crate::theme::TEXT_SUBTLE),
-                    );
-                }
-            }
-        }
-    });
-}
-
-fn paint_shortcut_keycap(ui: &mut egui::Ui, label: &str) {
-    let corner_radius = crate::theme::CONTROL_RADIUS.saturating_sub(2);
     egui::Frame::new()
         .fill(crate::theme::SURFACE_ELEVATED)
         .stroke(crate::theme::stroke_subtle())
-        .corner_radius(corner_radius)
+        .corner_radius(crate::theme::CONTROL_RADIUS.saturating_sub(2))
         .inner_margin(egui::Margin {
-            left: 6,
-            right: 6,
-            top: 3,
-            bottom: 3,
+            left: 5,
+            right: 5,
+            top: 2,
+            bottom: 2,
         })
         .show(ui, |ui| {
             ui.label(
-                egui::RichText::new(label)
+                egui::RichText::new(shortcut)
                     .text_style(egui::TextStyle::Monospace)
                     .color(crate::theme::TEXT)
                     .strong(),
             );
         });
-}
-
-fn parse_shortcut_visual_parts(shortcut: &str) -> Vec<ShortcutVisualPart> {
-    if shortcut.contains(" + ") {
-        let mut parts = Vec::new();
-        for (idx, segment) in shortcut.split(" + ").enumerate() {
-            if idx > 0 {
-                parts.push(ShortcutVisualPart::Joiner);
-            }
-            parts.extend(parse_compact_shortcut_segment(segment));
-        }
-        return parts;
-    }
-
-    parse_compact_shortcut_segment(shortcut)
-}
-
-fn parse_compact_shortcut_segment(segment: &str) -> Vec<ShortcutVisualPart> {
-    let chars = segment.chars().collect::<Vec<_>>();
-    if !chars.contains(&'+') {
-        return split_symbolic_keys(segment)
-            .into_iter()
-            .map(ShortcutVisualPart::Key)
-            .collect();
-    }
-
-    let mut parts = Vec::new();
-    let mut current = String::new();
-
-    for (idx, ch) in chars.iter().copied().enumerate() {
-        if ch == '+' {
-            if !current.is_empty() {
-                parts.extend(
-                    split_symbolic_keys(&current)
-                        .into_iter()
-                        .map(ShortcutVisualPart::Key),
-                );
-                current.clear();
-            }
-
-            let is_terminal = idx == chars.len() - 1;
-            let next_is_plus = chars.get(idx + 1).copied() == Some('+');
-
-            if is_terminal {
-                parts.push(ShortcutVisualPart::Key("+".to_owned()));
-            } else if next_is_plus || !parts.is_empty() {
-                parts.push(ShortcutVisualPart::Joiner);
-            }
-        } else {
-            current.push(ch);
-        }
-    }
-
-    if !current.is_empty() {
-        parts.extend(
-            split_symbolic_keys(&current)
-                .into_iter()
-                .map(ShortcutVisualPart::Key),
-        );
-    }
-
-    while matches!(parts.last(), Some(ShortcutVisualPart::Joiner)) {
-        parts.pop();
-    }
-
-    parts
-}
-
-fn split_symbolic_keys(segment: &str) -> Vec<String> {
-    if segment.contains(' ') {
-        return vec![segment.to_owned()];
-    }
-
-    let mut keys = Vec::new();
-    let mut remaining = segment;
-
-    while let Some(first) = remaining.chars().next() {
-        if matches!(first, '⌘' | '⇧' | '⌥' | '⌃') {
-            keys.push(first.to_string());
-            remaining = &remaining[first.len_utf8()..];
-        } else {
-            break;
-        }
-    }
-
-    if !remaining.is_empty() {
-        keys.push(remaining.to_owned());
-    }
-
-    if keys.is_empty() {
-        keys.push(segment.to_owned());
-    }
-
-    keys
-}
-
-fn paint_shortcut_section(ui: &mut egui::Ui, section: &ShortcutSection) {
-    paint_drawer_subsection_label(ui, section.title);
-    paint_shortcut_grid(
-        ui,
-        egui::Id::new(("shortcut_section_grid", section.title)),
-        section.rows.iter().copied(),
-    );
 }
 
 fn toggle_drawer_shortcut_label() -> &'static str {
@@ -3269,6 +3346,13 @@ fn toggle_drawer_shortcut_label() -> &'static str {
     {
         "Ctrl+B"
     }
+}
+
+fn shortcut_drawer_height(screen_rect: egui::Rect) -> f32 {
+    let target = (screen_rect.height() * SHORTCUT_DRAWER_HEIGHT_RATIO)
+        .clamp(SHORTCUT_DRAWER_MIN_HEIGHT, SHORTCUT_DRAWER_MAX_HEIGHT);
+    let available = (screen_rect.height() - SHORTCUT_DRAWER_MARGIN * 2.0).max(0.0);
+    target.min(available)
 }
 
 fn drawer_toggle_width() -> f32 {
@@ -3286,7 +3370,9 @@ fn drawer_toggle_width() -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ArrangementAction, ReferenceApp, SEARCH_OVERLAY_EMPTY_MAX_WIDTH, apply_arrangement_action,
+        ArrangementAction, DrawerLayoutMode, ReferenceApp, SEARCH_OVERLAY_EMPTY_MAX_WIDTH,
+        SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH, SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH,
+        SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH, apply_arrangement_action, drawer_layout_mode,
         search_overlay_width, search_result_grid_content_height, search_result_grid_layout,
         search_result_tile_height, should_close_drawer,
     };
@@ -3445,6 +3531,28 @@ mod tests {
         assert!(!should_close_drawer(true, None, drawer_rect));
     }
 
+    #[test]
+    fn drawer_layout_stacks_below_the_breakpoint() {
+        assert!(matches!(
+            drawer_layout_mode(SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH - 1.0),
+            DrawerLayoutMode::Stacked
+        ));
+    }
+
+    #[test]
+    fn drawer_layout_uses_a_fixed_split_above_the_breakpoint() {
+        match drawer_layout_mode(SHORTCUT_DRAWER_WIDE_LAYOUT_WIDTH + 120.0) {
+            DrawerLayoutMode::Split {
+                left_width,
+                right_width,
+            } => {
+                assert!((left_width - SHORTCUT_DRAWER_LEFT_COLUMN_WIDTH).abs() < f32::EPSILON);
+                assert!(right_width >= SHORTCUT_DRAWER_MIN_RIGHT_COLUMN_WIDTH);
+            }
+            DrawerLayoutMode::Stacked => panic!("expected split layout above breakpoint"),
+        }
+    }
+
     #[cfg(feature = "semantic-search")]
     #[test]
     fn search_shortcut_opens_overlay_when_enabled() {
@@ -3600,6 +3708,8 @@ mod tests {
             next_import_queue_id: 1,
             #[cfg(debug_assertions)]
             verification_search_query: None,
+            #[cfg(debug_assertions)]
+            drawer_hot_preview: false,
         }
     }
 

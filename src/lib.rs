@@ -28,9 +28,10 @@ pub fn run() -> eframe::Result<()> {
         }
         return Ok(());
     }
+    let viewport_size = config.startup_viewport_size();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([960.0, 640.0])
+            .with_inner_size([viewport_size.x, viewport_size.y])
             .with_fullsize_content_view(true)
             .with_title_shown(false)
             .with_titlebar_shown(false)
