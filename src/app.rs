@@ -1613,17 +1613,17 @@ impl ReferenceApp {
             return;
         }
 
-        let width = (screen_rect.width() * 0.52).clamp(280.0, 520.0);
+        let width = (screen_rect.width() * 0.58).clamp(320.0, 720.0);
         let area_pos = egui::pos2(
             screen_rect.center().x - width * 0.5,
-            screen_rect.top() + 24.0,
+            screen_rect.top() + 28.0,
         );
         let input_id = egui::Id::new("semantic_search_input");
-        let compact_margin = egui::Margin {
-            left: 10,
-            right: 10,
-            top: 8,
-            bottom: 8,
+        let shell_margin = egui::Margin {
+            left: 16,
+            right: 16,
+            top: 14,
+            bottom: 12,
         };
         let area_response = egui::Area::new(egui::Id::new("semantic_search_overlay"))
             .order(egui::Order::Foreground)
@@ -1634,17 +1634,33 @@ impl ReferenceApp {
                     .fill(crate::theme::SURFACE)
                     .stroke(crate::theme::stroke_subtle())
                     .corner_radius(crate::theme::CARD_RADIUS)
-                    .inner_margin(compact_margin)
+                    .inner_margin(shell_margin)
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing =
-                            egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_1);
+                            egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2);
 
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut self.search_overlay.query)
-                                .id(input_id)
-                                .desired_width(f32::INFINITY)
-                                .hint_text("Search images"),
-                        );
+                        let response = ui
+                            .scope(|ui| {
+                                let visuals = &mut ui.style_mut().visuals;
+                                visuals.extreme_bg_color = crate::theme::SURFACE;
+                                visuals.widgets.inactive.bg_fill = egui::Color32::TRANSPARENT;
+                                visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                                visuals.widgets.active.bg_fill = egui::Color32::TRANSPARENT;
+                                visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+                                visuals.widgets.hovered.bg_fill = egui::Color32::TRANSPARENT;
+                                visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                                visuals.selection.bg_fill = crate::theme::SURFACE_ELEVATED;
+                                ui.add_sized(
+                                    egui::vec2(ui.available_width(), 30.0),
+                                    egui::TextEdit::singleline(&mut self.search_overlay.query)
+                                        .id(input_id)
+                                        .desired_width(f32::INFINITY)
+                                        .hint_text("Search images")
+                                        .frame(egui::Frame::NONE)
+                                        .margin(egui::vec2(0.0, 0.0)),
+                                )
+                            })
+                            .inner;
                         if self.search_overlay.focus_requested {
                             response.request_focus();
                             self.search_overlay.focus_requested =
@@ -1673,23 +1689,44 @@ impl ReferenceApp {
                             }
                             SearchOverlayStatus::Error(error) => error.clone(),
                         };
-                        ui.label(
-                            egui::RichText::new(status)
-                                .text_style(egui::TextStyle::Small)
-                                .color(crate::theme::TEXT_SUBTLE),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(status)
+                                    .text_style(egui::TextStyle::Small)
+                                    .color(crate::theme::TEXT_SUBTLE),
+                            );
+
+                            let helper = if self.search_overlay.results.is_empty() {
+                                "Semantic search"
+                            } else {
+                                "Up/Down to browse"
+                            };
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        egui::RichText::new(helper)
+                                            .text_style(egui::TextStyle::Small)
+                                            .color(crate::theme::TEXT_SUBTLE),
+                                    );
+                                },
+                            );
+                        });
 
                         if !self.search_overlay.results.is_empty() {
-                            ui.add_space(crate::theme::SPACE_1);
+                            ui.add_space(crate::theme::SPACE_2);
                             let mut clicked_index = None;
                             ui.scope(|ui| {
-                                ui.spacing_mut().item_spacing.y = 2.0;
+                                ui.spacing_mut().item_spacing.y = crate::theme::SPACE_1;
                                 for (index, group) in self.search_overlay.results.iter().enumerate()
                                 {
                                     let active = index == self.search_overlay.active_result_index;
                                     let response = search_result_row(ui, group, active);
                                     if response.clicked() {
                                         clicked_index = Some(index);
+                                    }
+                                    if index + 1 < self.search_overlay.results.len() {
+                                        ui.separator();
                                     }
                                 }
                             });
