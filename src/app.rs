@@ -23,11 +23,25 @@ const MAX_IMPORT_RESULTS_PER_FRAME: usize = 4;
 #[cfg(feature = "semantic-search")]
 const SEARCH_DEBOUNCE_MS: f32 = 120.0;
 #[cfg(feature = "semantic-search")]
-const SEARCH_OVERLAY_MAX_SCREEN_WIDTH_RATIO: f32 = 0.9;
+const SEARCH_OVERLAY_MAX_SCREEN_WIDTH_RATIO: f32 = 0.78;
 #[cfg(feature = "semantic-search")]
 const SEARCH_OVERLAY_MAX_SCREEN_HEIGHT_RATIO: f32 = 0.8;
 #[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_TOP_MARGIN: f32 = 28.0;
+#[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_BOTTOM_MARGIN: f32 = 24.0;
+#[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_MIN_WIDTH: f32 = 480.0;
+#[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_EMPTY_WIDTH_RATIO: f32 = 0.52;
+#[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_EMPTY_MAX_WIDTH: f32 = 760.0;
+#[cfg(feature = "semantic-search")]
+const SEARCH_OVERLAY_GRID_CHROME_HEIGHT: f32 = 108.0;
+#[cfg(feature = "semantic-search")]
 const SEARCH_RESULT_TILE_MIN_WIDTH: f32 = 180.0;
+#[cfg(feature = "semantic-search")]
+const SEARCH_RESULT_TILE_TARGET_WIDTH: f32 = 220.0;
 #[cfg(feature = "semantic-search")]
 const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 320.0;
 #[cfg(feature = "semantic-search")]
@@ -1621,19 +1635,6 @@ impl ReferenceApp {
             return;
         }
 
-        let base_width = screen_rect.width() * 0.58;
-        let max_width = screen_rect.width() * SEARCH_OVERLAY_MAX_SCREEN_WIDTH_RATIO;
-        let width = if self.search_overlay.results.is_empty() {
-            base_width.clamp(320.0, max_width)
-        } else {
-            max_width
-        };
-        let area_pos = egui::pos2(
-            screen_rect.center().x - width * 0.5,
-            screen_rect.top() + 28.0,
-        );
-        let overlay_max_height = (screen_rect.height() * SEARCH_OVERLAY_MAX_SCREEN_HEIGHT_RATIO)
-            .min(screen_rect.bottom() - area_pos.y - 24.0);
         let input_id = egui::Id::new("semantic_search_input");
         let shell_margin = egui::Margin {
             left: 16,
@@ -1641,9 +1642,27 @@ impl ReferenceApp {
             top: 14,
             bottom: 12,
         };
+        let overlay_max_height = search_overlay_max_height(screen_rect);
+        let width = search_overlay_width(screen_rect, self.search_overlay.results.len());
+        let shell_content_width = width - shell_margin.left as f32 - shell_margin.right as f32;
+        let grid_max_height = search_overlay_grid_max_height(overlay_max_height);
+        let grid_layout = search_result_grid_layout(
+            shell_content_width,
+            self.search_overlay.results.len(),
+            grid_max_height,
+        );
+        let grid_content_height = search_result_grid_content_height(
+            self.search_overlay.results.len(),
+            grid_layout.columns,
+        );
+        let grid_viewport_height = grid_content_height.min(grid_max_height);
         let area_response = egui::Area::new(egui::Id::new("semantic_search_overlay"))
             .order(egui::Order::Foreground)
-            .fixed_pos(area_pos)
+            .pivot(egui::Align2::CENTER_TOP)
+            .fixed_pos(egui::pos2(
+                screen_rect.center().x,
+                screen_rect.top() + SEARCH_OVERLAY_TOP_MARGIN,
+            ))
             .show(ctx, |ui| {
                 ui.set_min_width(width);
                 egui::Frame::new()
@@ -1728,19 +1747,11 @@ impl ReferenceApp {
                                 },
                             );
                         });
-
-                        let shell_content_width =
-                            width - shell_margin.left as f32 - shell_margin.right as f32;
-                        let grid_layout = search_result_grid_layout(shell_content_width);
-                        let grid_max_height = (overlay_max_height - 108.0).max(
-                            SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT,
-                        );
-
                         if !self.search_overlay.results.is_empty() {
                             ui.add_space(crate::theme::SPACE_2);
                             let mut clicked_index = None;
                             egui::ScrollArea::vertical()
-                                .max_height(grid_max_height)
+                                .max_height(grid_viewport_height)
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
                                     ui.spacing_mut().item_spacing =
@@ -1807,8 +1818,6 @@ impl ReferenceApp {
         }
 
         if !self.search_overlay.results.is_empty() {
-            let shell_content_width = width - shell_margin.left as f32 - shell_margin.right as f32;
-            let grid_layout = search_result_grid_layout(shell_content_width);
             let last_index = self.search_overlay.results.len() - 1;
             if ctx.input(|input| input.key_pressed(egui::Key::ArrowRight)) {
                 self.search_overlay.active_result_index =
@@ -2245,15 +2254,84 @@ struct SearchResultGridLayout {
 }
 
 #[cfg(feature = "semantic-search")]
-fn search_result_grid_layout(available_width: f32) -> SearchResultGridLayout {
+fn search_overlay_max_height(screen_rect: egui::Rect) -> f32 {
+    (screen_rect.height() * SEARCH_OVERLAY_MAX_SCREEN_HEIGHT_RATIO)
+        .min(screen_rect.height() - SEARCH_OVERLAY_TOP_MARGIN - SEARCH_OVERLAY_BOTTOM_MARGIN)
+}
+
+#[cfg(feature = "semantic-search")]
+fn search_overlay_grid_max_height(overlay_max_height: f32) -> f32 {
+    (overlay_max_height - SEARCH_OVERLAY_GRID_CHROME_HEIGHT)
+        .max(SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT)
+}
+
+#[cfg(feature = "semantic-search")]
+fn search_result_tile_height() -> f32 {
+    SEARCH_RESULT_TILE_PREVIEW_HEIGHT + SEARCH_RESULT_TILE_FOOTER_HEIGHT
+}
+
+#[cfg(feature = "semantic-search")]
+fn search_result_max_rows(max_grid_height: f32) -> usize {
     let gap = crate::theme::SPACE_2;
-    let columns =
+    (((max_grid_height + gap) / (search_result_tile_height() + gap)).floor() as usize).max(1)
+}
+
+#[cfg(feature = "semantic-search")]
+fn search_overlay_width(screen_rect: egui::Rect, result_count: usize) -> f32 {
+    let screen_width = screen_rect.width();
+    let compact_width = (screen_width * SEARCH_OVERLAY_EMPTY_WIDTH_RATIO)
+        .clamp(SEARCH_OVERLAY_MIN_WIDTH, SEARCH_OVERLAY_EMPTY_MAX_WIDTH);
+    if result_count == 0 {
+        return compact_width;
+    }
+
+    let max_width = screen_width * SEARCH_OVERLAY_MAX_SCREEN_WIDTH_RATIO;
+    let max_rows = search_result_max_rows(search_overlay_grid_max_height(
+        search_overlay_max_height(screen_rect),
+    ));
+    let required_columns = result_count.div_ceil(max_rows);
+    let square_columns = (result_count as f32).sqrt().ceil() as usize;
+    let target_columns = required_columns
+        .max(square_columns)
+        .max(1)
+        .min(result_count);
+    let desired_grid_width = target_columns as f32 * SEARCH_RESULT_TILE_TARGET_WIDTH
+        + (target_columns.saturating_sub(1) as f32) * crate::theme::SPACE_2;
+    (desired_grid_width + crate::theme::SPACE_4 * 2.0).clamp(compact_width, max_width)
+}
+
+#[cfg(feature = "semantic-search")]
+fn search_result_grid_layout(
+    available_width: f32,
+    result_count: usize,
+    max_grid_height: f32,
+) -> SearchResultGridLayout {
+    let gap = crate::theme::SPACE_2;
+    let max_columns_by_width =
         (((available_width + gap) / (SEARCH_RESULT_TILE_MIN_WIDTH + gap)).floor() as usize).max(1);
+    let max_rows = search_result_max_rows(max_grid_height);
+    let required_columns = result_count.max(1).div_ceil(max_rows);
+    let square_columns = (result_count.max(1) as f32).sqrt().ceil() as usize;
+    let columns = required_columns
+        .max(square_columns)
+        .min(max_columns_by_width)
+        .min(result_count.max(1));
     let tile_width = (available_width - gap * (columns.saturating_sub(1) as f32)) / columns as f32;
     SearchResultGridLayout {
         columns,
         tile_width,
     }
+}
+
+#[cfg(feature = "semantic-search")]
+fn search_result_grid_content_height(result_count: usize, columns: usize) -> f32 {
+    if result_count == 0 {
+        return 0.0;
+    }
+
+    let rows = result_count.div_ceil(columns.max(1));
+    rows as f32 * search_result_tile_height()
+        + (rows.saturating_sub(1) as f32) * crate::theme::SPACE_2
 }
 
 #[cfg(feature = "semantic-search")]
@@ -3060,7 +3138,12 @@ fn drawer_toggle_width() -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ArrangementAction, ReferenceApp, apply_arrangement_action, should_close_drawer};
+    use super::{
+        ArrangementAction, ReferenceApp, SEARCH_OVERLAY_EMPTY_MAX_WIDTH, apply_arrangement_action,
+        search_overlay_grid_max_height, search_overlay_max_height, search_overlay_width,
+        search_result_grid_content_height, search_result_grid_layout, search_result_tile_height,
+        should_close_drawer,
+    };
     use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
     use crate::jobs::LoadedCanvasItem;
     use crate::storage::Library;
@@ -3297,6 +3380,43 @@ mod tests {
 
         assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("semantic_search_input"))));
         assert!(!app.search_overlay.focus_requested);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_overlay_width_stays_compact_without_results() {
+        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(2048.0, 1280.0));
+
+        let width = search_overlay_width(screen_rect, 0);
+
+        assert_eq!(width, SEARCH_OVERLAY_EMPTY_MAX_WIDTH);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_result_grid_layout_balances_five_results_into_three_columns() {
+        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(2048.0, 1280.0));
+        let overlay_max_height = search_overlay_max_height(screen_rect);
+        let width = search_overlay_width(screen_rect, 5);
+        let shell_content_width = width - 32.0;
+        let grid_layout = search_result_grid_layout(
+            shell_content_width,
+            5,
+            search_overlay_grid_max_height(overlay_max_height),
+        );
+
+        assert_eq!(grid_layout.columns, 3);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_result_grid_content_height_grows_by_rows() {
+        let height = search_result_grid_content_height(5, 3);
+
+        assert_eq!(
+            height,
+            search_result_tile_height() * 2.0 + crate::theme::SPACE_2
+        );
     }
 
     #[test]
