@@ -581,7 +581,8 @@ impl ReferenceApp {
                         app.search_overlay.query = query;
                         app.search_overlay.last_query_edit_at = Some(Instant::now());
                     }
-                    app.verification_search_query = config.verification_search_query().map(ToOwned::to_owned);
+                    app.verification_search_query =
+                        config.verification_search_query().map(ToOwned::to_owned);
                 }
                 app
             }
