@@ -1664,7 +1664,9 @@ impl ReferenceApp {
                 screen_rect.top() + SEARCH_OVERLAY_TOP_MARGIN,
             ))
             .show(ctx, |ui| {
+                ui.set_width(width);
                 ui.set_min_width(width);
+                ui.set_max_width(width);
                 egui::Frame::new()
                     .fill(crate::theme::SURFACE)
                     .stroke(crate::theme::stroke_subtle())
@@ -1750,42 +1752,49 @@ impl ReferenceApp {
                         if !self.search_overlay.results.is_empty() {
                             ui.add_space(crate::theme::SPACE_2);
                             let mut clicked_index = None;
-                            egui::ScrollArea::vertical()
-                                .max_height(grid_viewport_height)
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    ui.spacing_mut().item_spacing =
-                                        egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2);
-                                    for row in self
-                                        .search_overlay
-                                        .results
-                                        .chunks(grid_layout.columns.max(1))
-                                        .enumerate()
-                                    {
-                                        let (row_index, row_groups) = row;
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
-                                            for (column_index, group) in
-                                                row_groups.iter().enumerate()
-                                            {
-                                                let index =
-                                                    row_index * grid_layout.columns + column_index;
-                                                let active = index
-                                                    == self.search_overlay.active_result_index;
-                                                let response = search_result_tile(
-                                                    ui,
-                                                    &self.canvas,
-                                                    group,
-                                                    active,
-                                                    grid_layout.tile_width,
-                                                );
-                                                if response.clicked() {
-                                                    clicked_index = Some(index);
-                                                }
+                            let mut render_grid = |ui: &mut egui::Ui| {
+                                ui.spacing_mut().item_spacing =
+                                    egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2);
+                                for (row_index, row_groups) in self
+                                    .search_overlay
+                                    .results
+                                    .chunks(grid_layout.columns.max(1))
+                                    .enumerate()
+                                {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+                                        for (column_index, group) in row_groups.iter().enumerate() {
+                                            let index =
+                                                row_index * grid_layout.columns + column_index;
+                                            let active =
+                                                index == self.search_overlay.active_result_index;
+                                            let response = search_result_tile(
+                                                ui,
+                                                &self.canvas,
+                                                group,
+                                                active,
+                                                grid_layout.tile_width,
+                                            );
+                                            if response.clicked() {
+                                                clicked_index = Some(index);
                                             }
-                                        });
-                                    }
-                                });
+                                        }
+                                    });
+                                }
+                            };
+
+                            if grid_content_height <= grid_max_height {
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(shell_content_width, grid_content_height),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| render_grid(ui),
+                                );
+                            } else {
+                                egui::ScrollArea::vertical()
+                                    .max_height(grid_viewport_height)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| render_grid(ui));
+                            }
                             if let Some(index) = clicked_index {
                                 self.search_overlay.active_result_index = index;
                                 self.search_overlay.active_instance_index = 0;
