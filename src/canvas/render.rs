@@ -4,22 +4,22 @@ use std::time::Instant;
 
 use eframe::egui;
 
+use super::geometry::{clamped_crop_screen_rect, image_screen_rect_for_record};
 use super::interaction::{
     annotation_screen_points, annotation_screen_rect, hit_test_textbox_resize_handle,
     image_screen_rect, normalized_textbox_rect, pending_annotation_from_draft, textbox_screen_rect,
 };
 use super::{
-    CanvasImage, CanvasImageCacheTier, CanvasState, CanvasTexture, ImagePassBatch,
-    ImagePassCallback, ImagePassInstance, ImagePassMetrics, PendingAnnotation,
-    TextboxLayoutCacheKey, TextboxPointerRegion,
     ANNOTATION_CULL_MARGIN_SCREEN, BACKGROUND_BASE_WORLD_STEP, BACKGROUND_MAX_LOD_LEVEL,
-    BACKGROUND_MAX_SCREEN_STEP, BACKGROUND_MIN_LOD_LEVEL, BACKGROUND_MIN_SCREEN_STEP,
-    IMAGE_CULL_MARGIN_SCREEN, IMAGE_DETAIL_PROMOTION_THRESHOLD, MIN_CANVAS_ZOOM,
-    MIN_TEXTBOX_WORLD_SIZE, TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP, TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
+    BACKGROUND_MAX_SCREEN_STEP, BACKGROUND_MIN_LOD_LEVEL, BACKGROUND_MIN_SCREEN_STEP, CanvasImage,
+    CanvasImageCacheTier, CanvasState, CanvasTexture, IMAGE_CULL_MARGIN_SCREEN,
+    IMAGE_DETAIL_PROMOTION_THRESHOLD, ImagePassBatch, ImagePassCallback, ImagePassInstance,
+    ImagePassMetrics, MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation,
+    TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP, TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
     TEXTBOX_EDITOR_TOOLBAR_CLEARANCE, TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN,
-    TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH, TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH,
+    TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH, TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH, TextboxLayoutCacheKey,
+    TextboxPointerRegion,
 };
-use super::geometry::{clamped_crop_screen_rect, image_screen_rect_for_record};
 use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasBackground, CanvasTextSize};
 
 #[cfg(test)]
@@ -37,11 +37,14 @@ pub(super) fn paint_images(
     let cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
     let mut metrics = ImagePassMetrics::default();
     let visible_images = state
-        .document.images
+        .document
+        .images
         .iter()
         .filter_map(|image| {
             let image_rect = image_screen_rect(state, rect, image);
-            image_rect.intersects(cull_rect).then_some((image, image_rect))
+            image_rect
+                .intersects(cull_rect)
+                .then_some((image, image_rect))
         })
         .collect::<Vec<_>>();
     metrics.visible_images = visible_images.len();
@@ -189,7 +192,11 @@ fn paint_image_overlay(
     image_rect: egui::Rect,
     debug_labels: bool,
 ) {
-    if state.interaction.search_match_item_ids.contains(&image.record.item.id) {
+    if state
+        .interaction
+        .search_match_item_ids
+        .contains(&image.record.item.id)
+    {
         let stroke = if state.interaction.active_search_item_id == Some(image.record.item.id) {
             egui::Stroke::new(3.0, egui::Color32::from_rgb(255, 170, 72))
         } else {
@@ -727,7 +734,8 @@ pub(super) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut C
         return;
     };
     let Some(index) = state
-        .document.annotations
+        .document
+        .annotations
         .iter()
         .position(|annotation| annotation.id == annotation_id)
     else {
@@ -921,11 +929,7 @@ pub(super) fn paint_marquee(painter: &egui::Painter, state: &CanvasState) {
     );
 }
 
-pub(super) fn paint_crop_marquee(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    state: &CanvasState,
-) {
+pub(super) fn paint_crop_marquee(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) {
     let Some(crop_state) = &state.interaction.crop_state else {
         return;
     };
@@ -961,7 +965,9 @@ pub(super) fn paint_selection_bounds(
     rect: egui::Rect,
     state: &CanvasState,
 ) {
-    if state.document.selected_annotation_ids.is_empty() && state.document.selected_item_ids.len() <= 1 {
+    if state.document.selected_annotation_ids.is_empty()
+        && state.document.selected_item_ids.len() <= 1
+    {
         return;
     }
 

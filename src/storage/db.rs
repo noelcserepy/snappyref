@@ -1722,7 +1722,10 @@ mod tests {
         assert_eq!(session.viewport.camera_zoom, 1.5);
         assert!(session.settings.auto_image_scaling);
         assert_eq!(session.settings.import_gap, crate::data::DEFAULT_IMPORT_GAP);
-        assert_eq!(session.settings.canvas_image_mode, CanvasImageMode::Downscale);
+        assert_eq!(
+            session.settings.canvas_image_mode,
+            CanvasImageMode::Downscale
+        );
         assert_eq!(
             session.settings.canvas_image_max_side,
             crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE

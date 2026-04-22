@@ -126,11 +126,7 @@ pub(crate) fn show_sidebar(
                 match *sidebar_tab {
                     SidebarTab::Boards => paint_sidebar_boards(ui, canvas),
                     SidebarTab::Options => {
-                        settings_changed |= paint_sidebar_options(
-                            ui,
-                            settings,
-                            canvas,
-                        );
+                        settings_changed |= paint_sidebar_options(ui, settings, canvas);
                     }
                 }
             });
@@ -280,11 +276,7 @@ fn paint_sidebar_options(
                 ui.add_space(crate::theme::SPACE_3);
                 paint_sidebar_section_header(ui, "Options", Some("Board defaults"));
                 paint_sidebar_subcard(ui, |ui| {
-                    changed |= paint_settings_section(
-                        ui,
-                        settings,
-                        canvas,
-                    );
+                    changed |= paint_settings_section(ui, settings, canvas);
                 });
                 ui.add_space(crate::theme::SPACE_5);
                 paint_sidebar_section_header(ui, "Shortcuts", None);
@@ -488,8 +480,7 @@ fn paint_settings_section(
         |ui| paint_canvas_image_mode_control(ui, &mut settings.canvas_image_mode),
     );
     paint_setting_divider(ui);
-    let downscale_enabled =
-        settings.canvas_image_mode == crate::data::CanvasImageMode::Downscale;
+    let downscale_enabled = settings.canvas_image_mode == crate::data::CanvasImageMode::Downscale;
     changed |= paint_setting_row(
         ui,
         "Default image area",

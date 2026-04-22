@@ -53,7 +53,8 @@ impl ImageResidencyCoordinator {
             canvas_image_settings: canvas_image_settings(settings),
             tier,
         }) {
-            self.pending_cache_backfills.remove(&(record.asset.id, tier));
+            self.pending_cache_backfills
+                .remove(&(record.asset.id, tier));
             return Some(error);
         }
         None
@@ -132,7 +133,9 @@ mod tests {
         let mut residency = ImageResidencyCoordinator::default();
         let mut canvas = CanvasState::default();
         canvas.clear_pending_image_tier_load(7);
-        residency.inflight_image_tier_loads.insert(7, CanvasImageCacheTier::Detail);
+        residency
+            .inflight_image_tier_loads
+            .insert(7, CanvasImageCacheTier::Detail);
 
         residency.note_failed_item(&mut canvas, Some(7));
 
@@ -146,8 +149,7 @@ mod tests {
             .pending_cache_backfills
             .insert((42, CanvasImageCacheTier::Overview));
 
-        let error =
-            residency.note_backfill_completed(42, CanvasImageCacheTier::Overview, None);
+        let error = residency.note_backfill_completed(42, CanvasImageCacheTier::Overview, None);
 
         assert_eq!(error, None);
         assert!(!residency.has_pending_backfill(42, CanvasImageCacheTier::Overview));

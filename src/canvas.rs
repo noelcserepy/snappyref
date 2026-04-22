@@ -1,10 +1,10 @@
 use std::sync::{Arc, Mutex};
 
-mod state;
 mod document;
 mod geometry;
 mod interaction;
 mod render;
+mod state;
 
 use crate::data::{
     BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, CanvasBackground,
@@ -1238,7 +1238,6 @@ pub fn show(
     CanvasFrameMetrics { image_pass }
 }
 
-
 pub fn paint_perf_report() -> PaintPerfReport {
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(960.0, 640.0));
     let pan = egui::Vec2::ZERO;
@@ -1300,26 +1299,18 @@ pub fn paint_perf_report() -> PaintPerfReport {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        AnnotationDraftState, CanvasImage, CanvasState, CanvasTexture,
-        FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, SelectedLayoutItem,
-        TEXTBOX_EDITOR_TOOLBAR_CLEARANCE, TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN,
-        TextboxPointerRegion, TextboxResizeHandle, best_compact_layout, horizontal_layout,
-        legacy_best_compact_layout, vertical_layout,
-    };
     use super::geometry::{
         crop_center_offset_local, lattice_phase_screen, lattice_phase_world,
         merge_cropped_item_fields, min_image_scale, pixel_crop_rect_from_local,
         screen_rect_to_local_crop_rect,
     };
     use super::interaction::{
-        handle_textbox_primary_press, hit_test_image_resize_handle,
-        hit_test_textbox_resize_handle, image_screen_rect, moved_textbox_rect,
-        normalized_textbox_rect, pending_annotation_from_draft, resized_image_scale,
-        resized_textbox_rect, textbox_screen_rect,
+        handle_textbox_primary_press, hit_test_image_resize_handle, hit_test_textbox_resize_handle,
+        image_screen_rect, moved_textbox_rect, normalized_textbox_rect,
+        pending_annotation_from_draft, resized_image_scale, resized_textbox_rect,
+        textbox_screen_rect,
     };
     use super::render::{
         annotation_paint_stats_for_annotations, background_screen_step, background_world_step,
@@ -1327,6 +1318,13 @@ mod tests {
         textbox_content_rect, textbox_empty_hotspot_rect, textbox_font_size,
         textbox_layout_cache_key, textbox_pointer_region, textbox_required_world_height,
         textbox_text_interactive_rect_from_galley,
+    };
+    use super::{
+        AnnotationDraftState, CanvasImage, CanvasState, CanvasTexture,
+        FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, SelectedLayoutItem,
+        TEXTBOX_EDITOR_TOOLBAR_CLEARANCE, TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN,
+        TextboxPointerRegion, TextboxResizeHandle, best_compact_layout, horizontal_layout,
+        legacy_best_compact_layout, vertical_layout,
     };
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind,
@@ -2608,7 +2606,10 @@ mod tests {
         state.finish_textbox_edit();
 
         assert!(state.document.annotations.is_empty());
-        assert_eq!(state.take_document_changes().archived_annotation_ids, vec![7]);
+        assert_eq!(
+            state.take_document_changes().archived_annotation_ids,
+            vec![7]
+        );
     }
 
     #[test]

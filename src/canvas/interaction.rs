@@ -1,14 +1,13 @@
 use eframe::egui;
 
-use super::{
-    AnnotationDraftState, CanvasImage, CanvasState, CropState, DragState, ImageResizeHandle,
-    ImageTransformState, PendingAnnotation, TextboxPointerRegion, TextboxResizeHandle,
-    TextboxTransformState, ANNOTATION_HIT_RADIUS, IMAGE_RESIZE_HIT_RADIUS, MAX_CANVAS_ZOOM,
-    MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, TEXTBOX_DRAG_THRESHOLD_SCREEN,
-    TEXTBOX_RESIZE_HIT_RADIUS,
-};
 use super::geometry::{image_screen_rect_for_record, min_image_scale};
 use super::render::textbox_pointer_region;
+use super::{
+    ANNOTATION_HIT_RADIUS, AnnotationDraftState, CanvasImage, CanvasState, CropState, DragState,
+    IMAGE_RESIZE_HIT_RADIUS, ImageResizeHandle, ImageTransformState, MAX_CANVAS_ZOOM,
+    MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation, TEXTBOX_DRAG_THRESHOLD_SCREEN,
+    TEXTBOX_RESIZE_HIT_RADIUS, TextboxPointerRegion, TextboxResizeHandle, TextboxTransformState,
+};
 use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasTextSize};
 
 pub(super) fn handle_input(
@@ -160,7 +159,8 @@ pub(super) fn handle_input(
 
             let pointer_world = state.screen_to_world(pointer_pos, rect);
             let starting_positions = state
-                .document.images
+                .document
+                .images
                 .iter()
                 .filter(|image| state.is_selected(image.record.item.id))
                 .map(|image| {
@@ -226,11 +226,12 @@ pub(super) fn handle_input(
                 start_rects_world,
             } => {
                 if pointer_pos.distance(pointer_start_screen) >= TEXTBOX_DRAG_THRESHOLD_SCREEN {
-                    state.interaction.textbox_transform_state = Some(TextboxTransformState::Moving {
-                        annotation_ids: annotation_ids.clone(),
-                        pointer_start_world,
-                        start_rects_world: start_rects_world.clone(),
-                    });
+                    state.interaction.textbox_transform_state =
+                        Some(TextboxTransformState::Moving {
+                            annotation_ids: annotation_ids.clone(),
+                            pointer_start_world,
+                            start_rects_world: start_rects_world.clone(),
+                        });
                 }
             }
             TextboxTransformState::Moving {
@@ -301,7 +302,8 @@ pub(super) fn handle_input(
 
         for (item_id, start_pos) in &drag_state.starting_positions {
             if let Some(image) = state
-                .document.images
+                .document
+                .images
                 .iter_mut()
                 .find(|image| image.record.item.id == *item_id)
             {
@@ -362,13 +364,15 @@ pub(super) fn handle_input(
         let selection_rect =
             egui::Rect::from_two_pos(marquee_state.start_screen, marquee_state.current_screen);
         let selected = state
-            .document.images
+            .document
+            .images
             .iter()
             .filter(|image| image_screen_rect(state, rect, image).intersects(selection_rect))
             .map(|image| image.record.item.id)
             .collect::<Vec<_>>();
         let selected_annotation_ids = state
-            .document.annotations
+            .document
+            .annotations
             .iter()
             .filter(|annotation| {
                 annotation.kind == CanvasAnnotationKind::Textbox
@@ -387,7 +391,8 @@ pub(super) fn handle_input(
         return;
     };
 
-    if state.interaction.crop_state.is_some() || state.interaction.annotation_draft_state.is_some() {
+    if state.interaction.crop_state.is_some() || state.interaction.annotation_draft_state.is_some()
+    {
         return;
     }
 
@@ -446,7 +451,8 @@ fn drawing_annotation_kind(ui: &egui::Ui) -> Option<CanvasAnnotationKind> {
 
 fn hit_test_image(state: &CanvasState, rect: egui::Rect, pointer_pos: egui::Pos2) -> Option<i64> {
     state
-        .document.images
+        .document
+        .images
         .iter()
         .rev()
         .find(|image| image_screen_rect(state, rect, image).contains(pointer_pos))
@@ -496,7 +502,8 @@ fn begin_textbox_pending_move(
         state.document.selected_annotation_ids = vec![annotation.id];
     }
     let annotation_ids = state
-        .document.selected_annotation_ids
+        .document
+        .selected_annotation_ids
         .iter()
         .copied()
         .filter(|annotation_id| {
@@ -577,7 +584,8 @@ fn hit_test_annotation(
     pointer_pos: egui::Pos2,
 ) -> Option<i64> {
     state
-        .document.annotations
+        .document
+        .annotations
         .iter()
         .rev()
         .find(|annotation| annotation_hit_test(state, rect, annotation, pointer_pos))

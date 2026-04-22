@@ -634,8 +634,7 @@ impl ReferenceApp {
                     app.settings.auto_image_scaling = false;
                     app.settings.import_gap = 32.0;
                     app.settings.canvas_image_mode = crate::data::CanvasImageMode::Original;
-                    app.settings.canvas_image_max_side =
-                        crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE;
+                    app.settings.canvas_image_max_side = crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE;
                     app.canvas
                         .set_background(crate::data::CanvasBackground::Grid);
                     app.settings.semantic_search_enabled = true;
@@ -792,11 +791,8 @@ impl ReferenceApp {
         width: u32,
         height: u32,
     ) {
-        let scale = crate::jobs::initial_import_scale(
-            width,
-            height,
-            self.settings.auto_image_scaling,
-        );
+        let scale =
+            crate::jobs::initial_import_scale(width, height, self.settings.auto_image_scaling);
         self.canvas.add_import_placeholder(
             queue_id,
             desired_world,

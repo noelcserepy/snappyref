@@ -113,6 +113,10 @@ pub(super) fn lattice_phase_world(world: f32, world_step: f32) -> f32 {
 }
 
 #[cfg(test)]
-pub(super) fn lattice_phase_screen(screen_origin: f32, screen_position: f32, screen_step: f32) -> f32 {
+pub(super) fn lattice_phase_screen(
+    screen_origin: f32,
+    screen_position: f32,
+    screen_step: f32,
+) -> f32 {
     (screen_position - screen_origin).rem_euclid(screen_step) / screen_step
 }
