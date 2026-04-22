@@ -1731,8 +1731,14 @@ mod tests {
         );
 
         state.set_hover_preview_placeholders(vec![
-            (eframe::egui::pos2(10.0, 10.0), eframe::egui::vec2(50.0, 50.0)),
-            (eframe::egui::pos2(70.0, 10.0), eframe::egui::vec2(50.0, 50.0)),
+            (
+                eframe::egui::pos2(10.0, 10.0),
+                eframe::egui::vec2(50.0, 50.0),
+            ),
+            (
+                eframe::egui::pos2(70.0, 10.0),
+                eframe::egui::vec2(50.0, 50.0),
+            ),
         ]);
         assert_eq!(state.hover_preview_placeholder_count(), 2);
         assert_eq!(state.import_placeholder_count(), 1);

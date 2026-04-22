@@ -323,16 +323,18 @@ impl CanvasState {
 
     pub fn set_hover_preview_placeholders(&mut self, placeholders: Vec<(egui::Pos2, egui::Vec2)>) {
         self.interaction.hover_preview_placeholders.clear();
-        self.interaction.hover_preview_placeholders.extend(
-            placeholders
-                .into_iter()
-                .map(|(center_world, size_world)| ImportPlaceholder {
-                    queue_id: 0,
-                    center_world,
-                    size_world,
-                    label: String::new(),
-                }),
-        );
+        self.interaction
+            .hover_preview_placeholders
+            .extend(
+                placeholders
+                    .into_iter()
+                    .map(|(center_world, size_world)| ImportPlaceholder {
+                        queue_id: 0,
+                        center_world,
+                        size_world,
+                        label: String::new(),
+                    }),
+            );
     }
 
     pub fn clear_hover_preview_placeholders(&mut self) {

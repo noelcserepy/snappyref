@@ -537,8 +537,7 @@ pub struct ReferenceApp {
     frame_perf: FramePerfState,
     residency: ImageResidencyCoordinator,
     next_import_queue_id: u64,
-    hover_preview_dimensions:
-        std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
+    hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
     #[cfg(debug_assertions)]
