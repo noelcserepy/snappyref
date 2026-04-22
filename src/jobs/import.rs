@@ -120,6 +120,7 @@ pub enum ImportRequest {
         queue_id: u64,
         source_path: PathBuf,
         desired_world: egui::Pos2,
+        reserved_world: Option<egui::Pos2>,
         viewport_world: egui::Rect,
         max_texture_side: usize,
         canvas_image_settings: CanvasImageSettings,
@@ -133,6 +134,7 @@ pub enum ImportRequest {
         width: u32,
         height: u32,
         desired_world: egui::Pos2,
+        reserved_world: Option<egui::Pos2>,
         viewport_world: egui::Rect,
         max_texture_side: usize,
         canvas_image_settings: CanvasImageSettings,
@@ -404,6 +406,7 @@ impl ImportWorker {
                             queue_id,
                             source_path,
                             desired_world,
+                            reserved_world,
                             viewport_world,
                             max_texture_side,
                             canvas_image_settings,
@@ -415,6 +418,7 @@ impl ImportWorker {
                             queue_id,
                             source_path,
                             desired_world,
+                            reserved_world,
                             viewport_world,
                             max_texture_side,
                             canvas_image_settings,
@@ -429,6 +433,7 @@ impl ImportWorker {
                             width,
                             height,
                             desired_world,
+                            reserved_world,
                             viewport_world,
                             max_texture_side,
                             canvas_image_settings,
@@ -442,6 +447,7 @@ impl ImportWorker {
                             width,
                             height,
                             desired_world,
+                            reserved_world,
                             viewport_world,
                             max_texture_side,
                             canvas_image_settings,
@@ -664,6 +670,7 @@ pub fn import_path_sync(
         None,
         source_path,
         desired_world,
+        None,
         viewport_world,
         usize::MAX,
         CanvasImageSettings::default(),
@@ -691,6 +698,7 @@ pub fn import_clipboard_sync(
         width,
         height,
         desired_world,
+        None,
         viewport_world,
         usize::MAX,
         CanvasImageSettings::default(),
@@ -973,6 +981,7 @@ fn import_path_sync_traced(
     queue_id: Option<u64>,
     source_path: PathBuf,
     desired_world: egui::Pos2,
+    reserved_world: Option<egui::Pos2>,
     viewport_world: egui::Rect,
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
@@ -994,14 +1003,18 @@ fn import_path_sync_traced(
         trace.timings.decode_or_load = decode_started_at.elapsed();
     }
     let initial_scale = initial_import_scale(decoded.width, decoded.height, auto_scale);
-    let arranged_world = arrange_rect_world(
-        library,
-        desired_world,
-        viewport_world,
-        decoded.width as f32 * initial_scale.max(0.01),
-        decoded.height as f32 * initial_scale.max(0.01),
-        import_gap,
-    )?;
+    let arranged_world = if let Some(reserved_world) = reserved_world {
+        reserved_world
+    } else {
+        arrange_rect_world(
+            library,
+            desired_world,
+            viewport_world,
+            decoded.width as f32 * initial_scale.max(0.01),
+            decoded.height as f32 * initial_scale.max(0.01),
+            import_gap,
+        )?
+    };
 
     let store_started_at = Instant::now();
     let stored_path = library
@@ -1067,6 +1080,7 @@ fn import_path(
     queue_id: u64,
     source_path: PathBuf,
     desired_world: egui::Pos2,
+    reserved_world: Option<egui::Pos2>,
     viewport_world: egui::Rect,
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
@@ -1080,6 +1094,7 @@ fn import_path(
         Some(queue_id),
         source_path.clone(),
         desired_world,
+        reserved_world,
         viewport_world,
         max_texture_side,
         canvas_image_settings,
@@ -1105,6 +1120,7 @@ fn import_clipboard(
     width: u32,
     height: u32,
     desired_world: egui::Pos2,
+    reserved_world: Option<egui::Pos2>,
     viewport_world: egui::Rect,
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
@@ -1120,6 +1136,7 @@ fn import_clipboard(
         width,
         height,
         desired_world,
+        reserved_world,
         viewport_world,
         max_texture_side,
         canvas_image_settings,
@@ -1145,6 +1162,7 @@ fn import_clipboard_sync_traced(
     width: u32,
     height: u32,
     desired_world: egui::Pos2,
+    reserved_world: Option<egui::Pos2>,
     viewport_world: egui::Rect,
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
@@ -1165,14 +1183,18 @@ fn import_clipboard_sync_traced(
         .map_err(|error| format!("failed to read clipboard image metadata: {error}"))?
         .len();
     let initial_scale = initial_import_scale(width, height, auto_scale);
-    let arranged_world = arrange_rect_world(
-        library,
-        desired_world,
-        viewport_world,
-        width as f32 * initial_scale.max(0.01),
-        height as f32 * initial_scale.max(0.01),
-        import_gap,
-    )?;
+    let arranged_world = if let Some(reserved_world) = reserved_world {
+        reserved_world
+    } else {
+        arrange_rect_world(
+            library,
+            desired_world,
+            viewport_world,
+            width as f32 * initial_scale.max(0.01),
+            height as f32 * initial_scale.max(0.01),
+            import_gap,
+        )?
+    };
     let record = library.persist_imported_image(
         &stored_path,
         image::ImageFormat::Png.to_mime_type(),
@@ -1407,6 +1429,7 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
         width: 1200,
         height: 900,
         desired_world: egui::Pos2::ZERO,
+        reserved_world: None,
         viewport_world,
         max_texture_side: usize::MAX,
         canvas_image_settings: CanvasImageSettings::default(),
@@ -1999,14 +2022,32 @@ pub fn arrange_rect_world(
     item_height: f32,
     import_gap: f32,
 ) -> Result<egui::Pos2, String> {
+    let existing_items = library.load_board_layout_items()?;
+    Ok(arrange_rect_with_existing_layout(
+        &existing_items,
+        desired_world,
+        viewport_world,
+        item_width,
+        item_height,
+        import_gap,
+    ))
+}
+
+pub fn arrange_rect_with_existing_layout(
+    existing_items: &[BoardLayoutItem],
+    desired_world: egui::Pos2,
+    viewport_world: egui::Rect,
+    item_width: f32,
+    item_height: f32,
+    import_gap: f32,
+) -> egui::Pos2 {
     let new_rect = egui::Rect::from_center_size(
         desired_world,
         egui::vec2(item_width.max(0.0), item_height.max(0.0)),
     );
 
-    let existing_items = library.load_board_layout_items()?;
     if existing_items.is_empty() {
-        return Ok(desired_world);
+        return desired_world;
     }
 
     let mut existing_rects = existing_items
@@ -2073,9 +2114,9 @@ pub fn arrange_rect_world(
         }
     }
 
-    Ok(best_candidate
+    best_candidate
         .map(|(_, _, _, _, center)| center)
-        .unwrap_or(desired_world))
+        .unwrap_or(desired_world)
 }
 
 fn viewport_distance_score(candidate_center: egui::Pos2, viewport_world: egui::Rect) -> f32 {
@@ -2253,6 +2294,7 @@ mod tests {
             390,
             844,
             eframe::egui::Pos2::ZERO,
+            None,
             test_viewport_world(),
             usize::MAX,
             CanvasImageSettings::default(),
@@ -2271,6 +2313,7 @@ mod tests {
             160,
             200,
             eframe::egui::Pos2::ZERO,
+            None,
             test_viewport_world(),
             usize::MAX,
             CanvasImageSettings::default(),
@@ -2401,6 +2444,7 @@ mod tests {
             200,
             200,
             eframe::egui::Pos2::ZERO,
+            None,
             test_viewport_world(),
             usize::MAX,
             CanvasImageSettings::default(),
@@ -2420,6 +2464,7 @@ mod tests {
             200,
             200,
             eframe::egui::Pos2::ZERO,
+            None,
             test_viewport_world(),
             usize::MAX,
             CanvasImageSettings::default(),
@@ -2443,6 +2488,38 @@ mod tests {
 
         assert_eq!(second_rect.left() - first_rect.right(), gap);
         assert!(!rects_overlap_with_gap(first_rect, second_rect, gap));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reserved_world_is_persisted_without_worker_relayout() {
+        let root = temp_library_root("placement-reserved-world");
+        let library = Library::initialize(root.clone()).unwrap();
+        seed_board_item(&library, 1, 0.0, 0.0, 100, 100, 1.0);
+        let reserved_world = eframe::egui::pos2(240.0, 36.0);
+
+        let loaded = match import_clipboard(
+            &library,
+            2,
+            solid_rgba(100, 100),
+            100,
+            100,
+            eframe::egui::Pos2::ZERO,
+            Some(reserved_world),
+            test_viewport_world(),
+            usize::MAX,
+            CanvasImageSettings::default(),
+            false,
+            crate::data::DEFAULT_IMPORT_GAP,
+            None,
+            None,
+        ) {
+            ImportResult::Loaded(loaded) => loaded,
+            other => panic!("expected reserved clipboard import to load, got {other:?}"),
+        };
+
+        assert_eq!(loaded.record.item.x, reserved_world.x);
+        assert_eq!(loaded.record.item.y, reserved_world.y);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -2515,6 +2592,7 @@ mod tests {
             64,
             64,
             eframe::egui::Pos2::ZERO,
+            None,
             test_viewport_world(),
             usize::MAX,
             CanvasImageSettings::default(),

@@ -268,6 +268,8 @@ enum VerificationMode {
     OpenPaletteImagePivot,
     DrawArrow,
     EditTextbox,
+    ImportPlaceholders,
+    ImportLoaded,
 }
 
 impl AppConfig {
@@ -332,6 +334,16 @@ impl AppConfig {
                 #[cfg(debug_assertions)]
                 {
                     verification_mode = Some(VerificationMode::EditTextbox);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-import-placeholders" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::ImportPlaceholders);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-import-loaded" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::ImportLoaded);
                 }
             } else if let Some(query) = argument.strip_prefix("--verify-search=") {
                 #[cfg(debug_assertions)]
@@ -419,6 +431,19 @@ impl AppConfig {
     #[cfg(debug_assertions)]
     fn edit_textbox_on_start(&self) -> bool {
         matches!(self.verification_mode, Some(VerificationMode::EditTextbox))
+    }
+
+    #[cfg(debug_assertions)]
+    fn verify_import_placeholders_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(VerificationMode::ImportPlaceholders)
+        )
+    }
+
+    #[cfg(debug_assertions)]
+    fn verify_import_loaded_on_start(&self) -> bool {
+        matches!(self.verification_mode, Some(VerificationMode::ImportLoaded))
     }
 
     #[cfg(debug_assertions)]
@@ -513,6 +538,8 @@ pub struct ReferenceApp {
     residency: ImageResidencyCoordinator,
     next_import_queue_id: u64,
     #[cfg(debug_assertions)]
+    verification_mode: Option<VerificationMode>,
+    #[cfg(debug_assertions)]
     verification_search_query: Option<String>,
     #[cfg(debug_assertions)]
     sidebar_hot_preview: bool,
@@ -571,6 +598,8 @@ impl ReferenceApp {
                     residency: ImageResidencyCoordinator::default(),
                     next_import_queue_id: 1,
                     #[cfg(debug_assertions)]
+                    verification_mode: config.verification_mode,
+                    #[cfg(debug_assertions)]
                     verification_search_query: None,
                     #[cfg(debug_assertions)]
                     sidebar_hot_preview: config.open_sidebar_hot_on_start(),
@@ -613,6 +642,14 @@ impl ReferenceApp {
                     });
                     app.canvas.begin_textbox_edit(-2);
                     app.status = "Editing debug textbox".to_owned();
+                }
+                #[cfg(debug_assertions)]
+                if config.verify_import_placeholders_on_start() {
+                    app.seed_import_verification_placeholders(&cc.egui_ctx);
+                }
+                #[cfg(debug_assertions)]
+                if config.verify_import_loaded_on_start() {
+                    app.seed_import_verification_loaded(&cc.egui_ctx);
                 }
                 #[cfg(debug_assertions)]
                 if let Some(query) = config.verification_search_query().map(ToOwned::to_owned) {
@@ -692,6 +729,8 @@ impl ReferenceApp {
                 frame_perf: FramePerfState::default(),
                 residency: ImageResidencyCoordinator::default(),
                 next_import_queue_id: 1,
+                #[cfg(debug_assertions)]
+                verification_mode: config.verification_mode,
                 #[cfg(debug_assertions)]
                 verification_search_query: None,
                 #[cfg(debug_assertions)]
@@ -787,7 +826,7 @@ impl ReferenceApp {
         &mut self,
         queue_id: u64,
         label: String,
-        desired_world: egui::Pos2,
+        placeholder_world: egui::Pos2,
         width: u32,
         height: u32,
     ) {
@@ -795,10 +834,49 @@ impl ReferenceApp {
             crate::jobs::initial_import_scale(width, height, self.settings.auto_image_scaling);
         self.canvas.add_import_placeholder(
             queue_id,
-            desired_world,
+            placeholder_world,
             egui::vec2(width as f32 * scale, height as f32 * scale),
             label,
         );
+    }
+
+    fn import_layout_snapshot(&self) -> Result<Vec<crate::data::BoardLayoutItem>, String> {
+        let mut layout = if let Some(library) = &self.library {
+            library.load_board_layout_items()?
+        } else {
+            Vec::new()
+        };
+        layout.extend(self.canvas.import_placeholder_layout_items());
+        Ok(layout)
+    }
+
+    fn reserve_import_world(
+        &self,
+        layout: &mut Vec<crate::data::BoardLayoutItem>,
+        width: u32,
+        height: u32,
+        desired_world: egui::Pos2,
+        viewport_world: egui::Rect,
+    ) -> egui::Pos2 {
+        let scale =
+            crate::jobs::initial_import_scale(width, height, self.settings.auto_image_scaling);
+        let size = egui::vec2(width as f32 * scale, height as f32 * scale);
+        let reserved_world = crate::jobs::arrange_rect_with_existing_layout(
+            layout,
+            desired_world,
+            viewport_world,
+            size.x,
+            size.y,
+            self.settings.import_gap,
+        );
+        layout.push(crate::data::BoardLayoutItem {
+            id: -((layout.len() as i64) + 1),
+            x: reserved_world.x,
+            y: reserved_world.y,
+            width: size.x,
+            height: size.y,
+        });
+        reserved_world
     }
 
     fn handle_dropped_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
@@ -813,6 +891,13 @@ impl ReferenceApp {
 
         let desired_world = self.preferred_import_world(ui.ctx(), screen_rect);
         let viewport_world = self.import_viewport_world_rect(screen_rect);
+        let mut layout = match self.import_layout_snapshot() {
+            Ok(layout) => layout,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
 
         for dropped_file in dropped_files {
             let Some(source_path) = dropped_file.path else {
@@ -827,9 +912,23 @@ impl ReferenceApp {
                 .unwrap_or("image")
                 .to_owned();
             let dimensions = image::image_dimensions(&source_path).ok();
-            if let Some((width, height)) = dimensions {
-                self.queue_import_placeholder(queue_id, label, desired_world, width, height);
-            }
+            let reserved_world = dimensions.map(|(width, height)| {
+                let reserved_world = self.reserve_import_world(
+                    &mut layout,
+                    width,
+                    height,
+                    desired_world,
+                    viewport_world,
+                );
+                self.queue_import_placeholder(
+                    queue_id,
+                    label.clone(),
+                    reserved_world,
+                    width,
+                    height,
+                );
+                reserved_world
+            });
 
             if let Err(error) = self
                 .import_worker
@@ -839,6 +938,7 @@ impl ReferenceApp {
                     queue_id,
                     source_path: source_path.clone(),
                     desired_world,
+                    reserved_world,
                     viewport_world,
                     max_texture_side: self.max_texture_side,
                     canvas_image_settings: crate::jobs::CanvasImageSettings {
@@ -903,10 +1003,19 @@ impl ReferenceApp {
         let width = clipboard_image.width as u32;
         let height = clipboard_image.height as u32;
         let queue_id = self.next_import_queue_id();
+        let mut layout = match self.import_layout_snapshot() {
+            Ok(layout) => layout,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
+        let reserved_world =
+            self.reserve_import_world(&mut layout, width, height, desired_world, viewport_world);
         self.queue_import_placeholder(
             queue_id,
             "Clipboard".to_owned(),
-            desired_world,
+            reserved_world,
             width,
             height,
         );
@@ -921,6 +1030,7 @@ impl ReferenceApp {
                 width,
                 height,
                 desired_world,
+                reserved_world: Some(reserved_world),
                 viewport_world,
                 max_texture_side: self.max_texture_side,
                 canvas_image_settings: crate::jobs::CanvasImageSettings {
@@ -1549,6 +1659,183 @@ impl ReferenceApp {
         }
     }
 
+    #[cfg(debug_assertions)]
+    fn seed_import_verification_existing_anchor(
+        &mut self,
+        ctx: &egui::Context,
+    ) -> Result<(), String> {
+        let Some(library) = &self.library else {
+            return Err("Library unavailable".to_owned());
+        };
+        let width = 180_u32;
+        let height = 140_u32;
+        let rgba = Self::solid_rgba(width, height, [188, 146, 255, 255]);
+        let stored_path = library.store_rgba_image("verify-existing", &rgba, width, height)?;
+        let file_size = std::fs::metadata(&stored_path)
+            .map_err(|error| format!("failed to read debug image metadata: {error}"))?
+            .len();
+        let record = library.persist_imported_image(
+            &stored_path,
+            image::ImageFormat::Png.to_mime_type(),
+            width,
+            height,
+            file_size,
+            egui::Pos2::ZERO,
+            1.0,
+        )?;
+        self.canvas.add_loaded_item(
+            ctx,
+            crate::jobs::LoadedCanvasItem {
+                queue_id: None,
+                record,
+                preview_rgba: rgba,
+                preview_width: width,
+                preview_height: height,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+        Ok(())
+    }
+
+    #[cfg(debug_assertions)]
+    fn seed_import_verification_placeholders(&mut self, ctx: &egui::Context) {
+        self.canvas
+            .apply_viewport_state(&crate::data::ViewportState::default());
+        if let Err(error) = self.seed_import_verification_existing_anchor(ctx) {
+            self.status = error;
+            return;
+        }
+        let desired_world = egui::Pos2::ZERO;
+        let viewport_world = self.startup_viewport_world_rect();
+        let mut layout = match self.import_layout_snapshot() {
+            Ok(layout) => layout,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
+        for (index, (label, width, height)) in [
+            ("Alpha", 180_u32, 140_u32),
+            ("Beta", 180, 140),
+            ("Gamma", 180, 140),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let queue_id = self.next_import_queue_id();
+            let reserved_world = self.reserve_import_world(
+                &mut layout,
+                width,
+                height,
+                desired_world,
+                viewport_world,
+            );
+            self.queue_import_placeholder(
+                queue_id,
+                label.to_owned(),
+                reserved_world,
+                width,
+                height,
+            );
+            self.status = format!("Queued debug import placeholder {}", index + 1);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn seed_import_verification_loaded(&mut self, ctx: &egui::Context) {
+        self.canvas
+            .apply_viewport_state(&crate::data::ViewportState::default());
+        if self.import_worker.is_none() {
+            self.status = "Import worker unavailable".to_owned();
+            return;
+        }
+        if let Err(error) = self.seed_import_verification_existing_anchor(ctx) {
+            self.status = error;
+            return;
+        }
+        let desired_world = egui::Pos2::ZERO;
+        let viewport_world = self.startup_viewport_world_rect();
+        let mut layout = match self.import_layout_snapshot() {
+            Ok(layout) => layout,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
+        for (label, width, height, color) in [
+            ("Alpha", 180_u32, 140_u32, [231_u8, 94, 66, 255]),
+            ("Beta", 180, 140, [70, 142, 255, 255]),
+            ("Gamma", 180, 140, [73, 179, 122, 255]),
+        ] {
+            let queue_id = self.next_import_queue_id();
+            let reserved_world = self.reserve_import_world(
+                &mut layout,
+                width,
+                height,
+                desired_world,
+                viewport_world,
+            );
+            self.queue_import_placeholder(
+                queue_id,
+                label.to_owned(),
+                reserved_world,
+                width,
+                height,
+            );
+            let rgba = Self::solid_rgba(width, height, color);
+            let enqueue_result = self.import_worker.as_ref().and_then(|import_worker| {
+                import_worker
+                    .enqueue(crate::jobs::ImportRequest::ImportClipboard {
+                        queue_id,
+                        rgba,
+                        width,
+                        height,
+                        desired_world,
+                        reserved_world: Some(reserved_world),
+                        viewport_world,
+                        max_texture_side: self.max_texture_side,
+                        canvas_image_settings: crate::jobs::CanvasImageSettings {
+                            mode: self.settings.canvas_image_mode,
+                            max_side: self.settings.canvas_image_max_side,
+                        },
+                        auto_scale: self.settings.auto_image_scaling,
+                        import_gap: self.settings.import_gap,
+                        trace: None,
+                    })
+                    .err()
+            });
+            if let Some(error) = enqueue_result {
+                self.canvas.remove_import_placeholder(queue_id);
+                self.status = error;
+                return;
+            }
+        }
+        self.status = "Queued debug imports".to_owned();
+    }
+
+    #[cfg(debug_assertions)]
+    fn verification_imports_settled(&self) -> bool {
+        !matches!(self.verification_mode, Some(VerificationMode::ImportLoaded))
+            || self.canvas.import_placeholder_count() == 0
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn verification_imports_settled(&self) -> bool {
+        true
+    }
+
+    fn solid_rgba(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
+        let mut rgba = vec![0; width as usize * height as usize * 4];
+        for chunk in rgba.chunks_exact_mut(4) {
+            chunk.copy_from_slice(&color);
+        }
+        rgba
+    }
+
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
     fn drive_verification_search(&mut self) {
         let Some(query) = self.verification_search_query.clone() else {
@@ -1750,7 +2037,16 @@ impl eframe::App for ReferenceApp {
         self.handle_crop_undo(ui.ctx());
         self.drive_verification_search();
 
-        if !self.verification_search_settled() {
+        #[cfg(debug_assertions)]
+        if matches!(
+            self.verification_mode,
+            Some(VerificationMode::ImportPlaceholders)
+        ) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(16));
+        }
+
+        if !self.verification_search_settled() || !self.verification_imports_settled() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(16));
             return;
@@ -2226,6 +2522,23 @@ mod tests {
         assert_eq!(app.canvas.import_placeholder_count(), 0);
     }
 
+    #[test]
+    fn reserve_import_world_accounts_for_pending_placeholders() {
+        let mut app = test_app(None);
+        app.queue_import_placeholder(1, "first".to_owned(), egui::pos2(0.0, 0.0), 100, 100);
+
+        let mut layout = app.import_layout_snapshot().unwrap();
+        let reserved = app.reserve_import_world(
+            &mut layout,
+            100,
+            100,
+            egui::pos2(0.0, 0.0),
+            test_viewport_world(),
+        );
+
+        assert_eq!(reserved, egui::pos2(100.0 + app.settings.import_gap, 0.0));
+    }
+
     fn test_app(library: Option<Library>) -> ReferenceApp {
         ReferenceApp {
             canvas: crate::canvas::CanvasState::default(),
@@ -2250,6 +2563,8 @@ mod tests {
             perf_log: None,
             next_import_queue_id: 1,
             #[cfg(debug_assertions)]
+            verification_mode: None,
+            #[cfg(debug_assertions)]
             verification_search_query: None,
             #[cfg(debug_assertions)]
             sidebar_hot_preview: false,
@@ -2266,5 +2581,9 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    fn test_viewport_world() -> egui::Rect {
+        egui::Rect::from_min_max(egui::pos2(-240.0, -180.0), egui::pos2(240.0, 180.0))
     }
 }

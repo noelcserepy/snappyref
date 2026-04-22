@@ -20,7 +20,7 @@ use super::{
     PendingAnnotation, SelectedLayoutItem, TextboxLayoutCacheEntry, merge_ids,
 };
 use crate::data::{
-    BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, CanvasBackground,
+    BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationKind, CanvasBackground,
     CanvasImageCacheTier, CanvasTextSize, ViewportState,
 };
 use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
@@ -299,6 +299,21 @@ impl CanvasState {
         self.interaction
             .import_placeholders
             .retain(|placeholder| placeholder.queue_id != queue_id);
+    }
+
+    pub fn import_placeholder_layout_items(&self) -> Vec<BoardLayoutItem> {
+        self.interaction
+            .import_placeholders
+            .iter()
+            .enumerate()
+            .map(|(index, placeholder)| BoardLayoutItem {
+                id: -((index as i64) + 1),
+                x: placeholder.center_world.x,
+                y: placeholder.center_world.y,
+                width: placeholder.size_world.x,
+                height: placeholder.size_world.y,
+            })
+            .collect()
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
