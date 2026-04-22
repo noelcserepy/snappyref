@@ -50,30 +50,56 @@ impl Default for CanvasImageMode {
 }
 
 #[derive(Clone, Debug)]
-pub struct UserSession {
+pub struct ViewportState {
     pub camera_pan_x: f32,
     pub camera_pan_y: f32,
     pub camera_zoom: f32,
-    pub auto_image_scaling: bool,
-    pub import_gap: f32,
-    pub canvas_image_mode: CanvasImageMode,
-    pub canvas_image_max_side: u32,
     pub canvas_background: CanvasBackground,
-    pub semantic_search_enabled: bool,
 }
 
-impl Default for UserSession {
+impl Default for ViewportState {
     fn default() -> Self {
         Self {
             camera_pan_x: 0.0,
             camera_pan_y: 0.0,
             camera_zoom: 1.0,
+            canvas_background: CanvasBackground::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkspaceSettings {
+    pub auto_image_scaling: bool,
+    pub import_gap: f32,
+    pub canvas_image_mode: CanvasImageMode,
+    pub canvas_image_max_side: u32,
+    pub semantic_search_enabled: bool,
+}
+
+impl Default for WorkspaceSettings {
+    fn default() -> Self {
+        Self {
             auto_image_scaling: true,
             import_gap: DEFAULT_IMPORT_GAP,
             canvas_image_mode: CanvasImageMode::default(),
             canvas_image_max_side: DEFAULT_CANVAS_IMAGE_MAX_SIDE,
-            canvas_background: CanvasBackground::default(),
             semantic_search_enabled: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct UserSession {
+    pub viewport: ViewportState,
+    pub settings: WorkspaceSettings,
+}
+
+impl Default for UserSession {
+    fn default() -> Self {
+        Self {
+            viewport: ViewportState::default(),
+            settings: WorkspaceSettings::default(),
         }
     }
 }

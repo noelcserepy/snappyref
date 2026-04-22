@@ -6,7 +6,10 @@ mod native_capture;
 #[cfg(feature = "semantic-search")]
 mod palette;
 mod perf;
+mod residency;
 mod screenshot;
+#[cfg(feature = "semantic-search")]
+mod search;
 #[cfg(feature = "semantic-search")]
 mod semantic_search;
 mod sidebar;

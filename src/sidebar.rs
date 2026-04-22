@@ -77,11 +77,7 @@ pub(crate) fn show_sidebar(
     screen_rect: egui::Rect,
     sidebar_open: bool,
     sidebar_tab: &mut SidebarTab,
-    auto_image_scaling: &mut bool,
-    import_gap: &mut f32,
-    canvas_image_mode: &mut crate::data::CanvasImageMode,
-    canvas_image_max_side: &mut u32,
-    semantic_search_enabled: &mut bool,
+    settings: &mut crate::data::WorkspaceSettings,
     canvas: &mut crate::canvas::CanvasState,
 ) -> SidebarRenderResult {
     if !sidebar_open {
@@ -130,15 +126,7 @@ pub(crate) fn show_sidebar(
                 match *sidebar_tab {
                     SidebarTab::Boards => paint_sidebar_boards(ui, canvas),
                     SidebarTab::Options => {
-                        settings_changed |= paint_sidebar_options(
-                            ui,
-                            auto_image_scaling,
-                            import_gap,
-                            canvas_image_mode,
-                            canvas_image_max_side,
-                            semantic_search_enabled,
-                            canvas,
-                        );
+                        settings_changed |= paint_sidebar_options(ui, settings, canvas);
                     }
                 }
             });
@@ -273,11 +261,7 @@ fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
 
 fn paint_sidebar_options(
     ui: &mut egui::Ui,
-    auto_image_scaling: &mut bool,
-    import_gap: &mut f32,
-    canvas_image_mode: &mut crate::data::CanvasImageMode,
-    canvas_image_max_side: &mut u32,
-    semantic_search_enabled: &mut bool,
+    settings: &mut crate::data::WorkspaceSettings,
     canvas: &mut crate::canvas::CanvasState,
 ) -> bool {
     let mut changed = false;
@@ -292,15 +276,7 @@ fn paint_sidebar_options(
                 ui.add_space(crate::theme::SPACE_3);
                 paint_sidebar_section_header(ui, "Options", Some("Board defaults"));
                 paint_sidebar_subcard(ui, |ui| {
-                    changed |= paint_settings_section(
-                        ui,
-                        auto_image_scaling,
-                        import_gap,
-                        canvas_image_mode,
-                        canvas_image_max_side,
-                        semantic_search_enabled,
-                        canvas,
-                    );
+                    changed |= paint_settings_section(ui, settings, canvas);
                 });
                 ui.add_space(crate::theme::SPACE_5);
                 paint_sidebar_section_header(ui, "Shortcuts", None);
@@ -488,11 +464,7 @@ fn paint_sidebar_subcard(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui:
 
 fn paint_settings_section(
     ui: &mut egui::Ui,
-    auto_image_scaling: &mut bool,
-    import_gap: &mut f32,
-    canvas_image_mode: &mut crate::data::CanvasImageMode,
-    canvas_image_max_side: &mut u32,
-    semantic_search_enabled: &mut bool,
+    settings: &mut crate::data::WorkspaceSettings,
     canvas: &mut crate::canvas::CanvasState,
 ) -> bool {
     let mut changed = false;
@@ -505,10 +477,10 @@ fn paint_settings_section(
         ui,
         "Canvas image resolution",
         "Keeps originals for crop/edit.",
-        |ui| paint_canvas_image_mode_control(ui, canvas_image_mode),
+        |ui| paint_canvas_image_mode_control(ui, &mut settings.canvas_image_mode),
     );
     paint_setting_divider(ui);
-    let downscale_enabled = *canvas_image_mode == crate::data::CanvasImageMode::Downscale;
+    let downscale_enabled = settings.canvas_image_mode == crate::data::CanvasImageMode::Downscale;
     changed |= paint_setting_row(
         ui,
         "Default image area",
@@ -516,7 +488,7 @@ fn paint_settings_section(
         |ui| {
             ui.add_enabled_ui(downscale_enabled, |ui| {
                 ui.add(
-                    egui::DragValue::new(canvas_image_max_side)
+                    egui::DragValue::new(&mut settings.canvas_image_max_side)
                         .speed(64.0)
                         .range(256..=8192)
                         .fixed_decimals(0)
@@ -535,13 +507,13 @@ fn paint_settings_section(
         |ui| {
             #[cfg(feature = "semantic-search")]
             {
-                paint_switch(ui, auto_image_scaling).changed()
+                paint_switch(ui, &mut settings.auto_image_scaling).changed()
             }
             #[cfg(not(feature = "semantic-search"))]
             {
                 ui.add_enabled(
                     false,
-                    egui::widgets::Checkbox::without_text(auto_image_scaling),
+                    egui::widgets::Checkbox::without_text(&mut settings.auto_image_scaling),
                 )
                 .changed()
             }
@@ -550,7 +522,7 @@ fn paint_settings_section(
     paint_setting_divider(ui);
     changed |= paint_setting_row(ui, "Image gap", "Gap used when placing new images.", |ui| {
         ui.add(
-            egui::DragValue::new(import_gap)
+            egui::DragValue::new(&mut settings.import_gap)
                 .speed(0.5)
                 .range(0.0..=128.0)
                 .fixed_decimals(0)
@@ -569,13 +541,13 @@ fn paint_settings_section(
         |ui| {
             #[cfg(feature = "semantic-search")]
             {
-                paint_switch(ui, semantic_search_enabled).changed()
+                paint_switch(ui, &mut settings.semantic_search_enabled).changed()
             }
             #[cfg(not(feature = "semantic-search"))]
             {
                 ui.add_enabled(
                     false,
-                    egui::widgets::Checkbox::without_text(semantic_search_enabled),
+                    egui::widgets::Checkbox::without_text(&mut settings.semantic_search_enabled),
                 )
                 .changed()
             }
