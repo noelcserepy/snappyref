@@ -54,3 +54,8 @@ Use this repo-local guide when inspecting the app, verifying a UI state, or addi
 
 - The semantic-search model is downloaded on first use; treat the first run as potentially slow.
 - Use `cargo check` after probe or UI changes before trusting a screenshot.
+
+## Pre-push Checks
+
+- CI runs `cargo fmt --check` and will fail on unformatted code. Always run `cargo fmt` before pushing.
+- Run `cargo check` (and any tests you touched) locally before pushing so CI does not catch basic regressions.
