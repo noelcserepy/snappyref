@@ -3,17 +3,21 @@ use std::sync::Arc;
 use eframe::egui;
 
 use super::{
-    canvas_texture_from_preview,
-    clamped_crop_screen_rect, crop_center_offset_local, layout_textbox_galley,
-    merge_cropped_item_fields, merge_ids, min_image_scale, pixel_crop_rect_from_local,
-    screen_rect_to_local_crop_rect, textbox_layout_cache_key, textbox_required_world_height,
-    CanvasCropRequest, CanvasDocumentChanges, CanvasImage, CanvasImagePreview, CanvasState,
-    CropState, ImportPlaceholder, PendingAnnotation, SelectedLayoutItem, TextboxLayoutCacheEntry,
-    FOCUS_SELECTION_PADDING_SCREEN, MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM,
+    merge_ids, CanvasCropRequest, CanvasDocumentChanges, CanvasImage, CanvasImagePreview,
+    CanvasState, CropState, ImportPlaceholder, PendingAnnotation, SelectedLayoutItem,
+    TextboxLayoutCacheEntry, FOCUS_SELECTION_PADDING_SCREEN, MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM,
+};
+use super::geometry::{
+    clamped_crop_screen_rect, crop_center_offset_local, merge_cropped_item_fields,
+    min_image_scale, pixel_crop_rect_from_local, screen_rect_to_local_crop_rect,
 };
 use super::interaction::{
     annotation_screen_rect, annotation_world_rect, image_screen_rect, normalized_textbox_rect,
     textbox_world_rect,
+};
+use super::render::{
+    canvas_texture_from_preview, layout_textbox_galley, textbox_layout_cache_key,
+    textbox_required_world_height,
 };
 use crate::data::{
     BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, CanvasBackground,

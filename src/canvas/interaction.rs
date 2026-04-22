@@ -7,6 +7,8 @@ use super::{
     MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, TEXTBOX_DRAG_THRESHOLD_SCREEN,
     TEXTBOX_RESIZE_HIT_RADIUS,
 };
+use super::geometry::{image_screen_rect_for_record, min_image_scale};
+use super::render::textbox_pointer_region;
 use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasTextSize};
 
 pub(super) fn handle_input(
@@ -47,7 +49,7 @@ pub(super) fn handle_input(
         && let Some(annotation_id) = state.single_selected_annotation_id()
         && let Some(annotation) = state.annotation_by_id(annotation_id).cloned()
         && annotation.kind == CanvasAnnotationKind::Textbox
-        && let Some(region) = super::textbox_pointer_region(ui, rect, state, &annotation, pointer_pos)
+        && let Some(region) = textbox_pointer_region(ui, rect, state, &annotation, pointer_pos)
     {
         match region {
             TextboxPointerRegion::Resize(handle) => {
@@ -111,7 +113,7 @@ pub(super) fn handle_input(
             && let Some(annotation) = state.annotation_by_id(annotation_id).cloned()
             && annotation.kind == CanvasAnnotationKind::Textbox
             && matches!(
-                super::textbox_pointer_region(ui, rect, state, &annotation, pointer_pos),
+                textbox_pointer_region(ui, rect, state, &annotation, pointer_pos),
                 Some(TextboxPointerRegion::Resize(_))
             )
         {
@@ -523,7 +525,7 @@ pub(super) fn handle_textbox_primary_press(
     annotation: &CanvasAnnotation,
     pointer_pos: egui::Pos2,
 ) -> bool {
-    let Some(region) = super::textbox_pointer_region(ui, rect, state, annotation, pointer_pos) else {
+    let Some(region) = textbox_pointer_region(ui, rect, state, annotation, pointer_pos) else {
         return false;
     };
 
@@ -587,7 +589,7 @@ pub(super) fn image_screen_rect(
     rect: egui::Rect,
     image: &CanvasImage,
 ) -> egui::Rect {
-    super::image_screen_rect_for_record(&image.record, rect, state.pan, state.zoom, rect.center())
+    image_screen_rect_for_record(&image.record, rect, state.pan, state.zoom, rect.center())
 }
 
 fn image_resize_handle_screen_pos(image_rect: egui::Rect, handle: ImageResizeHandle) -> egui::Pos2 {
@@ -639,7 +641,7 @@ pub(super) fn resized_image_scale(
     } else {
         current_radius_screen / start_radius_screen
     };
-    (start_scale * scale_ratio).max(super::min_image_scale(asset))
+    (start_scale * scale_ratio).max(min_image_scale(asset))
 }
 
 fn zoom_around_pointer(
