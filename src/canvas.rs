@@ -1,7 +1,8 @@
-use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+mod state;
 
 use crate::data::{
     BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, CanvasBackground,
@@ -9,6 +10,7 @@ use crate::data::{
 };
 use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
 use eframe::egui;
+use state::{CanvasDocumentState, CanvasInteractionState, CanvasRenderState};
 
 const MIN_CANVAS_ZOOM: f32 = 0.01;
 const MAX_CANVAS_ZOOM: f32 = 64.0;
@@ -41,44 +43,6 @@ pub struct CanvasState {
     document: CanvasDocumentState,
     interaction: CanvasInteractionState,
     render: CanvasRenderState,
-}
-
-#[derive(Default)]
-struct CanvasDocumentState {
-    images: Vec<CanvasImage>,
-    annotations: Vec<CanvasAnnotation>,
-    selected_item_ids: Vec<i64>,
-    selected_annotation_ids: Vec<i64>,
-    dirty_item_ids: Vec<i64>,
-    dirty_annotation_ids: Vec<i64>,
-    pending_archived_annotation_ids: Vec<i64>,
-}
-
-#[derive(Default)]
-struct CanvasInteractionState {
-    search_match_item_ids: Vec<i64>,
-    active_search_item_id: Option<i64>,
-    editing_text_annotation_id: Option<i64>,
-    focus_text_editor: bool,
-    drag_state: Option<DragState>,
-    image_transform_state: Option<ImageTransformState>,
-    textbox_transform_state: Option<TextboxTransformState>,
-    marquee_state: Option<MarqueeState>,
-    crop_state: Option<CropState>,
-    annotation_draft_state: Option<AnnotationDraftState>,
-    crop_pending_item_ids: Vec<i64>,
-    pending_crop: Option<CanvasCropRequest>,
-    pending_annotation: Option<PendingAnnotation>,
-    import_placeholders: Vec<ImportPlaceholder>,
-    last_pointer_screen_pos: Option<egui::Pos2>,
-}
-
-#[derive(Default)]
-struct CanvasRenderState {
-    background_lod_level: i32,
-    asset_rgba_cache: HashMap<i64, Vec<u8>>,
-    textbox_layout_cache: HashMap<i64, TextboxLayoutCacheEntry>,
-    pending_image_tier_loads: HashMap<i64, CanvasImageCacheTier>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
