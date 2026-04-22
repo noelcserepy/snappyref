@@ -12,7 +12,7 @@ use rusqlite::{Connection, Transaction, params, params_from_iter};
 use crate::data::{
     BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationKind,
     CanvasBackground, CanvasImageCacheTier, CanvasImageMode, CanvasTextSize, ImageAsset,
-    UserSession,
+    UserSession, ViewportState, WorkspaceSettings,
 };
 
 #[derive(Clone, Debug)]
@@ -992,19 +992,23 @@ impl Library {
                 .and_then(|value| CanvasImageMode::from_str(&value))
                 .unwrap_or_default();
             Ok(UserSession {
-                camera_pan_x: row.get(0)?,
-                camera_pan_y: row.get(1)?,
-                camera_zoom: row.get(2)?,
-                auto_image_scaling: row.get::<_, i64>(3)? != 0,
-                import_gap: row.get(4)?,
-                canvas_image_mode,
-                canvas_image_max_side: row
-                    .get::<_, i64>(8)
-                    .ok()
-                    .map(|value| value.max(1) as u32)
-                    .unwrap_or(crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE),
-                canvas_background: background,
-                semantic_search_enabled: row.get::<_, i64>(6).unwrap_or(0) != 0,
+                viewport: ViewportState {
+                    camera_pan_x: row.get(0)?,
+                    camera_pan_y: row.get(1)?,
+                    camera_zoom: row.get(2)?,
+                    canvas_background: background,
+                },
+                settings: WorkspaceSettings {
+                    auto_image_scaling: row.get::<_, i64>(3)? != 0,
+                    import_gap: row.get(4)?,
+                    canvas_image_mode,
+                    canvas_image_max_side: row
+                        .get::<_, i64>(8)
+                        .ok()
+                        .map(|value| value.max(1) as u32)
+                        .unwrap_or(crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE),
+                    semantic_search_enabled: row.get::<_, i64>(6).unwrap_or(0) != 0,
+                },
             })
         });
 
@@ -1032,19 +1036,23 @@ impl Library {
                     canvas_image_mode = excluded.canvas_image_mode,
                     canvas_image_max_side = excluded.canvas_image_max_side",
                 params![
-                    session.camera_pan_x,
-                    session.camera_pan_y,
-                    session.camera_zoom,
-                    if session.auto_image_scaling { 1_i64 } else { 0_i64 },
-                    session.import_gap,
-                    session.canvas_background.as_str(),
-                    if session.semantic_search_enabled {
+                    session.viewport.camera_pan_x,
+                    session.viewport.camera_pan_y,
+                    session.viewport.camera_zoom,
+                    if session.settings.auto_image_scaling {
                         1_i64
                     } else {
                         0_i64
                     },
-                    session.canvas_image_mode.as_str(),
-                    i64::from(session.canvas_image_max_side),
+                    session.settings.import_gap,
+                    session.viewport.canvas_background.as_str(),
+                    if session.settings.semantic_search_enabled {
+                        1_i64
+                    } else {
+                        0_i64
+                    },
+                    session.settings.canvas_image_mode.as_str(),
+                    i64::from(session.settings.canvas_image_max_side),
                 ],
             )
             .map_err(|error| format!("failed to save user session: {error}"))?;
@@ -1709,18 +1717,18 @@ mod tests {
         let library = Library::initialize(root.clone()).unwrap();
         let session = library.load_user_session().unwrap();
 
-        assert_eq!(session.camera_pan_x, 10.0);
-        assert_eq!(session.camera_pan_y, 20.0);
-        assert_eq!(session.camera_zoom, 1.5);
-        assert!(session.auto_image_scaling);
-        assert_eq!(session.import_gap, crate::data::DEFAULT_IMPORT_GAP);
-        assert_eq!(session.canvas_image_mode, CanvasImageMode::Downscale);
+        assert_eq!(session.viewport.camera_pan_x, 10.0);
+        assert_eq!(session.viewport.camera_pan_y, 20.0);
+        assert_eq!(session.viewport.camera_zoom, 1.5);
+        assert!(session.settings.auto_image_scaling);
+        assert_eq!(session.settings.import_gap, crate::data::DEFAULT_IMPORT_GAP);
+        assert_eq!(session.settings.canvas_image_mode, CanvasImageMode::Downscale);
         assert_eq!(
-            session.canvas_image_max_side,
+            session.settings.canvas_image_max_side,
             crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE
         );
-        assert_eq!(session.canvas_background, CanvasBackground::None);
-        assert!(session.semantic_search_enabled);
+        assert_eq!(session.viewport.canvas_background, CanvasBackground::None);
+        assert!(session.settings.semantic_search_enabled);
 
         let _ = fs::remove_dir_all(root);
     }

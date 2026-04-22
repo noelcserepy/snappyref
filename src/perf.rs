@@ -58,7 +58,7 @@ pub fn print_startup_trace() -> Result<(), String> {
     let library = crate::storage::Library::initialize(library_root)?;
     let mut canvas = crate::canvas::CanvasState::default();
     if let Ok(session) = library.load_user_session() {
-        canvas.apply_user_session(&session);
+        canvas.apply_viewport_state(&session.viewport);
     }
     let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0));
     let viewport_world = egui::Rect::from_min_max(
@@ -68,8 +68,8 @@ pub fn print_startup_trace() -> Result<(), String> {
     let settings = library
         .load_user_session()
         .map(|session| crate::jobs::CanvasImageSettings {
-            mode: session.canvas_image_mode,
-            max_side: session.canvas_image_max_side,
+            mode: session.settings.canvas_image_mode,
+            max_side: session.settings.canvas_image_max_side,
         })
         .unwrap_or_default();
 

@@ -1,24 +1,12 @@
-use std::collections::{HashMap, HashSet};
-
 use eframe::egui;
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "semantic-search")]
-use std::time::Duration;
 use std::time::Instant;
 
 #[cfg(feature = "semantic-search")]
-use crate::palette::{
-    ImageSearchPivot, PALETTE_GRID_MAX_HEIGHT, PALETTE_WIDTH, SEARCH_DEBOUNCE_MS,
-    SEARCH_OVERLAY_TOP_MARGIN, SearchOverlayState, SearchOverlayStatus, paint_palette_divider,
-    paint_palette_empty_state, paint_palette_facet_row, paint_palette_footer,
-    paint_palette_input_row, search_result_grid_content_height, search_result_grid_layout,
-    search_result_tile,
-};
+use crate::palette::ImageSearchPivot;
+use crate::residency::ImageResidencyCoordinator;
 #[cfg(feature = "semantic-search")]
-use crate::semantic_search::{
-    DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, SemanticSearchConfig,
-    SemanticSearchService,
-};
+use crate::search::SearchController;
 use crate::sidebar::{
     SidebarTab, block_sidebar_input, close_sidebar_on_outside_click, show_sidebar,
     show_sidebar_hint, sidebar_rect,
@@ -514,22 +502,15 @@ pub struct ReferenceApp {
     import_worker: Option<crate::jobs::ImportWorker>,
     crop_undo_stack: Vec<CropUndoEntry>,
     max_texture_side: usize,
-    auto_image_scaling: bool,
-    import_gap: f32,
-    canvas_image_mode: crate::data::CanvasImageMode,
-    canvas_image_max_side: u32,
-    semantic_search_enabled: bool,
+    settings: crate::data::WorkspaceSettings,
     #[cfg(feature = "semantic-search")]
-    semantic_search: Option<SemanticSearchService>,
-    #[cfg(feature = "semantic-search")]
-    search_overlay: SearchOverlayState,
+    search: SearchController,
     sidebar_open: bool,
     sidebar_tab: SidebarTab,
     status: String,
     perf_log: Option<PerfLogState>,
     frame_perf: FramePerfState,
-    pending_cache_backfills: HashSet<(i64, crate::data::CanvasImageCacheTier)>,
-    inflight_image_tier_loads: HashMap<i64, crate::data::CanvasImageCacheTier>,
+    residency: ImageResidencyCoordinator,
     next_import_queue_id: u64,
     #[cfg(debug_assertions)]
     verification_search_query: Option<String>,
@@ -569,15 +550,12 @@ impl ReferenceApp {
                     import_worker: Some(import_worker),
                     crop_undo_stack: Vec::new(),
                     max_texture_side,
-                    auto_image_scaling: true,
-                    import_gap: crate::data::DEFAULT_IMPORT_GAP,
-                    canvas_image_mode: crate::data::CanvasImageMode::default(),
-                    canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
-                    semantic_search_enabled: false,
+                    settings: crate::data::WorkspaceSettings {
+                        semantic_search_enabled: false,
+                        ..Default::default()
+                    },
                     #[cfg(feature = "semantic-search")]
-                    semantic_search: None,
-                    #[cfg(feature = "semantic-search")]
-                    search_overlay: SearchOverlayState::default(),
+                    search: SearchController::default(),
                     sidebar_open: config.open_sidebar_on_start(),
                     sidebar_tab: if config.open_sidebar_boards_on_start() {
                         SidebarTab::Boards
@@ -590,8 +568,7 @@ impl ReferenceApp {
                         startup_logged: false,
                     }),
                     frame_perf: FramePerfState::default(),
-                    pending_cache_backfills: HashSet::new(),
-                    inflight_image_tier_loads: HashMap::new(),
+                    residency: ImageResidencyCoordinator::default(),
                     next_import_queue_id: 1,
                     #[cfg(debug_assertions)]
                     verification_search_query: None,
@@ -605,7 +582,7 @@ impl ReferenceApp {
                 #[cfg(debug_assertions)]
                 if config.draw_arrow_on_start() {
                     app.canvas
-                        .apply_user_session(&crate::data::UserSession::default());
+                        .apply_viewport_state(&crate::data::ViewportState::default());
                     app.canvas.add_annotation(crate::data::CanvasAnnotation {
                         id: -1,
                         kind: crate::data::CanvasAnnotationKind::Arrow,
@@ -622,7 +599,7 @@ impl ReferenceApp {
                 #[cfg(debug_assertions)]
                 if config.edit_textbox_on_start() {
                     app.canvas
-                        .apply_user_session(&crate::data::UserSession::default());
+                        .apply_viewport_state(&crate::data::ViewportState::default());
                     app.canvas.add_annotation(crate::data::CanvasAnnotation {
                         id: -2,
                         kind: crate::data::CanvasAnnotationKind::Textbox,
@@ -639,46 +616,47 @@ impl ReferenceApp {
                 }
                 #[cfg(debug_assertions)]
                 if let Some(query) = config.verification_search_query().map(ToOwned::to_owned) {
-                    app.semantic_search_enabled = true;
+                    app.settings.semantic_search_enabled = true;
                     #[cfg(feature = "semantic-search")]
                     app.sync_semantic_search_service();
                     #[cfg(feature = "semantic-search")]
                     {
-                        app.search_overlay.open = true;
-                        app.search_overlay.focus_requested = true;
-                        app.search_overlay.query = query;
-                        app.search_overlay.last_query_edit_at = Some(Instant::now());
+                        app.search.overlay.open = true;
+                        app.search.overlay.focus_requested = true;
+                        app.search.overlay.query = query;
+                        app.search.overlay.last_query_edit_at = Some(Instant::now());
                     }
                     app.verification_search_query =
                         config.verification_search_query().map(ToOwned::to_owned);
                 }
                 #[cfg(debug_assertions)]
                 if app.sidebar_hot_preview {
-                    app.auto_image_scaling = false;
-                    app.import_gap = 32.0;
-                    app.canvas_image_mode = crate::data::CanvasImageMode::Original;
-                    app.canvas_image_max_side = crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE;
+                    app.settings.auto_image_scaling = false;
+                    app.settings.import_gap = 32.0;
+                    app.settings.canvas_image_mode = crate::data::CanvasImageMode::Original;
+                    app.settings.canvas_image_max_side =
+                        crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE;
                     app.canvas
                         .set_background(crate::data::CanvasBackground::Grid);
-                    app.semantic_search_enabled = true;
+                    app.settings.semantic_search_enabled = true;
                     #[cfg(feature = "semantic-search")]
                     app.sync_semantic_search_service();
                 }
                 #[cfg(debug_assertions)]
                 if config.open_palette_on_start() {
-                    app.semantic_search_enabled = true;
+                    app.settings.semantic_search_enabled = true;
                     #[cfg(feature = "semantic-search")]
                     {
                         app.sync_semantic_search_service();
-                        app.search_overlay.open = true;
-                        app.search_overlay.focus_requested = true;
+                        app.search.overlay.open = true;
+                        app.search.overlay.focus_requested = true;
                     }
                 }
                 #[cfg(debug_assertions)]
                 if config.open_palette_image_pivot_on_start() {
                     #[cfg(feature = "semantic-search")]
                     {
-                        app.search_overlay.image_pivot = Some(ImageSearchPivot {
+                        app.search.overlay.image_pivot = Some(ImageSearchPivot {
                             asset_id: 42,
                             item_id: -1,
                         });
@@ -695,15 +673,12 @@ impl ReferenceApp {
                 import_worker: None,
                 crop_undo_stack: Vec::new(),
                 max_texture_side,
-                auto_image_scaling: true,
-                import_gap: crate::data::DEFAULT_IMPORT_GAP,
-                canvas_image_mode: crate::data::CanvasImageMode::default(),
-                canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
-                semantic_search_enabled: false,
+                settings: crate::data::WorkspaceSettings {
+                    semantic_search_enabled: false,
+                    ..Default::default()
+                },
                 #[cfg(feature = "semantic-search")]
-                semantic_search: None,
-                #[cfg(feature = "semantic-search")]
-                search_overlay: SearchOverlayState::default(),
+                search: SearchController::default(),
                 sidebar_open: config.open_sidebar_on_start(),
                 sidebar_tab: if config.open_sidebar_boards_on_start() {
                     SidebarTab::Boards
@@ -716,8 +691,7 @@ impl ReferenceApp {
                     startup_logged: false,
                 }),
                 frame_perf: FramePerfState::default(),
-                pending_cache_backfills: HashSet::new(),
-                inflight_image_tier_loads: HashMap::new(),
+                residency: ImageResidencyCoordinator::default(),
                 next_import_queue_id: 1,
                 #[cfg(debug_assertions)]
                 verification_search_query: None,
@@ -745,8 +719,8 @@ impl ReferenceApp {
                             record,
                             max_texture_side: self.max_texture_side,
                             canvas_image_settings: crate::jobs::CanvasImageSettings {
-                                mode: self.canvas_image_mode,
-                                max_side: self.canvas_image_max_side,
+                                mode: self.settings.canvas_image_mode,
+                                max_side: self.settings.canvas_image_max_side,
                             },
                             target_tier: crate::data::CanvasImageCacheTier::Working,
                             priority: crate::jobs::ExistingLoadPriority::Startup,
@@ -779,12 +753,8 @@ impl ReferenceApp {
 
         match library.load_user_session() {
             Ok(session) => {
-                self.canvas.apply_user_session(&session);
-                self.auto_image_scaling = session.auto_image_scaling;
-                self.import_gap = session.import_gap;
-                self.canvas_image_mode = session.canvas_image_mode;
-                self.canvas_image_max_side = session.canvas_image_max_side;
-                self.semantic_search_enabled = session.semantic_search_enabled;
+                self.canvas.apply_viewport_state(&session.viewport);
+                self.settings = session.settings;
             }
             Err(error) => self.status = error,
         }
@@ -822,7 +792,11 @@ impl ReferenceApp {
         width: u32,
         height: u32,
     ) {
-        let scale = crate::jobs::initial_import_scale(width, height, self.auto_image_scaling);
+        let scale = crate::jobs::initial_import_scale(
+            width,
+            height,
+            self.settings.auto_image_scaling,
+        );
         self.canvas.add_import_placeholder(
             queue_id,
             desired_world,
@@ -872,11 +846,11 @@ impl ReferenceApp {
                     viewport_world,
                     max_texture_side: self.max_texture_side,
                     canvas_image_settings: crate::jobs::CanvasImageSettings {
-                        mode: self.canvas_image_mode,
-                        max_side: self.canvas_image_max_side,
+                        mode: self.settings.canvas_image_mode,
+                        max_side: self.settings.canvas_image_max_side,
                     },
-                    auto_scale: self.auto_image_scaling,
-                    import_gap: self.import_gap,
+                    auto_scale: self.settings.auto_image_scaling,
+                    import_gap: self.settings.import_gap,
                     trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
                         queued_at: Instant::now(),
                         timings: crate::jobs::ImportTimings::default(),
@@ -954,11 +928,11 @@ impl ReferenceApp {
                 viewport_world,
                 max_texture_side: self.max_texture_side,
                 canvas_image_settings: crate::jobs::CanvasImageSettings {
-                    mode: self.canvas_image_mode,
-                    max_side: self.canvas_image_max_side,
+                    mode: self.settings.canvas_image_mode,
+                    max_side: self.settings.canvas_image_max_side,
                 },
-                auto_scale: self.auto_image_scaling,
-                import_gap: self.import_gap,
+                auto_scale: self.settings.auto_image_scaling,
+                import_gap: self.settings.import_gap,
                 trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
                     queued_at: Instant::now(),
                     timings: crate::jobs::ImportTimings::default(),
@@ -1092,8 +1066,7 @@ impl ReferenceApp {
                     let loaded_tier = loaded.loaded_tier;
                     let loaded_record = loaded.record.clone();
                     let existing_load_diagnostics = loaded.existing_load_diagnostics.clone();
-                    self.inflight_image_tier_loads
-                        .remove(&loaded.record.item.id);
+                    self.residency.note_loaded_item(loaded.record.item.id);
                     if self
                         .canvas
                         .record_for_item_id(loaded.record.item.id)
@@ -1103,9 +1076,7 @@ impl ReferenceApp {
                     }
                     let mut trace = loaded.trace;
                     #[cfg(feature = "semantic-search")]
-                    let queued_asset = (self.semantic_search_enabled
-                        && self.semantic_search.is_some())
-                    .then(|| {
+                    let queued_asset = self.settings.semantic_search_enabled.then(|| {
                         (
                             loaded.record.asset.id,
                             loaded.record.asset.original_path.clone(),
@@ -1114,11 +1085,8 @@ impl ReferenceApp {
                     let ui_integration_started_at = Instant::now();
                     self.canvas.add_loaded_item(ctx, loaded);
                     #[cfg(feature = "semantic-search")]
-                    if let Some((asset_id, original_path)) = queued_asset
-                        && let Some(service) = &self.semantic_search
-                    {
-                        let _ = service.enqueue_asset_index(asset_id, original_path);
-                        self.search_overlay.status = SearchOverlayStatus::Indexing;
+                    if let Some((asset_id, original_path)) = queued_asset {
+                        self.search.queue_asset_index(asset_id, original_path);
                     }
                     if let Some(trace) = &mut trace {
                         trace.timings.ui_integration = ui_integration_started_at.elapsed();
@@ -1130,10 +1098,14 @@ impl ReferenceApp {
                         trace,
                     );
                     if loaded_tier == crate::data::CanvasImageCacheTier::Working {
-                        self.enqueue_cache_backfill(
+                        if let Some(error) = self.residency.queue_backfill(
+                            self.import_worker.as_ref(),
                             &loaded_record,
+                            &self.settings,
                             crate::data::CanvasImageCacheTier::Overview,
-                        );
+                        ) {
+                            self.status = error;
+                        }
                     }
                     self.status = "Imported image".to_owned();
                 }
@@ -1184,8 +1156,8 @@ impl ReferenceApp {
 
                     let _ = library.store_canvas_image_cache(
                         asset.id,
-                        self.canvas_image_mode,
-                        self.canvas_image_max_side,
+                        self.settings.canvas_image_mode,
+                        self.settings.canvas_image_max_side,
                         &cropped.canvas_rgba,
                         cropped.canvas_width,
                         cropped.canvas_height,
@@ -1202,8 +1174,7 @@ impl ReferenceApp {
                         .apply_cropped_item(ctx, cropped, asset.clone(), updated_item)
                     {
                         Ok(()) => {
-                            self.inflight_image_tier_loads.remove(&updated_item_id);
-                            self.canvas.clear_pending_image_tier_load(updated_item_id);
+                            self.residency.note_loaded_item(updated_item_id);
                             self.push_crop_undo_entry(CropUndoEntry {
                                 previous_record: previous_snapshot.0,
                                 previous_rgba: previous_snapshot.1,
@@ -1213,17 +1184,18 @@ impl ReferenceApp {
                             });
                             self.canvas.clear_crop_pending(updated_item_id);
                             #[cfg(feature = "semantic-search")]
-                            if self.semantic_search_enabled
-                                && let Some(service) = &self.semantic_search
-                            {
-                                let _ = service
-                                    .enqueue_asset_index(asset.id, asset.original_path.clone());
-                                self.search_overlay.status = SearchOverlayStatus::Indexing;
+                            if self.settings.semantic_search_enabled {
+                                self.search
+                                    .queue_asset_index(asset.id, asset.original_path.clone());
                             }
-                            self.enqueue_cache_backfill(
+                            if let Some(error) = self.residency.queue_backfill(
+                                self.import_worker.as_ref(),
                                 &updated_record,
+                                &self.settings,
                                 crate::data::CanvasImageCacheTier::Overview,
-                            );
+                            ) {
+                                self.status = error;
+                            }
                             self.status = "Cropped image".to_owned();
                         }
                         Err(error) => {
@@ -1233,15 +1205,19 @@ impl ReferenceApp {
                     }
                 }
                 crate::jobs::ImportResult::CacheTierBackfilled { asset_id, tier } => {
-                    self.pending_cache_backfills.remove(&(asset_id, tier));
+                    let _ = self.residency.note_backfill_completed(asset_id, tier, None);
                 }
                 crate::jobs::ImportResult::CacheTierBackfillFailed {
                     asset_id,
                     tier,
                     error,
                 } => {
-                    self.pending_cache_backfills.remove(&(asset_id, tier));
-                    self.status = error;
+                    if let Some(error) =
+                        self.residency
+                            .note_backfill_completed(asset_id, tier, Some(error))
+                    {
+                        self.status = error;
+                    }
                 }
                 crate::jobs::ImportResult::Failed {
                     queue_id,
@@ -1252,10 +1228,9 @@ impl ReferenceApp {
                     if let Some(queue_id) = queue_id {
                         self.canvas.remove_import_placeholder(queue_id);
                     }
+                    self.residency.note_failed_item(&mut self.canvas, item_id);
                     if let Some(item_id) = item_id {
-                        self.inflight_image_tier_loads.remove(&item_id);
                         self.canvas.clear_crop_pending(item_id);
-                        self.canvas.clear_pending_image_tier_load(item_id);
                     }
                     self.status = format!("{context}: {error}");
                 }
@@ -1335,7 +1310,7 @@ impl ReferenceApp {
 
     fn handle_selection_shortcuts(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
         #[cfg(feature = "semantic-search")]
-        if self.search_overlay.open {
+        if self.search.is_open() {
             return;
         }
 
@@ -1399,7 +1374,7 @@ impl ReferenceApp {
                         apply_arrangement_action(
                             &mut self.canvas,
                             action,
-                            self.import_gap,
+                            self.settings.import_gap,
                             &mut self.status,
                         );
                     }
@@ -1442,7 +1417,7 @@ impl ReferenceApp {
             viewport_world,
             source_bounds.width(),
             source_bounds.height(),
-            self.import_gap,
+            self.settings.import_gap,
         ) {
             Ok(anchor_world) => anchor_world,
             Err(error) => {
@@ -1492,8 +1467,8 @@ impl ReferenceApp {
                 request,
                 max_texture_side: self.max_texture_side,
                 canvas_image_settings: crate::jobs::CanvasImageSettings {
-                    mode: self.canvas_image_mode,
-                    max_side: self.canvas_image_max_side,
+                    mode: self.settings.canvas_image_mode,
+                    max_side: self.settings.canvas_image_max_side,
                 },
             }) {
                 self.canvas.clear_crop_pending(item_id);
@@ -1502,72 +1477,6 @@ impl ReferenceApp {
             }
 
             self.status = "Cropping image".to_owned();
-        }
-    }
-
-    fn enqueue_cache_backfill(
-        &mut self,
-        record: &crate::data::BoardItemWithAsset,
-        tier: crate::data::CanvasImageCacheTier,
-    ) {
-        if self.canvas_image_mode != crate::data::CanvasImageMode::Downscale {
-            return;
-        }
-        let Some(import_worker) = &self.import_worker else {
-            return;
-        };
-        if !self.pending_cache_backfills.insert((record.asset.id, tier)) {
-            return;
-        }
-        if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::BackfillTier {
-            record: record.clone(),
-            canvas_image_settings: crate::jobs::CanvasImageSettings {
-                mode: self.canvas_image_mode,
-                max_side: self.canvas_image_max_side,
-            },
-            tier,
-        }) {
-            self.pending_cache_backfills
-                .remove(&(record.asset.id, tier));
-            self.status = error;
-        }
-    }
-
-    fn handle_pending_image_tier_requests(&mut self) {
-        if self.canvas_image_mode != crate::data::CanvasImageMode::Downscale {
-            return;
-        }
-        let Some(import_worker) = &self.import_worker else {
-            return;
-        };
-
-        for (item_id, target_tier) in self.canvas.take_pending_image_tier_loads() {
-            if self
-                .inflight_image_tier_loads
-                .get(&item_id)
-                .is_some_and(|existing| *existing >= target_tier)
-            {
-                continue;
-            }
-            let Some(record) = self.canvas.record_for_item_id(item_id) else {
-                continue;
-            };
-            self.inflight_image_tier_loads.insert(item_id, target_tier);
-            if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::LoadExisting {
-                record,
-                max_texture_side: self.max_texture_side,
-                canvas_image_settings: crate::jobs::CanvasImageSettings {
-                    mode: self.canvas_image_mode,
-                    max_side: self.canvas_image_max_side,
-                },
-                target_tier,
-                priority: crate::jobs::ExistingLoadPriority::Background,
-                trace: None,
-            }) {
-                self.inflight_image_tier_loads.remove(&item_id);
-                self.canvas.clear_pending_image_tier_load(item_id);
-                self.status = error;
-            }
         }
     }
 
@@ -1610,20 +1519,20 @@ impl ReferenceApp {
             return;
         };
 
-        let archived_annotation_ids = self.canvas.take_archived_annotation_ids();
-        if !archived_annotation_ids.is_empty()
-            && let Err(error) = library.archive_canvas_annotations(&archived_annotation_ids)
+        let changes = self.canvas.take_document_changes();
+        if !changes.archived_annotation_ids.is_empty()
+            && let Err(error) = library.archive_canvas_annotations(&changes.archived_annotation_ids)
         {
             self.status = error;
         }
 
-        for item in self.canvas.take_dirty_items() {
+        for item in changes.updated_items {
             if let Err(error) = library.update_board_item(&item) {
                 self.status = error;
             }
         }
 
-        for annotation in self.canvas.take_dirty_annotations() {
+        for annotation in changes.updated_annotations {
             if let Err(error) = library.update_canvas_annotation(&annotation) {
                 self.status = error;
             }
@@ -1635,12 +1544,10 @@ impl ReferenceApp {
             return;
         };
 
-        let mut session = self.canvas.user_session();
-        session.auto_image_scaling = self.auto_image_scaling;
-        session.import_gap = self.import_gap;
-        session.canvas_image_mode = self.canvas_image_mode;
-        session.canvas_image_max_side = self.canvas_image_max_side;
-        session.semantic_search_enabled = self.semantic_search_enabled;
+        let session = crate::data::UserSession {
+            viewport: self.canvas.viewport_state(),
+            settings: self.settings.clone(),
+        };
         if let Err(error) = library.save_user_session(&session) {
             self.status = error;
         }
@@ -1651,40 +1558,20 @@ impl ReferenceApp {
         let Some(query) = self.verification_search_query.clone() else {
             return;
         };
-
-        if !self.semantic_search_enabled {
-            self.semantic_search_enabled = true;
-            self.sync_semantic_search_service();
-        }
-
-        self.search_overlay.open = true;
-        self.search_overlay.focus_requested = true;
-        if self.search_overlay.query.trim() != query.trim() {
-            self.search_overlay.query = query.clone();
-            self.search_overlay.last_query_edit_at = None;
-            self.search_overlay.last_submitted_query.clear();
-            self.search_overlay.results.clear();
-            self.search_overlay.active_result_index = 0;
-            self.search_overlay.active_instance_index = 0;
-            self.canvas.clear_search_matches();
-        }
-
-        self.submit_search_query();
+        self.search.drive_verification_search(
+            &query,
+            &mut self.settings.semantic_search_enabled,
+            self.library.as_ref(),
+            &mut self.canvas,
+            &mut self.status,
+        );
     }
 
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
     fn verification_search_settled(&self) -> bool {
-        let Some(query) = self.verification_search_query.as_deref() else {
-            return true;
-        };
-
-        self.search_overlay.open
-            && self.search_overlay.query.trim() == query.trim()
-            && self.search_overlay.last_submitted_query == query.trim()
-            && matches!(
-                self.search_overlay.status,
-                SearchOverlayStatus::Ready | SearchOverlayStatus::Error(_)
-            )
+        self.verification_search_query
+            .as_deref()
+            .is_none_or(|query| self.search.verification_search_settled(query))
     }
 
     #[cfg(not(all(debug_assertions, feature = "semantic-search")))]
@@ -1697,466 +1584,33 @@ impl ReferenceApp {
 
     #[cfg(feature = "semantic-search")]
     fn sync_semantic_search_service(&mut self) {
-        if !self.semantic_search_enabled {
-            self.semantic_search = None;
-            self.close_search_overlay();
-            return;
-        }
-
-        if self.semantic_search.is_some() {
-            return;
-        }
-
-        let Some(library) = &self.library else {
-            self.search_overlay.status =
-                SearchOverlayStatus::Error("Storage unavailable".to_owned());
-            return;
-        };
-
-        match SemanticSearchService::new(
-            library.clone(),
-            SemanticSearchConfig {
-                enabled: true,
-                model: DEFAULT_SEMANTIC_SEARCH_MODEL,
-                max_results: 5,
-            },
-        ) {
-            Ok(service) => {
-                self.search_overlay.status =
-                    SearchOverlayStatus::Loading("Preparing semantic search…".to_owned());
-                let _ = service.enqueue_startup_backfill();
-                self.semantic_search = Some(service);
-            }
-            Err(error) => {
-                self.search_overlay.status = SearchOverlayStatus::Error(error.clone());
-                self.status = format!("Semantic search unavailable: {error}");
-            }
-        }
+        self.search.sync_service(
+            self.settings.semantic_search_enabled,
+            self.library.as_ref(),
+            &mut self.status,
+            Some(&mut self.canvas),
+        );
     }
 
     #[cfg(feature = "semantic-search")]
     fn handle_search_results(&mut self) {
-        let Some(service) = &self.semantic_search else {
-            return;
-        };
-
-        for result in service.try_recv_all() {
-            match result {
-                SearchIndexResult::Progress { message } => {
-                    if !matches!(self.search_overlay.status, SearchOverlayStatus::Error(_)) {
-                        self.search_overlay.status = SearchOverlayStatus::Loading(message);
-                    }
-                }
-                SearchIndexResult::ModelReady => {
-                    if !self.search_overlay.query.trim().is_empty() {
-                        self.search_overlay.last_submitted_query.clear();
-                    }
-                    if !matches!(self.search_overlay.status, SearchOverlayStatus::Error(_)) {
-                        self.search_overlay.status = SearchOverlayStatus::Ready;
-                    }
-                }
-                SearchIndexResult::Indexed => {
-                    if !self.search_overlay.query.trim().is_empty() {
-                        self.search_overlay.last_submitted_query.clear();
-                    }
-                }
-                SearchIndexResult::Failed { error } => {
-                    self.search_overlay.status = SearchOverlayStatus::Error(error);
-                }
-            }
-        }
+        self.search.handle_results();
     }
 
     #[cfg(feature = "semantic-search")]
     fn handle_search_shortcut(&mut self, ctx: &egui::Context) {
-        if !self.semantic_search_enabled {
-            return;
-        }
-
-        let triggered =
-            ctx.input(|input| input.modifiers.command && input.key_pressed(egui::Key::F));
-        if !triggered {
-            return;
-        }
-
-        self.sync_semantic_search_service();
-
-        let pivot = {
-            let selected = self.canvas.selected_item_ids();
-            if selected.len() == 1
-                && let Some(record) = self.canvas.record_for_item_id(selected[0])
-            {
-                Some(ImageSearchPivot {
-                    asset_id: record.asset.id,
-                    item_id: record.item.id,
-                })
-            } else {
-                None
-            }
-        };
-
-        if pivot.is_some() && self.search_overlay.image_pivot != pivot {
-            self.search_overlay.query.clear();
-            self.search_overlay.last_submitted_query.clear();
-            self.search_overlay.results.clear();
-            self.search_overlay.active_result_index = 0;
-            self.search_overlay.active_instance_index = 0;
-            self.search_overlay.image_pivot = pivot;
-            self.search_overlay.last_query_edit_at = None;
-            self.canvas.clear_search_matches();
-            self.submit_search_query();
-        }
-
-        self.search_overlay.open = true;
-        self.search_overlay.focus_requested = true;
-        if !matches!(self.search_overlay.status, SearchOverlayStatus::Error(_)) {
-            let status = self
-                .semantic_search
-                .as_ref()
-                .map(|service| {
-                    if service.is_ready() {
-                        SearchOverlayStatus::Ready
-                    } else {
-                        SearchOverlayStatus::Loading("Preparing semantic search…".to_owned())
-                    }
-                })
-                .unwrap_or_else(|| {
-                    SearchOverlayStatus::Loading("Preparing semantic search…".to_owned())
-                });
-            self.search_overlay.status = status;
-        }
-    }
-
-    #[cfg(feature = "semantic-search")]
-    fn close_search_overlay(&mut self) {
-        self.search_overlay = SearchOverlayState::default();
-        self.canvas.clear_search_matches();
-    }
-
-    #[cfg(feature = "semantic-search")]
-    fn submit_search_query(&mut self) {
-        let query = self.search_overlay.query.trim().to_owned();
-        let pivot = self.search_overlay.image_pivot;
-        if query.is_empty() && pivot.is_none() {
-            self.search_overlay.results.clear();
-            self.search_overlay.last_submitted_query.clear();
-            self.search_overlay.active_result_index = 0;
-            self.search_overlay.active_instance_index = 0;
-            self.search_overlay.status = SearchOverlayStatus::Ready;
-            self.canvas.clear_search_matches();
-            return;
-        }
-
-        let Some(service) = &self.semantic_search else {
-            self.search_overlay.status =
-                SearchOverlayStatus::Error("Semantic search unavailable".to_owned());
-            return;
-        };
-
-        let search_result = match pivot {
-            Some(pivot) => {
-                let text = if query.is_empty() {
-                    None
-                } else {
-                    Some(query.as_str())
-                };
-                service.search_with_image_pivot(pivot.asset_id, text)
-            }
-            None => service.search(&query),
-        };
-
-        match search_result {
-            Ok(results) => {
-                self.search_overlay.last_submitted_query = query;
-                let last_index = results.len().saturating_sub(1);
-                self.search_overlay.results = results;
-                self.search_overlay.active_result_index =
-                    self.search_overlay.active_result_index.min(last_index);
-                let instance_last = self
-                    .search_overlay
-                    .results
-                    .get(self.search_overlay.active_result_index)
-                    .map(|group| group.item_ids.len().saturating_sub(1))
-                    .unwrap_or(0);
-                self.search_overlay.active_instance_index =
-                    self.search_overlay.active_instance_index.min(instance_last);
-                self.search_overlay.status = SearchOverlayStatus::Ready;
-                self.apply_search_matches();
-            }
-            Err(error) if error == "Loading model…" => {
-                if !matches!(self.search_overlay.status, SearchOverlayStatus::Loading(_)) {
-                    self.search_overlay.status =
-                        SearchOverlayStatus::Loading("Preparing semantic search…".to_owned());
-                }
-            }
-            Err(error) => {
-                self.search_overlay.status = SearchOverlayStatus::Error(error);
-                self.search_overlay.results.clear();
-                self.canvas.clear_search_matches();
-            }
-        }
-    }
-
-    #[cfg(feature = "semantic-search")]
-    fn apply_search_matches(&mut self) {
-        let item_ids = self
-            .search_overlay
-            .results
-            .iter()
-            .flat_map(|group| group.item_ids.iter().copied())
-            .collect::<Vec<_>>();
-        let active_item_id = self
-            .search_overlay
-            .results
-            .get(self.search_overlay.active_result_index)
-            .and_then(|group| {
-                if group.item_ids.is_empty() {
-                    None
-                } else {
-                    Some(
-                        group.item_ids
-                            [self.search_overlay.active_instance_index % group.item_ids.len()],
-                    )
-                }
-            });
-        self.canvas.set_search_matches(item_ids, active_item_id);
-    }
-
-    #[cfg(feature = "semantic-search")]
-    fn focus_active_search_result(&mut self) {
-        let Some(group) = self
-            .search_overlay
-            .results
-            .get(self.search_overlay.active_result_index)
-        else {
-            return;
-        };
-        if group.item_ids.is_empty() {
-            return;
-        }
-
-        let item_id =
-            group.item_ids[self.search_overlay.active_instance_index % group.item_ids.len()];
-        self.canvas.focus_item(item_id);
-        self.search_overlay.active_instance_index =
-            (self.search_overlay.active_instance_index + 1) % group.item_ids.len();
-        self.apply_search_matches();
+        self.search.handle_shortcut(
+            ctx,
+            self.settings.semantic_search_enabled,
+            self.library.as_ref(),
+            &mut self.canvas,
+            &mut self.status,
+        );
     }
 
     #[cfg(feature = "semantic-search")]
     fn show_search_overlay(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
-        if !self.search_overlay.open {
-            return;
-        }
-
-        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-            self.close_search_overlay();
-            return;
-        }
-
-        let input_id = egui::Id::new("semantic_search_input");
-        let width = PALETTE_WIDTH;
-        let result_count = self.search_overlay.results.len();
-        let body_h_pad = 12.0_f32;
-        let grid_inner_width = width - body_h_pad * 2.0;
-        let grid_layout = search_result_grid_layout(grid_inner_width, result_count);
-        let grid_content_height =
-            search_result_grid_content_height(result_count, grid_layout.columns);
-        let grid_viewport_height = grid_content_height.min(PALETTE_GRID_MAX_HEIGHT);
-        egui::Area::new(egui::Id::new("semantic_search_scrim"))
-            .order(egui::Order::Middle)
-            .fixed_pos(screen_rect.min)
-            .show(ctx, |ui| {
-                let painter = ui.painter();
-                painter.rect_filled(screen_rect, 0, egui::Color32::from_black_alpha(170));
-            });
-        let area_response = egui::Area::new(egui::Id::new("semantic_search_overlay"))
-            .order(egui::Order::Foreground)
-            .pivot(egui::Align2::CENTER_TOP)
-            .fixed_pos(egui::pos2(
-                screen_rect.center().x,
-                screen_rect.top() + SEARCH_OVERLAY_TOP_MARGIN,
-            ))
-            .show(ctx, |ui| {
-                ui.set_width(width);
-                ui.set_min_width(width);
-                ui.set_max_width(width);
-                egui::Frame::new()
-                    .fill(crate::theme::PALETTE_SURFACE)
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(33)))
-                    .corner_radius(egui::CornerRadius::same(12))
-                    .shadow(egui::epaint::Shadow {
-                        offset: [0, 12],
-                        blur: 40,
-                        spread: 0,
-                        color: egui::Color32::from_black_alpha(180),
-                    })
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-
-                        let input_result = paint_palette_input_row(
-                            ui,
-                            &mut self.search_overlay.query,
-                            input_id,
-                            self.search_overlay.image_pivot.as_ref(),
-                            &self.canvas,
-                        );
-                        let response = input_result.response;
-                        if input_result.pivot_dismissed {
-                            self.search_overlay.image_pivot = None;
-                            self.search_overlay.last_submitted_query.clear();
-                            self.search_overlay.results.clear();
-                            self.search_overlay.active_result_index = 0;
-                            self.search_overlay.active_instance_index = 0;
-                            self.canvas.clear_search_matches();
-                            self.search_overlay.last_query_edit_at = Some(Instant::now());
-                        }
-                        if self.search_overlay.focus_requested {
-                            response.request_focus();
-                            self.search_overlay.focus_requested =
-                                !ctx.memory(|memory| memory.has_focus(input_id));
-                            if self.search_overlay.focus_requested {
-                                ctx.request_repaint_after(Duration::from_millis(16));
-                            }
-                        }
-                        if response.changed() {
-                            self.search_overlay.last_query_edit_at = Some(Instant::now());
-                            self.search_overlay.active_result_index = 0;
-                            self.search_overlay.active_instance_index = 0;
-                            if self.search_overlay.query.trim().is_empty()
-                                && self.search_overlay.image_pivot.is_none()
-                            {
-                                self.search_overlay.results.clear();
-                                self.canvas.clear_search_matches();
-                            }
-                        }
-
-                        paint_palette_facet_row(ui, result_count);
-                        paint_palette_divider(ui);
-
-                        if result_count == 0 {
-                            paint_palette_empty_state(ui);
-                        } else {
-                            let mut clicked_index = None;
-                            egui::Frame::new()
-                                .inner_margin(egui::Margin {
-                                    left: body_h_pad as i8,
-                                    right: body_h_pad as i8,
-                                    top: body_h_pad as i8,
-                                    bottom: body_h_pad as i8,
-                                })
-                                .show(ui, |ui| {
-                                    ui.set_min_width(grid_inner_width);
-                                    ui.set_max_width(grid_inner_width);
-                                    let mut render_grid = |ui: &mut egui::Ui| {
-                                        ui.spacing_mut().item_spacing = egui::vec2(
-                                            crate::theme::SPACE_2,
-                                            crate::theme::SPACE_2,
-                                        );
-                                        for (row_index, row_groups) in self
-                                            .search_overlay
-                                            .results
-                                            .chunks(grid_layout.columns.max(1))
-                                            .enumerate()
-                                        {
-                                            ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x =
-                                                    crate::theme::SPACE_2;
-                                                for (column_index, group) in
-                                                    row_groups.iter().enumerate()
-                                                {
-                                                    let index = row_index * grid_layout.columns
-                                                        + column_index;
-                                                    let active = index
-                                                        == self.search_overlay.active_result_index;
-                                                    let response = search_result_tile(
-                                                        ui,
-                                                        &self.canvas,
-                                                        group,
-                                                        active,
-                                                        grid_layout.tile_width,
-                                                    );
-                                                    if response.clicked() {
-                                                        clicked_index = Some(index);
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    };
-
-                                    if grid_content_height <= PALETTE_GRID_MAX_HEIGHT {
-                                        render_grid(ui);
-                                    } else {
-                                        egui::ScrollArea::vertical()
-                                            .max_height(grid_viewport_height)
-                                            .auto_shrink([false, false])
-                                            .show(ui, |ui| render_grid(ui));
-                                    }
-                                });
-                            if let Some(index) = clicked_index {
-                                self.search_overlay.active_result_index = index;
-                                self.search_overlay.active_instance_index = 0;
-                                self.apply_search_matches();
-                            }
-                        }
-
-                        paint_palette_divider(ui);
-                        paint_palette_footer(ui, result_count, &self.search_overlay.status);
-                    });
-            });
-
-        let overlay_rect = area_response.response.rect;
-        let clicked_outside = ctx.input(|input| {
-            input.pointer.any_click()
-                && input
-                    .pointer
-                    .interact_pos()
-                    .is_some_and(|pointer_pos| !overlay_rect.contains(pointer_pos))
-        });
-        if clicked_outside {
-            self.close_search_overlay();
-            return;
-        }
-
-        if let Some(changed_at) = self.search_overlay.last_query_edit_at
-            && changed_at.elapsed().as_secs_f32() * 1000.0 >= SEARCH_DEBOUNCE_MS
-            && self.search_overlay.query.trim() != self.search_overlay.last_submitted_query
-        {
-            self.submit_search_query();
-        } else if self.search_overlay.last_query_edit_at.is_some() {
-            ctx.request_repaint_after(Duration::from_millis(16));
-        }
-
-        if !self.search_overlay.results.is_empty() {
-            let last_index = self.search_overlay.results.len() - 1;
-            if ctx.input(|input| input.key_pressed(egui::Key::ArrowRight)) {
-                self.search_overlay.active_result_index =
-                    (self.search_overlay.active_result_index + 1).min(last_index);
-                self.search_overlay.active_instance_index = 0;
-                self.apply_search_matches();
-            } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowLeft)) {
-                self.search_overlay.active_result_index =
-                    self.search_overlay.active_result_index.saturating_sub(1);
-                self.search_overlay.active_instance_index = 0;
-                self.apply_search_matches();
-            } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
-                self.search_overlay.active_result_index =
-                    (self.search_overlay.active_result_index + grid_layout.columns).min(last_index);
-                self.search_overlay.active_instance_index = 0;
-                self.apply_search_matches();
-            } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
-                self.search_overlay.active_result_index = self
-                    .search_overlay
-                    .active_result_index
-                    .saturating_sub(grid_layout.columns);
-                self.search_overlay.active_instance_index = 0;
-                self.apply_search_matches();
-            }
-
-            if ctx.input(|input| input.key_pressed(egui::Key::Enter)) {
-                self.focus_active_search_result();
-            }
-        }
+        self.search.show_overlay(ctx, screen_rect, &mut self.canvas);
     }
 
     fn persist_settings_if_changed(&mut self, settings_changed: bool) {
@@ -2339,10 +1793,17 @@ impl eframe::App for ReferenceApp {
             visible_canvas_rect,
             &mut self.canvas,
             self.wgpu_render_state.as_ref(),
-            self.canvas_image_mode == crate::data::CanvasImageMode::Downscale,
+            self.settings.canvas_image_mode == crate::data::CanvasImageMode::Downscale,
             false,
         );
-        self.handle_pending_image_tier_requests();
+        if let Some(error) = self.residency.dispatch_pending_tier_requests(
+            self.import_worker.as_ref(),
+            &mut self.canvas,
+            &self.settings,
+            self.max_texture_side,
+        ) {
+            self.status = error;
+        }
         self.handle_pending_crop_requests();
         self.handle_pending_annotation_requests();
         self.persist_canvas_changes();
@@ -2351,11 +1812,7 @@ impl eframe::App for ReferenceApp {
             screen_rect,
             sidebar_open,
             &mut self.sidebar_tab,
-            &mut self.auto_image_scaling,
-            &mut self.import_gap,
-            &mut self.canvas_image_mode,
-            &mut self.canvas_image_max_side,
-            &mut self.semantic_search_enabled,
+            &mut self.settings,
             &mut self.canvas,
         );
         if sidebar_open {
@@ -2534,25 +1991,25 @@ mod tests {
         let root = temp_library_root("reference-app-gap");
         let library = Library::initialize(root.clone()).unwrap();
         let mut app = test_app(Some(library.clone()));
-        app.auto_image_scaling = false;
-        app.import_gap = 37.0;
-        app.canvas_image_mode = crate::data::CanvasImageMode::Original;
-        app.canvas_image_max_side = 4096;
+        app.settings.auto_image_scaling = false;
+        app.settings.import_gap = 37.0;
+        app.settings.canvas_image_mode = crate::data::CanvasImageMode::Original;
+        app.settings.canvas_image_max_side = 4096;
         app.canvas
             .set_background(crate::data::CanvasBackground::Grid);
 
         app.save_user_session();
 
         let session = library.load_user_session().unwrap();
-        assert!(!session.auto_image_scaling);
-        assert_eq!(session.import_gap, 37.0);
+        assert!(!session.settings.auto_image_scaling);
+        assert_eq!(session.settings.import_gap, 37.0);
         assert_eq!(
-            session.canvas_image_mode,
+            session.settings.canvas_image_mode,
             crate::data::CanvasImageMode::Original
         );
-        assert_eq!(session.canvas_image_max_side, 4096);
+        assert_eq!(session.settings.canvas_image_max_side, 4096);
         assert_eq!(
-            session.canvas_background,
+            session.viewport.canvas_background,
             crate::data::CanvasBackground::Grid
         );
 
@@ -2663,7 +2120,7 @@ mod tests {
     fn search_shortcut_opens_overlay_when_enabled() {
         let ctx = egui::Context::default();
         let mut app = test_app(None);
-        app.semantic_search_enabled = true;
+        app.settings.semantic_search_enabled = true;
 
         let _ = ctx.run_ui(
             egui::RawInput {
@@ -2686,8 +2143,8 @@ mod tests {
             |ui| app.handle_search_shortcut(ui.ctx()),
         );
 
-        assert!(app.search_overlay.open);
-        assert!(app.search_overlay.focus_requested);
+        assert!(app.search.overlay.open);
+        assert!(app.search.overlay.focus_requested);
     }
 
     #[cfg(feature = "semantic-search")]
@@ -2695,8 +2152,8 @@ mod tests {
     fn escape_closes_search_overlay_and_clears_matches() {
         let ctx = egui::Context::default();
         let mut app = test_app(None);
-        app.search_overlay.open = true;
-        app.search_overlay.query = "cat".to_owned();
+        app.search.overlay.open = true;
+        app.search.overlay.query = "cat".to_owned();
         app.canvas.set_search_matches(vec![1, 2], Some(1));
 
         let _ = ctx.run_ui(
@@ -2718,8 +2175,8 @@ mod tests {
             },
         );
 
-        assert!(!app.search_overlay.open);
-        assert!(app.search_overlay.query.is_empty());
+        assert!(!app.search.overlay.open);
+        assert!(app.search.overlay.query.is_empty());
     }
 
     #[cfg(feature = "semantic-search")]
@@ -2727,8 +2184,8 @@ mod tests {
     fn search_overlay_focuses_text_input_when_requested() {
         let ctx = egui::Context::default();
         let mut app = test_app(None);
-        app.search_overlay.open = true;
-        app.search_overlay.focus_requested = true;
+        app.search.overlay.open = true;
+        app.search.overlay.focus_requested = true;
 
         let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
             app.show_search_overlay(
@@ -2738,7 +2195,7 @@ mod tests {
         });
 
         assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("semantic_search_input"))));
-        assert!(!app.search_overlay.focus_requested);
+        assert!(!app.search.overlay.focus_requested);
     }
 
     #[cfg(feature = "semantic-search")]
@@ -2783,18 +2240,14 @@ mod tests {
             import_worker: None,
             crop_undo_stack: Vec::new(),
             max_texture_side: 8192,
-            auto_image_scaling: true,
-            import_gap: crate::data::DEFAULT_IMPORT_GAP,
-            canvas_image_mode: crate::data::CanvasImageMode::default(),
-            canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
-            semantic_search_enabled: false,
+            settings: crate::data::WorkspaceSettings {
+                semantic_search_enabled: false,
+                ..Default::default()
+            },
             #[cfg(feature = "semantic-search")]
-            semantic_search: None,
-            #[cfg(feature = "semantic-search")]
-            search_overlay: super::SearchOverlayState::default(),
+            search: super::SearchController::default(),
             frame_perf: super::FramePerfState::default(),
-            pending_cache_backfills: std::collections::HashSet::new(),
-            inflight_image_tier_loads: std::collections::HashMap::new(),
+            residency: super::ImageResidencyCoordinator::default(),
             sidebar_open: false,
             sidebar_tab: super::SidebarTab::default(),
             status: String::new(),
