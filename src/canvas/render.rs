@@ -995,52 +995,50 @@ pub(super) fn paint_import_placeholders(
     rect: egui::Rect,
     state: &CanvasState,
 ) {
+    let cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
     for placeholder in &state.interaction.import_placeholders {
         let placeholder_rect = egui::Rect::from_center_size(
             state.world_to_screen(placeholder.center_world, rect),
             placeholder.size_world * state.zoom,
         );
-        let fill = egui::Color32::from_rgba_premultiplied(
-            crate::theme::SURFACE.r(),
-            crate::theme::SURFACE.g(),
-            crate::theme::SURFACE.b(),
-            144,
-        );
-        let stripe = egui::Color32::from_rgba_premultiplied(
-            crate::theme::ACCENT.r(),
-            crate::theme::ACCENT.g(),
-            crate::theme::ACCENT.b(),
-            112,
-        );
-        painter.rect_filled(placeholder_rect, crate::theme::CONTROL_RADIUS, fill);
-        painter.rect_stroke(
-            placeholder_rect,
-            crate::theme::CONTROL_RADIUS,
-            egui::Stroke::new(1.5, crate::theme::ACCENT),
-            egui::StrokeKind::Outside,
-        );
-
-        let stripe_spacing = 18.0;
-        let mut x = placeholder_rect.left() - placeholder_rect.height();
-        while x < placeholder_rect.right() {
-            painter.line_segment(
-                [
-                    egui::pos2(x, placeholder_rect.top()),
-                    egui::pos2(x + placeholder_rect.height(), placeholder_rect.bottom()),
-                ],
-                egui::Stroke::new(1.0, stripe),
-            );
-            x += stripe_spacing;
+        if !placeholder_rect.intersects(cull_rect) {
+            continue;
         }
 
-        let label = format!("Importing {}", placeholder.label);
-        painter.text(
-            placeholder_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            label,
-            egui::FontId::proportional(14.0),
-            crate::theme::TEXT,
+        painter.rect_filled(
+            placeholder_rect.expand(2.0),
+            0.0,
+            egui::Color32::from_rgba_premultiplied(0, 0, 0, 120),
         );
+        painter.rect_filled(placeholder_rect, 0.0, crate::theme::SURFACE_ELEVATED);
+        painter.rect_stroke(
+            placeholder_rect,
+            0.0,
+            egui::Stroke::new(1.0, crate::theme::BORDER_STRONG),
+            egui::StrokeKind::Inside,
+        );
+
+        let horizontal_padding = 12.0;
+        let available_width = (placeholder_rect.width() - horizontal_padding * 2.0).max(0.0);
+        if available_width <= 0.0 {
+            continue;
+        }
+        let mut job = egui::text::LayoutJob::single_section(
+            format!("Importing {}", placeholder.label),
+            egui::TextFormat::simple(egui::FontId::proportional(11.0), crate::theme::TEXT_MUTED),
+        );
+        job.wrap.max_width = available_width;
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        job.wrap.overflow_character = Some('…');
+        let galley = painter.ctx().fonts_mut(|fonts| fonts.layout_job(job));
+        if galley.size().y > placeholder_rect.height() {
+            continue;
+        }
+        let text_pos = placeholder_rect.center() - galley.size() / 2.0;
+        painter
+            .with_clip_rect(placeholder_rect)
+            .galley(text_pos, galley, crate::theme::TEXT_MUTED);
     }
 }
 
