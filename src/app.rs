@@ -537,6 +537,8 @@ pub struct ReferenceApp {
     frame_perf: FramePerfState,
     residency: ImageResidencyCoordinator,
     next_import_queue_id: u64,
+    hover_preview_dimensions:
+        std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
     #[cfg(debug_assertions)]
@@ -597,6 +599,7 @@ impl ReferenceApp {
                     frame_perf: FramePerfState::default(),
                     residency: ImageResidencyCoordinator::default(),
                     next_import_queue_id: 1,
+                    hover_preview_dimensions: std::collections::HashMap::new(),
                     #[cfg(debug_assertions)]
                     verification_mode: config.verification_mode,
                     #[cfg(debug_assertions)]
@@ -729,6 +732,7 @@ impl ReferenceApp {
                 frame_perf: FramePerfState::default(),
                 residency: ImageResidencyCoordinator::default(),
                 next_import_queue_id: 1,
+                hover_preview_dimensions: std::collections::HashMap::new(),
                 #[cfg(debug_assertions)]
                 verification_mode: config.verification_mode,
                 #[cfg(debug_assertions)]
@@ -877,6 +881,58 @@ impl ReferenceApp {
             height: size.y,
         });
         reserved_world
+    }
+
+    fn handle_hovered_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
+        let hovered_paths: Vec<std::path::PathBuf> = ui.input(|input| {
+            input
+                .raw
+                .hovered_files
+                .iter()
+                .filter_map(|file| file.path.clone())
+                .collect()
+        });
+
+        if hovered_paths.is_empty() {
+            self.canvas.clear_hover_preview_placeholders();
+            self.hover_preview_dimensions.clear();
+            return;
+        }
+
+        self.hover_preview_dimensions
+            .retain(|path, _| hovered_paths.contains(path));
+
+        let desired_world = self.preferred_import_world(ui.ctx(), screen_rect);
+        let viewport_world = self.import_viewport_world_rect(screen_rect);
+        let mut layout = match self.import_layout_snapshot() {
+            Ok(layout) => layout,
+            Err(_) => return,
+        };
+
+        const FALLBACK_WIDTH: u32 = 360;
+        const FALLBACK_HEIGHT: u32 = 240;
+
+        let mut previews = Vec::with_capacity(hovered_paths.len());
+        for path in hovered_paths {
+            let dimensions = self
+                .hover_preview_dimensions
+                .entry(path.clone())
+                .or_insert_with(|| image::image_dimensions(&path).ok());
+            let (width, height) = dimensions.unwrap_or((FALLBACK_WIDTH, FALLBACK_HEIGHT));
+            let reserved_world = self.reserve_import_world(
+                &mut layout,
+                width,
+                height,
+                desired_world,
+                viewport_world,
+            );
+            let scale =
+                crate::jobs::initial_import_scale(width, height, self.settings.auto_image_scaling);
+            let size_world = egui::vec2(width as f32 * scale, height as f32 * scale);
+            previews.push((reserved_world, size_world));
+        }
+
+        self.canvas.set_hover_preview_placeholders(previews);
     }
 
     fn handle_dropped_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
@@ -2070,6 +2126,7 @@ impl eframe::App for ReferenceApp {
 
         self.handle_clipboard_copy(ui.ctx());
         self.handle_clipboard_paste(ui.ctx(), screen_rect);
+        self.handle_hovered_files(ui, screen_rect);
         self.handle_dropped_files(ui, screen_rect);
         #[cfg(feature = "semantic-search")]
         self.handle_search_shortcut(ui.ctx());
@@ -2562,6 +2619,7 @@ mod tests {
             status: String::new(),
             perf_log: None,
             next_import_queue_id: 1,
+            hover_preview_dimensions: std::collections::HashMap::new(),
             #[cfg(debug_assertions)]
             verification_mode: None,
             #[cfg(debug_assertions)]

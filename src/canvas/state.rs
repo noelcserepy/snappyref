@@ -36,6 +36,7 @@ pub(super) struct CanvasInteractionState {
     pub pending_crop: Option<CanvasCropRequest>,
     pub pending_annotation: Option<PendingAnnotation>,
     pub import_placeholders: Vec<ImportPlaceholder>,
+    pub hover_preview_placeholders: Vec<ImportPlaceholder>,
     pub last_pointer_screen_pos: Option<egui::Pos2>,
 }
 

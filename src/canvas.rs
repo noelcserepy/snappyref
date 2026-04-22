@@ -1721,6 +1721,34 @@ mod tests {
     }
 
     #[test]
+    fn hover_preview_placeholders_replace_and_clear_without_touching_queued_placeholders() {
+        let mut state = CanvasState::default();
+        state.add_import_placeholder(
+            1,
+            eframe::egui::pos2(0.0, 0.0),
+            eframe::egui::vec2(100.0, 80.0),
+            "queued".to_owned(),
+        );
+
+        state.set_hover_preview_placeholders(vec![
+            (eframe::egui::pos2(10.0, 10.0), eframe::egui::vec2(50.0, 50.0)),
+            (eframe::egui::pos2(70.0, 10.0), eframe::egui::vec2(50.0, 50.0)),
+        ]);
+        assert_eq!(state.hover_preview_placeholder_count(), 2);
+        assert_eq!(state.import_placeholder_count(), 1);
+
+        state.set_hover_preview_placeholders(vec![(
+            eframe::egui::pos2(20.0, 20.0),
+            eframe::egui::vec2(40.0, 40.0),
+        )]);
+        assert_eq!(state.hover_preview_placeholder_count(), 1);
+
+        state.clear_hover_preview_placeholders();
+        assert_eq!(state.hover_preview_placeholder_count(), 0);
+        assert_eq!(state.import_placeholder_count(), 1);
+    }
+
+    #[test]
     fn textbox_multiline_content_requires_more_than_min_height() {
         assert!(textbox_required_world_height(80.0, 1.0) > 56.0);
 
