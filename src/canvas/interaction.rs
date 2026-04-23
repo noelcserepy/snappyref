@@ -7,10 +7,10 @@ use super::geometry::{
 use super::render::textbox_pointer_region;
 use super::{
     ANNOTATION_HIT_RADIUS, AnnotationDraftState, AnnotationDragState, CanvasImage, CanvasState,
-    CropState, DragState, IMAGE_RESIZE_HIT_RADIUS, IMAGE_ROTATION_HANDLE_DISTANCE,
-    IMAGE_ROTATION_HANDLE_RADIUS, ImageResizeHandle, ImageTransformState, MAX_CANVAS_ZOOM,
-    MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation, TEXTBOX_DRAG_THRESHOLD_SCREEN,
-    TEXTBOX_RESIZE_HIT_RADIUS, TextboxPointerRegion, TextboxResizeHandle, TextboxTransformState,
+    CropState, DragState, IMAGE_RESIZE_HIT_RADIUS, ImageResizeHandle, ImageTransformState,
+    MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation,
+    TEXTBOX_DRAG_THRESHOLD_SCREEN, TEXTBOX_RESIZE_HIT_RADIUS, TextboxPointerRegion,
+    TextboxResizeHandle, TextboxTransformState,
 };
 use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasTextSize};
 
@@ -49,7 +49,12 @@ pub(super) fn handle_input(
         state.interaction.last_pointer_screen_pos = pointer_pos;
     }
 
-    if let Some(pointer_pos) = pointer_pos
+    if matches!(
+        state.interaction.image_transform_state,
+        Some(ImageTransformState::Rotating { .. })
+    ) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if let Some(pointer_pos) = pointer_pos
         && let Some(annotation_id) = state.single_selected_annotation_id()
         && let Some(annotation) = state.annotation_by_id(annotation_id).cloned()
         && annotation.kind == CanvasAnnotationKind::Textbox
@@ -68,14 +73,14 @@ pub(super) fn handle_input(
 
     if let Some(pointer_pos) = pointer_pos
         && let Some(image) = state.selected_single_image()
+        && hit_test_image_rotation_corner(state, rect, image, pointer_pos)
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    } else if let Some(pointer_pos) = pointer_pos
+        && let Some(image) = state.selected_single_image()
         && let Some(handle) = hit_test_image_resize_handle(state, rect, image, pointer_pos)
     {
         ui.ctx().set_cursor_icon(image_resize_cursor_icon(handle));
-    } else if let Some(pointer_pos) = pointer_pos
-        && let Some(image) = state.selected_single_image()
-        && hit_test_image_rotation_handle(state, rect, image, pointer_pos)
-    {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
 
     if pointer_in_canvas_rect
@@ -110,7 +115,7 @@ pub(super) fn handle_input(
                 current_screen: pointer_pos,
             });
         } else if let Some(image) = state.selected_single_image()
-            && hit_test_image_rotation_handle(state, rect, image, pointer_pos)
+            && hit_test_image_rotation_corner(state, rect, image, pointer_pos)
         {
             begin_image_rotation(state, rect, image.record.item.id);
             return;
@@ -743,23 +748,6 @@ pub(super) fn image_screen_rect(
     image_screen_rect_for_record(&image.record, rect, state.pan, state.zoom, rect.center())
 }
 
-pub(super) fn image_rotation_handle_screen_pos(
-    state: &CanvasState,
-    rect: egui::Rect,
-    image: &CanvasImage,
-) -> egui::Pos2 {
-    let corners =
-        image_screen_corners_for_record(&image.record, state.pan, state.zoom, rect.center());
-    let top_center = egui::pos2(
-        (corners[0].x + corners[1].x) * 0.5,
-        (corners[0].y + corners[1].y) * 0.5,
-    );
-    let center =
-        image_screen_center_for_record(&image.record, state.pan, state.zoom, rect.center());
-    let direction = (top_center - center).normalized();
-    top_center + direction * IMAGE_ROTATION_HANDLE_DISTANCE
-}
-
 fn image_resize_handle_screen_pos(image_rect: egui::Rect, handle: ImageResizeHandle) -> egui::Pos2 {
     match handle {
         ImageResizeHandle::TopLeft => image_rect.left_top(),
@@ -769,14 +757,15 @@ fn image_resize_handle_screen_pos(image_rect: egui::Rect, handle: ImageResizeHan
     }
 }
 
-fn hit_test_image_rotation_handle(
+fn hit_test_image_rotation_corner(
     state: &CanvasState,
     rect: egui::Rect,
     image: &CanvasImage,
     pointer_pos: egui::Pos2,
 ) -> bool {
-    image_rotation_handle_screen_pos(state, rect, image).distance(pointer_pos)
-        <= IMAGE_ROTATION_HANDLE_RADIUS + 4.0
+    image_screen_corners_for_record(&image.record, state.pan, state.zoom, rect.center())
+        .into_iter()
+        .any(|corner| corner.distance(pointer_pos) <= IMAGE_RESIZE_HIT_RADIUS)
 }
 
 fn image_resize_cursor_icon(handle: ImageResizeHandle) -> egui::CursorIcon {

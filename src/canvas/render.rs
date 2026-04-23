@@ -5,24 +5,22 @@ use std::time::Instant;
 use eframe::egui;
 
 use super::geometry::{
-    clamped_crop_screen_rect, image_screen_center_for_record, image_screen_corners_for_record,
-    image_screen_rect_for_record,
+    clamped_crop_screen_rect, image_screen_corners_for_record, image_screen_rect_for_record,
 };
 use super::interaction::{
     annotation_screen_points, annotation_screen_rect, hit_test_textbox_resize_handle,
-    image_rotation_handle_screen_pos, image_screen_rect, normalized_textbox_rect,
-    pending_annotation_from_draft, textbox_screen_rect,
+    image_screen_rect, normalized_textbox_rect, pending_annotation_from_draft, textbox_screen_rect,
 };
 use super::{
     ANNOTATION_CULL_MARGIN_SCREEN, BACKGROUND_BASE_WORLD_STEP, BACKGROUND_MAX_LOD_LEVEL,
     BACKGROUND_MAX_SCREEN_STEP, BACKGROUND_MIN_LOD_LEVEL, BACKGROUND_MIN_SCREEN_STEP, CanvasImage,
     CanvasImageCacheTier, CanvasState, CanvasTexture, IMAGE_CULL_MARGIN_SCREEN,
-    IMAGE_DETAIL_PROMOTION_THRESHOLD, IMAGE_ROTATION_HANDLE_RADIUS, ImagePassBatch,
-    ImagePassCallback, ImagePassInstance, ImagePassMetrics, MIN_CANVAS_ZOOM,
-    MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation, TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP,
-    TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
-    TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH,
-    TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH, TextboxLayoutCacheKey, TextboxPointerRegion,
+    IMAGE_DETAIL_PROMOTION_THRESHOLD, ImagePassBatch, ImagePassCallback, ImagePassInstance,
+    ImagePassMetrics, MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation,
+    TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP, TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
+    TEXTBOX_EDITOR_TOOLBAR_CLEARANCE, TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN,
+    TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH, TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH, TextboxLayoutCacheKey,
+    TextboxPointerRegion,
 };
 use crate::data::{
     CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
@@ -55,14 +53,6 @@ pub(super) fn paint_images(
         })
         .collect::<Vec<_>>();
     metrics.visible_images = visible_images.len();
-
-    for (_, image_rect) in &visible_images {
-        painter.rect_filled(
-            image_rect.expand(2.0),
-            0.0,
-            egui::Color32::from_rgba_premultiplied(0, 0, 0, 120),
-        );
-    }
 
     let animation_time = state
         .render
@@ -180,7 +170,6 @@ pub(super) fn paint_images(
         paint_image_overlay(painter, state, image, image_rect, debug_labels);
     }
 
-    paint_image_rotation_handle(painter, state, rect);
     if any_visible_animated {
         painter.ctx().request_repaint();
     }
@@ -311,24 +300,6 @@ fn paint_image_mesh(
     mesh.add_triangle(left_top, left_top + 1, left_top + 2);
     mesh.add_triangle(left_top, left_top + 2, left_top + 3);
     painter.add(egui::Shape::mesh(mesh));
-}
-
-fn paint_image_rotation_handle(painter: &egui::Painter, state: &CanvasState, rect: egui::Rect) {
-    let Some(image) = state.selected_single_image() else {
-        return;
-    };
-    let bounds = image_screen_rect(state, rect, image);
-    let center =
-        image_screen_center_for_record(&image.record, state.pan, state.zoom, rect.center());
-    let handle = image_rotation_handle_screen_pos(state, rect, image);
-    let top_center = egui::pos2(center.x, bounds.top());
-    painter.line_segment([top_center, handle], crate::theme::stroke_strong());
-    painter.circle_filled(handle, IMAGE_ROTATION_HANDLE_RADIUS, crate::theme::SURFACE);
-    painter.circle_stroke(
-        handle,
-        IMAGE_ROTATION_HANDLE_RADIUS,
-        crate::theme::stroke_strong(),
-    );
 }
 
 pub(super) fn canvas_texture_from_preview(
