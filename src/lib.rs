@@ -2,6 +2,7 @@ mod app;
 mod canvas;
 mod data;
 mod jobs;
+mod layout_snap;
 mod native_capture;
 mod native_drop;
 #[cfg(feature = "semantic-search")]

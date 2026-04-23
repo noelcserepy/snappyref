@@ -7,7 +7,7 @@ pub use import::{
     ExistingLoadDiagnostics, ExistingLoadPriority, ImportOrigin, ImportRequest, ImportResult,
     ImportTimings, ImportTrace, ImportWorker, ImportedPreviewTexture, LoadedCanvasItem,
     NativeTextureHandle, arrange_rect_with_existing_layout, arrange_rect_world,
-    best_arrangement_candidate_with_existing_layout, default_import_reference_span,
-    initial_import_scale, interactive_import_perf_report, sort_records_by_viewport_proximity,
-    startup_perf_report, startup_trace, worker_interactive_import_perf_report,
+    default_import_reference_span, initial_import_scale, interactive_import_perf_report,
+    sort_records_by_viewport_proximity, startup_perf_report, startup_trace,
+    worker_interactive_import_perf_report,
 };

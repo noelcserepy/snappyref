@@ -186,6 +186,7 @@ pub(super) fn handle_input(
                 pointer_start_world: pointer_world,
                 starting_items,
                 snap_preview_offset_world: None,
+                snap_preview_rect_world: None,
             });
             state.interaction.image_transform_state = None;
             state.interaction.textbox_transform_state = None;
@@ -364,6 +365,10 @@ pub(super) fn handle_input(
         let snap_offset = compute_drag_snap_preview(state, rect, &drag_state, world_delta);
         if let Some(active_drag_state) = &mut state.interaction.drag_state {
             active_drag_state.snap_preview_offset_world = snap_offset;
+            active_drag_state.snap_preview_rect_world = snap_offset.and_then(|offset| {
+                offset_layout_bounds(&active_drag_state.starting_items, world_delta)
+                    .map(|bounds| bounds.translate(offset))
+            });
         }
     }
 
@@ -867,27 +872,31 @@ fn compute_drag_snap_preview(
         return None;
     };
 
-    let candidate = crate::jobs::best_arrangement_candidate_with_existing_layout(
+    let max_snap_distance_world = IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN / state.zoom.max(0.01);
+    let candidate = crate::layout_snap::best_move_snap_candidate(
         &layout,
-        bounds.center(),
-        visible_world_rect(state, rect),
-        bounds.width(),
-        bounds.height(),
-        state.layout_gap,
+        &crate::layout_snap::MoveSnapRequest {
+            desired_rect: bounds,
+            drag_delta: world_delta,
+            previous_snapped_rect: drag_state.snap_preview_rect_world,
+            gap: state.layout_gap,
+            max_snap_distance: max_snap_distance_world,
+            hysteresis_distance: (IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN * 0.2) / state.zoom.max(0.01),
+        },
     );
     let Some(candidate) = candidate else {
         state.clear_move_preview_placeholders();
         return None;
     };
 
-    let candidate_screen = state.world_to_screen(candidate.center, rect);
+    let candidate_screen = state.world_to_screen(candidate.rect.center(), rect);
     let desired_screen = state.world_to_screen(bounds.center(), rect);
-    if candidate_screen.distance(desired_screen) > IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN {
+    if candidate_screen.distance(desired_screen) >= IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN {
         state.clear_move_preview_placeholders();
         return None;
     }
 
-    let snap_offset = candidate.center - bounds.center();
+    let snap_offset = candidate.rect.center() - bounds.center();
     let placeholders = drag_state
         .starting_items
         .iter()
@@ -918,32 +927,6 @@ fn offset_layout_bounds(items: &[SelectedLayoutItem], offset: egui::Vec2) -> Opt
         }
     }
     found.then_some(bounds)
-}
-
-fn visible_world_rect(state: &CanvasState, rect: egui::Rect) -> egui::Rect {
-    let corners = [
-        state.screen_to_world(rect.left_top(), rect),
-        state.screen_to_world(rect.right_top(), rect),
-        state.screen_to_world(rect.left_bottom(), rect),
-        state.screen_to_world(rect.right_bottom(), rect),
-    ];
-    let min_x = corners
-        .iter()
-        .map(|corner| corner.x)
-        .fold(f32::INFINITY, f32::min);
-    let max_x = corners
-        .iter()
-        .map(|corner| corner.x)
-        .fold(f32::NEG_INFINITY, f32::max);
-    let min_y = corners
-        .iter()
-        .map(|corner| corner.y)
-        .fold(f32::INFINITY, f32::min);
-    let max_y = corners
-        .iter()
-        .map(|corner| corner.y)
-        .fold(f32::NEG_INFINITY, f32::max);
-    egui::Rect::from_min_max(egui::pos2(min_x, min_y), egui::pos2(max_x, max_y))
 }
 
 fn zoom_around_pointer(
@@ -1240,7 +1223,7 @@ pub(super) fn pending_annotation_from_draft(
 
 #[cfg(test)]
 mod tests {
-    use super::{DragState, compute_drag_snap_preview};
+    use super::{DragState, compute_drag_snap_preview, offset_layout_bounds};
     use crate::canvas::CanvasState;
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
@@ -1262,6 +1245,7 @@ mod tests {
             pointer_start_world: egui::Pos2::ZERO,
             starting_items: canvas.selected_layout_items(),
             snap_preview_offset_world: None,
+            snap_preview_rect_world: None,
         };
 
         let snap_offset = compute_drag_snap_preview(
@@ -1292,6 +1276,7 @@ mod tests {
             pointer_start_world: egui::Pos2::ZERO,
             starting_items: canvas.selected_layout_items(),
             snap_preview_offset_world: None,
+            snap_preview_rect_world: None,
         };
 
         let snap_offset = compute_drag_snap_preview(
@@ -1330,6 +1315,7 @@ mod tests {
             pointer_start_world: egui::Pos2::ZERO,
             starting_items: canvas.selected_layout_items(),
             snap_preview_offset_world: None,
+            snap_preview_rect_world: None,
         };
 
         let snap_offset = compute_drag_snap_preview(
@@ -1342,6 +1328,42 @@ mod tests {
 
         assert_eq!(snap_offset, egui::vec2(84.0, 0.0));
         assert_eq!(canvas.move_preview_placeholder_count(), 1);
+    }
+
+    #[test]
+    fn drag_snap_preview_preserves_previous_world_rect_for_hysteresis() {
+        let ctx = egui::Context::default();
+        let mut canvas = CanvasState::default();
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 100);
+        add_test_image(&mut canvas, &ctx, 2, egui::pos2(120.0, 0.0), 100, 100);
+        add_test_image(&mut canvas, &ctx, 3, egui::pos2(0.0, 0.0), 100, 100);
+        canvas.select_items(&[3]);
+
+        let rect = test_screen_rect();
+        let mut drag_state = DragState {
+            pointer_start_world: egui::Pos2::ZERO,
+            starting_items: canvas.selected_layout_items(),
+            snap_preview_offset_world: None,
+            snap_preview_rect_world: None,
+        };
+
+        let first_delta = egui::vec2(0.0, 80.0);
+        let first_offset = compute_drag_snap_preview(&mut canvas, rect, &drag_state, first_delta)
+            .expect("expected initial snap preview");
+        let first_bounds =
+            offset_layout_bounds(&drag_state.starting_items, first_delta).expect("initial bounds");
+        let first_rect = first_bounds.translate(first_offset);
+        drag_state.snap_preview_offset_world = Some(first_offset);
+        drag_state.snap_preview_rect_world = Some(first_rect);
+
+        let second_delta = egui::vec2(3.0, 80.0);
+        let second_offset = compute_drag_snap_preview(&mut canvas, rect, &drag_state, second_delta)
+            .expect("expected hysteresis snap preview");
+        let second_bounds =
+            offset_layout_bounds(&drag_state.starting_items, second_delta).expect("second bounds");
+        let second_rect = second_bounds.translate(second_offset);
+
+        assert_eq!(second_rect.center(), first_rect.center());
     }
 
     fn add_test_image(

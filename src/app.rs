@@ -2148,33 +2148,41 @@ impl ReferenceApp {
         self.settings.import_gap = 24.0;
         self.canvas.set_layout_gap(self.settings.import_gap);
 
-        let anchor_result = self.seed_import_verification_image(
+        let left_result = self.seed_import_verification_image(
             ctx,
-            "verify-snap-anchor",
-            egui::pos2(-120.0, 0.0),
+            "verify-snap-left",
+            egui::pos2(-170.0, 150.0),
+            120,
             180,
-            140,
+            [126, 150, 255, 255],
+        );
+        let top_result = self.seed_import_verification_image(
+            ctx,
+            "verify-snap-top",
+            egui::pos2(10.0, -120.0),
+            220,
+            120,
             [188, 146, 255, 255],
         );
         let moving_result = self.seed_import_verification_image(
             ctx,
             "verify-snap-moving",
-            egui::pos2(132.0, 0.0),
+            egui::pos2(70.0, 36.0),
             180,
             140,
             [231, 94, 66, 255],
         );
 
-        match (anchor_result, moving_result) {
-            (Ok(_), Ok(item_id)) => {
+        match (left_result, top_result, moving_result) {
+            (Ok(_), Ok(_), Ok(item_id)) => {
                 self.canvas.select_items(&[item_id]);
                 self.canvas.set_move_preview_placeholders(vec![(
-                    egui::pos2(84.0, 0.0),
+                    egui::pos2(24.0, 34.0),
                     egui::vec2(180.0, 140.0),
                 )]);
                 self.status = "Added move snap debug preview".to_owned();
             }
-            (Err(error), _) | (_, Err(error)) => self.status = error,
+            (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => self.status = error,
         }
     }
 

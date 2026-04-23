@@ -222,6 +222,7 @@ struct DragState {
     pointer_start_world: egui::Pos2,
     starting_items: Vec<SelectedLayoutItem>,
     snap_preview_offset_world: Option<egui::Vec2>,
+    snap_preview_rect_world: Option<egui::Rect>,
 }
 
 #[derive(Clone)]
