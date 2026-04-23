@@ -20,7 +20,7 @@ use super::{
     PendingAnnotation, SelectedLayoutItem, TextboxLayoutCacheEntry, merge_ids,
 };
 use crate::data::{
-    BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, CanvasBackground,
+    BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationKind, CanvasBackground,
     CanvasImageCacheTier, CanvasTextSize, ViewportState,
 };
 use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
@@ -301,9 +301,49 @@ impl CanvasState {
             .retain(|placeholder| placeholder.queue_id != queue_id);
     }
 
+    pub fn import_placeholder_layout_items(&self) -> Vec<BoardLayoutItem> {
+        self.interaction
+            .import_placeholders
+            .iter()
+            .enumerate()
+            .map(|(index, placeholder)| BoardLayoutItem {
+                id: -((index as i64) + 1),
+                x: placeholder.center_world.x,
+                y: placeholder.center_world.y,
+                width: placeholder.size_world.x,
+                height: placeholder.size_world.y,
+            })
+            .collect()
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn import_placeholder_count(&self) -> usize {
         self.interaction.import_placeholders.len()
+    }
+
+    pub fn set_hover_preview_placeholders(&mut self, placeholders: Vec<(egui::Pos2, egui::Vec2)>) {
+        self.interaction.hover_preview_placeholders.clear();
+        self.interaction
+            .hover_preview_placeholders
+            .extend(
+                placeholders
+                    .into_iter()
+                    .map(|(center_world, size_world)| ImportPlaceholder {
+                        queue_id: 0,
+                        center_world,
+                        size_world,
+                        label: String::new(),
+                    }),
+            );
+    }
+
+    pub fn clear_hover_preview_placeholders(&mut self) {
+        self.interaction.hover_preview_placeholders.clear();
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn hover_preview_placeholder_count(&self) -> usize {
+        self.interaction.hover_preview_placeholders.len()
     }
 
     pub fn take_pending_image_tier_loads(&mut self) -> Vec<(i64, CanvasImageCacheTier)> {

@@ -1,6 +1,7 @@
 use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
@@ -21,6 +22,8 @@ pub struct Library {
     thumbs_dir: PathBuf,
     db_path: PathBuf,
 }
+
+static DESTINATION_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1311,9 +1314,10 @@ impl Library {
 
     fn destination_path(&self, source_name: &str, extension: &str) -> PathBuf {
         let timestamp = unix_timestamp_millis();
+        let sequence = DESTINATION_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
         let safe_name = sanitize_filename(source_name);
         self.originals_dir
-            .join(format!("{timestamp}-{safe_name}.{extension}"))
+            .join(format!("{timestamp}-{sequence}-{safe_name}.{extension}"))
     }
 }
 
@@ -1765,6 +1769,32 @@ mod tests {
             root.join("thumbs")
                 .join("asset-42-canvas-v3-downscale-working-2000.jpg")
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn clipboard_images_get_unique_destination_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "reference-clipboard-path-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library
+            .store_clipboard_image(&[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let second = library
+            .store_clipboard_image(&[0, 255, 0, 255], 1, 1)
+            .unwrap();
+
+        assert_ne!(first, second);
+        assert!(first.exists());
+        assert!(second.exists());
 
         let _ = fs::remove_dir_all(root);
     }

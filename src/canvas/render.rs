@@ -995,53 +995,103 @@ pub(super) fn paint_import_placeholders(
     rect: egui::Rect,
     state: &CanvasState,
 ) {
-    for placeholder in &state.interaction.import_placeholders {
+    const SHIMMER_PERIOD_SECS: f32 = 1.8;
+    const SHIMMER_PEAK_ALPHA: u8 = 40;
+    const SHIMMER_BAND_FRACTION: f32 = 0.35;
+    const SHIMMER_TILT_FRACTION: f32 = 0.25;
+
+    let cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
+    let time = painter.ctx().input(|i| i.time) as f32;
+    let phase = (time / SHIMMER_PERIOD_SECS).rem_euclid(1.0);
+    let mut any_visible = false;
+
+    for placeholder in state
+        .interaction
+        .import_placeholders
+        .iter()
+        .chain(state.interaction.hover_preview_placeholders.iter())
+    {
         let placeholder_rect = egui::Rect::from_center_size(
             state.world_to_screen(placeholder.center_world, rect),
             placeholder.size_world * state.zoom,
         );
-        let fill = egui::Color32::from_rgba_premultiplied(
-            crate::theme::SURFACE.r(),
-            crate::theme::SURFACE.g(),
-            crate::theme::SURFACE.b(),
-            144,
+        if !placeholder_rect.intersects(cull_rect) {
+            continue;
+        }
+        any_visible = true;
+
+        painter.rect_filled(
+            placeholder_rect.expand(2.0),
+            0.0,
+            egui::Color32::from_rgba_premultiplied(0, 0, 0, 120),
         );
-        let stripe = egui::Color32::from_rgba_premultiplied(
-            crate::theme::ACCENT.r(),
-            crate::theme::ACCENT.g(),
-            crate::theme::ACCENT.b(),
-            112,
-        );
-        painter.rect_filled(placeholder_rect, crate::theme::CONTROL_RADIUS, fill);
+        painter.rect_filled(placeholder_rect, 0.0, crate::theme::SURFACE_ELEVATED);
         painter.rect_stroke(
             placeholder_rect,
-            crate::theme::CONTROL_RADIUS,
-            egui::Stroke::new(1.5, crate::theme::ACCENT),
-            egui::StrokeKind::Outside,
+            0.0,
+            egui::Stroke::new(1.0, crate::theme::BORDER_STRONG),
+            egui::StrokeKind::Inside,
         );
 
-        let stripe_spacing = 18.0;
-        let mut x = placeholder_rect.left() - placeholder_rect.height();
-        while x < placeholder_rect.right() {
-            painter.line_segment(
-                [
-                    egui::pos2(x, placeholder_rect.top()),
-                    egui::pos2(x + placeholder_rect.height(), placeholder_rect.bottom()),
-                ],
-                egui::Stroke::new(1.0, stripe),
-            );
-            x += stripe_spacing;
+        if let Some(shimmer) = shimmer_mesh(
+            placeholder_rect,
+            phase,
+            SHIMMER_BAND_FRACTION,
+            SHIMMER_TILT_FRACTION,
+            SHIMMER_PEAK_ALPHA,
+        ) {
+            painter.with_clip_rect(placeholder_rect).add(shimmer);
         }
-
-        let label = format!("Importing {}", placeholder.label);
-        painter.text(
-            placeholder_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            label,
-            egui::FontId::proportional(14.0),
-            crate::theme::TEXT,
-        );
     }
+
+    if any_visible {
+        painter.ctx().request_repaint();
+    }
+}
+
+fn shimmer_mesh(
+    card_rect: egui::Rect,
+    phase: f32,
+    band_fraction: f32,
+    tilt_fraction: f32,
+    peak_alpha: u8,
+) -> Option<egui::epaint::Mesh> {
+    if card_rect.width() <= 1.0 || card_rect.height() <= 1.0 {
+        return None;
+    }
+    let band_width = (card_rect.width() * band_fraction).max(24.0);
+    let tilt = card_rect.height() * tilt_fraction;
+    let travel_start = card_rect.left() - band_width - tilt;
+    let travel_end = card_rect.right() + band_width;
+    let center_x = travel_start + phase * (travel_end - travel_start);
+    let half = band_width / 2.0;
+
+    let peak = egui::Color32::from_rgba_unmultiplied(255, 255, 255, peak_alpha);
+    let edge = egui::Color32::TRANSPARENT;
+
+    let mut mesh = egui::epaint::Mesh::default();
+    let mut push_vertex = |pos: egui::Pos2, color: egui::Color32| -> u32 {
+        let index = mesh.vertices.len() as u32;
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos,
+            uv: egui::epaint::WHITE_UV,
+            color,
+        });
+        index
+    };
+    let top = card_rect.top();
+    let bottom = card_rect.bottom();
+    let left_top = push_vertex(egui::pos2(center_x - half, top), edge);
+    let center_top = push_vertex(egui::pos2(center_x, top), peak);
+    let right_top = push_vertex(egui::pos2(center_x + half, top), edge);
+    let left_bot = push_vertex(egui::pos2(center_x - half - tilt, bottom), edge);
+    let center_bot = push_vertex(egui::pos2(center_x - tilt, bottom), peak);
+    let right_bot = push_vertex(egui::pos2(center_x + half - tilt, bottom), edge);
+    mesh.add_triangle(left_top, center_top, center_bot);
+    mesh.add_triangle(left_top, center_bot, left_bot);
+    mesh.add_triangle(center_top, right_top, right_bot);
+    mesh.add_triangle(center_top, right_bot, center_bot);
+    Some(mesh)
 }
 
 pub(super) fn image_paint_stats_for_records(
