@@ -3,6 +3,7 @@ mod canvas;
 mod data;
 mod jobs;
 mod native_capture;
+mod native_drop;
 #[cfg(feature = "semantic-search")]
 mod palette;
 mod perf;

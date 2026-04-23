@@ -42,12 +42,24 @@ pub struct DecodedAnimation {
 
 pub fn decode_image_file(path: &Path) -> Result<DecodedImage, String> {
     let bytes = std::fs::read(path).map_err(|error| format!("failed to open image: {error}"))?;
+    decode_image_bytes(&bytes, Some(path.display().to_string()), None)
+}
+
+pub fn decode_image_bytes(
+    bytes: &[u8],
+    source_label: Option<String>,
+    mime_hint: Option<&str>,
+) -> Result<DecodedImage, String> {
     let file_size = bytes.len() as u64;
-    let format = image::guess_format(&bytes)
-        .map_err(|error| format!("failed to determine image format: {error}"))?;
+    let format = guess_image_format(bytes, mime_hint)
+        .map_err(|error| format!("{}: {error}", source_label.as_deref().unwrap_or("image")))?;
 
     if !SUPPORTED_IMPORT_FORMATS.contains(&format) {
-        return Err(unsupported_format_error(path, Some(format)));
+        let source_path = source_label
+            .as_deref()
+            .map(Path::new)
+            .unwrap_or(Path::new("image"));
+        return Err(unsupported_format_error(source_path, Some(format)));
     }
 
     #[cfg(feature = "turbojpeg-native")]
@@ -68,6 +80,66 @@ pub fn decode_image_file(path: &Path) -> Result<DecodedImage, String> {
     };
 
     Ok(decoded)
+}
+
+fn guess_image_format(bytes: &[u8], mime_hint: Option<&str>) -> Result<ImageFormat, String> {
+    match image::guess_format(bytes) {
+        Ok(format) => Ok(format),
+        Err(primary_error) => {
+            if let Some(format) = mime_hint.and_then(image_format_from_mime_hint) {
+                Ok(format)
+            } else {
+                Err(format!("failed to determine image format: {primary_error}"))
+            }
+        }
+    }
+}
+
+pub fn image_format_extension(format: ImageFormat) -> &'static str {
+    match format {
+        ImageFormat::Avif => "avif",
+        ImageFormat::Bmp => "bmp",
+        ImageFormat::Dds => "dds",
+        ImageFormat::Farbfeld => "ff",
+        ImageFormat::Gif => "gif",
+        ImageFormat::Hdr => "hdr",
+        ImageFormat::Ico => "ico",
+        ImageFormat::Jpeg => "jpg",
+        ImageFormat::OpenExr => "exr",
+        ImageFormat::Png => "png",
+        ImageFormat::Pnm => "pnm",
+        ImageFormat::Qoi => "qoi",
+        ImageFormat::Tga => "tga",
+        ImageFormat::Tiff => "tiff",
+        ImageFormat::WebP => "webp",
+        _ => "img",
+    }
+}
+
+fn image_format_from_mime_hint(mime_hint: &str) -> Option<ImageFormat> {
+    let mime = mime_hint
+        .split(';')
+        .next()
+        .unwrap_or(mime_hint)
+        .trim()
+        .to_ascii_lowercase();
+    match mime.as_str() {
+        "image/avif" => Some(ImageFormat::Avif),
+        "image/bmp" => Some(ImageFormat::Bmp),
+        "image/gif" => Some(ImageFormat::Gif),
+        "image/vnd.microsoft.icon" | "image/x-icon" => Some(ImageFormat::Ico),
+        "image/jpeg" | "image/jpg" => Some(ImageFormat::Jpeg),
+        "image/exr" | "image/x-exr" => Some(ImageFormat::OpenExr),
+        "image/png" => Some(ImageFormat::Png),
+        "image/x-portable-anymap"
+        | "image/x-portable-bitmap"
+        | "image/x-portable-graymap"
+        | "image/x-portable-pixmap" => Some(ImageFormat::Pnm),
+        "image/tga" | "image/x-tga" => Some(ImageFormat::Tga),
+        "image/tiff" => Some(ImageFormat::Tiff),
+        "image/webp" => Some(ImageFormat::WebP),
+        _ => None,
+    }
 }
 
 pub struct PreviewImage {

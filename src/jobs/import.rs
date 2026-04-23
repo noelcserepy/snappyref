@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::fmt;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
@@ -12,12 +13,15 @@ use image::RgbaImage;
 
 use crate::data::{BoardItemWithAsset, BoardLayoutItem, CanvasImageCacheTier};
 use crate::jobs::image_formats::{
-    AnimatedPreview, PreviewImage, decode_image_file, preview_animation_from_frames,
-    preview_image_from_rgba,
+    AnimatedPreview, PreviewImage, decode_image_bytes, decode_image_file, image_format_extension,
+    preview_animation_from_frames, preview_image_from_rgba,
 };
 use crate::storage::Library;
 
 pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
+const URL_IMPORT_MAX_BYTES: u64 = 64 * 1024 * 1024;
+const URL_IMPORT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const URL_IMPORT_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 
 pub fn default_import_reference_span() -> f32 {
     DEFAULT_IMPORT_TARGET_CANVAS_AREA.sqrt()
@@ -31,6 +35,7 @@ pub enum ImportOrigin {
     Existing,
     Path,
     Clipboard,
+    Url,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +141,18 @@ pub enum ImportRequest {
         rgba: Vec<u8>,
         width: u32,
         height: u32,
+        desired_world: egui::Pos2,
+        reserved_world: Option<egui::Pos2>,
+        viewport_world: egui::Rect,
+        max_texture_side: usize,
+        canvas_image_settings: CanvasImageSettings,
+        auto_scale: bool,
+        import_gap: f32,
+        trace: Option<ImportTrace>,
+    },
+    ImportUrl {
+        queue_id: u64,
+        url: String,
         desired_world: egui::Pos2,
         reserved_world: Option<egui::Pos2>,
         viewport_world: egui::Rect,
@@ -460,6 +477,31 @@ impl ImportWorker {
                             trace,
                             worker_render_state.as_ref(),
                         ),
+                        ImportRequest::ImportUrl {
+                            queue_id,
+                            url,
+                            desired_world,
+                            reserved_world,
+                            viewport_world,
+                            max_texture_side,
+                            canvas_image_settings,
+                            auto_scale,
+                            import_gap,
+                            trace,
+                        } => import_url(
+                            &worker_library,
+                            queue_id,
+                            url,
+                            desired_world,
+                            reserved_world,
+                            viewport_world,
+                            max_texture_side,
+                            canvas_image_settings,
+                            auto_scale,
+                            import_gap,
+                            trace,
+                            worker_render_state.as_ref(),
+                        ),
                         ImportRequest::Crop {
                             request,
                             max_texture_side,
@@ -655,6 +697,7 @@ impl ImportRequest {
             ImportRequest::BackfillTier { .. } => ImportPriority::Background,
             ImportRequest::ImportPath { .. }
             | ImportRequest::ImportClipboard { .. }
+            | ImportRequest::ImportUrl { .. }
             | ImportRequest::Crop { .. } => ImportPriority::Interactive,
         }
     }
@@ -1134,6 +1177,44 @@ fn import_path(
     }
 }
 
+fn import_url(
+    library: &Library,
+    queue_id: u64,
+    url: String,
+    desired_world: egui::Pos2,
+    reserved_world: Option<egui::Pos2>,
+    viewport_world: egui::Rect,
+    max_texture_side: usize,
+    canvas_image_settings: CanvasImageSettings,
+    auto_scale: bool,
+    import_gap: f32,
+    trace: Option<ImportTrace>,
+    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
+) -> ImportResult {
+    match import_url_sync_traced(
+        library,
+        Some(queue_id),
+        &url,
+        desired_world,
+        reserved_world,
+        viewport_world,
+        max_texture_side,
+        canvas_image_settings,
+        auto_scale,
+        import_gap,
+        trace,
+        wgpu_render_state,
+    ) {
+        Ok(loaded) => ImportResult::Loaded(loaded),
+        Err(error) => ImportResult::Failed {
+            queue_id: Some(queue_id),
+            item_id: None,
+            context: url,
+            error,
+        },
+    }
+}
+
 fn import_clipboard(
     library: &Library,
     queue_id: u64,
@@ -1174,6 +1255,146 @@ fn import_clipboard(
             error,
         },
     }
+}
+
+struct DownloadedUrlImage {
+    url: url::Url,
+    bytes: Vec<u8>,
+    mime_type: Option<String>,
+}
+
+fn import_url_sync_traced(
+    library: &Library,
+    queue_id: Option<u64>,
+    url: &str,
+    desired_world: egui::Pos2,
+    reserved_world: Option<egui::Pos2>,
+    viewport_world: egui::Rect,
+    max_texture_side: usize,
+    canvas_image_settings: CanvasImageSettings,
+    auto_scale: bool,
+    import_gap: f32,
+    trace: Option<ImportTrace>,
+    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
+) -> Result<LoadedCanvasItem, String> {
+    let worker_started_at = Instant::now();
+    let mut trace = trace;
+    if let Some(trace) = &mut trace {
+        trace.timings.queue_wait = worker_started_at.saturating_duration_since(trace.queued_at);
+    }
+
+    let download_started_at = Instant::now();
+    let downloaded = download_remote_image(url)?;
+    if let Some(trace) = &mut trace {
+        trace.timings.decode_or_load = download_started_at.elapsed();
+    }
+
+    let source_label = downloaded.url.as_str().to_owned();
+    let decode_started_at = Instant::now();
+    let decoded = decode_image_bytes(
+        &downloaded.bytes,
+        Some(source_label.clone()),
+        downloaded.mime_type.as_deref(),
+    )?;
+    if let Some(trace) = &mut trace {
+        trace.timings.decode_or_load += decode_started_at.elapsed();
+    }
+
+    let initial_scale = initial_import_scale(decoded.width, decoded.height, auto_scale);
+    let arranged_world = if let Some(reserved_world) = reserved_world {
+        reserved_world
+    } else {
+        arrange_rect_world(
+            library,
+            desired_world,
+            viewport_world,
+            decoded.width as f32 * initial_scale.max(0.01),
+            decoded.height as f32 * initial_scale.max(0.01),
+            import_gap,
+        )?
+    };
+
+    let store_started_at = Instant::now();
+    let source_name = remote_image_source_name(&downloaded.url);
+    let extension = image_format_extension(decoded.format);
+    let stored_path = library.store_original_bytes(&source_name, extension, &downloaded.bytes)?;
+    let record = library.persist_imported_image(
+        &stored_path,
+        decoded.format.to_mime_type(),
+        decoded.width,
+        decoded.height,
+        downloaded.bytes.len() as u64,
+        arranged_world,
+        initial_scale,
+    )?;
+    let store_and_persist = store_started_at.elapsed();
+
+    let preview_started_at = Instant::now();
+    let canvas_source = canvas_source_image_from_rgba(
+        decoded.width,
+        decoded.height,
+        &decoded.rgba,
+        canvas_image_settings,
+    )?;
+    let _ = library.store_canvas_image_cache(
+        record.asset.id,
+        canvas_image_settings.mode,
+        canvas_image_settings.max_side,
+        &canvas_source.rgba,
+        canvas_source.width,
+        canvas_source.height,
+    );
+    let preview = preview_image_from_rgba(
+        canvas_source.width,
+        canvas_source.height,
+        &canvas_source.rgba,
+        max_texture_side,
+    )?;
+    let animated_preview = decoded
+        .animation
+        .as_ref()
+        .map(|animation| {
+            preview_animation_from_frames(
+                decoded.width,
+                decoded.height,
+                &animation.frames,
+                animated_preview_max_side(canvas_image_settings, max_texture_side),
+            )
+        })
+        .transpose()?;
+    let preview_texture = if animated_preview.is_some() {
+        ImportedPreviewTexture::Cpu
+    } else {
+        build_preview_texture(
+            wgpu_render_state,
+            &PreviewImage {
+                rgba: preview.rgba.clone(),
+                width: preview.width,
+                height: preview.height,
+            },
+        )?
+    };
+    let preview_prepare = preview_started_at.elapsed();
+
+    if let Some(trace) = &mut trace {
+        trace.timings.store_and_persist = store_and_persist;
+        trace.timings.preview_prepare = preview_prepare;
+        trace.timings.worker_total = worker_started_at.elapsed();
+    }
+
+    Ok(LoadedCanvasItem {
+        queue_id,
+        record,
+        preview_rgba: preview.rgba,
+        preview_width: preview.width,
+        preview_height: preview.height,
+        animated_preview,
+        preview_texture,
+        loaded_tier: CanvasImageCacheTier::Working,
+        existing_load_diagnostics: None,
+        origin: ImportOrigin::Url,
+        trace,
+    })
 }
 
 fn import_clipboard_sync_traced(
@@ -2123,6 +2344,11 @@ struct PlacementCandidate {
     generation_index: usize,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ArrangementCandidate {
+    pub center: egui::Pos2,
+}
+
 pub fn arrange_rect_world(
     library: &Library,
     desired_world: egui::Pos2,
@@ -2150,13 +2376,37 @@ pub fn arrange_rect_with_existing_layout(
     item_height: f32,
     import_gap: f32,
 ) -> egui::Pos2 {
+    if existing_items.is_empty() {
+        return desired_world;
+    }
+
+    best_arrangement_candidate_with_existing_layout(
+        existing_items,
+        desired_world,
+        viewport_world,
+        item_width,
+        item_height,
+        import_gap,
+    )
+    .map(|candidate| candidate.center)
+    .unwrap_or(desired_world)
+}
+
+pub fn best_arrangement_candidate_with_existing_layout(
+    existing_items: &[BoardLayoutItem],
+    desired_world: egui::Pos2,
+    viewport_world: egui::Rect,
+    item_width: f32,
+    item_height: f32,
+    import_gap: f32,
+) -> Option<ArrangementCandidate> {
     let new_rect = egui::Rect::from_center_size(
         desired_world,
         egui::vec2(item_width.max(0.0), item_height.max(0.0)),
     );
 
     if existing_items.is_empty() {
-        return desired_world;
+        return None;
     }
 
     let mut existing_rects = existing_items
@@ -2223,9 +2473,7 @@ pub fn arrange_rect_with_existing_layout(
         }
     }
 
-    best_candidate
-        .map(|(_, _, _, _, center)| center)
-        .unwrap_or(desired_world)
+    best_candidate.map(|(_, _, _, _, center)| ArrangementCandidate { center })
 }
 
 fn viewport_distance_score(candidate_center: egui::Pos2, viewport_world: egui::Rect) -> f32 {
@@ -2283,19 +2531,91 @@ fn occupied_bounds_squareness(existing_rects: &[LayoutRect], candidate_rect: egu
     width.max(height) / width.min(height)
 }
 
+fn download_remote_image(url: &str) -> Result<DownloadedUrlImage, String> {
+    let parsed = url::Url::parse(url).map_err(|error| format!("invalid image URL: {error}"))?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err("only http and https image URLs are supported".to_owned());
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(URL_IMPORT_CONNECT_TIMEOUT)
+        .timeout(URL_IMPORT_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|error| format!("failed to build HTTP client: {error}"))?;
+    let mut response = client
+        .get(parsed.clone())
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|error| format!("failed to download image: {error}"))?;
+
+    let content_length = response.content_length();
+    if let Some(content_length) = content_length
+        && content_length > URL_IMPORT_MAX_BYTES
+    {
+        return Err(format!(
+            "remote image is too large ({content_length} bytes > {URL_IMPORT_MAX_BYTES} byte limit)"
+        ));
+    }
+
+    let mime_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+
+    let mut bytes = Vec::new();
+    let limit = URL_IMPORT_MAX_BYTES + 1;
+    std::io::Read::take(&mut response, limit)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("failed to read downloaded image: {error}"))?;
+    if bytes.len() as u64 > URL_IMPORT_MAX_BYTES {
+        return Err(format!(
+            "remote image exceeded the {} byte download limit",
+            URL_IMPORT_MAX_BYTES
+        ));
+    }
+
+    Ok(DownloadedUrlImage {
+        url: parsed,
+        bytes,
+        mime_type,
+    })
+}
+
+fn remote_image_source_name(url: &url::Url) -> String {
+    let path_name = url
+        .path_segments()
+        .and_then(Iterator::last)
+        .and_then(|segment| {
+            segment
+                .rsplit_once('.')
+                .map(|(stem, _)| stem)
+                .or(Some(segment))
+        })
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_owned);
+
+    path_name.unwrap_or_else(|| {
+        let host = url.host_str().unwrap_or("remote-image").replace('.', "-");
+        format!("{host}-image")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         CanvasImageSettings, DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImportResult, ImportTimings,
         ImportTrace, ImportWorker, ImportWorkerConfig, ImportedPreviewTexture, arrange_rect_world,
-        build_preview_texture, crop_item, import_clipboard, import_path_sync, initial_import_scale,
-        load_existing, rects_overlap_with_gap,
+        build_preview_texture, crop_item, import_clipboard, import_path_sync,
+        import_url_sync_traced, initial_import_scale, load_existing, rects_overlap_with_gap,
     };
     use crate::data::CanvasImageCacheTier;
     use crate::storage::Library;
     use image::{ColorType, ImageFormat};
     use pollster::block_on;
     use std::fs;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, mpsc};
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -2629,6 +2949,61 @@ mod tests {
 
         assert_eq!(loaded.record.item.x, reserved_world.x);
         assert_eq!(loaded.record.item.y, reserved_world.y);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn url_import_downloads_and_persists_original_bytes() {
+        let root = temp_library_root("url-import");
+        fs::create_dir_all(&root).unwrap();
+        let library = Library::initialize(root.clone()).unwrap();
+        let png_bytes = solid_png_bytes(64, 48, [188, 146, 255, 255]);
+        let (url, server) = serve_bytes_once("/test-image.png", "image/png", png_bytes.clone());
+
+        let loaded = import_url_sync_traced(
+            &library,
+            Some(7),
+            &url,
+            eframe::egui::Pos2::ZERO,
+            None,
+            test_viewport_world(),
+            usize::MAX,
+            CanvasImageSettings::default(),
+            false,
+            crate::data::DEFAULT_IMPORT_GAP,
+            None,
+            None,
+        )
+        .unwrap();
+
+        server.join().unwrap();
+
+        assert_eq!(loaded.record.asset.mime_type, "image/png");
+        assert_eq!(loaded.record.asset.width, 64);
+        assert_eq!(loaded.record.asset.height, 48);
+        assert_eq!(
+            loaded
+                .record
+                .asset
+                .original_path
+                .extension()
+                .and_then(|value| value.to_str()),
+            Some("png")
+        );
+        assert!(
+            loaded
+                .record
+                .asset
+                .original_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name.ends_with("test-image.png"))
+        );
+        assert_eq!(
+            fs::read(&loaded.record.asset.original_path).unwrap(),
+            png_bytes
+        );
+
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3107,6 +3482,19 @@ mod tests {
         vec![255; width as usize * height as usize * 4]
     }
 
+    fn solid_png_bytes(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
+        let rgba = vec![color; (width * height) as usize]
+            .into_iter()
+            .flat_map(|pixel| pixel)
+            .collect::<Vec<_>>();
+        let image = image::RgbaImage::from_raw(width, height, rgba).unwrap();
+        let mut bytes = Vec::new();
+        image
+            .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Png)
+            .unwrap();
+        bytes
+    }
+
     fn displayed_area(loaded: &super::LoadedCanvasItem) -> f32 {
         loaded.record.asset.width as f32
             * loaded.record.asset.height as f32
@@ -3164,5 +3552,34 @@ mod tests {
             eframe::egui_wgpu::RendererOptions::default(),
         ))
         .ok()
+    }
+
+    fn serve_bytes_once(
+        path: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let path = path.to_owned();
+        let request_path = path.clone();
+        let content_type = content_type.to_owned();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let bytes_read = stream.read(&mut request).unwrap();
+            let request_text = String::from_utf8_lossy(&request[..bytes_read]);
+            assert!(request_text.starts_with(&format!("GET {request_path} ")));
+
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: {}\r\nConnection: close\r\n\r\n",
+                body.len(),
+                content_type
+            );
+            stream.write_all(headers.as_bytes()).unwrap();
+            stream.write_all(&body).unwrap();
+            stream.flush().unwrap();
+        });
+        (format!("http://{address}{path}"), handle)
     }
 }

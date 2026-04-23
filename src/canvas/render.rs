@@ -1265,6 +1265,7 @@ pub(super) fn paint_import_placeholders(
         .import_placeholders
         .iter()
         .chain(state.interaction.hover_preview_placeholders.iter())
+        .chain(state.interaction.move_preview_placeholders.iter())
     {
         let placeholder_rect = egui::Rect::from_center_size(
             state.world_to_screen(placeholder.center_world, rect),

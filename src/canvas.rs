@@ -26,6 +26,7 @@ const MIN_IMAGE_WORLD_SIZE: f32 = 24.0;
 const IMAGE_CULL_MARGIN_SCREEN: f32 = 128.0;
 const ANNOTATION_CULL_MARGIN_SCREEN: f32 = 128.0;
 const IMAGE_RESIZE_HIT_RADIUS: f32 = 14.0;
+const IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN: f32 = 96.0;
 const MIN_TEXTBOX_WORLD_SIZE: egui::Vec2 = egui::vec2(240.0, 56.0);
 const TEXTBOX_RESIZE_HIT_RADIUS: f32 = 14.0;
 const TEXTBOX_DRAG_THRESHOLD_SCREEN: f32 = 4.0;
@@ -48,6 +49,7 @@ pub struct CanvasState {
     pan: egui::Vec2,
     zoom: f32,
     background: CanvasBackground,
+    layout_gap: f32,
     rotation_snap_degrees: f32,
     document: CanvasDocumentState,
     interaction: CanvasInteractionState,
@@ -215,9 +217,11 @@ struct SelectedLayoutItem {
     height: f32,
 }
 
+#[derive(Clone)]
 struct DragState {
     pointer_start_world: egui::Pos2,
-    starting_positions: Vec<(i64, egui::Pos2)>,
+    starting_items: Vec<SelectedLayoutItem>,
+    snap_preview_offset_world: Option<egui::Vec2>,
 }
 
 #[derive(Clone)]
@@ -378,6 +382,7 @@ impl Default for CanvasState {
             pan: egui::Vec2::ZERO,
             zoom: 1.0,
             background: CanvasBackground::default(),
+            layout_gap: crate::data::DEFAULT_IMPORT_GAP,
             rotation_snap_degrees: crate::data::DEFAULT_ROTATION_SNAP_DEGREES,
             document: CanvasDocumentState::default(),
             interaction: CanvasInteractionState::default(),

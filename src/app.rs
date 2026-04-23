@@ -35,6 +35,12 @@ enum SupportedShortcutAction {
     AverageSelectionArea,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum ExternalImportSource {
+    Path(std::path::PathBuf),
+    Url(String),
+}
+
 #[derive(Clone, Copy)]
 struct ShortcutBinding {
     key: egui::Key,
@@ -270,6 +276,7 @@ enum VerificationMode {
     EditTextbox,
     RotateImage,
     AnimatedGif,
+    MoveSnapPreview,
     ImportPlaceholders,
     ImportLoaded,
 }
@@ -346,6 +353,11 @@ impl AppConfig {
                 #[cfg(debug_assertions)]
                 {
                     verification_mode = Some(VerificationMode::AnimatedGif);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-move-snap" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::MoveSnapPreview);
                 }
             } else if cfg!(debug_assertions) && argument == "--verify-import-placeholders" {
                 #[cfg(debug_assertions)]
@@ -456,6 +468,14 @@ impl AppConfig {
     }
 
     #[cfg(debug_assertions)]
+    fn verify_move_snap_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(VerificationMode::MoveSnapPreview)
+        )
+    }
+
+    #[cfg(debug_assertions)]
     fn verify_import_placeholders_on_start(&self) -> bool {
         matches!(
             self.verification_mode,
@@ -469,8 +489,29 @@ impl AppConfig {
     }
 
     #[cfg(debug_assertions)]
+    fn skip_existing_items_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(
+                VerificationMode::DrawArrow
+                    | VerificationMode::EditTextbox
+                    | VerificationMode::RotateImage
+                    | VerificationMode::AnimatedGif
+                    | VerificationMode::MoveSnapPreview
+                    | VerificationMode::ImportPlaceholders
+                    | VerificationMode::ImportLoaded
+            )
+        )
+    }
+
+    #[cfg(debug_assertions)]
     fn verification_search_query(&self) -> Option<&str> {
         self.verification_search_query.as_deref()
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn skip_existing_items_on_start(&self) -> bool {
+        false
     }
 
     #[cfg(debug_assertions)]
@@ -570,6 +611,7 @@ pub struct ReferenceApp {
 
 impl ReferenceApp {
     pub fn new(cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
+        crate::native_drop::install_url_drop_bridge();
         let library_root = std::env::current_dir()
             .unwrap_or_else(|_| std::path::PathBuf::from("."))
             .join("library");
@@ -631,7 +673,9 @@ impl ReferenceApp {
                 app.load_user_session();
                 #[cfg(feature = "semantic-search")]
                 app.sync_semantic_search_service();
-                app.enqueue_existing_items();
+                if !config.skip_existing_items_on_start() {
+                    app.enqueue_existing_items();
+                }
                 #[cfg(debug_assertions)]
                 if config.draw_arrow_on_start() {
                     app.canvas
@@ -681,6 +725,10 @@ impl ReferenceApp {
                 #[cfg(debug_assertions)]
                 if config.verify_gif_on_start() {
                     app.seed_gif_verification(&cc.egui_ctx);
+                }
+                #[cfg(debug_assertions)]
+                if config.verify_move_snap_on_start() {
+                    app.seed_move_snap_verification(&cc.egui_ctx);
                 }
                 #[cfg(debug_assertions)]
                 if config.verify_import_placeholders_on_start() {
@@ -835,6 +883,7 @@ impl ReferenceApp {
                 self.settings = session.settings;
                 self.canvas
                     .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
+                self.canvas.set_layout_gap(self.settings.import_gap);
             }
             Err(error) => self.status = error,
         }
@@ -921,22 +970,115 @@ impl ReferenceApp {
         reserved_world
     }
 
-    fn handle_hovered_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
-        let hovered_paths: Vec<std::path::PathBuf> = ui.input(|input| {
-            input
-                .raw
-                .hovered_files
-                .iter()
-                .filter_map(|file| file.path.clone())
-                .collect()
-        });
+    fn normalize_import_url(raw: &str) -> Option<String> {
+        let parsed = url::Url::parse(raw.trim()).ok()?;
+        ((parsed.scheme() == "http") || (parsed.scheme() == "https")).then(|| parsed.to_string())
+    }
 
-        if hovered_paths.is_empty() {
+    fn import_source_label(source: &ExternalImportSource) -> String {
+        match source {
+            ExternalImportSource::Path(path) => path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("image")
+                .to_owned(),
+            ExternalImportSource::Url(url) => {
+                let parsed = url::Url::parse(url).ok();
+                parsed
+                    .as_ref()
+                    .and_then(|parsed| {
+                        parsed
+                            .path_segments()
+                            .and_then(Iterator::last)
+                            .filter(|segment| !segment.is_empty())
+                            .map(str::to_owned)
+                    })
+                    .or_else(|| {
+                        parsed
+                            .as_ref()
+                            .and_then(|parsed| parsed.host_str())
+                            .map(str::to_owned)
+                    })
+                    .unwrap_or_else(|| "image-url".to_owned())
+            }
+        }
+    }
+
+    fn hovered_import_sources(&mut self, ui: &egui::Ui) -> Vec<ExternalImportSource> {
+        let hovered_files = ui.input(|input| input.raw.hovered_files.clone());
+        let mut sources = Vec::new();
+        let mut seen_paths = std::collections::HashSet::new();
+        let mut seen_urls = std::collections::HashSet::new();
+
+        for file in hovered_files {
+            if let Some(path) = file.path {
+                let path_text = path.to_string_lossy();
+                if let Some(url) = Self::normalize_import_url(&path_text) {
+                    if seen_urls.insert(url.clone()) {
+                        sources.push(ExternalImportSource::Url(url));
+                    }
+                } else if seen_paths.insert(path.clone()) {
+                    sources.push(ExternalImportSource::Path(path));
+                }
+            }
+        }
+
+        for url in crate::native_drop::hovered_url_strings() {
+            if seen_urls.insert(url.clone()) {
+                sources.push(ExternalImportSource::Url(url));
+            }
+        }
+
+        sources
+    }
+
+    fn dropped_import_sources(&mut self, ui: &egui::Ui) -> Vec<ExternalImportSource> {
+        let dropped_files = ui.input(|input| input.raw.dropped_files.clone());
+        let mut sources = Vec::new();
+        let mut seen_paths = std::collections::HashSet::new();
+        let mut seen_urls = std::collections::HashSet::new();
+
+        for file in dropped_files {
+            if let Some(path) = file.path {
+                let path_text = path.to_string_lossy();
+                if let Some(url) = Self::normalize_import_url(&path_text) {
+                    if seen_urls.insert(url.clone()) {
+                        sources.push(ExternalImportSource::Url(url));
+                    }
+                } else if seen_paths.insert(path.clone()) {
+                    sources.push(ExternalImportSource::Path(path));
+                }
+            } else if let Some(url) = Self::normalize_import_url(&file.name) {
+                if seen_urls.insert(url.clone()) {
+                    sources.push(ExternalImportSource::Url(url));
+                }
+            }
+        }
+
+        for url in crate::native_drop::take_dropped_url_strings() {
+            if seen_urls.insert(url.clone()) {
+                sources.push(ExternalImportSource::Url(url));
+            }
+        }
+
+        sources
+    }
+
+    fn handle_hovered_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
+        let hovered_sources = self.hovered_import_sources(ui);
+        if hovered_sources.is_empty() {
             self.canvas.clear_hover_preview_placeholders();
             self.hover_preview_dimensions.clear();
             return;
         }
 
+        let hovered_paths = hovered_sources
+            .iter()
+            .filter_map(|source| match source {
+                ExternalImportSource::Path(path) => Some(path.clone()),
+                ExternalImportSource::Url(_) => None,
+            })
+            .collect::<Vec<_>>();
         self.hover_preview_dimensions
             .retain(|path, _| hovered_paths.contains(path));
 
@@ -950,13 +1092,18 @@ impl ReferenceApp {
         const FALLBACK_WIDTH: u32 = 360;
         const FALLBACK_HEIGHT: u32 = 240;
 
-        let mut previews = Vec::with_capacity(hovered_paths.len());
-        for path in hovered_paths {
-            let dimensions = self
-                .hover_preview_dimensions
-                .entry(path.clone())
-                .or_insert_with(|| image::image_dimensions(&path).ok());
-            let (width, height) = dimensions.unwrap_or((FALLBACK_WIDTH, FALLBACK_HEIGHT));
+        let mut previews = Vec::with_capacity(hovered_sources.len());
+        for source in hovered_sources {
+            let (width, height) = match &source {
+                ExternalImportSource::Path(path) => {
+                    let dimensions = self
+                        .hover_preview_dimensions
+                        .entry(path.clone())
+                        .or_insert_with(|| image::image_dimensions(path).ok());
+                    dimensions.unwrap_or((FALLBACK_WIDTH, FALLBACK_HEIGHT))
+                }
+                ExternalImportSource::Url(_) => (FALLBACK_WIDTH, FALLBACK_HEIGHT),
+            };
             let reserved_world = self.reserve_import_world(
                 &mut layout,
                 width,
@@ -978,8 +1125,8 @@ impl ReferenceApp {
             return;
         }
 
-        let dropped_files = ui.input(|input| input.raw.dropped_files.clone());
-        if dropped_files.is_empty() {
+        let dropped_sources = self.dropped_import_sources(ui);
+        if dropped_sources.is_empty() {
             return;
         }
 
@@ -993,19 +1140,16 @@ impl ReferenceApp {
             }
         };
 
-        for dropped_file in dropped_files {
-            let Some(source_path) = dropped_file.path else {
-                continue;
-            };
+        const FALLBACK_WIDTH: u32 = 360;
+        const FALLBACK_HEIGHT: u32 = 240;
 
-            let source_path_for_status = source_path.clone();
+        for source in dropped_sources {
             let queue_id = self.next_import_queue_id();
-            let label = source_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("image")
-                .to_owned();
-            let dimensions = image::image_dimensions(&source_path).ok();
+            let label = Self::import_source_label(&source);
+            let dimensions = match &source {
+                ExternalImportSource::Path(path) => image::image_dimensions(path).ok(),
+                ExternalImportSource::Url(_) => Some((FALLBACK_WIDTH, FALLBACK_HEIGHT)),
+            };
             let reserved_world = dimensions.map(|(width, height)| {
                 let reserved_world = self.reserve_import_world(
                     &mut layout,
@@ -1024,11 +1168,8 @@ impl ReferenceApp {
                 reserved_world
             });
 
-            if let Err(error) = self
-                .import_worker
-                .as_ref()
-                .expect("checked import worker")
-                .enqueue(crate::jobs::ImportRequest::ImportPath {
+            let request = match &source {
+                ExternalImportSource::Path(source_path) => crate::jobs::ImportRequest::ImportPath {
                     queue_id,
                     source_path: source_path.clone(),
                     desired_world,
@@ -1045,14 +1186,44 @@ impl ReferenceApp {
                         queued_at: Instant::now(),
                         timings: crate::jobs::ImportTimings::default(),
                     }),
-                })
+                },
+                ExternalImportSource::Url(url) => crate::jobs::ImportRequest::ImportUrl {
+                    queue_id,
+                    url: url.clone(),
+                    desired_world,
+                    reserved_world,
+                    viewport_world,
+                    max_texture_side: self.max_texture_side,
+                    canvas_image_settings: crate::jobs::CanvasImageSettings {
+                        mode: self.settings.canvas_image_mode,
+                        max_side: self.settings.canvas_image_max_side,
+                    },
+                    auto_scale: self.settings.auto_image_scaling,
+                    import_gap: self.settings.import_gap,
+                    trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
+                        queued_at: Instant::now(),
+                        timings: crate::jobs::ImportTimings::default(),
+                    }),
+                },
+            };
+
+            if let Err(error) = self
+                .import_worker
+                .as_ref()
+                .expect("checked import worker")
+                .enqueue(request)
             {
                 self.canvas.remove_import_placeholder(queue_id);
                 self.status = error;
                 continue;
             }
 
-            self.status = format!("Queued import: {}", source_path_for_status.display());
+            self.status = match &source {
+                ExternalImportSource::Path(path) => {
+                    format!("Queued import: {}", path.display())
+                }
+                ExternalImportSource::Url(url) => format!("Queued URL import: {url}"),
+            };
         }
     }
 
@@ -1068,6 +1239,10 @@ impl ReferenceApp {
         };
 
         if self.handle_internal_clipboard_paste(ctx, screen_rect, &paste_text) {
+            return;
+        }
+
+        if self.handle_clipboard_url_import(ctx, screen_rect, &paste_text) {
             return;
         }
 
@@ -1145,6 +1320,71 @@ impl ReferenceApp {
         }
 
         self.status = "Queued clipboard image".to_owned();
+    }
+
+    fn handle_clipboard_url_import(
+        &mut self,
+        ctx: &egui::Context,
+        screen_rect: egui::Rect,
+        paste_text: &str,
+    ) -> bool {
+        if self.import_worker.is_none() {
+            return false;
+        }
+        let Some(url) = Self::normalize_import_url(paste_text) else {
+            return false;
+        };
+
+        let desired_world = self.preferred_import_world(ctx, screen_rect);
+        let viewport_world = self.import_viewport_world_rect(screen_rect);
+        let queue_id = self.next_import_queue_id();
+        let mut layout = match self.import_layout_snapshot() {
+            Ok(layout) => layout,
+            Err(error) => {
+                self.status = error;
+                return true;
+            }
+        };
+        let reserved_world =
+            self.reserve_import_world(&mut layout, 360, 240, desired_world, viewport_world);
+        self.queue_import_placeholder(
+            queue_id,
+            Self::import_source_label(&ExternalImportSource::Url(url.clone())),
+            reserved_world,
+            360,
+            240,
+        );
+
+        if let Err(error) = self
+            .import_worker
+            .as_ref()
+            .expect("checked import worker")
+            .enqueue(crate::jobs::ImportRequest::ImportUrl {
+                queue_id,
+                url: url.clone(),
+                desired_world,
+                reserved_world: Some(reserved_world),
+                viewport_world,
+                max_texture_side: self.max_texture_side,
+                canvas_image_settings: crate::jobs::CanvasImageSettings {
+                    mode: self.settings.canvas_image_mode,
+                    max_side: self.settings.canvas_image_max_side,
+                },
+                auto_scale: self.settings.auto_image_scaling,
+                import_gap: self.settings.import_gap,
+                trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
+                    queued_at: Instant::now(),
+                    timings: crate::jobs::ImportTimings::default(),
+                }),
+            })
+        {
+            self.canvas.remove_import_placeholder(queue_id);
+            self.status = error;
+            return true;
+        }
+
+        self.status = format!("Queued URL import: {url}");
+        true
     }
 
     fn handle_clipboard_copy(&mut self, ctx: &egui::Context) {
@@ -1764,13 +2004,31 @@ impl ReferenceApp {
         &mut self,
         ctx: &egui::Context,
     ) -> Result<i64, String> {
+        self.seed_import_verification_image(
+            ctx,
+            "verify-existing",
+            egui::pos2(0.0, 0.0),
+            180,
+            140,
+            [188, 146, 255, 255],
+        )
+    }
+
+    #[cfg(debug_assertions)]
+    fn seed_import_verification_image(
+        &mut self,
+        ctx: &egui::Context,
+        source_name: &str,
+        center_world: egui::Pos2,
+        width: u32,
+        height: u32,
+        color: [u8; 4],
+    ) -> Result<i64, String> {
         let Some(library) = &self.library else {
             return Err("Library unavailable".to_owned());
         };
-        let width = 180_u32;
-        let height = 140_u32;
-        let rgba = Self::solid_rgba(width, height, [188, 146, 255, 255]);
-        let stored_path = library.store_rgba_image("verify-existing", &rgba, width, height)?;
+        let rgba = Self::solid_rgba(width, height, color);
+        let stored_path = library.store_rgba_image(source_name, &rgba, width, height)?;
         let file_size = std::fs::metadata(&stored_path)
             .map_err(|error| format!("failed to read debug image metadata: {error}"))?
             .len();
@@ -1780,7 +2038,7 @@ impl ReferenceApp {
             width,
             height,
             file_size,
-            egui::Pos2::ZERO,
+            center_world,
             1.0,
         )?;
         let item_id = record.item.id;
@@ -1880,6 +2138,44 @@ impl ReferenceApp {
         self.canvas.select_items(&[-40]);
         self.canvas.set_animation_time_override_seconds(Some(0.13));
         self.status = "Added animated GIF debug image".to_owned();
+    }
+
+    #[cfg(debug_assertions)]
+    fn seed_move_snap_verification(&mut self, ctx: &egui::Context) {
+        self.canvas
+            .apply_viewport_state(&crate::data::ViewportState::default());
+        self.canvas.clear_scene_for_verification();
+        self.settings.import_gap = 24.0;
+        self.canvas.set_layout_gap(self.settings.import_gap);
+
+        let anchor_result = self.seed_import_verification_image(
+            ctx,
+            "verify-snap-anchor",
+            egui::pos2(-120.0, 0.0),
+            180,
+            140,
+            [188, 146, 255, 255],
+        );
+        let moving_result = self.seed_import_verification_image(
+            ctx,
+            "verify-snap-moving",
+            egui::pos2(132.0, 0.0),
+            180,
+            140,
+            [231, 94, 66, 255],
+        );
+
+        match (anchor_result, moving_result) {
+            (Ok(_), Ok(item_id)) => {
+                self.canvas.select_items(&[item_id]);
+                self.canvas.set_move_preview_placeholders(vec![(
+                    egui::pos2(84.0, 0.0),
+                    egui::vec2(180.0, 140.0),
+                )]);
+                self.status = "Added move snap debug preview".to_owned();
+            }
+            (Err(error), _) | (_, Err(error)) => self.status = error,
+        }
     }
 
     #[cfg(debug_assertions)]
@@ -2200,6 +2496,11 @@ impl ReferenceApp {
                     eprintln!("[perf] dropped_file_import{}", format_trace(trace));
                 }
             }
+            crate::jobs::ImportOrigin::Url => {
+                if let Some(trace) = trace {
+                    eprintln!("[perf] url_import{}", format_trace(trace));
+                }
+            }
         }
     }
 }
@@ -2262,6 +2563,7 @@ impl eframe::App for ReferenceApp {
         }
         self.canvas
             .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
+        self.canvas.set_layout_gap(self.settings.import_gap);
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         self.frame_perf.canvas = crate::canvas::show(
             ui,
@@ -2722,6 +3024,39 @@ mod tests {
         );
 
         assert_eq!(reserved, egui::pos2(100.0 + app.settings.import_gap, 0.0));
+    }
+
+    #[test]
+    fn normalize_import_url_accepts_http_and_https_only() {
+        assert_eq!(
+            ReferenceApp::normalize_import_url(" https://example.com/cat.png?size=large "),
+            Some("https://example.com/cat.png?size=large".to_owned())
+        );
+        assert_eq!(
+            ReferenceApp::normalize_import_url("http://example.com/dog.gif"),
+            Some("http://example.com/dog.gif".to_owned())
+        );
+        assert_eq!(
+            ReferenceApp::normalize_import_url("file:///tmp/cat.png"),
+            None
+        );
+        assert_eq!(ReferenceApp::normalize_import_url("not a url"), None);
+    }
+
+    #[test]
+    fn import_source_label_prefers_url_path_basename_then_host() {
+        assert_eq!(
+            ReferenceApp::import_source_label(&super::ExternalImportSource::Url(
+                "https://images.example.com/path/cat.gif?size=large".to_owned()
+            )),
+            "cat.gif"
+        );
+        assert_eq!(
+            ReferenceApp::import_source_label(&super::ExternalImportSource::Url(
+                "https://images.example.com".to_owned()
+            )),
+            "images.example.com"
+        );
     }
 
     fn test_app(library: Option<Library>) -> ReferenceApp {

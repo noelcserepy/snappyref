@@ -147,6 +147,18 @@ impl Library {
         Ok(destination)
     }
 
+    pub fn store_original_bytes(
+        &self,
+        source_name: &str,
+        extension: &str,
+        bytes: &[u8],
+    ) -> Result<PathBuf, String> {
+        let destination = self.destination_path(source_name, extension);
+        fs::write(&destination, bytes)
+            .map_err(|error| format!("failed to write original bytes: {error}"))?;
+        Ok(destination)
+    }
+
     pub fn store_clipboard_image(
         &self,
         rgba: &[u8],

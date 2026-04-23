@@ -183,6 +183,10 @@ impl CanvasState {
         self.rotation_snap_degrees = degrees.max(0.0);
     }
 
+    pub fn set_layout_gap(&mut self, gap: f32) {
+        self.layout_gap = gap.max(0.0);
+    }
+
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn set_animation_time_override_seconds(&mut self, seconds: Option<f32>) {
         self.render.animation_time_override_seconds = seconds;
@@ -233,6 +237,16 @@ impl CanvasState {
 
     pub fn set_background(&mut self, background: CanvasBackground) {
         self.background = background;
+    }
+
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn clear_scene_for_verification(&mut self) {
+        self.document = super::state::CanvasDocumentState::default();
+        self.interaction = super::state::CanvasInteractionState::default();
+        self.render.asset_rgba_cache.clear();
+        self.render.textbox_layout_cache.clear();
+        self.render.pending_image_tier_loads.clear();
+        self.render.animation_time_override_seconds = None;
     }
 
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
@@ -375,6 +389,31 @@ impl CanvasState {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn hover_preview_placeholder_count(&self) -> usize {
         self.interaction.hover_preview_placeholders.len()
+    }
+
+    pub fn set_move_preview_placeholders(&mut self, placeholders: Vec<(egui::Pos2, egui::Vec2)>) {
+        self.interaction.move_preview_placeholders.clear();
+        self.interaction
+            .move_preview_placeholders
+            .extend(
+                placeholders
+                    .into_iter()
+                    .map(|(center_world, size_world)| ImportPlaceholder {
+                        queue_id: 0,
+                        center_world,
+                        size_world,
+                        label: String::new(),
+                    }),
+            );
+    }
+
+    pub fn clear_move_preview_placeholders(&mut self) {
+        self.interaction.move_preview_placeholders.clear();
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn move_preview_placeholder_count(&self) -> usize {
+        self.interaction.move_preview_placeholders.len()
     }
 
     pub fn take_pending_image_tier_loads(&mut self) -> Vec<(i64, CanvasImageCacheTier)> {
@@ -1117,6 +1156,39 @@ impl CanvasState {
                 height: image.record.asset.height as f32 * image.record.item.scale.max(0.01),
             })
             .collect()
+    }
+
+    pub fn board_snap_layout_items_excluding(
+        &self,
+        excluded_item_ids: &[i64],
+    ) -> Vec<BoardLayoutItem> {
+        let mut items = self
+            .document
+            .images
+            .iter()
+            .filter(|image| !excluded_item_ids.contains(&image.record.item.id))
+            .map(|image| BoardLayoutItem {
+                id: image.record.item.id,
+                x: image.record.item.x,
+                y: image.record.item.y,
+                width: image.record.asset.width as f32 * image.record.item.scale.max(0.01),
+                height: image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+            })
+            .collect::<Vec<_>>();
+        items.extend(self.document.annotations.iter().filter_map(|annotation| {
+            (annotation.kind == CanvasAnnotationKind::Textbox).then(|| {
+                let world_rect = textbox_world_rect(annotation);
+                BoardLayoutItem {
+                    id: -(annotation.id + 1),
+                    x: world_rect.center().x,
+                    y: world_rect.center().y,
+                    width: world_rect.width(),
+                    height: world_rect.height(),
+                }
+            })
+        }));
+        items.extend(self.import_placeholder_layout_items());
+        items
     }
 
     pub(super) fn apply_arrangement(
