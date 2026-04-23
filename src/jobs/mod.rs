@@ -1,6 +1,7 @@
 mod image_formats;
 mod import;
 
+pub use image_formats::{AnimatedPreview, AnimatedPreviewFrame};
 pub use import::{
     CanvasImageSettings, CroppedCanvasItem, DEFAULT_IMPORT_TARGET_CANVAS_AREA,
     ExistingLoadDiagnostics, ExistingLoadPriority, ImportOrigin, ImportRequest, ImportResult,

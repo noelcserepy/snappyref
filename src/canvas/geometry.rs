@@ -2,6 +2,49 @@ use eframe::egui;
 
 use super::PixelCropRect;
 
+pub(super) fn image_screen_center_for_record(
+    record: &crate::data::BoardItemWithAsset,
+    pan: egui::Vec2,
+    zoom: f32,
+    screen_center: egui::Pos2,
+) -> egui::Pos2 {
+    screen_center + pan + egui::vec2(record.item.x, record.item.y) * zoom
+}
+
+pub(super) fn image_screen_size_for_record(
+    record: &crate::data::BoardItemWithAsset,
+    zoom: f32,
+) -> egui::Vec2 {
+    egui::vec2(record.asset.width as f32, record.asset.height as f32)
+        * record.item.scale.max(0.01)
+        * zoom
+}
+
+pub(super) fn image_screen_corners_for_record(
+    record: &crate::data::BoardItemWithAsset,
+    pan: egui::Vec2,
+    zoom: f32,
+    screen_center: egui::Pos2,
+) -> [egui::Pos2; 4] {
+    let center = image_screen_center_for_record(record, pan, zoom, screen_center);
+    let half_size = image_screen_size_for_record(record, zoom) * 0.5;
+    let sin = record.item.rotation.sin();
+    let cos = record.item.rotation.cos();
+    let rotate = |offset: egui::Vec2| {
+        egui::vec2(
+            offset.x * cos - offset.y * sin,
+            offset.x * sin + offset.y * cos,
+        )
+    };
+
+    [
+        center + rotate(egui::vec2(-half_size.x, -half_size.y)),
+        center + rotate(egui::vec2(half_size.x, -half_size.y)),
+        center + rotate(egui::vec2(half_size.x, half_size.y)),
+        center + rotate(egui::vec2(-half_size.x, half_size.y)),
+    ]
+}
+
 pub(super) fn image_screen_rect_for_record(
     record: &crate::data::BoardItemWithAsset,
     rect: egui::Rect,
@@ -9,18 +52,36 @@ pub(super) fn image_screen_rect_for_record(
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> egui::Rect {
-    let center = screen_center + pan + egui::vec2(record.item.x, record.item.y) * zoom;
-    let size = egui::vec2(record.asset.width as f32, record.asset.height as f32)
-        * record.item.scale.max(0.01)
-        * zoom;
     let _ = rect;
-    egui::Rect::from_center_size(center, size)
+    image_screen_corners_for_record(record, pan, zoom, screen_center)
+        .into_iter()
+        .fold(egui::Rect::NOTHING, |mut bounds, corner| {
+            bounds.extend_with(corner);
+            bounds
+        })
 }
 
 pub(super) fn min_image_scale(asset: &crate::data::ImageAsset) -> f32 {
     let width_scale = super::MIN_IMAGE_WORLD_SIZE / asset.width.max(1) as f32;
     let height_scale = super::MIN_IMAGE_WORLD_SIZE / asset.height.max(1) as f32;
     width_scale.max(height_scale)
+}
+
+pub(super) fn image_contains_screen_point(
+    record: &crate::data::BoardItemWithAsset,
+    pointer_pos: egui::Pos2,
+    pan: egui::Vec2,
+    zoom: f32,
+    screen_center: egui::Pos2,
+) -> bool {
+    let center = image_screen_center_for_record(record, pan, zoom, screen_center);
+    let local = pointer_pos - center;
+    let sin = (-record.item.rotation).sin();
+    let cos = (-record.item.rotation).cos();
+    let unrotated = egui::vec2(local.x * cos - local.y * sin, local.x * sin + local.y * cos);
+    let half_size = image_screen_size_for_record(record, zoom) * 0.5;
+
+    unrotated.x.abs() <= half_size.x && unrotated.y.abs() <= half_size.y
 }
 
 pub(super) fn clamped_crop_screen_rect(

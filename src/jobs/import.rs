@@ -11,7 +11,10 @@ use eframe::egui;
 use image::RgbaImage;
 
 use crate::data::{BoardItemWithAsset, BoardLayoutItem, CanvasImageCacheTier};
-use crate::jobs::image_formats::{PreviewImage, decode_image_file, preview_image_from_rgba};
+use crate::jobs::image_formats::{
+    AnimatedPreview, PreviewImage, decode_image_file, preview_animation_from_frames,
+    preview_image_from_rgba,
+};
 use crate::storage::Library;
 
 pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
@@ -298,6 +301,7 @@ pub struct LoadedCanvasItem {
     pub preview_rgba: Vec<u8>,
     pub preview_width: u32,
     pub preview_height: u32,
+    pub animated_preview: Option<AnimatedPreview>,
     pub preview_texture: ImportedPreviewTexture,
     pub loaded_tier: CanvasImageCacheTier,
     pub existing_load_diagnostics: Option<ExistingLoadDiagnostics>,
@@ -1054,7 +1058,23 @@ fn import_path_sync_traced(
         &canvas_source.rgba,
         max_texture_side,
     )?;
-    let preview_texture = build_preview_texture(wgpu_render_state, &preview)?;
+    let animated_preview = decoded
+        .animation
+        .as_ref()
+        .map(|animation| {
+            preview_animation_from_frames(
+                decoded.width,
+                decoded.height,
+                &animation.frames,
+                animated_preview_max_side(canvas_image_settings, max_texture_side),
+            )
+        })
+        .transpose()?;
+    let preview_texture = if animated_preview.is_some() {
+        ImportedPreviewTexture::Cpu
+    } else {
+        build_preview_texture(wgpu_render_state, &preview)?
+    };
     if let Some(trace) = &mut trace {
         trace.timings.store_and_persist = store_and_persist;
         trace.timings.preview_prepare = preview_started_at.elapsed();
@@ -1067,6 +1087,7 @@ fn import_path_sync_traced(
         preview_rgba: preview.rgba,
         preview_width: preview.width,
         preview_height: preview.height,
+        animated_preview,
         preview_texture,
         loaded_tier: CanvasImageCacheTier::Working,
         existing_load_diagnostics: None,
@@ -1234,6 +1255,7 @@ fn import_clipboard_sync_traced(
         preview_rgba: preview.rgba,
         preview_width: preview.width,
         preview_height: preview.height,
+        animated_preview: None,
         preview_texture,
         loaded_tier: CanvasImageCacheTier::Working,
         existing_load_diagnostics: None,
@@ -1266,17 +1288,21 @@ fn load_existing(
         target_tier,
         max_texture_side,
     ) {
-        Ok((preview, diagnostics)) => {
+        Ok((preview, animated_preview, diagnostics)) => {
             let decode_or_load = decode_started_at.elapsed();
-            let preview_texture = match build_preview_texture(wgpu_render_state, &preview) {
-                Ok(preview_texture) => preview_texture,
-                Err(error) => {
-                    return ImportResult::Failed {
-                        queue_id: None,
-                        item_id: Some(record.item.id),
-                        context: record.asset.original_path.display().to_string(),
-                        error,
-                    };
+            let preview_texture = if animated_preview.is_some() {
+                ImportedPreviewTexture::Cpu
+            } else {
+                match build_preview_texture(wgpu_render_state, &preview) {
+                    Ok(preview_texture) => preview_texture,
+                    Err(error) => {
+                        return ImportResult::Failed {
+                            queue_id: None,
+                            item_id: Some(record.item.id),
+                            context: record.asset.original_path.display().to_string(),
+                            error,
+                        };
+                    }
                 }
             };
             if let Some(trace) = &mut trace {
@@ -1290,6 +1316,7 @@ fn load_existing(
                 preview_rgba: preview.rgba,
                 preview_width: preview.width,
                 preview_height: preview.height,
+                animated_preview,
                 preview_texture,
                 loaded_tier: target_tier,
                 existing_load_diagnostics: Some(diagnostics),
@@ -1798,9 +1825,16 @@ fn load_existing_preview(
     canvas_image_settings: CanvasImageSettings,
     target_tier: CanvasImageCacheTier,
     max_texture_side: usize,
-) -> Result<(PreviewImage, ExistingLoadDiagnostics), String> {
+) -> Result<
+    (
+        PreviewImage,
+        Option<AnimatedPreview>,
+        ExistingLoadDiagnostics,
+    ),
+    String,
+> {
     let tier_settings = tier_settings(canvas_image_settings, target_tier);
-    let (canvas_source, diagnostics) = match canvas_image_settings.mode {
+    let (canvas_source, animated_preview, diagnostics) = match canvas_image_settings.mode {
         crate::data::CanvasImageMode::Original => {
             let decoded = decode_image_file(&record.asset.original_path)?;
             let source_path = record.asset.original_path.clone();
@@ -1811,6 +1845,18 @@ fn load_existing_preview(
                     width: decoded.width,
                     height: decoded.height,
                 },
+                decoded
+                    .animation
+                    .as_ref()
+                    .map(|animation| {
+                        preview_animation_from_frames(
+                            decoded.width,
+                            decoded.height,
+                            &animation.frames,
+                            max_texture_side,
+                        )
+                    })
+                    .transpose()?,
                 ExistingLoadDiagnostics {
                     source_kind: ExistingLoadSourceKind::Original,
                     source_path,
@@ -1822,7 +1868,38 @@ fn load_existing_preview(
             )
         }
         crate::data::CanvasImageMode::Downscale => {
-            if let Some(cache_path) = library.canvas_image_cache_path_for_tier(
+            if record.asset.mime_type == image::ImageFormat::Gif.to_mime_type() {
+                let decoded = decode_image_file(&record.asset.original_path)?;
+                let source_file_size = decoded.file_size;
+                (
+                    preview_image_from_rgba(
+                        decoded.width,
+                        decoded.height,
+                        &decoded.rgba,
+                        tier_settings.max_side.min(max_texture_side as u32) as usize,
+                    )?,
+                    decoded
+                        .animation
+                        .as_ref()
+                        .map(|animation| {
+                            preview_animation_from_frames(
+                                decoded.width,
+                                decoded.height,
+                                &animation.frames,
+                                tier_settings.max_side.min(max_texture_side as u32) as usize,
+                            )
+                        })
+                        .transpose()?,
+                    ExistingLoadDiagnostics {
+                        source_kind: ExistingLoadSourceKind::Original,
+                        source_path: record.asset.original_path.clone(),
+                        source_file_size,
+                        source_width: decoded.width,
+                        source_height: decoded.height,
+                        backfilled_cache: false,
+                    },
+                )
+            } else if let Some(cache_path) = library.canvas_image_cache_path_for_tier(
                 record.asset.id,
                 tier_settings.mode,
                 tier_settings.max_side,
@@ -1838,6 +1915,7 @@ fn load_existing_preview(
                                 width: decoded.width,
                                 height: decoded.height,
                             },
+                            None,
                             ExistingLoadDiagnostics {
                                 source_kind: ExistingLoadSourceKind::Cache,
                                 source_path: cache_path,
@@ -1850,24 +1928,43 @@ fn load_existing_preview(
                     }
                     Err(_) => {
                         let _ = std::fs::remove_file(&cache_path);
-                        backfill_canvas_image_cache(library, record, tier_settings, target_tier)?
+                        let (preview, diagnostics) = backfill_canvas_image_cache(
+                            library,
+                            record,
+                            tier_settings,
+                            target_tier,
+                        )?;
+                        (preview, None, diagnostics)
                     }
                 }
             } else {
-                backfill_canvas_image_cache(library, record, tier_settings, target_tier)?
+                let (preview, diagnostics) =
+                    backfill_canvas_image_cache(library, record, tier_settings, target_tier)?;
+                (preview, None, diagnostics)
             }
         }
     };
 
-    Ok((
+    let preview = if let Some(animated_preview) = &animated_preview {
+        PreviewImage {
+            rgba: animated_preview.frames[0].rgba.clone(),
+            width: animated_preview.width,
+            height: animated_preview.height,
+        }
+    } else if canvas_source.width <= max_texture_side as u32
+        && canvas_source.height <= max_texture_side as u32
+    {
+        canvas_source
+    } else {
         preview_image_from_rgba(
             canvas_source.width,
             canvas_source.height,
             &canvas_source.rgba,
             max_texture_side,
-        )?,
-        diagnostics,
-    ))
+        )?
+    };
+
+    Ok((preview, animated_preview, diagnostics))
 }
 
 fn canvas_source_image_from_rgba(
@@ -1885,6 +1982,18 @@ fn canvas_source_image_from_rgba(
             width,
             height,
         }),
+    }
+}
+
+fn animated_preview_max_side(
+    canvas_image_settings: CanvasImageSettings,
+    max_texture_side: usize,
+) -> usize {
+    match canvas_image_settings.mode {
+        crate::data::CanvasImageMode::Downscale => {
+            (canvas_image_settings.max_side as usize).min(max_texture_side)
+        }
+        crate::data::CanvasImageMode::Original => max_texture_side,
     }
 }
 

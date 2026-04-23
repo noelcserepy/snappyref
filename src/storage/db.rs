@@ -11,9 +11,9 @@ use image::{ColorType, ExtendedColorType, ImageEncoder, ImageFormat};
 use rusqlite::{Connection, Transaction, params, params_from_iter};
 
 use crate::data::{
-    BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationKind,
-    CanvasBackground, CanvasImageCacheTier, CanvasImageMode, CanvasTextSize, ImageAsset,
-    UserSession, ViewportState, WorkspaceSettings,
+    BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
+    CanvasAnnotationKind, CanvasBackground, CanvasImageCacheTier, CanvasImageMode,
+    CanvasStrokeWidth, CanvasTextSize, ImageAsset, UserSession, ViewportState, WorkspaceSettings,
 };
 
 #[derive(Clone, Debug)]
@@ -977,7 +977,9 @@ impl Library {
                     canvas_background,
                     semantic_search_enabled,
                     canvas_image_mode,
-                    canvas_image_max_side
+                    canvas_image_max_side,
+                    rotation_snap_degrees,
+                    default_textbox_background
                  FROM user_session
                  WHERE id = 1",
             )
@@ -1011,6 +1013,12 @@ impl Library {
                         .map(|value| value.max(1) as u32)
                         .unwrap_or(crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE),
                     semantic_search_enabled: row.get::<_, i64>(6).unwrap_or(0) != 0,
+                    rotation_snap_degrees: row
+                        .get::<_, f32>(9)
+                        .ok()
+                        .map(|value| value.max(0.0))
+                        .unwrap_or(crate::data::DEFAULT_ROTATION_SNAP_DEGREES),
+                    default_textbox_background: row.get::<_, i64>(10).unwrap_or(0) != 0,
                 },
             })
         });
@@ -1026,8 +1034,21 @@ impl Library {
         let connection = self.connection()?;
         connection
             .execute(
-                "INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap, canvas_background, semantic_search_enabled, canvas_image_mode, canvas_image_max_side)
-                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                "INSERT INTO user_session (
+                    id,
+                    camera_pan_x,
+                    camera_pan_y,
+                    camera_zoom,
+                    auto_image_scaling,
+                    import_gap,
+                    canvas_background,
+                    semantic_search_enabled,
+                    canvas_image_mode,
+                    canvas_image_max_side,
+                    rotation_snap_degrees,
+                    default_textbox_background
+                 )
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(id) DO UPDATE SET
                     camera_pan_x = excluded.camera_pan_x,
                     camera_pan_y = excluded.camera_pan_y,
@@ -1037,7 +1058,9 @@ impl Library {
                     canvas_background = excluded.canvas_background,
                     semantic_search_enabled = excluded.semantic_search_enabled,
                     canvas_image_mode = excluded.canvas_image_mode,
-                    canvas_image_max_side = excluded.canvas_image_max_side",
+                    canvas_image_max_side = excluded.canvas_image_max_side,
+                    rotation_snap_degrees = excluded.rotation_snap_degrees,
+                    default_textbox_background = excluded.default_textbox_background",
                 params![
                     session.viewport.camera_pan_x,
                     session.viewport.camera_pan_y,
@@ -1056,6 +1079,12 @@ impl Library {
                     },
                     session.settings.canvas_image_mode.as_str(),
                     i64::from(session.settings.canvas_image_max_side),
+                    session.settings.rotation_snap_degrees,
+                    if session.settings.default_textbox_background {
+                        1_i64
+                    } else {
+                        0_i64
+                    },
                 ],
             )
             .map_err(|error| format!("failed to save user session: {error}"))?;
@@ -1067,7 +1096,18 @@ impl Library {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT id, kind, start_x, start_y, end_x, end_y, text, text_size
+                "SELECT
+                    id,
+                    kind,
+                    start_x,
+                    start_y,
+                    end_x,
+                    end_y,
+                    text,
+                    text_size,
+                    stroke_width,
+                    color,
+                    background_enabled
                  FROM canvas_annotations
                  WHERE archived = 0
                  ORDER BY id ASC",
@@ -1106,6 +1146,30 @@ impl Library {
                             )
                         },
                     )?,
+                    stroke_width: CanvasStrokeWidth::from_str(&row.get::<_, String>(8)?)
+                        .ok_or_else(|| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                8,
+                                rusqlite::types::Type::Text,
+                                Box::new(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "unknown canvas stroke width",
+                                )),
+                            )
+                        })?,
+                    color: CanvasAnnotationColor::from_str(&row.get::<_, String>(9)?).ok_or_else(
+                        || {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                9,
+                                rusqlite::types::Type::Text,
+                                Box::new(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "unknown canvas annotation color",
+                                )),
+                            )
+                        },
+                    )?,
+                    background_enabled: row.get::<_, i64>(10).unwrap_or(0) != 0,
                     archived: false,
                 })
             })
@@ -1122,6 +1186,9 @@ impl Library {
         end: egui::Pos2,
         text: &str,
         text_size: CanvasTextSize,
+        stroke_width: CanvasStrokeWidth,
+        color: CanvasAnnotationColor,
+        background_enabled: bool,
     ) -> Result<CanvasAnnotation, String> {
         let connection = self.connection()?;
         connection
@@ -1134,8 +1201,11 @@ impl Library {
                     end_y,
                     text,
                     text_size,
+                    stroke_width,
+                    color,
+                    background_enabled,
                     archived
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     kind.as_str(),
                     start.x,
@@ -1144,6 +1214,9 @@ impl Library {
                     end.y,
                     text,
                     text_size.as_str(),
+                    stroke_width.as_str(),
+                    color.as_str(),
+                    if background_enabled { 1_i64 } else { 0_i64 },
                     0_i64
                 ],
             )
@@ -1158,6 +1231,9 @@ impl Library {
             end_y: end.y,
             text: text.to_owned(),
             text_size,
+            stroke_width,
+            color,
+            background_enabled,
             archived: false,
         })
     }
@@ -1173,8 +1249,11 @@ impl Library {
                      end_y = ?4,
                      text = ?5,
                      text_size = ?6,
-                     archived = ?7
-                 WHERE id = ?8",
+                     stroke_width = ?7,
+                     color = ?8,
+                     background_enabled = ?9,
+                     archived = ?10
+                 WHERE id = ?11",
                 params![
                     annotation.start_x,
                     annotation.start_y,
@@ -1182,6 +1261,13 @@ impl Library {
                     annotation.end_y,
                     annotation.text,
                     annotation.text_size.as_str(),
+                    annotation.stroke_width.as_str(),
+                    annotation.color.as_str(),
+                    if annotation.background_enabled {
+                        1_i64
+                    } else {
+                        0_i64
+                    },
                     if annotation.archived { 1_i64 } else { 0_i64 },
                     annotation.id,
                 ],
@@ -1264,7 +1350,9 @@ impl Library {
                     canvas_background TEXT NOT NULL DEFAULT 'none',
                     semantic_search_enabled INTEGER NOT NULL DEFAULT 1,
                     canvas_image_mode TEXT NOT NULL DEFAULT 'downscale',
-                    canvas_image_max_side INTEGER NOT NULL DEFAULT 2000
+                    canvas_image_max_side INTEGER NOT NULL DEFAULT 2000,
+                    rotation_snap_degrees REAL NOT NULL DEFAULT 15.0,
+                    default_textbox_background INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS canvas_annotations (
@@ -1276,6 +1364,9 @@ impl Library {
                     end_y     REAL NOT NULL,
                     text      TEXT NOT NULL DEFAULT '',
                     text_size TEXT NOT NULL DEFAULT 'm',
+                    stroke_width TEXT NOT NULL DEFAULT 'm',
+                    color TEXT NOT NULL DEFAULT 'default',
+                    background_enabled INTEGER NOT NULL DEFAULT 0,
                     archived  INTEGER NOT NULL DEFAULT 0
                 );
 
@@ -1304,7 +1395,12 @@ impl Library {
         ensure_user_session_semantic_search_enabled_column(&connection)?;
         ensure_user_session_canvas_image_mode_column(&connection)?;
         ensure_user_session_canvas_image_max_side_column(&connection)?;
-        ensure_canvas_annotations_text_size_column(&connection)
+        ensure_user_session_rotation_snap_degrees_column(&connection)?;
+        ensure_user_session_default_textbox_background_column(&connection)?;
+        ensure_canvas_annotations_text_size_column(&connection)?;
+        ensure_canvas_annotations_stroke_width_column(&connection)?;
+        ensure_canvas_annotations_color_column(&connection)?;
+        ensure_canvas_annotations_background_enabled_column(&connection)
     }
 
     fn connection(&self) -> Result<Connection, String> {
@@ -1408,6 +1504,87 @@ fn ensure_canvas_annotations_text_size_column(connection: &Connection) -> Result
         )
         .map_err(|error| {
             format!("failed to add text_size column to canvas_annotations: {error}")
+        })?;
+
+    Ok(())
+}
+
+fn ensure_canvas_annotations_stroke_width_column(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(canvas_annotations)")
+        .map_err(|error| format!("failed to inspect canvas_annotations schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read canvas_annotations schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect canvas_annotations schema: {error}"))?;
+
+    if columns.iter().any(|column| column == "stroke_width") {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE canvas_annotations ADD COLUMN stroke_width TEXT NOT NULL DEFAULT 'm'",
+            [],
+        )
+        .map_err(|error| {
+            format!("failed to add stroke_width column to canvas_annotations: {error}")
+        })?;
+
+    Ok(())
+}
+
+fn ensure_canvas_annotations_color_column(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(canvas_annotations)")
+        .map_err(|error| format!("failed to inspect canvas_annotations schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read canvas_annotations schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect canvas_annotations schema: {error}"))?;
+
+    if columns.iter().any(|column| column == "color") {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE canvas_annotations ADD COLUMN color TEXT NOT NULL DEFAULT 'default'",
+            [],
+        )
+        .map_err(|error| format!("failed to add color column to canvas_annotations: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_canvas_annotations_background_enabled_column(
+    connection: &Connection,
+) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(canvas_annotations)")
+        .map_err(|error| format!("failed to inspect canvas_annotations schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read canvas_annotations schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect canvas_annotations schema: {error}"))?;
+
+    if columns.iter().any(|column| column == "background_enabled") {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE canvas_annotations ADD COLUMN background_enabled INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|error| {
+            format!("failed to add background_enabled column to canvas_annotations: {error}")
         })?;
 
     Ok(())
@@ -1666,6 +1843,68 @@ fn ensure_user_session_canvas_image_max_side_column(connection: &Connection) -> 
             [],
         )
         .map_err(|error| format!("failed to add canvas_image_max_side column: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_user_session_rotation_snap_degrees_column(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(user_session)")
+        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read user_session schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
+
+    if columns
+        .iter()
+        .any(|column| column == "rotation_snap_degrees")
+    {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE user_session ADD COLUMN rotation_snap_degrees REAL NOT NULL DEFAULT 15.0",
+            [],
+        )
+        .map_err(|error| {
+            format!("failed to add rotation_snap_degrees column to user_session: {error}")
+        })?;
+
+    Ok(())
+}
+
+fn ensure_user_session_default_textbox_background_column(
+    connection: &Connection,
+) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(user_session)")
+        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read user_session schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
+
+    if columns
+        .iter()
+        .any(|column| column == "default_textbox_background")
+    {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE user_session ADD COLUMN default_textbox_background INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|error| {
+            format!("failed to add default_textbox_background column to user_session: {error}")
+        })?;
 
     Ok(())
 }
@@ -1992,6 +2231,9 @@ mod tests {
                 egui::pos2(110.0, 72.0),
                 "hello",
                 CanvasTextSize::default(),
+                crate::data::CanvasStrokeWidth::default(),
+                crate::data::CanvasAnnotationColor::default(),
+                false,
             )
             .unwrap();
 

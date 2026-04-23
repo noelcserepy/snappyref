@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use eframe::egui;
 
 use super::{
-    AnnotationDraftState, CanvasCropRequest, CanvasImage, CropState, DragState,
-    ImageTransformState, ImportPlaceholder, MarqueeState, PendingAnnotation,
+    AnnotationDraftState, AnnotationDragState, CanvasCropRequest, CanvasImage, CropState,
+    DragState, ImageTransformState, ImportPlaceholder, MarqueeState, PendingAnnotation,
     TextboxLayoutCacheEntry, TextboxTransformState,
 };
 use crate::data::{CanvasAnnotation, CanvasImageCacheTier};
@@ -27,6 +27,7 @@ pub(super) struct CanvasInteractionState {
     pub editing_text_annotation_id: Option<i64>,
     pub focus_text_editor: bool,
     pub drag_state: Option<DragState>,
+    pub annotation_drag_state: Option<AnnotationDragState>,
     pub image_transform_state: Option<ImageTransformState>,
     pub textbox_transform_state: Option<TextboxTransformState>,
     pub marquee_state: Option<MarqueeState>,
@@ -46,4 +47,5 @@ pub(super) struct CanvasRenderState {
     pub asset_rgba_cache: HashMap<i64, Vec<u8>>,
     pub textbox_layout_cache: HashMap<i64, TextboxLayoutCacheEntry>,
     pub pending_image_tier_loads: HashMap<i64, CanvasImageCacheTier>,
+    pub animation_time_override_seconds: Option<f32>,
 }

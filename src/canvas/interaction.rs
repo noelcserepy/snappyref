@@ -1,10 +1,14 @@
 use eframe::egui;
 
-use super::geometry::{image_screen_rect_for_record, min_image_scale};
+use super::geometry::{
+    image_contains_screen_point, image_screen_center_for_record, image_screen_corners_for_record,
+    image_screen_rect_for_record, min_image_scale,
+};
 use super::render::textbox_pointer_region;
 use super::{
-    ANNOTATION_HIT_RADIUS, AnnotationDraftState, CanvasImage, CanvasState, CropState, DragState,
-    IMAGE_RESIZE_HIT_RADIUS, ImageResizeHandle, ImageTransformState, MAX_CANVAS_ZOOM,
+    ANNOTATION_HIT_RADIUS, AnnotationDraftState, AnnotationDragState, CanvasImage, CanvasState,
+    CropState, DragState, IMAGE_RESIZE_HIT_RADIUS, IMAGE_ROTATION_HANDLE_DISTANCE,
+    IMAGE_ROTATION_HANDLE_RADIUS, ImageResizeHandle, ImageTransformState, MAX_CANVAS_ZOOM,
     MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation, TEXTBOX_DRAG_THRESHOLD_SCREEN,
     TEXTBOX_RESIZE_HIT_RADIUS, TextboxPointerRegion, TextboxResizeHandle, TextboxTransformState,
 };
@@ -29,6 +33,7 @@ pub(super) fn handle_input(
     let crop_key_held = ui.input(|i| i.key_down(egui::Key::C));
     let draw_kind = drawing_annotation_kind(ui);
     let shift_held = ui.input(|i| i.modifiers.shift);
+    let alt_held = ui.input(|i| i.modifiers.alt);
     let pointer_in_canvas_rect = pointer_pos
         .map(|pointer_pos| {
             input_rect.contains(pointer_pos)
@@ -66,6 +71,11 @@ pub(super) fn handle_input(
         && let Some(handle) = hit_test_image_resize_handle(state, rect, image, pointer_pos)
     {
         ui.ctx().set_cursor_icon(image_resize_cursor_icon(handle));
+    } else if let Some(pointer_pos) = pointer_pos
+        && let Some(image) = state.selected_single_image()
+        && hit_test_image_rotation_handle(state, rect, image, pointer_pos)
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
 
     if pointer_in_canvas_rect
@@ -99,6 +109,11 @@ pub(super) fn handle_input(
                 start_screen: pointer_pos,
                 current_screen: pointer_pos,
             });
+        } else if let Some(image) = state.selected_single_image()
+            && hit_test_image_rotation_handle(state, rect, image, pointer_pos)
+        {
+            begin_image_rotation(state, rect, image.record.item.id);
+            return;
         } else if let Some(image) = state.selected_single_image().map(|image| {
             (
                 image.record.item.id,
@@ -143,12 +158,12 @@ pub(super) fn handle_input(
                 }
                 state.document.selected_item_ids.clear();
                 state.document.selected_annotation_ids = vec![annotation_id];
+                begin_annotation_drag(state, rect, annotation_id, pointer_pos);
                 state.interaction.image_transform_state = None;
-                state.interaction.textbox_transform_state = None;
-                state.interaction.drag_state = None;
                 state.interaction.marquee_state = None;
                 state.interaction.crop_state = None;
                 state.interaction.annotation_draft_state = None;
+                return;
             }
         } else if let Some(item_id) = hit_test_image(state, rect, pointer_pos) {
             if shift_held {
@@ -177,6 +192,7 @@ pub(super) fn handle_input(
             });
             state.interaction.image_transform_state = None;
             state.interaction.textbox_transform_state = None;
+            state.interaction.annotation_drag_state = None;
             state.interaction.marquee_state = None;
             state.interaction.crop_state = None;
             state.interaction.annotation_draft_state = None;
@@ -184,6 +200,7 @@ pub(super) fn handle_input(
             state.interaction.drag_state = None;
             state.interaction.image_transform_state = None;
             state.interaction.textbox_transform_state = None;
+            state.interaction.annotation_drag_state = None;
             if !shift_held {
                 state.clear_selection();
             }
@@ -210,6 +227,25 @@ pub(super) fn handle_input(
         let world = (pointer_pos - rect.center() - state.pan) / state.zoom;
         let pointer_world = egui::pos2(world.x, world.y);
         draft_state.current_world = pointer_world;
+    }
+
+    if state.interaction.crop_state.is_none()
+        && state.interaction.annotation_draft_state.is_none()
+        && primary_down
+        && let Some(pointer_pos) = pointer_pos
+        && let Some(drag_state) = state.interaction.annotation_drag_state.clone()
+    {
+        if pointer_pos.distance(drag_state.pointer_start_screen) >= TEXTBOX_DRAG_THRESHOLD_SCREEN {
+            let pointer_world = state.screen_to_world(pointer_pos, rect);
+            let world_delta = pointer_world - drag_state.pointer_start_world;
+            for (annotation_id, start_world, end_world) in drag_state.starting_points {
+                state.set_annotation_world_points(
+                    annotation_id,
+                    start_world + world_delta,
+                    end_world + world_delta,
+                );
+            }
+        }
     }
 
     if state.interaction.crop_state.is_none()
@@ -288,6 +324,20 @@ pub(super) fn handle_input(
                     state.set_image_scale(item_id, scale);
                 }
             }
+            ImageTransformState::Rotating {
+                item_id,
+                center_screen,
+                start_rotation,
+            } => {
+                let rotation = rotated_image_angle(
+                    center_screen,
+                    pointer_pos,
+                    start_rotation,
+                    state.rotation_snap_degrees,
+                    alt_held,
+                );
+                state.set_image_rotation(item_id, rotation);
+            }
         }
     }
 
@@ -319,8 +369,10 @@ pub(super) fn handle_input(
         } else if let Some(draft_state) = state.interaction.annotation_draft_state.take() {
             state.interaction.pending_annotation = pending_annotation_from_draft(draft_state);
         } else if let Some(transform_state) = state.interaction.image_transform_state.take() {
-            let ImageTransformState::Resizing { item_id, .. } = transform_state;
-            state.mark_dirty(item_id);
+            match transform_state {
+                ImageTransformState::Resizing { item_id, .. }
+                | ImageTransformState::Rotating { item_id, .. } => state.mark_dirty(item_id),
+            }
         } else if let Some(transform_state) = state.interaction.textbox_transform_state.take() {
             match transform_state {
                 TextboxTransformState::Moving { annotation_ids, .. } => {
@@ -332,6 +384,10 @@ pub(super) fn handle_input(
                     state.mark_annotation_dirty(annotation_id);
                 }
                 TextboxTransformState::PendingMove { .. } => {}
+            }
+        } else if let Some(drag_state) = state.interaction.annotation_drag_state.take() {
+            for annotation_id in drag_state.annotation_ids {
+                state.mark_annotation_dirty(annotation_id);
             }
         } else if let Some(drag_state) = state.interaction.drag_state.take() {
             for (item_id, _) in drag_state.starting_positions {
@@ -375,8 +431,7 @@ pub(super) fn handle_input(
             .annotations
             .iter()
             .filter(|annotation| {
-                annotation.kind == CanvasAnnotationKind::Textbox
-                    && annotation_screen_rect(state, rect, annotation).intersects(selection_rect)
+                annotation_screen_rect(state, rect, annotation).intersects(selection_rect)
             })
             .map(|annotation| annotation.id)
             .collect::<Vec<_>>();
@@ -455,7 +510,15 @@ fn hit_test_image(state: &CanvasState, rect: egui::Rect, pointer_pos: egui::Pos2
         .images
         .iter()
         .rev()
-        .find(|image| image_screen_rect(state, rect, image).contains(pointer_pos))
+        .find(|image| {
+            image_contains_screen_point(
+                &image.record,
+                pointer_pos,
+                state.pan,
+                state.zoom,
+                rect.center(),
+            )
+        })
         .map(|image| image.record.item.id)
 }
 
@@ -479,6 +542,7 @@ fn begin_image_resize(
     state.document.selected_item_ids.push(item_id);
     state.document.selected_annotation_ids.clear();
     state.interaction.drag_state = None;
+    state.interaction.annotation_drag_state = None;
     state.interaction.marquee_state = None;
     state.interaction.crop_state = None;
     state.interaction.annotation_draft_state = None;
@@ -488,6 +552,85 @@ fn begin_image_resize(
         center_screen,
         start_scale,
         start_radius_screen,
+    });
+}
+
+fn begin_image_rotation(state: &mut CanvasState, rect: egui::Rect, item_id: i64) {
+    let Some(image) = state.image_by_item_id(item_id) else {
+        return;
+    };
+    let center_screen =
+        image_screen_center_for_record(&image.record, state.pan, state.zoom, rect.center());
+    let start_rotation = image.record.item.rotation;
+
+    state.finish_textbox_edit();
+    state.document.selected_item_ids.clear();
+    state.document.selected_item_ids.push(item_id);
+    state.document.selected_annotation_ids.clear();
+    state.interaction.drag_state = None;
+    state.interaction.annotation_drag_state = None;
+    state.interaction.marquee_state = None;
+    state.interaction.crop_state = None;
+    state.interaction.annotation_draft_state = None;
+    state.interaction.textbox_transform_state = None;
+    state.interaction.image_transform_state = Some(ImageTransformState::Rotating {
+        item_id,
+        center_screen,
+        start_rotation,
+    });
+}
+
+fn begin_annotation_drag(
+    state: &mut CanvasState,
+    rect: egui::Rect,
+    annotation_id: i64,
+    pointer_pos: egui::Pos2,
+) {
+    state.finish_textbox_edit();
+    state.document.selected_item_ids.clear();
+    if !state.is_annotation_selected(annotation_id) {
+        state.document.selected_annotation_ids = vec![annotation_id];
+    }
+
+    let annotation_ids = state
+        .document
+        .selected_annotation_ids
+        .iter()
+        .copied()
+        .filter(|selected_id| {
+            state
+                .annotation_by_id(*selected_id)
+                .is_some_and(|annotation| {
+                    matches!(
+                        annotation.kind,
+                        CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    let starting_points = annotation_ids
+        .iter()
+        .filter_map(|selected_id| {
+            state.annotation_by_id(*selected_id).map(|annotation| {
+                (
+                    *selected_id,
+                    egui::pos2(annotation.start_x, annotation.start_y),
+                    egui::pos2(annotation.end_x, annotation.end_y),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    state.interaction.drag_state = None;
+    state.interaction.marquee_state = None;
+    state.interaction.crop_state = None;
+    state.interaction.annotation_draft_state = None;
+    state.interaction.textbox_transform_state = None;
+    state.interaction.annotation_drag_state = Some(AnnotationDragState {
+        annotation_ids,
+        pointer_start_world: state.screen_to_world(pointer_pos, rect),
+        pointer_start_screen: pointer_pos,
+        starting_points,
     });
 }
 
@@ -600,6 +743,23 @@ pub(super) fn image_screen_rect(
     image_screen_rect_for_record(&image.record, rect, state.pan, state.zoom, rect.center())
 }
 
+pub(super) fn image_rotation_handle_screen_pos(
+    state: &CanvasState,
+    rect: egui::Rect,
+    image: &CanvasImage,
+) -> egui::Pos2 {
+    let corners =
+        image_screen_corners_for_record(&image.record, state.pan, state.zoom, rect.center());
+    let top_center = egui::pos2(
+        (corners[0].x + corners[1].x) * 0.5,
+        (corners[0].y + corners[1].y) * 0.5,
+    );
+    let center =
+        image_screen_center_for_record(&image.record, state.pan, state.zoom, rect.center());
+    let direction = (top_center - center).normalized();
+    top_center + direction * IMAGE_ROTATION_HANDLE_DISTANCE
+}
+
 fn image_resize_handle_screen_pos(image_rect: egui::Rect, handle: ImageResizeHandle) -> egui::Pos2 {
     match handle {
         ImageResizeHandle::TopLeft => image_rect.left_top(),
@@ -607,6 +767,16 @@ fn image_resize_handle_screen_pos(image_rect: egui::Rect, handle: ImageResizeHan
         ImageResizeHandle::BottomLeft => image_rect.left_bottom(),
         ImageResizeHandle::BottomRight => image_rect.right_bottom(),
     }
+}
+
+fn hit_test_image_rotation_handle(
+    state: &CanvasState,
+    rect: egui::Rect,
+    image: &CanvasImage,
+    pointer_pos: egui::Pos2,
+) -> bool {
+    image_rotation_handle_screen_pos(state, rect, image).distance(pointer_pos)
+        <= IMAGE_ROTATION_HANDLE_RADIUS + 4.0
 }
 
 fn image_resize_cursor_icon(handle: ImageResizeHandle) -> egui::CursorIcon {
@@ -650,6 +820,27 @@ pub(super) fn resized_image_scale(
         current_radius_screen / start_radius_screen
     };
     (start_scale * scale_ratio).max(min_image_scale(asset))
+}
+
+fn rotated_image_angle(
+    center_screen: egui::Pos2,
+    pointer_pos: egui::Pos2,
+    start_rotation: f32,
+    snap_degrees: f32,
+    unsnapped: bool,
+) -> f32 {
+    let pointer_delta = pointer_pos - center_screen;
+    if pointer_delta.length_sq() <= f32::EPSILON {
+        return start_rotation;
+    }
+
+    let rotation = pointer_delta.angle() + std::f32::consts::FRAC_PI_2;
+    if unsnapped || snap_degrees <= f32::EPSILON {
+        rotation
+    } else {
+        let snap_radians = snap_degrees.to_radians();
+        (rotation / snap_radians).round() * snap_radians
+    }
 }
 
 fn zoom_around_pointer(

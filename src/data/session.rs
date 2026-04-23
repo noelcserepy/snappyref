@@ -2,6 +2,7 @@ use super::CanvasBackground;
 
 pub const DEFAULT_IMPORT_GAP: f32 = 24.0;
 pub const DEFAULT_CANVAS_IMAGE_MAX_SIDE: u32 = 2000;
+pub const DEFAULT_ROTATION_SNAP_DEGREES: f32 = 15.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CanvasImageCacheTier {
@@ -75,6 +76,8 @@ pub struct WorkspaceSettings {
     pub canvas_image_mode: CanvasImageMode,
     pub canvas_image_max_side: u32,
     pub semantic_search_enabled: bool,
+    pub rotation_snap_degrees: f32,
+    pub default_textbox_background: bool,
 }
 
 impl Default for WorkspaceSettings {
@@ -85,6 +88,8 @@ impl Default for WorkspaceSettings {
             canvas_image_mode: CanvasImageMode::default(),
             canvas_image_max_side: DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             semantic_search_enabled: true,
+            rotation_snap_degrees: DEFAULT_ROTATION_SNAP_DEGREES,
+            default_textbox_background: false,
         }
     }
 }

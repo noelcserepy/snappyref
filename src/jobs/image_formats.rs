@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use image::{ImageFormat, RgbaImage};
+use image::{AnimationDecoder, ImageFormat, RgbaImage};
 
 pub const SUPPORTED_IMPORT_FORMATS: &[ImageFormat] = &[
     ImageFormat::Avif,
@@ -26,6 +26,18 @@ pub struct DecodedImage {
     pub height: u32,
     pub file_size: u64,
     pub format: ImageFormat,
+    pub animation: Option<DecodedAnimation>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DecodedAnimationFrame {
+    pub rgba: Vec<u8>,
+    pub delay_seconds: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct DecodedAnimation {
+    pub frames: Vec<DecodedAnimationFrame>,
 }
 
 pub fn decode_image_file(path: &Path) -> Result<DecodedImage, String> {
@@ -39,7 +51,9 @@ pub fn decode_image_file(path: &Path) -> Result<DecodedImage, String> {
     }
 
     #[cfg(feature = "turbojpeg-native")]
-    let decoded = if format == ImageFormat::Jpeg {
+    let decoded = if format == ImageFormat::Gif {
+        decode_gif(&bytes, file_size)
+    } else if format == ImageFormat::Jpeg {
         decode_jpeg_with_turbojpeg(&bytes, file_size)
             .or_else(|_| decode_with_image_crate(&bytes, file_size, format))
     } else {
@@ -47,13 +61,30 @@ pub fn decode_image_file(path: &Path) -> Result<DecodedImage, String> {
     }?;
 
     #[cfg(not(feature = "turbojpeg-native"))]
-    let decoded = decode_with_image_crate(&bytes, file_size, format)?;
+    let decoded = if format == ImageFormat::Gif {
+        decode_gif(&bytes, file_size)?
+    } else {
+        decode_with_image_crate(&bytes, file_size, format)?
+    };
 
     Ok(decoded)
 }
 
 pub struct PreviewImage {
     pub rgba: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct AnimatedPreviewFrame {
+    pub rgba: Vec<u8>,
+    pub delay_seconds: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct AnimatedPreview {
+    pub frames: Vec<AnimatedPreviewFrame>,
     pub width: u32,
     pub height: u32,
 }
@@ -86,6 +117,43 @@ pub fn preview_image_from_rgba(
 
     Ok(PreviewImage {
         rgba: resized.into_raw(),
+        width: preview_width as u32,
+        height: preview_height as u32,
+    })
+}
+
+pub fn preview_animation_from_frames(
+    width: u32,
+    height: u32,
+    frames: &[DecodedAnimationFrame],
+    max_side: usize,
+) -> Result<AnimatedPreview, String> {
+    let (preview_width, preview_height) =
+        fitted_texture_size(width as usize, height as usize, max_side);
+
+    let mut preview_frames = Vec::with_capacity(frames.len());
+    for frame in frames {
+        let rgba = if preview_width == width as usize && preview_height == height as usize {
+            frame.rgba.clone()
+        } else {
+            let image = RgbaImage::from_raw(width, height, frame.rgba.clone())
+                .ok_or_else(|| "failed to rebuild RGBA image for animation resize".to_owned())?;
+            image::imageops::resize(
+                &image,
+                preview_width as u32,
+                preview_height as u32,
+                image::imageops::FilterType::Triangle,
+            )
+            .into_raw()
+        };
+        preview_frames.push(AnimatedPreviewFrame {
+            rgba,
+            delay_seconds: frame.delay_seconds.max(0.01),
+        });
+    }
+
+    Ok(AnimatedPreview {
+        frames: preview_frames,
         width: preview_width as u32,
         height: preview_height as u32,
     })
@@ -163,6 +231,50 @@ fn decode_with_image_crate(
         height,
         file_size,
         format,
+        animation: None,
+    })
+}
+
+fn decode_gif(bytes: &[u8], file_size: u64) -> Result<DecodedImage, String> {
+    let decoder = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes))
+        .map_err(|error| format!("failed to decode GIF: {error}"))?;
+    let frames = decoder
+        .into_frames()
+        .collect_frames()
+        .map_err(|error| format!("failed to read GIF frames: {error}"))?;
+
+    let first = frames
+        .first()
+        .ok_or_else(|| "GIF did not contain any frames".to_owned())?;
+    let width = first.buffer().width();
+    let height = first.buffer().height();
+    let rgba = first.buffer().clone().into_raw();
+
+    let animation = (frames.len() > 1).then(|| DecodedAnimation {
+        frames: frames
+            .into_iter()
+            .map(|frame| {
+                let (numerator_ms, denominator) = frame.delay().numer_denom_ms();
+                let delay_seconds = if denominator == 0 {
+                    0.1
+                } else {
+                    (numerator_ms as f32 / denominator as f32 / 1000.0).max(0.01)
+                };
+                DecodedAnimationFrame {
+                    rgba: frame.into_buffer().into_raw(),
+                    delay_seconds,
+                }
+            })
+            .collect(),
+    });
+
+    Ok(DecodedImage {
+        rgba,
+        width,
+        height,
+        file_size,
+        format: ImageFormat::Gif,
+        animation,
     })
 }
 
@@ -190,14 +302,16 @@ fn decode_jpeg_with_turbojpeg(bytes: &[u8], file_size: u64) -> Result<DecodedIma
         height: header.height as u32,
         file_size,
         format: ImageFormat::Jpeg,
+        animation: None,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{decode_image_file, fitted_texture_size, preview_image_from_rgba};
+    use image::codecs::gif::{GifEncoder, Repeat};
     use image::codecs::jpeg::JpegEncoder;
-    use image::{ExtendedColorType, ImageEncoder};
+    use image::{Delay, ExtendedColorType, Frame, ImageEncoder, RgbaImage};
 
     #[test]
     fn fitted_texture_size_clamps_to_max_texture_side() {
@@ -242,6 +356,42 @@ mod tests {
         assert_eq!(decoded.width, 2);
         assert_eq!(decoded.height, 2);
         assert_eq!(decoded.rgba.len(), 16);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn decode_image_file_detects_animated_gif_frames() {
+        let root = std::env::temp_dir().join(format!(
+            "reference-decode-gif-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("sample.gif");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut encoder = GifEncoder::new(std::io::BufWriter::new(file));
+        encoder.set_repeat(Repeat::Infinite).unwrap();
+        let first = RgbaImage::from_raw(2, 1, vec![255, 0, 0, 255, 255, 0, 0, 255]).unwrap();
+        let second = RgbaImage::from_raw(2, 1, vec![0, 0, 255, 255, 0, 0, 255, 255]).unwrap();
+        encoder
+            .encode_frames(
+                vec![
+                    Frame::from_parts(first, 0, 0, Delay::from_numer_denom_ms(120, 1)),
+                    Frame::from_parts(second, 0, 0, Delay::from_numer_denom_ms(120, 1)),
+                ]
+                .into_iter(),
+            )
+            .unwrap();
+        drop(encoder);
+
+        let decoded = decode_image_file(&path).unwrap();
+        assert_eq!(decoded.format, image::ImageFormat::Gif);
+        let animation = decoded.animation.expect("expected animation metadata");
+        assert_eq!(animation.frames.len(), 2);
+        assert!(animation.frames[0].delay_seconds > 0.0);
 
         let _ = std::fs::remove_dir_all(root);
     }

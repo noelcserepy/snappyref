@@ -268,6 +268,8 @@ enum VerificationMode {
     OpenPaletteImagePivot,
     DrawArrow,
     EditTextbox,
+    RotateImage,
+    AnimatedGif,
     ImportPlaceholders,
     ImportLoaded,
 }
@@ -334,6 +336,16 @@ impl AppConfig {
                 #[cfg(debug_assertions)]
                 {
                     verification_mode = Some(VerificationMode::EditTextbox);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-rotate-image" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::RotateImage);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-gif" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::AnimatedGif);
                 }
             } else if cfg!(debug_assertions) && argument == "--verify-import-placeholders" {
                 #[cfg(debug_assertions)]
@@ -431,6 +443,16 @@ impl AppConfig {
     #[cfg(debug_assertions)]
     fn edit_textbox_on_start(&self) -> bool {
         matches!(self.verification_mode, Some(VerificationMode::EditTextbox))
+    }
+
+    #[cfg(debug_assertions)]
+    fn rotate_image_on_start(&self) -> bool {
+        matches!(self.verification_mode, Some(VerificationMode::RotateImage))
+    }
+
+    #[cfg(debug_assertions)]
+    fn verify_gif_on_start(&self) -> bool {
+        matches!(self.verification_mode, Some(VerificationMode::AnimatedGif))
     }
 
     #[cfg(debug_assertions)]
@@ -623,8 +645,12 @@ impl ReferenceApp {
                         end_y: 120.0,
                         text: String::new(),
                         text_size: crate::data::CanvasTextSize::default(),
+                        stroke_width: crate::data::CanvasStrokeWidth::L,
+                        color: crate::data::CanvasAnnotationColor::Coral,
+                        background_enabled: false,
                         archived: false,
                     });
+                    app.canvas.select_single_annotation(-1);
                     app.status = "Added debug arrow".to_owned();
                 }
                 #[cfg(debug_assertions)]
@@ -640,10 +666,21 @@ impl ReferenceApp {
                         end_y: 80.0,
                         text: "debug textbox".to_owned(),
                         text_size: crate::data::CanvasTextSize::default(),
+                        stroke_width: crate::data::CanvasStrokeWidth::default(),
+                        color: crate::data::CanvasAnnotationColor::Sky,
+                        background_enabled: true,
                         archived: false,
                     });
                     app.canvas.begin_textbox_edit(-2);
                     app.status = "Editing debug textbox".to_owned();
+                }
+                #[cfg(debug_assertions)]
+                if config.rotate_image_on_start() {
+                    app.seed_rotation_verification(&cc.egui_ctx);
+                }
+                #[cfg(debug_assertions)]
+                if config.verify_gif_on_start() {
+                    app.seed_gif_verification(&cc.egui_ctx);
                 }
                 #[cfg(debug_assertions)]
                 if config.verify_import_placeholders_on_start() {
@@ -796,6 +833,8 @@ impl ReferenceApp {
             Ok(session) => {
                 self.canvas.apply_viewport_state(&session.viewport);
                 self.settings = session.settings;
+                self.canvas
+                    .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
             }
             Err(error) => self.status = error,
         }
@@ -1459,6 +1498,7 @@ impl ReferenceApp {
                 preview_height: entry.previous_preview_height,
                 record: entry.previous_record,
                 preview_rgba: entry.previous_rgba,
+                animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
                 loaded_tier: crate::data::CanvasImageCacheTier::Working,
                 existing_load_diagnostics: None,
@@ -1647,12 +1687,17 @@ impl ReferenceApp {
         };
 
         while let Some(request) = self.canvas.take_pending_annotation() {
+            let background_enabled = request.kind == crate::data::CanvasAnnotationKind::Textbox
+                && self.settings.default_textbox_background;
             match library.create_canvas_annotation(
                 request.kind,
                 request.start_world,
                 request.end_world,
                 &request.text,
                 request.text_size,
+                crate::data::CanvasStrokeWidth::default(),
+                crate::data::CanvasAnnotationColor::default(),
+                background_enabled,
             ) {
                 Ok(annotation) => {
                     let should_focus_text =
@@ -1718,7 +1763,7 @@ impl ReferenceApp {
     fn seed_import_verification_existing_anchor(
         &mut self,
         ctx: &egui::Context,
-    ) -> Result<(), String> {
+    ) -> Result<i64, String> {
         let Some(library) = &self.library else {
             return Err("Library unavailable".to_owned());
         };
@@ -1738,6 +1783,7 @@ impl ReferenceApp {
             egui::Pos2::ZERO,
             1.0,
         )?;
+        let item_id = record.item.id;
         self.canvas.add_loaded_item(
             ctx,
             crate::jobs::LoadedCanvasItem {
@@ -1746,6 +1792,7 @@ impl ReferenceApp {
                 preview_rgba: rgba,
                 preview_width: width,
                 preview_height: height,
+                animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
                 loaded_tier: crate::data::CanvasImageCacheTier::Working,
                 existing_load_diagnostics: None,
@@ -1753,7 +1800,86 @@ impl ReferenceApp {
                 trace: None,
             },
         );
-        Ok(())
+        Ok(item_id)
+    }
+
+    #[cfg(debug_assertions)]
+    fn seed_rotation_verification(&mut self, ctx: &egui::Context) {
+        self.canvas
+            .apply_viewport_state(&crate::data::ViewportState::default());
+        match self.seed_import_verification_existing_anchor(ctx) {
+            Ok(item_id) => {
+                self.canvas.select_items(&[item_id]);
+                let _ = self.canvas.set_image_rotation(item_id, 30_f32.to_radians());
+                self.status = "Added rotated debug image".to_owned();
+            }
+            Err(error) => self.status = error,
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn seed_gif_verification(&mut self, ctx: &egui::Context) {
+        self.canvas
+            .apply_viewport_state(&crate::data::ViewportState::default());
+        let width = 160_u32;
+        let height = 120_u32;
+        let first = Self::solid_rgba(width, height, [231, 94, 66, 255]);
+        let second = Self::solid_rgba(width, height, [70, 142, 255, 255]);
+        let asset = crate::data::ImageAsset {
+            id: -40,
+            original_path: std::path::PathBuf::from("/tmp/debug.gif"),
+            filename: "debug.gif".to_owned(),
+            mime_type: image::ImageFormat::Gif.to_mime_type().to_owned(),
+            width,
+            height,
+            file_size: (first.len() + second.len()) as u64,
+            imported_at: 0,
+        };
+        let record = crate::data::BoardItemWithAsset {
+            item: crate::data::BoardItem {
+                id: -40,
+                asset_id: -40,
+                x: 0.0,
+                y: 0.0,
+                scale: 1.0,
+                rotation: 0.0,
+                z_index: 0,
+                archived: false,
+            },
+            asset,
+        };
+        self.canvas.add_loaded_item(
+            ctx,
+            crate::jobs::LoadedCanvasItem {
+                queue_id: None,
+                record,
+                preview_rgba: first.clone(),
+                preview_width: width,
+                preview_height: height,
+                animated_preview: Some(crate::jobs::AnimatedPreview {
+                    frames: vec![
+                        crate::jobs::AnimatedPreviewFrame {
+                            rgba: first,
+                            delay_seconds: 0.12,
+                        },
+                        crate::jobs::AnimatedPreviewFrame {
+                            rgba: second,
+                            delay_seconds: 0.12,
+                        },
+                    ],
+                    width,
+                    height,
+                }),
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+        self.canvas.select_items(&[-40]);
+        self.canvas.set_animation_time_override_seconds(Some(0.13));
+        self.status = "Added animated GIF debug image".to_owned();
     }
 
     #[cfg(debug_assertions)]
@@ -2134,6 +2260,8 @@ impl eframe::App for ReferenceApp {
         if sidebar_open {
             block_sidebar_input(ui.ctx(), sidebar_rect(screen_rect));
         }
+        self.canvas
+            .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         self.frame_perf.canvas = crate::canvas::show(
             ui,
@@ -2412,6 +2540,7 @@ mod tests {
                     preview_rgba: rgba,
                     preview_width: *width,
                     preview_height: *height,
+                    animated_preview: None,
                     preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
                     loaded_tier: crate::data::CanvasImageCacheTier::Working,
                     existing_load_diagnostics: None,
