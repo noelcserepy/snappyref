@@ -185,7 +185,6 @@ pub(super) fn handle_input(
             state.interaction.drag_state = Some(DragState {
                 pointer_start_world: pointer_world,
                 starting_items,
-                snap_preview_offset_world: None,
                 snap_preview_rect_world: None,
             });
             state.interaction.image_transform_state = None;
@@ -349,26 +348,15 @@ pub(super) fn handle_input(
     {
         let pointer_world = state.screen_to_world(pointer_pos, rect);
         let world_delta = pointer_world - drag_state.pointer_start_world;
-
-        for item in &drag_state.starting_items {
-            if let Some(image) = state
-                .document
-                .images
-                .iter_mut()
-                .find(|image| image.record.item.id == item.id)
-            {
-                image.record.item.x = item.x + world_delta.x;
-                image.record.item.y = item.y + world_delta.y;
-            }
-        }
-
-        let snap_offset = compute_drag_snap_preview(state, rect, &drag_state, world_delta);
+        let snap_preview_rect = compute_drag_snap_preview(state, rect, &drag_state, world_delta);
+        apply_dragged_item_positions(
+            state,
+            &drag_state.starting_items,
+            world_delta,
+            snap_preview_rect,
+        );
         if let Some(active_drag_state) = &mut state.interaction.drag_state {
-            active_drag_state.snap_preview_offset_world = snap_offset;
-            active_drag_state.snap_preview_rect_world = snap_offset.and_then(|offset| {
-                offset_layout_bounds(&active_drag_state.starting_items, world_delta)
-                    .map(|bounds| bounds.translate(offset))
-            });
+            active_drag_state.snap_preview_rect_world = snap_preview_rect;
         }
     }
 
@@ -399,19 +387,6 @@ pub(super) fn handle_input(
                 state.mark_annotation_dirty(annotation_id);
             }
         } else if let Some(drag_state) = state.interaction.drag_state.take() {
-            if let Some(snap_offset) = drag_state.snap_preview_offset_world {
-                for item in &drag_state.starting_items {
-                    if let Some(image) = state
-                        .document
-                        .images
-                        .iter_mut()
-                        .find(|image| image.record.item.id == item.id)
-                    {
-                        image.record.item.x += snap_offset.x;
-                        image.record.item.y += snap_offset.y;
-                    }
-                }
-            }
             for item in drag_state.starting_items {
                 state.mark_dirty(item.id);
             }
@@ -855,34 +830,42 @@ fn rotated_image_angle(
     }
 }
 
-fn compute_drag_snap_preview(
+pub(super) fn compute_drag_snap_preview(
     state: &mut CanvasState,
     rect: egui::Rect,
     drag_state: &DragState,
     world_delta: egui::Vec2,
-) -> Option<egui::Vec2> {
+) -> Option<egui::Rect> {
     let excluded_ids = drag_state
         .starting_items
         .iter()
         .map(|item| item.id)
         .collect::<Vec<_>>();
-    let layout = state.board_snap_layout_items_excluding(&excluded_ids);
+    let obstacles = state.board_snap_obstacles_excluding(&excluded_ids);
     let Some(bounds) = offset_layout_bounds(&drag_state.starting_items, world_delta) else {
         state.clear_move_preview_placeholders();
         return None;
     };
 
     let max_snap_distance_world = IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN / state.zoom.max(0.01);
-    let candidate = crate::layout_snap::best_move_snap_candidate(
-        &layout,
-        &crate::layout_snap::MoveSnapRequest {
-            desired_rect: bounds,
-            drag_delta: world_delta,
-            previous_snapped_rect: drag_state.snap_preview_rect_world,
-            gap: state.layout_gap,
-            max_snap_distance: max_snap_distance_world,
-            hysteresis_distance: (IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN * 0.2) / state.zoom.max(0.01),
-        },
+    let request = crate::layout_snap::MoveSnapRequest {
+        desired_rect: bounds,
+        drag_delta: world_delta,
+        gap: state.layout_gap,
+        max_snap_distance: max_snap_distance_world,
+    };
+    let candidate = apply_preview_hysteresis(
+        crate::layout_snap::best_move_snap_candidate(&obstacles, &request),
+        drag_state
+            .snap_preview_rect_world
+            .and_then(|previous_rect| {
+                crate::layout_snap::validate_move_snap_candidate(
+                    &obstacles,
+                    &request,
+                    previous_rect,
+                )
+            }),
+        (IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN * 0.2) / state.zoom.max(0.01),
     );
     let Some(candidate) = candidate else {
         state.clear_move_preview_placeholders();
@@ -896,22 +879,31 @@ fn compute_drag_snap_preview(
         return None;
     }
 
-    let snap_offset = candidate.rect.center() - bounds.center();
-    let placeholders = drag_state
-        .starting_items
-        .iter()
-        .map(|item| {
-            (
-                egui::pos2(item.x + world_delta.x, item.y + world_delta.y) + snap_offset,
-                egui::vec2(item.width, item.height),
-            )
-        })
-        .collect::<Vec<_>>();
-    state.set_move_preview_placeholders(placeholders);
-    Some(snap_offset)
+    state.clear_move_preview_placeholders();
+    Some(candidate.rect)
 }
 
-fn offset_layout_bounds(items: &[SelectedLayoutItem], offset: egui::Vec2) -> Option<egui::Rect> {
+fn apply_preview_hysteresis(
+    best: Option<crate::layout_snap::MoveSnapCandidate>,
+    previous: Option<crate::layout_snap::MoveSnapCandidate>,
+    hysteresis_distance: f32,
+) -> Option<crate::layout_snap::MoveSnapCandidate> {
+    match (best, previous) {
+        (Some(best), Some(previous))
+            if best.rect.center().distance(previous.rect.center()) <= hysteresis_distance =>
+        {
+            Some(previous)
+        }
+        (Some(best), _) => Some(best),
+        (None, Some(previous)) => Some(previous),
+        (None, None) => None,
+    }
+}
+
+pub(super) fn offset_layout_bounds(
+    items: &[SelectedLayoutItem],
+    offset: egui::Vec2,
+) -> Option<egui::Rect> {
     let mut bounds = egui::Rect::NOTHING;
     let mut found = false;
     for item in items {
@@ -927,6 +919,32 @@ fn offset_layout_bounds(items: &[SelectedLayoutItem], offset: egui::Vec2) -> Opt
         }
     }
     found.then_some(bounds)
+}
+
+fn apply_dragged_item_positions(
+    state: &mut CanvasState,
+    items: &[SelectedLayoutItem],
+    world_delta: egui::Vec2,
+    snap_preview_rect: Option<egui::Rect>,
+) {
+    let snap_offset = snap_preview_rect
+        .and_then(|snap_rect| {
+            offset_layout_bounds(items, world_delta)
+                .map(|bounds| snap_rect.center() - bounds.center())
+        })
+        .unwrap_or(egui::Vec2::ZERO);
+
+    for item in items {
+        if let Some(image) = state
+            .document
+            .images
+            .iter_mut()
+            .find(|image| image.record.item.id == item.id)
+        {
+            image.record.item.x = item.x + world_delta.x + snap_offset.x;
+            image.record.item.y = item.y + world_delta.y + snap_offset.y;
+        }
+    }
 }
 
 fn zoom_around_pointer(
@@ -1244,24 +1262,23 @@ mod tests {
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
             starting_items: canvas.selected_layout_items(),
-            snap_preview_offset_world: None,
             snap_preview_rect_world: None,
         };
 
-        let snap_offset = compute_drag_snap_preview(
+        let snap_rect = compute_drag_snap_preview(
             &mut canvas,
             test_screen_rect(),
             &drag_state,
             egui::vec2(60.0, 0.0),
         )
         .expect("expected snap preview");
+        let current_bounds =
+            offset_layout_bounds(&drag_state.starting_items, egui::vec2(60.0, 0.0))
+                .expect("bounds");
+        let snap_offset = snap_rect.center() - current_bounds.center();
 
         assert_eq!(snap_offset, egui::vec2(24.0, 0.0));
-        assert_eq!(canvas.move_preview_placeholder_count(), 1);
-        assert_eq!(
-            canvas.interaction.move_preview_placeholders[0].center_world,
-            egui::pos2(84.0, 0.0)
-        );
+        assert_eq!(canvas.move_preview_placeholder_count(), 0);
     }
 
     #[test]
@@ -1275,18 +1292,17 @@ mod tests {
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
             starting_items: canvas.selected_layout_items(),
-            snap_preview_offset_world: None,
             snap_preview_rect_world: None,
         };
 
-        let snap_offset = compute_drag_snap_preview(
+        let snap_rect = compute_drag_snap_preview(
             &mut canvas,
             test_screen_rect(),
             &drag_state,
             egui::vec2(220.0, 0.0),
         );
 
-        assert!(snap_offset.is_none());
+        assert!(snap_rect.is_none());
         assert_eq!(canvas.move_preview_placeholder_count(), 0);
     }
 
@@ -1314,54 +1330,48 @@ mod tests {
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
             starting_items: canvas.selected_layout_items(),
-            snap_preview_offset_world: None,
             snap_preview_rect_world: None,
         };
 
-        let snap_offset = compute_drag_snap_preview(
-            &mut canvas,
-            test_screen_rect(),
-            &drag_state,
-            egui::vec2(60.0, 0.0),
-        )
-        .expect("expected textbox snap preview");
+        let (delta, snap_rect) = (0..=200)
+            .find_map(|delta_x| {
+                let delta = egui::vec2(delta_x as f32, 0.0);
+                compute_drag_snap_preview(&mut canvas, test_screen_rect(), &drag_state, delta)
+                    .map(|rect| (delta, rect))
+            })
+            .expect("expected textbox snap preview");
+        let current_bounds = offset_layout_bounds(&drag_state.starting_items, delta).expect("bounds");
+        let snap_offset = snap_rect.center() - current_bounds.center();
 
-        assert_eq!(snap_offset, egui::vec2(84.0, 0.0));
-        assert_eq!(canvas.move_preview_placeholder_count(), 1);
+        assert!(snap_offset.x.abs() <= 32.0);
+        assert_eq!(snap_offset.y, 0.0);
+        assert_eq!(canvas.move_preview_placeholder_count(), 0);
     }
 
     #[test]
     fn drag_snap_preview_preserves_previous_world_rect_for_hysteresis() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 100);
-        add_test_image(&mut canvas, &ctx, 2, egui::pos2(120.0, 0.0), 100, 100);
-        add_test_image(&mut canvas, &ctx, 3, egui::pos2(0.0, 0.0), 100, 100);
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(-170.0, 150.0), 120, 180);
+        add_test_image(&mut canvas, &ctx, 2, egui::pos2(10.0, -120.0), 220, 120);
+        add_test_image(&mut canvas, &ctx, 3, egui::pos2(70.0, 36.0), 180, 140);
         canvas.select_items(&[3]);
 
         let rect = test_screen_rect();
         let mut drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
             starting_items: canvas.selected_layout_items(),
-            snap_preview_offset_world: None,
             snap_preview_rect_world: None,
         };
 
-        let first_delta = egui::vec2(0.0, 80.0);
-        let first_offset = compute_drag_snap_preview(&mut canvas, rect, &drag_state, first_delta)
+        let first_delta = egui::vec2(-50.0, 0.0);
+        let first_rect = compute_drag_snap_preview(&mut canvas, rect, &drag_state, first_delta)
             .expect("expected initial snap preview");
-        let first_bounds =
-            offset_layout_bounds(&drag_state.starting_items, first_delta).expect("initial bounds");
-        let first_rect = first_bounds.translate(first_offset);
-        drag_state.snap_preview_offset_world = Some(first_offset);
         drag_state.snap_preview_rect_world = Some(first_rect);
 
-        let second_delta = egui::vec2(3.0, 80.0);
-        let second_offset = compute_drag_snap_preview(&mut canvas, rect, &drag_state, second_delta)
+        let second_delta = egui::vec2(-47.0, 0.0);
+        let second_rect = compute_drag_snap_preview(&mut canvas, rect, &drag_state, second_delta)
             .expect("expected hysteresis snap preview");
-        let second_bounds =
-            offset_layout_bounds(&drag_state.starting_items, second_delta).expect("second bounds");
-        let second_rect = second_bounds.translate(second_offset);
 
         assert_eq!(second_rect.center(), first_rect.center());
     }

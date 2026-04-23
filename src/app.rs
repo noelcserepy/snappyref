@@ -2176,11 +2176,16 @@ impl ReferenceApp {
         match (left_result, top_result, moving_result) {
             (Ok(_), Ok(_), Ok(item_id)) => {
                 self.canvas.select_items(&[item_id]);
-                self.canvas.set_move_preview_placeholders(vec![(
-                    egui::pos2(24.0, 34.0),
-                    egui::vec2(180.0, 140.0),
-                )]);
-                self.status = "Added move snap debug preview".to_owned();
+                let screen_rect =
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, STARTUP_VIEWPORT_SIZE);
+                if self
+                    .canvas
+                    .seed_move_snap_preview_for_selected_items(screen_rect, egui::vec2(0.0, -88.0))
+                {
+                    self.status = "Added move snap debug preview".to_owned();
+                } else {
+                    self.status = "Failed to compute move snap debug preview".to_owned();
+                }
             }
             (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => self.status = error,
         }

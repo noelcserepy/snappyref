@@ -26,7 +26,7 @@ const MIN_IMAGE_WORLD_SIZE: f32 = 24.0;
 const IMAGE_CULL_MARGIN_SCREEN: f32 = 128.0;
 const ANNOTATION_CULL_MARGIN_SCREEN: f32 = 128.0;
 const IMAGE_RESIZE_HIT_RADIUS: f32 = 14.0;
-const IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN: f32 = 96.0;
+const IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN: f32 = 32.0;
 const MIN_TEXTBOX_WORLD_SIZE: egui::Vec2 = egui::vec2(240.0, 56.0);
 const TEXTBOX_RESIZE_HIT_RADIUS: f32 = 14.0;
 const TEXTBOX_DRAG_THRESHOLD_SCREEN: f32 = 4.0;
@@ -221,7 +221,6 @@ struct SelectedLayoutItem {
 struct DragState {
     pointer_start_world: egui::Pos2,
     starting_items: Vec<SelectedLayoutItem>,
-    snap_preview_offset_world: Option<egui::Vec2>,
     snap_preview_rect_world: Option<egui::Rect>,
 }
 
@@ -400,6 +399,39 @@ impl CanvasState {
     pub fn screen_to_world(&self, screen: egui::Pos2, rect: egui::Rect) -> egui::Pos2 {
         let world = (screen - rect.center() - self.pan) / self.zoom;
         egui::pos2(world.x, world.y)
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn seed_move_snap_preview_for_selected_items(
+        &mut self,
+        rect: egui::Rect,
+        world_delta: egui::Vec2,
+    ) -> bool {
+        let drag_state = DragState {
+            pointer_start_world: egui::Pos2::ZERO,
+            starting_items: self.selected_layout_items(),
+            snap_preview_rect_world: None,
+        };
+        let snap_preview_rect =
+            interaction::compute_drag_snap_preview(self, rect, &drag_state, world_delta);
+        let snap_offset = snap_preview_rect
+            .and_then(|snap_rect| {
+                interaction::offset_layout_bounds(&drag_state.starting_items, world_delta)
+                    .map(|bounds| snap_rect.center() - bounds.center())
+            })
+            .unwrap_or(egui::Vec2::ZERO);
+        for item in &drag_state.starting_items {
+            if let Some(image) = self
+                .document
+                .images
+                .iter_mut()
+                .find(|image| image.record.item.id == item.id)
+            {
+                image.record.item.x = item.x + world_delta.x + snap_offset.x;
+                image.record.item.y = item.y + world_delta.y + snap_offset.y;
+            }
+        }
+        snap_preview_rect.is_some()
     }
 }
 

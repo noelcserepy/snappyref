@@ -391,22 +391,6 @@ impl CanvasState {
         self.interaction.hover_preview_placeholders.len()
     }
 
-    pub fn set_move_preview_placeholders(&mut self, placeholders: Vec<(egui::Pos2, egui::Vec2)>) {
-        self.interaction.move_preview_placeholders.clear();
-        self.interaction
-            .move_preview_placeholders
-            .extend(
-                placeholders
-                    .into_iter()
-                    .map(|(center_world, size_world)| ImportPlaceholder {
-                        queue_id: 0,
-                        center_world,
-                        size_world,
-                        label: String::new(),
-                    }),
-            );
-    }
-
     pub fn clear_move_preview_placeholders(&mut self) {
         self.interaction.move_preview_placeholders.clear();
     }
@@ -1158,37 +1142,45 @@ impl CanvasState {
             .collect()
     }
 
-    pub fn board_snap_layout_items_excluding(
+    pub fn board_snap_obstacles_excluding(
         &self,
         excluded_item_ids: &[i64],
-    ) -> Vec<BoardLayoutItem> {
-        let mut items = self
+    ) -> Vec<crate::layout_snap::SnapObstacle> {
+        let mut obstacles = self
             .document
             .images
             .iter()
             .filter(|image| !excluded_item_ids.contains(&image.record.item.id))
-            .map(|image| BoardLayoutItem {
-                id: image.record.item.id,
-                x: image.record.item.x,
-                y: image.record.item.y,
-                width: image.record.asset.width as f32 * image.record.item.scale.max(0.01),
-                height: image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+            .map(|image| {
+                crate::layout_snap::SnapObstacle::from_center_size(
+                    egui::pos2(image.record.item.x, image.record.item.y),
+                    egui::vec2(
+                        image.record.asset.width as f32 * image.record.item.scale.max(0.01),
+                        image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+                    ),
+                )
             })
             .collect::<Vec<_>>();
-        items.extend(self.document.annotations.iter().filter_map(|annotation| {
+        obstacles.extend(self.document.annotations.iter().filter_map(|annotation| {
             (annotation.kind == CanvasAnnotationKind::Textbox).then(|| {
                 let world_rect = textbox_world_rect(annotation);
-                BoardLayoutItem {
-                    id: -(annotation.id + 1),
-                    x: world_rect.center().x,
-                    y: world_rect.center().y,
-                    width: world_rect.width(),
-                    height: world_rect.height(),
-                }
+                crate::layout_snap::SnapObstacle::from_center_size(
+                    world_rect.center(),
+                    world_rect.size(),
+                )
             })
         }));
-        items.extend(self.import_placeholder_layout_items());
-        items
+        obstacles.extend(
+            self.import_placeholder_layout_items()
+                .into_iter()
+                .map(|placeholder| {
+                    crate::layout_snap::SnapObstacle::from_center_size(
+                        egui::pos2(placeholder.x, placeholder.y),
+                        egui::vec2(placeholder.width, placeholder.height),
+                    )
+                }),
+        );
+        obstacles
     }
 
     pub(super) fn apply_arrangement(
