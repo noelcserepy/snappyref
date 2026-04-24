@@ -5,16 +5,26 @@ use eframe::egui;
 
 use crate::canvas::CanvasState;
 use crate::palette::{
-    ImageSearchPivot, PALETTE_GRID_MAX_HEIGHT, PALETTE_WIDTH, SEARCH_DEBOUNCE_MS,
-    SEARCH_OVERLAY_TOP_MARGIN, SearchOverlayState, SearchOverlayStatus, paint_palette_divider,
-    paint_palette_empty_state, paint_palette_footer, paint_palette_input_row,
-    search_result_grid_content_height, search_result_grid_layout, search_result_tile,
+    ImageSearchPivot, PALETTE_GRID_MAX_HEIGHT, PALETTE_WIDTH, RECENT_SEARCHES, SEARCH_DEBOUNCE_MS,
+    SEARCH_OVERLAY_TOP_MARGIN, SEARCH_RESULT_PAGE_SIZE, SearchOverlayState, SearchOverlayStatus,
+    paint_palette_divider, paint_palette_empty_state, paint_palette_footer,
+    paint_palette_input_row, search_result_grid_content_height, search_result_grid_layout,
+    search_result_tile,
 };
 use crate::semantic_search::{
     DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, SemanticSearchConfig,
     SemanticSearchService,
 };
 use crate::storage::Library;
+
+const SEARCH_RESULT_SCROLL_ANIMATION: egui::style::ScrollAnimation = egui::style::ScrollAnimation {
+    points_per_second: 3200.0,
+    duration: egui::Rangef {
+        min: 0.04,
+        max: 0.16,
+    },
+};
+const SEARCH_RESULT_SCROLL_MARGIN: f32 = 12.0;
 
 #[derive(Default)]
 pub(crate) struct SearchController {
@@ -67,7 +77,6 @@ impl SearchController {
             SemanticSearchConfig {
                 enabled: true,
                 model: DEFAULT_SEMANTIC_SEARCH_MODEL,
-                max_results: 5,
             },
         ) {
             Ok(service) => {
@@ -161,8 +170,10 @@ impl SearchController {
             self.overlay.last_query_edit_at = None;
             self.overlay.last_submitted_query.clear();
             self.overlay.results.clear();
-            self.overlay.active_result_index = 0;
-            self.overlay.active_instance_index = 0;
+            self.overlay.result_selection.clear();
+            self.overlay.active_recent_search_index = 0;
+            self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
+            self.overlay.has_more_results = false;
             canvas.clear_search_matches();
         }
 
@@ -217,8 +228,10 @@ impl SearchController {
             self.overlay.query.clear();
             self.overlay.last_submitted_query.clear();
             self.overlay.results.clear();
-            self.overlay.active_result_index = 0;
-            self.overlay.active_instance_index = 0;
+            self.overlay.result_selection.clear();
+            self.overlay.active_recent_search_index = 0;
+            self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
+            self.overlay.has_more_results = false;
             self.overlay.image_pivot = pivot;
             self.overlay.last_query_edit_at = None;
             canvas.clear_search_matches();
@@ -256,7 +269,16 @@ impl SearchController {
         }
 
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-            self.close_overlay(Some(canvas));
+            if self
+                .overlay
+                .drag_state
+                .as_ref()
+                .is_some_and(|drag| drag.placement_pending)
+            {
+                self.cancel_pending_placement(canvas);
+            } else {
+                self.close_overlay(Some(canvas));
+            }
             return None;
         }
 
@@ -323,16 +345,12 @@ impl SearchController {
                             canvas,
                         );
                         let response = input_result.response;
-                        if input_result.pivot_dismissed {
-                            self.overlay.image_pivot = None;
-                            self.overlay.last_submitted_query.clear();
-                            self.overlay.results.clear();
-                            self.overlay.selected_result_indices.clear();
-                            self.overlay.selection_anchor_index = None;
-                            self.overlay.active_result_index = 0;
-                            self.overlay.active_instance_index = 0;
-                            canvas.clear_search_matches();
-                            self.overlay.last_query_edit_at = Some(Instant::now());
+                        let pivot_backspace_dismissed = self.overlay.image_pivot.is_some()
+                            && self.overlay.query.is_empty()
+                            && response.has_focus()
+                            && ctx.input(|input| input.key_pressed(egui::Key::Backspace));
+                        if input_result.pivot_dismissed || pivot_backspace_dismissed {
+                            self.dismiss_image_pivot(canvas);
                         }
                         if self.overlay.focus_requested {
                             response.request_focus();
@@ -344,14 +362,17 @@ impl SearchController {
                         }
                         if response.changed() {
                             self.overlay.last_query_edit_at = Some(Instant::now());
-                            self.overlay.active_result_index = 0;
-                            self.overlay.active_instance_index = 0;
+                            self.overlay
+                                .result_selection
+                                .select_initial(self.overlay.results.len());
+                            self.overlay.active_recent_search_index = 0;
+                            self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
+                            self.overlay.has_more_results = false;
                             if self.overlay.query.trim().is_empty()
                                 && self.overlay.image_pivot.is_none()
                             {
                                 self.overlay.results.clear();
-                                self.overlay.selected_result_indices.clear();
-                                self.overlay.selection_anchor_index = None;
+                                self.overlay.result_selection.clear();
                                 canvas.clear_search_matches();
                             }
                         }
@@ -360,11 +381,27 @@ impl SearchController {
                             paint_palette_divider(ui);
 
                             if result_count == 0 {
-                                paint_palette_empty_state(ui);
+                                if let Some(recent_search) = paint_palette_empty_state(
+                                    ui,
+                                    self.overlay
+                                        .active_recent_search_index
+                                        .min(RECENT_SEARCHES.len().saturating_sub(1)),
+                                ) {
+                                    self.submit_recent_search(recent_search, canvas);
+                                }
                             } else {
                                 let mut clicked_index = None;
                                 let mut drag_start_index = None;
-                                let selected_indices = self.overlay.selected_result_indices.clone();
+                                let scroll_lead_index = if self.overlay.scroll_lead_result_into_view
+                                {
+                                    self.overlay.result_selection.lead()
+                                } else {
+                                    None
+                                };
+                                let mut scrolled_lead_result = false;
+                                let selected_indices =
+                                    self.overlay.result_selection.selected().to_vec();
+                                let lead_index = self.overlay.result_selection.lead();
                                 egui::Frame::new()
                                     .inner_margin(egui::Margin {
                                         left: body_h_pad as i8,
@@ -394,18 +431,28 @@ impl SearchController {
                                                     {
                                                         let index = row_index * grid_layout.columns
                                                             + column_index;
-                                                        let active = index
-                                                            == self.overlay.active_result_index;
+                                                        let lead = Some(index) == lead_index;
                                                         let selected =
                                                             selected_indices.contains(&index);
                                                         let response = search_result_tile(
                                                             ui,
                                                             canvas,
                                                             group,
-                                                            active,
+                                                            lead,
                                                             selected,
                                                             grid_layout.tile_width,
                                                         );
+                                                        if scroll_lead_index == Some(index) {
+                                                            ui.scroll_to_rect_animation(
+                                                                response.rect.expand2(egui::vec2(
+                                                                    0.0,
+                                                                    SEARCH_RESULT_SCROLL_MARGIN,
+                                                                )),
+                                                                None,
+                                                                SEARCH_RESULT_SCROLL_ANIMATION,
+                                                            );
+                                                            scrolled_lead_result = true;
+                                                        }
                                                         if response.clicked() {
                                                             clicked_index = Some((
                                                                 index,
@@ -440,9 +487,11 @@ impl SearchController {
                                                 .show(ui, |ui| render_grid(ui));
                                         }
                                     });
+                                if scrolled_lead_result {
+                                    self.overlay.scroll_lead_result_into_view = false;
+                                }
                                 if let Some((index, mode)) = clicked_index {
-                                    self.overlay.active_result_index = index;
-                                    self.overlay.active_instance_index = 0;
+                                    self.overlay.scroll_lead_result_into_view = true;
                                     self.update_result_selection(index, mode);
                                     self.apply_search_matches(canvas);
                                 }
@@ -452,7 +501,12 @@ impl SearchController {
                             }
 
                             paint_palette_divider(ui);
-                            paint_palette_footer(ui, result_count, &self.overlay.status);
+                            paint_palette_footer(
+                                ui,
+                                result_count,
+                                self.overlay.has_more_results,
+                                &self.overlay.status,
+                            );
                         }
                     });
             });
@@ -466,14 +520,46 @@ impl SearchController {
                 .overlay
                 .last_expanded_overlay_rect
                 .unwrap_or(overlay_rect);
-            drag.outside_overlay =
-                pointer_pos.is_some_and(|pos| !expanded_rect.expand(2.0).contains(pos));
+            if !drag.outside_overlay && !drag.placement_pending {
+                drag.outside_overlay =
+                    pointer_pos.is_some_and(|pos| !expanded_rect.expand(2.0).contains(pos));
+            }
             if drag.outside_overlay {
+                if let Some(pointer_pos) = pointer_pos {
+                    let pointer_world = canvas.screen_to_world(pointer_pos, screen_rect);
+                    canvas.update_search_drag_preview(&drag.item_ids, pointer_world, screen_rect);
+                }
                 ctx.request_repaint_after(Duration::from_millis(16));
             }
         }
         let mut drop_request = None;
-        if ctx.input(|input| input.pointer.any_released())
+        let mut cancelled_pending_placement = false;
+        let cancel_pending_placement = ctx.input(|input| input.pointer.secondary_clicked());
+        if cancel_pending_placement
+            && self
+                .overlay
+                .drag_state
+                .as_ref()
+                .is_some_and(|drag| drag.placement_pending)
+        {
+            self.cancel_pending_placement(canvas);
+            cancelled_pending_placement = true;
+            ctx.request_repaint_after(Duration::from_millis(16));
+        } else if ctx.input(|input| input.pointer.primary_clicked())
+            && self
+                .overlay
+                .drag_state
+                .as_ref()
+                .is_some_and(|drag| drag.placement_pending)
+            && let Some(drag) = self.overlay.drag_state.take()
+            && let Some(screen_pos) = pointer_pos
+        {
+            drop_request = Some(SearchDropRequest {
+                item_ids: drag.item_ids,
+                screen_pos,
+            });
+            ctx.request_repaint_after(Duration::from_millis(16));
+        } else if ctx.input(|input| input.pointer.any_released())
             && let Some(drag) = self.overlay.drag_state.take()
         {
             if drag.outside_overlay
@@ -483,6 +569,8 @@ impl SearchController {
                     item_ids: drag.item_ids,
                     screen_pos,
                 });
+            } else {
+                canvas.clear_search_drag_preview();
             }
             ctx.request_repaint_after(Duration::from_millis(16));
         }
@@ -493,7 +581,11 @@ impl SearchController {
                     .interact_pos()
                     .is_some_and(|pointer_pos| !overlay_rect.contains(pointer_pos))
         });
-        if clicked_outside && self.overlay.drag_state.is_none() && drop_request.is_none() {
+        if clicked_outside
+            && self.overlay.drag_state.is_none()
+            && drop_request.is_none()
+            && !cancelled_pending_placement
+        {
             self.close_overlay(Some(canvas));
             return drop_request;
         }
@@ -507,93 +599,123 @@ impl SearchController {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
 
+        let placement_pending = self
+            .overlay
+            .drag_state
+            .as_ref()
+            .is_some_and(|drag| drag.placement_pending);
+        if placement_pending {
+            return drop_request;
+        }
+
         if !self.overlay.results.is_empty() {
             let last_index = self.overlay.results.len() - 1;
+            let lead_index = self.overlay.result_selection.lead().unwrap_or(0);
+            let lead_is_on_bottom_row =
+                result_is_on_bottom_row(lead_index, last_index, grid_layout.columns);
+            let arrow_selection_mode = if ctx.input(|input| input.modifiers.shift) {
+                SearchSelectionMode::Range
+            } else {
+                SearchSelectionMode::Replace
+            };
             if ctx.input(|input| input.key_pressed(egui::Key::ArrowRight)) {
-                self.overlay.active_result_index =
-                    (self.overlay.active_result_index + 1).min(last_index);
-                self.overlay.active_instance_index = 0;
+                let index = (lead_index + 1).min(last_index);
+                self.update_result_selection(index, arrow_selection_mode);
+                self.overlay.scroll_lead_result_into_view = true;
                 self.apply_search_matches(canvas);
             } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowLeft)) {
-                self.overlay.active_result_index =
-                    self.overlay.active_result_index.saturating_sub(1);
-                self.overlay.active_instance_index = 0;
+                let index = lead_index.saturating_sub(1);
+                self.update_result_selection(index, arrow_selection_mode);
+                self.overlay.scroll_lead_result_into_view = true;
                 self.apply_search_matches(canvas);
             } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
-                self.overlay.active_result_index =
-                    (self.overlay.active_result_index + grid_layout.columns).min(last_index);
-                self.overlay.active_instance_index = 0;
-                self.apply_search_matches(canvas);
+                if lead_is_on_bottom_row && self.overlay.has_more_results {
+                    let next_row_index = lead_index + grid_layout.columns;
+                    self.overlay.result_limit += SEARCH_RESULT_PAGE_SIZE;
+                    self.submit_query(canvas);
+                    if !self.overlay.results.is_empty() {
+                        let index = next_row_index.min(self.overlay.results.len() - 1);
+                        self.update_result_selection(index, arrow_selection_mode);
+                        self.overlay.scroll_lead_result_into_view = true;
+                        self.apply_search_matches(canvas);
+                    }
+                } else {
+                    let index = (lead_index + grid_layout.columns).min(last_index);
+                    self.update_result_selection(index, arrow_selection_mode);
+                    self.overlay.scroll_lead_result_into_view = true;
+                    self.apply_search_matches(canvas);
+                }
             } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
-                self.overlay.active_result_index = self
-                    .overlay
-                    .active_result_index
-                    .saturating_sub(grid_layout.columns);
-                self.overlay.active_instance_index = 0;
+                let index = lead_index.saturating_sub(grid_layout.columns);
+                self.update_result_selection(index, arrow_selection_mode);
+                self.overlay.scroll_lead_result_into_view = true;
                 self.apply_search_matches(canvas);
             }
 
             if ctx.input(|input| input.key_pressed(egui::Key::Enter)) {
-                self.focus_active_search_result(canvas);
+                if ctx.input(|input| input.modifiers.command) {
+                    self.start_keyboard_placement_for_all_results(canvas, pointer_pos, screen_rect);
+                } else {
+                    self.start_keyboard_placement_for_selected_results(
+                        canvas,
+                        pointer_pos,
+                        screen_rect,
+                    );
+                }
+            }
+        } else if !RECENT_SEARCHES.is_empty() {
+            let last_recent_index = RECENT_SEARCHES.len() - 1;
+            if ctx.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
+                self.overlay.active_recent_search_index =
+                    (self.overlay.active_recent_search_index + 1).min(last_recent_index);
+            } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
+                self.overlay.active_recent_search_index =
+                    self.overlay.active_recent_search_index.saturating_sub(1);
+            } else if ctx.input(|input| input.key_pressed(egui::Key::Enter)) {
+                let recent_search = RECENT_SEARCHES[self
+                    .overlay
+                    .active_recent_search_index
+                    .min(last_recent_index)];
+                self.submit_recent_search(recent_search, canvas);
             }
         }
         drop_request
     }
 
-    fn close_overlay(&mut self, canvas: Option<&mut CanvasState>) {
+    pub(crate) fn close_overlay(&mut self, canvas: Option<&mut CanvasState>) {
         self.overlay = SearchOverlayState::default();
         if let Some(canvas) = canvas {
             canvas.clear_search_matches();
+            canvas.clear_search_drag_preview();
         }
     }
 
     fn update_result_selection(&mut self, index: usize, mode: SearchSelectionMode) {
         match mode {
             SearchSelectionMode::Replace => {
-                self.overlay.selected_result_indices.clear();
-                self.overlay.selected_result_indices.push(index);
-                self.overlay.selection_anchor_index = Some(index);
+                self.overlay.result_selection.replace(index);
             }
             SearchSelectionMode::Toggle => {
-                if let Some(position) = self
-                    .overlay
-                    .selected_result_indices
-                    .iter()
-                    .position(|selected| *selected == index)
-                {
-                    self.overlay.selected_result_indices.remove(position);
-                } else {
-                    self.overlay.selected_result_indices.push(index);
-                }
-                self.overlay.selection_anchor_index = Some(index);
+                self.overlay.result_selection.toggle(index);
             }
             SearchSelectionMode::Range => {
-                let anchor = self
-                    .overlay
-                    .selection_anchor_index
-                    .or_else(|| self.overlay.selected_result_indices.first().copied())
-                    .unwrap_or(index);
-                let start = anchor.min(index);
-                let end = anchor.max(index);
-                self.overlay.selected_result_indices = (start..=end).collect();
+                self.overlay.result_selection.range_to(index);
             }
         }
-        self.overlay.selected_result_indices.sort_unstable();
+    }
+
+    fn select_initial_result(&mut self) {
+        self.overlay
+            .result_selection
+            .select_initial(self.overlay.results.len());
     }
 
     fn start_result_drag(&mut self, index: usize) {
-        if !self.overlay.selected_result_indices.contains(&index) {
+        if !self.overlay.result_selection.contains(index) {
             self.update_result_selection(index, SearchSelectionMode::Replace);
         }
 
-        let item_ids = self
-            .overlay
-            .selected_result_indices
-            .iter()
-            .filter_map(|index| self.overlay.results.get(*index))
-            .filter_map(|group| group.item_ids.first().copied())
-            .collect::<Vec<_>>();
-
+        let item_ids = self.selected_result_item_ids();
         if item_ids.is_empty() {
             return;
         }
@@ -601,7 +723,109 @@ impl SearchController {
         self.overlay.drag_state = Some(crate::palette::SearchResultDragState {
             item_ids,
             outside_overlay: false,
+            placement_pending: false,
         });
+    }
+
+    fn start_keyboard_placement_for_selected_results(
+        &mut self,
+        canvas: &mut CanvasState,
+        pointer_pos: Option<egui::Pos2>,
+        screen_rect: egui::Rect,
+    ) {
+        let item_ids = self.selected_result_item_ids();
+        self.start_keyboard_placement(item_ids, canvas, pointer_pos, screen_rect);
+    }
+
+    fn start_keyboard_placement_for_all_results(
+        &mut self,
+        canvas: &mut CanvasState,
+        pointer_pos: Option<egui::Pos2>,
+        screen_rect: egui::Rect,
+    ) {
+        let item_ids = self.all_result_item_ids();
+        self.start_keyboard_placement(item_ids, canvas, pointer_pos, screen_rect);
+    }
+
+    fn start_keyboard_placement(
+        &mut self,
+        item_ids: Vec<i64>,
+        canvas: &mut CanvasState,
+        pointer_pos: Option<egui::Pos2>,
+        screen_rect: egui::Rect,
+    ) {
+        if item_ids.is_empty() {
+            return;
+        }
+
+        self.overlay.drag_state = Some(crate::palette::SearchResultDragState {
+            item_ids: item_ids.clone(),
+            outside_overlay: true,
+            placement_pending: true,
+        });
+        let pointer_world = pointer_pos
+            .map(|pos| canvas.screen_to_world(pos, screen_rect))
+            .unwrap_or_else(|| canvas.screen_to_world(screen_rect.center(), screen_rect));
+        canvas.update_search_drag_preview(&item_ids, pointer_world, screen_rect);
+    }
+
+    fn cancel_pending_placement(&mut self, canvas: &mut CanvasState) {
+        self.overlay.drag_state = None;
+        canvas.clear_search_drag_preview();
+    }
+
+    fn selected_result_item_ids(&self) -> Vec<i64> {
+        let item_ids = self
+            .overlay
+            .result_selection
+            .selected()
+            .iter()
+            .filter_map(|index| self.overlay.results.get(*index))
+            .filter_map(|group| group.item_ids.first().copied())
+            .collect::<Vec<_>>();
+
+        if item_ids.is_empty() {
+            self.overlay
+                .results
+                .get(self.overlay.result_selection.lead().unwrap_or(0))
+                .and_then(|group| group.item_ids.first().copied())
+                .into_iter()
+                .collect()
+        } else {
+            item_ids
+        }
+    }
+
+    fn all_result_item_ids(&self) -> Vec<i64> {
+        self.overlay
+            .results
+            .iter()
+            .filter_map(|group| group.item_ids.first().copied())
+            .collect()
+    }
+
+    fn dismiss_image_pivot(&mut self, canvas: &mut CanvasState) {
+        self.overlay.image_pivot = None;
+        self.overlay.last_submitted_query.clear();
+        self.overlay.results.clear();
+        self.overlay.result_selection.clear();
+        self.overlay.active_recent_search_index = 0;
+        self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
+        self.overlay.has_more_results = false;
+        canvas.clear_search_matches();
+        self.overlay.last_query_edit_at = Some(Instant::now());
+    }
+
+    fn submit_recent_search(&mut self, query: &str, canvas: &mut CanvasState) {
+        self.overlay.query = query.to_owned();
+        self.overlay.image_pivot = None;
+        self.overlay.last_query_edit_at = None;
+        self.overlay.last_submitted_query.clear();
+        self.overlay.results.clear();
+        self.overlay.result_selection.clear();
+        self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
+        self.overlay.has_more_results = false;
+        self.submit_query(canvas);
     }
 
     fn submit_query(&mut self, canvas: &mut CanvasState) {
@@ -609,11 +833,9 @@ impl SearchController {
         let pivot = self.overlay.image_pivot;
         if query.is_empty() && pivot.is_none() {
             self.overlay.results.clear();
-            self.overlay.selected_result_indices.clear();
-            self.overlay.selection_anchor_index = None;
+            self.overlay.result_selection.clear();
             self.overlay.last_submitted_query.clear();
-            self.overlay.active_result_index = 0;
-            self.overlay.active_instance_index = 0;
+            self.overlay.has_more_results = false;
             self.overlay.status = SearchOverlayStatus::Ready;
             canvas.clear_search_matches();
             return;
@@ -632,27 +854,22 @@ impl SearchController {
                 } else {
                     Some(query.as_str())
                 };
-                service.search_with_image_pivot(pivot.asset_id, text)
+                service.search_with_image_pivot_with_limit(
+                    pivot.asset_id,
+                    text,
+                    self.overlay.result_limit + 1,
+                )
             }
-            None => service.search(&query),
+            None => service.search_with_limit(&query, self.overlay.result_limit + 1),
         };
 
         match search_result {
-            Ok(results) => {
+            Ok(mut results) => {
                 self.overlay.last_submitted_query = query;
-                let last_index = results.len().saturating_sub(1);
+                self.overlay.has_more_results = results.len() > self.overlay.result_limit;
+                results.truncate(self.overlay.result_limit);
                 self.overlay.results = results;
-                self.overlay.selected_result_indices.clear();
-                self.overlay.selection_anchor_index = None;
-                self.overlay.active_result_index = self.overlay.active_result_index.min(last_index);
-                let instance_last = self
-                    .overlay
-                    .results
-                    .get(self.overlay.active_result_index)
-                    .map(|group| group.item_ids.len().saturating_sub(1))
-                    .unwrap_or(0);
-                self.overlay.active_instance_index =
-                    self.overlay.active_instance_index.min(instance_last);
+                self.select_initial_result();
                 self.overlay.status = SearchOverlayStatus::Ready;
                 self.apply_search_matches(canvas);
             }
@@ -665,8 +882,8 @@ impl SearchController {
             Err(error) => {
                 self.overlay.status = SearchOverlayStatus::Error(error);
                 self.overlay.results.clear();
-                self.overlay.selected_result_indices.clear();
-                self.overlay.selection_anchor_index = None;
+                self.overlay.result_selection.clear();
+                self.overlay.has_more_results = false;
                 canvas.clear_search_matches();
             }
         }
@@ -679,39 +896,22 @@ impl SearchController {
             .iter()
             .flat_map(|group| group.item_ids.iter().copied())
             .collect::<Vec<_>>();
-        let active_item_id = self
+        let lead_item_id = self
             .overlay
             .results
-            .get(self.overlay.active_result_index)
-            .and_then(|group| {
-                if group.item_ids.is_empty() {
-                    None
-                } else {
-                    Some(group.item_ids[self.overlay.active_instance_index % group.item_ids.len()])
-                }
-            });
-        canvas.set_search_matches(item_ids, active_item_id);
+            .get(self.overlay.result_selection.lead().unwrap_or(0))
+            .and_then(|group| group.item_ids.first().copied());
+        canvas.set_search_matches(item_ids, lead_item_id);
     }
+}
 
-    fn focus_active_search_result(&mut self, canvas: &mut CanvasState) {
-        let Some(group) = self.overlay.results.get(self.overlay.active_result_index) else {
-            return;
-        };
-        if group.item_ids.is_empty() {
-            return;
-        }
-
-        let item_id = group.item_ids[self.overlay.active_instance_index % group.item_ids.len()];
-        canvas.focus_item(item_id);
-        self.overlay.active_instance_index =
-            (self.overlay.active_instance_index + 1) % group.item_ids.len();
-        self.apply_search_matches(canvas);
-    }
+fn result_is_on_bottom_row(index: usize, last_index: usize, columns: usize) -> bool {
+    index / columns.max(1) == last_index / columns.max(1)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SearchController, SearchSelectionMode};
+    use super::{SearchController, SearchSelectionMode, result_is_on_bottom_row};
     use crate::semantic_search::SearchResultGroup;
 
     #[test]
@@ -719,13 +919,39 @@ mod tests {
         let mut search = SearchController::default();
 
         search.update_result_selection(1, SearchSelectionMode::Replace);
-        assert_eq!(search.overlay.selected_result_indices, vec![1]);
+        assert_eq!(search.overlay.result_selection.selected(), &[1]);
 
         search.update_result_selection(3, SearchSelectionMode::Toggle);
-        assert_eq!(search.overlay.selected_result_indices, vec![1, 3]);
+        assert_eq!(search.overlay.result_selection.selected(), &[1, 3]);
 
         search.update_result_selection(1, SearchSelectionMode::Toggle);
-        assert_eq!(search.overlay.selected_result_indices, vec![3]);
+        assert_eq!(search.overlay.result_selection.selected(), &[3]);
+    }
+
+    #[test]
+    fn selection_lead_stays_selected() {
+        let mut search = SearchController::default();
+
+        search.update_result_selection(1, SearchSelectionMode::Replace);
+        assert_eq!(search.overlay.result_selection.lead(), Some(1));
+
+        search.update_result_selection(3, SearchSelectionMode::Range);
+        assert_eq!(search.overlay.result_selection.lead(), Some(3));
+        assert!(
+            search
+                .overlay
+                .result_selection
+                .contains(search.overlay.result_selection.lead().unwrap())
+        );
+
+        search.update_result_selection(3, SearchSelectionMode::Toggle);
+        assert_eq!(search.overlay.result_selection.lead(), Some(1));
+        assert!(
+            search
+                .overlay
+                .result_selection
+                .contains(search.overlay.result_selection.lead().unwrap())
+        );
     }
 
     #[test]
@@ -735,7 +961,44 @@ mod tests {
         search.update_result_selection(1, SearchSelectionMode::Replace);
         search.update_result_selection(4, SearchSelectionMode::Range);
 
-        assert_eq!(search.overlay.selected_result_indices, vec![1, 2, 3, 4]);
+        assert_eq!(search.overlay.result_selection.selected(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn result_selection_range_keeps_anchor_when_contracting() {
+        let mut search = SearchController::default();
+
+        search.update_result_selection(2, SearchSelectionMode::Replace);
+        search.update_result_selection(5, SearchSelectionMode::Range);
+        search.update_result_selection(3, SearchSelectionMode::Range);
+
+        assert_eq!(search.overlay.result_selection.selected(), &[2, 3]);
+        assert_eq!(search.overlay.result_selection.lead(), Some(3));
+    }
+
+    #[test]
+    fn bottom_row_detection_handles_partial_rows() {
+        assert!(!result_is_on_bottom_row(4, 7, 5));
+        assert!(result_is_on_bottom_row(5, 7, 5));
+        assert!(result_is_on_bottom_row(7, 7, 5));
+    }
+
+    #[test]
+    fn initial_result_becomes_range_anchor() {
+        let mut search = SearchController::default();
+        search.overlay.results = (0..5)
+            .map(|index| SearchResultGroup {
+                asset_id: index,
+                similarity: 0.9,
+                item_ids: vec![100 + index],
+                instance_count: 1,
+            })
+            .collect();
+
+        search.select_initial_result();
+        search.update_result_selection(3, SearchSelectionMode::Range);
+
+        assert_eq!(search.overlay.result_selection.selected(), &[0, 1, 2, 3]);
     }
 
     #[test]
@@ -755,11 +1018,55 @@ mod tests {
                 instance_count: 1,
             },
         ];
-        search.overlay.selected_result_indices = vec![0, 1];
+        search.overlay.result_selection.replace(0);
+        search.update_result_selection(1, SearchSelectionMode::Toggle);
 
         search.start_result_drag(1);
 
         let drag = search.overlay.drag_state.expect("expected search drag");
         assert_eq!(drag.item_ids, vec![101, 201]);
+    }
+
+    #[test]
+    fn selected_result_item_ids_falls_back_to_lead_result() {
+        let mut search = SearchController::default();
+        search.overlay.results = vec![
+            SearchResultGroup {
+                asset_id: 10,
+                similarity: 0.9,
+                item_ids: vec![101],
+                instance_count: 1,
+            },
+            SearchResultGroup {
+                asset_id: 11,
+                similarity: 0.8,
+                item_ids: vec![201],
+                instance_count: 1,
+            },
+        ];
+        search.overlay.result_selection.replace(1);
+
+        assert_eq!(search.selected_result_item_ids(), vec![201]);
+    }
+
+    #[test]
+    fn all_result_item_ids_uses_loaded_results() {
+        let mut search = SearchController::default();
+        search.overlay.results = vec![
+            SearchResultGroup {
+                asset_id: 10,
+                similarity: 0.9,
+                item_ids: vec![101, 102],
+                instance_count: 2,
+            },
+            SearchResultGroup {
+                asset_id: 11,
+                similarity: 0.8,
+                item_ids: vec![201],
+                instance_count: 1,
+            },
+        ];
+
+        assert_eq!(search.all_result_item_ids(), vec![101, 201]);
     }
 }

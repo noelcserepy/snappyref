@@ -5,7 +5,7 @@ use eframe::egui;
 use super::{
     AnnotationDraftState, AnnotationDragState, CanvasCropRequest, CanvasImage, CropState,
     DragState, ImageTransformState, ImportPlaceholder, MarqueeState, PendingAnnotation,
-    TextboxLayoutCacheEntry, TextboxTransformState,
+    SearchDragPreview, TextboxLayoutCacheEntry, TextboxTransformState,
 };
 use crate::data::{CanvasAnnotation, CanvasImageCacheTier};
 
@@ -39,6 +39,7 @@ pub(super) struct CanvasInteractionState {
     pub import_placeholders: Vec<ImportPlaceholder>,
     pub hover_preview_placeholders: Vec<ImportPlaceholder>,
     pub move_preview_placeholders: Vec<ImportPlaceholder>,
+    pub search_drag_preview: Option<SearchDragPreview>,
     pub last_pointer_screen_pos: Option<egui::Pos2>,
 }
 

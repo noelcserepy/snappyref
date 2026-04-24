@@ -9,31 +9,134 @@ pub(crate) const SEARCH_OVERLAY_TOP_MARGIN: f32 = 56.0;
 pub(crate) const PALETTE_WIDTH: f32 = 660.0;
 pub(crate) const PALETTE_GRID_COLUMNS: usize = 5;
 pub(crate) const PALETTE_GRID_MAX_HEIGHT: f32 = 360.0;
+pub(crate) const SEARCH_RESULT_PAGE_SIZE: usize = 5;
+pub(crate) const RECENT_SEARCHES: [&str; 3] = ["boat", "forest path", "still life"];
 
 const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 144.0;
+const KBD_PILL_SIZE: egui::Vec2 = egui::vec2(28.0, 28.0);
 
-#[derive(Default)]
 pub(crate) struct SearchOverlayState {
     pub open: bool,
     pub query: String,
     pub last_submitted_query: String,
     pub last_query_edit_at: Option<Instant>,
-    pub active_result_index: usize,
-    pub active_instance_index: usize,
-    pub selected_result_indices: Vec<usize>,
-    pub selection_anchor_index: Option<usize>,
+    pub result_selection: SearchSelection,
+    pub scroll_lead_result_into_view: bool,
+    pub active_recent_search_index: usize,
     pub drag_state: Option<SearchResultDragState>,
     pub last_expanded_overlay_rect: Option<egui::Rect>,
     pub results: Vec<SearchResultGroup>,
+    pub result_limit: usize,
+    pub has_more_results: bool,
     pub status: SearchOverlayStatus,
     pub focus_requested: bool,
     pub image_pivot: Option<ImageSearchPivot>,
+}
+
+impl Default for SearchOverlayState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            query: String::new(),
+            last_submitted_query: String::new(),
+            last_query_edit_at: None,
+            result_selection: SearchSelection::default(),
+            scroll_lead_result_into_view: false,
+            active_recent_search_index: 0,
+            drag_state: None,
+            last_expanded_overlay_rect: None,
+            results: Vec::new(),
+            result_limit: SEARCH_RESULT_PAGE_SIZE,
+            has_more_results: false,
+            status: SearchOverlayStatus::Idle,
+            focus_requested: false,
+            image_pivot: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SearchSelection {
+    selected: Vec<usize>,
+    lead: Option<usize>,
+    anchor: Option<usize>,
+}
+
+impl SearchSelection {
+    pub(crate) fn clear(&mut self) {
+        self.selected.clear();
+        self.lead = None;
+        self.anchor = None;
+    }
+
+    pub(crate) fn selected(&self) -> &[usize] {
+        &self.selected
+    }
+
+    pub(crate) fn lead(&self) -> Option<usize> {
+        self.lead
+    }
+
+    pub(crate) fn contains(&self, index: usize) -> bool {
+        self.selected.contains(&index)
+    }
+
+    pub(crate) fn replace(&mut self, index: usize) {
+        self.selected.clear();
+        self.selected.push(index);
+        self.lead = Some(index);
+        self.anchor = Some(index);
+    }
+
+    pub(crate) fn toggle(&mut self, index: usize) {
+        if let Some(position) = self.selected.iter().position(|selected| *selected == index) {
+            self.selected.remove(position);
+        } else {
+            self.selected.push(index);
+        }
+
+        self.selected.sort_unstable();
+        if self.selected.is_empty() {
+            self.selected.push(index);
+            self.lead = Some(index);
+            self.anchor = Some(index);
+        } else if self.selected.contains(&index) {
+            self.lead = Some(index);
+            self.anchor = Some(index);
+        } else {
+            let fallback = self.selected[0];
+            self.lead = Some(fallback);
+            self.anchor = Some(fallback);
+        }
+    }
+
+    pub(crate) fn range_to(&mut self, index: usize) {
+        let anchor = self
+            .anchor
+            .or_else(|| self.selected.first().copied())
+            .unwrap_or(index);
+        let start = anchor.min(index);
+        let end = anchor.max(index);
+        self.selected = (start..=end).collect();
+        self.lead = Some(index);
+    }
+
+    pub(crate) fn select_initial(&mut self, result_count: usize) {
+        if result_count == 0 {
+            self.clear();
+            return;
+        }
+
+        let index = self.lead.unwrap_or(0).min(result_count - 1);
+        self.replace(index);
+    }
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct SearchResultDragState {
     pub item_ids: Vec<i64>,
     pub outside_overlay: bool,
+    pub placement_pending: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -89,14 +192,14 @@ pub(crate) fn search_result_tile(
     ui: &mut egui::Ui,
     canvas: &crate::canvas::CanvasState,
     group: &SearchResultGroup,
-    active: bool,
+    lead: bool,
     selected: bool,
     tile_width: f32,
 ) -> egui::Response {
     let total_size = egui::vec2(tile_width, search_result_tile_height());
-    let (rect, response) = ui.allocate_exact_size(total_size, egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(total_size, egui::Sense::click_and_drag());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    let tile_radius = if active || selected {
+    let tile_radius = if selected {
         0
     } else {
         crate::theme::CARD_RADIUS
@@ -134,11 +237,11 @@ pub(crate) fn search_result_tile(
             .rect_filled(preview_rect, tile_radius, crate::theme::BACKGROUND);
     }
 
-    if selected || active {
-        let stroke = if active {
-            crate::theme::stroke_strong()
+    if selected {
+        let stroke = if lead {
+            egui::Stroke::new(2.0, crate::theme::ACCENT)
         } else {
-            egui::Stroke::new(1.0, crate::theme::BORDER_STRONG)
+            egui::Stroke::new(2.0, egui::Color32::from_white_alpha(140))
         };
         ui.painter()
             .rect_stroke(preview_rect, tile_radius, stroke, egui::StrokeKind::Outside);
@@ -332,28 +435,49 @@ fn paint_kbd_pill(ui: &mut egui::Ui, label: &str) {
         10.0
     };
 
-    egui::Frame::new()
-        .fill(egui::Color32::from_white_alpha(15))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(15)))
-        .corner_radius(egui::CornerRadius::same(4))
-        .inner_margin(egui::Margin {
-            left: 5,
-            right: 5,
-            top: 2,
-            bottom: 2,
-        })
-        .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(label)
-                    .text_style(egui::TextStyle::Monospace)
-                    .color(crate::theme::TEXT_MUTED)
-                    .size(label_size),
-            );
-        });
+    let (rect, _) = ui.allocate_exact_size(KBD_PILL_SIZE, egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, 4, egui::Color32::from_white_alpha(15));
+    ui.painter().rect_stroke(
+        rect,
+        4,
+        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(15)),
+        egui::StrokeKind::Inside,
+    );
+
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::monospace(label_size),
+        crate::theme::TEXT_MUTED,
+    );
+    ui.painter().galley(
+        rect.center() - galley.size() * 0.5,
+        galley,
+        crate::theme::TEXT_MUTED,
+    );
 }
 
 fn kbd_label_uses_small_symbol_glyphs(label: &str) -> bool {
-    label.chars().any(|ch| matches!(ch, '⇧' | '↵'))
+    label
+        .chars()
+        .any(|ch| matches!(ch, '⇧' | '↵' | '↓' | '↑' | '⌘'))
+}
+
+fn footer_hint_label(ui: &mut egui::Ui, label: &str) {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::proportional(11.0),
+        crate::theme::TEXT_SUBTLE,
+    );
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(galley.size().x, KBD_PILL_SIZE.y),
+        egui::Sense::hover(),
+    );
+    ui.painter().galley(
+        rect.center() - galley.size() * 0.5,
+        galley,
+        crate::theme::TEXT_SUBTLE,
+    );
 }
 
 pub(crate) fn paint_palette_divider(ui: &mut egui::Ui) {
@@ -363,7 +487,11 @@ pub(crate) fn paint_palette_divider(ui: &mut egui::Ui) {
         .rect_filled(rect, 0, egui::Color32::from_white_alpha(14));
 }
 
-pub(crate) fn paint_palette_empty_state(ui: &mut egui::Ui) {
+pub(crate) fn paint_palette_empty_state(
+    ui: &mut egui::Ui,
+    active_recent_search_index: usize,
+) -> Option<&'static str> {
+    let mut selected_recent_search = None;
     egui::Frame::new()
         .inner_margin(egui::Margin {
             left: 8,
@@ -372,11 +500,23 @@ pub(crate) fn paint_palette_empty_state(ui: &mut egui::Ui) {
             bottom: 6,
         })
         .show(ui, |ui| {
-            paint_palette_empty_group(ui, "RECENT", &["boat", "forest path", "still life"]);
+            selected_recent_search = paint_palette_empty_group(
+                ui,
+                "RECENT",
+                &RECENT_SEARCHES,
+                active_recent_search_index,
+            );
         });
+    selected_recent_search
 }
 
-fn paint_palette_empty_group(ui: &mut egui::Ui, title: &str, rows: &[&str]) {
+fn paint_palette_empty_group(
+    ui: &mut egui::Ui,
+    title: &str,
+    rows: &'static [&'static str],
+    active_recent_search_index: usize,
+) -> Option<&'static str> {
+    let mut selected_recent_search = None;
     egui::Frame::new()
         .inner_margin(egui::Margin {
             left: 6,
@@ -392,28 +532,43 @@ fn paint_palette_empty_group(ui: &mut egui::Ui, title: &str, rows: &[&str]) {
                     .size(9.0),
             );
         });
-    for row in rows {
-        egui::Frame::new()
-            .inner_margin(egui::Margin {
-                left: 14,
-                right: 14,
-                top: 6,
-                bottom: 6,
-            })
-            .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new(*row)
-                        .text_style(egui::TextStyle::Body)
-                        .color(crate::theme::TEXT),
-                );
-            });
+    for (index, row) in rows.iter().enumerate() {
+        let row_height = 34.0;
+        let row_width = ui.available_width();
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(row_width, row_height), egui::Sense::click());
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let active = index == active_recent_search_index;
+        if active || response.hovered() {
+            ui.painter().rect_filled(
+                rect.shrink2(egui::vec2(2.0, 2.0)),
+                crate::theme::CARD_RADIUS,
+                if active {
+                    crate::theme::SURFACE_ELEVATED
+                } else {
+                    crate::theme::SURFACE
+                },
+            );
+        }
+        ui.painter().text(
+            egui::pos2(rect.left() + 14.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            *row,
+            egui::TextStyle::Body.resolve(ui.style()),
+            crate::theme::TEXT,
+        );
+        if response.clicked() {
+            selected_recent_search = Some(*row);
+        }
     }
     ui.add_space(4.0);
+    selected_recent_search
 }
 
 pub(crate) fn paint_palette_footer(
     ui: &mut egui::Ui,
     result_count: usize,
+    has_more_results: bool,
     status: &SearchOverlayStatus,
 ) {
     egui::Frame::new()
@@ -446,25 +601,31 @@ pub(crate) fn paint_palette_footer(
                             .color(crate::theme::TEXT_SUBTLE)
                             .size(11.0),
                     );
+                } else if has_more_results {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        paint_kbd_pill(ui, "↓");
+                        ui.add_space(6.0);
+                        footer_hint_label(ui, "more");
+                    });
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    ui.label(
-                        egui::RichText::new("board")
-                            .text_style(egui::TextStyle::Small)
-                            .color(crate::theme::TEXT_SUBTLE)
-                            .size(11.0),
-                    );
-                    paint_kbd_pill(ui, "↵");
-                    paint_kbd_pill(ui, "⌘");
-                    ui.add_space(8.0);
-                    ui.label(
-                        egui::RichText::new("open")
-                            .text_style(egui::TextStyle::Small)
-                            .color(crate::theme::TEXT_SUBTLE)
-                            .size(11.0),
-                    );
-                    paint_kbd_pill(ui, "↵");
+                    if result_count == 0 {
+                        footer_hint_label(ui, "select");
+                        paint_kbd_pill(ui, "↵");
+                        ui.add_space(8.0);
+                        footer_hint_label(ui, "navigate");
+                        paint_kbd_pill(ui, "↓");
+                        paint_kbd_pill(ui, "↑");
+                    } else {
+                        footer_hint_label(ui, "place all");
+                        paint_kbd_pill(ui, "↵");
+                        paint_kbd_pill(ui, "⌘");
+                        ui.add_space(8.0);
+                        footer_hint_label(ui, "place");
+                        paint_kbd_pill(ui, "↵");
+                    }
                 });
             });
         });

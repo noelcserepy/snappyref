@@ -13,7 +13,6 @@ const IMAGE_PIVOT_CANDIDATE_LIMIT: usize = 50;
 pub struct SemanticSearchConfig {
     pub enabled: bool,
     pub model: ModelSpec,
-    pub max_results: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -53,7 +52,6 @@ enum ModelState {
 pub struct SemanticSearchService {
     library: Library,
     model_key: &'static str,
-    max_results: usize,
     model_state: Arc<Mutex<ModelState>>,
     index_tx: mpsc::Sender<IndexRequest>,
     result_rx: mpsc::Receiver<IndexResult>,
@@ -146,7 +144,6 @@ impl SemanticSearchService {
         let service = Self {
             library,
             model_key: config.model.model_key,
-            max_results: config.max_results,
             model_state,
             index_tx,
             result_rx,
@@ -172,10 +169,11 @@ impl SemanticSearchService {
             .map_err(|error| format!("failed to queue embedding backfill: {error}"))
     }
 
-    pub fn search_with_image_pivot(
+    pub fn search_with_image_pivot_with_limit(
         &self,
         source_asset_id: i64,
         text_query: Option<&str>,
+        limit: usize,
     ) -> Result<Vec<SearchResultGroup>, String> {
         let source_blob = self
             .library
@@ -220,7 +218,7 @@ impl SemanticSearchService {
             hits.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));
         }
 
-        hits.truncate(self.max_results);
+        hits.truncate(limit);
         let asset_ids = hits.iter().map(|hit| hit.asset_id).collect::<Vec<_>>();
         let instances = self.library.board_item_instances_for_assets(&asset_ids)?;
 
@@ -247,7 +245,11 @@ impl SemanticSearchService {
             .collect())
     }
 
-    pub fn search(&self, query: &str) -> Result<Vec<SearchResultGroup>, String> {
+    pub fn search_with_limit(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchResultGroup>, String> {
         let query = query.trim();
         if query.is_empty() {
             return Ok(Vec::new());
@@ -265,7 +267,7 @@ impl SemanticSearchService {
 
         let query_embedding = model.embed_text(query)?;
         let index = BruteForceIndex::new(self.library.clone());
-        let hits = index.search(self.model_key, &query_embedding, self.max_results)?;
+        let hits = index.search(self.model_key, &query_embedding, limit)?;
         let asset_ids = hits.iter().map(|hit| hit.asset_id).collect::<Vec<_>>();
         let instances = self.library.board_item_instances_for_assets(&asset_ids)?;
 
@@ -443,7 +445,6 @@ mod tests {
             SemanticSearchConfig {
                 enabled: true,
                 model: DEFAULT_SEMANTIC_SEARCH_MODEL,
-                max_results: 5,
             },
         )
         .unwrap();
@@ -471,7 +472,7 @@ mod tests {
 
         assert!(indexed, "timed out waiting for semantic-search indexing");
 
-        let results = service.search("cat").unwrap();
+        let results = service.search_with_limit("cat", 5).unwrap();
         assert!(!results.is_empty());
         assert_eq!(results[0].asset_id, record.asset.id);
 

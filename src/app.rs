@@ -2465,6 +2465,10 @@ impl ReferenceApp {
         let drop_world = self
             .canvas
             .screen_to_world(drop_request.screen_pos, screen_rect);
+        let drop_world = self
+            .canvas
+            .take_search_drag_drop_anchor_world()
+            .unwrap_or(drop_world);
         let source_center = self
             .source_center_for_item_ids(&drop_request.item_ids)
             .unwrap_or(drop_world);
@@ -2501,6 +2505,8 @@ impl ReferenceApp {
             "images"
         };
         self.status = format!("Added {} search {noun}", duplicated_ids.len());
+        self.canvas.clear_search_drag_preview();
+        self.search.close_overlay(Some(&mut self.canvas));
     }
 
     #[cfg(feature = "semantic-search")]
@@ -2514,10 +2520,14 @@ impl ReferenceApp {
                 continue;
             };
             found = true;
-            min.x = min.x.min(record.item.x);
-            min.y = min.y.min(record.item.y);
-            max.x = max.x.max(record.item.x);
-            max.y = max.y.max(record.item.y);
+            let half_size = egui::vec2(
+                record.asset.width as f32 * record.item.scale.max(0.01),
+                record.asset.height as f32 * record.item.scale.max(0.01),
+            ) * 0.5;
+            min.x = min.x.min(record.item.x - half_size.x);
+            min.y = min.y.min(record.item.y - half_size.y);
+            max.x = max.x.max(record.item.x + half_size.x);
+            max.y = max.y.max(record.item.y + half_size.y);
         }
 
         found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))
@@ -3150,6 +3160,59 @@ mod tests {
             height,
             search_result_tile_height() * 2.0 + crate::theme::SPACE_2
         );
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_drop_source_center_uses_image_extents() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+
+        for (id, x, width) in [(1_i64, 0.0_f32, 100_u32), (2, 200.0, 300)] {
+            let asset = ImageAsset {
+                id,
+                original_path: PathBuf::from(format!("fixture-{id}.png")),
+                filename: format!("fixture-{id}.png"),
+                mime_type: "image/png".to_owned(),
+                width,
+                height: 100,
+                file_size: 0,
+                imported_at: 0,
+            };
+            let record = BoardItemWithAsset {
+                item: BoardItem {
+                    id,
+                    asset_id: id,
+                    x,
+                    y: 0.0,
+                    scale: 1.0,
+                    rotation: 0.0,
+                    z_index: id as i32,
+                    archived: false,
+                },
+                asset,
+            };
+            app.canvas.add_loaded_item(
+                &ctx,
+                LoadedCanvasItem {
+                    queue_id: None,
+                    record,
+                    preview_rgba: vec![255; width as usize * 100 * 4],
+                    preview_width: width,
+                    preview_height: 100,
+                    animated_preview: None,
+                    preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                    loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                    existing_load_diagnostics: None,
+                    origin: crate::jobs::ImportOrigin::Existing,
+                    trace: None,
+                },
+            );
+        }
+
+        let center = app.source_center_for_item_ids(&[1, 2]).unwrap();
+
+        assert_eq!(center, egui::pos2(150.0, 0.0));
     }
 
     #[test]

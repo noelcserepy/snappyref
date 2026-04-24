@@ -107,6 +107,7 @@ struct AnnotationPaintStats {
     drawn: usize,
 }
 
+#[derive(Clone)]
 struct CanvasImage {
     record: BoardItemWithAsset,
     texture: CanvasTexture,
@@ -221,6 +222,13 @@ struct SelectedLayoutItem {
 struct DragState {
     pointer_start_world: egui::Pos2,
     starting_items: Vec<SelectedLayoutItem>,
+    snap_preview_rect_world: Option<egui::Rect>,
+}
+
+#[derive(Clone)]
+struct SearchDragPreview {
+    images: Vec<CanvasImage>,
+    drop_anchor_world: egui::Pos2,
     snap_preview_rect_world: Option<egui::Rect>,
 }
 
