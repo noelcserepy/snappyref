@@ -611,7 +611,7 @@ pub struct ReferenceApp {
 
 impl ReferenceApp {
     pub fn new(cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
-        crate::native_drop::install_url_drop_bridge();
+        crate::native_drop::install_url_drop_bridge(cc);
         let library_root = std::env::current_dir()
             .unwrap_or_else(|_| std::path::PathBuf::from("."))
             .join("library");
@@ -947,27 +947,18 @@ impl ReferenceApp {
         width: u32,
         height: u32,
         desired_world: egui::Pos2,
-        viewport_world: egui::Rect,
+        _viewport_world: egui::Rect,
     ) -> egui::Pos2 {
         let scale =
             crate::jobs::initial_import_scale(width, height, self.settings.auto_image_scaling);
         let size = egui::vec2(width as f32 * scale, height as f32 * scale);
-        let reserved_world = crate::jobs::arrange_rect_with_existing_layout(
+        crate::import_placement::reserve_import_world(
             layout,
             desired_world,
-            viewport_world,
-            size.x,
-            size.y,
+            size,
             self.settings.import_gap,
-        );
-        layout.push(crate::data::BoardLayoutItem {
-            id: -((layout.len() as i64) + 1),
-            x: reserved_world.x,
-            y: reserved_world.y,
-            width: size.x,
-            height: size.y,
-        });
-        reserved_world
+            crate::import_placement::import_snap_distance_world(&self.canvas),
+        )
     }
 
     fn normalize_import_url(raw: &str) -> Option<String> {
@@ -1023,6 +1014,12 @@ impl ReferenceApp {
             }
         }
 
+        for path in crate::native_drop::hovered_paths() {
+            if seen_paths.insert(path.clone()) {
+                sources.push(ExternalImportSource::Path(path));
+            }
+        }
+
         for url in crate::native_drop::hovered_url_strings() {
             if seen_urls.insert(url.clone()) {
                 sources.push(ExternalImportSource::Url(url));
@@ -1052,6 +1049,12 @@ impl ReferenceApp {
                 if seen_urls.insert(url.clone()) {
                     sources.push(ExternalImportSource::Url(url));
                 }
+            }
+        }
+
+        for path in crate::native_drop::take_dropped_paths() {
+            if seen_paths.insert(path.clone()) {
+                sources.push(ExternalImportSource::Path(path));
             }
         }
 

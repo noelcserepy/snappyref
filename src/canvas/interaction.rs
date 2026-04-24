@@ -1340,7 +1340,8 @@ mod tests {
                     .map(|rect| (delta, rect))
             })
             .expect("expected textbox snap preview");
-        let current_bounds = offset_layout_bounds(&drag_state.starting_items, delta).expect("bounds");
+        let current_bounds =
+            offset_layout_bounds(&drag_state.starting_items, delta).expect("bounds");
         let snap_offset = snap_rect.center() - current_bounds.center();
 
         assert!(snap_offset.x.abs() <= 32.0);

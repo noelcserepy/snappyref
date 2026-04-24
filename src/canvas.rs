@@ -401,6 +401,10 @@ impl CanvasState {
         egui::pos2(world.x, world.y)
     }
 
+    pub(crate) fn screen_distance_to_world(&self, screen_distance: f32) -> f32 {
+        screen_distance / self.zoom.max(0.01)
+    }
+
     #[cfg(debug_assertions)]
     pub(crate) fn seed_move_snap_preview_for_selected_items(
         &mut self,

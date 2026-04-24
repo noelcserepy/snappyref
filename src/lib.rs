@@ -1,6 +1,7 @@
 mod app;
 mod canvas;
 mod data;
+mod import_placement;
 mod jobs;
 mod layout_snap;
 mod native_capture;

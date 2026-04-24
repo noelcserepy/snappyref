@@ -4125,6 +4125,7 @@ dependencies = [
  "tokenizers",
  "turbojpeg",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
