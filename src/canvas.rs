@@ -1389,11 +1389,11 @@ mod tests {
         textbox_screen_rect,
     };
     use super::render::{
-        annotation_paint_stats_for_annotations, background_screen_step, background_world_step,
-        editing_textbox_toolbar_rect, layout_textbox_galley, settled_background_lod_level,
-        textbox_content_rect, textbox_empty_hotspot_rect, textbox_font_size,
-        textbox_layout_cache_key, textbox_pointer_region, textbox_required_world_height,
-        textbox_text_interactive_rect_from_galley,
+        annotation_paint_stats_for_annotations, background_lod_layers, background_screen_step,
+        background_world_step, editing_textbox_toolbar_rect, layout_textbox_galley,
+        settled_background_lod_level, textbox_content_rect, textbox_empty_hotspot_rect,
+        textbox_font_size, textbox_layout_cache_key, textbox_pointer_region,
+        textbox_required_world_height, textbox_text_interactive_rect_from_galley,
     };
     use super::{
         AnnotationDraftState, CanvasImage, CanvasState, CanvasTexture,
@@ -3364,6 +3364,27 @@ mod tests {
         let screen_step = background_screen_step(level_after_large_zoom_in, 1.80);
         assert!(screen_step >= super::BACKGROUND_MIN_SCREEN_STEP);
         assert!(screen_step <= super::BACKGROUND_MAX_SCREEN_STEP);
+    }
+
+    #[test]
+    fn background_lod_layers_crossfade_near_zoom_thresholds() {
+        let zoom_near_zoom_out_switch =
+            (super::BACKGROUND_MIN_SCREEN_STEP + 12.0) / super::BACKGROUND_BASE_WORLD_STEP;
+        let layers = background_lod_layers(0, zoom_near_zoom_out_switch);
+        assert_eq!(layers.len(), 2);
+        assert_eq!(layers[0].level, 1);
+        assert_eq!(layers[1].level, 0);
+        assert!((layers[0].alpha - 0.5).abs() < 0.001);
+        assert!((layers[1].alpha - 0.5).abs() < 0.001);
+
+        let zoom_near_zoom_in_switch =
+            (super::BACKGROUND_MAX_SCREEN_STEP - 12.0) / super::BACKGROUND_BASE_WORLD_STEP;
+        let layers = background_lod_layers(0, zoom_near_zoom_in_switch);
+        assert_eq!(layers.len(), 2);
+        assert_eq!(layers[0].level, -1);
+        assert_eq!(layers[1].level, 0);
+        assert!((layers[0].alpha - 0.5).abs() < 0.001);
+        assert!((layers[1].alpha - 0.5).abs() < 0.001);
     }
 
     #[test]

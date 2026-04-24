@@ -1050,18 +1050,15 @@ fn import_path_sync_traced(
         trace.timings.decode_or_load = decode_started_at.elapsed();
     }
     let initial_scale = initial_import_scale(decoded.width, decoded.height, auto_scale);
-    let arranged_world = if let Some(reserved_world) = reserved_world {
-        reserved_world
-    } else {
-        arrange_rect_world(
-            library,
-            desired_world,
-            viewport_world,
-            decoded.width as f32 * initial_scale.max(0.01),
-            decoded.height as f32 * initial_scale.max(0.01),
-            import_gap,
-        )?
-    };
+    let arranged_world = resolve_import_world(
+        library,
+        desired_world,
+        reserved_world,
+        viewport_world,
+        decoded.width as f32 * initial_scale.max(0.01),
+        decoded.height as f32 * initial_scale.max(0.01),
+        import_gap,
+    )?;
 
     let store_started_at = Instant::now();
     let stored_path = library
@@ -1301,18 +1298,15 @@ fn import_url_sync_traced(
     }
 
     let initial_scale = initial_import_scale(decoded.width, decoded.height, auto_scale);
-    let arranged_world = if let Some(reserved_world) = reserved_world {
-        reserved_world
-    } else {
-        arrange_rect_world(
-            library,
-            desired_world,
-            viewport_world,
-            decoded.width as f32 * initial_scale.max(0.01),
-            decoded.height as f32 * initial_scale.max(0.01),
-            import_gap,
-        )?
-    };
+    let arranged_world = resolve_import_world(
+        library,
+        desired_world,
+        reserved_world,
+        viewport_world,
+        decoded.width as f32 * initial_scale.max(0.01),
+        decoded.height as f32 * initial_scale.max(0.01),
+        import_gap,
+    )?;
 
     let store_started_at = Instant::now();
     let source_name = remote_image_source_name(&downloaded.url);
@@ -1425,18 +1419,15 @@ fn import_clipboard_sync_traced(
         .map_err(|error| format!("failed to read clipboard image metadata: {error}"))?
         .len();
     let initial_scale = initial_import_scale(width, height, auto_scale);
-    let arranged_world = if let Some(reserved_world) = reserved_world {
-        reserved_world
-    } else {
-        arrange_rect_world(
-            library,
-            desired_world,
-            viewport_world,
-            width as f32 * initial_scale.max(0.01),
-            height as f32 * initial_scale.max(0.01),
-            import_gap,
-        )?
-    };
+    let arranged_world = resolve_import_world(
+        library,
+        desired_world,
+        reserved_world,
+        viewport_world,
+        width as f32 * initial_scale.max(0.01),
+        height as f32 * initial_scale.max(0.01),
+        import_gap,
+    )?;
     let record = library.persist_imported_image(
         &stored_path,
         image::ImageFormat::Png.to_mime_type(),
@@ -2368,6 +2359,49 @@ pub fn arrange_rect_world(
     ))
 }
 
+fn resolve_import_world(
+    library: &Library,
+    desired_world: egui::Pos2,
+    reserved_world: Option<egui::Pos2>,
+    viewport_world: egui::Rect,
+    item_width: f32,
+    item_height: f32,
+    import_gap: f32,
+) -> Result<egui::Pos2, String> {
+    let Some(reserved_world) = reserved_world else {
+        return arrange_rect_world(
+            library,
+            desired_world,
+            viewport_world,
+            item_width,
+            item_height,
+            import_gap,
+        );
+    };
+
+    let existing_items = library.load_board_layout_items()?;
+    let reserved_rect = egui::Rect::from_center_size(
+        reserved_world,
+        egui::vec2(item_width.max(0.0), item_height.max(0.0)),
+    );
+    let overlaps_existing = existing_items.iter().any(|item| {
+        rects_overlap_with_gap(reserved_rect, displayed_layout_rect(item).rect, import_gap)
+    });
+
+    if overlaps_existing {
+        Ok(arrange_rect_with_existing_layout(
+            &existing_items,
+            desired_world,
+            viewport_world,
+            item_width,
+            item_height,
+            import_gap,
+        ))
+    } else {
+        Ok(reserved_world)
+    }
+}
+
 pub fn arrange_rect_with_existing_layout(
     existing_items: &[BoardLayoutItem],
     desired_world: egui::Pos2,
@@ -2949,6 +2983,48 @@ mod tests {
 
         assert_eq!(loaded.record.item.x, reserved_world.x);
         assert_eq!(loaded.record.item.y, reserved_world.y);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn overlapping_reserved_world_is_rearranged_before_persisting() {
+        let root = temp_library_root("placement-overlapping-reserved-world");
+        let library = Library::initialize(root.clone()).unwrap();
+        seed_board_item(&library, 1, 0.0, 0.0, 100, 100, 1.0);
+        let reserved_world = eframe::egui::Pos2::ZERO;
+        let gap = crate::data::DEFAULT_IMPORT_GAP;
+
+        let loaded = match import_clipboard(
+            &library,
+            2,
+            solid_rgba(100, 100),
+            100,
+            100,
+            reserved_world,
+            Some(reserved_world),
+            test_viewport_world(),
+            usize::MAX,
+            CanvasImageSettings::default(),
+            false,
+            gap,
+            None,
+            None,
+        ) {
+            ImportResult::Loaded(loaded) => loaded,
+            other => {
+                panic!("expected overlapping reserved clipboard import to load, got {other:?}")
+            }
+        };
+
+        let existing_rect =
+            eframe::egui::Rect::from_center_size(reserved_world, eframe::egui::vec2(100.0, 100.0));
+        let imported_rect = eframe::egui::Rect::from_center_size(
+            eframe::egui::pos2(loaded.record.item.x, loaded.record.item.y),
+            eframe::egui::vec2(100.0, 100.0),
+        );
+
+        assert_ne!(imported_rect.center(), reserved_world);
+        assert!(!rects_overlap_with_gap(imported_rect, existing_rect, gap));
         let _ = fs::remove_dir_all(root);
     }
 

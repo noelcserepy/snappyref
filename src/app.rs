@@ -279,6 +279,9 @@ enum VerificationMode {
     MoveSnapPreview,
     ImportPlaceholders,
     ImportLoaded,
+    BackgroundGrid,
+    BackgroundDots,
+    BackgroundTransition,
 }
 
 impl AppConfig {
@@ -368,6 +371,21 @@ impl AppConfig {
                 #[cfg(debug_assertions)]
                 {
                     verification_mode = Some(VerificationMode::ImportLoaded);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-background-grid" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::BackgroundGrid);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-background-dots" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::BackgroundDots);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-background-transition" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::BackgroundTransition);
                 }
             } else if let Some(query) = argument.strip_prefix("--verify-search=") {
                 #[cfg(debug_assertions)]
@@ -489,6 +507,18 @@ impl AppConfig {
     }
 
     #[cfg(debug_assertions)]
+    fn background_verification_mode(&self) -> Option<VerificationMode> {
+        match self.verification_mode {
+            Some(
+                VerificationMode::BackgroundGrid
+                | VerificationMode::BackgroundDots
+                | VerificationMode::BackgroundTransition,
+            ) => self.verification_mode,
+            _ => None,
+        }
+    }
+
+    #[cfg(debug_assertions)]
     fn skip_existing_items_on_start(&self) -> bool {
         matches!(
             self.verification_mode,
@@ -500,6 +530,9 @@ impl AppConfig {
                     | VerificationMode::MoveSnapPreview
                     | VerificationMode::ImportPlaceholders
                     | VerificationMode::ImportLoaded
+                    | VerificationMode::BackgroundGrid
+                    | VerificationMode::BackgroundDots
+                    | VerificationMode::BackgroundTransition
             )
         )
     }
@@ -737,6 +770,10 @@ impl ReferenceApp {
                 #[cfg(debug_assertions)]
                 if config.verify_import_loaded_on_start() {
                     app.seed_import_verification_loaded(&cc.egui_ctx);
+                }
+                #[cfg(debug_assertions)]
+                if let Some(mode) = config.background_verification_mode() {
+                    app.seed_background_verification(mode);
                 }
                 #[cfg(debug_assertions)]
                 if let Some(query) = config.verification_search_query().map(ToOwned::to_owned) {
@@ -2000,6 +2037,25 @@ impl ReferenceApp {
         if let Err(error) = library.save_user_session(&session) {
             self.status = error;
         }
+    }
+
+    #[cfg(debug_assertions)]
+    fn seed_background_verification(&mut self, mode: VerificationMode) {
+        let (background, zoom) = match mode {
+            VerificationMode::BackgroundDots => (crate::data::CanvasBackground::Dots, 1.0),
+            VerificationMode::BackgroundTransition => {
+                let transition_zoom = 0.9;
+                (crate::data::CanvasBackground::Grid, transition_zoom)
+            }
+            _ => (crate::data::CanvasBackground::Grid, 1.0),
+        };
+        self.canvas
+            .apply_viewport_state(&crate::data::ViewportState {
+                camera_pan_x: 0.0,
+                camera_pan_y: 0.0,
+                camera_zoom: zoom,
+                canvas_background: background,
+            });
     }
 
     #[cfg(debug_assertions)]
