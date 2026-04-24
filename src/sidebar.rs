@@ -184,11 +184,6 @@ fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
             ui.painter().rect_filled(underline, 0, crate::theme::ACCENT);
         }
     }
-    ui.painter().hline(
-        rect.left()..=rect.right(),
-        rect.bottom(),
-        crate::theme::stroke_subtle(),
-    );
 }
 
 fn paint_sidebar_options(
@@ -206,7 +201,6 @@ fn paint_sidebar_options(
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 ui.add_space(crate::theme::SPACE_3);
-                paint_sidebar_section_header(ui, "Options", Some("Board defaults"));
                 paint_sidebar_subcard(ui, |ui| {
                     changed |= paint_settings_section(ui, settings, canvas);
                 });
@@ -771,10 +765,12 @@ fn paint_shortcut_row(ui: &mut egui::Ui, shortcut: &SupportedShortcut) {
 }
 
 fn paint_shortcut_pill(ui: &mut egui::Ui, keys: &str) {
-    let font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
-    let galley = ui
-        .painter()
-        .layout_no_wrap(keys.to_owned(), font, crate::theme::TEXT);
+    let keys = display_shortcut_label(keys);
+    let mut font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
+    if shortcut_label_uses_small_symbol_glyphs(&keys) {
+        font.size += 3.0;
+    }
+    let galley = ui.painter().layout_no_wrap(keys, font, crate::theme::TEXT);
     let pad = egui::vec2(6.0, 2.0);
     let size = galley.size() + pad * 2.0;
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -850,12 +846,12 @@ pub(crate) fn show_sidebar_hint(ctx: &egui::Context, screen_rect: egui::Rect, si
     egui::Area::new(egui::Id::new("sidebar_hint"))
         .order(egui::Order::Foreground)
         .fixed_pos(egui::pos2(
-            screen_rect.right() - crate::theme::SPACE_4,
+            screen_rect.left() + crate::theme::SPACE_4,
             screen_rect.bottom() - crate::theme::SPACE_4,
         ))
         .anchor(
-            egui::Align2::RIGHT_BOTTOM,
-            egui::vec2(-crate::theme::SPACE_4, -crate::theme::SPACE_4),
+            egui::Align2::LEFT_BOTTOM,
+            egui::vec2(crate::theme::SPACE_4, -crate::theme::SPACE_4),
         )
         .show(ctx, |ui| {
             egui::Frame::new()
@@ -870,7 +866,7 @@ pub(crate) fn show_sidebar_hint(ctx: &egui::Context, screen_rect: egui::Rect, si
                 })
                 .show(ui, |ui| {
                     ui.label(
-                        egui::RichText::new(sidebar_shortcut_label())
+                        egui::RichText::new(display_shortcut_label(sidebar_shortcut_label()))
                             .text_style(egui::TextStyle::Monospace)
                             .color(crate::theme::TEXT_MUTED),
                     );
@@ -887,5 +883,58 @@ fn sidebar_shortcut_label() -> &'static str {
     #[cfg(not(target_os = "macos"))]
     {
         "Ctrl+B"
+    }
+}
+
+fn display_shortcut_label(keys: &str) -> String {
+    if keys.contains(" + ") {
+        return keys.to_owned();
+    }
+
+    if keys.contains('+') {
+        return keys
+            .split('+')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
+
+    let mut label = String::new();
+    let mut previous_was_modifier = false;
+
+    for ch in keys.chars() {
+        let is_modifier = matches!(ch, '⌘' | '⇧' | '⌥' | '⌃');
+        if !label.is_empty() && (previous_was_modifier || is_modifier) {
+            label.push(' ');
+        }
+        label.push(ch);
+        previous_was_modifier = is_modifier;
+    }
+
+    label
+}
+
+fn shortcut_label_uses_small_symbol_glyphs(keys: &str) -> bool {
+    keys.chars().any(|ch| matches!(ch, '⇧' | '↵'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_shortcut_label, shortcut_label_uses_small_symbol_glyphs};
+
+    #[test]
+    fn display_shortcut_label_spaces_compact_modifier_chords() {
+        assert_eq!(display_shortcut_label("⌘B"), "⌘ B");
+        assert_eq!(display_shortcut_label("⇧⌘L"), "⇧ ⌘ L");
+        assert_eq!(display_shortcut_label("Ctrl+B"), "Ctrl B");
+        assert_eq!(display_shortcut_label("Ctrl+Shift+L"), "Ctrl Shift L");
+        assert_eq!(display_shortcut_label("C + Drag"), "C + Drag");
+    }
+
+    #[test]
+    fn shortcut_label_detects_visually_small_symbol_glyphs() {
+        assert!(shortcut_label_uses_small_symbol_glyphs("⇧ ⌘ L"));
+        assert!(shortcut_label_uses_small_symbol_glyphs("↵"));
+        assert!(!shortcut_label_uses_small_symbol_glyphs("⌘ B"));
     }
 }

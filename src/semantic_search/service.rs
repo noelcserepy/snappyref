@@ -20,6 +20,7 @@ pub struct SemanticSearchConfig {
 pub struct SearchResultGroup {
     #[allow(dead_code)]
     pub asset_id: i64,
+    #[allow(dead_code)]
     pub similarity: f32,
     pub item_ids: Vec<i64>,
     #[allow(dead_code)]

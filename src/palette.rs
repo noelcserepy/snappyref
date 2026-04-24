@@ -11,8 +11,6 @@ pub(crate) const PALETTE_GRID_COLUMNS: usize = 5;
 pub(crate) const PALETTE_GRID_MAX_HEIGHT: f32 = 360.0;
 
 const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 144.0;
-const SEARCH_RESULT_TILE_METER_HEIGHT: f32 = 18.0;
-const SEARCH_RESULT_TILE_METER_GAP: f32 = 6.0;
 
 #[derive(Default)]
 pub(crate) struct SearchOverlayState {
@@ -22,10 +20,19 @@ pub(crate) struct SearchOverlayState {
     pub last_query_edit_at: Option<Instant>,
     pub active_result_index: usize,
     pub active_instance_index: usize,
+    pub selected_result_indices: Vec<usize>,
+    pub drag_state: Option<SearchResultDragState>,
+    pub last_expanded_overlay_rect: Option<egui::Rect>,
     pub results: Vec<SearchResultGroup>,
     pub status: SearchOverlayStatus,
     pub focus_requested: bool,
     pub image_pivot: Option<ImageSearchPivot>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SearchResultDragState {
+    pub item_ids: Vec<i64>,
+    pub outside_overlay: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -52,8 +59,6 @@ pub(crate) struct SearchResultGridLayout {
 
 pub(crate) fn search_result_tile_height() -> f32 {
     SEARCH_RESULT_TILE_PREVIEW_HEIGHT
-        + SEARCH_RESULT_TILE_METER_GAP
-        + SEARCH_RESULT_TILE_METER_HEIGHT
 }
 
 pub(crate) fn search_result_grid_layout(
@@ -84,25 +89,22 @@ pub(crate) fn search_result_tile(
     canvas: &crate::canvas::CanvasState,
     group: &SearchResultGroup,
     active: bool,
+    selected: bool,
     tile_width: f32,
 ) -> egui::Response {
     let total_size = egui::vec2(tile_width, search_result_tile_height());
     let (rect, response) = ui.allocate_exact_size(total_size, egui::Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    let tile_radius = if active { 0 } else { crate::theme::CARD_RADIUS };
+    let tile_radius = if active || selected {
+        0
+    } else {
+        crate::theme::CARD_RADIUS
+    };
 
     let preview_rect = egui::Rect::from_min_size(
         rect.min,
         egui::vec2(tile_width, SEARCH_RESULT_TILE_PREVIEW_HEIGHT),
     );
-    let meter_rect = egui::Rect::from_min_size(
-        egui::pos2(
-            rect.left(),
-            preview_rect.bottom() + SEARCH_RESULT_TILE_METER_GAP,
-        ),
-        egui::vec2(tile_width, SEARCH_RESULT_TILE_METER_HEIGHT),
-    );
-
     ui.painter()
         .rect_filled(preview_rect, tile_radius, crate::theme::SURFACE);
 
@@ -131,61 +133,17 @@ pub(crate) fn search_result_tile(
             .rect_filled(preview_rect, tile_radius, crate::theme::BACKGROUND);
     }
 
-    paint_tile_similarity_meter(ui, meter_rect, group.similarity);
-
-    if active {
-        ui.painter().rect_stroke(
-            preview_rect,
-            tile_radius,
-            crate::theme::stroke_strong(),
-            egui::StrokeKind::Outside,
-        );
+    if selected || active {
+        let stroke = if active {
+            crate::theme::stroke_strong()
+        } else {
+            egui::Stroke::new(1.0, crate::theme::BORDER_STRONG)
+        };
+        ui.painter()
+            .rect_stroke(preview_rect, tile_radius, stroke, egui::StrokeKind::Outside);
     }
 
     response
-}
-
-fn paint_tile_similarity_meter(ui: &mut egui::Ui, meter_rect: egui::Rect, similarity: f32) {
-    let normalized = similarity.clamp(0.0, 1.0);
-    let score = (similarity * 100.0).round().max(0.0) as i32;
-
-    let track_height = 3.0;
-    let gap = 8.0;
-    let painter = ui.painter();
-
-    let score_font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
-    let score_galley =
-        painter.layout_no_wrap(format!("{score}"), score_font, crate::theme::TEXT_MUTED);
-    let score_width = score_galley.size().x;
-
-    let track_left = meter_rect.left();
-    let track_right = meter_rect.right() - score_width - gap;
-    if track_right > track_left {
-        let track_rect = egui::Rect::from_min_max(
-            egui::pos2(track_left, meter_rect.center().y - track_height * 0.5),
-            egui::pos2(track_right, meter_rect.center().y + track_height * 0.5),
-        );
-        painter.rect_filled(
-            track_rect,
-            egui::CornerRadius::same(2),
-            egui::Color32::from_white_alpha(22),
-        );
-        let fill_right = track_left + (track_right - track_left) * normalized;
-        let fill_rect = egui::Rect::from_min_max(
-            egui::pos2(track_left, track_rect.top()),
-            egui::pos2(fill_right.max(track_left), track_rect.bottom()),
-        );
-        painter.rect_filled(fill_rect, egui::CornerRadius::same(2), crate::theme::ACCENT);
-    }
-
-    painter.galley(
-        egui::pos2(
-            meter_rect.right() - score_width,
-            meter_rect.center().y - score_galley.size().y * 0.5,
-        ),
-        score_galley,
-        crate::theme::TEXT_MUTED,
-    );
 }
 
 pub(crate) struct PaletteInputResult {
@@ -367,6 +325,12 @@ fn paint_search_icon(ui: &mut egui::Ui, rect: egui::Rect, color: egui::Color32) 
 }
 
 fn paint_kbd_pill(ui: &mut egui::Ui, label: &str) {
+    let label_size = if kbd_label_uses_small_symbol_glyphs(label) {
+        14.0
+    } else {
+        10.0
+    };
+
     egui::Frame::new()
         .fill(egui::Color32::from_white_alpha(15))
         .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(15)))
@@ -382,93 +346,13 @@ fn paint_kbd_pill(ui: &mut egui::Ui, label: &str) {
                 egui::RichText::new(label)
                     .text_style(egui::TextStyle::Monospace)
                     .color(crate::theme::TEXT_MUTED)
-                    .size(10.0),
+                    .size(label_size),
             );
         });
 }
 
-pub(crate) fn paint_palette_facet_row(ui: &mut egui::Ui, result_count: usize) {
-    egui::Frame::new()
-        .inner_margin(egui::Margin {
-            left: 18,
-            right: 18,
-            top: 0,
-            bottom: 10,
-        })
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                ui.label(
-                    egui::RichText::new("filter")
-                        .text_style(egui::TextStyle::Monospace)
-                        .color(crate::theme::TEXT_SUBTLE)
-                        .size(10.0),
-                );
-                paint_facet_btn(ui, "Color", Some(crate::theme::ACCENT));
-                paint_facet_btn(ui, "Kind", None);
-                paint_facet_btn(ui, "Orientation", None);
-                paint_facet_btn(ui, "Source", None);
-                paint_facet_btn(ui, "Visual", None);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        egui::RichText::new(format!("{result_count}"))
-                            .text_style(egui::TextStyle::Monospace)
-                            .color(crate::theme::TEXT_SUBTLE)
-                            .size(10.0),
-                    );
-                });
-            });
-        });
-}
-
-fn paint_facet_btn(ui: &mut egui::Ui, label: &str, dot: Option<egui::Color32>) -> egui::Response {
-    let label_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
-    let label_galley =
-        ui.painter()
-            .layout_no_wrap(label.to_owned(), label_font, crate::theme::TEXT_MUTED);
-    let mut content_w = label_galley.size().x + 4.0 + 8.0;
-    if dot.is_some() {
-        content_w += 8.0 + 4.0;
-    }
-    let pad_x = 8.0_f32;
-    let btn_size = egui::vec2(content_w + pad_x * 2.0 - 4.0, 20.0);
-    let (rect, response) = ui.allocate_exact_size(btn_size, egui::Sense::click());
-    ui.painter().rect(
-        rect,
-        egui::CornerRadius::same(4),
-        egui::Color32::from_white_alpha(9),
-        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(15)),
-        egui::StrokeKind::Inside,
-    );
-    let mut x = rect.left() + pad_x;
-    let center_y = rect.center().y;
-    if let Some(dot_color) = dot {
-        ui.painter()
-            .circle_filled(egui::pos2(x + 4.0, center_y), 4.0, dot_color);
-        x += 12.0;
-    }
-    ui.painter().galley(
-        egui::pos2(x, center_y - label_galley.size().y * 0.5),
-        label_galley,
-        crate::theme::TEXT_MUTED,
-    );
-    let chev_x = rect.right() - pad_x + 2.0;
-    let chev_stroke = egui::Stroke::new(1.2, crate::theme::TEXT_SUBTLE);
-    ui.painter().line_segment(
-        [
-            egui::pos2(chev_x - 4.0, center_y - 2.0),
-            egui::pos2(chev_x - 1.0, center_y + 1.0),
-        ],
-        chev_stroke,
-    );
-    ui.painter().line_segment(
-        [
-            egui::pos2(chev_x - 1.0, center_y + 1.0),
-            egui::pos2(chev_x + 2.0, center_y - 2.0),
-        ],
-        chev_stroke,
-    );
-    response
+fn kbd_label_uses_small_symbol_glyphs(label: &str) -> bool {
+    label.chars().any(|ch| matches!(ch, '⇧' | '↵'))
 }
 
 pub(crate) fn paint_palette_divider(ui: &mut egui::Ui) {
@@ -488,8 +372,6 @@ pub(crate) fn paint_palette_empty_state(ui: &mut egui::Ui) {
         })
         .show(ui, |ui| {
             paint_palette_empty_group(ui, "RECENT", &["boat", "forest path", "still life"]);
-            paint_palette_empty_group(ui, "SAVED SEARCHES", &["Warm tones", "Cold tones"]);
-            paint_palette_empty_group(ui, "BOARDS", &["All images"]);
         });
 }
 
@@ -544,15 +426,7 @@ pub(crate) fn paint_palette_footer(
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
-                if result_count > 0 {
-                    paint_create_board_pill(ui, result_count);
-                    ui.label(
-                        egui::RichText::new("or drag individual images")
-                            .text_style(egui::TextStyle::Small)
-                            .color(crate::theme::TEXT_SUBTLE)
-                            .size(11.0),
-                    );
-                } else {
+                if result_count == 0 {
                     let idle_text = match status {
                         SearchOverlayStatus::Idle => "Ready".to_owned(),
                         SearchOverlayStatus::Indexing => "Indexing…".to_owned(),
@@ -591,37 +465,6 @@ pub(crate) fn paint_palette_footer(
                     );
                     paint_kbd_pill(ui, "↵");
                 });
-            });
-        });
-}
-
-fn paint_create_board_pill(ui: &mut egui::Ui, result_count: usize) {
-    let accent = crate::theme::ACCENT;
-    let bg = egui::Color32::from_rgba_unmultiplied(228, 206, 176, 31);
-    let stroke = egui::Stroke::new(
-        1.0,
-        egui::Color32::from_rgba_unmultiplied(228, 206, 176, 89),
-    );
-    egui::Frame::new()
-        .fill(bg)
-        .stroke(stroke)
-        .corner_radius(egui::CornerRadius::same(5))
-        .inner_margin(egui::Margin {
-            left: 10,
-            right: 10,
-            top: 4,
-            bottom: 4,
-        })
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                ui.label(egui::RichText::new("+").color(accent).strong().size(11.0));
-                ui.label(
-                    egui::RichText::new(format!("Create board from {result_count} results"))
-                        .color(accent)
-                        .strong()
-                        .size(11.0),
-                );
             });
         });
 }
