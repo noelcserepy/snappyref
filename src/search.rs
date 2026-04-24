@@ -92,11 +92,12 @@ impl SearchController {
         }
     }
 
-    pub(crate) fn handle_results(&mut self) {
+    pub(crate) fn handle_results(&mut self, canvas: &mut CanvasState) {
         let Some(service) = &self.service else {
             return;
         };
 
+        let mut refresh_active_query = false;
         for result in service.try_recv_all() {
             match result {
                 SearchIndexResult::Progress { message } => {
@@ -107,20 +108,29 @@ impl SearchController {
                 SearchIndexResult::ModelReady => {
                     if !self.overlay.query.trim().is_empty() {
                         self.overlay.last_submitted_query.clear();
+                        refresh_active_query = true;
                     }
                     if !matches!(self.overlay.status, SearchOverlayStatus::Error(_)) {
                         self.overlay.status = SearchOverlayStatus::Ready;
                     }
                 }
                 SearchIndexResult::Indexed => {
-                    if !self.overlay.query.trim().is_empty() {
+                    if self.overlay.open
+                        && (!self.overlay.query.trim().is_empty()
+                            || self.overlay.image_pivot.is_some())
+                    {
                         self.overlay.last_submitted_query.clear();
+                        refresh_active_query = true;
                     }
                 }
                 SearchIndexResult::Failed { error } => {
                     self.overlay.status = SearchOverlayStatus::Error(error);
                 }
             }
+        }
+
+        if refresh_active_query {
+            self.submit_query(canvas);
         }
     }
 
