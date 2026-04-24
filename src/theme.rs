@@ -7,7 +7,6 @@ const PANEL_BG: egui::Color32 = color(0x16, 0x15, 0x14);
 const PANEL_BG_PALETTE: egui::Color32 = color(0x17, 0x16, 0x15);
 const PANEL_BG_ELEVATED: egui::Color32 = color(0x22, 0x21, 0x1F);
 const ACCENT_GOLD: egui::Color32 = color(0xE4, 0xCE, 0xB0);
-const BADGE_WARM: egui::Color32 = color(0xC4, 0x85, 0x5A);
 const INDEXED_GREEN: egui::Color32 = color(0x7A, 0xC9, 0x7A);
 
 const DISPLAY_TEXT_STYLE_NAME: &str = "display";
@@ -69,14 +68,12 @@ pub const SURFACE_ELEVATED: egui::Color32 = PANEL_BG_ELEVATED;
 /// - `TEXT_MUTED` for helper text and secondary values
 /// - `TEXT_SUBTLE` for section labels, table headers, and low-emphasis metadata
 /// - `ACCENT` for active fills and the few states that need emphasis without adding a new hue
-/// - `BADGE`  for the warm "R" app-mark and similar accent swatches
 pub const BORDER: egui::Color32 = egui::Color32::from_rgba_premultiplied(20, 20, 20, 20);
 pub const BORDER_STRONG: egui::Color32 = egui::Color32::from_rgba_premultiplied(31, 31, 31, 31);
 pub const TEXT: egui::Color32 = color(0xF0, 0xF0, 0xF0);
 pub const TEXT_MUTED: egui::Color32 = color(0x8C, 0x8C, 0x8C);
 pub const TEXT_SUBTLE: egui::Color32 = color(0x66, 0x66, 0x66);
 pub const ACCENT: egui::Color32 = ACCENT_GOLD;
-pub const BADGE: egui::Color32 = BADGE_WARM;
 pub const INDEXED_DOT: egui::Color32 = INDEXED_GREEN;
 
 pub fn configure_theme(ctx: &egui::Context) {

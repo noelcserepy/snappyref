@@ -120,7 +120,6 @@ pub(crate) fn show_sidebar(
             let ui_builder = egui::UiBuilder::new().max_rect(inner_rect);
             ui.scope_builder(ui_builder, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-                paint_sidebar_header(ui);
                 paint_sidebar_tabs(ui, sidebar_tab);
                 ui.add_space(crate::theme::SPACE_2);
                 match *sidebar_tab {
@@ -136,73 +135,6 @@ pub(crate) fn show_sidebar(
         settings_changed,
         interactive_rect: Some(area_response.response.rect),
     }
-}
-
-fn paint_sidebar_header(ui: &mut egui::Ui) {
-    let rect = ui
-        .allocate_space(egui::vec2(
-            ui.available_width(),
-            crate::theme::CONTROL_HEIGHT + crate::theme::SPACE_2,
-        ))
-        .1;
-    let pad_x = crate::theme::SPACE_4;
-    let center_y = rect.center().y;
-    let badge_size = 22.0;
-    let badge_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + pad_x + badge_size * 0.5, center_y),
-        egui::vec2(badge_size, badge_size),
-    );
-    ui.painter()
-        .rect_filled(badge_rect, egui::CornerRadius::same(5), crate::theme::BADGE);
-    let badge_text_color = egui::Color32::from_rgb(0x1A, 0x19, 0x17);
-    let badge_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
-    let badge_galley = ui
-        .painter()
-        .layout_no_wrap("R".to_owned(), badge_font, badge_text_color);
-    let badge_pos = egui::pos2(
-        badge_rect.center().x - badge_galley.size().x * 0.5,
-        badge_rect.center().y - badge_galley.size().y * 0.5,
-    );
-    ui.painter()
-        .galley(badge_pos, badge_galley, badge_text_color);
-
-    let name_font = ui.style().text_styles[&egui::TextStyle::Body].clone();
-    let name_galley =
-        ui.painter()
-            .layout_no_wrap("Reference".to_owned(), name_font, crate::theme::TEXT);
-    let name_pos = egui::pos2(
-        badge_rect.right() + crate::theme::SPACE_2,
-        center_y - name_galley.size().y * 0.5,
-    );
-    ui.painter()
-        .galley(name_pos, name_galley, crate::theme::TEXT);
-
-    let kbd_label = sidebar_shortcut_label();
-    let kbd_font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
-    let kbd_galley =
-        ui.painter()
-            .layout_no_wrap(kbd_label.to_owned(), kbd_font, crate::theme::TEXT_SUBTLE);
-    let kbd_pad = egui::vec2(crate::theme::SPACE_1 + 1.0, 2.0);
-    let kbd_size = kbd_galley.size() + kbd_pad * 2.0;
-    let kbd_rect = egui::Rect::from_min_size(
-        egui::pos2(
-            rect.right() - pad_x - kbd_size.x,
-            center_y - kbd_size.y * 0.5,
-        ),
-        kbd_size,
-    );
-    ui.painter().rect(
-        kbd_rect,
-        egui::CornerRadius::same(4),
-        crate::theme::SURFACE_ELEVATED,
-        crate::theme::stroke_subtle(),
-        egui::StrokeKind::Inside,
-    );
-    ui.painter().galley(
-        kbd_rect.min + kbd_pad,
-        kbd_galley,
-        crate::theme::TEXT_SUBTLE,
-    );
 }
 
 fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
@@ -252,11 +184,6 @@ fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
             ui.painter().rect_filled(underline, 0, crate::theme::ACCENT);
         }
     }
-    ui.painter().hline(
-        rect.left()..=rect.right(),
-        rect.bottom(),
-        crate::theme::stroke_subtle(),
-    );
 }
 
 fn paint_sidebar_options(
@@ -274,7 +201,6 @@ fn paint_sidebar_options(
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 ui.add_space(crate::theme::SPACE_3);
-                paint_sidebar_section_header(ui, "Options", Some("Board defaults"));
                 paint_sidebar_subcard(ui, |ui| {
                     changed |= paint_settings_section(ui, settings, canvas);
                 });
@@ -839,10 +765,12 @@ fn paint_shortcut_row(ui: &mut egui::Ui, shortcut: &SupportedShortcut) {
 }
 
 fn paint_shortcut_pill(ui: &mut egui::Ui, keys: &str) {
-    let font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
-    let galley = ui
-        .painter()
-        .layout_no_wrap(keys.to_owned(), font, crate::theme::TEXT);
+    let keys = display_shortcut_label(keys);
+    let mut font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
+    if shortcut_label_uses_small_symbol_glyphs(&keys) {
+        font.size += 3.0;
+    }
+    let galley = ui.painter().layout_no_wrap(keys, font, crate::theme::TEXT);
     let pad = egui::vec2(6.0, 2.0);
     let size = galley.size() + pad * 2.0;
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -918,12 +846,12 @@ pub(crate) fn show_sidebar_hint(ctx: &egui::Context, screen_rect: egui::Rect, si
     egui::Area::new(egui::Id::new("sidebar_hint"))
         .order(egui::Order::Foreground)
         .fixed_pos(egui::pos2(
-            screen_rect.right() - crate::theme::SPACE_4,
+            screen_rect.left() + crate::theme::SPACE_4,
             screen_rect.bottom() - crate::theme::SPACE_4,
         ))
         .anchor(
-            egui::Align2::RIGHT_BOTTOM,
-            egui::vec2(-crate::theme::SPACE_4, -crate::theme::SPACE_4),
+            egui::Align2::LEFT_BOTTOM,
+            egui::vec2(crate::theme::SPACE_4, -crate::theme::SPACE_4),
         )
         .show(ctx, |ui| {
             egui::Frame::new()
@@ -938,7 +866,7 @@ pub(crate) fn show_sidebar_hint(ctx: &egui::Context, screen_rect: egui::Rect, si
                 })
                 .show(ui, |ui| {
                     ui.label(
-                        egui::RichText::new(sidebar_shortcut_label())
+                        egui::RichText::new(display_shortcut_label(sidebar_shortcut_label()))
                             .text_style(egui::TextStyle::Monospace)
                             .color(crate::theme::TEXT_MUTED),
                     );
@@ -955,5 +883,58 @@ fn sidebar_shortcut_label() -> &'static str {
     #[cfg(not(target_os = "macos"))]
     {
         "Ctrl+B"
+    }
+}
+
+fn display_shortcut_label(keys: &str) -> String {
+    if keys.contains(" + ") {
+        return keys.to_owned();
+    }
+
+    if keys.contains('+') {
+        return keys
+            .split('+')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
+
+    let mut label = String::new();
+    let mut previous_was_modifier = false;
+
+    for ch in keys.chars() {
+        let is_modifier = matches!(ch, '⌘' | '⇧' | '⌥' | '⌃');
+        if !label.is_empty() && (previous_was_modifier || is_modifier) {
+            label.push(' ');
+        }
+        label.push(ch);
+        previous_was_modifier = is_modifier;
+    }
+
+    label
+}
+
+fn shortcut_label_uses_small_symbol_glyphs(keys: &str) -> bool {
+    keys.chars().any(|ch| matches!(ch, '⇧' | '↵'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_shortcut_label, shortcut_label_uses_small_symbol_glyphs};
+
+    #[test]
+    fn display_shortcut_label_spaces_compact_modifier_chords() {
+        assert_eq!(display_shortcut_label("⌘B"), "⌘ B");
+        assert_eq!(display_shortcut_label("⇧⌘L"), "⇧ ⌘ L");
+        assert_eq!(display_shortcut_label("Ctrl+B"), "Ctrl B");
+        assert_eq!(display_shortcut_label("Ctrl+Shift+L"), "Ctrl Shift L");
+        assert_eq!(display_shortcut_label("C + Drag"), "C + Drag");
+    }
+
+    #[test]
+    fn shortcut_label_detects_visually_small_symbol_glyphs() {
+        assert!(shortcut_label_uses_small_symbol_glyphs("⇧ ⌘ L"));
+        assert!(shortcut_label_uses_small_symbol_glyphs("↵"));
+        assert!(!shortcut_label_uses_small_symbol_glyphs("⌘ B"));
     }
 }

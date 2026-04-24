@@ -30,6 +30,10 @@ use crate::data::{
 #[cfg(test)]
 use super::{AnnotationPaintStats, CanvasDocumentState};
 
+const BACKGROUND_DOT_ALPHA: u8 = 76;
+const BACKGROUND_GRID_ALPHA: u8 = 58;
+const BACKGROUND_LOD_FADE_BAND_SCREEN: f32 = 24.0;
+
 pub(super) fn paint_images(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -324,59 +328,139 @@ pub(super) fn canvas_texture_from_preview(
 }
 
 pub(super) fn paint_background(painter: &egui::Painter, rect: egui::Rect, state: &mut CanvasState) {
-    let base = crate::theme::TEXT;
     state.render.background_lod_level =
         settled_background_lod_level(state.render.background_lod_level, state.zoom);
-    let world_step = background_world_step(state.render.background_lod_level);
     let visible_world_rect = visible_world_rect(state, rect);
     match state.background {
         CanvasBackground::None => {}
         CanvasBackground::Dots => {
-            let color = egui::Color32::from_rgba_premultiplied(base.r(), base.g(), base.b(), 3);
-            let mut world_x = first_lattice_at_or_before(visible_world_rect.left(), world_step);
-            while world_x <= visible_world_rect.right() + world_step {
-                let mut world_y = first_lattice_at_or_before(visible_world_rect.top(), world_step);
-                while world_y <= visible_world_rect.bottom() + world_step {
-                    let screen_pos = state.world_to_screen(egui::pos2(world_x, world_y), rect);
-                    painter.circle_filled(snap_point(screen_pos), 0.6, color);
-                    world_y += world_step;
-                }
-                world_x += world_step;
+            for layer in background_lod_layers(state.render.background_lod_level, state.zoom) {
+                paint_background_dots(painter, rect, state, visible_world_rect, layer);
             }
         }
         CanvasBackground::Grid => {
-            let darker = crate::theme::TEXT_SUBTLE;
-            let color =
-                egui::Color32::from_rgba_premultiplied(darker.r(), darker.g(), darker.b(), 5);
-            let stroke = egui::Stroke::new(0.3, color);
-            let mut world_x = first_lattice_at_or_before(visible_world_rect.left(), world_step);
-            while world_x <= visible_world_rect.right() + world_step {
-                let screen_x =
-                    snap_line_coordinate(state.world_to_screen(egui::pos2(world_x, 0.0), rect).x);
-                painter.line_segment(
-                    [
-                        egui::pos2(screen_x, rect.top()),
-                        egui::pos2(screen_x, rect.bottom()),
-                    ],
-                    stroke,
-                );
-                world_x += world_step;
-            }
-            let mut world_y = first_lattice_at_or_before(visible_world_rect.top(), world_step);
-            while world_y <= visible_world_rect.bottom() + world_step {
-                let screen_y =
-                    snap_line_coordinate(state.world_to_screen(egui::pos2(0.0, world_y), rect).y);
-                painter.line_segment(
-                    [
-                        egui::pos2(rect.left(), screen_y),
-                        egui::pos2(rect.right(), screen_y),
-                    ],
-                    stroke,
-                );
-                world_y += world_step;
+            for layer in background_lod_layers(state.render.background_lod_level, state.zoom) {
+                paint_background_grid(painter, rect, state, visible_world_rect, layer);
             }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct BackgroundLodLayer {
+    pub(super) level: i32,
+    pub(super) alpha: f32,
+}
+
+pub(super) fn background_lod_layers(current_level: i32, zoom: f32) -> Vec<BackgroundLodLayer> {
+    let level = current_level.clamp(BACKGROUND_MIN_LOD_LEVEL, BACKGROUND_MAX_LOD_LEVEL);
+    let screen_step = background_screen_step(level, zoom);
+    let mut primary_alpha = 1.0_f32;
+    let mut layers = Vec::with_capacity(2);
+
+    if screen_step < BACKGROUND_MIN_SCREEN_STEP + BACKGROUND_LOD_FADE_BAND_SCREEN
+        && level < BACKGROUND_MAX_LOD_LEVEL
+    {
+        let adjacent_alpha = ((BACKGROUND_MIN_SCREEN_STEP + BACKGROUND_LOD_FADE_BAND_SCREEN
+            - screen_step)
+            / BACKGROUND_LOD_FADE_BAND_SCREEN)
+            .clamp(0.0, 1.0);
+        primary_alpha = 1.0 - adjacent_alpha;
+        layers.push(BackgroundLodLayer {
+            level: level + 1,
+            alpha: adjacent_alpha,
+        });
+    } else if screen_step > BACKGROUND_MAX_SCREEN_STEP - BACKGROUND_LOD_FADE_BAND_SCREEN
+        && level > BACKGROUND_MIN_LOD_LEVEL
+    {
+        let adjacent_alpha = ((screen_step
+            - (BACKGROUND_MAX_SCREEN_STEP - BACKGROUND_LOD_FADE_BAND_SCREEN))
+            / BACKGROUND_LOD_FADE_BAND_SCREEN)
+            .clamp(0.0, 1.0);
+        primary_alpha = 1.0 - adjacent_alpha;
+        layers.push(BackgroundLodLayer {
+            level: level - 1,
+            alpha: adjacent_alpha,
+        });
+    }
+
+    layers.push(BackgroundLodLayer {
+        level,
+        alpha: primary_alpha,
+    });
+    layers
+}
+
+fn paint_background_dots(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    state: &CanvasState,
+    visible_world_rect: egui::Rect,
+    layer: BackgroundLodLayer,
+) {
+    let Some(alpha) = scaled_alpha(BACKGROUND_DOT_ALPHA, layer.alpha) else {
+        return;
+    };
+    let base = crate::theme::TEXT_MUTED;
+    let color = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha);
+    let world_step = background_world_step(layer.level);
+    let mut world_x = first_lattice_at_or_before(visible_world_rect.left(), world_step);
+    while world_x <= visible_world_rect.right() + world_step {
+        let mut world_y = first_lattice_at_or_before(visible_world_rect.top(), world_step);
+        while world_y <= visible_world_rect.bottom() + world_step {
+            let screen_pos = state.world_to_screen(egui::pos2(world_x, world_y), rect);
+            painter.circle_filled(snap_point(screen_pos), 0.9, color);
+            world_y += world_step;
+        }
+        world_x += world_step;
+    }
+}
+
+fn paint_background_grid(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    state: &CanvasState,
+    visible_world_rect: egui::Rect,
+    layer: BackgroundLodLayer,
+) {
+    let Some(alpha) = scaled_alpha(BACKGROUND_GRID_ALPHA, layer.alpha) else {
+        return;
+    };
+    let base = crate::theme::TEXT_SUBTLE;
+    let color = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha);
+    let stroke = egui::Stroke::new(0.45, color);
+    let world_step = background_world_step(layer.level);
+    let mut world_x = first_lattice_at_or_before(visible_world_rect.left(), world_step);
+    while world_x <= visible_world_rect.right() + world_step {
+        let screen_x =
+            snap_line_coordinate(state.world_to_screen(egui::pos2(world_x, 0.0), rect).x);
+        painter.line_segment(
+            [
+                egui::pos2(screen_x, rect.top()),
+                egui::pos2(screen_x, rect.bottom()),
+            ],
+            stroke,
+        );
+        world_x += world_step;
+    }
+    let mut world_y = first_lattice_at_or_before(visible_world_rect.top(), world_step);
+    while world_y <= visible_world_rect.bottom() + world_step {
+        let screen_y =
+            snap_line_coordinate(state.world_to_screen(egui::pos2(0.0, world_y), rect).y);
+        painter.line_segment(
+            [
+                egui::pos2(rect.left(), screen_y),
+                egui::pos2(rect.right(), screen_y),
+            ],
+            stroke,
+        );
+        world_y += world_step;
+    }
+}
+
+fn scaled_alpha(base: u8, scale: f32) -> Option<u8> {
+    let alpha = (f32::from(base) * scale).round().clamp(0.0, 255.0) as u8;
+    (alpha > 0).then_some(alpha)
 }
 
 pub(super) fn settled_background_lod_level(current_level: i32, zoom: f32) -> i32 {

@@ -279,6 +279,9 @@ enum VerificationMode {
     MoveSnapPreview,
     ImportPlaceholders,
     ImportLoaded,
+    BackgroundGrid,
+    BackgroundDots,
+    BackgroundTransition,
 }
 
 impl AppConfig {
@@ -368,6 +371,21 @@ impl AppConfig {
                 #[cfg(debug_assertions)]
                 {
                     verification_mode = Some(VerificationMode::ImportLoaded);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-background-grid" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::BackgroundGrid);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-background-dots" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::BackgroundDots);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-background-transition" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::BackgroundTransition);
                 }
             } else if let Some(query) = argument.strip_prefix("--verify-search=") {
                 #[cfg(debug_assertions)]
@@ -489,6 +507,18 @@ impl AppConfig {
     }
 
     #[cfg(debug_assertions)]
+    fn background_verification_mode(&self) -> Option<VerificationMode> {
+        match self.verification_mode {
+            Some(
+                VerificationMode::BackgroundGrid
+                | VerificationMode::BackgroundDots
+                | VerificationMode::BackgroundTransition,
+            ) => self.verification_mode,
+            _ => None,
+        }
+    }
+
+    #[cfg(debug_assertions)]
     fn skip_existing_items_on_start(&self) -> bool {
         matches!(
             self.verification_mode,
@@ -500,6 +530,9 @@ impl AppConfig {
                     | VerificationMode::MoveSnapPreview
                     | VerificationMode::ImportPlaceholders
                     | VerificationMode::ImportLoaded
+                    | VerificationMode::BackgroundGrid
+                    | VerificationMode::BackgroundDots
+                    | VerificationMode::BackgroundTransition
             )
         )
     }
@@ -737,6 +770,10 @@ impl ReferenceApp {
                 #[cfg(debug_assertions)]
                 if config.verify_import_loaded_on_start() {
                     app.seed_import_verification_loaded(&cc.egui_ctx);
+                }
+                #[cfg(debug_assertions)]
+                if let Some(mode) = config.background_verification_mode() {
+                    app.seed_background_verification(mode);
                 }
                 #[cfg(debug_assertions)]
                 if let Some(query) = config.verification_search_query().map(ToOwned::to_owned) {
@@ -2003,6 +2040,25 @@ impl ReferenceApp {
     }
 
     #[cfg(debug_assertions)]
+    fn seed_background_verification(&mut self, mode: VerificationMode) {
+        let (background, zoom) = match mode {
+            VerificationMode::BackgroundDots => (crate::data::CanvasBackground::Dots, 1.0),
+            VerificationMode::BackgroundTransition => {
+                let transition_zoom = 0.9;
+                (crate::data::CanvasBackground::Grid, transition_zoom)
+            }
+            _ => (crate::data::CanvasBackground::Grid, 1.0),
+        };
+        self.canvas
+            .apply_viewport_state(&crate::data::ViewportState {
+                camera_pan_x: 0.0,
+                camera_pan_y: 0.0,
+                camera_zoom: zoom,
+                canvas_background: background,
+            });
+    }
+
+    #[cfg(debug_assertions)]
     fn seed_import_verification_existing_anchor(
         &mut self,
         ctx: &egui::Context,
@@ -2386,7 +2442,85 @@ impl ReferenceApp {
 
     #[cfg(feature = "semantic-search")]
     fn show_search_overlay(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
-        self.search.show_overlay(ctx, screen_rect, &mut self.canvas);
+        if let Some(drop_request) = self.search.show_overlay(ctx, screen_rect, &mut self.canvas) {
+            self.handle_search_drop(drop_request, screen_rect);
+        }
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn handle_search_drop(
+        &mut self,
+        drop_request: crate::search::SearchDropRequest,
+        screen_rect: egui::Rect,
+    ) {
+        if drop_request.item_ids.is_empty() {
+            return;
+        }
+
+        let Some(library) = &self.library else {
+            self.status = "Storage unavailable".to_owned();
+            return;
+        };
+
+        let drop_world = self
+            .canvas
+            .screen_to_world(drop_request.screen_pos, screen_rect);
+        let source_center = self
+            .source_center_for_item_ids(&drop_request.item_ids)
+            .unwrap_or(drop_world);
+        let duplicated = match library.duplicate_board_items(
+            &drop_request.item_ids,
+            drop_world,
+            source_center,
+        ) {
+            Ok(records) => records,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
+
+        let mut duplicated_ids = Vec::new();
+        for record in duplicated {
+            duplicated_ids.push(record.item.id);
+            if let Err(error) = self.canvas.add_reference_item(record) {
+                self.status = error;
+                return;
+            }
+        }
+
+        self.canvas.select_items(&duplicated_ids);
+        if duplicated_ids.len() > 1 {
+            self.canvas
+                .arrange_selected_compact(self.settings.import_gap);
+        }
+        self.persist_canvas_changes();
+        let noun = if duplicated_ids.len() == 1 {
+            "image"
+        } else {
+            "images"
+        };
+        self.status = format!("Added {} search {noun}", duplicated_ids.len());
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn source_center_for_item_ids(&self, item_ids: &[i64]) -> Option<egui::Pos2> {
+        let mut min = egui::Pos2::new(f32::INFINITY, f32::INFINITY);
+        let mut max = egui::Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
+        let mut found = false;
+
+        for item_id in item_ids {
+            let Some(record) = self.canvas.record_for_item_id(*item_id) else {
+                continue;
+            };
+            found = true;
+            min.x = min.x.min(record.item.x);
+            min.y = min.y.min(record.item.y);
+            max.x = max.x.max(record.item.x);
+            max.y = max.y.max(record.item.y);
+        }
+
+        found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))
     }
 
     fn persist_settings_if_changed(&mut self, settings_changed: bool) {
@@ -2581,6 +2715,10 @@ impl eframe::App for ReferenceApp {
             .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
         self.canvas.set_layout_gap(self.settings.import_gap);
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
+        #[cfg(feature = "semantic-search")]
+        let suppress_canvas_input = self.search.blocks_canvas_input(ui.ctx());
+        #[cfg(not(feature = "semantic-search"))]
+        let suppress_canvas_input = false;
         self.frame_perf.canvas = crate::canvas::show(
             ui,
             screen_rect,
@@ -2588,6 +2726,7 @@ impl eframe::App for ReferenceApp {
             &mut self.canvas,
             self.wgpu_render_state.as_ref(),
             self.settings.canvas_image_mode == crate::data::CanvasImageMode::Downscale,
+            suppress_canvas_input,
             false,
         );
         if let Some(error) = self.residency.dispatch_pending_tier_requests(
