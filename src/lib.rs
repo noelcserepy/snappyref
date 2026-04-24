@@ -1,8 +1,11 @@
 mod app;
 mod canvas;
 mod data;
+mod import_placement;
 mod jobs;
+mod layout_snap;
 mod native_capture;
+mod native_drop;
 #[cfg(feature = "semantic-search")]
 mod palette;
 mod perf;

@@ -475,6 +475,29 @@ fn paint_settings_section(
     paint_setting_divider(ui);
     changed |= paint_setting_row(
         ui,
+        "Rotation snap",
+        "Default snap angle for image rotation.",
+        |ui| {
+            ui.add(
+                egui::DragValue::new(&mut settings.rotation_snap_degrees)
+                    .speed(1.0)
+                    .range(0.0..=180.0)
+                    .fixed_decimals(0)
+                    .suffix(" deg"),
+            )
+            .changed()
+        },
+    );
+    paint_setting_divider(ui);
+    changed |= paint_setting_row(
+        ui,
+        "Textbox background",
+        "Default background for new textboxes.",
+        |ui| paint_switch(ui, &mut settings.default_textbox_background).changed(),
+    );
+    paint_setting_divider(ui);
+    changed |= paint_setting_row(
+        ui,
         "Canvas image resolution",
         "Keeps originals for crop/edit.",
         |ui| paint_canvas_image_mode_control(ui, &mut settings.canvas_image_mode),

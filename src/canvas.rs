@@ -7,15 +7,16 @@ mod render;
 mod state;
 
 use crate::data::{
-    BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind, CanvasBackground,
-    CanvasImageCacheTier, CanvasTextSize,
+    BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind,
+    CanvasBackground, CanvasImageCacheTier, CanvasTextSize,
 };
 use eframe::egui;
 use interaction::handle_input;
 use render::{
-    editing_textbox_toolbar_rect, paint_annotation_draft, paint_annotations, paint_background,
-    paint_crop_marquee, paint_images, paint_import_placeholders, paint_marquee,
-    paint_selection_bounds, show_textbox_editor,
+    annotation_style_toolbar_rect, editing_textbox_toolbar_rect, paint_annotation_draft,
+    paint_annotations, paint_background, paint_crop_marquee, paint_images,
+    paint_import_placeholders, paint_marquee, paint_selection_bounds,
+    show_annotation_style_toolbar, show_textbox_editor,
 };
 use state::{CanvasDocumentState, CanvasInteractionState, CanvasRenderState};
 
@@ -25,6 +26,7 @@ const MIN_IMAGE_WORLD_SIZE: f32 = 24.0;
 const IMAGE_CULL_MARGIN_SCREEN: f32 = 128.0;
 const ANNOTATION_CULL_MARGIN_SCREEN: f32 = 128.0;
 const IMAGE_RESIZE_HIT_RADIUS: f32 = 14.0;
+const IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN: f32 = 32.0;
 const MIN_TEXTBOX_WORLD_SIZE: egui::Vec2 = egui::vec2(240.0, 56.0);
 const TEXTBOX_RESIZE_HIT_RADIUS: f32 = 14.0;
 const TEXTBOX_DRAG_THRESHOLD_SCREEN: f32 = 4.0;
@@ -47,6 +49,8 @@ pub struct CanvasState {
     pan: egui::Vec2,
     zoom: f32,
     background: CanvasBackground,
+    layout_gap: f32,
+    rotation_snap_degrees: f32,
     document: CanvasDocumentState,
     interaction: CanvasInteractionState,
     render: CanvasRenderState,
@@ -107,6 +111,7 @@ struct CanvasImage {
     record: BoardItemWithAsset,
     texture: CanvasTexture,
     loaded_tier: CanvasImageCacheTier,
+    animation: Option<AnimatedCanvasImage>,
 }
 
 #[derive(Clone)]
@@ -212,9 +217,19 @@ struct SelectedLayoutItem {
     height: f32,
 }
 
+#[derive(Clone)]
 struct DragState {
     pointer_start_world: egui::Pos2,
-    starting_positions: Vec<(i64, egui::Pos2)>,
+    starting_items: Vec<SelectedLayoutItem>,
+    snap_preview_rect_world: Option<egui::Rect>,
+}
+
+#[derive(Clone)]
+struct AnnotationDragState {
+    annotation_ids: Vec<i64>,
+    pointer_start_world: egui::Pos2,
+    pointer_start_screen: egui::Pos2,
+    starting_points: Vec<(i64, egui::Pos2, egui::Pos2)>,
 }
 
 #[derive(Clone, Copy)]
@@ -224,6 +239,11 @@ enum ImageTransformState {
         center_screen: egui::Pos2,
         start_scale: f32,
         start_radius_screen: f32,
+    },
+    Rotating {
+        item_id: i64,
+        center_screen: egui::Pos2,
+        start_rotation: f32,
     },
 }
 
@@ -279,6 +299,7 @@ enum TextboxPointerRegion {
 struct TextboxLayoutCacheKey {
     text_hash: u64,
     text_size: CanvasTextSize,
+    color: CanvasAnnotationColor,
     wrap_width_bits: u32,
     zoom_bits: u32,
 }
@@ -307,6 +328,20 @@ struct CropState {
     item_id: i64,
     start_screen: egui::Pos2,
     current_screen: egui::Pos2,
+}
+
+#[derive(Clone, Debug)]
+struct AnimatedCanvasFrame {
+    rgba: Vec<u8>,
+    delay_seconds: f32,
+}
+
+#[derive(Clone, Debug)]
+struct AnimatedCanvasImage {
+    frames: Vec<AnimatedCanvasFrame>,
+    width: u32,
+    height: u32,
+    current_frame: usize,
 }
 
 #[derive(Clone)]
@@ -347,6 +382,8 @@ impl Default for CanvasState {
             pan: egui::Vec2::ZERO,
             zoom: 1.0,
             background: CanvasBackground::default(),
+            layout_gap: crate::data::DEFAULT_IMPORT_GAP,
+            rotation_snap_degrees: crate::data::DEFAULT_ROTATION_SNAP_DEGREES,
             document: CanvasDocumentState::default(),
             interaction: CanvasInteractionState::default(),
             render: CanvasRenderState::default(),
@@ -362,6 +399,43 @@ impl CanvasState {
     pub fn screen_to_world(&self, screen: egui::Pos2, rect: egui::Rect) -> egui::Pos2 {
         let world = (screen - rect.center() - self.pan) / self.zoom;
         egui::pos2(world.x, world.y)
+    }
+
+    pub(crate) fn screen_distance_to_world(&self, screen_distance: f32) -> f32 {
+        screen_distance / self.zoom.max(0.01)
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn seed_move_snap_preview_for_selected_items(
+        &mut self,
+        rect: egui::Rect,
+        world_delta: egui::Vec2,
+    ) -> bool {
+        let drag_state = DragState {
+            pointer_start_world: egui::Pos2::ZERO,
+            starting_items: self.selected_layout_items(),
+            snap_preview_rect_world: None,
+        };
+        let snap_preview_rect =
+            interaction::compute_drag_snap_preview(self, rect, &drag_state, world_delta);
+        let snap_offset = snap_preview_rect
+            .and_then(|snap_rect| {
+                interaction::offset_layout_bounds(&drag_state.starting_items, world_delta)
+                    .map(|bounds| snap_rect.center() - bounds.center())
+            })
+            .unwrap_or(egui::Vec2::ZERO);
+        for item in &drag_state.starting_items {
+            if let Some(image) = self
+                .document
+                .images
+                .iter_mut()
+                .find(|image| image.record.item.id == item.id)
+            {
+                image.record.item.x = item.x + world_delta.x + snap_offset.x;
+                image.record.item.y = item.y + world_delta.y + snap_offset.y;
+            }
+        }
+        snap_preview_rect.is_some()
     }
 }
 
@@ -1212,7 +1286,8 @@ pub fn show(
     allow_tier_promotion: bool,
     debug_labels: bool,
 ) -> CanvasFrameMetrics {
-    let toolbar_rect = editing_textbox_toolbar_rect(ui, state, rect);
+    let toolbar_rect = editing_textbox_toolbar_rect(ui, state, rect)
+        .or_else(|| annotation_style_toolbar_rect(ui, state, rect));
     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
     handle_input(ui, rect, input_rect, toolbar_rect, state, &response);
 
@@ -1234,6 +1309,7 @@ pub fn show(
     paint_crop_marquee(&painter, rect, state);
     paint_annotation_draft(&painter, rect, state);
     paint_marquee(&painter, state);
+    show_annotation_style_toolbar(ui, rect, state);
     show_textbox_editor(ui, rect, state);
     CanvasFrameMetrics { image_pass }
 }
@@ -1327,8 +1403,8 @@ mod tests {
         legacy_best_compact_layout, vertical_layout,
     };
     use crate::data::{
-        BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationKind,
-        CanvasImageCacheTier, CanvasTextSize, ImageAsset,
+        BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
+        CanvasAnnotationKind, CanvasImageCacheTier, CanvasStrokeWidth, CanvasTextSize, ImageAsset,
     };
     use std::{
         path::PathBuf,
@@ -1377,11 +1453,20 @@ mod tests {
             },
             texture: CanvasTexture::Managed(texture),
             loaded_tier: CanvasImageCacheTier::Working,
+            animation: None,
         });
     }
 
     fn default_text_size() -> CanvasTextSize {
         CanvasTextSize::default()
+    }
+
+    fn default_annotation_color() -> CanvasAnnotationColor {
+        CanvasAnnotationColor::Default
+    }
+
+    fn default_stroke_width() -> CanvasStrokeWidth {
+        CanvasStrokeWidth::default()
     }
 
     fn test_record(item_id: i64, asset_id: i64, width: u32, height: u32) -> BoardItemWithAsset {
@@ -1418,7 +1503,42 @@ mod tests {
             preview_rgba: vec![255; record.asset.width as usize * record.asset.height as usize * 4],
             preview_width: record.asset.width,
             preview_height: record.asset.height,
+            animated_preview: None,
             preview_texture: crate::jobs::ImportedPreviewTexture::Native(texture),
+            loaded_tier: CanvasImageCacheTier::Working,
+            existing_load_diagnostics: None,
+            record,
+            origin: crate::jobs::ImportOrigin::Existing,
+            trace: None,
+        }
+    }
+
+    fn animated_loaded_item(
+        _ui: &eframe::egui::Ui,
+        record: BoardItemWithAsset,
+    ) -> crate::jobs::LoadedCanvasItem {
+        let first_frame = vec![0, 0, 255, 255];
+        let second_frame = vec![0, 255, 0, 255];
+        crate::jobs::LoadedCanvasItem {
+            queue_id: None,
+            preview_rgba: first_frame.clone(),
+            preview_width: 1,
+            preview_height: 1,
+            animated_preview: Some(crate::jobs::AnimatedPreview {
+                frames: vec![
+                    crate::jobs::AnimatedPreviewFrame {
+                        rgba: first_frame,
+                        delay_seconds: 0.1,
+                    },
+                    crate::jobs::AnimatedPreviewFrame {
+                        rgba: second_frame,
+                        delay_seconds: 0.1,
+                    },
+                ],
+                width: 1,
+                height: 1,
+            }),
+            preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
             loaded_tier: CanvasImageCacheTier::Working,
             existing_load_diagnostics: None,
             record,
@@ -1543,6 +1663,36 @@ mod tests {
 
         state.delete_items(&[1]);
         assert_eq!(new_cleanup.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn reference_items_preserve_gif_animation_after_source_item_is_removed() {
+        let mut state = CanvasState::default();
+
+        eframe::egui::__run_test_ui(|ui| {
+            state.add_loaded_item(ui.ctx(), animated_loaded_item(ui, test_record(1, 1, 1, 1)));
+        });
+        state.add_reference_item(test_record(2, 1, 1, 1)).unwrap();
+
+        assert!(state.document.images[1].animation.is_some());
+        assert_eq!(
+            state.advance_animated_image(2, 0.15).unwrap().0,
+            vec![0, 255, 0, 255]
+        );
+
+        state.delete_items(&[1]);
+
+        assert_eq!(
+            state.advance_animated_image(2, 0.25).unwrap().0,
+            vec![0, 0, 255, 255]
+        );
+        assert!(
+            state
+                .document
+                .images
+                .iter()
+                .any(|image| image.record.item.id == 2 && image.animation.is_some())
+        );
     }
 
     #[test]
@@ -1809,6 +1959,9 @@ mod tests {
             end_y: 96.0,
             text: "zoomed out".to_owned(),
             text_size: default_text_size(),
+            stroke_width: default_stroke_width(),
+            color: default_annotation_color(),
+            background_enabled: false,
             archived: false,
         };
 
@@ -1838,6 +1991,9 @@ mod tests {
                 end_y: 320.0,
                 text: "toolbar".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             });
             state.begin_textbox_edit(71);
@@ -1867,6 +2023,9 @@ mod tests {
                 end_y: 320.0,
                 text: "toolbar".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             });
             state.begin_textbox_edit(74);
@@ -1900,6 +2059,9 @@ mod tests {
                 end_y: -180.0,
                 text: "toolbar".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             });
             state.begin_textbox_edit(72);
@@ -1931,6 +2093,9 @@ mod tests {
                 end_y: 240.0,
                 text: "toolbar".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             });
             state.begin_textbox_edit(73);
@@ -1952,10 +2117,24 @@ mod tests {
     fn textbox_layout_cache_reuses_entry_for_identical_inputs() {
         eframe::egui::__run_test_ui(|ui| {
             let mut state = CanvasState::default();
-            let first =
-                state.cached_textbox_layout(ui, 1, "cache me", default_text_size(), 120.0, 1.0);
-            let second =
-                state.cached_textbox_layout(ui, 1, "cache me", default_text_size(), 120.0, 1.0);
+            let first = state.cached_textbox_layout(
+                ui,
+                1,
+                "cache me",
+                default_text_size(),
+                default_annotation_color(),
+                120.0,
+                1.0,
+            );
+            let second = state.cached_textbox_layout(
+                ui,
+                1,
+                "cache me",
+                default_text_size(),
+                default_annotation_color(),
+                120.0,
+                1.0,
+            );
 
             assert!(Arc::ptr_eq(&first.galley, &second.galley));
             assert_eq!(first.key, second.key);
@@ -1966,10 +2145,24 @@ mod tests {
     fn textbox_layout_cache_replaces_entry_when_text_changes() {
         eframe::egui::__run_test_ui(|ui| {
             let mut state = CanvasState::default();
-            let first =
-                state.cached_textbox_layout(ui, 1, "before", default_text_size(), 120.0, 1.0);
-            let second =
-                state.cached_textbox_layout(ui, 1, "after", default_text_size(), 120.0, 1.0);
+            let first = state.cached_textbox_layout(
+                ui,
+                1,
+                "before",
+                default_text_size(),
+                default_annotation_color(),
+                120.0,
+                1.0,
+            );
+            let second = state.cached_textbox_layout(
+                ui,
+                1,
+                "after",
+                default_text_size(),
+                default_annotation_color(),
+                120.0,
+                1.0,
+            );
 
             assert!(!Arc::ptr_eq(&first.galley, &second.galley));
             assert_ne!(first.key, second.key);
@@ -1980,9 +2173,24 @@ mod tests {
     fn textbox_layout_cache_replaces_entry_when_zoom_changes() {
         eframe::egui::__run_test_ui(|ui| {
             let mut state = CanvasState::default();
-            let first = state.cached_textbox_layout(ui, 1, "zoom", default_text_size(), 120.0, 1.0);
-            let second =
-                state.cached_textbox_layout(ui, 1, "zoom", default_text_size(), 120.0, 2.0);
+            let first = state.cached_textbox_layout(
+                ui,
+                1,
+                "zoom",
+                default_text_size(),
+                default_annotation_color(),
+                120.0,
+                1.0,
+            );
+            let second = state.cached_textbox_layout(
+                ui,
+                1,
+                "zoom",
+                default_text_size(),
+                default_annotation_color(),
+                120.0,
+                2.0,
+            );
 
             assert!(!Arc::ptr_eq(&first.galley, &second.galley));
             assert_ne!(first.key, second.key);
@@ -2001,16 +2209,31 @@ mod tests {
             let mut text = "updated text".to_owned();
             let mut layouter =
                 |ui: &eframe::egui::Ui, text: &dyn eframe::egui::TextBuffer, width: f32| {
-                    layout_textbox_galley(ui, text.as_str(), default_text_size(), width, 1.0)
+                    layout_textbox_galley(
+                        ui,
+                        text.as_str(),
+                        default_text_size(),
+                        default_annotation_color(),
+                        width,
+                        1.0,
+                    )
                 };
 
             state.cache_textbox_layout(
                 9,
                 "stale",
                 default_text_size(),
+                default_annotation_color(),
                 text_rect.width(),
                 1.0,
-                layout_textbox_galley(ui, "stale", default_text_size(), text_rect.width(), 1.0),
+                layout_textbox_galley(
+                    ui,
+                    "stale",
+                    default_text_size(),
+                    default_annotation_color(),
+                    text_rect.width(),
+                    1.0,
+                ),
             );
 
             let output = ui
@@ -2025,6 +2248,7 @@ mod tests {
                 9,
                 &text,
                 default_text_size(),
+                default_annotation_color(),
                 text_rect.width(),
                 1.0,
                 output.galley,
@@ -2032,11 +2256,23 @@ mod tests {
 
             assert_eq!(
                 entry.key,
-                textbox_layout_cache_key(&text, default_text_size(), text_rect.width(), 1.0)
+                textbox_layout_cache_key(
+                    &text,
+                    default_text_size(),
+                    default_annotation_color(),
+                    text_rect.width(),
+                    1.0,
+                )
             );
             assert_eq!(
                 state.render.textbox_layout_cache.get(&9).unwrap().key,
-                textbox_layout_cache_key(&text, default_text_size(), text_rect.width(), 1.0)
+                textbox_layout_cache_key(
+                    &text,
+                    default_text_size(),
+                    default_annotation_color(),
+                    text_rect.width(),
+                    1.0,
+                )
             );
         });
     }
@@ -2105,6 +2341,9 @@ mod tests {
             end_y: 96.0,
             text: String::new(),
             text_size: default_text_size(),
+            stroke_width: default_stroke_width(),
+            color: default_annotation_color(),
+            background_enabled: false,
             archived: false,
         };
 
@@ -2275,6 +2514,9 @@ mod tests {
                 end_y: 160.0,
                 text: "short".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             };
 
@@ -2285,6 +2527,7 @@ mod tests {
                 annotation.id,
                 &annotation.text,
                 default_text_size(),
+                default_annotation_color(),
                 content_rect.width(),
                 1.0,
             );
@@ -2339,6 +2582,9 @@ mod tests {
                 end_y: 180.0,
                 text: "short".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             });
 
@@ -2380,6 +2626,9 @@ mod tests {
                 end_y: 180.0,
                 text: "short".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             });
             state.document.selected_annotation_ids.clear();
@@ -2422,6 +2671,9 @@ mod tests {
                 end_y: 180.0,
                 text: "short".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             });
             state.document.selected_annotation_ids = vec![19];
@@ -2466,6 +2718,9 @@ mod tests {
                 end_y: 180.0,
                 text: String::new(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             });
             state.begin_textbox_edit(16);
@@ -2510,6 +2765,9 @@ mod tests {
                     end_y: 140.0,
                     text: "group".to_owned(),
                     text_size: default_text_size(),
+                    stroke_width: default_stroke_width(),
+                    color: default_annotation_color(),
+                    background_enabled: false,
                     archived: false,
                 });
             }
@@ -2553,6 +2811,9 @@ mod tests {
                 end_y: 180.0,
                 text: "hello world".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             });
             state.begin_textbox_edit(17);
@@ -2565,6 +2826,7 @@ mod tests {
                 annotation.id,
                 &annotation.text,
                 default_text_size(),
+                default_annotation_color(),
                 content_rect.width(),
                 1.0,
             );
@@ -2607,6 +2869,9 @@ mod tests {
             end_y: 96.0,
             text: String::new(),
             text_size: default_text_size(),
+            stroke_width: default_stroke_width(),
+            color: default_annotation_color(),
+            background_enabled: false,
             archived: false,
         });
 
@@ -2633,6 +2898,9 @@ mod tests {
             end_y: 80.0,
             text: String::new(),
             text_size: default_text_size(),
+            stroke_width: default_stroke_width(),
+            color: default_annotation_color(),
+            background_enabled: false,
             archived: false,
         });
 
@@ -2654,9 +2922,17 @@ mod tests {
                 5,
                 "cached",
                 default_text_size(),
+                default_annotation_color(),
                 120.0,
                 1.0,
-                layout_textbox_galley(ui, "cached", default_text_size(), 120.0, 1.0),
+                layout_textbox_galley(
+                    ui,
+                    "cached",
+                    default_text_size(),
+                    default_annotation_color(),
+                    120.0,
+                    1.0,
+                ),
             );
 
             state.add_annotation(CanvasAnnotation {
@@ -2668,6 +2944,9 @@ mod tests {
                 end_y: 96.0,
                 text: String::new(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             });
 
@@ -2683,17 +2962,33 @@ mod tests {
                 1,
                 "one",
                 default_text_size(),
+                default_annotation_color(),
                 120.0,
                 1.0,
-                layout_textbox_galley(ui, "one", default_text_size(), 120.0, 1.0),
+                layout_textbox_galley(
+                    ui,
+                    "one",
+                    default_text_size(),
+                    default_annotation_color(),
+                    120.0,
+                    1.0,
+                ),
             );
             state.cache_textbox_layout(
                 2,
                 "two",
                 default_text_size(),
+                default_annotation_color(),
                 120.0,
                 1.0,
-                layout_textbox_galley(ui, "two", default_text_size(), 120.0, 1.0),
+                layout_textbox_galley(
+                    ui,
+                    "two",
+                    default_text_size(),
+                    default_annotation_color(),
+                    120.0,
+                    1.0,
+                ),
             );
 
             state.add_annotations(Vec::new());
@@ -2715,15 +3010,26 @@ mod tests {
                 end_y: 96.0,
                 text: "hello".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             });
             state.cache_textbox_layout(
                 3,
                 "hello",
                 default_text_size(),
+                default_annotation_color(),
                 120.0,
                 1.0,
-                layout_textbox_galley(ui, "hello", default_text_size(), 120.0, 1.0),
+                layout_textbox_galley(
+                    ui,
+                    "hello",
+                    default_text_size(),
+                    default_annotation_color(),
+                    120.0,
+                    1.0,
+                ),
             );
 
             state.remove_annotation_locally(3);
@@ -2745,15 +3051,26 @@ mod tests {
                 end_y: 96.0,
                 text: "resize".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             });
             state.cache_textbox_layout(
                 4,
                 "resize",
                 default_text_size(),
+                default_annotation_color(),
                 120.0,
                 1.0,
-                layout_textbox_galley(ui, "resize", default_text_size(), 120.0, 1.0),
+                layout_textbox_galley(
+                    ui,
+                    "resize",
+                    default_text_size(),
+                    default_annotation_color(),
+                    120.0,
+                    1.0,
+                ),
             );
 
             assert!(state.set_textbox_world_rect(
@@ -2779,6 +3096,9 @@ mod tests {
             end_y: 96.0,
             text: "textbox".to_owned(),
             text_size: default_text_size(),
+            stroke_width: default_stroke_width(),
+            color: default_annotation_color(),
+            background_enabled: false,
             archived: false,
         });
 
@@ -2800,6 +3120,9 @@ mod tests {
             end_y: 96.0,
             text: "textbox".to_owned(),
             text_size: default_text_size(),
+            stroke_width: default_stroke_width(),
+            color: default_annotation_color(),
+            background_enabled: false,
             archived: false,
         });
         state.add_annotation(CanvasAnnotation {
@@ -2811,6 +3134,9 @@ mod tests {
             end_y: 96.0,
             text: "textbox".to_owned(),
             text_size: default_text_size(),
+            stroke_width: default_stroke_width(),
+            color: default_annotation_color(),
+            background_enabled: false,
             archived: false,
         });
 
@@ -2836,6 +3162,9 @@ mod tests {
                 end_y: 180.0,
                 text: "visible".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             },
             CanvasAnnotation {
@@ -2847,6 +3176,9 @@ mod tests {
                 end_y: 180.0,
                 text: "offscreen-a".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             },
             CanvasAnnotation {
@@ -2858,6 +3190,9 @@ mod tests {
                 end_y: 400.0,
                 text: "offscreen-b".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             },
             CanvasAnnotation {
@@ -2869,6 +3204,9 @@ mod tests {
                 end_y: 20.0,
                 text: "offscreen-c".to_owned(),
                 text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
                 archived: false,
             },
         ];

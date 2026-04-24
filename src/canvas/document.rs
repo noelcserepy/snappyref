@@ -15,18 +15,36 @@ use super::render::{
     textbox_required_world_height,
 };
 use super::{
-    CanvasCropRequest, CanvasDocumentChanges, CanvasImage, CanvasImagePreview, CanvasState,
-    CropState, FOCUS_SELECTION_PADDING_SCREEN, ImportPlaceholder, MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM,
-    PendingAnnotation, SelectedLayoutItem, TextboxLayoutCacheEntry, merge_ids,
+    AnimatedCanvasFrame, AnimatedCanvasImage, CanvasCropRequest, CanvasDocumentChanges,
+    CanvasImage, CanvasImagePreview, CanvasState, CropState, FOCUS_SELECTION_PADDING_SCREEN,
+    ImportPlaceholder, MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, PendingAnnotation, SelectedLayoutItem,
+    TextboxLayoutCacheEntry, merge_ids,
 };
 use crate::data::{
-    BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationKind, CanvasBackground,
-    CanvasImageCacheTier, CanvasTextSize, ViewportState,
+    BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
+    CanvasAnnotationKind, CanvasBackground, CanvasImageCacheTier, CanvasStrokeWidth,
+    CanvasTextSize, ViewportState,
 };
 use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
 
 impl CanvasState {
     pub fn add_loaded_item(&mut self, ctx: &egui::Context, loaded: LoadedCanvasItem) {
+        let animation = loaded
+            .animated_preview
+            .as_ref()
+            .map(|animated| AnimatedCanvasImage {
+                frames: animated
+                    .frames
+                    .iter()
+                    .map(|frame| AnimatedCanvasFrame {
+                        rgba: frame.rgba.clone(),
+                        delay_seconds: frame.delay_seconds,
+                    })
+                    .collect(),
+                width: animated.width,
+                height: animated.height,
+                current_frame: 0,
+            });
         self.render
             .asset_rgba_cache
             .insert(loaded.record.asset.id, loaded.preview_rgba.clone());
@@ -52,6 +70,7 @@ impl CanvasState {
             record: loaded.record,
             texture,
             loaded_tier: loaded.loaded_tier,
+            animation,
         });
         self.document
             .images
@@ -59,18 +78,20 @@ impl CanvasState {
     }
 
     pub fn add_reference_item(&mut self, record: BoardItemWithAsset) -> Result<(), String> {
-        let texture = self
+        let source = self
             .document
             .images
             .iter()
             .find(|image| image.record.asset.id == record.asset.id)
-            .map(|image| image.texture.clone())
             .ok_or_else(|| format!("missing source texture for asset {}", record.asset.id))?;
+        let texture = source.texture.clone();
+        let animation = source.animation.clone();
 
         self.document.images.push(CanvasImage {
             record,
             texture,
             loaded_tier: CanvasImageCacheTier::Working,
+            animation,
         });
         self.document
             .images
@@ -145,6 +166,7 @@ impl CanvasState {
         image.record.asset = asset;
         image.texture = texture;
         image.loaded_tier = cropped.loaded_tier;
+        image.animation = None;
         self.render
             .pending_image_tier_loads
             .remove(&cropped.item_id);
@@ -155,6 +177,19 @@ impl CanvasState {
         self.pan = egui::vec2(viewport.camera_pan_x, viewport.camera_pan_y);
         self.zoom = viewport.camera_zoom.clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
         self.background = viewport.canvas_background;
+    }
+
+    pub fn set_rotation_snap_degrees(&mut self, degrees: f32) {
+        self.rotation_snap_degrees = degrees.max(0.0);
+    }
+
+    pub fn set_layout_gap(&mut self, gap: f32) {
+        self.layout_gap = gap.max(0.0);
+    }
+
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn set_animation_time_override_seconds(&mut self, seconds: Option<f32>) {
+        self.render.animation_time_override_seconds = seconds;
     }
 
     pub fn viewport_state(&self) -> ViewportState {
@@ -202,6 +237,16 @@ impl CanvasState {
 
     pub fn set_background(&mut self, background: CanvasBackground) {
         self.background = background;
+    }
+
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn clear_scene_for_verification(&mut self) {
+        self.document = super::state::CanvasDocumentState::default();
+        self.interaction = super::state::CanvasInteractionState::default();
+        self.render.asset_rgba_cache.clear();
+        self.render.textbox_layout_cache.clear();
+        self.render.pending_image_tier_loads.clear();
+        self.render.animation_time_override_seconds = None;
     }
 
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
@@ -346,6 +391,15 @@ impl CanvasState {
         self.interaction.hover_preview_placeholders.len()
     }
 
+    pub fn clear_move_preview_placeholders(&mut self) {
+        self.interaction.move_preview_placeholders.clear();
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn move_preview_placeholder_count(&self) -> usize {
+        self.interaction.move_preview_placeholders.len()
+    }
+
     pub fn take_pending_image_tier_loads(&mut self) -> Vec<(i64, CanvasImageCacheTier)> {
         self.render.pending_image_tier_loads.drain().collect()
     }
@@ -393,6 +447,7 @@ impl CanvasState {
             self.document.selected_item_ids.clear();
             self.interaction.image_transform_state = None;
             self.interaction.textbox_transform_state = None;
+            self.interaction.annotation_drag_state = None;
         }
     }
 
@@ -493,6 +548,34 @@ impl CanvasState {
             .map(|annotation| annotation.text_size)
     }
 
+    pub fn editing_textbox_color(&self) -> Option<CanvasAnnotationColor> {
+        let annotation_id = self.interaction.editing_text_annotation_id?;
+        self.annotation_by_id(annotation_id)
+            .filter(|annotation| annotation.kind == CanvasAnnotationKind::Textbox)
+            .map(|annotation| annotation.color)
+    }
+
+    pub fn editing_textbox_background_enabled(&self) -> Option<bool> {
+        let annotation_id = self.interaction.editing_text_annotation_id?;
+        self.annotation_by_id(annotation_id)
+            .filter(|annotation| annotation.kind == CanvasAnnotationKind::Textbox)
+            .map(|annotation| annotation.background_enabled)
+    }
+
+    pub fn selected_stroke_width(&self) -> Option<CanvasStrokeWidth> {
+        let annotation = self.selected_annotation()?;
+        matches!(
+            annotation.kind,
+            CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow
+        )
+        .then_some(annotation.stroke_width)
+    }
+
+    pub fn selected_annotation_color(&self) -> Option<CanvasAnnotationColor> {
+        self.selected_annotation()
+            .map(|annotation| annotation.color)
+    }
+
     pub fn apply_text_size_to_editing_textbox(&mut self, text_size: CanvasTextSize) -> bool {
         let Some(annotation_id) = self.interaction.editing_text_annotation_id else {
             return false;
@@ -508,6 +591,83 @@ impl CanvasState {
         self.invalidate_textbox_layout_cache(annotation_id);
         self.mark_annotation_dirty(annotation_id);
         self.interaction.focus_text_editor = true;
+        true
+    }
+
+    pub fn apply_color_to_editing_textbox(&mut self, color: CanvasAnnotationColor) -> bool {
+        let Some(annotation_id) = self.interaction.editing_text_annotation_id else {
+            return false;
+        };
+        let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
+            return false;
+        };
+        if annotation.kind != CanvasAnnotationKind::Textbox || annotation.color == color {
+            return false;
+        }
+
+        annotation.color = color;
+        self.invalidate_textbox_layout_cache(annotation_id);
+        self.mark_annotation_dirty(annotation_id);
+        self.interaction.focus_text_editor = true;
+        true
+    }
+
+    pub fn toggle_editing_textbox_background(&mut self) -> bool {
+        let Some(annotation_id) = self.interaction.editing_text_annotation_id else {
+            return false;
+        };
+        let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
+            return false;
+        };
+        if annotation.kind != CanvasAnnotationKind::Textbox {
+            return false;
+        }
+
+        annotation.background_enabled = !annotation.background_enabled;
+        self.mark_annotation_dirty(annotation_id);
+        self.interaction.focus_text_editor = true;
+        true
+    }
+
+    pub fn apply_stroke_width_to_selected_annotation(
+        &mut self,
+        stroke_width: CanvasStrokeWidth,
+    ) -> bool {
+        let Some(annotation_id) = self.single_selected_annotation_id() else {
+            return false;
+        };
+        let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
+            return false;
+        };
+        if !matches!(
+            annotation.kind,
+            CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow
+        ) || annotation.stroke_width == stroke_width
+        {
+            return false;
+        }
+
+        annotation.stroke_width = stroke_width;
+        self.mark_annotation_dirty(annotation_id);
+        true
+    }
+
+    pub fn apply_color_to_selected_annotation(&mut self, color: CanvasAnnotationColor) -> bool {
+        let Some(annotation_id) = self.single_selected_annotation_id() else {
+            return false;
+        };
+        let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
+            return false;
+        };
+        if annotation.color == color {
+            return false;
+        }
+
+        annotation.color = color;
+        if annotation.kind == CanvasAnnotationKind::Textbox {
+            self.invalidate_textbox_layout_cache(annotation_id);
+        }
+        self.mark_annotation_dirty(annotation_id);
         true
     }
 
@@ -528,6 +688,18 @@ impl CanvasState {
         self.interaction.editing_text_annotation_id = None;
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
+        self.interaction.annotation_drag_state = None;
+    }
+
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn select_single_annotation(&mut self, annotation_id: i64) {
+        self.finish_textbox_edit();
+        self.document.selected_item_ids.clear();
+        self.document.selected_annotation_ids = vec![annotation_id];
+        self.interaction.editing_text_annotation_id = None;
+        self.interaction.image_transform_state = None;
+        self.interaction.textbox_transform_state = None;
+        self.interaction.annotation_drag_state = None;
     }
 
     pub fn arrange_selected_horizontal(&mut self, gap: f32) -> usize {
@@ -634,6 +806,7 @@ impl CanvasState {
         self.interaction.drag_state = None;
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
+        self.interaction.annotation_drag_state = None;
         self.interaction.marquee_state = None;
         self.interaction.crop_state = None;
         self.interaction.annotation_draft_state = None;
@@ -674,6 +847,7 @@ impl CanvasState {
         self.interaction.editing_text_annotation_id = None;
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
+        self.interaction.annotation_drag_state = None;
     }
 
     pub(super) fn add_to_selection(&mut self, item_id: i64) {
@@ -683,6 +857,7 @@ impl CanvasState {
         }
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
+        self.interaction.annotation_drag_state = None;
     }
 
     pub(super) fn add_annotation_to_selection(&mut self, annotation_id: i64) {
@@ -696,6 +871,7 @@ impl CanvasState {
         }
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
+        self.interaction.annotation_drag_state = None;
     }
 
     pub(super) fn clear_selection(&mut self) {
@@ -705,6 +881,7 @@ impl CanvasState {
         self.interaction.editing_text_annotation_id = None;
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
+        self.interaction.annotation_drag_state = None;
     }
 
     pub(super) fn set_marquee_selection(
@@ -727,6 +904,7 @@ impl CanvasState {
         self.interaction.editing_text_annotation_id = None;
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
+        self.interaction.annotation_drag_state = None;
     }
 
     pub(super) fn mark_dirty(&mut self, item_id: i64) {
@@ -756,6 +934,7 @@ impl CanvasState {
         self.interaction.image_transform_state = None;
         if self.interaction.textbox_transform_state.is_some() {
             self.interaction.textbox_transform_state = None;
+            self.interaction.annotation_drag_state = None;
         }
         self.document
             .dirty_annotation_ids
@@ -772,6 +951,7 @@ impl CanvasState {
         self.interaction.focus_text_editor = false;
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
+        self.interaction.annotation_drag_state = None;
 
         let Some(annotation) = self
             .document
@@ -805,6 +985,7 @@ impl CanvasState {
         self.interaction.focus_text_editor = false;
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
+        self.interaction.annotation_drag_state = None;
     }
 
     pub(super) fn annotation_by_id(&self, annotation_id: i64) -> Option<&CanvasAnnotation> {
@@ -852,6 +1033,31 @@ impl CanvasState {
         changed
     }
 
+    pub(super) fn set_annotation_world_points(
+        &mut self,
+        annotation_id: i64,
+        start_world: egui::Pos2,
+        end_world: egui::Pos2,
+    ) -> bool {
+        let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
+            return false;
+        };
+        let changed = annotation.start_x != start_world.x
+            || annotation.start_y != start_world.y
+            || annotation.end_x != end_world.x
+            || annotation.end_y != end_world.y;
+        if changed {
+            annotation.start_x = start_world.x;
+            annotation.start_y = start_world.y;
+            annotation.end_x = end_world.x;
+            annotation.end_y = end_world.y;
+            if annotation.kind == CanvasAnnotationKind::Textbox {
+                self.invalidate_textbox_layout_cache(annotation_id);
+            }
+        }
+        changed
+    }
+
     pub(super) fn selected_textbox_start_rects(&self) -> Vec<(i64, egui::Rect)> {
         self.document
             .selected_annotation_ids
@@ -875,11 +1081,12 @@ impl CanvasState {
         annotation_id: i64,
         text: &str,
         text_size: CanvasTextSize,
+        color: CanvasAnnotationColor,
         wrap_width: f32,
         zoom: f32,
         galley: Arc<egui::Galley>,
     ) -> TextboxLayoutCacheEntry {
-        let key = textbox_layout_cache_key(text, text_size, wrap_width, zoom);
+        let key = textbox_layout_cache_key(text, text_size, color, wrap_width, zoom);
         let entry = TextboxLayoutCacheEntry {
             key,
             required_world_height: textbox_required_world_height(galley.size().y, zoom),
@@ -897,18 +1104,27 @@ impl CanvasState {
         annotation_id: i64,
         text: &str,
         text_size: CanvasTextSize,
+        color: CanvasAnnotationColor,
         wrap_width: f32,
         zoom: f32,
     ) -> TextboxLayoutCacheEntry {
-        let key = textbox_layout_cache_key(text, text_size, wrap_width, zoom);
+        let key = textbox_layout_cache_key(text, text_size, color, wrap_width, zoom);
         if let Some(entry) = self.render.textbox_layout_cache.get(&annotation_id)
             && entry.key == key
         {
             return entry.clone();
         }
 
-        let galley = layout_textbox_galley(ui, text, text_size, wrap_width, zoom);
-        self.cache_textbox_layout(annotation_id, text, text_size, wrap_width, zoom, galley)
+        let galley = layout_textbox_galley(ui, text, text_size, color, wrap_width, zoom);
+        self.cache_textbox_layout(
+            annotation_id,
+            text,
+            text_size,
+            color,
+            wrap_width,
+            zoom,
+            galley,
+        )
     }
 
     pub(super) fn selected_layout_items(&self) -> Vec<SelectedLayoutItem> {
@@ -924,6 +1140,47 @@ impl CanvasState {
                 height: image.record.asset.height as f32 * image.record.item.scale.max(0.01),
             })
             .collect()
+    }
+
+    pub fn board_snap_obstacles_excluding(
+        &self,
+        excluded_item_ids: &[i64],
+    ) -> Vec<crate::layout_snap::SnapObstacle> {
+        let mut obstacles = self
+            .document
+            .images
+            .iter()
+            .filter(|image| !excluded_item_ids.contains(&image.record.item.id))
+            .map(|image| {
+                crate::layout_snap::SnapObstacle::from_center_size(
+                    egui::pos2(image.record.item.x, image.record.item.y),
+                    egui::vec2(
+                        image.record.asset.width as f32 * image.record.item.scale.max(0.01),
+                        image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        obstacles.extend(self.document.annotations.iter().filter_map(|annotation| {
+            (annotation.kind == CanvasAnnotationKind::Textbox).then(|| {
+                let world_rect = textbox_world_rect(annotation);
+                crate::layout_snap::SnapObstacle::from_center_size(
+                    world_rect.center(),
+                    world_rect.size(),
+                )
+            })
+        }));
+        obstacles.extend(
+            self.import_placeholder_layout_items()
+                .into_iter()
+                .map(|placeholder| {
+                    crate::layout_snap::SnapObstacle::from_center_size(
+                        egui::pos2(placeholder.x, placeholder.y),
+                        egui::vec2(placeholder.width, placeholder.height),
+                    )
+                }),
+        );
+        obstacles
     }
 
     pub(super) fn apply_arrangement(
@@ -1105,5 +1362,54 @@ impl CanvasState {
         }
         image.record.item.scale = normalized;
         true
+    }
+
+    pub fn set_image_rotation(&mut self, item_id: i64, rotation: f32) -> bool {
+        let Some(image) = self.image_by_item_id_mut(item_id) else {
+            return false;
+        };
+        if (image.record.item.rotation - rotation).abs() <= f32::EPSILON {
+            return false;
+        }
+        image.record.item.rotation = rotation;
+        true
+    }
+
+    pub(super) fn advance_animated_image(
+        &mut self,
+        item_id: i64,
+        time_seconds: f32,
+    ) -> Option<(Vec<u8>, u32, u32)> {
+        let image = self.image_by_item_id_mut(item_id)?;
+        let animation = image.animation.as_mut()?;
+        if animation.frames.is_empty() {
+            return None;
+        }
+
+        let total_duration = animation
+            .frames
+            .iter()
+            .map(|frame| frame.delay_seconds.max(0.01))
+            .sum::<f32>()
+            .max(0.01);
+        let mut remaining = time_seconds.rem_euclid(total_duration);
+        let mut frame_index = 0;
+        for (index, frame) in animation.frames.iter().enumerate() {
+            let delay = frame.delay_seconds.max(0.01);
+            if remaining <= delay {
+                frame_index = index;
+                break;
+            }
+            remaining -= delay;
+            frame_index = index;
+        }
+
+        if animation.current_frame == frame_index {
+            return None;
+        }
+
+        animation.current_frame = frame_index;
+        let frame = &animation.frames[frame_index];
+        Some((frame.rgba.clone(), animation.width, animation.height))
     }
 }
