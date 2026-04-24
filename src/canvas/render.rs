@@ -174,6 +174,22 @@ pub(super) fn paint_images(
         paint_image_overlay(painter, state, image, image_rect, debug_labels);
     }
 
+    if let Some(preview) = &state.interaction.search_drag_preview {
+        for image in &preview.images {
+            let image_rect = image_screen_rect(state, rect, image);
+            if !image_rect.intersects(cull_rect) {
+                continue;
+            }
+            paint_image_mesh(painter, state, rect, image);
+            painter.rect_stroke(
+                image_rect.expand(2.0),
+                0.0,
+                crate::theme::stroke_strong(),
+                egui::StrokeKind::Outside,
+            );
+        }
+    }
+
     if any_visible_animated {
         painter.ctx().request_repaint();
     }

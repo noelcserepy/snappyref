@@ -261,15 +261,6 @@ impl CanvasState {
         self.interaction.active_search_item_id = None;
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
-    pub fn focus_item(&mut self, item_id: i64) {
-        let Some(image) = self.image_by_item_id(item_id) else {
-            return;
-        };
-        let center = egui::vec2(image.record.item.x, image.record.item.y);
-        self.pan = -center * self.zoom;
-    }
-
     pub fn focus_selection_in_view(
         &mut self,
         canvas_rect: egui::Rect,
@@ -398,6 +389,125 @@ impl CanvasState {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn move_preview_placeholder_count(&self) -> usize {
         self.interaction.move_preview_placeholders.len()
+    }
+
+    pub fn update_search_drag_preview(
+        &mut self,
+        item_ids: &[i64],
+        desired_anchor_world: egui::Pos2,
+        screen_rect: egui::Rect,
+    ) {
+        let Some(layout_items) = self.search_drag_layout_items_for_item_ids(item_ids) else {
+            self.clear_search_drag_preview();
+            return;
+        };
+        let Some(source_center_world) = self.source_center_for_layout_items(&layout_items) else {
+            self.clear_search_drag_preview();
+            return;
+        };
+        let Some((drop_anchor_world, snap_preview_rect_world)) = self
+            .resolve_search_drag_anchor_world(
+                item_ids,
+                &layout_items,
+                desired_anchor_world,
+                screen_rect,
+            )
+        else {
+            self.clear_search_drag_preview();
+            return;
+        };
+        let delta = drop_anchor_world - source_center_world;
+        let layout_by_id = layout_items
+            .iter()
+            .map(|item| (item.id, egui::pos2(item.x, item.y)))
+            .collect::<std::collections::HashMap<_, _>>();
+        let images = item_ids
+            .iter()
+            .filter_map(|item_id| self.image_by_item_id(*item_id).cloned())
+            .map(|mut image| {
+                if let Some(layout_pos) = layout_by_id.get(&image.record.item.id) {
+                    image.record.item.x = layout_pos.x + delta.x;
+                    image.record.item.y = layout_pos.y + delta.y;
+                }
+                image
+            })
+            .collect::<Vec<_>>();
+        if images.is_empty() {
+            self.clear_search_drag_preview();
+            return;
+        }
+        self.interaction.search_drag_preview = Some(super::SearchDragPreview {
+            images,
+            drop_anchor_world,
+            snap_preview_rect_world,
+        });
+    }
+
+    pub fn take_search_drag_drop_anchor_world(&mut self) -> Option<egui::Pos2> {
+        self.interaction
+            .search_drag_preview
+            .as_ref()
+            .map(|preview| preview.drop_anchor_world)
+    }
+
+    pub fn clear_search_drag_preview(&mut self) {
+        self.interaction.search_drag_preview = None;
+    }
+
+    fn resolve_search_drag_anchor_world(
+        &mut self,
+        item_ids: &[i64],
+        items: &[SelectedLayoutItem],
+        desired_anchor_world: egui::Pos2,
+        screen_rect: egui::Rect,
+    ) -> Option<(egui::Pos2, Option<egui::Rect>)> {
+        let source_center_world = self.source_center_for_layout_items(items)?;
+        let world_delta = desired_anchor_world - source_center_world;
+        let bounds = layout_bounds_with_offset(items, world_delta)?;
+        let obstacles = self.board_snap_obstacles_excluding(item_ids);
+        let max_snap_distance_world =
+            super::IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN / self.zoom.max(0.01);
+        let request = crate::layout_snap::MoveSnapRequest {
+            desired_rect: bounds,
+            drag_delta: world_delta,
+            gap: self.layout_gap,
+            max_snap_distance: max_snap_distance_world,
+        };
+        let previous = self
+            .interaction
+            .search_drag_preview
+            .as_ref()
+            .and_then(|preview| preview.snap_preview_rect_world)
+            .and_then(|previous_rect| {
+                crate::layout_snap::validate_move_snap_candidate(
+                    &obstacles,
+                    &request,
+                    previous_rect,
+                )
+            });
+        let best = crate::layout_snap::best_move_snap_candidate(&obstacles, &request);
+        let hysteresis_distance =
+            (super::IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN * 0.2) / self.zoom.max(0.01);
+        let candidate = match (best, previous) {
+            (Some(best), Some(previous))
+                if best.rect.center().distance(previous.rect.center()) <= hysteresis_distance =>
+            {
+                Some(previous)
+            }
+            (Some(best), _) => Some(best),
+            (None, Some(previous)) => Some(previous),
+            (None, None) => None,
+        };
+        let Some(candidate) = candidate else {
+            return Some((desired_anchor_world, None));
+        };
+        let candidate_screen = self.world_to_screen(candidate.rect.center(), screen_rect);
+        let desired_screen = self.world_to_screen(bounds.center(), screen_rect);
+        if candidate_screen.distance(desired_screen) >= super::IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN {
+            return Some((desired_anchor_world, None));
+        }
+        let snap_offset = candidate.rect.center() - bounds.center();
+        Some((desired_anchor_world + snap_offset, Some(candidate.rect)))
     }
 
     pub fn take_pending_image_tier_loads(&mut self) -> Vec<(i64, CanvasImageCacheTier)> {
@@ -1142,6 +1252,64 @@ impl CanvasState {
             .collect()
     }
 
+    fn layout_items_for_item_ids(&self, item_ids: &[i64]) -> Vec<SelectedLayoutItem> {
+        self.document
+            .images
+            .iter()
+            .filter(|image| item_ids.contains(&image.record.item.id))
+            .map(|image| SelectedLayoutItem {
+                id: image.record.item.id,
+                x: image.record.item.x,
+                y: image.record.item.y,
+                width: image.record.asset.width as f32 * image.record.item.scale.max(0.01),
+                height: image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+            })
+            .collect()
+    }
+
+    fn search_drag_layout_items_for_item_ids(
+        &self,
+        item_ids: &[i64],
+    ) -> Option<Vec<SelectedLayoutItem>> {
+        let mut items = self.layout_items_for_item_ids(item_ids);
+        if items.is_empty() {
+            return None;
+        }
+        if items.len() == 1 {
+            return Some(items);
+        }
+
+        let source_center = self.source_center_for_layout_items(&items)?;
+        items.sort_by(|left, right| {
+            right
+                .width
+                .max(right.height)
+                .total_cmp(&left.width.max(left.height))
+                .then_with(|| (right.width * right.height).total_cmp(&(left.width * left.height)))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+
+        let Some((placements, width, height)) = super::best_compact_layout(&items, self.layout_gap)
+        else {
+            return Some(items);
+        };
+        let local_center = egui::pos2(width * 0.5, height * 0.5);
+        for item in &mut items {
+            if let Some((_, placement)) = placements
+                .iter()
+                .find(|(placement_item_id, _)| *placement_item_id == item.id)
+            {
+                item.x = source_center.x + placement.x - local_center.x;
+                item.y = source_center.y + placement.y - local_center.y;
+            }
+        }
+        Some(items)
+    }
+
+    fn source_center_for_layout_items(&self, items: &[SelectedLayoutItem]) -> Option<egui::Pos2> {
+        layout_bounds_with_offset(items, egui::Vec2::ZERO).map(|bounds| bounds.center())
+    }
+
     pub fn board_snap_obstacles_excluding(
         &self,
         excluded_item_ids: &[i64],
@@ -1412,4 +1580,25 @@ impl CanvasState {
         let frame = &animation.frames[frame_index];
         Some((frame.rgba.clone(), animation.width, animation.height))
     }
+}
+
+fn layout_bounds_with_offset(
+    items: &[SelectedLayoutItem],
+    offset: egui::Vec2,
+) -> Option<egui::Rect> {
+    let mut bounds = egui::Rect::NOTHING;
+    let mut found = false;
+    for item in items {
+        let rect = egui::Rect::from_center_size(
+            egui::pos2(item.x + offset.x, item.y + offset.y),
+            egui::vec2(item.width, item.height),
+        );
+        if found {
+            bounds = bounds.union(rect);
+        } else {
+            bounds = rect;
+            found = true;
+        }
+    }
+    found.then_some(bounds)
 }
