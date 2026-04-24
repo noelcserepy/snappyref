@@ -120,7 +120,6 @@ pub(crate) fn show_sidebar(
             let ui_builder = egui::UiBuilder::new().max_rect(inner_rect);
             ui.scope_builder(ui_builder, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-                paint_sidebar_header(ui);
                 paint_sidebar_tabs(ui, sidebar_tab);
                 ui.add_space(crate::theme::SPACE_2);
                 match *sidebar_tab {
@@ -136,73 +135,6 @@ pub(crate) fn show_sidebar(
         settings_changed,
         interactive_rect: Some(area_response.response.rect),
     }
-}
-
-fn paint_sidebar_header(ui: &mut egui::Ui) {
-    let rect = ui
-        .allocate_space(egui::vec2(
-            ui.available_width(),
-            crate::theme::CONTROL_HEIGHT + crate::theme::SPACE_2,
-        ))
-        .1;
-    let pad_x = crate::theme::SPACE_4;
-    let center_y = rect.center().y;
-    let badge_size = 22.0;
-    let badge_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + pad_x + badge_size * 0.5, center_y),
-        egui::vec2(badge_size, badge_size),
-    );
-    ui.painter()
-        .rect_filled(badge_rect, egui::CornerRadius::same(5), crate::theme::BADGE);
-    let badge_text_color = egui::Color32::from_rgb(0x1A, 0x19, 0x17);
-    let badge_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
-    let badge_galley = ui
-        .painter()
-        .layout_no_wrap("R".to_owned(), badge_font, badge_text_color);
-    let badge_pos = egui::pos2(
-        badge_rect.center().x - badge_galley.size().x * 0.5,
-        badge_rect.center().y - badge_galley.size().y * 0.5,
-    );
-    ui.painter()
-        .galley(badge_pos, badge_galley, badge_text_color);
-
-    let name_font = ui.style().text_styles[&egui::TextStyle::Body].clone();
-    let name_galley =
-        ui.painter()
-            .layout_no_wrap("Reference".to_owned(), name_font, crate::theme::TEXT);
-    let name_pos = egui::pos2(
-        badge_rect.right() + crate::theme::SPACE_2,
-        center_y - name_galley.size().y * 0.5,
-    );
-    ui.painter()
-        .galley(name_pos, name_galley, crate::theme::TEXT);
-
-    let kbd_label = sidebar_shortcut_label();
-    let kbd_font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
-    let kbd_galley =
-        ui.painter()
-            .layout_no_wrap(kbd_label.to_owned(), kbd_font, crate::theme::TEXT_SUBTLE);
-    let kbd_pad = egui::vec2(crate::theme::SPACE_1 + 1.0, 2.0);
-    let kbd_size = kbd_galley.size() + kbd_pad * 2.0;
-    let kbd_rect = egui::Rect::from_min_size(
-        egui::pos2(
-            rect.right() - pad_x - kbd_size.x,
-            center_y - kbd_size.y * 0.5,
-        ),
-        kbd_size,
-    );
-    ui.painter().rect(
-        kbd_rect,
-        egui::CornerRadius::same(4),
-        crate::theme::SURFACE_ELEVATED,
-        crate::theme::stroke_subtle(),
-        egui::StrokeKind::Inside,
-    );
-    ui.painter().galley(
-        kbd_rect.min + kbd_pad,
-        kbd_galley,
-        crate::theme::TEXT_SUBTLE,
-    );
 }
 
 fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
