@@ -21,6 +21,7 @@ pub(crate) struct SearchOverlayState {
     pub active_result_index: usize,
     pub active_instance_index: usize,
     pub selected_result_indices: Vec<usize>,
+    pub selection_anchor_index: Option<usize>,
     pub drag_state: Option<SearchResultDragState>,
     pub last_expanded_overlay_rect: Option<egui::Rect>,
     pub results: Vec<SearchResultGroup>,

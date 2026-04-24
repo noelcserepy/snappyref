@@ -2715,6 +2715,10 @@ impl eframe::App for ReferenceApp {
             .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
         self.canvas.set_layout_gap(self.settings.import_gap);
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
+        #[cfg(feature = "semantic-search")]
+        let suppress_canvas_input = self.search.blocks_canvas_input(ui.ctx());
+        #[cfg(not(feature = "semantic-search"))]
+        let suppress_canvas_input = false;
         self.frame_perf.canvas = crate::canvas::show(
             ui,
             screen_rect,
@@ -2722,6 +2726,7 @@ impl eframe::App for ReferenceApp {
             &mut self.canvas,
             self.wgpu_render_state.as_ref(),
             self.settings.canvas_image_mode == crate::data::CanvasImageMode::Downscale,
+            suppress_canvas_input,
             false,
         );
         if let Some(error) = self.residency.dispatch_pending_tier_requests(

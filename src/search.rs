@@ -28,6 +28,13 @@ pub(crate) struct SearchDropRequest {
     pub screen_pos: egui::Pos2,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SearchSelectionMode {
+    Replace,
+    Toggle,
+    Range,
+}
+
 impl SearchController {
     pub(crate) fn is_open(&self) -> bool {
         self.overlay.open
@@ -106,6 +113,24 @@ impl SearchController {
                 }
             }
         }
+    }
+
+    pub(crate) fn blocks_canvas_input(&self, ctx: &egui::Context) -> bool {
+        if !self.overlay.open {
+            return false;
+        }
+
+        if self.overlay.drag_state.is_some() {
+            return true;
+        }
+
+        let Some(pointer_pos) = ctx.input(|input| input.pointer.latest_pos()) else {
+            return false;
+        };
+
+        self.overlay
+            .last_expanded_overlay_rect
+            .is_some_and(|rect| rect.contains(pointer_pos))
     }
 
     pub(crate) fn queue_asset_index(&mut self, asset_id: i64, original_path: PathBuf) {
@@ -303,6 +328,7 @@ impl SearchController {
                             self.overlay.last_submitted_query.clear();
                             self.overlay.results.clear();
                             self.overlay.selected_result_indices.clear();
+                            self.overlay.selection_anchor_index = None;
                             self.overlay.active_result_index = 0;
                             self.overlay.active_instance_index = 0;
                             canvas.clear_search_matches();
@@ -325,6 +351,7 @@ impl SearchController {
                             {
                                 self.overlay.results.clear();
                                 self.overlay.selected_result_indices.clear();
+                                self.overlay.selection_anchor_index = None;
                                 canvas.clear_search_matches();
                             }
                         }
@@ -383,8 +410,16 @@ impl SearchController {
                                                             clicked_index = Some((
                                                                 index,
                                                                 ctx.input(|input| {
-                                                                    input.modifiers.command
-                                                                        || input.modifiers.shift
+                                                                    if input.modifiers.shift {
+                                                                        SearchSelectionMode::Range
+                                                                    } else if input
+                                                                        .modifiers
+                                                                        .command
+                                                                    {
+                                                                        SearchSelectionMode::Toggle
+                                                                    } else {
+                                                                        SearchSelectionMode::Replace
+                                                                    }
                                                                 }),
                                                             ));
                                                         }
@@ -405,10 +440,10 @@ impl SearchController {
                                                 .show(ui, |ui| render_grid(ui));
                                         }
                                     });
-                                if let Some((index, additive)) = clicked_index {
+                                if let Some((index, mode)) = clicked_index {
                                     self.overlay.active_result_index = index;
                                     self.overlay.active_instance_index = 0;
-                                    self.update_result_selection(index, additive);
+                                    self.update_result_selection(index, mode);
                                     self.apply_search_matches(canvas);
                                 }
                                 if let Some(index) = drag_start_index {
@@ -512,28 +547,43 @@ impl SearchController {
         }
     }
 
-    fn update_result_selection(&mut self, index: usize, additive: bool) {
-        if additive {
-            if let Some(position) = self
-                .overlay
-                .selected_result_indices
-                .iter()
-                .position(|selected| *selected == index)
-            {
-                self.overlay.selected_result_indices.remove(position);
-            } else {
+    fn update_result_selection(&mut self, index: usize, mode: SearchSelectionMode) {
+        match mode {
+            SearchSelectionMode::Replace => {
+                self.overlay.selected_result_indices.clear();
                 self.overlay.selected_result_indices.push(index);
+                self.overlay.selection_anchor_index = Some(index);
             }
-        } else {
-            self.overlay.selected_result_indices.clear();
-            self.overlay.selected_result_indices.push(index);
+            SearchSelectionMode::Toggle => {
+                if let Some(position) = self
+                    .overlay
+                    .selected_result_indices
+                    .iter()
+                    .position(|selected| *selected == index)
+                {
+                    self.overlay.selected_result_indices.remove(position);
+                } else {
+                    self.overlay.selected_result_indices.push(index);
+                }
+                self.overlay.selection_anchor_index = Some(index);
+            }
+            SearchSelectionMode::Range => {
+                let anchor = self
+                    .overlay
+                    .selection_anchor_index
+                    .or_else(|| self.overlay.selected_result_indices.first().copied())
+                    .unwrap_or(index);
+                let start = anchor.min(index);
+                let end = anchor.max(index);
+                self.overlay.selected_result_indices = (start..=end).collect();
+            }
         }
         self.overlay.selected_result_indices.sort_unstable();
     }
 
     fn start_result_drag(&mut self, index: usize) {
         if !self.overlay.selected_result_indices.contains(&index) {
-            self.update_result_selection(index, false);
+            self.update_result_selection(index, SearchSelectionMode::Replace);
         }
 
         let item_ids = self
@@ -560,6 +610,7 @@ impl SearchController {
         if query.is_empty() && pivot.is_none() {
             self.overlay.results.clear();
             self.overlay.selected_result_indices.clear();
+            self.overlay.selection_anchor_index = None;
             self.overlay.last_submitted_query.clear();
             self.overlay.active_result_index = 0;
             self.overlay.active_instance_index = 0;
@@ -592,6 +643,7 @@ impl SearchController {
                 let last_index = results.len().saturating_sub(1);
                 self.overlay.results = results;
                 self.overlay.selected_result_indices.clear();
+                self.overlay.selection_anchor_index = None;
                 self.overlay.active_result_index = self.overlay.active_result_index.min(last_index);
                 let instance_last = self
                     .overlay
@@ -614,6 +666,7 @@ impl SearchController {
                 self.overlay.status = SearchOverlayStatus::Error(error);
                 self.overlay.results.clear();
                 self.overlay.selected_result_indices.clear();
+                self.overlay.selection_anchor_index = None;
                 canvas.clear_search_matches();
             }
         }
@@ -658,21 +711,31 @@ impl SearchController {
 
 #[cfg(test)]
 mod tests {
-    use super::SearchController;
+    use super::{SearchController, SearchSelectionMode};
     use crate::semantic_search::SearchResultGroup;
 
     #[test]
     fn result_selection_toggles_additive_indices() {
         let mut search = SearchController::default();
 
-        search.update_result_selection(1, false);
+        search.update_result_selection(1, SearchSelectionMode::Replace);
         assert_eq!(search.overlay.selected_result_indices, vec![1]);
 
-        search.update_result_selection(3, true);
+        search.update_result_selection(3, SearchSelectionMode::Toggle);
         assert_eq!(search.overlay.selected_result_indices, vec![1, 3]);
 
-        search.update_result_selection(1, true);
+        search.update_result_selection(1, SearchSelectionMode::Toggle);
         assert_eq!(search.overlay.selected_result_indices, vec![3]);
+    }
+
+    #[test]
+    fn result_selection_shift_selects_anchor_range() {
+        let mut search = SearchController::default();
+
+        search.update_result_selection(1, SearchSelectionMode::Replace);
+        search.update_result_selection(4, SearchSelectionMode::Range);
+
+        assert_eq!(search.overlay.selected_result_indices, vec![1, 2, 3, 4]);
     }
 
     #[test]

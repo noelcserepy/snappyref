@@ -1284,12 +1284,20 @@ pub fn show(
     state: &mut CanvasState,
     render_state: Option<&eframe::egui_wgpu::RenderState>,
     allow_tier_promotion: bool,
+    suppress_input: bool,
     debug_labels: bool,
 ) -> CanvasFrameMetrics {
     let toolbar_rect = editing_textbox_toolbar_rect(ui, state, rect)
         .or_else(|| annotation_style_toolbar_rect(ui, state, rect));
     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
-    handle_input(ui, rect, input_rect, toolbar_rect, state, &response);
+    if suppress_input {
+        state.interaction.drag_state = None;
+        state.interaction.marquee_state = None;
+        state.interaction.crop_state = None;
+        state.interaction.annotation_draft_state = None;
+    } else {
+        handle_input(ui, rect, input_rect, toolbar_rect, state, &response);
+    }
 
     let painter = ui.painter_at(rect);
 
