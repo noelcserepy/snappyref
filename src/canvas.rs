@@ -3289,12 +3289,42 @@ mod tests {
     #[test]
     fn pending_crop_guard_blocks_second_crop_until_cleared() {
         let mut state = super::CanvasState::default();
+        let handle = crate::jobs::NativeTextureHandle::for_tests(
+            eframe::egui::TextureId::User(42),
+            [4, 4],
+            |_| {},
+        );
+        state.document.images.push(CanvasImage {
+            record: test_record(42, 42, 4, 4),
+            texture: CanvasTexture::Native(handle),
+            loaded_tier: CanvasImageCacheTier::Working,
+            animation: None,
+        });
 
         assert!(state.can_start_crop_on_item(42));
         state.mark_crop_pending(42);
         assert!(!state.can_start_crop_on_item(42));
         state.clear_crop_pending(42);
         assert!(state.can_start_crop_on_item(42));
+    }
+
+    #[test]
+    fn crop_guard_rejects_svg_items() {
+        let mut state = super::CanvasState::default();
+        let mut record = test_record(42, 42, 4, 4);
+        record.asset.mime_type = "image/svg+xml".to_owned();
+        state.document.images.push(CanvasImage {
+            record,
+            texture: CanvasTexture::Svg {
+                uri: "memory://test.svg".to_owned(),
+                bytes: Arc::<[u8]>::from(b"<svg viewBox='0 0 4 4'/>".as_slice()),
+                size: [4, 4],
+            },
+            loaded_tier: CanvasImageCacheTier::Working,
+            animation: None,
+        });
+
+        assert!(!state.can_start_crop_on_item(42));
     }
 
     #[test]
