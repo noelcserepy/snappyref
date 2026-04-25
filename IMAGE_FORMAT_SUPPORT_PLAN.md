@@ -31,7 +31,7 @@ The shared post-decode work is not part of the decoder comparison. The current r
 | JP2 | Done: macOS Quick Look reduced preview | Full macOS Image I/O fallback if preview generation fails | Static reduced RGBA preview with original dimensions retained | Better than full decode, still slower than normal image budget |
 | JXL | Done: `jxl-oxide` with `moxcms` | macOS Image I/O or libjxl if slow | Static RGBA | Near budget on 36 MP image; keep measuring |
 | PSD | Done: macOS Image I/O flattened composite fallback | Rust PSD on other platforms if needed | Flattened composite RGBA | External fixture passes |
-| RAW | Embedded preview first | macOS Image I/O / LibRaw full decode later | Fast preview RGBA | Full demosaic should be background-only |
+| RAW | Done: macOS Image I/O fallback first for RAW-like extensions | LibRaw or embedded-preview extraction if speed is needed | Full-size RGBA through native fallback | Slow on small DNG; native dependency likely if RAW import becomes core |
 | XBM | Small crate or parser | None initially | Static RGBA | Low risk |
 | XPM | Small custom parser | None initially | Static RGBA | Scope to common XPM3 |
 
@@ -118,6 +118,7 @@ Notes:
 - JXL now uses `jxl-oxide`, reducing the 36 MP decode from about 1.9 s through `sips` to about 0.43 s. It is close enough to keep pure Rust for now, but still worth testing on a real external corpus.
 - The external JXL corpus includes a CMYK fixture, so `jxl-oxide` is built with the pure-Rust `moxcms` feature.
 - A full OpenJPEG experiment using the Rust `jpeg2k` crate decoded the small `768x512` external JP2 fixture in `9.56 ms`, but decoded the 36 MP generated JP2 in `5122.10 ms`, worse than the `sips` fallback. Do not add it as a default full-resolution import path.
+- RAW-like file extensions now route to the macOS native fallback before the generic TIFF decoder. This avoids silently importing DNG embedded thumbnails; the raw.pixls.us Canon PowerShot A410 DNG decodes as `2048x1536` in about `810.24 ms` instead of being misclassified as a `128x96` TIFF preview.
 
 ## Fixture Strategy
 
@@ -156,7 +157,7 @@ Useful sources to evaluate:
 - ImageMagick example images for broad small-format coverage.
 - JPEG XL project/libjxl testdata and public JPEG XL test page samples for JXL variants.
 - libheif examples/test files for HEIC/HEIF/AVIF coverage.
-- Camera RAW samples from explicitly redistributable sources, or local user-provided files kept out of git.
+- Camera RAW samples from explicitly redistributable sources such as raw.pixls.us, or local user-provided files kept out of git.
 
 Current external fixture coverage:
 
@@ -170,6 +171,7 @@ Current external fixture coverage:
 | image-rs/image | BMP, APNG PNG | Real corpus coverage for common static decoders |
 | image-rs/image | malformed WebP fuzz input | Expected negative robustness fixture |
 | Pillow | `hopper_merged.psd` | PSD flattened composite through macOS fallback |
+| raw.pixls.us | Canon PowerShot A410 CHDK DNG | RAW/DNG native fallback and thumbnail-misclassification regression |
 
 ### Generated Benchmark Set
 
@@ -198,14 +200,14 @@ Generated files are useful for performance baselines, but passing them is not en
 5. Done: add extension fallback for ambiguous file formats such as TGA.
 6. Done for current scope: add SVG as a vector asset path. Local path import, URL import, existing load, crop rejection, and visual probe coverage are implemented. Future raster derivatives may still be needed for thumbnails/search.
 7. Done: add XBM/XPM as small raster decoders into the normal RGBA import pipeline.
-8. Started: macOS native fallback via `sips` for AVIF, HEIC/HEIF, JP2, JXL failure fallback, PSD, EXR fallback, and common RAW extensions when Rust decoding fails.
+8. Done for current macOS scope: native fallback via `sips` for AVIF, HEIC/HEIF, JXL failure fallback, PSD, EXR fallback, and common RAW extensions. JP2 uses Quick Look first, then `sips`.
 9. Done for current scope: external fixture downloader infrastructure at `scripts/fetch-image-fixtures.sh`, plus decode/dimension checker at `scripts/check-external-image-fixtures.sh`.
 10. Done for JXL: add a dedicated `jxl-oxide` decode path plus smoke coverage that exercises it when `cjxl` is available.
 11. Done for full-resolution JP2/OpenJPEG experiment: rejected as a default path because it was slower than macOS Image I/O on the large benchmark.
 12. Done for EXR: add a direct `exr` crate decode path before the generic `image` decoder/macOS fallback.
 13. Done for JP2 preview: add a macOS Quick Look reduced preview path and preserve original source dimensions in asset metadata.
 14. Done for PSD baseline: add an external Pillow PSD fixture and validate macOS flattened-composite fallback.
-15. Use measurements to decide whether HEIC/HEIF or RAW need optional native dependencies beyond macOS Image I/O fallback.
+15. Started: use measurements to decide whether HEIC/HEIF or RAW need optional native dependencies beyond macOS Image I/O fallback. RAW is correct but slow enough to revisit if it becomes an important workflow.
 
 ## References
 
@@ -214,3 +216,4 @@ Generated files are useful for performance baselines, but passing them is not en
 - libjxl reference implementation and tools: https://github.com/libjxl/libjxl
 - JPEG XL public test page: https://jpegxl.info/resources/jpeg-xl-test-page.html
 - ImageMagick example image directory: https://usage.imagemagick.org/images/
+- raw.pixls.us RAW sample archive: https://raw.pixls.us/

@@ -90,5 +90,15 @@
     "decoder_path": "macos-sips-fallback",
     "width": 128,
     "height": 128
+  },
+  {
+    "file": "raw-pixls-us/Canon-PowerShot-A410/CANON_A410_CHDK_CRW_0741.DNG",
+    "url": "https://raw.pixls.us/download/data/Canon/Canon%20PowerShot%20A410/CANON_A410_CHDK_CRW_0741.DNG",
+    "sha256": "f0d2fe47507fadf50008bddbc6bd2c5e39fddbe90cca6bca72dd360fa0e0eb38",
+    "license": "raw.pixls.us archive; project preference is Creative Commons Zero / Public Domain samples",
+    "format": "dng",
+    "decoder_path": "macos-sips-fallback",
+    "width": 2048,
+    "height": 1536
   }
 ]

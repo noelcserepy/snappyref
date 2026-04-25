@@ -71,6 +71,9 @@ pub struct DecodePerfReport {
 
 pub fn decode_image_file(path: &Path) -> Result<DecodedImage, String> {
     let bytes = std::fs::read(path).map_err(|error| format!("failed to open image: {error}"))?;
+    if path_has_raw_like_extension(path) {
+        return decode_image_file_with_native_fallback(path, &bytes);
+    }
     match decode_image_bytes_with_path_hint(
         &bytes,
         Some(path.display().to_string()),
@@ -187,6 +190,17 @@ fn path_extension_is(path: &Path, expected: &str) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case(expected))
+}
+
+fn path_has_raw_like_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "raw" | "dng" | "cr2" | "cr3" | "nef" | "arw" | "orf" | "rw2"
+            )
+        })
 }
 
 fn mime_hint_is_xbm(mime_hint: &str) -> bool {
@@ -1437,6 +1451,29 @@ mod tests {
         assert_eq!(decoded.width, 128);
         assert_eq!(decoded.height, 128);
         assert_eq!(decoded.rgba.len(), 128 * 128 * 4);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn decode_image_file_decodes_external_dng_fixture_as_raw_when_available() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+            "tests/fixtures/external/files/raw-pixls-us/Canon-PowerShot-A410/CANON_A410_CHDK_CRW_0741.DNG",
+        );
+        if !path.exists() {
+            eprintln!("skipping RAW external fixture test: run scripts/fetch-image-fixtures.sh");
+            return;
+        }
+
+        let decoded = decode_image_file(&path).unwrap();
+
+        assert_eq!(decoded.format_name, "RAW");
+        assert_eq!(decoded.mime_type, "image/x-raw");
+        assert_eq!(decoded.extension, "dng");
+        assert_eq!(decoded.source_width, 2048);
+        assert_eq!(decoded.source_height, 1536);
+        assert_eq!(decoded.width, 2048);
+        assert_eq!(decoded.height, 1536);
+        assert_eq!(decoded.rgba.len(), 2048 * 1536 * 4);
     }
 
     #[test]
