@@ -1,0 +1,45 @@
+[
+  {
+    "file": "pbm-2x2.pbm",
+    "format": "pnm",
+    "width": 2,
+    "height": 2
+  },
+  {
+    "file": "pgm-2x2.pgm",
+    "format": "pnm",
+    "width": 2,
+    "height": 2
+  },
+  {
+    "file": "ppm-2x2.ppm",
+    "format": "pnm",
+    "width": 2,
+    "height": 2
+  },
+  {
+    "file": "xbm-2x2.xbm",
+    "format": "xbm",
+    "width": 2,
+    "height": 2
+  },
+  {
+    "file": "xpm-2x2.xpm",
+    "format": "xpm",
+    "width": 2,
+    "height": 2
+  },
+  {
+    "file": "animated-webp-2x2.webp",
+    "format": "webp",
+    "width": 2,
+    "height": 2,
+    "animation_frame_count": 2
+  },
+  {
+    "file": "dxt1-4x4.dds",
+    "format": "dds",
+    "width": 4,
+    "height": 4
+  }
+]

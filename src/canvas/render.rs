@@ -36,6 +36,7 @@ const BACKGROUND_LOD_FADE_BAND_SCREEN: f32 = 24.0;
 
 pub(super) fn paint_images(
     painter: &egui::Painter,
+    ui: &egui::Ui,
     rect: egui::Rect,
     state: &mut CanvasState,
     render_state: Option<&eframe::egui_wgpu::RenderState>,
@@ -63,6 +64,7 @@ pub(super) fn paint_images(
         .animation_time_override_seconds
         .unwrap_or_else(|| painter.ctx().input(|input| input.time as f32));
     let mut native_images = Vec::new();
+    let mut svg_images = Vec::new();
     let mut fallback_images = Vec::new();
     let mut any_visible_animated = false;
 
@@ -83,6 +85,11 @@ pub(super) fn paint_images(
         if image.animation.is_some() {
             any_visible_animated = true;
         }
+        if matches!(image.texture, CanvasTexture::Svg { .. }) {
+            svg_images.push((*item_id, *image_rect));
+            continue;
+        }
+
         let native_eligible = matches!(image.texture, CanvasTexture::Native(_))
             && image.animation.is_none()
             && image.record.item.rotation.abs() <= 0.0001;
@@ -145,6 +152,12 @@ pub(super) fn paint_images(
     }
 
     metrics.fallback_images = fallback_images.len();
+    for (item_id, image_rect) in svg_images {
+        let Some(image) = state.image_by_item_id(item_id) else {
+            continue;
+        };
+        paint_svg_image(ui, image, image_rect);
+    }
     for item_id in fallback_images {
         let Some(image) = state.image_by_item_id(item_id) else {
             continue;
@@ -195,6 +208,13 @@ pub(super) fn paint_images(
     }
 
     metrics
+}
+
+fn paint_svg_image(ui: &egui::Ui, image: &CanvasImage, image_rect: egui::Rect) {
+    let CanvasTexture::Svg { uri, bytes, .. } = &image.texture else {
+        return;
+    };
+    egui::Image::from_bytes(uri.clone(), bytes.clone()).paint_at(ui, image_rect);
 }
 
 fn image_pass_instance(rect: egui::Rect, image_rect: egui::Rect) -> ImagePassInstance {
@@ -340,6 +360,9 @@ pub(super) fn canvas_texture_from_preview(
             egui::TextureOptions::LINEAR,
         )),
         crate::jobs::ImportedPreviewTexture::Native(texture) => CanvasTexture::Native(texture),
+        crate::jobs::ImportedPreviewTexture::Svg { uri, bytes, size } => {
+            CanvasTexture::Svg { uri, bytes, size }
+        }
     }
 }
 

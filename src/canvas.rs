@@ -119,6 +119,11 @@ struct CanvasImage {
 enum CanvasTexture {
     Managed(egui::TextureHandle),
     Native(Arc<crate::jobs::NativeTextureHandle>),
+    Svg {
+        uri: String,
+        bytes: Arc<[u8]>,
+        size: [usize; 2],
+    },
 }
 
 impl CanvasTexture {
@@ -126,6 +131,7 @@ impl CanvasTexture {
         match self {
             Self::Managed(texture) => texture.id(),
             Self::Native(texture) => texture.texture_id(),
+            Self::Svg { .. } => egui::TextureId::Managed(0),
         }
     }
 
@@ -133,6 +139,7 @@ impl CanvasTexture {
         match self {
             Self::Managed(texture) => texture.size(),
             Self::Native(texture) => texture.size(),
+            Self::Svg { size, .. } => *size,
         }
     }
 }
@@ -1314,6 +1321,7 @@ pub fn show(
     paint_import_placeholders(&painter, rect, state);
     let image_pass = paint_images(
         &painter,
+        ui,
         rect,
         state,
         render_state,
@@ -3281,12 +3289,42 @@ mod tests {
     #[test]
     fn pending_crop_guard_blocks_second_crop_until_cleared() {
         let mut state = super::CanvasState::default();
+        let handle = crate::jobs::NativeTextureHandle::for_tests(
+            eframe::egui::TextureId::User(42),
+            [4, 4],
+            |_| {},
+        );
+        state.document.images.push(CanvasImage {
+            record: test_record(42, 42, 4, 4),
+            texture: CanvasTexture::Native(handle),
+            loaded_tier: CanvasImageCacheTier::Working,
+            animation: None,
+        });
 
         assert!(state.can_start_crop_on_item(42));
         state.mark_crop_pending(42);
         assert!(!state.can_start_crop_on_item(42));
         state.clear_crop_pending(42);
         assert!(state.can_start_crop_on_item(42));
+    }
+
+    #[test]
+    fn crop_guard_rejects_svg_items() {
+        let mut state = super::CanvasState::default();
+        let mut record = test_record(42, 42, 4, 4);
+        record.asset.mime_type = "image/svg+xml".to_owned();
+        state.document.images.push(CanvasImage {
+            record,
+            texture: CanvasTexture::Svg {
+                uri: "memory://test.svg".to_owned(),
+                bytes: Arc::<[u8]>::from(b"<svg viewBox='0 0 4 4'/>".as_slice()),
+                size: [4, 4],
+            },
+            loaded_tier: CanvasImageCacheTier::Working,
+            animation: None,
+        });
+
+        assert!(!state.can_start_crop_on_item(42));
     }
 
     #[test]

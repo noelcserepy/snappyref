@@ -37,6 +37,22 @@ pub fn run() -> eframe::Result<()> {
         }
         return Ok(());
     }
+    if let Some(path) = config.perf_decode_path() {
+        if let Err(error) = perf::print_file_decode_report(path) {
+            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
+                error,
+            ))));
+        }
+        return Ok(());
+    }
+    if let Some(path) = config.perf_import_path() {
+        if let Err(error) = perf::print_file_import_report(path) {
+            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
+                error,
+            ))));
+        }
+        return Ok(());
+    }
     let viewport_size = config.startup_viewport_size();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()

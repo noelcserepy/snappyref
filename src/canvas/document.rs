@@ -29,6 +29,10 @@ use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
 
 impl CanvasState {
     pub fn add_loaded_item(&mut self, ctx: &egui::Context, loaded: LoadedCanvasItem) {
+        let is_vector_preview = matches!(
+            loaded.preview_texture,
+            crate::jobs::ImportedPreviewTexture::Svg { .. }
+        );
         let animation = loaded
             .animated_preview
             .as_ref()
@@ -45,9 +49,11 @@ impl CanvasState {
                 height: animated.height,
                 current_frame: 0,
             });
-        self.render
-            .asset_rgba_cache
-            .insert(loaded.record.asset.id, loaded.preview_rgba.clone());
+        if !is_vector_preview {
+            self.render
+                .asset_rgba_cache
+                .insert(loaded.record.asset.id, loaded.preview_rgba.clone());
+        }
         let texture = canvas_texture_from_preview(
             ctx,
             format!(
@@ -1517,6 +1523,9 @@ impl CanvasState {
 
     pub(super) fn can_start_crop_on_item(&self, item_id: i64) -> bool {
         !self.interaction.crop_pending_item_ids.contains(&item_id)
+            && self
+                .image_by_item_id(item_id)
+                .is_some_and(|image| !asset_mime_type_is_svg(&image.record.asset.mime_type))
     }
 
     pub(super) fn set_image_scale(&mut self, item_id: i64, scale: f32) -> bool {
@@ -1580,6 +1589,15 @@ impl CanvasState {
         let frame = &animation.frames[frame_index];
         Some((frame.rgba.clone(), animation.width, animation.height))
     }
+}
+
+fn asset_mime_type_is_svg(mime_type: &str) -> bool {
+    mime_type
+        .split(';')
+        .next()
+        .unwrap_or(mime_type)
+        .trim()
+        .eq_ignore_ascii_case("image/svg+xml")
 }
 
 fn layout_bounds_with_offset(

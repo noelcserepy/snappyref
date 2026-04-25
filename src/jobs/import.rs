@@ -13,7 +13,7 @@ use image::RgbaImage;
 
 use crate::data::{BoardItemWithAsset, BoardLayoutItem, CanvasImageCacheTier};
 use crate::jobs::image_formats::{
-    AnimatedPreview, PreviewImage, decode_image_bytes, decode_image_file, image_format_extension,
+    AnimatedPreview, PreviewImage, decode_image_bytes, decode_image_file,
     preview_animation_from_frames, preview_image_from_rgba,
 };
 use crate::storage::Library;
@@ -86,6 +86,20 @@ pub struct WorkerInteractiveImportPerfReport {
     pub current_pooled_ms: f64,
     pub current_interactive_workers: usize,
     pub current_background_workers: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct FileImportPerfReport {
+    pub source_path: PathBuf,
+    pub source_file_size: u64,
+    pub source_width: u32,
+    pub source_height: u32,
+    pub preview_width: u32,
+    pub preview_height: u32,
+    pub canvas_cache_path: Option<PathBuf>,
+    pub canvas_cache_file_size: Option<u64>,
+    pub timings: ImportTimings,
+    pub total_ms: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -207,6 +221,11 @@ pub enum ImportResult {
 pub enum ImportedPreviewTexture {
     Cpu,
     Native(Arc<NativeTextureHandle>),
+    Svg {
+        uri: String,
+        bytes: Arc<[u8]>,
+        size: [usize; 2],
+    },
 }
 
 impl fmt::Debug for ImportedPreviewTexture {
@@ -214,6 +233,11 @@ impl fmt::Debug for ImportedPreviewTexture {
         match self {
             Self::Cpu => f.write_str("Cpu"),
             Self::Native(handle) => f.debug_tuple("Native").field(handle).finish(),
+            Self::Svg { uri, size, .. } => f
+                .debug_struct("Svg")
+                .field("uri", uri)
+                .field("size", size)
+                .finish(),
         }
     }
 }
@@ -1023,6 +1047,72 @@ pub fn worker_interactive_import_perf_report() -> Result<WorkerInteractiveImport
     })
 }
 
+pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfReport, String> {
+    let root = temp_library_root("file-import-perf");
+    let library = Library::initialize(root.clone())?;
+    let viewport_world =
+        egui::Rect::from_min_max(egui::pos2(-480.0, -320.0), egui::pos2(480.0, 320.0));
+    let settings = CanvasImageSettings::default();
+    let trace = ImportTrace {
+        queued_at: Instant::now(),
+        timings: ImportTimings::default(),
+    };
+
+    let started_at = Instant::now();
+    let result = import_path_sync_traced(
+        &library,
+        None,
+        source_path.clone(),
+        egui::Pos2::ZERO,
+        None,
+        viewport_world,
+        usize::MAX,
+        settings,
+        true,
+        crate::data::DEFAULT_IMPORT_GAP,
+        Some(trace),
+        None,
+    );
+    let total_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+
+    let loaded = match result {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(root);
+            return Err(error);
+        }
+    };
+    let timings = loaded
+        .trace
+        .map(|trace| trace.timings)
+        .ok_or_else(|| "missing import trace".to_owned())?;
+    let canvas_cache_path =
+        library.canvas_image_cache_path(loaded.record.asset.id, settings.mode, settings.max_side);
+    let canvas_cache_file_size = canvas_cache_path
+        .as_ref()
+        .and_then(|path| std::fs::metadata(path).ok())
+        .map(|metadata| metadata.len());
+    let source_file_size = std::fs::metadata(&source_path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(loaded.record.asset.file_size);
+
+    let report = FileImportPerfReport {
+        source_path,
+        source_file_size,
+        source_width: loaded.record.asset.width,
+        source_height: loaded.record.asset.height,
+        preview_width: loaded.preview_width,
+        preview_height: loaded.preview_height,
+        canvas_cache_path,
+        canvas_cache_file_size,
+        timings,
+        total_ms,
+    };
+
+    let _ = std::fs::remove_dir_all(root);
+    Ok(report)
+}
+
 fn import_path_sync_traced(
     library: &Library,
     queue_id: Option<u64>,
@@ -1043,20 +1133,36 @@ fn import_path_sync_traced(
         trace.timings.queue_wait = worker_started_at.saturating_duration_since(trace.queued_at);
     }
 
+    if is_svg_path(&source_path) {
+        return import_svg_path_sync_traced(
+            library,
+            queue_id,
+            source_path,
+            desired_world,
+            reserved_world,
+            viewport_world,
+            auto_scale,
+            import_gap,
+            worker_started_at,
+            trace,
+        );
+    }
+
     let decode_started_at = Instant::now();
     let decoded = decode_image_file(&source_path)
         .map_err(|error| format!("{}: {error}", source_path.display()))?;
     if let Some(trace) = &mut trace {
         trace.timings.decode_or_load = decode_started_at.elapsed();
     }
-    let initial_scale = initial_import_scale(decoded.width, decoded.height, auto_scale);
+    let initial_scale =
+        initial_import_scale(decoded.source_width, decoded.source_height, auto_scale);
     let arranged_world = resolve_import_world(
         library,
         desired_world,
         reserved_world,
         viewport_world,
-        decoded.width as f32 * initial_scale.max(0.01),
-        decoded.height as f32 * initial_scale.max(0.01),
+        decoded.source_width as f32 * initial_scale.max(0.01),
+        decoded.source_height as f32 * initial_scale.max(0.01),
         import_gap,
     )?;
 
@@ -1068,9 +1174,9 @@ fn import_path_sync_traced(
     let record = library
         .persist_imported_image(
             &stored_path,
-            decoded.format.to_mime_type(),
-            decoded.width,
-            decoded.height,
+            &decoded.mime_type,
+            decoded.source_width,
+            decoded.source_height,
             decoded.file_size,
             arranged_world,
             initial_scale,
@@ -1129,6 +1235,79 @@ fn import_path_sync_traced(
         preview_height: preview.height,
         animated_preview,
         preview_texture,
+        loaded_tier: CanvasImageCacheTier::Working,
+        existing_load_diagnostics: None,
+        origin: ImportOrigin::Path,
+        trace,
+    })
+}
+
+fn import_svg_path_sync_traced(
+    library: &Library,
+    queue_id: Option<u64>,
+    source_path: PathBuf,
+    desired_world: egui::Pos2,
+    reserved_world: Option<egui::Pos2>,
+    viewport_world: egui::Rect,
+    auto_scale: bool,
+    import_gap: f32,
+    worker_started_at: Instant,
+    mut trace: Option<ImportTrace>,
+) -> Result<LoadedCanvasItem, String> {
+    let decode_started_at = Instant::now();
+    let svg = read_svg_document(&source_path)?;
+    if let Some(trace) = &mut trace {
+        trace.timings.decode_or_load = decode_started_at.elapsed();
+    }
+
+    let initial_scale = initial_import_scale(svg.width, svg.height, auto_scale);
+    let arranged_world = resolve_import_world(
+        library,
+        desired_world,
+        reserved_world,
+        viewport_world,
+        svg.width as f32 * initial_scale.max(0.01),
+        svg.height as f32 * initial_scale.max(0.01),
+        import_gap,
+    )?;
+
+    let store_started_at = Instant::now();
+    let stored_path = library
+        .store_original(&source_path)
+        .map_err(|error| format!("{}: {error}", source_path.display()))?;
+    let file_size = std::fs::metadata(&stored_path)
+        .map_err(|error| format!("failed to read stored SVG metadata: {error}"))?
+        .len();
+    let record = library
+        .persist_imported_image(
+            &stored_path,
+            SVG_MIME_TYPE,
+            svg.width,
+            svg.height,
+            file_size,
+            arranged_world,
+            initial_scale,
+        )
+        .map_err(|error| format!("{}: {error}", stored_path.display()))?;
+    let store_and_persist = store_started_at.elapsed();
+
+    if let Some(trace) = &mut trace {
+        trace.timings.store_and_persist = store_and_persist;
+        trace.timings.worker_total = worker_started_at.elapsed();
+    }
+
+    Ok(LoadedCanvasItem {
+        queue_id,
+        record,
+        preview_rgba: Vec::new(),
+        preview_width: svg.width,
+        preview_height: svg.height,
+        animated_preview: None,
+        preview_texture: ImportedPreviewTexture::Svg {
+            uri: format!("bytes://asset-svg-{}.svg", stable_svg_uri_key(&stored_path)),
+            bytes: Arc::<[u8]>::from(svg.bytes),
+            size: [svg.width as usize, svg.height as usize],
+        },
         loaded_tier: CanvasImageCacheTier::Working,
         existing_load_diagnostics: None,
         origin: ImportOrigin::Path,
@@ -1286,6 +1465,21 @@ fn import_url_sync_traced(
         trace.timings.decode_or_load = download_started_at.elapsed();
     }
 
+    if downloaded_url_image_is_svg(&downloaded) {
+        return import_downloaded_svg_sync_traced(
+            library,
+            queue_id,
+            downloaded,
+            desired_world,
+            reserved_world,
+            viewport_world,
+            auto_scale,
+            import_gap,
+            worker_started_at,
+            trace,
+        );
+    }
+
     let source_label = downloaded.url.as_str().to_owned();
     let decode_started_at = Instant::now();
     let decoded = decode_image_bytes(
@@ -1297,26 +1491,27 @@ fn import_url_sync_traced(
         trace.timings.decode_or_load += decode_started_at.elapsed();
     }
 
-    let initial_scale = initial_import_scale(decoded.width, decoded.height, auto_scale);
+    let initial_scale =
+        initial_import_scale(decoded.source_width, decoded.source_height, auto_scale);
     let arranged_world = resolve_import_world(
         library,
         desired_world,
         reserved_world,
         viewport_world,
-        decoded.width as f32 * initial_scale.max(0.01),
-        decoded.height as f32 * initial_scale.max(0.01),
+        decoded.source_width as f32 * initial_scale.max(0.01),
+        decoded.source_height as f32 * initial_scale.max(0.01),
         import_gap,
     )?;
 
     let store_started_at = Instant::now();
     let source_name = remote_image_source_name(&downloaded.url);
-    let extension = image_format_extension(decoded.format);
-    let stored_path = library.store_original_bytes(&source_name, extension, &downloaded.bytes)?;
+    let stored_path =
+        library.store_original_bytes(&source_name, &decoded.extension, &downloaded.bytes)?;
     let record = library.persist_imported_image(
         &stored_path,
-        decoded.format.to_mime_type(),
-        decoded.width,
-        decoded.height,
+        &decoded.mime_type,
+        decoded.source_width,
+        decoded.source_height,
         downloaded.bytes.len() as u64,
         arranged_world,
         initial_scale,
@@ -1384,6 +1579,75 @@ fn import_url_sync_traced(
         preview_height: preview.height,
         animated_preview,
         preview_texture,
+        loaded_tier: CanvasImageCacheTier::Working,
+        existing_load_diagnostics: None,
+        origin: ImportOrigin::Url,
+        trace,
+    })
+}
+
+fn import_downloaded_svg_sync_traced(
+    library: &Library,
+    queue_id: Option<u64>,
+    downloaded: DownloadedUrlImage,
+    desired_world: egui::Pos2,
+    reserved_world: Option<egui::Pos2>,
+    viewport_world: egui::Rect,
+    auto_scale: bool,
+    import_gap: f32,
+    worker_started_at: Instant,
+    mut trace: Option<ImportTrace>,
+) -> Result<LoadedCanvasItem, String> {
+    let source_label = downloaded.url.as_str().to_owned();
+    let decode_started_at = Instant::now();
+    let svg =
+        parse_svg_document(downloaded.bytes).map_err(|error| format!("{source_label}: {error}"))?;
+    if let Some(trace) = &mut trace {
+        trace.timings.decode_or_load += decode_started_at.elapsed();
+    }
+
+    let initial_scale = initial_import_scale(svg.width, svg.height, auto_scale);
+    let arranged_world = resolve_import_world(
+        library,
+        desired_world,
+        reserved_world,
+        viewport_world,
+        svg.width as f32 * initial_scale.max(0.01),
+        svg.height as f32 * initial_scale.max(0.01),
+        import_gap,
+    )?;
+
+    let store_started_at = Instant::now();
+    let source_name = remote_image_source_name(&downloaded.url);
+    let stored_path = library.store_original_bytes(&source_name, "svg", &svg.bytes)?;
+    let record = library.persist_imported_image(
+        &stored_path,
+        SVG_MIME_TYPE,
+        svg.width,
+        svg.height,
+        svg.bytes.len() as u64,
+        arranged_world,
+        initial_scale,
+    )?;
+    let store_and_persist = store_started_at.elapsed();
+
+    if let Some(trace) = &mut trace {
+        trace.timings.store_and_persist = store_and_persist;
+        trace.timings.worker_total = worker_started_at.elapsed();
+    }
+
+    Ok(LoadedCanvasItem {
+        queue_id,
+        record,
+        preview_rgba: Vec::new(),
+        preview_width: svg.width,
+        preview_height: svg.height,
+        animated_preview: None,
+        preview_texture: ImportedPreviewTexture::Svg {
+            uri: format!("bytes://asset-svg-{}.svg", stable_svg_uri_key(&stored_path)),
+            bytes: Arc::<[u8]>::from(svg.bytes),
+            size: [svg.width as usize, svg.height as usize],
+        },
         loaded_tier: CanvasImageCacheTier::Working,
         existing_load_diagnostics: None,
         origin: ImportOrigin::Url,
@@ -1489,6 +1753,46 @@ fn load_existing(
     let mut trace = trace;
     if let Some(trace) = &mut trace {
         trace.timings.queue_wait = worker_started_at.saturating_duration_since(trace.queued_at);
+    }
+
+    if original_mime_type_is_svg(&record.asset.mime_type) {
+        let decode_started_at = Instant::now();
+        match read_svg_document(&record.asset.original_path) {
+            Ok(svg) => {
+                if let Some(trace) = &mut trace {
+                    trace.timings.decode_or_load = decode_started_at.elapsed();
+                    trace.timings.worker_total = worker_started_at.elapsed();
+                }
+                return ImportResult::Loaded(LoadedCanvasItem {
+                    queue_id: None,
+                    preview_rgba: Vec::new(),
+                    preview_width: svg.width,
+                    preview_height: svg.height,
+                    preview_texture: ImportedPreviewTexture::Svg {
+                        uri: format!(
+                            "bytes://asset-svg-{}.svg",
+                            stable_svg_uri_key(&record.asset.original_path)
+                        ),
+                        bytes: Arc::<[u8]>::from(svg.bytes),
+                        size: [record.asset.width as usize, record.asset.height as usize],
+                    },
+                    record,
+                    animated_preview: None,
+                    loaded_tier: target_tier,
+                    existing_load_diagnostics: None,
+                    origin: ImportOrigin::Existing,
+                    trace,
+                });
+            }
+            Err(error) => {
+                return ImportResult::Failed {
+                    queue_id: None,
+                    item_id: Some(record.item.id),
+                    context: record.asset.original_path.display().to_string(),
+                    error,
+                };
+            }
+        }
     }
 
     let decode_started_at = Instant::now();
@@ -1822,6 +2126,15 @@ fn crop_item(
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> ImportResult {
     let source_context = request.source_asset.original_path.display().to_string();
+    if original_mime_type_is_svg(&request.source_asset.mime_type) {
+        return ImportResult::Failed {
+            queue_id: None,
+            item_id: Some(request.item_id),
+            context: source_context,
+            error: "SVG cropping is not supported yet".to_owned(),
+        };
+    }
+
     let decoded = match decode_image_file(&request.source_asset.original_path) {
         Ok(decoded) => decoded,
         Err(error) => {
@@ -2045,6 +2358,27 @@ fn load_existing_preview(
     ),
     String,
 > {
+    if original_mime_type_is_svg(&record.asset.mime_type) {
+        let svg = read_svg_document(&record.asset.original_path)?;
+        let diagnostics = ExistingLoadDiagnostics {
+            source_kind: ExistingLoadSourceKind::Original,
+            source_path: record.asset.original_path.clone(),
+            source_file_size: svg.bytes.len() as u64,
+            source_width: svg.width,
+            source_height: svg.height,
+            backfilled_cache: false,
+        };
+        return Ok((
+            PreviewImage {
+                rgba: Vec::new(),
+                width: svg.width,
+                height: svg.height,
+            },
+            None,
+            diagnostics,
+        ));
+    }
+
     let tier_settings = tier_settings(canvas_image_settings, target_tier);
     let (canvas_source, animated_preview, diagnostics) = match canvas_image_settings.mode {
         crate::data::CanvasImageMode::Original => {
@@ -2073,14 +2407,14 @@ fn load_existing_preview(
                     source_kind: ExistingLoadSourceKind::Original,
                     source_path,
                     source_file_size,
-                    source_width: decoded.width,
-                    source_height: decoded.height,
+                    source_width: decoded.source_width,
+                    source_height: decoded.source_height,
                     backfilled_cache: false,
                 },
             )
         }
         crate::data::CanvasImageMode::Downscale => {
-            if record.asset.mime_type == image::ImageFormat::Gif.to_mime_type() {
+            if original_mime_type_supports_animation(&record.asset.mime_type) {
                 let decoded = decode_image_file(&record.asset.original_path)?;
                 let source_file_size = decoded.file_size;
                 (
@@ -2106,8 +2440,8 @@ fn load_existing_preview(
                         source_kind: ExistingLoadSourceKind::Original,
                         source_path: record.asset.original_path.clone(),
                         source_file_size,
-                        source_width: decoded.width,
-                        source_height: decoded.height,
+                        source_width: decoded.source_width,
+                        source_height: decoded.source_height,
                         backfilled_cache: false,
                     },
                 )
@@ -2177,6 +2511,77 @@ fn load_existing_preview(
     };
 
     Ok((preview, animated_preview, diagnostics))
+}
+
+fn original_mime_type_supports_animation(mime_type: &str) -> bool {
+    mime_type == image::ImageFormat::Gif.to_mime_type()
+        || mime_type == image::ImageFormat::WebP.to_mime_type()
+}
+
+const SVG_MIME_TYPE: &str = "image/svg+xml";
+
+struct SvgDocument {
+    bytes: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
+fn is_svg_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
+}
+
+fn original_mime_type_is_svg(mime_type: &str) -> bool {
+    mime_type
+        .split(';')
+        .next()
+        .unwrap_or(mime_type)
+        .trim()
+        .eq_ignore_ascii_case(SVG_MIME_TYPE)
+}
+
+fn read_svg_document(path: &Path) -> Result<SvgDocument, String> {
+    let bytes = std::fs::read(path).map_err(|error| format!("failed to open SVG: {error}"))?;
+    parse_svg_document(bytes)
+}
+
+fn parse_svg_document(bytes: Vec<u8>) -> Result<SvgDocument, String> {
+    let tree = usvg::Tree::from_data(&bytes, &usvg::Options::default())
+        .map_err(|error| format!("failed to parse SVG: {error}"))?;
+    let size = tree.size();
+    let width = size.width().round().max(1.0) as u32;
+    let height = size.height().round().max(1.0) as u32;
+    Ok(SvgDocument {
+        bytes,
+        width,
+        height,
+    })
+}
+
+fn downloaded_url_image_is_svg(downloaded: &DownloadedUrlImage) -> bool {
+    downloaded
+        .mime_type
+        .as_deref()
+        .is_some_and(original_mime_type_is_svg)
+        || downloaded
+            .url
+            .path_segments()
+            .and_then(|mut segments| segments.next_back())
+            .is_some_and(|name| {
+                Path::new(name)
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
+            })
+}
+
+fn stable_svg_uri_key(path: &Path) -> u64 {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    path.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn canvas_source_image_from_rgba(
@@ -2640,8 +3045,9 @@ mod tests {
     use super::{
         CanvasImageSettings, DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImportResult, ImportTimings,
         ImportTrace, ImportWorker, ImportWorkerConfig, ImportedPreviewTexture, arrange_rect_world,
-        build_preview_texture, crop_item, import_clipboard, import_path_sync,
-        import_url_sync_traced, initial_import_scale, load_existing, rects_overlap_with_gap,
+        build_preview_texture, crop_item, file_import_perf_report, import_clipboard,
+        import_path_sync, import_url_sync_traced, initial_import_scale, load_existing,
+        rects_overlap_with_gap,
     };
     use crate::data::CanvasImageCacheTier;
     use crate::storage::Library;
@@ -3084,6 +3490,245 @@ mod tests {
     }
 
     #[test]
+    fn url_import_preserves_svg_as_vector_source() {
+        let root = temp_library_root("url-svg-import");
+        fs::create_dir_all(&root).unwrap();
+        let library = Library::initialize(root.clone()).unwrap();
+        let svg_bytes = svg_bytes(128, 96);
+        let (url, server) =
+            serve_bytes_once("/remote-icon.svg", "image/svg+xml", svg_bytes.clone());
+
+        let loaded = import_url_sync_traced(
+            &library,
+            Some(9),
+            &url,
+            eframe::egui::Pos2::ZERO,
+            None,
+            test_viewport_world(),
+            usize::MAX,
+            CanvasImageSettings::default(),
+            false,
+            crate::data::DEFAULT_IMPORT_GAP,
+            None,
+            None,
+        )
+        .unwrap();
+
+        server.join().unwrap();
+
+        assert_eq!(loaded.origin, super::ImportOrigin::Url);
+        assert_eq!(loaded.record.asset.mime_type, "image/svg+xml");
+        assert_eq!(loaded.record.asset.width, 128);
+        assert_eq!(loaded.record.asset.height, 96);
+        assert!(loaded.preview_rgba.is_empty());
+        assert!(matches!(
+            loaded.preview_texture,
+            ImportedPreviewTexture::Svg { .. }
+        ));
+        assert_eq!(
+            fs::read(&loaded.record.asset.original_path).unwrap(),
+            svg_bytes
+        );
+        assert!(
+            library
+                .canvas_image_cache_path(
+                    loaded.record.asset.id,
+                    crate::data::CanvasImageMode::Downscale,
+                    2000,
+                )
+                .is_none()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn svg_import_preserves_vector_source_and_skips_canvas_cache() {
+        let root = temp_library_root("svg-import");
+        fs::create_dir_all(&root).unwrap();
+        let library = Library::initialize(root.clone()).unwrap();
+        let svg_path = write_svg(&root, "icon.svg", 320, 180);
+
+        let loaded = import_path_sync(
+            &library,
+            svg_path.clone(),
+            eframe::egui::Pos2::ZERO,
+            test_viewport_world(),
+            false,
+            crate::data::DEFAULT_IMPORT_GAP,
+        )
+        .unwrap();
+
+        assert_eq!(loaded.record.asset.mime_type, "image/svg+xml");
+        assert_eq!(loaded.record.asset.width, 320);
+        assert_eq!(loaded.record.asset.height, 180);
+        assert!(loaded.preview_rgba.is_empty());
+        assert!(matches!(
+            loaded.preview_texture,
+            ImportedPreviewTexture::Svg { .. }
+        ));
+        assert_eq!(
+            fs::read_to_string(&loaded.record.asset.original_path).unwrap(),
+            fs::read_to_string(&svg_path).unwrap()
+        );
+        assert!(
+            library
+                .canvas_image_cache_path(
+                    loaded.record.asset.id,
+                    crate::data::CanvasImageMode::Downscale,
+                    2000,
+                )
+                .is_none()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn xpm_import_uses_raster_pipeline_with_original_mime_type() {
+        let root = temp_library_root("xpm-import");
+        fs::create_dir_all(&root).unwrap();
+        let library = Library::initialize(root.clone()).unwrap();
+        let source = root.join("sample.xpm");
+        fs::write(
+            &source,
+            r##"/* XPM */
+static char * sample_xpm[] = {
+"2 2 2 1",
+"a c #ff0000",
+". c None",
+"a.",
+".a"};"##,
+        )
+        .unwrap();
+
+        let loaded = import_path_sync(
+            &library,
+            source.clone(),
+            eframe::egui::Pos2::ZERO,
+            test_viewport_world(),
+            false,
+            crate::data::DEFAULT_IMPORT_GAP,
+        )
+        .unwrap();
+
+        assert_eq!(loaded.record.asset.mime_type, "image/x-xpixmap");
+        assert_eq!(loaded.record.asset.width, 2);
+        assert_eq!(loaded.record.asset.height, 2);
+        assert_eq!(loaded.preview_rgba.len(), 2 * 2 * 4);
+        assert_eq!(
+            fs::read(&loaded.record.asset.original_path).unwrap(),
+            fs::read(source).unwrap()
+        );
+        assert!(
+            library
+                .canvas_image_cache_path(
+                    loaded.record.asset.id,
+                    crate::data::CanvasImageMode::Downscale,
+                    2000,
+                )
+                .is_some()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn crop_item_rejects_svg_with_clear_error() {
+        let root = temp_library_root("svg-crop");
+        fs::create_dir_all(&root).unwrap();
+        let library = Library::initialize(root.clone()).unwrap();
+        let svg_path = write_svg(&root, "icon.svg", 100, 80);
+        let loaded = import_path_sync(
+            &library,
+            svg_path,
+            eframe::egui::Pos2::ZERO,
+            test_viewport_world(),
+            false,
+            crate::data::DEFAULT_IMPORT_GAP,
+        )
+        .unwrap();
+
+        let result = crop_item(
+            &library,
+            crate::canvas::CanvasCropRequest {
+                item_id: loaded.record.item.id,
+                source_asset: loaded.record.asset.clone(),
+                crop_rect: crate::canvas::PixelCropRect {
+                    x: 0,
+                    y: 0,
+                    width: 50,
+                    height: 40,
+                },
+                crop_offset_local: eframe::egui::Vec2::ZERO,
+            },
+            usize::MAX,
+            CanvasImageSettings::default(),
+            None,
+        );
+
+        match result {
+            ImportResult::Failed { item_id, error, .. } => {
+                assert_eq!(item_id, Some(loaded.record.item.id));
+                assert_eq!(error, "SVG cropping is not supported yet");
+            }
+            other => panic!("expected SVG crop failure, got {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_existing_svg_uses_original_vector_source() {
+        let root = temp_library_root("svg-existing-load");
+        fs::create_dir_all(&root).unwrap();
+        let library = Library::initialize(root.clone()).unwrap();
+        let svg_path = write_svg(&root, "icon.svg", 240, 120);
+        let imported = import_path_sync(
+            &library,
+            svg_path,
+            eframe::egui::Pos2::ZERO,
+            test_viewport_world(),
+            false,
+            crate::data::DEFAULT_IMPORT_GAP,
+        )
+        .unwrap();
+
+        let loaded = match load_existing(
+            &library,
+            imported.record.clone(),
+            usize::MAX,
+            CanvasImageSettings::default(),
+            CanvasImageCacheTier::Working,
+            None,
+            None,
+        ) {
+            ImportResult::Loaded(loaded) => loaded,
+            other => panic!("expected SVG existing load, got {other:?}"),
+        };
+
+        assert_eq!(loaded.origin, super::ImportOrigin::Existing);
+        assert_eq!(loaded.preview_width, 240);
+        assert_eq!(loaded.preview_height, 120);
+        assert!(loaded.preview_rgba.is_empty());
+        assert!(matches!(
+            loaded.preview_texture,
+            ImportedPreviewTexture::Svg { .. }
+        ));
+        assert!(
+            library
+                .canvas_image_cache_path(
+                    loaded.record.asset.id,
+                    crate::data::CanvasImageMode::Downscale,
+                    2000,
+                )
+                .is_none()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn import_worker_drains_ready_results_in_capped_batches() {
         let (result_tx, result_rx) = mpsc::channel();
         let worker = ImportWorker {
@@ -3178,6 +3823,30 @@ mod tests {
     }
 
     #[test]
+    fn file_import_perf_report_imports_jpeg_and_reports_timings() {
+        let root = temp_library_root("file-import-perf-report");
+        fs::create_dir_all(&root).unwrap();
+        let source_path = write_jpeg(&root, "source.jpg", 64, 48);
+
+        let report = file_import_perf_report(source_path.clone()).unwrap();
+
+        assert_eq!(report.source_path, source_path);
+        assert_eq!(report.source_width, 64);
+        assert_eq!(report.source_height, 48);
+        assert_eq!(report.preview_width, 64);
+        assert_eq!(report.preview_height, 48);
+        assert!(report.source_file_size > 0);
+        assert!(report.canvas_cache_file_size.unwrap_or_default() > 0);
+        assert!(report.timings.decode_or_load >= Duration::ZERO);
+        assert!(report.timings.store_and_persist >= Duration::ZERO);
+        assert!(report.timings.preview_prepare >= Duration::ZERO);
+        assert!(report.timings.worker_total >= report.timings.decode_or_load);
+        assert!(report.total_ms >= 0.0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn native_preview_texture_stays_registered_until_last_reference_drops() {
         let Some(render_state) = test_render_state() else {
             eprintln!("skipping native preview texture lifecycle test: no wgpu adapter");
@@ -3194,6 +3863,7 @@ mod tests {
         let handle = match build_preview_texture(Some(&render_state), &preview).unwrap() {
             ImportedPreviewTexture::Native(handle) => handle,
             ImportedPreviewTexture::Cpu => panic!("expected native preview texture"),
+            ImportedPreviewTexture::Svg { .. } => panic!("expected native preview texture"),
         };
         let texture_id = handle.texture_id();
         assert!(render_state.renderer.read().texture(&texture_id).is_some());
@@ -3272,6 +3942,49 @@ mod tests {
         let cached = crate::jobs::image_formats::decode_image_file(&cache_path).unwrap();
         assert_eq!(cached.width, 2000);
         assert_eq!(cached.height, 1500);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_existing_preserves_animated_webp_in_downscale_mode() {
+        let root = temp_library_root("load-existing-animated-webp");
+        fs::create_dir_all(&root).unwrap();
+        let library = Library::initialize(root.clone()).unwrap();
+        let original_path = root.join("source.webp");
+        fs::write(&original_path, ANIMATED_WEBP_2X2_2_FRAMES).unwrap();
+        let file_size = fs::metadata(&original_path).unwrap().len();
+        let record = library
+            .persist_imported_image(
+                &original_path,
+                image::ImageFormat::WebP.to_mime_type(),
+                2,
+                2,
+                file_size,
+                eframe::egui::Pos2::ZERO,
+                1.0,
+            )
+            .unwrap();
+
+        let loaded = match load_existing(
+            &library,
+            record,
+            usize::MAX,
+            downscaled_canvas_settings(2000),
+            CanvasImageCacheTier::Working,
+            None,
+            None,
+        ) {
+            ImportResult::Loaded(loaded) => loaded,
+            other => panic!("expected animated WebP load_existing to succeed, got {other:?}"),
+        };
+
+        let animation = loaded
+            .animated_preview
+            .expect("expected animated WebP preview");
+        assert_eq!(animation.frames.len(), 2);
+        assert_eq!(animation.width, 2);
+        assert_eq!(animation.height, 2);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -3554,9 +4267,50 @@ mod tests {
         path
     }
 
+    fn write_jpeg(root: &Path, filename: &str, width: u32, height: u32) -> PathBuf {
+        let path = root.join(filename);
+        let rgb = vec![255; width as usize * height as usize * 3];
+        image::save_buffer_with_format(
+            &path,
+            &rgb,
+            width,
+            height,
+            ColorType::Rgb8,
+            ImageFormat::Jpeg,
+        )
+        .unwrap();
+        path
+    }
+
+    fn write_svg(root: &Path, filename: &str, width: u32, height: u32) -> PathBuf {
+        let path = root.join(filename);
+        fs::write(&path, svg_bytes(width, height)).unwrap();
+        path
+    }
+
+    fn svg_bytes(width: u32, height: u32) -> Vec<u8> {
+        format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><rect width="{width}" height="{height}" fill="#f8fafc"/><circle cx="80" cy="48" r="32" fill="#2563eb"/></svg>"##
+        )
+        .into_bytes()
+    }
+
     fn solid_rgba(width: u32, height: u32) -> Vec<u8> {
         vec![255; width as usize * height as usize * 4]
     }
+
+    const ANIMATED_WEBP_2X2_2_FRAMES: &[u8] = &[
+        0x52, 0x49, 0x46, 0x46, 0x84, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38,
+        0x58, 0x0a, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+        0x41, 0x4e, 0x49, 0x4d, 0x06, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0xff, 0x00, 0x00, 0x41,
+        0x4e, 0x4d, 0x46, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+        0x00, 0x01, 0x00, 0x00, 0x78, 0x00, 0x00, 0x02, 0x56, 0x50, 0x38, 0x4c, 0x0f, 0x00, 0x00,
+        0x00, 0x2f, 0x01, 0x40, 0x00, 0x00, 0x07, 0x10, 0xe5, 0x8f, 0xfe, 0x07, 0x22, 0xa2, 0xff,
+        0x01, 0x00, 0x41, 0x4e, 0x4d, 0x46, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x78, 0x00, 0x00, 0x00, 0x56, 0x50, 0x38, 0x4c,
+        0x0f, 0x00, 0x00, 0x00, 0x2f, 0x01, 0x40, 0x00, 0x00, 0x07, 0x10, 0xd1, 0xfe, 0xfe, 0x07,
+        0x22, 0xa2, 0xff, 0x01, 0x00,
+    ];
 
     fn solid_png_bytes(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
         let rgba = vec![color; (width * height) as usize]
