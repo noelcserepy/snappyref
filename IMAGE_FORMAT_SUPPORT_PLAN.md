@@ -22,18 +22,48 @@ The shared post-decode work is not part of the decoder comparison. The current r
 | TGA | Existing `image` path | None initially | Static RGBA | Measure |
 | TIFF | Existing `image` path | Native libtiff only if measurements justify it | Static RGBA | Watch large LZW-compressed files |
 | EXR | Done: direct `exr` crate path | macOS Image I/O fallback if direct decode fails | Static RGBA | Near budget on 36 MP generated EXR; keep direct path |
-| DDS | Existing `image` path first | `image_dds` if BC4-BC7 support is needed | Static RGBA | Add compressed DDS fixtures before deciding |
+| DDS | Existing `image` path for DXT1/DXT3/DXT5 | `image_dds` if BC4-BC7 or uncompressed DDS support is needed | Static RGBA for supported texture blocks | DXT1 smoke fixture passes; broader DDS variants deferred |
 | AVIF | Existing `image` path first | Done: macOS Image I/O fallback if crate support is unavailable | Static RGBA initially | Escalate only if over budget |
 | GIF | Existing `image` animation path | None initially | Animated playback | Already supported |
-| WebP | Existing `image` static path plus new animation path | Native libwebp only if slow | Static + animated playback | Add animated WebP fixture/test first |
+| WebP | Existing `image` static path plus new animation path | Native libwebp only if slow | Static + animated playback | Animated smoke fixture passes; watch real-world static decode speed |
 | SVG | Vector asset path, not raster decode | Raster fallback only for thumbnails/search if needed | Preserve vector scaling on canvas | Needs a separate asset/render path |
-| HEIC / HEIF | macOS Image I/O first; Windows libheif later | libheif fallback where needed | Static RGBA first | Native justified because current stack has no decoder |
+| HEIC / HEIF | Done: macOS Image I/O fallback | libheif fallback where needed on other platforms | Static RGBA first | HEIC and HEIF external fixtures pass |
 | JP2 | Done: macOS Quick Look reduced preview | Full macOS Image I/O fallback if preview generation fails | Static reduced RGBA preview with original dimensions retained | Better than full decode, still slower than normal image budget |
 | JXL | Done: `jxl-oxide` with `moxcms` | macOS Image I/O or libjxl if slow | Static RGBA | Near budget on 36 MP image; keep measuring |
 | PSD | Done: macOS Image I/O flattened composite fallback | Rust PSD on other platforms if needed | Flattened composite RGBA | External fixture passes |
 | RAW | Done: macOS Image I/O fallback first for RAW-like extensions | LibRaw or embedded-preview extraction if speed is needed | Full-size RGBA through native fallback | Slow on small DNG; native dependency likely if RAW import becomes core |
 | XBM | Small crate or parser | None initially | Static RGBA | Low risk |
 | XPM | Small custom parser | None initially | Static RGBA | Scope to common XPM3 |
+
+## Current Support Status
+
+| Format | Status | Decoder / path |
+|---|---|---|
+| AVIF | Supported | `image` crate when available, macOS native fallback otherwise |
+| BMP | Supported | `image` crate |
+| DDS | Partially supported | `image` crate DXT1/DXT3/DXT5 only; BC4-BC7/uncompressed DDS deferred |
+| GIF (animated) | Supported | `image` animation decoder |
+| HEIC | Supported on macOS | Native Image I/O fallback |
+| HEIF | Supported on macOS | Native Image I/O fallback |
+| ICO | Supported | `image` crate |
+| JPEG | Supported | TurboJPEG with Rust fallback |
+| JP2 | Supported on macOS | Quick Look reduced preview, then native Image I/O fallback |
+| JXL | Supported | `jxl-oxide` with `moxcms`, native fallback on failure |
+| PBM | Supported | `image` crate PNM path |
+| PGM | Supported | `image` crate PNM path |
+| PNG | Supported | `image` crate |
+| PNM | Supported | `image` crate |
+| PPM | Supported | `image` crate PNM path |
+| PSD | Supported on macOS | Native Image I/O flattened composite fallback |
+| QOI | Supported | `image` crate |
+| RAW | Supported on macOS, slow | Native Image I/O fallback first for RAW-like extensions |
+| SVG | Supported as vector | Original SVG bytes preserved and rendered as vector asset |
+| TIFF | Supported | `image` crate |
+| WebP | Supported, including animation | `image` static and animation paths |
+| XBM | Supported | Custom parser |
+| XPM | Supported | Custom parser for common XPM3 |
+| TGA | Supported | `image` crate with extension fallback |
+| EXR | Supported | Direct `exr` crate path, native fallback on failure |
 
 ## SVG Direction
 
@@ -112,7 +142,10 @@ Notes:
 - TGA required a filename-extension fallback because it is often ambiguous from magic bytes alone.
 - ffmpeg's default TIFF output produced a color type that `image` rejects; the benchmark script now generates RGBA TIFF to measure a supported baseline. TIFF still needs more fixtures for compression/color variants.
 - WebP is much smaller on disk but roughly 2x slower than JPEG decode-to-RGBA for this test image. That does not automatically justify native libwebp, but it is the first candidate to re-evaluate if users feel WebP import latency.
+- Animated WebP has both an in-memory decoder unit test and a checked-in `2x2` smoke fixture with two frames.
+- DDS support currently means the `image` crate's DXT1/DXT3/DXT5 decoder path. A checked-in `4x4` DXT1 fixture passes; BC4-BC7 and uncompressed DDS should be treated as future `image_dds` work.
 - AVIF generation failed on this 36 MP source due encoder memory pressure. It still needs a smaller generated benchmark and real fixtures.
+- HEIF coverage uses libheif's `hevc32.heif` corpus file; it decodes as `32x32` in about `107.60 ms` through the macOS fallback.
 - Direct `exr` decoding reduced the 36 MP generated EXR from about 5.18 s through macOS fallback to about 0.44 s. The small real EXR fixture decodes in about 1.43 ms.
 - JP2 now uses a macOS Quick Look reduced preview path capped at the canvas image max side. The original file dimensions are retained in asset metadata, while the canvas cache uses the preview pixels. This reduced the 36 MP generated JP2 from about 3.78 s through full `sips` conversion to about 1.09 s for a `2000x1335` preview.
 - JXL now uses `jxl-oxide`, reducing the 36 MP decode from about 1.9 s through `sips` to about 0.43 s. It is close enough to keep pure Rust for now, but still worth testing on a real external corpus.
@@ -164,6 +197,7 @@ Current external fixture coverage:
 | Source | Fixture | Purpose |
 |---|---|---|
 | libheif | `example.heic` | HEIC through macOS fallback |
+| libheif | `hevc32.heif` | HEIF through macOS fallback |
 | libheif | `example.avif` | AVIF through `image` or macOS fallback |
 | jpeg2k | `file6.jp2` | JP2 through macOS fallback |
 | jxl-oxide | `cmyk_layers.jxl` | JXL + CMYK color-management coverage |
@@ -195,7 +229,7 @@ Generated files are useful for performance baselines, but passing them is not en
 
 1. Done: add `--perf-decode` and decode-only report struct.
 2. Done for current scope: add fixture manifest structure, tiny checked-in smoke fixtures, generated common-format smoke tests, and an external fixture manifest/checker.
-3. Done: generalize animation decoding from GIF-only to GIF + WebP.
+3. Done: generalize animation decoding from GIF-only to GIF + WebP, with a checked-in animated WebP smoke fixture.
 4. Done: add generated same-content benchmark script for common large static formats.
 5. Done: add extension fallback for ambiguous file formats such as TGA.
 6. Done for current scope: add SVG as a vector asset path. Local path import, URL import, existing load, crop rejection, and visual probe coverage are implemented. Future raster derivatives may still be needed for thumbnails/search.
@@ -207,7 +241,8 @@ Generated files are useful for performance baselines, but passing them is not en
 12. Done for EXR: add a direct `exr` crate decode path before the generic `image` decoder/macOS fallback.
 13. Done for JP2 preview: add a macOS Quick Look reduced preview path and preserve original source dimensions in asset metadata.
 14. Done for PSD baseline: add an external Pillow PSD fixture and validate macOS flattened-composite fallback.
-15. Started: use measurements to decide whether HEIC/HEIF or RAW need optional native dependencies beyond macOS Image I/O fallback. RAW is correct but slow enough to revisit if it becomes an important workflow.
+15. Done for current HEIC/HEIF scope: add external HEIC and HEIF fixtures and validate the macOS fallback.
+16. Started: use measurements to decide whether RAW needs optional native dependencies beyond macOS Image I/O fallback. RAW is correct but slow enough to revisit if it becomes an important workflow.
 
 ## References
 

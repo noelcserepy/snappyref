@@ -1301,6 +1301,17 @@ mod tests {
                 "{}",
                 fixture.file
             );
+            if let Some(animation_frame_count) = fixture.animation_frame_count {
+                assert_eq!(
+                    decoded
+                        .animation
+                        .as_ref()
+                        .map(|animation| animation.frames.len()),
+                    Some(animation_frame_count),
+                    "{}",
+                    fixture.file
+                );
+            }
         }
     }
 
@@ -1692,12 +1703,15 @@ static unsigned char sample_bits[] = { 0x01 };
         format: String,
         width: u32,
         height: u32,
+        animation_frame_count: Option<usize>,
     }
 
     impl SmokeFixture {
         fn expected_format(&self) -> &str {
             match self.format.as_str() {
+                "dds" => "DDS",
                 "pnm" => "PNM",
+                "webp" => "WebP",
                 "xbm" => "XBM",
                 "xpm" => "XPM",
                 other => panic!("unknown smoke fixture format {other}"),

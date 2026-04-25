@@ -28,5 +28,18 @@
     "format": "xpm",
     "width": 2,
     "height": 2
+  },
+  {
+    "file": "animated-webp-2x2.webp",
+    "format": "webp",
+    "width": 2,
+    "height": 2,
+    "animation_frame_count": 2
+  },
+  {
+    "file": "dxt1-4x4.dds",
+    "format": "dds",
+    "width": 4,
+    "height": 4
   }
 ]

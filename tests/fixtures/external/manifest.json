@@ -10,6 +10,16 @@
     "height": 854
   },
   {
+    "file": "libheif/hevc32.heif",
+    "url": "https://raw.githubusercontent.com/strukturag/libheif/46521618983c795fdb09a412ebb29e917086896a/fuzzing/data/corpus/hevc32.heif",
+    "sha256": "7076e79a3a6f7ed9c09089fbe3a7608eb6c044fa34de900f3e3467704f36bcb7",
+    "license": "LGPL-3.0-or-later project; HEIF corpus file from libheif repository",
+    "format": "heif",
+    "decoder_path": "macos-sips-fallback",
+    "width": 32,
+    "height": 32
+  },
+  {
     "file": "libheif/example.avif",
     "url": "https://raw.githubusercontent.com/strukturag/libheif/46521618983c795fdb09a412ebb29e917086896a/examples/example.avif",
     "sha256": "54a0dc31d02b6f5d9d4b66027d4787861b7af15ffd8fab8eab963d10c5411469",
