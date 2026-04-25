@@ -27,7 +27,7 @@ tokenizers = { version = "0.22.2", optional = true }
 time = { version = "0.3.47", features = ["formatting"] }
 turbojpeg = { version = "1.4.0", optional = true, default-features = false, features = ["pkg-config"] }
 url = "2.5.7"
-usvg = "0.45.1"
+usvg = { version = "0.45.1", default-features = false }
 
 [dev-dependencies]
 pollster = "0.4.0"
