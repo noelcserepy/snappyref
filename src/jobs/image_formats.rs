@@ -1419,6 +1419,27 @@ mod tests {
     }
 
     #[test]
+    fn decode_image_file_decodes_external_psd_fixture_when_available() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/external/files/pillow/hopper_merged.psd");
+        if !path.exists() {
+            eprintln!("skipping PSD external fixture test: run scripts/fetch-image-fixtures.sh");
+            return;
+        }
+
+        let decoded = decode_image_file(&path).unwrap();
+
+        assert_eq!(decoded.format_name, "PSD");
+        assert_eq!(decoded.mime_type, "image/vnd.adobe.photoshop");
+        assert_eq!(decoded.extension, "psd");
+        assert_eq!(decoded.source_width, 128);
+        assert_eq!(decoded.source_height, 128);
+        assert_eq!(decoded.width, 128);
+        assert_eq!(decoded.height, 128);
+        assert_eq!(decoded.rgba.len(), 128 * 128 * 4);
+    }
+
+    #[test]
     fn decode_image_bytes_uses_source_label_extension_for_custom_formats() {
         let xbm = br#"#define sample_width 2
 #define sample_height 2

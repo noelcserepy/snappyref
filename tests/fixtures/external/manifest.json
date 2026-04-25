@@ -80,5 +80,15 @@
     "height": 0,
     "expect_decode_failure": true,
     "known_caveat": "Malformed fuzz input; useful for negative/robustness testing, not dimensions validation."
+  },
+  {
+    "file": "pillow/hopper_merged.psd",
+    "url": "https://raw.githubusercontent.com/python-pillow/Pillow/2ae2c4e84f82d919e7c2a8f28d2bbcae51c48355/Tests/images/hopper_merged.psd",
+    "sha256": "924c9939472b04946c597b1fa679beacad00b522d7b3691dec9c3e240dba7c8f",
+    "license": "Historical PIL/Pillow test fixture; see Pillow repository license",
+    "format": "psd",
+    "decoder_path": "macos-sips-fallback",
+    "width": 128,
+    "height": 128
   }
 ]

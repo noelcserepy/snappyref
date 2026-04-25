@@ -30,7 +30,7 @@ The shared post-decode work is not part of the decoder comparison. The current r
 | HEIC / HEIF | macOS Image I/O first; Windows libheif later | libheif fallback where needed | Static RGBA first | Native justified because current stack has no decoder |
 | JP2 | Done: macOS Quick Look reduced preview | Full macOS Image I/O fallback if preview generation fails | Static reduced RGBA preview with original dimensions retained | Better than full decode, still slower than normal image budget |
 | JXL | Done: `jxl-oxide` with `moxcms` | macOS Image I/O or libjxl if slow | Static RGBA | Near budget on 36 MP image; keep measuring |
-| PSD | macOS Image I/O first; Rust PSD on other platforms | Native/Image I/O for flattened composite | Flattened composite RGBA | Do not import layers as separate board items |
+| PSD | Done: macOS Image I/O flattened composite fallback | Rust PSD on other platforms if needed | Flattened composite RGBA | External fixture passes |
 | RAW | Embedded preview first | macOS Image I/O / LibRaw full decode later | Fast preview RGBA | Full demosaic should be background-only |
 | XBM | Small crate or parser | None initially | Static RGBA | Low risk |
 | XPM | Small custom parser | None initially | Static RGBA | Scope to common XPM3 |
@@ -169,6 +169,7 @@ Current external fixture coverage:
 | image-rs/image | small EXR | EXR positive decode coverage |
 | image-rs/image | BMP, APNG PNG | Real corpus coverage for common static decoders |
 | image-rs/image | malformed WebP fuzz input | Expected negative robustness fixture |
+| Pillow | `hopper_merged.psd` | PSD flattened composite through macOS fallback |
 
 ### Generated Benchmark Set
 
@@ -203,7 +204,8 @@ Generated files are useful for performance baselines, but passing them is not en
 11. Done for full-resolution JP2/OpenJPEG experiment: rejected as a default path because it was slower than macOS Image I/O on the large benchmark.
 12. Done for EXR: add a direct `exr` crate decode path before the generic `image` decoder/macOS fallback.
 13. Done for JP2 preview: add a macOS Quick Look reduced preview path and preserve original source dimensions in asset metadata.
-14. Use measurements to decide whether HEIC/HEIF, PSD, or RAW need optional native dependencies beyond macOS Image I/O fallback.
+14. Done for PSD baseline: add an external Pillow PSD fixture and validate macOS flattened-composite fallback.
+15. Use measurements to decide whether HEIC/HEIF or RAW need optional native dependencies beyond macOS Image I/O fallback.
 
 ## References
 
