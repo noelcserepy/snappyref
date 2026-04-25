@@ -25,6 +25,8 @@ pub struct DecodedImage {
     pub rgba: Vec<u8>,
     pub width: u32,
     pub height: u32,
+    pub source_width: u32,
+    pub source_height: u32,
     pub file_size: u64,
     #[allow(dead_code)]
     pub format: ImageFormat,
@@ -32,6 +34,14 @@ pub struct DecodedImage {
     pub mime_type: String,
     pub extension: String,
     pub animation: Option<DecodedAnimation>,
+}
+
+impl DecodedImage {
+    fn with_source_dimensions(mut self, source_width: u32, source_height: u32) -> Self {
+        self.source_width = source_width;
+        self.source_height = source_height;
+        self
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -242,6 +252,12 @@ fn decode_image_file_with_native_fallback(
         return Err("no native fallback registered for extension".to_owned());
     };
 
+    if metadata.extension == "jp2"
+        && let Ok(decoded) = decode_jpeg2000_quicklook_preview(path, original_bytes, &metadata)
+    {
+        return Ok(decoded);
+    }
+
     let temp_path = std::env::temp_dir().join(format!(
         "reference-native-decode-{}-{}.png",
         std::process::id(),
@@ -271,6 +287,8 @@ fn decode_image_file_with_native_fallback(
     let image = image::load_from_memory_with_format(&png, ImageFormat::Png)
         .map_err(|error| format!("failed to decode native PNG output: {error}"))?
         .to_rgba8();
+    let (source_width, source_height) =
+        native_image_dimensions(path).unwrap_or((image.width(), image.height()));
     Ok(decoded_custom_image_from_rgba(
         image.as_raw().clone(),
         image.width(),
@@ -279,7 +297,92 @@ fn decode_image_file_with_native_fallback(
         metadata.format_name,
         metadata.mime_type,
         &metadata.extension,
+    )
+    .with_source_dimensions(source_width, source_height))
+}
+
+#[cfg(target_os = "macos")]
+fn decode_jpeg2000_quicklook_preview(
+    path: &Path,
+    original_bytes: &[u8],
+    metadata: &NativeFallbackMetadata,
+) -> Result<DecodedImage, String> {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "reference-quicklook-decode-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|error| format!("failed to create Quick Look temp dir: {error}"))?;
+    let output = std::process::Command::new("qlmanage")
+        .arg("-t")
+        .arg("-s")
+        .arg(crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE.to_string())
+        .arg("-o")
+        .arg(&temp_dir)
+        .arg(path)
+        .output()
+        .map_err(|error| format!("failed to run qlmanage: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        return Err(format!("qlmanage failed: {}", stderr.trim()));
+    }
+
+    let preview_path = path
+        .file_name()
+        .map(|file_name| temp_dir.join(format!("{}.png", file_name.to_string_lossy())))
+        .ok_or_else(|| "JPEG 2000 path did not have a file name".to_owned())?;
+    let png = std::fs::read(&preview_path)
+        .map_err(|error| format!("failed to read Quick Look PNG output: {error}"))?;
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    let image = image::load_from_memory_with_format(&png, ImageFormat::Png)
+        .map_err(|error| format!("failed to decode Quick Look PNG output: {error}"))?
+        .to_rgba8();
+    let (source_width, source_height) =
+        native_image_dimensions(path).unwrap_or((image.width(), image.height()));
+
+    Ok(decoded_custom_image_from_rgba_with_source_dimensions(
+        image.as_raw().clone(),
+        image.width(),
+        image.height(),
+        source_width,
+        source_height,
+        original_bytes.len() as u64,
+        metadata.format_name,
+        metadata.mime_type,
+        &metadata.extension,
     ))
+}
+
+#[cfg(target_os = "macos")]
+fn native_image_dimensions(path: &Path) -> Option<(u32, u32)> {
+    let output = std::process::Command::new("sips")
+        .arg("-g")
+        .arg("pixelWidth")
+        .arg("-g")
+        .arg("pixelHeight")
+        .arg(path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut width = None;
+    let mut height = None;
+    for line in stdout.lines() {
+        let line = line.trim();
+        if let Some(value) = line.strip_prefix("pixelWidth:") {
+            width = value.trim().parse::<u32>().ok();
+        } else if let Some(value) = line.strip_prefix("pixelHeight:") {
+            height = value.trim().parse::<u32>().ok();
+        }
+    }
+    Some((width?, height?))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -399,6 +502,8 @@ fn decoded_image_from_rgba(
         rgba,
         width,
         height,
+        source_width: width,
+        source_height: height,
         file_size,
         format,
         format_name: format_name(format),
@@ -421,6 +526,34 @@ fn decoded_custom_image_from_rgba(
         rgba,
         width,
         height,
+        source_width: width,
+        source_height: height,
+        file_size,
+        format: ImageFormat::Png,
+        format_name: format_name.to_owned(),
+        mime_type: mime_type.to_owned(),
+        extension: extension.to_owned(),
+        animation: None,
+    }
+}
+
+fn decoded_custom_image_from_rgba_with_source_dimensions(
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    source_width: u32,
+    source_height: u32,
+    file_size: u64,
+    format_name: &str,
+    mime_type: &str,
+    extension: &str,
+) -> DecodedImage {
+    DecodedImage {
+        rgba,
+        width,
+        height,
+        source_width,
+        source_height,
         file_size,
         format: ImageFormat::Png,
         format_name: format_name.to_owned(),
@@ -1260,6 +1393,29 @@ mod tests {
         assert_eq!(decoded.width, 20);
         assert_eq!(decoded.height, 12);
         assert_eq!(decoded.rgba.len(), 20 * 12 * 4);
+    }
+
+    #[test]
+    fn decode_image_file_decodes_external_jp2_fixture_when_available() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/external/files/jpeg2k/file6.jp2");
+        if !path.exists() {
+            eprintln!(
+                "skipping JPEG 2000 external fixture test: run scripts/fetch-image-fixtures.sh"
+            );
+            return;
+        }
+
+        let decoded = decode_image_file(&path).unwrap();
+
+        assert_eq!(decoded.format_name, "JP2");
+        assert_eq!(decoded.mime_type, "image/jp2");
+        assert_eq!(decoded.extension, "jp2");
+        assert_eq!(decoded.source_width, 768);
+        assert_eq!(decoded.source_height, 512);
+        assert_eq!(decoded.width, 768);
+        assert_eq!(decoded.height, 512);
+        assert_eq!(decoded.rgba.len(), 768 * 512 * 4);
     }
 
     #[test]

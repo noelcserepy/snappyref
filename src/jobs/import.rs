@@ -1154,14 +1154,15 @@ fn import_path_sync_traced(
     if let Some(trace) = &mut trace {
         trace.timings.decode_or_load = decode_started_at.elapsed();
     }
-    let initial_scale = initial_import_scale(decoded.width, decoded.height, auto_scale);
+    let initial_scale =
+        initial_import_scale(decoded.source_width, decoded.source_height, auto_scale);
     let arranged_world = resolve_import_world(
         library,
         desired_world,
         reserved_world,
         viewport_world,
-        decoded.width as f32 * initial_scale.max(0.01),
-        decoded.height as f32 * initial_scale.max(0.01),
+        decoded.source_width as f32 * initial_scale.max(0.01),
+        decoded.source_height as f32 * initial_scale.max(0.01),
         import_gap,
     )?;
 
@@ -1174,8 +1175,8 @@ fn import_path_sync_traced(
         .persist_imported_image(
             &stored_path,
             &decoded.mime_type,
-            decoded.width,
-            decoded.height,
+            decoded.source_width,
+            decoded.source_height,
             decoded.file_size,
             arranged_world,
             initial_scale,
@@ -1490,14 +1491,15 @@ fn import_url_sync_traced(
         trace.timings.decode_or_load += decode_started_at.elapsed();
     }
 
-    let initial_scale = initial_import_scale(decoded.width, decoded.height, auto_scale);
+    let initial_scale =
+        initial_import_scale(decoded.source_width, decoded.source_height, auto_scale);
     let arranged_world = resolve_import_world(
         library,
         desired_world,
         reserved_world,
         viewport_world,
-        decoded.width as f32 * initial_scale.max(0.01),
-        decoded.height as f32 * initial_scale.max(0.01),
+        decoded.source_width as f32 * initial_scale.max(0.01),
+        decoded.source_height as f32 * initial_scale.max(0.01),
         import_gap,
     )?;
 
@@ -1508,8 +1510,8 @@ fn import_url_sync_traced(
     let record = library.persist_imported_image(
         &stored_path,
         &decoded.mime_type,
-        decoded.width,
-        decoded.height,
+        decoded.source_width,
+        decoded.source_height,
         downloaded.bytes.len() as u64,
         arranged_world,
         initial_scale,
@@ -2405,8 +2407,8 @@ fn load_existing_preview(
                     source_kind: ExistingLoadSourceKind::Original,
                     source_path,
                     source_file_size,
-                    source_width: decoded.width,
-                    source_height: decoded.height,
+                    source_width: decoded.source_width,
+                    source_height: decoded.source_height,
                     backfilled_cache: false,
                 },
             )
@@ -2438,8 +2440,8 @@ fn load_existing_preview(
                         source_kind: ExistingLoadSourceKind::Original,
                         source_path: record.asset.original_path.clone(),
                         source_file_size,
-                        source_width: decoded.width,
-                        source_height: decoded.height,
+                        source_width: decoded.source_width,
+                        source_height: decoded.source_height,
                         backfilled_cache: false,
                     },
                 )

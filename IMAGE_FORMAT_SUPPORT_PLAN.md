@@ -28,7 +28,7 @@ The shared post-decode work is not part of the decoder comparison. The current r
 | WebP | Existing `image` static path plus new animation path | Native libwebp only if slow | Static + animated playback | Add animated WebP fixture/test first |
 | SVG | Vector asset path, not raster decode | Raster fallback only for thumbnails/search if needed | Preserve vector scaling on canvas | Needs a separate asset/render path |
 | HEIC / HEIF | macOS Image I/O first; Windows libheif later | libheif fallback where needed | Static RGBA first | Native justified because current stack has no decoder |
-| JP2 | macOS Image I/O first | Reduced-resolution OpenJPEG preview later if needed | Static RGBA or fast preview | Full OpenJPEG RGBA decode was slower than `sips` on the 36 MP benchmark |
+| JP2 | Done: macOS Quick Look reduced preview | Full macOS Image I/O fallback if preview generation fails | Static reduced RGBA preview with original dimensions retained | Better than full decode, still slower than normal image budget |
 | JXL | Done: `jxl-oxide` with `moxcms` | macOS Image I/O or libjxl if slow | Static RGBA | Near budget on 36 MP image; keep measuring |
 | PSD | macOS Image I/O first; Rust PSD on other platforms | Native/Image I/O for flattened composite | Flattened composite RGBA | Do not import layers as separate board items |
 | RAW | Embedded preview first | macOS Image I/O / LibRaw full decode later | Fast preview RGBA | Full demosaic should be background-only |
@@ -104,7 +104,7 @@ The source image is a 4.75 MB progressive JPEG at `7360x4912` (`36.15 MP`). Gene
 | PGM | 34.48 MB | 36.39 ms | 1.01 | Rust `image` path is acceptable |
 | PPM | 103.43 MB | 28.63 ms | 0.79 | Rust `image` path is acceptable |
 | EXR | 551.72 MB | 440.01 ms | 12.17 | Direct `exr` crate path is much faster than macOS fallback and close to budget |
-| JP2 | 13.07 MB | 3782.87 ms | 104.64 | macOS native fallback works but is far over budget |
+| JP2 | 13.07 MB | 1091.25 ms | 408.71 on `2000x1335` preview | Quick Look reduced preview is much faster than full decode, but still slow |
 | JXL | 3.96 MB | 432.42 ms | 11.96 | Dedicated `jxl-oxide` path is much faster than `sips`, still slightly over the large-image budget |
 
 Notes:
@@ -114,7 +114,7 @@ Notes:
 - WebP is much smaller on disk but roughly 2x slower than JPEG decode-to-RGBA for this test image. That does not automatically justify native libwebp, but it is the first candidate to re-evaluate if users feel WebP import latency.
 - AVIF generation failed on this 36 MP source due encoder memory pressure. It still needs a smaller generated benchmark and real fixtures.
 - Direct `exr` decoding reduced the 36 MP generated EXR from about 5.18 s through macOS fallback to about 0.44 s. The small real EXR fixture decodes in about 1.43 ms.
-- JP2 native fallback through macOS `sips` is functional but much too slow for large images. It needs an OpenJPEG dependency decision before claiming acceptable performance.
+- JP2 now uses a macOS Quick Look reduced preview path capped at the canvas image max side. The original file dimensions are retained in asset metadata, while the canvas cache uses the preview pixels. This reduced the 36 MP generated JP2 from about 3.78 s through full `sips` conversion to about 1.09 s for a `2000x1335` preview.
 - JXL now uses `jxl-oxide`, reducing the 36 MP decode from about 1.9 s through `sips` to about 0.43 s. It is close enough to keep pure Rust for now, but still worth testing on a real external corpus.
 - The external JXL corpus includes a CMYK fixture, so `jxl-oxide` is built with the pure-Rust `moxcms` feature.
 - A full OpenJPEG experiment using the Rust `jpeg2k` crate decoded the small `768x512` external JP2 fixture in `9.56 ms`, but decoded the 36 MP generated JP2 in `5122.10 ms`, worse than the `sips` fallback. Do not add it as a default full-resolution import path.
@@ -202,7 +202,8 @@ Generated files are useful for performance baselines, but passing them is not en
 10. Done for JXL: add a dedicated `jxl-oxide` decode path plus smoke coverage that exercises it when `cjxl` is available.
 11. Done for full-resolution JP2/OpenJPEG experiment: rejected as a default path because it was slower than macOS Image I/O on the large benchmark.
 12. Done for EXR: add a direct `exr` crate decode path before the generic `image` decoder/macOS fallback.
-13. Use measurements to decide whether JP2 needs a reduced-resolution preview decode path, and whether HEIC/HEIF, PSD, or RAW need optional native dependencies beyond macOS Image I/O fallback.
+13. Done for JP2 preview: add a macOS Quick Look reduced preview path and preserve original source dimensions in asset metadata.
+14. Use measurements to decide whether HEIC/HEIF, PSD, or RAW need optional native dependencies beyond macOS Image I/O fallback.
 
 ## References
 
