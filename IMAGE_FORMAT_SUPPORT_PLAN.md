@@ -21,7 +21,7 @@ The shared post-decode work is not part of the decoder comparison. The current r
 | QOI | Existing `image` path | None initially | Static RGBA | Should be very fast |
 | TGA | Existing `image` path | None initially | Static RGBA | Measure |
 | TIFF | Existing `image` path | Native libtiff only if measurements justify it | Static RGBA | Watch large LZW-compressed files |
-| EXR | Existing `image` path | macOS Image I/O or OpenEXR only if needed | Static RGBA | Watch unsupported compression variants |
+| EXR | Done: direct `exr` crate path | macOS Image I/O fallback if direct decode fails | Static RGBA | Near budget on 36 MP generated EXR; keep direct path |
 | DDS | Existing `image` path first | `image_dds` if BC4-BC7 support is needed | Static RGBA | Add compressed DDS fixtures before deciding |
 | AVIF | Existing `image` path first | Done: macOS Image I/O fallback if crate support is unavailable | Static RGBA initially | Escalate only if over budget |
 | GIF | Existing `image` animation path | None initially | Animated playback | Already supported |
@@ -103,7 +103,7 @@ The source image is a 4.75 MB progressive JPEG at `7360x4912` (`36.15 MP`). Gene
 | PBM | 4.31 MB | 51.22 ms | 1.42 | Rust `image` path is acceptable for generated binary PBM |
 | PGM | 34.48 MB | 36.39 ms | 1.01 | Rust `image` path is acceptable |
 | PPM | 103.43 MB | 28.63 ms | 0.79 | Rust `image` path is acceptable |
-| EXR | 551.72 MB | 5183.79 ms | 143.39 | macOS native fallback works after Rust memory-limit failure, but is far over budget |
+| EXR | 551.72 MB | 440.01 ms | 12.17 | Direct `exr` crate path is much faster than macOS fallback and close to budget |
 | JP2 | 13.07 MB | 3782.87 ms | 104.64 | macOS native fallback works but is far over budget |
 | JXL | 3.96 MB | 432.42 ms | 11.96 | Dedicated `jxl-oxide` path is much faster than `sips`, still slightly over the large-image budget |
 
@@ -113,7 +113,7 @@ Notes:
 - ffmpeg's default TIFF output produced a color type that `image` rejects; the benchmark script now generates RGBA TIFF to measure a supported baseline. TIFF still needs more fixtures for compression/color variants.
 - WebP is much smaller on disk but roughly 2x slower than JPEG decode-to-RGBA for this test image. That does not automatically justify native libwebp, but it is the first candidate to re-evaluate if users feel WebP import latency.
 - AVIF generation failed on this 36 MP source due encoder memory pressure. It still needs a smaller generated benchmark and real fixtures.
-- The first generated EXR exceeded the Rust decoder memory limit; macOS `sips` can convert that file, but it is far too slow for large EXR imports.
+- Direct `exr` decoding reduced the 36 MP generated EXR from about 5.18 s through macOS fallback to about 0.44 s. The small real EXR fixture decodes in about 1.43 ms.
 - JP2 native fallback through macOS `sips` is functional but much too slow for large images. It needs an OpenJPEG dependency decision before claiming acceptable performance.
 - JXL now uses `jxl-oxide`, reducing the 36 MP decode from about 1.9 s through `sips` to about 0.43 s. It is close enough to keep pure Rust for now, but still worth testing on a real external corpus.
 - The external JXL corpus includes a CMYK fixture, so `jxl-oxide` is built with the pure-Rust `moxcms` feature.
@@ -201,7 +201,8 @@ Generated files are useful for performance baselines, but passing them is not en
 9. Done for current scope: external fixture downloader infrastructure at `scripts/fetch-image-fixtures.sh`, plus decode/dimension checker at `scripts/check-external-image-fixtures.sh`.
 10. Done for JXL: add a dedicated `jxl-oxide` decode path plus smoke coverage that exercises it when `cjxl` is available.
 11. Done for full-resolution JP2/OpenJPEG experiment: rejected as a default path because it was slower than macOS Image I/O on the large benchmark.
-12. Use measurements to decide whether JP2 needs a reduced-resolution preview decode path, and whether HEIC/HEIF, PSD, RAW, or EXR need optional native dependencies beyond macOS Image I/O fallback.
+12. Done for EXR: add a direct `exr` crate decode path before the generic `image` decoder/macOS fallback.
+13. Use measurements to decide whether JP2 needs a reduced-resolution preview decode path, and whether HEIC/HEIF, PSD, or RAW need optional native dependencies beyond macOS Image I/O fallback.
 
 ## References
 

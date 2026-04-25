@@ -150,6 +150,8 @@ fn decode_image_bytes_with_path_hint(
         decode_gif(&bytes, file_size)
     } else if format == ImageFormat::WebP {
         decode_webp(&bytes, file_size)
+    } else if format == ImageFormat::OpenExr {
+        decode_exr(&bytes, file_size)
     } else if format == ImageFormat::Jpeg {
         decode_jpeg_with_turbojpeg(&bytes, file_size)
             .or_else(|_| decode_with_image_crate(&bytes, file_size, format))
@@ -162,6 +164,8 @@ fn decode_image_bytes_with_path_hint(
         decode_gif(&bytes, file_size)
     } else if format == ImageFormat::WebP {
         decode_webp(&bytes, file_size)
+    } else if format == ImageFormat::OpenExr {
+        decode_exr(&bytes, file_size)
     } else {
         decode_with_image_crate(&bytes, file_size, format)
     }?;
@@ -724,6 +728,61 @@ fn decode_jxl(bytes: &[u8], file_size: u64) -> Result<DecodedImage, String> {
     ))
 }
 
+fn decode_exr(bytes: &[u8], file_size: u64) -> Result<DecodedImage, String> {
+    use exr::prelude::{
+        Image, Layer, ReadChannels, ReadLayers, RgbaChannels, SpecificChannels,
+        read as read_exr_image,
+    };
+
+    let reader = read_exr_image()
+        .no_deep_data()
+        .largest_resolution_level()
+        .rgba_channels(
+            |resolution, _channels: &RgbaChannels| -> RgbaImage {
+                RgbaImage::new(resolution.width() as u32, resolution.height() as u32)
+            },
+            |image, position, (red, green, blue, alpha): (f32, f32, f32, f32)| {
+                image.put_pixel(
+                    position.x() as u32,
+                    position.y() as u32,
+                    image::Rgba([
+                        exr_sample_to_u8(red),
+                        exr_sample_to_u8(green),
+                        exr_sample_to_u8(blue),
+                        exr_alpha_to_u8(alpha),
+                    ]),
+                );
+            },
+        )
+        .first_valid_layer()
+        .all_attributes();
+    let image: Image<Layer<SpecificChannels<RgbaImage, RgbaChannels>>> = reader
+        .from_buffered(std::io::Cursor::new(bytes))
+        .map_err(|error| format!("failed to decode OpenEXR: {error}"))?;
+    let rgba = image.layer_data.channel_data.pixels;
+    let width = rgba.width();
+    let height = rgba.height();
+
+    Ok(decoded_custom_image_from_rgba(
+        rgba.into_raw(),
+        width,
+        height,
+        file_size,
+        "OpenEXR",
+        "image/exr",
+        "exr",
+    ))
+}
+
+fn exr_sample_to_u8(value: f32) -> u8 {
+    let tone_mapped = (value - 0.5).tanh() * 0.5 + 0.5;
+    (tone_mapped.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn exr_alpha_to_u8(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
 fn decode_xbm(bytes: &[u8], file_size: u64) -> Result<DecodedImage, String> {
     let text =
         std::str::from_utf8(bytes).map_err(|error| format!("failed to read XBM: {error}"))?;
@@ -1180,6 +1239,27 @@ mod tests {
         assert_eq!(decoded.rgba.len(), 2 * 2 * 4);
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn decode_image_file_decodes_external_exr_fixture_when_available() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/external/files/image-rs/overexposed-gradient.exr");
+        if !path.exists() {
+            eprintln!(
+                "skipping OpenEXR external fixture test: run scripts/fetch-image-fixtures.sh"
+            );
+            return;
+        }
+
+        let decoded = decode_image_file(&path).unwrap();
+
+        assert_eq!(decoded.format_name, "OpenEXR");
+        assert_eq!(decoded.mime_type, "image/exr");
+        assert_eq!(decoded.extension, "exr");
+        assert_eq!(decoded.width, 20);
+        assert_eq!(decoded.height, 12);
+        assert_eq!(decoded.rgba.len(), 20 * 12 * 4);
     }
 
     #[test]

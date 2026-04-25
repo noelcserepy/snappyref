@@ -13,6 +13,7 @@ arboard = "3.6.1"
 bytemuck = { version = "1.24.0", features = ["derive"] }
 eframe = "0.34.1"
 egui_extras = { version = "0.34.1", features = ["svg"] }
+exr = "1.74.0"
 hf-hub = { version = "0.5.0", optional = true }
 image = { version = "0.25.10", default-features = false, features = ["default-formats"] }
 jxl-oxide = { version = "0.12.5", features = ["image", "moxcms"] }

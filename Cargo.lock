@@ -1484,6 +1484,7 @@ dependencies = [
  "half",
  "lebe",
  "miniz_oxide",
+ "rayon-core",
  "smallvec",
  "zune-inflate",
 ]
@@ -4356,6 +4357,7 @@ dependencies = [
  "bytemuck",
  "eframe",
  "egui_extras",
+ "exr",
  "hf-hub",
  "image",
  "jxl-oxide",
