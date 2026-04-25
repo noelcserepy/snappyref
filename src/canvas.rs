@@ -119,6 +119,11 @@ struct CanvasImage {
 enum CanvasTexture {
     Managed(egui::TextureHandle),
     Native(Arc<crate::jobs::NativeTextureHandle>),
+    Svg {
+        uri: String,
+        bytes: Arc<[u8]>,
+        size: [usize; 2],
+    },
 }
 
 impl CanvasTexture {
@@ -126,6 +131,7 @@ impl CanvasTexture {
         match self {
             Self::Managed(texture) => texture.id(),
             Self::Native(texture) => texture.texture_id(),
+            Self::Svg { .. } => egui::TextureId::Managed(0),
         }
     }
 
@@ -133,6 +139,7 @@ impl CanvasTexture {
         match self {
             Self::Managed(texture) => texture.size(),
             Self::Native(texture) => texture.size(),
+            Self::Svg { size, .. } => *size,
         }
     }
 }
@@ -1314,6 +1321,7 @@ pub fn show(
     paint_import_placeholders(&painter, rect, state);
     let image_pass = paint_images(
         &painter,
+        ui,
         rect,
         state,
         render_state,

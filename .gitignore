@@ -1,3 +1,4 @@
 target/
 library/
 .claude/
+tests/fixtures/external/files/

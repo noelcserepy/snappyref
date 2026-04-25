@@ -1,0 +1,4 @@
+#define sample_width 2
+#define sample_height 2
+static unsigned char sample_bits[] = {
+   0x09 };

@@ -243,6 +243,8 @@ pub struct AppConfig {
     pub screenshot_path: Option<std::path::PathBuf>,
     perf_log: bool,
     perf_report: bool,
+    perf_decode_path: Option<std::path::PathBuf>,
+    perf_import_path: Option<std::path::PathBuf>,
     startup_trace: bool,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
@@ -276,6 +278,7 @@ enum VerificationMode {
     EditTextbox,
     RotateImage,
     AnimatedGif,
+    SvgImage,
     MoveSnapPreview,
     ImportPlaceholders,
     ImportLoaded,
@@ -289,6 +292,8 @@ impl AppConfig {
         let mut screenshot_path = None;
         let mut perf_log = false;
         let mut perf_report = false;
+        let mut perf_decode_path = None;
+        let mut perf_import_path = None;
         let mut startup_trace = false;
         #[cfg(debug_assertions)]
         let mut verification_mode = None;
@@ -305,6 +310,14 @@ impl AppConfig {
                 perf_log = true;
             } else if argument == "--perf-report" {
                 perf_report = true;
+            } else if argument == "--perf-decode" {
+                perf_decode_path = arguments.next().map(std::path::PathBuf::from);
+            } else if let Some(path) = argument.strip_prefix("--perf-decode=") {
+                perf_decode_path = Some(std::path::PathBuf::from(path));
+            } else if argument == "--perf-import" {
+                perf_import_path = arguments.next().map(std::path::PathBuf::from);
+            } else if let Some(path) = argument.strip_prefix("--perf-import=") {
+                perf_import_path = Some(std::path::PathBuf::from(path));
             } else if argument == "--startup-trace" {
                 startup_trace = true;
             } else if cfg!(debug_assertions) && argument == "--verify-sidebar" {
@@ -357,6 +370,11 @@ impl AppConfig {
                 {
                     verification_mode = Some(VerificationMode::AnimatedGif);
                 }
+            } else if cfg!(debug_assertions) && argument == "--verify-svg" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::SvgImage);
+                }
             } else if cfg!(debug_assertions) && argument == "--verify-move-snap" {
                 #[cfg(debug_assertions)]
                 {
@@ -404,6 +422,8 @@ impl AppConfig {
             screenshot_path,
             perf_log,
             perf_report,
+            perf_decode_path,
+            perf_import_path,
             startup_trace,
             #[cfg(debug_assertions)]
             verification_mode,
@@ -486,6 +506,11 @@ impl AppConfig {
     }
 
     #[cfg(debug_assertions)]
+    fn verify_svg_on_start(&self) -> bool {
+        matches!(self.verification_mode, Some(VerificationMode::SvgImage))
+    }
+
+    #[cfg(debug_assertions)]
     fn verify_move_snap_on_start(&self) -> bool {
         matches!(
             self.verification_mode,
@@ -527,6 +552,7 @@ impl AppConfig {
                     | VerificationMode::EditTextbox
                     | VerificationMode::RotateImage
                     | VerificationMode::AnimatedGif
+                    | VerificationMode::SvgImage
                     | VerificationMode::MoveSnapPreview
                     | VerificationMode::ImportPlaceholders
                     | VerificationMode::ImportLoaded
@@ -607,6 +633,14 @@ impl AppConfig {
 
     pub fn perf_report_requested(&self) -> bool {
         self.perf_report
+    }
+
+    pub fn perf_decode_path(&self) -> Option<&std::path::Path> {
+        self.perf_decode_path.as_deref()
+    }
+
+    pub fn perf_import_path(&self) -> Option<&std::path::Path> {
+        self.perf_import_path.as_deref()
     }
 
     pub fn startup_trace_requested(&self) -> bool {
@@ -758,6 +792,10 @@ impl ReferenceApp {
                 #[cfg(debug_assertions)]
                 if config.verify_gif_on_start() {
                     app.seed_gif_verification(&cc.egui_ctx);
+                }
+                #[cfg(debug_assertions)]
+                if config.verify_svg_on_start() {
+                    app.seed_svg_verification(&cc.egui_ctx);
                 }
                 #[cfg(debug_assertions)]
                 if config.verify_move_snap_on_start() {
@@ -1556,7 +1594,11 @@ impl ReferenceApp {
                     }
                     let mut trace = loaded.trace;
                     #[cfg(feature = "semantic-search")]
-                    let queued_asset = self.settings.semantic_search_enabled.then(|| {
+                    let queued_asset = (self.settings.semantic_search_enabled
+                        && asset_mime_type_supports_raster_derivatives(
+                            &loaded.record.asset.mime_type,
+                        ))
+                    .then(|| {
                         (
                             loaded.record.asset.id,
                             loaded.record.asset.original_path.clone(),
@@ -1577,7 +1619,11 @@ impl ReferenceApp {
                         existing_load_diagnostics.as_ref(),
                         trace,
                     );
-                    if loaded_tier == crate::data::CanvasImageCacheTier::Working {
+                    if loaded_tier == crate::data::CanvasImageCacheTier::Working
+                        && asset_mime_type_supports_raster_derivatives(
+                            &loaded_record.asset.mime_type,
+                        )
+                    {
                         if let Some(error) = self.residency.queue_backfill(
                             self.import_worker.as_ref(),
                             &loaded_record,
@@ -1664,17 +1710,21 @@ impl ReferenceApp {
                             });
                             self.canvas.clear_crop_pending(updated_item_id);
                             #[cfg(feature = "semantic-search")]
-                            if self.settings.semantic_search_enabled {
+                            if self.settings.semantic_search_enabled
+                                && asset_mime_type_supports_raster_derivatives(&asset.mime_type)
+                            {
                                 self.search
                                     .queue_asset_index(asset.id, asset.original_path.clone());
                             }
-                            if let Some(error) = self.residency.queue_backfill(
-                                self.import_worker.as_ref(),
-                                &updated_record,
-                                &self.settings,
-                                crate::data::CanvasImageCacheTier::Overview,
-                            ) {
-                                self.status = error;
+                            if asset_mime_type_supports_raster_derivatives(&asset.mime_type) {
+                                if let Some(error) = self.residency.queue_backfill(
+                                    self.import_worker.as_ref(),
+                                    &updated_record,
+                                    &self.settings,
+                                    crate::data::CanvasImageCacheTier::Overview,
+                                ) {
+                                    self.status = error;
+                                }
                             }
                             self.status = "Cropped image".to_owned();
                         }
@@ -2200,6 +2250,64 @@ impl ReferenceApp {
     }
 
     #[cfg(debug_assertions)]
+    fn seed_svg_verification(&mut self, ctx: &egui::Context) {
+        self.canvas
+            .apply_viewport_state(&crate::data::ViewportState::default());
+        self.canvas.clear_scene_for_verification();
+        let width = 240_u32;
+        let height = 160_u32;
+        let svg = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><rect width="{width}" height="{height}" rx="0" fill="#f8fafc"/><rect x="18" y="18" width="204" height="124" fill="#14b8a6"/><circle cx="120" cy="80" r="46" fill="#2563eb"/><path d="M52 116 L102 54 L139 98 L164 70 L204 116 Z" fill="#f59e0b"/></svg>"##
+        )
+        .into_bytes();
+        let asset = crate::data::ImageAsset {
+            id: -60,
+            original_path: std::path::PathBuf::from("/tmp/debug.svg"),
+            filename: "debug.svg".to_owned(),
+            mime_type: "image/svg+xml".to_owned(),
+            width,
+            height,
+            file_size: svg.len() as u64,
+            imported_at: 0,
+        };
+        let record = crate::data::BoardItemWithAsset {
+            item: crate::data::BoardItem {
+                id: -60,
+                asset_id: -60,
+                x: 0.0,
+                y: 0.0,
+                scale: 1.5,
+                rotation: 0.0,
+                z_index: 0,
+                archived: false,
+            },
+            asset,
+        };
+        self.canvas.add_loaded_item(
+            ctx,
+            crate::jobs::LoadedCanvasItem {
+                queue_id: None,
+                record,
+                preview_rgba: Vec::new(),
+                preview_width: width,
+                preview_height: height,
+                animated_preview: None,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Svg {
+                    uri: "bytes://verify-svg.svg".to_owned(),
+                    bytes: std::sync::Arc::<[u8]>::from(svg),
+                    size: [width as usize, height as usize],
+                },
+                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+        self.canvas.select_items(&[-60]);
+        self.status = "Added SVG debug image".to_owned();
+    }
+
+    #[cfg(debug_assertions)]
     fn seed_move_snap_verification(&mut self, ctx: &egui::Context) {
         self.canvas
             .apply_viewport_state(&crate::data::ViewportState::default());
@@ -2663,6 +2771,15 @@ impl ReferenceApp {
             }
         }
     }
+}
+
+fn asset_mime_type_supports_raster_derivatives(mime_type: &str) -> bool {
+    !mime_type
+        .split(';')
+        .next()
+        .unwrap_or(mime_type)
+        .trim()
+        .eq_ignore_ascii_case("image/svg+xml")
 }
 
 impl eframe::App for ReferenceApp {

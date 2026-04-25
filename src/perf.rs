@@ -1,5 +1,60 @@
 use eframe::egui;
 
+pub fn print_file_decode_report(path: &std::path::Path) -> Result<(), String> {
+    let report = crate::jobs::decode_image_file_perf_report(path)?;
+    let frames = report
+        .animated_frame_count
+        .map(|count| format!(" animated_frames={count}"))
+        .unwrap_or_default();
+
+    println!(
+        "decode source={} format={} source_mb={:.2} dims={}x{} megapixels={:.2} rgba_mb={:.2} decode_ms={:.2} ms_per_mp={:.2}{}",
+        report.source_path.display(),
+        report.format_name,
+        report.source_file_size as f64 / 1024.0 / 1024.0,
+        report.width,
+        report.height,
+        report.megapixels,
+        report.rgba_bytes as f64 / 1024.0 / 1024.0,
+        report.decode_ms,
+        report.ms_per_megapixel,
+        frames,
+    );
+
+    Ok(())
+}
+
+pub fn print_file_import_report(path: &std::path::Path) -> Result<(), String> {
+    let report = crate::jobs::file_import_perf_report(path.to_path_buf())?;
+    let cache = match (&report.canvas_cache_path, report.canvas_cache_file_size) {
+        (Some(path), Some(bytes)) => format!(
+            "{} ({:.2} MB)",
+            path.display(),
+            bytes as f64 / 1024.0 / 1024.0
+        ),
+        (Some(path), None) => path.display().to_string(),
+        (None, _) => "none".to_owned(),
+    };
+
+    println!(
+        "file_import source={} source_mb={:.2} source_dims={}x{} preview_dims={}x{} cache={} total_ms={:.2} decode_ms={:.2} store_ms={:.2} preview_ms={:.2} worker_ms={:.2}",
+        report.source_path.display(),
+        report.source_file_size as f64 / 1024.0 / 1024.0,
+        report.source_width,
+        report.source_height,
+        report.preview_width,
+        report.preview_height,
+        cache,
+        report.total_ms,
+        report.timings.decode_or_load.as_secs_f64() * 1000.0,
+        report.timings.store_and_persist.as_secs_f64() * 1000.0,
+        report.timings.preview_prepare.as_secs_f64() * 1000.0,
+        report.timings.worker_total.as_secs_f64() * 1000.0,
+    );
+
+    Ok(())
+}
+
 pub fn print_report() -> Result<(), String> {
     let startup = crate::jobs::startup_perf_report()?;
     let interactive = crate::jobs::interactive_import_perf_report()?;

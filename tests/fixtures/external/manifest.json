@@ -1,0 +1,84 @@
+[
+  {
+    "file": "libheif/example.heic",
+    "url": "https://raw.githubusercontent.com/strukturag/libheif/46521618983c795fdb09a412ebb29e917086896a/examples/example.heic",
+    "sha256": "7f8b363e4936c0666a25f64f3a92fda10bd8e5453be4592530b65a55dd98f3f2",
+    "license": "LGPL-3.0-or-later project; example file from libheif repository",
+    "format": "heic",
+    "decoder_path": "macos-sips-fallback",
+    "width": 1280,
+    "height": 854
+  },
+  {
+    "file": "libheif/example.avif",
+    "url": "https://raw.githubusercontent.com/strukturag/libheif/46521618983c795fdb09a412ebb29e917086896a/examples/example.avif",
+    "sha256": "54a0dc31d02b6f5d9d4b66027d4787861b7af15ffd8fab8eab963d10c5411469",
+    "license": "LGPL-3.0-or-later project; example file from libheif repository",
+    "format": "avif",
+    "decoder_path": "image-crate-or-macos-sips-fallback",
+    "width": 800,
+    "height": 533
+  },
+  {
+    "file": "jpeg2k/file6.jp2",
+    "url": "https://raw.githubusercontent.com/Neopallium/jpeg2k/74aaa2f8c733270ca90403064be81d93e2d81a8a/samples/file6.jp2",
+    "sha256": "78ae553dc97b22352a2417aba739160e3b6c5b187b2efb867fb50f9814f1bc67",
+    "license": "MIT/Apache-2.0 project; sample file from jpeg2k repository",
+    "format": "jp2",
+    "decoder_path": "macos-sips-fallback",
+    "width": 768,
+    "height": 512
+  },
+  {
+    "file": "jxl-oxide/cmyk_layers.jxl",
+    "url": "https://raw.githubusercontent.com/tirr-c/jxl-oxide/4793a821d1a1893ce9ebd475b280a914d04f33df/crates/jxl-oxide-tests/tests/cms/cmyk_layers.jxl",
+    "sha256": "d732c8836bf1abeadf310d2e07387a32813ed4690d32650c1c25e541b80eed4a",
+    "license": "MIT/Apache-2.0 project; test file from jxl-oxide repository",
+    "format": "jxl",
+    "decoder_path": "jxl-oxide",
+    "width": 512,
+    "height": 512
+  },
+  {
+    "file": "image-rs/overexposed-gradient.exr",
+    "url": "https://raw.githubusercontent.com/image-rs/image/e0d3c74ae4496c728afcd8aca28e8f9fbe3b2a28/tests/images/exr/overexposed%20gradient%20-%20data%20window%20equals%20display%20window.exr",
+    "sha256": "f3bd45eb0c382efcaa90da81fa1497198e804f91acc56f9936e7788d53687e21",
+    "license": "MIT project; test image from image-rs/image repository",
+    "format": "exr",
+    "decoder_path": "image-crate-or-macos-sips-fallback",
+    "width": 20,
+    "height": 12
+  },
+  {
+    "file": "image-rs/rgb24.bmp",
+    "url": "https://raw.githubusercontent.com/image-rs/image/e0d3c74ae4496c728afcd8aca28e8f9fbe3b2a28/tests/images/bmp/images/rgb24.bmp",
+    "sha256": "a9c4fbfbf8cb6df8d2d9d1484359d037aebd25078b21137bfd6c69739fcbe2e1",
+    "license": "MIT project; test image from image-rs/image repository",
+    "format": "bmp",
+    "decoder_path": "image-crate",
+    "width": 127,
+    "height": 64
+  },
+  {
+    "file": "image-rs/apng-ball.png",
+    "url": "https://raw.githubusercontent.com/image-rs/image/e0d3c74ae4496c728afcd8aca28e8f9fbe3b2a28/tests/images/png/apng/ball.png",
+    "sha256": "ce0905f339f44370c0fecc226ef4b422d86f06a3ec4f194e5cfb9d0b50aafb2e",
+    "license": "MIT project; test image from image-rs/image repository",
+    "format": "png",
+    "decoder_path": "image-crate",
+    "width": 100,
+    "height": 100
+  },
+  {
+    "file": "image-rs/fuzz.webp",
+    "url": "https://raw.githubusercontent.com/image-rs/image/e0d3c74ae4496c728afcd8aca28e8f9fbe3b2a28/fuzz-afl/in/webp/id_000000,orig_tbbn0g04.webp",
+    "sha256": "272fbcf336e638a4739a2dbe8e2277326c545a61a2a9bad1e944b62345f01f0f",
+    "license": "MIT project; fuzz input from image-rs/image repository",
+    "format": "webp",
+    "decoder_path": "image-crate",
+    "width": 0,
+    "height": 0,
+    "expect_decode_failure": true,
+    "known_caveat": "Malformed fuzz input; useful for negative/robustness testing, not dimensions validation."
+  }
+]
