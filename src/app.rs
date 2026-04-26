@@ -48,6 +48,12 @@ struct ShortcutBinding {
     shift: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingBoardDelete {
+    board_id: i64,
+    board_name: String,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct SupportedShortcut {
     pub action: &'static str,
@@ -695,6 +701,7 @@ pub struct ReferenceApp {
     search: SearchController,
     sidebar_open: bool,
     sidebar_tab: SidebarTab,
+    pending_board_delete: Option<PendingBoardDelete>,
     status: String,
     perf_log: Option<PerfLogState>,
     frame_perf: FramePerfState,
@@ -758,6 +765,7 @@ impl ReferenceApp {
                     } else {
                         SidebarTab::Options
                     },
+                    pending_board_delete: None,
                     status,
                     perf_log: config.perf_log_enabled().then(|| PerfLogState {
                         app_started_at: Instant::now(),
@@ -925,6 +933,7 @@ impl ReferenceApp {
                 } else {
                     SidebarTab::Options
                 },
+                pending_board_delete: None,
                 status: format!("Storage unavailable: {error}"),
                 perf_log: config.perf_log_enabled().then(|| PerfLogState {
                     app_started_at: Instant::now(),
@@ -1071,8 +1080,114 @@ impl ReferenceApp {
         match action {
             Some(SidebarBoardAction::CreateBoard) => self.create_and_switch_board(true),
             Some(SidebarBoardAction::SwitchBoard(board_id)) => self.switch_to_board(board_id),
+            Some(SidebarBoardAction::RenameBoard(board_id, name)) => {
+                let Some(library) = &self.library else {
+                    self.status = "Storage unavailable".to_owned();
+                    return;
+                };
+                match library.rename_board(board_id, &name) {
+                    Ok(()) => self.status = "Renamed board".to_owned(),
+                    Err(error) => self.status = error,
+                }
+            }
+            Some(SidebarBoardAction::RequestDeleteBoard(board_id)) => {
+                let board_name = self
+                    .board_summaries()
+                    .into_iter()
+                    .find(|summary| summary.board.id == board_id)
+                    .map(|summary| summary.board.name)
+                    .unwrap_or_else(|| "Board".to_owned());
+                self.request_board_delete(board_id, board_name);
+            }
             None => {}
         }
+    }
+
+    fn request_board_delete(&mut self, board_id: i64, board_name: String) {
+        self.pending_board_delete = Some(PendingBoardDelete {
+            board_id,
+            board_name,
+        });
+    }
+
+    fn cancel_pending_board_delete(&mut self) {
+        self.pending_board_delete = None;
+    }
+
+    fn confirm_pending_board_delete(&mut self) {
+        let Some(pending) = self.pending_board_delete.take() else {
+            return;
+        };
+
+        self.persist_canvas_changes();
+        self.save_user_session();
+
+        let Some(library) = &self.library else {
+            self.status = "Storage unavailable".to_owned();
+            return;
+        };
+
+        let deleted_active_board = pending.board_id == self.active_board_id;
+        let next_active_board_id = match library.delete_board(pending.board_id) {
+            Ok(board_id) => board_id,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
+
+        if deleted_active_board {
+            self.active_board_id = next_active_board_id;
+            #[cfg(feature = "semantic-search")]
+            self.search.close_overlay(Some(&mut self.canvas));
+            #[cfg(not(feature = "semantic-search"))]
+            {
+                self.canvas.clear_search_matches();
+                self.canvas.clear_search_drag_preview();
+            }
+            self.crop_undo_stack.clear();
+            self.canvas.clear_for_board_switch();
+            self.load_user_session();
+            self.restore_active_board_import_placeholders();
+            self.enqueue_existing_items();
+        }
+
+        self.status = format!("Deleted {}", pending.board_name);
+    }
+
+    fn show_board_delete_confirmation(&mut self, ctx: &egui::Context) {
+        let Some(pending) = self.pending_board_delete.clone() else {
+            return;
+        };
+
+        egui::Window::new("Delete board?")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_min_width(280.0);
+                ui.label(
+                    egui::RichText::new(format!("Delete \"{}\"?", pending.board_name))
+                        .color(crate::theme::TEXT),
+                );
+                ui.add_space(crate::theme::SPACE_1);
+                ui.label(
+                    egui::RichText::new(
+                        "Images stay in the shared Library. Placements, arrows, lines, and textboxes on this board will be removed.",
+                    )
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_MUTED),
+                );
+                ui.add_space(crate::theme::SPACE_3);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        self.cancel_pending_board_delete();
+                    }
+                    if ui.button("Delete").clicked() {
+                        self.confirm_pending_board_delete();
+                    }
+                });
+            });
     }
 
     fn load_user_session(&mut self) {
@@ -2106,6 +2221,10 @@ impl ReferenceApp {
     }
 
     fn handle_board_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.pending_board_delete.is_some() {
+            return;
+        }
+
         #[cfg(feature = "semantic-search")]
         if self.search.is_open() {
             return;
@@ -3073,9 +3192,10 @@ impl eframe::App for ReferenceApp {
         self.canvas.set_layout_gap(self.settings.import_gap);
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         #[cfg(feature = "semantic-search")]
-        let suppress_canvas_input = self.search.blocks_canvas_input(ui.ctx());
+        let suppress_canvas_input =
+            self.search.blocks_canvas_input(ui.ctx()) || self.pending_board_delete.is_some();
         #[cfg(not(feature = "semantic-search"))]
-        let suppress_canvas_input = false;
+        let suppress_canvas_input = self.pending_board_delete.is_some();
         self.frame_perf.canvas = crate::canvas::show(
             ui,
             screen_rect,
@@ -3130,6 +3250,7 @@ impl eframe::App for ReferenceApp {
             self.sync_semantic_search_service();
         }
         self.persist_settings_if_changed(sidebar_result.settings_changed);
+        self.show_board_delete_confirmation(ui.ctx());
         if show_sidebar_hint(ui.ctx(), screen_rect, sidebar_open, &active_board_name) {
             self.sidebar_open = !self.sidebar_open;
         }
@@ -3674,6 +3795,38 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn board_delete_requires_confirmation_before_archiving_active_board() {
+        let root = temp_library_root("reference-confirm-delete-board");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        let second = library.create_board("Second").unwrap();
+        library.set_active_board(second.id).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = second.id;
+
+        app.request_board_delete(second.id, second.name.clone());
+
+        assert!(app.pending_board_delete.is_some());
+        assert_eq!(library.list_boards().unwrap().len(), 2);
+
+        app.confirm_pending_board_delete();
+
+        assert!(app.pending_board_delete.is_none());
+        assert_eq!(app.active_board_id, first.id);
+        assert_eq!(
+            library
+                .list_boards()
+                .unwrap()
+                .iter()
+                .map(|board| board.id)
+                .collect::<Vec<_>>(),
+            vec![first.id]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[cfg(feature = "semantic-search")]
     #[test]
     fn switching_boards_clears_selection_search_and_transient_undo() {
@@ -4031,6 +4184,7 @@ mod tests {
             residency: super::ImageResidencyCoordinator::default(),
             sidebar_open: false,
             sidebar_tab: super::SidebarTab::default(),
+            pending_board_delete: None,
             status: String::new(),
             perf_log: None,
             next_import_queue_id: 1,
