@@ -8,8 +8,8 @@ use crate::residency::ImageResidencyCoordinator;
 #[cfg(feature = "semantic-search")]
 use crate::search::SearchController;
 use crate::sidebar::{
-    SidebarTab, block_sidebar_input, close_sidebar_on_outside_click, show_sidebar,
-    show_sidebar_hint, sidebar_rect,
+    SidebarBoardAction, SidebarTab, block_sidebar_input, close_sidebar_on_outside_click,
+    show_sidebar, show_sidebar_hint, sidebar_rect,
 };
 
 const COPY_PAYLOAD_KIND: &str = "reference-board-items";
@@ -285,6 +285,7 @@ enum VerificationMode {
     BackgroundGrid,
     BackgroundDots,
     BackgroundTransition,
+    ActiveBoardChip,
 }
 
 impl AppConfig {
@@ -404,6 +405,11 @@ impl AppConfig {
                 #[cfg(debug_assertions)]
                 {
                     verification_mode = Some(VerificationMode::BackgroundTransition);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-active-board-chip" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::ActiveBoardChip);
                 }
             } else if let Some(query) = argument.strip_prefix("--verify-search=") {
                 #[cfg(debug_assertions)]
@@ -947,6 +953,87 @@ impl ReferenceApp {
         match library.load_canvas_annotations() {
             Ok(annotations) => self.canvas.add_annotations(annotations),
             Err(error) => self.status = error,
+        }
+    }
+
+    fn board_summaries(&mut self) -> Vec<crate::data::BoardSummary> {
+        let Some(library) = &self.library else {
+            return Vec::new();
+        };
+        match library.list_board_summaries() {
+            Ok(boards) => boards,
+            Err(error) => {
+                self.status = error;
+                Vec::new()
+            }
+        }
+    }
+
+    fn create_and_switch_board(&mut self, keep_sidebar_open: bool) {
+        let Some(library) = &self.library else {
+            self.status = "Storage unavailable".to_owned();
+            return;
+        };
+
+        let boards = match library.list_boards() {
+            Ok(boards) => boards,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
+        let name = generated_board_name(&boards);
+        let board = match library.create_board(&name) {
+            Ok(board) => board,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
+
+        self.switch_to_board(board.id);
+        if keep_sidebar_open {
+            self.sidebar_open = true;
+        }
+        self.status = format!("Created {}", board.name);
+    }
+
+    fn switch_to_board(&mut self, board_id: i64) {
+        if self.active_board_id == board_id {
+            return;
+        }
+
+        self.persist_canvas_changes();
+        self.save_user_session();
+
+        let Some(library) = &self.library else {
+            self.status = "Storage unavailable".to_owned();
+            return;
+        };
+        if let Err(error) = library.set_active_board(board_id) {
+            self.status = error;
+            return;
+        }
+
+        self.active_board_id = board_id;
+        #[cfg(feature = "semantic-search")]
+        self.search.close_overlay(Some(&mut self.canvas));
+        #[cfg(not(feature = "semantic-search"))]
+        {
+            self.canvas.clear_search_matches();
+            self.canvas.clear_search_drag_preview();
+        }
+        self.crop_undo_stack.clear();
+        self.canvas.clear_for_board_switch();
+        self.load_user_session();
+        self.enqueue_existing_items();
+    }
+
+    fn handle_board_action(&mut self, action: Option<SidebarBoardAction>) {
+        match action {
+            Some(SidebarBoardAction::CreateBoard) => self.create_and_switch_board(true),
+            Some(SidebarBoardAction::SwitchBoard(board_id)) => self.switch_to_board(board_id),
+            None => {}
         }
     }
 
@@ -1932,6 +2019,52 @@ impl ReferenceApp {
         }
     }
 
+    fn handle_board_shortcuts(&mut self, ctx: &egui::Context) {
+        #[cfg(feature = "semantic-search")]
+        if self.search.is_open() {
+            return;
+        }
+
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+
+        let create_requested =
+            ctx.input(|input| input.modifiers.command && input.key_pressed(egui::Key::N));
+        if create_requested {
+            self.create_and_switch_board(false);
+            return;
+        }
+
+        let requested_index = ctx.input(|input| {
+            if !input.modifiers.command {
+                return None;
+            }
+            [
+                (egui::Key::Num1, 0_usize),
+                (egui::Key::Num2, 1),
+                (egui::Key::Num3, 2),
+                (egui::Key::Num4, 3),
+                (egui::Key::Num5, 4),
+                (egui::Key::Num6, 5),
+                (egui::Key::Num7, 6),
+                (egui::Key::Num8, 7),
+                (egui::Key::Num9, 8),
+                (egui::Key::Num0, 9),
+            ]
+            .into_iter()
+            .find_map(|(key, index)| input.key_pressed(key).then_some(index))
+        });
+
+        let Some(index) = requested_index else {
+            return;
+        };
+        let boards = self.board_summaries();
+        if let Some(summary) = boards.get(index) {
+            self.switch_to_board(summary.board.id);
+        }
+    }
+
     fn duplicate_selection_with_gap(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
         let Some(library) = &self.library else {
             self.status = "Storage unavailable".to_owned();
@@ -2838,6 +2971,7 @@ impl eframe::App for ReferenceApp {
         self.handle_dropped_files(ui, screen_rect);
         #[cfg(feature = "semantic-search")]
         self.handle_search_shortcut(ui.ctx());
+        self.handle_board_shortcuts(ui.ctx());
         self.handle_selection_shortcuts(ui.ctx(), screen_rect);
         let sidebar_open = self.sidebar_open;
         if sidebar_open {
@@ -2872,6 +3006,12 @@ impl eframe::App for ReferenceApp {
         self.handle_pending_crop_requests();
         self.handle_pending_annotation_requests();
         self.persist_canvas_changes();
+        let board_summaries = self.board_summaries();
+        let active_board_name = board_summaries
+            .iter()
+            .find(|summary| summary.board.id == self.active_board_id)
+            .map(|summary| summary.board.name.clone())
+            .unwrap_or_else(|| "My Board".to_owned());
         let sidebar_result = show_sidebar(
             ui.ctx(),
             screen_rect,
@@ -2879,7 +3019,10 @@ impl eframe::App for ReferenceApp {
             &mut self.sidebar_tab,
             &mut self.settings,
             &mut self.canvas,
+            &board_summaries,
+            self.active_board_id,
         );
+        self.handle_board_action(sidebar_result.board_action);
         if sidebar_open {
             close_sidebar_on_outside_click(
                 ui.ctx(),
@@ -2895,7 +3038,9 @@ impl eframe::App for ReferenceApp {
             self.sync_semantic_search_service();
         }
         self.persist_settings_if_changed(sidebar_result.settings_changed);
-        show_sidebar_hint(ui.ctx(), screen_rect, sidebar_open);
+        if show_sidebar_hint(ui.ctx(), screen_rect, sidebar_open, &active_board_name) {
+            self.sidebar_open = !self.sidebar_open;
+        }
         #[cfg(feature = "semantic-search")]
         self.show_search_overlay(ui.ctx(), screen_rect);
         if self
@@ -3016,9 +3161,21 @@ fn apply_average_selection_area(canvas: &mut crate::canvas::CanvasState, status:
     *status = format!("Averaged area across {changed} {noun}");
 }
 
+fn generated_board_name(boards: &[crate::data::Board]) -> String {
+    let names = boards
+        .iter()
+        .filter(|board| !board.archived)
+        .map(|board| board.name.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    (2..)
+        .map(|number| format!("Board {number}"))
+        .find(|name| !names.contains(name.as_str()))
+        .unwrap_or_else(|| "Board 2".to_owned())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ArrangementAction, ReferenceApp, apply_arrangement_action};
+    use super::{ArrangementAction, CropUndoEntry, ReferenceApp, apply_arrangement_action};
     use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
     use crate::jobs::LoadedCanvasItem;
     #[cfg(feature = "semantic-search")]
@@ -3179,6 +3336,316 @@ mod tests {
             sidebar_rect
         ));
         assert!(!should_close_sidebar(true, None, sidebar_rect));
+    }
+
+    #[test]
+    fn sidebar_create_board_generates_name_switches_and_stays_open() {
+        let root = temp_library_root("reference-create-board");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.sidebar_open = true;
+
+        app.create_and_switch_board(true);
+
+        let boards = library.list_boards().unwrap();
+        assert_eq!(boards.len(), 2);
+        assert_eq!(boards[0].name, "My Board");
+        assert_eq!(boards[1].name, "Board 2");
+        assert_eq!(app.active_board_id, boards[1].id);
+        assert_eq!(
+            library.load_user_session().unwrap().active_board_id,
+            boards[1].id
+        );
+        assert!(app.sidebar_open);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn generated_board_names_fill_smallest_visible_gap() {
+        let root = temp_library_root("reference-board-name-gap");
+        let library = Library::initialize(root.clone()).unwrap();
+        let board_2 = library.create_board("Board 2").unwrap();
+        library.create_board("Board 3").unwrap();
+        {
+            let connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
+            connection
+                .execute("UPDATE boards SET archived = 1 WHERE id = ?1", [board_2.id])
+                .unwrap();
+        }
+        let mut app = test_app(Some(library.clone()));
+
+        app.create_and_switch_board(false);
+
+        let boards = library.list_boards().unwrap();
+        assert!(boards.iter().any(|board| board.name == "Board 2"));
+        assert_eq!(app.active_board_id, boards.last().unwrap().id);
+        assert!(!app.sidebar_open);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn command_n_creates_board_without_opening_sidebar() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-cmd-n-board");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.sidebar_open = false;
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                modifiers: egui::Modifiers {
+                    command: true,
+                    ..Default::default()
+                },
+                events: vec![egui::Event::Key {
+                    key: egui::Key::N,
+                    physical_key: Some(egui::Key::N),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        ..Default::default()
+                    },
+                }],
+                ..Default::default()
+            },
+            |ui| app.handle_board_shortcuts(ui.ctx()),
+        );
+
+        let boards = library.list_boards().unwrap();
+        assert_eq!(boards.len(), 2);
+        assert_eq!(boards[1].name, "Board 2");
+        assert_eq!(app.active_board_id, boards[1].id);
+        assert!(!app.sidebar_open);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn command_number_switches_visible_board() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-cmd-number-board");
+        let library = Library::initialize(root.clone()).unwrap();
+        let second = library.create_board("Second").unwrap();
+        let third = library.create_board("Third").unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = second.id;
+        library.set_active_board(second.id).unwrap();
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                modifiers: egui::Modifiers {
+                    command: true,
+                    ..Default::default()
+                },
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Num3,
+                    physical_key: Some(egui::Key::Num3),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        ..Default::default()
+                    },
+                }],
+                ..Default::default()
+            },
+            |ui| app.handle_board_shortcuts(ui.ctx()),
+        );
+
+        assert_eq!(app.active_board_id, third.id);
+        assert_eq!(
+            library.load_user_session().unwrap().active_board_id,
+            third.id
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn command_zero_switches_tenth_visible_board() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-cmd-zero-board");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut tenth = None;
+        for index in 2..=10 {
+            let board = library.create_board(&format!("Board {index}")).unwrap();
+            if index == 10 {
+                tenth = Some(board);
+            }
+        }
+        let tenth = tenth.unwrap();
+        let mut app = test_app(Some(library.clone()));
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                modifiers: egui::Modifiers {
+                    command: true,
+                    ..Default::default()
+                },
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Num0,
+                    physical_key: Some(egui::Key::Num0),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        ..Default::default()
+                    },
+                }],
+                ..Default::default()
+            },
+            |ui| app.handle_board_shortcuts(ui.ctx()),
+        );
+
+        assert_eq!(app.active_board_id, tenth.id);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn board_shortcuts_are_suppressed_while_search_is_open() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-board-shortcut-search");
+        let library = Library::initialize(root.clone()).unwrap();
+        library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.search.overlay.open = true;
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                modifiers: egui::Modifiers {
+                    command: true,
+                    ..Default::default()
+                },
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Num2,
+                    physical_key: Some(egui::Key::Num2),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        ..Default::default()
+                    },
+                }],
+                ..Default::default()
+            },
+            |ui| app.handle_board_shortcuts(ui.ctx()),
+        );
+
+        assert_eq!(app.active_board_id, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn switching_boards_saves_previous_viewport_and_loads_target_viewport() {
+        let root = temp_library_root("reference-board-switch-viewport");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        let second = library.create_board("Second").unwrap();
+        library.set_active_board(second.id).unwrap();
+        let mut second_session = library.load_user_session().unwrap();
+        second_session.viewport.camera_pan_x = 75.0;
+        second_session.viewport.canvas_background = crate::data::CanvasBackground::Dots;
+        library.save_user_session(&second_session).unwrap();
+        library.set_active_board(first.id).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = first.id;
+        app.canvas
+            .apply_viewport_state(&crate::data::ViewportState {
+                camera_pan_x: 22.0,
+                camera_pan_y: 33.0,
+                camera_zoom: 1.5,
+                canvas_background: crate::data::CanvasBackground::Grid,
+            });
+
+        app.switch_to_board(second.id);
+
+        let saved_first = {
+            library.set_active_board(first.id).unwrap();
+            library.load_user_session().unwrap()
+        };
+        assert_eq!(saved_first.viewport.camera_pan_x, 22.0);
+        assert_eq!(
+            saved_first.viewport.canvas_background,
+            crate::data::CanvasBackground::Grid
+        );
+        library.set_active_board(second.id).unwrap();
+        assert_eq!(app.active_board_id, second.id);
+        assert_eq!(app.canvas.background(), crate::data::CanvasBackground::Dots);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn switching_boards_clears_selection_search_and_transient_undo() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-board-switch-cleanup");
+        let library = Library::initialize(root.clone()).unwrap();
+        let second = library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library.clone()));
+        let asset = ImageAsset {
+            id: 1,
+            original_path: PathBuf::from("fixture.png"),
+            filename: "fixture.png".to_owned(),
+            mime_type: "image/png".to_owned(),
+            width: 1,
+            height: 1,
+            file_size: 4,
+            imported_at: 0,
+        };
+        let record = BoardItemWithAsset {
+            item: BoardItem {
+                id: 1,
+                asset_id: 1,
+                x: 0.0,
+                y: 0.0,
+                scale: 1.0,
+                rotation: 0.0,
+                z_index: 0,
+                archived: false,
+            },
+            asset,
+        };
+        app.canvas.add_loaded_item(
+            &ctx,
+            LoadedCanvasItem {
+                queue_id: None,
+                record: record.clone(),
+                preview_rgba: vec![255, 255, 255, 255],
+                preview_width: 1,
+                preview_height: 1,
+                animated_preview: None,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+        app.canvas.select_items(&[1]);
+        app.search.overlay.open = true;
+        app.canvas.set_search_matches(vec![1], Some(1));
+        app.crop_undo_stack.push(CropUndoEntry {
+            previous_record: record,
+            previous_rgba: vec![255, 255, 255, 255],
+            previous_preview_width: 1,
+            previous_preview_height: 1,
+            removed_asset_id: 2,
+        });
+
+        app.switch_to_board(second.id);
+
+        assert!(!app.canvas.has_selection());
+        assert!(!app.search.is_open());
+        assert!(app.crop_undo_stack.is_empty());
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[cfg(feature = "semantic-search")]
