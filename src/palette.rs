@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use eframe::egui;
 
-use crate::semantic_search::SearchResultGroup;
+use crate::semantic_search::{SearchResultGroup, SearchScope};
 
 pub(crate) const SEARCH_DEBOUNCE_MS: f32 = 120.0;
 pub(crate) const SEARCH_OVERLAY_TOP_MARGIN: f32 = 56.0;
@@ -31,6 +31,7 @@ pub(crate) struct SearchOverlayState {
     pub status: SearchOverlayStatus,
     pub focus_requested: bool,
     pub image_pivot: Option<ImageSearchPivot>,
+    pub scope: SearchScope,
 }
 
 impl Default for SearchOverlayState {
@@ -51,6 +52,7 @@ impl Default for SearchOverlayState {
             status: SearchOverlayStatus::Idle,
             focus_requested: false,
             image_pivot: None,
+            scope: SearchScope::ThisBoard,
         }
     }
 }
@@ -232,6 +234,13 @@ pub(crate) fn search_result_tile(
             uv_rect,
             egui::Color32::WHITE,
         );
+    } else if let Some(path) = &group.asset_original_path {
+        if let Ok(url) = url::Url::from_file_path(path) {
+            egui::Image::from_uri(url.to_string())
+                .fit_to_exact_size(preview_rect.size())
+                .maintain_aspect_ratio(true)
+                .paint_at(ui, preview_rect);
+        }
     } else {
         ui.painter()
             .rect_filled(preview_rect, tile_radius, crate::theme::BACKGROUND);
@@ -253,6 +262,7 @@ pub(crate) fn search_result_tile(
 pub(crate) struct PaletteInputResult {
     pub response: egui::Response,
     pub pivot_dismissed: bool,
+    pub scope_toggled: bool,
 }
 
 pub(crate) fn paint_palette_input_row(
@@ -261,9 +271,11 @@ pub(crate) fn paint_palette_input_row(
     input_id: egui::Id,
     pivot: Option<&ImageSearchPivot>,
     canvas: &crate::canvas::CanvasState,
+    scope: SearchScope,
 ) -> PaletteInputResult {
     let mut response = None;
     let mut pivot_dismissed = false;
+    let mut scope_toggled = false;
     egui::Frame::new()
         .inner_margin(egui::Margin {
             left: 18,
@@ -283,7 +295,7 @@ pub(crate) fn paint_palette_input_row(
                     let (icon_rect, _) =
                         ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
                     paint_search_icon(ui, icon_rect, crate::theme::TEXT_SUBTLE);
-                    "Search images, tags, boards"
+                    "Search images"
                 };
 
                 let mut visuals = ui.style_mut().visuals.clone();
@@ -300,10 +312,11 @@ pub(crate) fn paint_palette_input_row(
                 let resp = ui.add(
                     egui::TextEdit::singleline(query)
                         .id(input_id)
-                        .desired_width(ui.available_width() - 44.0)
+                        .desired_width((ui.available_width() - 144.0).max(160.0))
                         .hint_text(placeholder)
                         .frame(egui::Frame::NONE),
                 );
+                scope_toggled = paint_scope_toggle(ui, scope);
                 paint_kbd_pill(ui, "esc");
                 response = Some(resp);
             });
@@ -311,7 +324,39 @@ pub(crate) fn paint_palette_input_row(
     PaletteInputResult {
         response: response.expect("palette input row allocated"),
         pivot_dismissed,
+        scope_toggled,
     }
+}
+
+fn paint_scope_toggle(ui: &mut egui::Ui, scope: SearchScope) -> bool {
+    let label = match scope {
+        SearchScope::ThisBoard => "This Board",
+        SearchScope::Library => "Library",
+    };
+    let response = egui::Frame::new()
+        .fill(egui::Color32::from_white_alpha(18))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(28)))
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin {
+            left: 9,
+            right: 9,
+            top: 5,
+            bottom: 5,
+        })
+        .show(ui, |ui| {
+            ui.add(
+                egui::Button::new(
+                    egui::RichText::new(label)
+                        .size(12.0)
+                        .color(crate::theme::TEXT),
+                )
+                .frame(false),
+            )
+            .on_hover_text("Toggle search scope")
+        })
+        .inner;
+
+    response.clicked()
 }
 
 fn paint_image_pivot_pill(
