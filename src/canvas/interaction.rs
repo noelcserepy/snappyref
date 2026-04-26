@@ -24,6 +24,7 @@ pub(super) fn handle_input(
 ) {
     let pointer_pos = ui.input(|i| i.pointer.latest_pos());
     let primary_pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
+    let secondary_pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary));
     let primary_released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
     let primary_double_clicked = ui.input(|i| {
         i.pointer
@@ -47,6 +48,14 @@ pub(super) fn handle_input(
 
     if pointer_in_canvas_rect {
         state.interaction.last_pointer_screen_pos = pointer_pos;
+    }
+
+    if pointer_in_canvas_rect
+        && secondary_pressed
+        && let Some(pointer_pos) = pointer_pos
+    {
+        open_context_menu_at_pointer(state, rect, pointer_pos);
+        return;
     }
 
     if matches!(
@@ -485,6 +494,36 @@ pub(super) fn handle_input(
     if pan_delta != egui::Vec2::ZERO {
         state.pan += pan_delta;
     }
+}
+
+pub(super) fn open_context_menu_at_pointer(
+    state: &mut CanvasState,
+    rect: egui::Rect,
+    pointer_pos: egui::Pos2,
+) {
+    if let Some(annotation_id) = hit_test_annotation(state, rect, pointer_pos) {
+        if !state.is_annotation_selected(annotation_id) {
+            state.finish_textbox_edit();
+            state.document.selected_item_ids.clear();
+            state.document.selected_annotation_ids = vec![annotation_id];
+        }
+    } else if let Some(item_id) = hit_test_image(state, rect, pointer_pos) {
+        if !state.is_selected(item_id) {
+            state.set_single_selection(item_id);
+        }
+    }
+
+    state.interaction.drag_state = None;
+    state.interaction.annotation_drag_state = None;
+    state.interaction.image_transform_state = None;
+    state.interaction.textbox_transform_state = None;
+    state.interaction.marquee_state = None;
+    state.interaction.crop_state = None;
+    state.interaction.annotation_draft_state = None;
+    state.clear_move_preview_placeholders();
+    state.interaction.pending_context_menu_request = Some(super::CanvasContextMenuRequest {
+        screen_pos: pointer_pos,
+    });
 }
 
 fn drawing_annotation_kind(ui: &egui::Ui) -> Option<CanvasAnnotationKind> {

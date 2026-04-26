@@ -780,6 +780,7 @@ impl Library {
                  FROM board_items b
                  JOIN assets a ON a.id = b.asset_id
                  WHERE b.archived = 0
+                   AND a.archived = 0
                    AND b.board_id = ?1
                  ORDER BY b.z_index ASC, b.id ASC",
             )
@@ -850,6 +851,7 @@ impl Library {
                  FROM board_items b
                  JOIN assets a ON a.id = b.asset_id
                  WHERE b.archived = 0
+                   AND a.archived = 0
                    AND b.board_id = ?1
                  ORDER BY b.z_index ASC, b.id ASC",
             )
@@ -919,6 +921,40 @@ impl Library {
         Ok(())
     }
 
+    pub fn archive_assets(&self, asset_ids: &[i64]) -> Result<(), String> {
+        if asset_ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start asset archive transaction: {error}"))?;
+
+        for asset_id in asset_ids {
+            transaction
+                .execute(
+                    "UPDATE assets SET archived = 1 WHERE id = ?1",
+                    params![asset_id],
+                )
+                .map_err(|error| format!("failed to archive asset {asset_id}: {error}"))?;
+            transaction
+                .execute(
+                    "UPDATE board_items SET archived = 1 WHERE asset_id = ?1",
+                    params![asset_id],
+                )
+                .map_err(|error| {
+                    format!("failed to archive placements for asset {asset_id}: {error}")
+                })?;
+        }
+
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit asset archive transaction: {error}"))?;
+
+        Ok(())
+    }
+
     pub fn duplicate_board_items(
         &self,
         item_ids: &[i64],
@@ -951,7 +987,10 @@ impl Library {
                     a.imported_at
                  FROM board_items b
                  JOIN assets a ON a.id = b.asset_id
-                 WHERE b.id = ?1 AND b.archived = 0 AND b.board_id = ?2",
+                 WHERE b.id = ?1
+                   AND b.archived = 0
+                   AND b.board_id = ?2
+                   AND a.archived = 0",
             )
             .map_err(|error| format!("failed to prepare duplicate-item query: {error}"))?;
 
@@ -1068,7 +1107,8 @@ impl Library {
                     file_size,
                     imported_at
                  FROM assets
-                 WHERE id = ?1",
+                 WHERE id = ?1
+                   AND archived = 0",
                 params![asset_id],
                 |row| {
                     Ok(ImageAsset {
@@ -1222,6 +1262,7 @@ impl Library {
                     AND e.model_key = ?1
                     AND e.status = 'ready'
                  WHERE e.asset_id IS NULL
+                   AND a.archived = 0
                  GROUP BY a.id, a.original_path
                  ORDER BY a.id ASC",
             )
@@ -1254,8 +1295,10 @@ impl Library {
                     e.embedding_blob
                  FROM asset_embeddings e
                  JOIN board_items b ON b.asset_id = e.asset_id
+                 JOIN assets a ON a.id = e.asset_id
                  WHERE b.archived = 0
                    AND b.board_id = ?2
+                   AND a.archived = 0
                    AND e.model_key = ?1
                    AND e.status = 'ready'
                    AND e.embedding_blob IS NOT NULL
@@ -1293,6 +1336,7 @@ impl Library {
                  WHERE e.model_key = ?1
                    AND e.status = 'ready'
                    AND e.embedding_blob IS NOT NULL
+                   AND a.archived = 0
                  ORDER BY e.asset_id ASC",
             )
             .map_err(|error| format!("failed to prepare library-embedding query: {error}"))?;
@@ -1321,10 +1365,12 @@ impl Library {
             .prepare(
                 "SELECT embedding_blob
                  FROM asset_embeddings
-                 WHERE asset_id = ?1
-                   AND model_key = ?2
-                   AND status = 'ready'
-                   AND embedding_blob IS NOT NULL
+                 JOIN assets a ON a.id = asset_embeddings.asset_id
+                 WHERE asset_embeddings.asset_id = ?1
+                   AND asset_embeddings.model_key = ?2
+                   AND asset_embeddings.status = 'ready'
+                   AND asset_embeddings.embedding_blob IS NOT NULL
+                   AND a.archived = 0
                  LIMIT 1",
             )
             .map_err(|error| format!("failed to prepare asset-embedding query: {error}"))?;
@@ -1363,13 +1409,15 @@ impl Library {
             .join(", ");
         let sql = format!(
             "SELECT
-                id,
-                asset_id
+                board_items.id,
+                board_items.asset_id
              FROM board_items
-             WHERE archived = 0
-               AND board_id = ?
-               AND asset_id IN ({placeholders})
-             ORDER BY z_index ASC, id ASC"
+             JOIN assets ON assets.id = board_items.asset_id
+             WHERE board_items.archived = 0
+               AND board_items.board_id = ?
+               AND assets.archived = 0
+               AND board_items.asset_id IN ({placeholders})
+             ORDER BY board_items.z_index ASC, board_items.id ASC"
         );
 
         let mut statement = connection
@@ -1408,7 +1456,8 @@ impl Library {
         let sql = format!(
             "SELECT id, original_path
              FROM assets
-             WHERE id IN ({placeholders})"
+             WHERE archived = 0
+               AND id IN ({placeholders})"
         );
 
         let mut statement = connection
@@ -1800,6 +1849,34 @@ impl Library {
         Ok(())
     }
 
+    pub fn delete_canvas_annotations(&self, annotation_ids: &[i64]) -> Result<(), String> {
+        if annotation_ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start annotation delete transaction: {error}"))?;
+
+        for annotation_id in annotation_ids {
+            transaction
+                .execute(
+                    "DELETE FROM canvas_annotations WHERE id = ?1",
+                    params![annotation_id],
+                )
+                .map_err(|error| {
+                    format!("failed to delete canvas annotation {annotation_id}: {error}")
+                })?;
+        }
+
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit annotation delete transaction: {error}"))?;
+
+        Ok(())
+    }
+
     fn initialize_schema(&self) -> Result<(), String> {
         let connection = self.connection()?;
         let should_migrate_default_board_viewport = !table_exists(&connection, "boards")?;
@@ -1817,7 +1894,8 @@ impl Library {
                     width         INTEGER NOT NULL,
                     height        INTEGER NOT NULL,
                     file_size     INTEGER NOT NULL,
-                    imported_at   INTEGER NOT NULL
+                    imported_at   INTEGER NOT NULL,
+                    archived      INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS boards (
@@ -1893,6 +1971,7 @@ impl Library {
             .map_err(|error| format!("failed to initialize database schema: {error}"))?;
 
         ensure_board_items_archived_column(&connection)?;
+        ensure_assets_archived_column(&connection)?;
         ensure_default_board(&connection)?;
         ensure_board_items_board_id_column(&connection)?;
         ensure_user_session_auto_image_scaling_column(&connection)?;
@@ -1990,6 +2069,21 @@ fn ensure_board_items_archived_column(connection: &Connection) -> Result<(), Str
             [],
         )
         .map_err(|error| format!("failed to add archived column to board_items: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_assets_archived_column(connection: &Connection) -> Result<(), String> {
+    if table_has_column(connection, "assets", "archived")? {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE assets ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|error| format!("failed to add archived column to assets: {error}"))?;
 
     Ok(())
 }
@@ -2960,6 +3054,72 @@ mod tests {
 
         assert!(library.delete_board(first.id).is_ok());
         assert!(library.delete_board(third.id).is_err());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archive_assets_removes_their_placements_from_all_boards_and_preserves_files() {
+        let root = temp_root("reference-archive-assets-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let second = library.create_board("Second").unwrap();
+        let first_path = library
+            .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let second_path = library
+            .store_rgba_image("second", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+        let first_item = library
+            .persist_imported_image(
+                &first_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 20.0),
+                1.0,
+            )
+            .unwrap();
+        let kept_item = library
+            .persist_imported_image(
+                &second_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(30.0, 40.0),
+                1.0,
+            )
+            .unwrap();
+        library.set_active_board(second.id).unwrap();
+        let second_placement = library
+            .create_board_item_from_asset(first_item.asset.id, egui::pos2(50.0, 60.0), 1.0, 0.0, 0)
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(first_item.asset.id, "test-model", &[1.0, 0.0])
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(kept_item.asset.id, "test-model", &[0.0, 1.0])
+            .unwrap();
+
+        library.archive_assets(&[first_item.asset.id]).unwrap();
+
+        assert!(first_item.asset.original_path.exists());
+        assert!(second_placement.asset.original_path.exists());
+        library.set_active_board(1).unwrap();
+        let first_board_items = library.load_board_items().unwrap();
+        assert_eq!(first_board_items.len(), 1);
+        assert_eq!(first_board_items[0].asset.id, kept_item.asset.id);
+        library.set_active_board(second.id).unwrap();
+        assert!(library.load_board_items().unwrap().is_empty());
+        let embeddings = library.load_library_embeddings("test-model").unwrap();
+        assert_eq!(
+            embeddings
+                .iter()
+                .map(|embedding| embedding.asset_id)
+                .collect::<Vec<_>>(),
+            vec![kept_item.asset.id]
+        );
 
         let _ = fs::remove_dir_all(root);
     }

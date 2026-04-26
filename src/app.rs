@@ -35,6 +35,24 @@ enum SupportedShortcutAction {
     AverageSelectionArea,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ContextMenuAction {
+    Copy,
+    Paste,
+    Duplicate,
+    DeleteFromBoard,
+    Crop,
+    SearchUsingImage,
+    RemoveFromLibrary,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ContextMenuItem {
+    action: ContextMenuAction,
+    label: &'static str,
+    enabled: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum ExternalImportSource {
     Path(std::path::PathBuf),
@@ -52,6 +70,11 @@ struct ShortcutBinding {
 struct PendingBoardDelete {
     board_id: i64,
     board_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingLibraryRemove {
+    asset_ids: Vec<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -323,6 +346,7 @@ enum VerificationMode {
     AnimatedGif,
     SvgImage,
     MoveSnapPreview,
+    ContextMenu,
     ImportPlaceholders,
     ImportLoaded,
     BackgroundGrid,
@@ -425,6 +449,11 @@ impl AppConfig {
                 #[cfg(debug_assertions)]
                 {
                     verification_mode = Some(VerificationMode::MoveSnapPreview);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-context-menu" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::ContextMenu);
                 }
             } else if cfg!(debug_assertions) && argument == "--verify-import-placeholders" {
                 #[cfg(debug_assertions)]
@@ -584,6 +613,11 @@ impl AppConfig {
     }
 
     #[cfg(debug_assertions)]
+    fn verify_context_menu_on_start(&self) -> bool {
+        matches!(self.verification_mode, Some(VerificationMode::ContextMenu))
+    }
+
+    #[cfg(debug_assertions)]
     fn verify_import_placeholders_on_start(&self) -> bool {
         matches!(
             self.verification_mode,
@@ -619,6 +653,7 @@ impl AppConfig {
                     | VerificationMode::AnimatedGif
                     | VerificationMode::SvgImage
                     | VerificationMode::MoveSnapPreview
+                    | VerificationMode::ContextMenu
                     | VerificationMode::ImportPlaceholders
                     | VerificationMode::ImportLoaded
                     | VerificationMode::BackgroundGrid
@@ -729,6 +764,8 @@ pub struct ReferenceApp {
     sidebar_open: bool,
     sidebar_tab: SidebarTab,
     pending_board_delete: Option<PendingBoardDelete>,
+    pending_library_remove: Option<PendingLibraryRemove>,
+    context_menu_pos: Option<egui::Pos2>,
     status: String,
     perf_log: Option<PerfLogState>,
     frame_perf: FramePerfState,
@@ -793,6 +830,8 @@ impl ReferenceApp {
                         SidebarTab::Options
                     },
                     pending_board_delete: None,
+                    pending_library_remove: None,
+                    context_menu_pos: None,
                     status,
                     perf_log: config.perf_log_enabled().then(|| PerfLogState {
                         app_started_at: Instant::now(),
@@ -875,6 +914,10 @@ impl ReferenceApp {
                 #[cfg(debug_assertions)]
                 if config.verify_move_snap_on_start() {
                     app.seed_move_snap_verification(&cc.egui_ctx);
+                }
+                #[cfg(debug_assertions)]
+                if config.verify_context_menu_on_start() {
+                    app.seed_context_menu_verification(&cc.egui_ctx);
                 }
                 #[cfg(debug_assertions)]
                 if config.verify_import_placeholders_on_start() {
@@ -961,6 +1004,8 @@ impl ReferenceApp {
                     SidebarTab::Options
                 },
                 pending_board_delete: None,
+                pending_library_remove: None,
+                context_menu_pos: None,
                 status: format!("Storage unavailable: {error}"),
                 perf_log: config.perf_log_enabled().then(|| PerfLogState {
                     app_started_at: Instant::now(),
@@ -1620,14 +1665,23 @@ impl ReferenceApp {
             return;
         };
 
-        if self.handle_internal_clipboard_paste(ctx, screen_rect, &paste_text) {
+        let desired_world = self.preferred_import_world(ctx, screen_rect);
+        if self.handle_internal_clipboard_paste_at(&paste_text, desired_world) {
             return;
         }
 
-        if self.handle_clipboard_url_import(ctx, screen_rect, &paste_text) {
+        if self.handle_clipboard_url_import_at(screen_rect, &paste_text, desired_world) {
             return;
         }
 
+        self.handle_external_clipboard_image_paste_at(screen_rect, desired_world);
+    }
+
+    fn handle_external_clipboard_image_paste_at(
+        &mut self,
+        screen_rect: egui::Rect,
+        desired_world: egui::Pos2,
+    ) {
         if self.import_worker.is_none() {
             return;
         }
@@ -1648,7 +1702,6 @@ impl ReferenceApp {
             }
         };
 
-        let desired_world = self.preferred_import_world(ctx, screen_rect);
         let viewport_world = self.import_viewport_world_rect(screen_rect);
         let rgba = clipboard_image.bytes.into_owned();
         let width = clipboard_image.width as u32;
@@ -1705,11 +1758,11 @@ impl ReferenceApp {
         self.status = "Queued clipboard image".to_owned();
     }
 
-    fn handle_clipboard_url_import(
+    fn handle_clipboard_url_import_at(
         &mut self,
-        ctx: &egui::Context,
         screen_rect: egui::Rect,
         paste_text: &str,
+        desired_world: egui::Pos2,
     ) -> bool {
         if self.import_worker.is_none() {
             return false;
@@ -1718,7 +1771,6 @@ impl ReferenceApp {
             return false;
         };
 
-        let desired_world = self.preferred_import_world(ctx, screen_rect);
         let viewport_world = self.import_viewport_world_rect(screen_rect);
         let queue_id = self.next_import_queue_id();
         let mut layout = match self.import_layout_snapshot() {
@@ -1802,6 +1854,298 @@ impl ReferenceApp {
         self.status = format!("Copied {count} {noun}");
     }
 
+    fn copy_selection_to_context_clipboard(&mut self, ctx: &egui::Context) {
+        if !self.canvas.has_selection() {
+            return;
+        }
+
+        let Some(payload) = self.copy_selected_board_payload() else {
+            return;
+        };
+
+        let payload = match serde_json::to_string(&payload) {
+            Ok(payload) => payload,
+            Err(error) => {
+                self.status = format!("Failed to serialize clipboard payload: {error}");
+                return;
+            }
+        };
+
+        ctx.copy_text(payload);
+
+        let count =
+            self.canvas.selected_item_ids().len() + self.canvas.selected_annotation_ids().len();
+        let noun = if count == 1 { "item" } else { "items" };
+        self.status = format!("Copied {count} {noun}");
+    }
+
+    fn context_menu_items(&self) -> Vec<ContextMenuItem> {
+        let selected_item_count = self.canvas.selected_item_ids().len();
+        let selected_annotation_count = self.canvas.selected_annotation_ids().len();
+        let has_selection = selected_item_count > 0 || selected_annotation_count > 0;
+        let has_selected_image = selected_item_count > 0;
+        let exactly_one_image_only = selected_item_count == 1 && selected_annotation_count == 0;
+
+        vec![
+            ContextMenuItem {
+                action: ContextMenuAction::Copy,
+                label: "Copy",
+                enabled: has_selection,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::Paste,
+                label: "Paste",
+                enabled: true,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::Duplicate,
+                label: "Duplicate",
+                enabled: has_selection,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::DeleteFromBoard,
+                label: "Delete (from board)",
+                enabled: has_selection,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::Crop,
+                label: "Crop",
+                enabled: exactly_one_image_only,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::SearchUsingImage,
+                label: "Search using image",
+                enabled: exactly_one_image_only,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::RemoveFromLibrary,
+                label: "Remove from Library...",
+                enabled: has_selected_image,
+            },
+        ]
+    }
+
+    fn handle_context_menu_action(
+        &mut self,
+        action: ContextMenuAction,
+        ctx: &egui::Context,
+        screen_rect: egui::Rect,
+    ) {
+        let Some(item) = self
+            .context_menu_items()
+            .into_iter()
+            .find(|item| item.action == action)
+        else {
+            return;
+        };
+        if !item.enabled {
+            return;
+        }
+
+        match action {
+            ContextMenuAction::Copy => self.copy_selection_to_context_clipboard(ctx),
+            ContextMenuAction::Paste => self.handle_clipboard_paste_from_context(ctx, screen_rect),
+            ContextMenuAction::Duplicate => self.duplicate_selection_with_gap(),
+            ContextMenuAction::DeleteFromBoard => {
+                delete_selected_items(&mut self.canvas, self.library.as_ref(), &mut self.status);
+            }
+            ContextMenuAction::Crop => {
+                self.status = "Hold C and drag over the selected image to crop".to_owned();
+            }
+            ContextMenuAction::SearchUsingImage => self.search_using_selected_image(),
+            ContextMenuAction::RemoveFromLibrary => self.request_selected_assets_library_remove(),
+        }
+    }
+
+    fn handle_clipboard_paste_from_context(
+        &mut self,
+        ctx: &egui::Context,
+        screen_rect: egui::Rect,
+    ) {
+        let paste_text = self.context_clipboard_text(ctx);
+        if let Some(paste_text) = paste_text {
+            let desired_world = self
+                .context_menu_pos
+                .map(|pos| self.canvas.screen_to_world(pos, screen_rect))
+                .unwrap_or_else(|| self.preferred_import_world(ctx, screen_rect));
+            if self.handle_internal_clipboard_paste_at(&paste_text, desired_world) {
+                return;
+            }
+            if self.handle_clipboard_url_import_at(screen_rect, &paste_text, desired_world) {
+                return;
+            }
+        }
+
+        let desired_world = self
+            .context_menu_pos
+            .map(|pos| self.canvas.screen_to_world(pos, screen_rect))
+            .unwrap_or_else(|| self.preferred_import_world(ctx, screen_rect));
+        self.handle_external_clipboard_image_paste_at(screen_rect, desired_world);
+    }
+
+    fn context_clipboard_text(&mut self, ctx: &egui::Context) -> Option<String> {
+        let paste_text = ctx.input(|input| {
+            input.events.iter().find_map(|event| match event {
+                egui::Event::Paste(text) => Some(text.clone()),
+                _ => None,
+            })
+        });
+        if paste_text.is_some() {
+            return paste_text;
+        }
+
+        let mut clipboard = match arboard::Clipboard::new() {
+            Ok(clipboard) => clipboard,
+            Err(_) => return None,
+        };
+        clipboard.get_text().ok()
+    }
+
+    fn request_selected_assets_library_remove(&mut self) {
+        let mut asset_ids = Vec::new();
+        for item_id in self.canvas.selected_item_ids() {
+            if let Some(record) = self.canvas.record_for_item_id(item_id)
+                && !asset_ids.contains(&record.asset.id)
+            {
+                asset_ids.push(record.asset.id);
+            }
+        }
+
+        if asset_ids.is_empty() {
+            return;
+        }
+
+        self.pending_library_remove = Some(PendingLibraryRemove { asset_ids });
+    }
+
+    fn confirm_pending_library_remove(&mut self) {
+        let Some(pending) = self.pending_library_remove.take() else {
+            return;
+        };
+
+        let Some(library) = &self.library else {
+            self.status = "Storage unavailable".to_owned();
+            return;
+        };
+
+        if let Err(error) = library.archive_assets(&pending.asset_ids) {
+            self.status = error;
+            return;
+        }
+
+        self.canvas.remove_assets(&pending.asset_ids);
+        let noun = if pending.asset_ids.len() == 1 {
+            "asset"
+        } else {
+            "assets"
+        };
+        self.status = format!("Removed {} library {noun}", pending.asset_ids.len());
+    }
+
+    fn show_context_menu(
+        &mut self,
+        ctx: &egui::Context,
+        screen_rect: egui::Rect,
+        just_opened: bool,
+    ) {
+        let Some(pos) = self.context_menu_pos else {
+            return;
+        };
+
+        let mut close_menu = false;
+        egui::Area::new(egui::Id::new("board_context_menu"))
+            .order(egui::Order::Tooltip)
+            .fixed_pos(pos)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(190.0);
+                    for item in self.context_menu_items() {
+                        let response = ui
+                            .add_enabled(item.enabled, egui::Button::new(item.label).frame(false));
+                        if response.clicked() {
+                            self.handle_context_menu_action(item.action, ctx, screen_rect);
+                            close_menu = true;
+                        }
+                    }
+                });
+            });
+
+        let clicked_elsewhere = ctx.input(|input| {
+            input.pointer.button_pressed(egui::PointerButton::Primary)
+                || input.pointer.button_pressed(egui::PointerButton::Secondary)
+                || input.key_pressed(egui::Key::Escape)
+        });
+        if close_menu || (clicked_elsewhere && !just_opened) {
+            self.context_menu_pos = None;
+        }
+    }
+
+    fn show_library_remove_confirmation(&mut self, ctx: &egui::Context) {
+        let Some(pending) = self.pending_library_remove.clone() else {
+            return;
+        };
+
+        let title = if pending.asset_ids.len() == 1 {
+            "Remove asset from Library?"
+        } else {
+            "Remove assets from Library?"
+        };
+        egui::Window::new(title)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label("Placements will be removed from all boards. Original files are kept.");
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        self.pending_library_remove = None;
+                    }
+                    if ui.button("Remove").clicked() {
+                        self.confirm_pending_library_remove();
+                    }
+                });
+            });
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn search_using_selected_image(&mut self) {
+        let selected = self.canvas.selected_item_ids();
+        if selected.len() != 1 {
+            return;
+        }
+        let Some(record) = self.canvas.record_for_item_id(selected[0]) else {
+            return;
+        };
+
+        self.search.sync_service(
+            self.settings.semantic_search_enabled,
+            self.library.as_ref(),
+            &mut self.status,
+            Some(&mut self.canvas),
+        );
+        self.search.overlay.query.clear();
+        self.search.overlay.last_submitted_query.clear();
+        self.search.overlay.results.clear();
+        self.search.overlay.result_selection.clear();
+        self.search.overlay.active_recent_search_index = 0;
+        self.search.overlay.result_limit = crate::palette::SEARCH_RESULT_PAGE_SIZE;
+        self.search.overlay.has_more_results = false;
+        self.search.overlay.image_pivot = Some(ImageSearchPivot {
+            asset_id: record.asset.id,
+            item_id: record.item.id,
+        });
+        self.search.overlay.last_query_edit_at = None;
+        self.search.overlay.open = true;
+        self.search.overlay.focus_requested = true;
+        self.canvas.clear_search_matches();
+        self.search.submit_query(&mut self.canvas);
+    }
+
+    #[cfg(not(feature = "semantic-search"))]
+    fn search_using_selected_image(&mut self) {
+        self.status = "Semantic search unavailable".to_owned();
+    }
+
     fn copy_selected_board_payload(&self) -> Option<ClipboardBoardSelection> {
         let source_bounds = self.canvas.selected_world_bounds()?;
         let mut items = Vec::new();
@@ -1845,11 +2189,10 @@ impl ReferenceApp {
         })
     }
 
-    fn handle_internal_clipboard_paste(
+    fn handle_internal_clipboard_paste_at(
         &mut self,
-        ctx: &egui::Context,
-        screen_rect: egui::Rect,
         paste_text: &str,
+        anchor_world: egui::Pos2,
     ) -> bool {
         let Ok(payload) = serde_json::from_str::<ClipboardBoardSelection>(paste_text) else {
             return false;
@@ -1860,7 +2203,6 @@ impl ReferenceApp {
             return false;
         }
 
-        let anchor_world = self.preferred_import_world(ctx, screen_rect);
         if let Err(error) = self.paste_board_payload_at(&payload, anchor_world) {
             self.status = error;
             return true;
@@ -2344,7 +2686,7 @@ impl ReferenceApp {
     }
 
     fn handle_board_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.pending_board_delete.is_some() {
+        if self.pending_board_delete.is_some() || self.pending_library_remove.is_some() {
             return;
         }
 
@@ -2785,6 +3127,46 @@ impl ReferenceApp {
                 }
             }
             (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => self.status = error,
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn seed_context_menu_verification(&mut self, ctx: &egui::Context) {
+        self.canvas
+            .apply_viewport_state(&crate::data::ViewportState::default());
+        self.canvas.clear_scene_for_verification();
+
+        let image_result = self.seed_import_verification_image(
+            ctx,
+            "verify-context-menu",
+            egui::pos2(-80.0, 0.0),
+            180,
+            140,
+            [70, 142, 255, 255],
+        );
+        let annotation_result = self.library.as_ref().map(|library| {
+            library.create_canvas_annotation(
+                crate::data::CanvasAnnotationKind::Textbox,
+                egui::pos2(80.0, -60.0),
+                egui::pos2(260.0, 20.0),
+                "menu target",
+                crate::data::CanvasTextSize::M,
+                crate::data::CanvasStrokeWidth::M,
+                crate::data::CanvasAnnotationColor::Gold,
+                true,
+            )
+        });
+
+        match (image_result, annotation_result) {
+            (Ok(item_id), Some(Ok(annotation))) => {
+                let annotation_id = annotation.id;
+                self.canvas.add_annotation(annotation);
+                self.canvas.select_content(&[item_id], &[annotation_id]);
+                self.context_menu_pos = Some(egui::pos2(520.0, 260.0));
+                self.status = "Opened debug context menu".to_owned();
+            }
+            (Err(error), _) | (_, Some(Err(error))) => self.status = error,
+            (_, None) => self.status = "Library unavailable".to_owned(),
         }
     }
 
@@ -3276,10 +3658,12 @@ impl eframe::App for ReferenceApp {
         self.canvas.set_layout_gap(self.settings.import_gap);
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         #[cfg(feature = "semantic-search")]
-        let suppress_canvas_input =
-            self.search.blocks_canvas_input(ui.ctx()) || self.pending_board_delete.is_some();
+        let suppress_canvas_input = self.search.blocks_canvas_input(ui.ctx())
+            || self.pending_board_delete.is_some()
+            || self.pending_library_remove.is_some();
         #[cfg(not(feature = "semantic-search"))]
-        let suppress_canvas_input = self.pending_board_delete.is_some();
+        let suppress_canvas_input =
+            self.pending_board_delete.is_some() || self.pending_library_remove.is_some();
         self.frame_perf.canvas = crate::canvas::show(
             ui,
             screen_rect,
@@ -3290,6 +3674,13 @@ impl eframe::App for ReferenceApp {
             suppress_canvas_input,
             false,
         );
+        let context_menu_just_opened =
+            if let Some(request) = self.canvas.take_context_menu_request() {
+                self.context_menu_pos = Some(request.screen_pos);
+                true
+            } else {
+                false
+            };
         if let Some(error) = self.residency.dispatch_pending_tier_requests(
             self.import_worker.as_ref(),
             &mut self.canvas,
@@ -3335,6 +3726,8 @@ impl eframe::App for ReferenceApp {
         }
         self.persist_settings_if_changed(sidebar_result.settings_changed);
         self.show_board_delete_confirmation(ui.ctx());
+        self.show_library_remove_confirmation(ui.ctx());
+        self.show_context_menu(ui.ctx(), screen_rect, context_menu_just_opened);
         if show_sidebar_hint(ui.ctx(), screen_rect, sidebar_open, &active_board_name) {
             self.sidebar_open = !self.sidebar_open;
         }
@@ -3385,7 +3778,7 @@ fn delete_selected_items(
     let annotation_ids = canvas.delete_selected_annotations();
     if !annotation_ids.is_empty() {
         if let Some(library) = library
-            && let Err(error) = library.archive_canvas_annotations(&annotation_ids)
+            && let Err(error) = library.delete_canvas_annotations(&annotation_ids)
         {
             *status = error;
             return;
@@ -3395,7 +3788,7 @@ fn delete_selected_items(
         } else {
             "annotations"
         };
-        *status = format!("Archived {} {noun}", annotation_ids.len());
+        *status = format!("Deleted {} {noun}", annotation_ids.len());
     }
 
     let archived_ids = canvas.delete_selected_images();
@@ -3415,7 +3808,7 @@ fn delete_selected_items(
     } else {
         "images"
     };
-    *status = format!("Archived {} {noun}", archived_ids.len());
+    *status = format!("Deleted {} {noun} from board", archived_ids.len());
 }
 
 fn clipboard_payload_bounds(payload: &ClipboardBoardSelection) -> Option<egui::Rect> {
@@ -3959,6 +4352,240 @@ mod tests {
         assert_eq!(payload.kind, super::COPY_PAYLOAD_KIND);
         assert_eq!(payload.items.len(), 1);
         assert_eq!(payload.annotations.len(), 1);
+    }
+
+    #[test]
+    fn context_menu_items_reflect_mixed_selection_capabilities() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.canvas.add_loaded_item(&ctx, test_loaded_item(1, 1));
+        app.canvas.add_annotation(crate::data::CanvasAnnotation {
+            id: 20,
+            kind: CanvasAnnotationKind::Textbox,
+            start_x: 10.0,
+            start_y: 10.0,
+            end_x: 70.0,
+            end_y: 40.0,
+            text: "caption".to_owned(),
+            text_size: CanvasTextSize::M,
+            stroke_width: CanvasStrokeWidth::M,
+            color: crate::data::CanvasAnnotationColor::Default,
+            background_enabled: false,
+            archived: false,
+        });
+        app.canvas.select_content(&[1], &[20]);
+
+        let items = app.context_menu_items();
+
+        assert_eq!(
+            items.iter().map(|item| item.label).collect::<Vec<_>>(),
+            vec![
+                "Copy",
+                "Paste",
+                "Duplicate",
+                "Delete (from board)",
+                "Crop",
+                "Search using image",
+                "Remove from Library..."
+            ]
+        );
+        assert!(item_enabled(&items, super::ContextMenuAction::Copy));
+        assert!(item_enabled(&items, super::ContextMenuAction::Paste));
+        assert!(item_enabled(&items, super::ContextMenuAction::Duplicate));
+        assert!(item_enabled(
+            &items,
+            super::ContextMenuAction::DeleteFromBoard
+        ));
+        assert!(!item_enabled(&items, super::ContextMenuAction::Crop));
+        assert!(!item_enabled(
+            &items,
+            super::ContextMenuAction::SearchUsingImage
+        ));
+        assert!(item_enabled(
+            &items,
+            super::ContextMenuAction::RemoveFromLibrary
+        ));
+    }
+
+    #[test]
+    fn crop_and_image_search_context_actions_require_exactly_one_image() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.canvas.add_loaded_item(&ctx, test_loaded_item(1, 1));
+        app.canvas.add_loaded_item(&ctx, test_loaded_item(2, 1));
+
+        app.canvas.select_items(&[1]);
+        let single = app.context_menu_items();
+        assert!(item_enabled(&single, super::ContextMenuAction::Crop));
+        assert!(item_enabled(
+            &single,
+            super::ContextMenuAction::SearchUsingImage
+        ));
+
+        app.canvas.select_items(&[1, 2]);
+        let multiple = app.context_menu_items();
+        assert!(!item_enabled(&multiple, super::ContextMenuAction::Crop));
+        assert!(!item_enabled(
+            &multiple,
+            super::ContextMenuAction::SearchUsingImage
+        ));
+    }
+
+    #[test]
+    fn remove_from_library_context_action_waits_for_confirmation() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-context-remove-confirm");
+        let library = Library::initialize(root.clone()).unwrap();
+        let image_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let source_item = library
+            .persist_imported_image(
+                &image_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 20.0),
+                1.0,
+            )
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.canvas.add_loaded_item(
+            &ctx,
+            LoadedCanvasItem {
+                target_board_id: 1,
+                queue_id: None,
+                record: source_item.clone(),
+                preview_rgba: vec![255, 0, 0, 255],
+                preview_width: 1,
+                preview_height: 1,
+                animated_preview: None,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+        app.canvas.select_items(&[source_item.item.id]);
+
+        app.handle_context_menu_action(
+            super::ContextMenuAction::RemoveFromLibrary,
+            &ctx,
+            egui::Rect::EVERYTHING,
+        );
+
+        assert!(app.pending_library_remove.is_some());
+        assert_eq!(library.load_board_items().unwrap().len(), 1);
+
+        app.confirm_pending_library_remove();
+
+        assert!(app.pending_library_remove.is_none());
+        assert!(library.load_board_items().unwrap().is_empty());
+        assert!(source_item.asset.original_path.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delete_from_board_archives_image_placements_but_hard_deletes_annotations() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-delete-from-board");
+        let library = Library::initialize(root.clone()).unwrap();
+        let image_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let source_item = library
+            .persist_imported_image(
+                &image_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 20.0),
+                1.0,
+            )
+            .unwrap();
+        let annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Line,
+                egui::pos2(0.0, 0.0),
+                egui::pos2(20.0, 20.0),
+                "",
+                CanvasTextSize::M,
+                CanvasStrokeWidth::M,
+                crate::data::CanvasAnnotationColor::Default,
+                false,
+            )
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.canvas.add_loaded_item(
+            &ctx,
+            LoadedCanvasItem {
+                target_board_id: 1,
+                queue_id: None,
+                record: source_item.clone(),
+                preview_rgba: vec![255, 0, 0, 255],
+                preview_width: 1,
+                preview_height: 1,
+                animated_preview: None,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+        app.canvas.add_annotation(annotation.clone());
+        app.canvas
+            .select_content(&[source_item.item.id], &[annotation.id]);
+
+        app.handle_context_menu_action(
+            super::ContextMenuAction::DeleteFromBoard,
+            &ctx,
+            egui::Rect::EVERYTHING,
+        );
+
+        assert!(library.load_board_items().unwrap().is_empty());
+        assert!(
+            library
+                .asset_original_paths_for_assets(&[source_item.asset.id])
+                .unwrap()
+                .contains_key(&source_item.asset.id)
+        );
+        let connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
+        let annotation_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM canvas_annotations WHERE id = ?1",
+                [annotation.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(annotation_count, 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_using_image_context_action_opens_image_pivot_search() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.settings.semantic_search_enabled = true;
+        app.canvas.add_loaded_item(&ctx, test_loaded_item(42, 1));
+        app.canvas.select_items(&[42]);
+
+        app.handle_context_menu_action(
+            super::ContextMenuAction::SearchUsingImage,
+            &ctx,
+            egui::Rect::EVERYTHING,
+        );
+
+        assert!(app.search.overlay.open);
+        let pivot = app.search.overlay.image_pivot.unwrap();
+        assert_eq!(pivot.asset_id, 42);
+        assert_eq!(pivot.item_id, 42);
     }
 
     #[test]
@@ -4594,6 +5221,8 @@ mod tests {
             sidebar_open: false,
             sidebar_tab: super::SidebarTab::default(),
             pending_board_delete: None,
+            pending_library_remove: None,
+            context_menu_pos: None,
             status: String::new(),
             perf_log: None,
             next_import_queue_id: 1,
@@ -4624,6 +5253,13 @@ mod tests {
 
     fn test_viewport_world() -> egui::Rect {
         egui::Rect::from_min_max(egui::pos2(-240.0, -180.0), egui::pos2(240.0, 180.0))
+    }
+
+    fn item_enabled(items: &[super::ContextMenuItem], action: super::ContextMenuAction) -> bool {
+        items
+            .iter()
+            .find(|item| item.action == action)
+            .is_some_and(|item| item.enabled)
     }
 
     fn test_loaded_item(item_id: i64, target_board_id: i64) -> LoadedCanvasItem {
