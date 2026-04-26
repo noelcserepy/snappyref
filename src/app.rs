@@ -1036,6 +1036,11 @@ impl ReferenceApp {
             return;
         };
 
+        match library.load_canvas_stack_order() {
+            Ok(stack_order) => self.canvas.set_canvas_stack_order(stack_order),
+            Err(error) => self.status = error,
+        }
+
         match library.load_board_items() {
             Ok(mut records) => {
                 let viewport_world = self.startup_viewport_world_rect();

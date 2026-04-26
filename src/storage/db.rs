@@ -12,7 +12,7 @@ use rusqlite::{Connection, Transaction, params, params_from_iter};
 
 use crate::data::{
     Board, BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
-    CanvasAnnotationKind, CanvasBackground, CanvasImageCacheTier, CanvasImageMode,
+    CanvasAnnotationKind, CanvasBackground, CanvasImageCacheTier, CanvasImageMode, CanvasStackItem,
     CanvasStrokeWidth, CanvasTextSize, ImageAsset, UserSession, ViewportState, WorkspaceSettings,
 };
 
@@ -403,6 +403,7 @@ impl Library {
             desired_world,
             initial_scale,
         )?;
+        append_canvas_stack_item(&transaction, board_id, CanvasStackItem::Placement(item.id))?;
 
         transaction
             .commit()
@@ -912,6 +913,16 @@ impl Library {
                     params![item_id],
                 )
                 .map_err(|error| format!("failed to archive board item {item_id}: {error}"))?;
+            transaction
+                .execute(
+                    "DELETE FROM canvas_stack_items
+                     WHERE item_kind = 'placement'
+                       AND item_id = ?1",
+                    params![item_id],
+                )
+                .map_err(|error| {
+                    format!("failed to remove board item {item_id} from canvas stack: {error}")
+                })?;
         }
 
         transaction
@@ -945,6 +956,20 @@ impl Library {
                 )
                 .map_err(|error| {
                     format!("failed to archive placements for asset {asset_id}: {error}")
+                })?;
+            transaction
+                .execute(
+                    "DELETE FROM canvas_stack_items
+                     WHERE item_kind = 'placement'
+                       AND item_id IN (
+                           SELECT id FROM board_items WHERE asset_id = ?1
+                       )",
+                    params![asset_id],
+                )
+                .map_err(|error| {
+                    format!(
+                        "failed to remove asset {asset_id} placements from canvas stack: {error}"
+                    )
                 })?;
         }
 
@@ -1063,6 +1088,11 @@ impl Library {
                 })?;
 
             let item_id = transaction.last_insert_rowid();
+            append_canvas_stack_item(
+                &transaction,
+                active_board_id,
+                CanvasStackItem::Placement(item_id),
+            )?;
             duplicated.push(BoardItemWithAsset {
                 asset: source.asset.clone(),
                 item: BoardItem {
@@ -1150,9 +1180,16 @@ impl Library {
             )
             .map_err(|error| format!("failed to create pasted board item: {error}"))?;
 
+        let item_id = connection.last_insert_rowid();
+        append_canvas_stack_item(
+            &connection,
+            active_board_id,
+            CanvasStackItem::Placement(item_id),
+        )?;
+
         Ok(BoardItemWithAsset {
             item: BoardItem {
-                id: connection.last_insert_rowid(),
+                id: item_id,
                 asset_id,
                 x: center_world.x,
                 y: center_world.y,
@@ -1715,6 +1752,12 @@ impl Library {
             .map_err(|error| format!("failed to collect canvas annotations: {error}"))
     }
 
+    pub fn load_canvas_stack_order(&self) -> Result<Vec<CanvasStackItem>, String> {
+        let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        load_canvas_stack_order_for_board_id(&connection, active_board_id)
+    }
+
     pub fn create_canvas_annotation(
         &self,
         kind: CanvasAnnotationKind,
@@ -1761,8 +1804,15 @@ impl Library {
             )
             .map_err(|error| format!("failed to create canvas annotation: {error}"))?;
 
+        let annotation_id = connection.last_insert_rowid();
+        append_canvas_stack_item(
+            &connection,
+            active_board_id,
+            CanvasStackItem::Annotation(annotation_id),
+        )?;
+
         Ok(CanvasAnnotation {
-            id: connection.last_insert_rowid(),
+            id: annotation_id,
             kind,
             start_x: start.x,
             start_y: start.y,
@@ -1840,6 +1890,18 @@ impl Library {
                 .map_err(|error| {
                     format!("failed to archive canvas annotation {annotation_id}: {error}")
                 })?;
+            transaction
+                .execute(
+                    "DELETE FROM canvas_stack_items
+                     WHERE item_kind = 'annotation'
+                       AND item_id = ?1",
+                    params![annotation_id],
+                )
+                .map_err(|error| {
+                    format!(
+                        "failed to remove canvas annotation {annotation_id} from stack: {error}"
+                    )
+                })?;
         }
 
         transaction
@@ -1867,6 +1929,18 @@ impl Library {
                 )
                 .map_err(|error| {
                     format!("failed to delete canvas annotation {annotation_id}: {error}")
+                })?;
+            transaction
+                .execute(
+                    "DELETE FROM canvas_stack_items
+                     WHERE item_kind = 'annotation'
+                       AND item_id = ?1",
+                    params![annotation_id],
+                )
+                .map_err(|error| {
+                    format!(
+                        "failed to remove deleted canvas annotation {annotation_id} from stack: {error}"
+                    )
                 })?;
         }
 
@@ -1952,6 +2026,14 @@ impl Library {
                     archived  INTEGER NOT NULL DEFAULT 0
                 );
 
+                CREATE TABLE IF NOT EXISTS canvas_stack_items (
+                    board_id    INTEGER NOT NULL DEFAULT 1 REFERENCES boards(id),
+                    item_kind   TEXT NOT NULL,
+                    item_id     INTEGER NOT NULL,
+                    stack_index INTEGER NOT NULL,
+                    PRIMARY KEY (board_id, item_kind, item_id)
+                );
+
                 CREATE TABLE IF NOT EXISTS asset_embeddings (
                     asset_id        INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
                     model_key       TEXT NOT NULL,
@@ -1988,6 +2070,7 @@ impl Library {
         ensure_canvas_annotations_color_column(&connection)?;
         ensure_canvas_annotations_background_enabled_column(&connection)?;
         ensure_canvas_annotations_board_id_column(&connection)?;
+        ensure_canvas_stack_items_populated(&connection)?;
         if should_migrate_default_board_viewport {
             migrate_default_board_viewport(&connection)?;
         }
@@ -2143,6 +2226,175 @@ fn ensure_canvas_annotations_board_id_column(connection: &Connection) -> Result<
             [],
         )
         .map_err(|error| format!("failed to add board_id column to canvas_annotations: {error}"))?;
+
+    Ok(())
+}
+
+fn load_canvas_stack_order_for_board_id(
+    connection: &Connection,
+    board_id: i64,
+) -> Result<Vec<CanvasStackItem>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT item_kind, item_id
+             FROM canvas_stack_items
+             WHERE board_id = ?1
+               AND (
+                   (
+                       item_kind = 'placement'
+                       AND EXISTS (
+                           SELECT 1
+                           FROM board_items
+                           JOIN assets ON assets.id = board_items.asset_id
+                           WHERE board_items.id = canvas_stack_items.item_id
+                             AND board_items.board_id = canvas_stack_items.board_id
+                             AND board_items.archived = 0
+                             AND assets.archived = 0
+                       )
+                   )
+                   OR (
+                       item_kind = 'annotation'
+                       AND EXISTS (
+                           SELECT 1
+                           FROM canvas_annotations
+                           WHERE canvas_annotations.id = canvas_stack_items.item_id
+                             AND canvas_annotations.board_id = canvas_stack_items.board_id
+                             AND canvas_annotations.archived = 0
+                       )
+                   )
+               )
+             ORDER BY stack_index ASC, item_kind ASC, item_id ASC",
+        )
+        .map_err(|error| format!("failed to prepare canvas-stack query: {error}"))?;
+
+    let rows = statement
+        .query_map(params![board_id], |row| {
+            let kind = row.get::<_, String>(0)?;
+            let item_id = row.get::<_, i64>(1)?;
+            CanvasStackItem::from_parts(&kind, item_id).ok_or_else(|| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("unknown canvas stack item kind: {kind}"),
+                    )),
+                )
+            })
+        })
+        .map_err(|error| format!("failed to read canvas-stack query: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect canvas-stack items: {error}"))
+}
+
+fn append_canvas_stack_item(
+    connection: &Connection,
+    board_id: i64,
+    item: CanvasStackItem,
+) -> Result<(), String> {
+    let next_index = next_canvas_stack_index(connection, board_id)?;
+    connection
+        .execute(
+            "INSERT OR REPLACE INTO canvas_stack_items (
+                board_id,
+                item_kind,
+                item_id,
+                stack_index
+             ) VALUES (?1, ?2, ?3, ?4)",
+            params![board_id, item.kind(), item.item_id(), next_index],
+        )
+        .map_err(|error| format!("failed to append canvas stack item: {error}"))?;
+    Ok(())
+}
+
+fn next_canvas_stack_index(connection: &Connection, board_id: i64) -> Result<i64, String> {
+    connection
+        .query_row(
+            "SELECT COALESCE(MAX(stack_index) + 1, 0)
+             FROM canvas_stack_items
+             WHERE board_id = ?1",
+            params![board_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("failed to inspect canvas stack index: {error}"))
+}
+
+fn ensure_canvas_stack_items_populated(connection: &Connection) -> Result<(), String> {
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM canvas_stack_items", [], |row| {
+            row.get(0)
+        })
+        .map_err(|error| format!("failed to inspect canvas stack items: {error}"))?;
+    if count > 0 {
+        return Ok(());
+    }
+
+    let board_ids = {
+        let mut statement = connection
+            .prepare("SELECT id FROM boards WHERE archived = 0 ORDER BY id ASC")
+            .map_err(|error| format!("failed to prepare board query: {error}"))?;
+        statement
+            .query_map([], |row| row.get::<_, i64>(0))
+            .map_err(|error| format!("failed to read board query: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect boards: {error}"))?
+    };
+
+    for board_id in board_ids {
+        let placements = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id
+                     FROM board_items
+                     WHERE board_id = ?1
+                       AND archived = 0
+                     ORDER BY z_index ASC, id ASC",
+                )
+                .map_err(|error| format!("failed to prepare stack placement query: {error}"))?;
+            statement
+                .query_map(params![board_id], |row| row.get::<_, i64>(0))
+                .map_err(|error| format!("failed to read stack placement query: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("failed to collect stack placements: {error}"))?
+        };
+
+        let annotations = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id
+                     FROM canvas_annotations
+                     WHERE board_id = ?1
+                       AND archived = 0
+                     ORDER BY id ASC",
+                )
+                .map_err(|error| format!("failed to prepare stack annotation query: {error}"))?;
+            statement
+                .query_map(params![board_id], |row| row.get::<_, i64>(0))
+                .map_err(|error| format!("failed to read stack annotation query: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("failed to collect stack annotations: {error}"))?
+        };
+
+        for (stack_index, item) in placements
+            .into_iter()
+            .map(CanvasStackItem::Placement)
+            .chain(annotations.into_iter().map(CanvasStackItem::Annotation))
+            .enumerate()
+        {
+            connection
+                .execute(
+                    "INSERT INTO canvas_stack_items (
+                        board_id,
+                        item_kind,
+                        item_id,
+                        stack_index
+                     ) VALUES (?1, ?2, ?3, ?4)",
+                    params![board_id, item.kind(), item.item_id(), stack_index as i64],
+                )
+                .map_err(|error| format!("failed to migrate canvas stack item: {error}"))?;
+        }
+    }
 
     Ok(())
 }
@@ -2746,7 +2998,9 @@ fn encode_f32_slice(values: &[f32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::Library;
-    use crate::data::{CanvasAnnotationKind, CanvasBackground, CanvasImageMode, CanvasTextSize};
+    use crate::data::{
+        CanvasAnnotationKind, CanvasBackground, CanvasImageMode, CanvasStackItem, CanvasTextSize,
+    };
     use eframe::egui;
     use rusqlite::Connection;
     use std::fs;
@@ -2873,6 +3127,130 @@ mod tests {
         assert_eq!(annotations.len(), 1);
         assert_eq!(annotations[0].id, 31);
         assert_eq!(annotations[0].text, "note");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn existing_canvas_data_migrates_to_unified_stack_with_annotations_above_placements() {
+        let root = temp_root("reference-stack-order-migration-test");
+        let db_path = root.join("library.db");
+        let connection = Connection::open(&db_path).unwrap();
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE assets (
+                    id INTEGER PRIMARY KEY,
+                    original_path TEXT NOT NULL UNIQUE,
+                    filename TEXT NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    width INTEGER NOT NULL,
+                    height INTEGER NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    imported_at INTEGER NOT NULL
+                );
+                CREATE TABLE board_items (
+                    id INTEGER PRIMARY KEY,
+                    asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+                    x REAL NOT NULL,
+                    y REAL NOT NULL,
+                    scale REAL NOT NULL,
+                    rotation REAL NOT NULL,
+                    z_index INTEGER NOT NULL,
+                    archived INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE canvas_annotations (
+                    id INTEGER PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    start_x REAL NOT NULL,
+                    start_y REAL NOT NULL,
+                    end_x REAL NOT NULL,
+                    end_y REAL NOT NULL,
+                    text TEXT NOT NULL DEFAULT '',
+                    text_size TEXT NOT NULL DEFAULT 'm',
+                    stroke_width TEXT NOT NULL DEFAULT 'm',
+                    color TEXT NOT NULL DEFAULT 'default',
+                    background_enabled INTEGER NOT NULL DEFAULT 0,
+                    archived INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE user_session (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    camera_pan_x REAL NOT NULL,
+                    camera_pan_y REAL NOT NULL,
+                    camera_zoom REAL NOT NULL
+                );
+                INSERT INTO assets (
+                    id, original_path, filename, mime_type, width, height, file_size, imported_at
+                ) VALUES
+                    (11, '/tmp/first.png', 'first.png', 'image/png', 100, 80, 4, 123),
+                    (12, '/tmp/second.png', 'second.png', 'image/png', 100, 80, 4, 124);
+                INSERT INTO board_items (
+                    id, asset_id, x, y, scale, rotation, z_index, archived
+                ) VALUES
+                    (21, 11, 10.0, 20.0, 1.0, 0.0, 7, 0),
+                    (22, 12, 20.0, 20.0, 1.0, 0.0, 3, 0);
+                INSERT INTO canvas_annotations (
+                    id, kind, start_x, start_y, end_x, end_y, text, archived
+                ) VALUES
+                    (31, 'textbox', 1.0, 2.0, 101.0, 52.0, 'first note', 0),
+                    (32, 'arrow', 3.0, 4.0, 103.0, 54.0, '', 0);
+                INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom)
+                VALUES (1, 0.0, 0.0, 1.0);
+                ",
+            )
+            .unwrap();
+        drop(connection);
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let stack = library.load_canvas_stack_order().unwrap();
+
+        assert_eq!(
+            stack,
+            vec![
+                CanvasStackItem::Placement(22),
+                CanvasStackItem::Placement(21),
+                CanvasStackItem::Annotation(31),
+                CanvasStackItem::Annotation(32),
+            ]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn created_annotations_round_trip_through_canvas_stack_order() {
+        let root = temp_root("reference-stack-order-annotation-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let path = library
+            .store_rgba_image("placed", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let placement = library
+            .persist_imported_image(&path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Textbox,
+                egui::pos2(10.0, 12.0),
+                egui::pos2(110.0, 72.0),
+                "hello",
+                CanvasTextSize::default(),
+                crate::data::CanvasStrokeWidth::default(),
+                crate::data::CanvasAnnotationColor::default(),
+                false,
+            )
+            .unwrap();
+
+        drop(library);
+        let library = Library::initialize(root.clone()).unwrap();
+        let stack = library.load_canvas_stack_order().unwrap();
+
+        assert_eq!(
+            stack,
+            vec![
+                CanvasStackItem::Placement(placement.item.id),
+                CanvasStackItem::Annotation(annotation.id),
+            ]
+        );
 
         let _ = fs::remove_dir_all(root);
     }

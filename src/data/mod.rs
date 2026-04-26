@@ -8,7 +8,9 @@ pub use annotation::{
     CanvasStrokeWidth, CanvasTextSize,
 };
 pub use asset::ImageAsset;
-pub use board_item::{Board, BoardItem, BoardItemWithAsset, BoardLayoutItem, BoardSummary};
+pub use board_item::{
+    Board, BoardItem, BoardItemWithAsset, BoardLayoutItem, BoardSummary, CanvasStackItem,
+};
 pub use session::{
     CanvasImageCacheTier, CanvasImageMode, DEFAULT_CANVAS_IMAGE_MAX_SIDE, DEFAULT_IMPORT_GAP,
     DEFAULT_ROTATION_SNAP_DEGREES, UserSession, ViewportState, WorkspaceSettings,

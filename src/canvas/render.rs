@@ -24,7 +24,7 @@ use super::{
 };
 use crate::data::{
     CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
-    CanvasStrokeWidth, CanvasTextSize,
+    CanvasStackItem, CanvasStrokeWidth, CanvasTextSize,
 };
 
 #[cfg(test)]
@@ -207,6 +207,163 @@ pub(super) fn paint_images(
         painter.ctx().request_repaint();
     }
 
+    metrics
+}
+
+pub(super) fn paint_canvas_items(
+    painter: &egui::Painter,
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    state: &mut CanvasState,
+    render_state: Option<&eframe::egui_wgpu::RenderState>,
+    allow_tier_promotion: bool,
+    debug_labels: bool,
+) -> ImagePassMetrics {
+    if canvas_stack_matches_existing_layering(state) {
+        let image_pass = paint_images(
+            painter,
+            ui,
+            rect,
+            state,
+            render_state,
+            allow_tier_promotion,
+            debug_labels,
+        );
+        paint_annotations(painter, ui, rect, state);
+        return image_pass;
+    }
+
+    paint_canvas_items_interleaved(painter, ui, rect, state, allow_tier_promotion, debug_labels)
+}
+
+#[cfg(test)]
+pub(super) fn unified_canvas_paint_order_for_state(state: &CanvasState) -> Vec<CanvasStackItem> {
+    state.ordered_canvas_items_back_to_front()
+}
+
+fn canvas_stack_matches_existing_layering(state: &CanvasState) -> bool {
+    let ordered = state.ordered_canvas_items_back_to_front();
+    let existing = state
+        .document
+        .images
+        .iter()
+        .map(|image| CanvasStackItem::Placement(image.record.item.id))
+        .chain(
+            state
+                .document
+                .annotations
+                .iter()
+                .map(|annotation| CanvasStackItem::Annotation(annotation.id)),
+        )
+        .collect::<Vec<_>>();
+    ordered == existing
+}
+
+fn paint_canvas_items_interleaved(
+    painter: &egui::Painter,
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    state: &mut CanvasState,
+    allow_tier_promotion: bool,
+    debug_labels: bool,
+) -> ImagePassMetrics {
+    let build_started_at = Instant::now();
+    let image_cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
+    let annotation_cull_rect = rect.expand(ANNOTATION_CULL_MARGIN_SCREEN);
+    let mut metrics = ImagePassMetrics::default();
+
+    let animation_time = state
+        .render
+        .animation_time_override_seconds
+        .unwrap_or_else(|| painter.ctx().input(|input| input.time as f32));
+    let mut any_visible_animated = false;
+    let mut visible_item_ids = Vec::new();
+
+    for item in state.ordered_canvas_items_back_to_front() {
+        match item {
+            CanvasStackItem::Placement(item_id) => {
+                let Some(image) = state.image_by_item_id(item_id) else {
+                    continue;
+                };
+                let image_rect = image_screen_rect(state, rect, image);
+                if !image_rect.intersects(image_cull_rect) {
+                    continue;
+                }
+                metrics.visible_images += 1;
+                metrics.fallback_images += 1;
+                visible_item_ids.push(item_id);
+
+                if let Some((rgba, width, height)) =
+                    state.advance_animated_image(item_id, animation_time)
+                    && let Some(image) = state.image_by_item_id_mut(item_id)
+                    && let CanvasTexture::Managed(texture) = &mut image.texture
+                {
+                    texture.set(
+                        egui::ColorImage::from_rgba_unmultiplied(
+                            [width as usize, height as usize],
+                            &rgba,
+                        ),
+                        egui::TextureOptions::LINEAR,
+                    );
+                }
+
+                let Some(image) = state.image_by_item_id(item_id) else {
+                    continue;
+                };
+                if image.animation.is_some() {
+                    any_visible_animated = true;
+                }
+                if matches!(image.texture, CanvasTexture::Svg { .. }) {
+                    paint_svg_image(ui, image, image_rect);
+                } else {
+                    paint_image_mesh(painter, state, rect, image);
+                }
+                paint_image_overlay(painter, state, image, image_rect, debug_labels);
+            }
+            CanvasStackItem::Annotation(annotation_id) => {
+                let Some(annotation) = state.annotation_by_id(annotation_id).cloned() else {
+                    continue;
+                };
+                if annotation_should_paint(state, rect, annotation_cull_rect, &annotation) {
+                    paint_annotation(painter, ui, rect, state, &annotation);
+                }
+            }
+        }
+    }
+
+    if allow_tier_promotion {
+        let promotion_requests = visible_item_ids
+            .iter()
+            .filter_map(|item_id| {
+                desired_image_tier(state, rect, *item_id).map(|tier| (*item_id, tier))
+            })
+            .collect::<Vec<_>>();
+        for (item_id, tier) in promotion_requests {
+            state.request_image_tier_load(item_id, tier);
+        }
+    }
+
+    if let Some(preview) = &state.interaction.search_drag_preview {
+        for image in &preview.images {
+            let image_rect = image_screen_rect(state, rect, image);
+            if !image_rect.intersects(image_cull_rect) {
+                continue;
+            }
+            paint_image_mesh(painter, state, rect, image);
+            painter.rect_stroke(
+                image_rect.expand(2.0),
+                0.0,
+                crate::theme::stroke_strong(),
+                egui::StrokeKind::Outside,
+            );
+        }
+    }
+
+    if any_visible_animated {
+        painter.ctx().request_repaint();
+    }
+
+    metrics.build_time_ms = build_started_at.elapsed().as_secs_f64() * 1000.0;
     metrics
 }
 
@@ -802,69 +959,79 @@ pub(super) fn paint_annotations(
         if !annotation_should_paint(state, rect, cull_rect, &annotation) {
             continue;
         }
-        let selected = state.is_annotation_selected(annotation.id);
-        let editing = state.interaction.editing_text_annotation_id == Some(annotation.id);
-        let color = annotation_color(annotation.color);
-        let stroke = if selected || editing {
-            egui::Stroke::new(stroke_width_value(annotation.stroke_width), color)
-        } else {
-            egui::Stroke::new(
-                stroke_width_value(annotation.stroke_width),
-                egui::Color32::from_rgba_premultiplied(color.r(), color.g(), color.b(), 220),
-            )
-        };
+        paint_annotation(painter, ui, rect, state, &annotation);
+    }
+}
 
-        match annotation.kind {
-            CanvasAnnotationKind::Line => {
-                let (start, end) = annotation_screen_points(state, rect, &annotation);
-                painter.line_segment([start, end], stroke);
+fn paint_annotation(
+    painter: &egui::Painter,
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    state: &mut CanvasState,
+    annotation: &CanvasAnnotation,
+) {
+    let selected = state.is_annotation_selected(annotation.id);
+    let editing = state.interaction.editing_text_annotation_id == Some(annotation.id);
+    let color = annotation_color(annotation.color);
+    let stroke = if selected || editing {
+        egui::Stroke::new(stroke_width_value(annotation.stroke_width), color)
+    } else {
+        egui::Stroke::new(
+            stroke_width_value(annotation.stroke_width),
+            egui::Color32::from_rgba_premultiplied(color.r(), color.g(), color.b(), 220),
+        )
+    };
+
+    match annotation.kind {
+        CanvasAnnotationKind::Line => {
+            let (start, end) = annotation_screen_points(state, rect, annotation);
+            painter.line_segment([start, end], stroke);
+        }
+        CanvasAnnotationKind::Arrow => {
+            let (start, end) = annotation_screen_points(state, rect, annotation);
+            paint_arrow_segment(painter, start, end, stroke);
+        }
+        CanvasAnnotationKind::Textbox => {
+            let textbox_rect = annotation_screen_rect(state, rect, annotation);
+            let content_rect = textbox_content_rect(textbox_rect);
+            if annotation.background_enabled {
+                let fill_alpha = if selected || editing { 184 } else { 112 };
+                painter.rect_filled(
+                    textbox_rect,
+                    crate::theme::CONTROL_RADIUS,
+                    egui::Color32::from_rgba_premultiplied(
+                        crate::theme::BACKGROUND.r(),
+                        crate::theme::BACKGROUND.g(),
+                        crate::theme::BACKGROUND.b(),
+                        fill_alpha,
+                    ),
+                );
             }
-            CanvasAnnotationKind::Arrow => {
-                let (start, end) = annotation_screen_points(state, rect, &annotation);
-                paint_arrow_segment(painter, start, end, stroke);
+            if selected || editing {
+                painter.rect_stroke(
+                    textbox_rect,
+                    crate::theme::CONTROL_RADIUS,
+                    stroke,
+                    egui::StrokeKind::Outside,
+                );
             }
-            CanvasAnnotationKind::Textbox => {
-                let textbox_rect = annotation_screen_rect(state, rect, &annotation);
-                let content_rect = textbox_content_rect(textbox_rect);
-                if annotation.background_enabled {
-                    let fill_alpha = if selected || editing { 184 } else { 112 };
-                    painter.rect_filled(
-                        textbox_rect,
-                        crate::theme::CONTROL_RADIUS,
-                        egui::Color32::from_rgba_premultiplied(
-                            crate::theme::BACKGROUND.r(),
-                            crate::theme::BACKGROUND.g(),
-                            crate::theme::BACKGROUND.b(),
-                            fill_alpha,
-                        ),
-                    );
-                }
-                if selected || editing {
-                    painter.rect_stroke(
-                        textbox_rect,
-                        crate::theme::CONTROL_RADIUS,
-                        stroke,
-                        egui::StrokeKind::Outside,
-                    );
-                }
-                if !editing && !annotation.text.trim().is_empty() {
-                    paint_textbox_text(
-                        painter,
-                        &state
-                            .cached_textbox_layout(
-                                ui,
-                                annotation.id,
-                                &annotation.text,
-                                annotation.text_size,
-                                annotation.color,
-                                content_rect.width(),
-                                state.zoom,
-                            )
-                            .galley,
-                        content_rect,
-                        color,
-                    );
-                }
+            if !editing && !annotation.text.trim().is_empty() {
+                paint_textbox_text(
+                    painter,
+                    &state
+                        .cached_textbox_layout(
+                            ui,
+                            annotation.id,
+                            &annotation.text,
+                            annotation.text_size,
+                            annotation.color,
+                            content_rect.width(),
+                            state.zoom,
+                        )
+                        .galley,
+                    content_rect,
+                    color,
+                );
             }
         }
     }

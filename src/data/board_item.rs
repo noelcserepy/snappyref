@@ -40,3 +40,32 @@ pub struct BoardLayoutItem {
     pub width: f32,
     pub height: f32,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CanvasStackItem {
+    Placement(i64),
+    Annotation(i64),
+}
+
+impl CanvasStackItem {
+    pub fn kind(self) -> &'static str {
+        match self {
+            Self::Placement(_) => "placement",
+            Self::Annotation(_) => "annotation",
+        }
+    }
+
+    pub fn item_id(self) -> i64 {
+        match self {
+            Self::Placement(item_id) | Self::Annotation(item_id) => item_id,
+        }
+    }
+
+    pub fn from_parts(kind: &str, item_id: i64) -> Option<Self> {
+        match kind {
+            "placement" => Some(Self::Placement(item_id)),
+            "annotation" => Some(Self::Annotation(item_id)),
+            _ => None,
+        }
+    }
+}
