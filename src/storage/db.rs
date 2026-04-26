@@ -498,6 +498,108 @@ impl Library {
         })
     }
 
+    pub fn rename_board(&self, board_id: i64, name: &str) -> Result<(), String> {
+        let trimmed_name = name.trim();
+        if trimmed_name.is_empty() {
+            return Ok(());
+        }
+
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "UPDATE boards
+                 SET name = ?1
+                 WHERE id = ?2
+                   AND archived = 0",
+                params![trimmed_name, board_id],
+            )
+            .map_err(|error| format!("failed to rename board {board_id}: {error}"))?;
+
+        Ok(())
+    }
+
+    pub fn delete_board(&self, board_id: i64) -> Result<i64, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start board delete transaction: {error}"))?;
+
+        let boards = list_non_archived_board_ids(&transaction)?;
+        let Some(target_index) = boards.iter().position(|id| *id == board_id) else {
+            return Err(format!(
+                "cannot delete missing or archived board {board_id}"
+            ));
+        };
+        if boards.len() == 1 {
+            return Err("cannot delete the last board".to_owned());
+        }
+
+        let current_active_board_id = active_board_id(&transaction)?;
+        let remaining = boards
+            .iter()
+            .copied()
+            .filter(|id| *id != board_id)
+            .collect::<Vec<_>>();
+        let next_active_board_id = if current_active_board_id == board_id {
+            if target_index > 0 {
+                boards[target_index - 1]
+            } else {
+                boards[target_index + 1]
+            }
+        } else {
+            current_active_board_id
+        };
+        if !remaining.contains(&next_active_board_id) {
+            return Err(format!(
+                "cannot keep active board {next_active_board_id} after deleting board {board_id}"
+            ));
+        }
+
+        transaction
+            .execute(
+                "UPDATE board_items
+                 SET archived = 1
+                 WHERE board_id = ?1",
+                params![board_id],
+            )
+            .map_err(|error| format!("failed to archive board {board_id} items: {error}"))?;
+        transaction
+            .execute(
+                "DELETE FROM canvas_annotations
+                 WHERE board_id = ?1",
+                params![board_id],
+            )
+            .map_err(|error| format!("failed to delete board {board_id} annotations: {error}"))?;
+        transaction
+            .execute(
+                "UPDATE boards
+                 SET archived = 1
+                 WHERE id = ?1",
+                params![board_id],
+            )
+            .map_err(|error| format!("failed to archive board {board_id}: {error}"))?;
+        transaction
+            .execute(
+                "INSERT INTO user_session (
+                    id,
+                    camera_pan_x,
+                    camera_pan_y,
+                    camera_zoom,
+                    active_board_id
+                 )
+                 VALUES (1, 0.0, 0.0, 1.0, ?1)
+                 ON CONFLICT(id) DO UPDATE SET active_board_id = excluded.active_board_id",
+                params![next_active_board_id],
+            )
+            .map_err(|error| format!("failed to persist active board: {error}"))?;
+
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit board delete transaction: {error}"))?;
+
+        Ok(next_active_board_id)
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn set_active_board(&self, board_id: i64) -> Result<(), String> {
         let connection = self.connection()?;
@@ -1975,6 +2077,24 @@ fn active_board_id(connection: &Connection) -> Result<i64, String> {
         .map_err(|error| format!("failed to load active board: {error}"))
 }
 
+fn list_non_archived_board_ids(connection: &Connection) -> Result<Vec<i64>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id
+             FROM boards
+             WHERE archived = 0
+             ORDER BY id ASC",
+        )
+        .map_err(|error| format!("failed to prepare board id query: {error}"))?;
+
+    let rows = statement
+        .query_map([], |row| row.get(0))
+        .map_err(|error| format!("failed to read board id query: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect board ids: {error}"))
+}
+
 fn board_is_non_archived(connection: &Connection, board_id: i64) -> Result<bool, String> {
     let count: i64 = connection
         .query_row(
@@ -2676,6 +2796,91 @@ mod tests {
         assert_eq!(first_items[0].item.id, first_item.item.id);
         assert_eq!(first_annotations.len(), 1);
         assert_eq!(first_annotations[0].id, first_annotation.id);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn board_rename_allows_duplicates_and_preserves_name_for_empty_edits() {
+        let root = temp_root("reference-board-rename-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        let second = library.create_board("Second").unwrap();
+
+        library.rename_board(first.id, "Second").unwrap();
+        library.rename_board(second.id, "   ").unwrap();
+
+        let boards = library.list_boards().unwrap();
+        assert_eq!(boards[0].name, "Second");
+        assert_eq!(boards[1].name, "Second");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delete_board_archives_board_preserves_assets_and_cleans_board_content() {
+        let root = temp_root("reference-board-delete-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        let second = library.create_board("Second").unwrap();
+        let third = library.create_board("Third").unwrap();
+        library.set_active_board(second.id).unwrap();
+        let path = library
+            .store_rgba_image("delete-board", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let item = library
+            .persist_imported_image(&path, "image/png", 1, 1, 4, egui::pos2(10.0, 20.0), 1.0)
+            .unwrap();
+        let annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Textbox,
+                egui::pos2(0.0, 0.0),
+                egui::pos2(40.0, 20.0),
+                "delete me",
+                CanvasTextSize::default(),
+                crate::data::CanvasStrokeWidth::default(),
+                crate::data::CanvasAnnotationColor::default(),
+                false,
+            )
+            .unwrap();
+
+        let remaining_active = library.delete_board(second.id).unwrap();
+
+        assert_eq!(remaining_active, first.id);
+        assert_eq!(
+            library.load_user_session().unwrap().active_board_id,
+            first.id
+        );
+        assert_eq!(
+            library
+                .list_boards()
+                .unwrap()
+                .iter()
+                .map(|board| board.id)
+                .collect::<Vec<_>>(),
+            vec![first.id, third.id]
+        );
+        assert!(library.load_board_items_for_board(second.id).is_err());
+        assert!(
+            library
+                .asset_original_paths_for_assets(&[item.asset.id])
+                .unwrap()
+                .contains_key(&item.asset.id)
+        );
+        {
+            let connection = Connection::open(root.join("library.db")).unwrap();
+            let annotation_count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM canvas_annotations WHERE id = ?1",
+                    [annotation.id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(annotation_count, 0);
+        }
+
+        assert!(library.delete_board(first.id).is_ok());
+        assert!(library.delete_board(third.id).is_err());
 
         let _ = fs::remove_dir_all(root);
     }
