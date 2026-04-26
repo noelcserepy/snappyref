@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use eframe::egui;
 
 use super::{
-    AnnotationDraftState, AnnotationDragState, CanvasCropRequest, CanvasImage, CropState,
-    DragState, ImageTransformState, ImportPlaceholder, MarqueeState, PendingAnnotation,
-    SearchDragPreview, TextboxLayoutCacheEntry, TextboxTransformState,
+    AnnotationDraftState, AnnotationDragState, CanvasContextMenuRequest, CanvasCropRequest,
+    CanvasImage, CropState, DragState, ImageTransformState, ImportPlaceholder, MarqueeState,
+    PendingAnnotation, SearchDragPreview, TextboxLayoutCacheEntry, TextboxTransformState,
 };
 use crate::data::{CanvasAnnotation, CanvasImageCacheTier};
 
@@ -36,6 +36,7 @@ pub(super) struct CanvasInteractionState {
     pub crop_pending_item_ids: Vec<i64>,
     pub pending_crop: Option<CanvasCropRequest>,
     pub pending_annotation: Option<PendingAnnotation>,
+    pub pending_context_menu_request: Option<CanvasContextMenuRequest>,
     pub import_placeholders: Vec<ImportPlaceholder>,
     pub hover_preview_placeholders: Vec<ImportPlaceholder>,
     pub move_preview_placeholders: Vec<ImportPlaceholder>,

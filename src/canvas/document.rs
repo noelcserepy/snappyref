@@ -347,6 +347,10 @@ impl CanvasState {
         self.interaction.pending_annotation.take()
     }
 
+    pub fn take_context_menu_request(&mut self) -> Option<super::CanvasContextMenuRequest> {
+        self.interaction.pending_context_menu_request.take()
+    }
+
     pub fn add_import_placeholder(
         &mut self,
         queue_id: u64,
@@ -1010,6 +1014,21 @@ impl CanvasState {
             .retain(|item_id, _| !removed_ids.contains(item_id));
         self.interaction.pending_crop = None;
         removed_ids
+    }
+
+    pub fn remove_assets(&mut self, asset_ids: &[i64]) -> Vec<i64> {
+        if asset_ids.is_empty() {
+            return Vec::new();
+        }
+
+        let item_ids = self
+            .document
+            .images
+            .iter()
+            .filter(|image| asset_ids.contains(&image.record.asset.id))
+            .map(|image| image.record.item.id)
+            .collect::<Vec<_>>();
+        self.delete_items(&item_ids)
     }
 
     pub(super) fn is_selected(&self, item_id: i64) -> bool {

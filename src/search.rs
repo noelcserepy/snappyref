@@ -851,7 +851,7 @@ impl SearchController {
         self.submit_query(canvas);
     }
 
-    fn submit_query(&mut self, canvas: &mut CanvasState) {
+    pub(crate) fn submit_query(&mut self, canvas: &mut CanvasState) {
         let query = self.overlay.query.trim().to_owned();
         let pivot = self.overlay.image_pivot;
         if query.is_empty() && pivot.is_none() {
