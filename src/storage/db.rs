@@ -1046,6 +1046,85 @@ impl Library {
         Ok(duplicated)
     }
 
+    pub fn create_board_item_from_asset(
+        &self,
+        asset_id: i64,
+        center_world: egui::Pos2,
+        scale: f32,
+        rotation: f32,
+        z_index: i32,
+    ) -> Result<BoardItemWithAsset, String> {
+        let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        let asset = connection
+            .query_row(
+                "SELECT
+                    id,
+                    original_path,
+                    filename,
+                    mime_type,
+                    width,
+                    height,
+                    file_size,
+                    imported_at
+                 FROM assets
+                 WHERE id = ?1",
+                params![asset_id],
+                |row| {
+                    Ok(ImageAsset {
+                        id: row.get(0)?,
+                        original_path: PathBuf::from(row.get::<_, String>(1)?),
+                        filename: row.get(2)?,
+                        mime_type: row.get(3)?,
+                        width: row.get::<_, u32>(4)?,
+                        height: row.get::<_, u32>(5)?,
+                        file_size: row.get::<_, i64>(6)? as u64,
+                        imported_at: row.get(7)?,
+                    })
+                },
+            )
+            .map_err(|error| format!("failed to load asset {asset_id} for paste: {error}"))?;
+
+        connection
+            .execute(
+                "INSERT INTO board_items (
+                    board_id,
+                    asset_id,
+                    x,
+                    y,
+                    scale,
+                    rotation,
+                    z_index,
+                    archived
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    active_board_id,
+                    asset_id,
+                    center_world.x,
+                    center_world.y,
+                    scale,
+                    rotation,
+                    z_index,
+                    0_i64
+                ],
+            )
+            .map_err(|error| format!("failed to create pasted board item: {error}"))?;
+
+        Ok(BoardItemWithAsset {
+            item: BoardItem {
+                id: connection.last_insert_rowid(),
+                asset_id,
+                x: center_world.x,
+                y: center_world.y,
+                scale,
+                rotation,
+                z_index,
+                archived: false,
+            },
+            asset,
+        })
+    }
+
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn upsert_asset_embedding_status(
         &self,

@@ -54,6 +54,41 @@ struct PendingBoardDelete {
     board_name: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ClipboardBoardSelection {
+    kind: String,
+    source_center_x: f32,
+    source_center_y: f32,
+    items: Vec<ClipboardBoardItem>,
+    annotations: Vec<ClipboardAnnotation>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ClipboardBoardItem {
+    asset_id: i64,
+    x: f32,
+    y: f32,
+    scale: f32,
+    rotation: f32,
+    z_index: i32,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ClipboardAnnotation {
+    kind: String,
+    start_x: f32,
+    start_y: f32,
+    end_x: f32,
+    end_y: f32,
+    text: String,
+    text_size: String,
+    stroke_width: String,
+    color: String,
+    background_enabled: bool,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct SupportedShortcut {
     pub action: &'static str,
@@ -226,14 +261,6 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: None,
     },
 ];
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ClipboardBoardSelection {
-    kind: String,
-    source_center_x: f32,
-    source_center_y: f32,
-    item_ids: Vec<i64>,
-}
 
 #[derive(Clone, Debug)]
 struct BoardImportPlaceholder {
@@ -1751,19 +1778,12 @@ impl ReferenceApp {
                 .iter()
                 .any(|event| matches!(event, egui::Event::Copy))
         });
-        if !copy_requested || !self.canvas.has_image_selection() {
+        if !copy_requested || !self.canvas.has_selection() {
             return;
         }
 
-        let Some(source_center) = self.canvas.selected_center_world() else {
+        let Some(payload) = self.copy_selected_board_payload() else {
             return;
-        };
-
-        let payload = ClipboardBoardSelection {
-            kind: COPY_PAYLOAD_KIND.to_owned(),
-            source_center_x: source_center.x,
-            source_center_y: source_center.y,
-            item_ids: self.canvas.selected_item_ids(),
         };
 
         let payload = match serde_json::to_string(&payload) {
@@ -1774,25 +1794,55 @@ impl ReferenceApp {
             }
         };
 
-        let mut clipboard = match arboard::Clipboard::new() {
-            Ok(clipboard) => clipboard,
-            Err(error) => {
-                self.status = format!("Clipboard unavailable: {error}");
-                return;
-            }
-        };
+        ctx.copy_text(payload);
 
-        if let Err(error) = clipboard.set_text(payload) {
-            self.status = format!("Failed to copy selection: {error}");
-            return;
+        let count =
+            self.canvas.selected_item_ids().len() + self.canvas.selected_annotation_ids().len();
+        let noun = if count == 1 { "item" } else { "items" };
+        self.status = format!("Copied {count} {noun}");
+    }
+
+    fn copy_selected_board_payload(&self) -> Option<ClipboardBoardSelection> {
+        let source_bounds = self.canvas.selected_world_bounds()?;
+        let mut items = Vec::new();
+        for item_id in self.canvas.selected_item_ids() {
+            let record = self.canvas.record_for_item_id(item_id)?;
+            items.push(ClipboardBoardItem {
+                asset_id: record.item.asset_id,
+                x: record.item.x,
+                y: record.item.y,
+                scale: record.item.scale,
+                rotation: record.item.rotation,
+                z_index: record.item.z_index,
+                width: record.asset.width,
+                height: record.asset.height,
+            });
         }
 
-        let noun = if self.canvas.selected_item_ids().len() == 1 {
-            "image"
-        } else {
-            "images"
-        };
-        self.status = format!("Copied {} {noun}", self.canvas.selected_item_ids().len());
+        let mut annotations = Vec::new();
+        for annotation_id in self.canvas.selected_annotation_ids() {
+            let annotation = self.canvas.annotation_for_id(annotation_id)?;
+            annotations.push(ClipboardAnnotation {
+                kind: annotation.kind.as_str().to_owned(),
+                start_x: annotation.start_x,
+                start_y: annotation.start_y,
+                end_x: annotation.end_x,
+                end_y: annotation.end_y,
+                text: annotation.text,
+                text_size: annotation.text_size.as_str().to_owned(),
+                stroke_width: annotation.stroke_width.as_str().to_owned(),
+                color: annotation.color.as_str().to_owned(),
+                background_enabled: annotation.background_enabled,
+            });
+        }
+
+        (!items.is_empty() || !annotations.is_empty()).then(|| ClipboardBoardSelection {
+            kind: COPY_PAYLOAD_KIND.to_owned(),
+            source_center_x: source_bounds.center().x,
+            source_center_y: source_bounds.center().y,
+            items,
+            annotations,
+        })
     }
 
     fn handle_internal_clipboard_paste(
@@ -1804,43 +1854,109 @@ impl ReferenceApp {
         let Ok(payload) = serde_json::from_str::<ClipboardBoardSelection>(paste_text) else {
             return false;
         };
-        if payload.kind != COPY_PAYLOAD_KIND || payload.item_ids.is_empty() {
+        if payload.kind != COPY_PAYLOAD_KIND
+            || (payload.items.is_empty() && payload.annotations.is_empty())
+        {
             return false;
         }
 
-        let Some(library) = &self.library else {
-            self.status = "Storage unavailable".to_owned();
-            return true;
-        };
-
         let anchor_world = self.preferred_import_world(ctx, screen_rect);
-        let source_center = egui::pos2(payload.source_center_x, payload.source_center_y);
-        let duplicated =
-            match library.duplicate_board_items(&payload.item_ids, anchor_world, source_center) {
-                Ok(records) => records,
-                Err(error) => {
-                    self.status = error;
-                    return true;
-                }
-            };
+        if let Err(error) = self.paste_board_payload_at(&payload, anchor_world) {
+            self.status = error;
+            return true;
+        }
+        true
+    }
 
-        let mut duplicated_ids = Vec::new();
-        for record in duplicated {
-            duplicated_ids.push(record.item.id);
+    fn paste_board_payload_at(
+        &mut self,
+        payload: &ClipboardBoardSelection,
+        requested_anchor_world: egui::Pos2,
+    ) -> Result<(), String> {
+        let Some(library) = self.library.clone() else {
+            return Err("Storage unavailable".to_owned());
+        };
+        let source_center = egui::pos2(payload.source_center_x, payload.source_center_y);
+        let target_anchor_world =
+            self.placement_anchor_for_payload(payload, requested_anchor_world)?;
+        let delta = target_anchor_world - source_center;
+
+        let mut pasted_item_ids = Vec::new();
+        for item in &payload.items {
+            let record = library.create_board_item_from_asset(
+                item.asset_id,
+                egui::pos2(item.x + delta.x, item.y + delta.y),
+                item.scale,
+                item.rotation,
+                item.z_index,
+            )?;
+            pasted_item_ids.push(record.item.id);
             if let Err(error) = self.canvas.add_reference_item(record) {
-                self.status = error;
-                return true;
+                if self.import_worker.is_some() {
+                    self.enqueue_existing_items();
+                } else {
+                    return Err(error);
+                }
             }
         }
 
-        self.canvas.select_items(&duplicated_ids);
-        let noun = if duplicated_ids.len() == 1 {
-            "image"
-        } else {
-            "images"
+        let mut pasted_annotation_ids = Vec::new();
+        for annotation in &payload.annotations {
+            let kind = crate::data::CanvasAnnotationKind::from_str(&annotation.kind)
+                .ok_or_else(|| format!("unknown copied annotation kind: {}", annotation.kind))?;
+            let text_size = crate::data::CanvasTextSize::from_str(&annotation.text_size)
+                .ok_or_else(|| format!("unknown copied text size: {}", annotation.text_size))?;
+            let stroke_width = crate::data::CanvasStrokeWidth::from_str(&annotation.stroke_width)
+                .ok_or_else(|| {
+                format!("unknown copied stroke width: {}", annotation.stroke_width)
+            })?;
+            let color = crate::data::CanvasAnnotationColor::from_str(&annotation.color)
+                .ok_or_else(|| format!("unknown copied annotation color: {}", annotation.color))?;
+            let pasted = library.create_canvas_annotation(
+                kind,
+                egui::pos2(annotation.start_x + delta.x, annotation.start_y + delta.y),
+                egui::pos2(annotation.end_x + delta.x, annotation.end_y + delta.y),
+                &annotation.text,
+                text_size,
+                stroke_width,
+                color,
+                annotation.background_enabled,
+            )?;
+            pasted_annotation_ids.push(pasted.id);
+            self.canvas.add_annotation(pasted);
+        }
+
+        self.canvas
+            .select_content(&pasted_item_ids, &pasted_annotation_ids);
+        let count = pasted_item_ids.len() + pasted_annotation_ids.len();
+        let noun = if count == 1 { "item" } else { "items" };
+        self.status = format!("Pasted {count} {noun}");
+        Ok(())
+    }
+
+    fn placement_anchor_for_payload(
+        &self,
+        payload: &ClipboardBoardSelection,
+        requested_anchor_world: egui::Pos2,
+    ) -> Result<egui::Pos2, String> {
+        let Some(library) = &self.library else {
+            return Err("Storage unavailable".to_owned());
         };
-        self.status = format!("Pasted {} {noun}", duplicated_ids.len());
-        true
+        let Some(bounds) = clipboard_payload_bounds(payload) else {
+            return Ok(requested_anchor_world);
+        };
+        let viewport_world = self.import_viewport_world_rect(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            STARTUP_VIEWPORT_SIZE,
+        ));
+        crate::jobs::arrange_rect_world(
+            library,
+            requested_anchor_world,
+            viewport_world,
+            bounds.width(),
+            bounds.height(),
+            self.settings.import_gap,
+        )
     }
 
     fn handle_import_results(&mut self, ctx: &egui::Context) {
@@ -2141,6 +2257,13 @@ impl ReferenceApp {
             return;
         }
 
+        let select_all_requested =
+            ctx.input(|input| input.modifiers.command && input.key_pressed(egui::Key::A));
+        if select_all_requested {
+            self.canvas.select_all_content();
+            return;
+        }
+
         for shortcut in SUPPORTED_SHORTCUTS {
             let Some(shortcut_action) = shortcut.shortcut_action else {
                 continue;
@@ -2172,10 +2295,10 @@ impl ReferenceApp {
                     );
                 }
                 SupportedShortcutAction::DuplicateSelection => {
-                    if !self.canvas.has_image_selection() {
+                    if !self.canvas.has_selection() {
                         continue;
                     }
-                    self.duplicate_selection_with_gap(ctx, screen_rect);
+                    self.duplicate_selection_with_gap();
                 }
                 SupportedShortcutAction::FocusSelection => {
                     if !self.canvas.has_selection() {
@@ -2270,62 +2393,23 @@ impl ReferenceApp {
         }
     }
 
-    fn duplicate_selection_with_gap(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
-        let Some(library) = &self.library else {
-            self.status = "Storage unavailable".to_owned();
+    fn duplicate_selection_with_gap(&mut self) {
+        let Some(payload) = self.copy_selected_board_payload() else {
             return;
         };
-        let Some(source_center) = self.canvas.selected_center_world() else {
-            return;
-        };
-        let Some(source_bounds) = self.canvas.selected_bounds_world() else {
+        let Some(bounds) = clipboard_payload_bounds(&payload) else {
             return;
         };
 
-        let desired_world = self.preferred_import_world(ctx, screen_rect);
-        let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let anchor_world = match crate::jobs::arrange_rect_world(
-            library,
-            desired_world,
-            viewport_world,
-            source_bounds.width(),
-            source_bounds.height(),
-            self.settings.import_gap,
-        ) {
-            Ok(anchor_world) => anchor_world,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
-        let duplicated = match library.duplicate_board_items(
-            &self.canvas.selected_item_ids(),
-            anchor_world,
-            source_center,
-        ) {
-            Ok(records) => records,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
-
-        let mut duplicated_ids = Vec::new();
-        for record in duplicated {
-            duplicated_ids.push(record.item.id);
-            if let Err(error) = self.canvas.add_reference_item(record) {
-                self.status = error;
-                return;
-            }
+        let offset = egui::vec2(
+            self.settings.import_gap.max(12.0),
+            self.settings.import_gap.max(12.0),
+        );
+        if let Err(error) = self.paste_board_payload_at(&payload, bounds.center() + offset) {
+            self.status = error;
+            return;
         }
-
-        self.canvas.select_items(&duplicated_ids);
-        let noun = if duplicated_ids.len() == 1 {
-            "image"
-        } else {
-            "images"
-        };
-        self.status = format!("Duplicated {} {noun}", duplicated_ids.len());
+        self.status = self.status.replacen("Pasted", "Duplicated", 1);
     }
 
     fn handle_pending_crop_requests(&mut self) {
@@ -3334,6 +3418,35 @@ fn delete_selected_items(
     *status = format!("Archived {} {noun}", archived_ids.len());
 }
 
+fn clipboard_payload_bounds(payload: &ClipboardBoardSelection) -> Option<egui::Rect> {
+    let mut bounds: Option<egui::Rect> = None;
+
+    for item in &payload.items {
+        let size = egui::vec2(
+            item.width as f32 * item.scale.max(0.01),
+            item.height as f32 * item.scale.max(0.01),
+        );
+        let rect = egui::Rect::from_center_size(egui::pos2(item.x, item.y), size);
+        bounds = Some(match bounds {
+            Some(existing) => existing.union(rect),
+            None => rect,
+        });
+    }
+
+    for annotation in &payload.annotations {
+        let rect = egui::Rect::from_two_pos(
+            egui::pos2(annotation.start_x, annotation.start_y),
+            egui::pos2(annotation.end_x, annotation.end_y),
+        );
+        bounds = Some(match bounds {
+            Some(existing) => existing.union(rect),
+            None => rect,
+        });
+    }
+
+    bounds
+}
+
 fn apply_arrangement_action(
     canvas: &mut crate::canvas::CanvasState,
     action: ArrangementAction,
@@ -3389,7 +3502,10 @@ fn generated_board_name(boards: &[crate::data::Board]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ArrangementAction, CropUndoEntry, ReferenceApp, apply_arrangement_action};
-    use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
+    use crate::data::{
+        BoardItem, BoardItemWithAsset, CanvasAnnotationKind, CanvasStrokeWidth, CanvasTextSize,
+        ImageAsset,
+    };
     use crate::jobs::LoadedCanvasItem;
     #[cfg(feature = "semantic-search")]
     use crate::palette::{
@@ -3550,6 +3666,299 @@ mod tests {
             sidebar_rect
         ));
         assert!(!should_close_sidebar(true, None, sidebar_rect));
+    }
+
+    #[test]
+    fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-cross-board-paste");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        let second = library.create_board("Second").unwrap();
+        let image_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let source_item = library
+            .persist_imported_image(
+                &image_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 20.0),
+                1.0,
+            )
+            .unwrap();
+        let source_annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Textbox,
+                egui::pos2(40.0, 60.0),
+                egui::pos2(140.0, 100.0),
+                "note",
+                CanvasTextSize::M,
+                CanvasStrokeWidth::M,
+                crate::data::CanvasAnnotationColor::Sky,
+                true,
+            )
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.canvas.add_loaded_item(
+            &ctx,
+            LoadedCanvasItem {
+                target_board_id: first.id,
+                queue_id: None,
+                record: source_item.clone(),
+                preview_rgba: vec![255, 0, 0, 255],
+                preview_width: 1,
+                preview_height: 1,
+                animated_preview: None,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+        app.canvas.add_annotation(source_annotation.clone());
+        app.canvas
+            .select_content(&[source_item.item.id], &[source_annotation.id]);
+
+        let payload = app.copy_selected_board_payload().unwrap();
+        library.set_active_board(second.id).unwrap();
+        app.active_board_id = second.id;
+        app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
+            .unwrap();
+
+        let pasted_items = library.load_board_items_for_board(second.id).unwrap();
+        let pasted_annotations = library.load_canvas_annotations().unwrap();
+        assert_eq!(pasted_items.len(), 1);
+        assert_eq!(pasted_annotations.len(), 1);
+        assert_ne!(pasted_items[0].item.id, source_item.item.id);
+        assert_ne!(pasted_annotations[0].id, source_annotation.id);
+        assert_eq!(
+            library.load_board_items_for_board(first.id).unwrap().len(),
+            1
+        );
+
+        let pasted_delta = egui::vec2(
+            pasted_annotations[0].start_x - pasted_items[0].item.x,
+            pasted_annotations[0].start_y - pasted_items[0].item.y,
+        );
+        let source_delta = egui::vec2(
+            source_annotation.start_x - source_item.item.x,
+            source_annotation.start_y - source_item.item.y,
+        );
+        assert_eq!(pasted_delta, source_delta);
+        assert_eq!(
+            app.canvas.selected_item_ids(),
+            vec![pasted_items[0].item.id]
+        );
+        assert_eq!(
+            app.canvas.selected_annotation_ids(),
+            vec![pasted_annotations[0].id]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-mixed-duplicate");
+        let library = Library::initialize(root.clone()).unwrap();
+        let image_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let source_item = library
+            .persist_imported_image(
+                &image_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 20.0),
+                1.0,
+            )
+            .unwrap();
+        let source_annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Line,
+                egui::pos2(40.0, 60.0),
+                egui::pos2(80.0, 90.0),
+                "",
+                CanvasTextSize::M,
+                CanvasStrokeWidth::M,
+                crate::data::CanvasAnnotationColor::Gold,
+                false,
+            )
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.settings.import_gap = 24.0;
+        app.canvas.add_loaded_item(
+            &ctx,
+            LoadedCanvasItem {
+                target_board_id: 1,
+                queue_id: None,
+                record: source_item.clone(),
+                preview_rgba: vec![255, 0, 0, 255],
+                preview_width: 1,
+                preview_height: 1,
+                animated_preview: None,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+        app.canvas.add_annotation(source_annotation.clone());
+        app.canvas
+            .select_content(&[source_item.item.id], &[source_annotation.id]);
+
+        app.duplicate_selection_with_gap();
+
+        let items = library.load_board_items().unwrap();
+        let annotations = library.load_canvas_annotations().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(annotations.len(), 2);
+        let duplicated_item = items
+            .iter()
+            .find(|item| item.item.id != source_item.item.id)
+            .unwrap();
+        let duplicated_annotation = annotations
+            .iter()
+            .find(|annotation| annotation.id != source_annotation.id)
+            .unwrap();
+        let item_offset = egui::vec2(
+            duplicated_item.item.x - source_item.item.x,
+            duplicated_item.item.y - source_item.item.y,
+        );
+        let annotation_offset = egui::vec2(
+            duplicated_annotation.start_x - source_annotation.start_x,
+            duplicated_annotation.start_y - source_annotation.start_y,
+        );
+        assert_eq!(annotation_offset, item_offset);
+        assert_ne!(item_offset, egui::Vec2::ZERO);
+        assert_eq!(
+            app.canvas.selected_item_ids(),
+            vec![duplicated_item.item.id]
+        );
+        assert_eq!(
+            app.canvas.selected_annotation_ids(),
+            vec![duplicated_annotation.id]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn command_a_selects_all_active_board_images_and_annotations() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        for id in [1_i64, 2] {
+            app.canvas.add_loaded_item(&ctx, test_loaded_item(id, 1));
+        }
+        app.canvas.add_annotation(crate::data::CanvasAnnotation {
+            id: 10,
+            kind: CanvasAnnotationKind::Textbox,
+            start_x: 0.0,
+            start_y: 0.0,
+            end_x: 100.0,
+            end_y: 40.0,
+            text: "one".to_owned(),
+            text_size: CanvasTextSize::M,
+            stroke_width: CanvasStrokeWidth::M,
+            color: crate::data::CanvasAnnotationColor::Default,
+            background_enabled: false,
+            archived: false,
+        });
+        app.canvas.add_annotation(crate::data::CanvasAnnotation {
+            id: 11,
+            kind: CanvasAnnotationKind::Line,
+            start_x: 20.0,
+            start_y: 20.0,
+            end_x: 80.0,
+            end_y: 80.0,
+            text: String::new(),
+            text_size: CanvasTextSize::M,
+            stroke_width: CanvasStrokeWidth::M,
+            color: crate::data::CanvasAnnotationColor::Default,
+            background_enabled: false,
+            archived: false,
+        });
+        app.canvas.select_content(&[], &[]);
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                modifiers: egui::Modifiers {
+                    command: true,
+                    ..Default::default()
+                },
+                events: vec![egui::Event::Key {
+                    key: egui::Key::A,
+                    physical_key: Some(egui::Key::A),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        ..Default::default()
+                    },
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                app.handle_selection_shortcuts(
+                    ui.ctx(),
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),
+                )
+            },
+        );
+
+        assert_eq!(app.canvas.selected_item_ids(), vec![1, 2]);
+        assert_eq!(app.canvas.selected_annotation_ids(), vec![10, 11]);
+    }
+
+    #[test]
+    fn copy_selection_emits_internal_json_text_without_clipboard_image_data() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.canvas.add_loaded_item(&ctx, test_loaded_item(1, 1));
+        app.canvas.add_annotation(crate::data::CanvasAnnotation {
+            id: 20,
+            kind: CanvasAnnotationKind::Textbox,
+            start_x: 10.0,
+            start_y: 10.0,
+            end_x: 70.0,
+            end_y: 40.0,
+            text: "caption".to_owned(),
+            text_size: CanvasTextSize::M,
+            stroke_width: CanvasStrokeWidth::M,
+            color: crate::data::CanvasAnnotationColor::Default,
+            background_enabled: false,
+            archived: false,
+        });
+        app.canvas.select_content(&[1], &[20]);
+
+        let mut commands = Vec::new();
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Copy],
+                ..Default::default()
+            },
+            |ui| {
+                app.handle_clipboard_copy(ui.ctx());
+                commands = ui.ctx().output(|output| output.commands.clone());
+            },
+        );
+
+        assert_eq!(commands.len(), 1);
+        let egui::OutputCommand::CopyText(payload) = &commands[0] else {
+            panic!("copy should emit text payload only");
+        };
+        let payload = serde_json::from_str::<super::ClipboardBoardSelection>(payload).unwrap();
+        assert_eq!(payload.kind, super::COPY_PAYLOAD_KIND);
+        assert_eq!(payload.items.len(), 1);
+        assert_eq!(payload.annotations.len(), 1);
     }
 
     #[test]
