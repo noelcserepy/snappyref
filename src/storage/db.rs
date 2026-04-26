@@ -11,7 +11,7 @@ use image::{ColorType, ExtendedColorType, ImageEncoder, ImageFormat};
 use rusqlite::{Connection, Transaction, params, params_from_iter};
 
 use crate::data::{
-    BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
+    Board, BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
     CanvasAnnotationKind, CanvasBackground, CanvasImageCacheTier, CanvasImageMode,
     CanvasStrokeWidth, CanvasTextSize, ImageAsset, UserSession, ViewportState, WorkspaceSettings,
 };
@@ -354,6 +354,7 @@ impl Library {
         initial_scale: f32,
     ) -> Result<BoardItemWithAsset, String> {
         let mut connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
         let transaction = connection
             .transaction()
             .map_err(|error| format!("failed to start transaction: {error}"))?;
@@ -366,13 +367,96 @@ impl Library {
             height,
             file_size,
         )?;
-        let item = insert_board_item_row(&transaction, asset.id, desired_world, initial_scale)?;
+        let item = insert_board_item_row(
+            &transaction,
+            active_board_id,
+            asset.id,
+            desired_world,
+            initial_scale,
+        )?;
 
         transaction
             .commit()
             .map_err(|error| format!("failed to commit transaction: {error}"))?;
 
         Ok(BoardItemWithAsset { asset, item })
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn list_boards(&self) -> Result<Vec<Board>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id, name, archived
+                 FROM boards
+                 WHERE archived = 0
+                 ORDER BY id ASC",
+            )
+            .map_err(|error| format!("failed to prepare boards query: {error}"))?;
+
+        let rows = statement
+            .query_map([], |row| {
+                Ok(Board {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    archived: row.get::<_, i64>(2)? != 0,
+                })
+            })
+            .map_err(|error| format!("failed to read boards query: {error}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect boards: {error}"))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn create_board(&self, name: &str) -> Result<Board, String> {
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "INSERT INTO boards (
+                    name,
+                    archived,
+                    camera_pan_x,
+                    camera_pan_y,
+                    camera_zoom,
+                    canvas_background
+                 ) VALUES (?1, 0, 0.0, 0.0, 1.0, 'none')",
+                params![name],
+            )
+            .map_err(|error| format!("failed to create board: {error}"))?;
+
+        Ok(Board {
+            id: connection.last_insert_rowid(),
+            name: name.to_owned(),
+            archived: false,
+        })
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn set_active_board(&self, board_id: i64) -> Result<(), String> {
+        let connection = self.connection()?;
+        if !board_is_non_archived(&connection, board_id)? {
+            return Err(format!(
+                "cannot activate missing or archived board {board_id}"
+            ));
+        }
+
+        connection
+            .execute(
+                "INSERT INTO user_session (
+                    id,
+                    camera_pan_x,
+                    camera_pan_y,
+                    camera_zoom,
+                    active_board_id
+                 )
+                 VALUES (1, 0.0, 0.0, 1.0, ?1)
+                 ON CONFLICT(id) DO UPDATE SET active_board_id = excluded.active_board_id",
+                params![board_id],
+            )
+            .map_err(|error| format!("failed to persist active board: {error}"))?;
+
+        Ok(())
     }
 
     pub fn create_asset_and_relink_board_item(
@@ -486,6 +570,7 @@ impl Library {
 
     pub fn load_board_items(&self) -> Result<Vec<BoardItemWithAsset>, String> {
         let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -507,12 +592,13 @@ impl Library {
                  FROM board_items b
                  JOIN assets a ON a.id = b.asset_id
                  WHERE b.archived = 0
+                   AND b.board_id = ?1
                  ORDER BY b.z_index ASC, b.id ASC",
             )
             .map_err(|error| format!("failed to prepare board-items query: {error}"))?;
 
         let rows = statement
-            .query_map([], |row| {
+            .query_map(params![active_board_id], |row| {
                 Ok(BoardItemWithAsset {
                     item: BoardItem {
                         id: row.get(0)?,
@@ -544,6 +630,7 @@ impl Library {
 
     pub fn load_board_layout_items(&self) -> Result<Vec<BoardLayoutItem>, String> {
         let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -555,12 +642,13 @@ impl Library {
                  FROM board_items b
                  JOIN assets a ON a.id = b.asset_id
                  WHERE b.archived = 0
+                   AND b.board_id = ?1
                  ORDER BY b.z_index ASC, b.id ASC",
             )
             .map_err(|error| format!("failed to prepare board-layout query: {error}"))?;
 
         let rows = statement
-            .query_map([], |row| {
+            .query_map(params![active_board_id], |row| {
                 Ok(BoardLayoutItem {
                     id: row.get(0)?,
                     x: row.get(1)?,
@@ -634,6 +722,7 @@ impl Library {
         }
 
         let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -654,14 +743,14 @@ impl Library {
                     a.imported_at
                  FROM board_items b
                  JOIN assets a ON a.id = b.asset_id
-                 WHERE b.id = ?1 AND b.archived = 0",
+                 WHERE b.id = ?1 AND b.archived = 0 AND b.board_id = ?2",
             )
             .map_err(|error| format!("failed to prepare duplicate-item query: {error}"))?;
 
         let mut source_records = Vec::new();
         for item_id in item_ids {
             let record = statement
-                .query_row(params![item_id], |row| {
+                .query_row(params![item_id, active_board_id], |row| {
                     Ok(BoardItemWithAsset {
                         item: BoardItem {
                             id: row.get(0)?,
@@ -702,6 +791,7 @@ impl Library {
             transaction
                 .execute(
                     "INSERT INTO board_items (
+                        board_id,
                         asset_id,
                         x,
                         y,
@@ -709,8 +799,9 @@ impl Library {
                         rotation,
                         z_index,
                         archived
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
+                        active_board_id,
                         source.item.asset_id,
                         source.item.x + delta.x,
                         source.item.y + delta.y,
@@ -833,6 +924,7 @@ impl Library {
         model_key: &str,
     ) -> Result<Vec<ImageEmbeddingJob>, String> {
         let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -845,6 +937,7 @@ impl Library {
                     AND e.model_key = ?1
                     AND e.status = 'ready'
                  WHERE b.archived = 0
+                   AND b.board_id = ?2
                    AND e.asset_id IS NULL
                  GROUP BY a.id, a.original_path
                  ORDER BY a.id ASC",
@@ -852,7 +945,7 @@ impl Library {
             .map_err(|error| format!("failed to prepare embedding-backfill query: {error}"))?;
 
         let rows = statement
-            .query_map(params![model_key], |row| {
+            .query_map(params![model_key, active_board_id], |row| {
                 Ok(ImageEmbeddingJob {
                     asset_id: row.get(0)?,
                     original_path: PathBuf::from(row.get::<_, String>(1)?),
@@ -870,6 +963,7 @@ impl Library {
         model_key: &str,
     ) -> Result<Vec<ActiveCanvasEmbedding>, String> {
         let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -878,6 +972,7 @@ impl Library {
                  FROM asset_embeddings e
                  JOIN board_items b ON b.asset_id = e.asset_id
                  WHERE b.archived = 0
+                   AND b.board_id = ?2
                    AND e.model_key = ?1
                    AND e.status = 'ready'
                    AND e.embedding_blob IS NOT NULL
@@ -887,7 +982,7 @@ impl Library {
             .map_err(|error| format!("failed to prepare active-embedding query: {error}"))?;
 
         let rows = statement
-            .query_map(params![model_key], |row| {
+            .query_map(params![model_key, active_board_id], |row| {
                 Ok(ActiveCanvasEmbedding {
                     asset_id: row.get(0)?,
                     embedding_blob: row.get(1)?,
@@ -946,6 +1041,7 @@ impl Library {
         }
 
         let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
         let placeholders = std::iter::repeat_n("?", asset_ids.len())
             .collect::<Vec<_>>()
             .join(", ");
@@ -955,6 +1051,7 @@ impl Library {
                 asset_id
              FROM board_items
              WHERE archived = 0
+               AND board_id = ?
                AND asset_id IN ({placeholders})
              ORDER BY z_index ASC, id ASC"
         );
@@ -964,12 +1061,15 @@ impl Library {
             .map_err(|error| format!("failed to prepare board-search-instance query: {error}"))?;
 
         let rows = statement
-            .query_map(params_from_iter(asset_ids.iter().copied()), |row| {
-                Ok(BoardSearchInstance {
-                    item_id: row.get(0)?,
-                    asset_id: row.get(1)?,
-                })
-            })
+            .query_map(
+                params_from_iter(std::iter::once(active_board_id).chain(asset_ids.iter().copied())),
+                |row| {
+                    Ok(BoardSearchInstance {
+                        item_id: row.get(0)?,
+                        asset_id: row.get(1)?,
+                    })
+                },
+            )
             .map_err(|error| format!("failed to read board-search-instance query: {error}"))?;
 
         rows.collect::<Result<Vec<_>, _>>()
@@ -978,15 +1078,14 @@ impl Library {
 
     pub fn load_user_session(&self) -> Result<UserSession, String> {
         let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        let viewport = board_viewport_state(&connection, active_board_id)
+            .map_err(|error| format!("failed to load active board viewport: {error}"))?;
         let mut statement = connection
             .prepare(
                 "SELECT
-                    camera_pan_x,
-                    camera_pan_y,
-                    camera_zoom,
                     auto_image_scaling,
                     import_gap,
-                    canvas_background,
                     semantic_search_enabled,
                     canvas_image_mode,
                     canvas_image_max_side,
@@ -998,52 +1097,53 @@ impl Library {
             .map_err(|error| format!("failed to prepare user-session query: {error}"))?;
 
         let session = statement.query_row([], |row| {
-            let background = row
-                .get::<_, String>(5)
-                .ok()
-                .and_then(|value| CanvasBackground::from_str(&value))
-                .unwrap_or_default();
             let canvas_image_mode = row
-                .get::<_, String>(7)
+                .get::<_, String>(3)
                 .ok()
                 .and_then(|value| CanvasImageMode::from_str(&value))
                 .unwrap_or_default();
             Ok(UserSession {
-                viewport: ViewportState {
-                    camera_pan_x: row.get(0)?,
-                    camera_pan_y: row.get(1)?,
-                    camera_zoom: row.get(2)?,
-                    canvas_background: background,
-                },
+                active_board_id,
+                viewport: viewport.clone(),
                 settings: WorkspaceSettings {
-                    auto_image_scaling: row.get::<_, i64>(3)? != 0,
-                    import_gap: row.get(4)?,
+                    auto_image_scaling: row.get::<_, i64>(0)? != 0,
+                    import_gap: row.get(1)?,
                     canvas_image_mode,
                     canvas_image_max_side: row
-                        .get::<_, i64>(8)
+                        .get::<_, i64>(4)
                         .ok()
                         .map(|value| value.max(1) as u32)
                         .unwrap_or(crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE),
-                    semantic_search_enabled: row.get::<_, i64>(6).unwrap_or(0) != 0,
+                    semantic_search_enabled: row.get::<_, i64>(2).unwrap_or(0) != 0,
                     rotation_snap_degrees: row
-                        .get::<_, f32>(9)
+                        .get::<_, f32>(5)
                         .ok()
                         .map(|value| value.max(0.0))
                         .unwrap_or(crate::data::DEFAULT_ROTATION_SNAP_DEGREES),
-                    default_textbox_background: row.get::<_, i64>(10).unwrap_or(0) != 0,
+                    default_textbox_background: row.get::<_, i64>(6).unwrap_or(0) != 0,
                 },
             })
         });
 
         match session {
             Ok(session) => Ok(session),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(UserSession::default()),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                let mut session = UserSession::default();
+                session.active_board_id = active_board_id;
+                session.viewport = viewport;
+                Ok(session)
+            }
             Err(error) => Err(format!("failed to load user session: {error}")),
         }
     }
 
     pub fn save_user_session(&self, session: &UserSession) -> Result<(), String> {
         let connection = self.connection()?;
+        let active_board_id = if board_is_non_archived(&connection, session.active_board_id)? {
+            session.active_board_id
+        } else {
+            active_board_id(&connection)?
+        };
         connection
             .execute(
                 "INSERT INTO user_session (
@@ -1058,9 +1158,10 @@ impl Library {
                     canvas_image_mode,
                     canvas_image_max_side,
                     rotation_snap_degrees,
-                    default_textbox_background
+                    default_textbox_background,
+                    active_board_id
                  )
-                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                  ON CONFLICT(id) DO UPDATE SET
                     camera_pan_x = excluded.camera_pan_x,
                     camera_pan_y = excluded.camera_pan_y,
@@ -1072,7 +1173,8 @@ impl Library {
                     canvas_image_mode = excluded.canvas_image_mode,
                     canvas_image_max_side = excluded.canvas_image_max_side,
                     rotation_snap_degrees = excluded.rotation_snap_degrees,
-                    default_textbox_background = excluded.default_textbox_background",
+                    default_textbox_background = excluded.default_textbox_background,
+                    active_board_id = excluded.active_board_id",
                 params![
                     session.viewport.camera_pan_x,
                     session.viewport.camera_pan_y,
@@ -1097,15 +1199,35 @@ impl Library {
                     } else {
                         0_i64
                     },
+                    active_board_id,
                 ],
             )
             .map_err(|error| format!("failed to save user session: {error}"))?;
+
+        connection
+            .execute(
+                "UPDATE boards
+                 SET camera_pan_x = ?1,
+                     camera_pan_y = ?2,
+                     camera_zoom = ?3,
+                     canvas_background = ?4
+                 WHERE id = ?5",
+                params![
+                    session.viewport.camera_pan_x,
+                    session.viewport.camera_pan_y,
+                    session.viewport.camera_zoom,
+                    session.viewport.canvas_background.as_str(),
+                    active_board_id,
+                ],
+            )
+            .map_err(|error| format!("failed to save board viewport: {error}"))?;
 
         Ok(())
     }
 
     pub fn load_canvas_annotations(&self) -> Result<Vec<CanvasAnnotation>, String> {
         let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -1122,12 +1244,13 @@ impl Library {
                     background_enabled
                  FROM canvas_annotations
                  WHERE archived = 0
+                   AND board_id = ?1
                  ORDER BY id ASC",
             )
             .map_err(|error| format!("failed to prepare canvas-annotations query: {error}"))?;
 
         let rows = statement
-            .query_map([], |row| {
+            .query_map(params![active_board_id], |row| {
                 let kind = row.get::<_, String>(1)?;
                 Ok(CanvasAnnotation {
                     id: row.get(0)?,
@@ -1203,9 +1326,11 @@ impl Library {
         background_enabled: bool,
     ) -> Result<CanvasAnnotation, String> {
         let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
         connection
             .execute(
                 "INSERT INTO canvas_annotations (
+                    board_id,
                     kind,
                     start_x,
                     start_y,
@@ -1217,8 +1342,9 @@ impl Library {
                     color,
                     background_enabled,
                     archived
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
+                    active_board_id,
                     kind.as_str(),
                     start.x,
                     start.y,
@@ -1324,6 +1450,7 @@ impl Library {
 
     fn initialize_schema(&self) -> Result<(), String> {
         let connection = self.connection()?;
+        let should_migrate_default_board_viewport = !table_exists(&connection, "boards")?;
         connection
             .execute_batch(
                 "
@@ -1341,8 +1468,19 @@ impl Library {
                     imported_at   INTEGER NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS boards (
+                    id            INTEGER PRIMARY KEY,
+                    name          TEXT NOT NULL,
+                    archived      INTEGER NOT NULL DEFAULT 0,
+                    camera_pan_x  REAL NOT NULL DEFAULT 0.0,
+                    camera_pan_y  REAL NOT NULL DEFAULT 0.0,
+                    camera_zoom   REAL NOT NULL DEFAULT 1.0,
+                    canvas_background TEXT NOT NULL DEFAULT 'none'
+                );
+
                 CREATE TABLE IF NOT EXISTS board_items (
                     id        INTEGER PRIMARY KEY,
+                    board_id  INTEGER NOT NULL DEFAULT 1 REFERENCES boards(id),
                     asset_id  INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
                     x         REAL NOT NULL,
                     y         REAL NOT NULL,
@@ -1364,11 +1502,13 @@ impl Library {
                     canvas_image_mode TEXT NOT NULL DEFAULT 'downscale',
                     canvas_image_max_side INTEGER NOT NULL DEFAULT 2000,
                     rotation_snap_degrees REAL NOT NULL DEFAULT 15.0,
-                    default_textbox_background INTEGER NOT NULL DEFAULT 0
+                    default_textbox_background INTEGER NOT NULL DEFAULT 0,
+                    active_board_id INTEGER NOT NULL DEFAULT 1
                 );
 
                 CREATE TABLE IF NOT EXISTS canvas_annotations (
                     id        INTEGER PRIMARY KEY,
+                    board_id  INTEGER NOT NULL DEFAULT 1 REFERENCES boards(id),
                     kind      TEXT NOT NULL,
                     start_x   REAL NOT NULL,
                     start_y   REAL NOT NULL,
@@ -1401,6 +1541,8 @@ impl Library {
             .map_err(|error| format!("failed to initialize database schema: {error}"))?;
 
         ensure_board_items_archived_column(&connection)?;
+        ensure_default_board(&connection)?;
+        ensure_board_items_board_id_column(&connection)?;
         ensure_user_session_auto_image_scaling_column(&connection)?;
         ensure_user_session_import_gap_column(&connection)?;
         ensure_user_session_canvas_background_column(&connection)?;
@@ -1409,10 +1551,16 @@ impl Library {
         ensure_user_session_canvas_image_max_side_column(&connection)?;
         ensure_user_session_rotation_snap_degrees_column(&connection)?;
         ensure_user_session_default_textbox_background_column(&connection)?;
+        ensure_user_session_active_board_id_column(&connection)?;
         ensure_canvas_annotations_text_size_column(&connection)?;
         ensure_canvas_annotations_stroke_width_column(&connection)?;
         ensure_canvas_annotations_color_column(&connection)?;
-        ensure_canvas_annotations_background_enabled_column(&connection)
+        ensure_canvas_annotations_background_enabled_column(&connection)?;
+        ensure_canvas_annotations_board_id_column(&connection)?;
+        if should_migrate_default_board_viewport {
+            migrate_default_board_viewport(&connection)?;
+        }
+        Ok(())
     }
 
     fn connection(&self) -> Result<Connection, String> {
@@ -1492,6 +1640,204 @@ fn ensure_board_items_archived_column(connection: &Connection) -> Result<(), Str
         .map_err(|error| format!("failed to add archived column to board_items: {error}"))?;
 
     Ok(())
+}
+
+fn ensure_default_board(connection: &Connection) -> Result<(), String> {
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM boards WHERE archived = 0",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("failed to count boards: {error}"))?;
+
+    if count == 0 {
+        connection
+            .execute(
+                "INSERT INTO boards (
+                    id,
+                    name,
+                    archived,
+                    camera_pan_x,
+                    camera_pan_y,
+                    camera_zoom,
+                    canvas_background
+                 ) VALUES (1, 'My Board', 0, 0.0, 0.0, 1.0, 'none')",
+                [],
+            )
+            .map_err(|error| format!("failed to create default board: {error}"))?;
+    }
+
+    Ok(())
+}
+
+fn ensure_board_items_board_id_column(connection: &Connection) -> Result<(), String> {
+    if table_has_column(connection, "board_items", "board_id")? {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE board_items ADD COLUMN board_id INTEGER NOT NULL DEFAULT 1",
+            [],
+        )
+        .map_err(|error| format!("failed to add board_id column to board_items: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_canvas_annotations_board_id_column(connection: &Connection) -> Result<(), String> {
+    if table_has_column(connection, "canvas_annotations", "board_id")? {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE canvas_annotations ADD COLUMN board_id INTEGER NOT NULL DEFAULT 1",
+            [],
+        )
+        .map_err(|error| format!("failed to add board_id column to canvas_annotations: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_user_session_active_board_id_column(connection: &Connection) -> Result<(), String> {
+    if table_has_column(connection, "user_session", "active_board_id")? {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE user_session ADD COLUMN active_board_id INTEGER NOT NULL DEFAULT 1",
+            [],
+        )
+        .map_err(|error| {
+            format!("failed to add active_board_id column to user_session: {error}")
+        })?;
+
+    Ok(())
+}
+
+fn migrate_default_board_viewport(connection: &Connection) -> Result<(), String> {
+    let session = connection.query_row(
+        "SELECT camera_pan_x, camera_pan_y, camera_zoom, canvas_background
+         FROM user_session
+         WHERE id = 1",
+        [],
+        |row| {
+            Ok((
+                row.get::<_, f32>(0)?,
+                row.get::<_, f32>(1)?,
+                row.get::<_, f32>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        },
+    );
+
+    let Ok((pan_x, pan_y, zoom, background)) = session else {
+        return Ok(());
+    };
+
+    connection
+        .execute(
+            "UPDATE boards
+             SET camera_pan_x = ?1,
+                 camera_pan_y = ?2,
+                 camera_zoom = ?3,
+                 canvas_background = ?4
+             WHERE id = 1
+               AND name = 'My Board'",
+            params![pan_x, pan_y, zoom, background],
+        )
+        .map_err(|error| format!("failed to migrate default board viewport: {error}"))?;
+
+    Ok(())
+}
+
+fn table_has_column(connection: &Connection, table: &str, column: &str) -> Result<bool, String> {
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| format!("failed to inspect {table} schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read {table} schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect {table} schema: {error}"))?;
+
+    Ok(columns.iter().any(|existing| existing == column))
+}
+
+fn table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*)
+             FROM sqlite_master
+             WHERE type = 'table'
+               AND name = ?1",
+            params![table],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("failed to inspect {table} table: {error}"))?;
+    Ok(count > 0)
+}
+
+fn active_board_id(connection: &Connection) -> Result<i64, String> {
+    let candidate = connection
+        .query_row(
+            "SELECT active_board_id FROM user_session WHERE id = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(1);
+
+    if board_is_non_archived(connection, candidate)? {
+        return Ok(candidate);
+    }
+
+    connection
+        .query_row(
+            "SELECT id FROM boards WHERE archived = 0 ORDER BY id ASC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("failed to load active board: {error}"))
+}
+
+fn board_is_non_archived(connection: &Connection, board_id: i64) -> Result<bool, String> {
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM boards WHERE id = ?1 AND archived = 0",
+            params![board_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("failed to inspect board {board_id}: {error}"))?;
+    Ok(count > 0)
+}
+
+fn board_viewport_state(
+    connection: &Connection,
+    board_id: i64,
+) -> Result<ViewportState, rusqlite::Error> {
+    connection.query_row(
+        "SELECT camera_pan_x, camera_pan_y, camera_zoom, canvas_background
+         FROM boards
+         WHERE id = ?1",
+        params![board_id],
+        |row| {
+            let background = row
+                .get::<_, String>(3)
+                .ok()
+                .and_then(|value| CanvasBackground::from_str(&value))
+                .unwrap_or_default();
+            Ok(ViewportState {
+                camera_pan_x: row.get(0)?,
+                camera_pan_y: row.get(1)?,
+                camera_zoom: row.get(2)?,
+                canvas_background: background,
+            })
+        },
+    )
 }
 
 fn ensure_canvas_annotations_text_size_column(connection: &Connection) -> Result<(), String> {
@@ -1656,6 +2002,7 @@ fn insert_asset_row(
 
 fn insert_board_item_row(
     transaction: &Transaction<'_>,
+    board_id: i64,
     asset_id: i64,
     desired_world: egui::Pos2,
     initial_scale: f32,
@@ -1663,6 +2010,7 @@ fn insert_board_item_row(
     transaction
         .execute(
             "INSERT INTO board_items (
+                board_id,
                 asset_id,
                 x,
                 y,
@@ -1670,8 +2018,9 @@ fn insert_board_item_row(
                 rotation,
                 z_index,
                 archived
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
+                board_id,
                 asset_id,
                 desired_world.x,
                 desired_world.y,
@@ -1938,6 +2287,293 @@ mod tests {
     use rusqlite::Connection;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_root(prefix: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "{prefix}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn new_library_has_default_non_archived_active_board() {
+        let root = temp_root("reference-default-board-test");
+        let library = Library::initialize(root.clone()).unwrap();
+
+        let boards = library.list_boards().unwrap();
+        let session = library.load_user_session().unwrap();
+
+        assert_eq!(boards.len(), 1);
+        assert_eq!(boards[0].name, "My Board");
+        assert!(!boards[0].archived);
+        assert_eq!(session.active_board_id, boards[0].id);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn existing_single_canvas_data_migrates_to_my_board() {
+        let root = temp_root("reference-board-migration-test");
+        let db_path = root.join("library.db");
+        let connection = Connection::open(&db_path).unwrap();
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE assets (
+                    id INTEGER PRIMARY KEY,
+                    original_path TEXT NOT NULL UNIQUE,
+                    filename TEXT NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    width INTEGER NOT NULL,
+                    height INTEGER NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    imported_at INTEGER NOT NULL
+                );
+                CREATE TABLE board_items (
+                    id INTEGER PRIMARY KEY,
+                    asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+                    x REAL NOT NULL,
+                    y REAL NOT NULL,
+                    scale REAL NOT NULL,
+                    rotation REAL NOT NULL,
+                    z_index INTEGER NOT NULL,
+                    archived INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE canvas_annotations (
+                    id INTEGER PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    start_x REAL NOT NULL,
+                    start_y REAL NOT NULL,
+                    end_x REAL NOT NULL,
+                    end_y REAL NOT NULL,
+                    text TEXT NOT NULL DEFAULT '',
+                    text_size TEXT NOT NULL DEFAULT 'm',
+                    stroke_width TEXT NOT NULL DEFAULT 'm',
+                    color TEXT NOT NULL DEFAULT 'default',
+                    background_enabled INTEGER NOT NULL DEFAULT 0,
+                    archived INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE user_session (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    camera_pan_x REAL NOT NULL,
+                    camera_pan_y REAL NOT NULL,
+                    camera_zoom REAL NOT NULL,
+                    auto_image_scaling INTEGER NOT NULL DEFAULT 1,
+                    import_gap REAL NOT NULL DEFAULT 24.0,
+                    canvas_background TEXT NOT NULL DEFAULT 'none',
+                    semantic_search_enabled INTEGER NOT NULL DEFAULT 1,
+                    canvas_image_mode TEXT NOT NULL DEFAULT 'downscale',
+                    canvas_image_max_side INTEGER NOT NULL DEFAULT 2000,
+                    rotation_snap_degrees REAL NOT NULL DEFAULT 15.0,
+                    default_textbox_background INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO assets (
+                    id, original_path, filename, mime_type, width, height, file_size, imported_at
+                ) VALUES (11, '/tmp/legacy.png', 'legacy.png', 'image/png', 100, 80, 4, 123);
+                INSERT INTO board_items (
+                    id, asset_id, x, y, scale, rotation, z_index, archived
+                ) VALUES (21, 11, 10.0, 20.0, 0.5, 12.0, 3, 0);
+                INSERT INTO canvas_annotations (
+                    id, kind, start_x, start_y, end_x, end_y, text, text_size, stroke_width, color, background_enabled, archived
+                ) VALUES (31, 'textbox', 1.0, 2.0, 101.0, 52.0, 'note', 'l', 's', 'sky', 1, 0);
+                INSERT INTO user_session (
+                    id, camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap,
+                    canvas_background, semantic_search_enabled, canvas_image_mode,
+                    canvas_image_max_side, rotation_snap_degrees, default_textbox_background
+                ) VALUES (1, 44.0, 55.0, 1.25, 0, 37.0, 'grid', 0, 'original', 4096, 30.0, 1);
+                ",
+            )
+            .unwrap();
+        drop(connection);
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let boards = library.list_boards().unwrap();
+        let session = library.load_user_session().unwrap();
+        let items = library.load_board_items().unwrap();
+        let annotations = library.load_canvas_annotations().unwrap();
+
+        assert_eq!(boards.len(), 1);
+        assert_eq!(boards[0].name, "My Board");
+        assert_eq!(session.active_board_id, boards[0].id);
+        assert_eq!(session.viewport.camera_pan_x, 44.0);
+        assert_eq!(session.viewport.camera_pan_y, 55.0);
+        assert_eq!(session.viewport.camera_zoom, 1.25);
+        assert_eq!(session.viewport.canvas_background, CanvasBackground::Grid);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].item.id, 21);
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(annotations[0].id, 31);
+        assert_eq!(annotations[0].text, "note");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn active_board_persists_and_scopes_items_annotations_and_viewport() {
+        let root = temp_root("reference-board-scope-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_board = library.list_boards().unwrap()[0].clone();
+        let first_path = library
+            .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let first_item = library
+            .persist_imported_image(
+                &first_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let first_annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Textbox,
+                egui::pos2(0.0, 0.0),
+                egui::pos2(50.0, 20.0),
+                "first board",
+                CanvasTextSize::default(),
+                crate::data::CanvasStrokeWidth::default(),
+                crate::data::CanvasAnnotationColor::default(),
+                false,
+            )
+            .unwrap();
+
+        let second_board = library.create_board("Second").unwrap();
+        library.set_active_board(second_board.id).unwrap();
+        let second_path = library
+            .store_rgba_image("second", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+        let second_item = library
+            .persist_imported_image(
+                &second_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(20.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let second_annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Textbox,
+                egui::pos2(100.0, 0.0),
+                egui::pos2(150.0, 20.0),
+                "second board",
+                CanvasTextSize::default(),
+                crate::data::CanvasStrokeWidth::default(),
+                crate::data::CanvasAnnotationColor::default(),
+                true,
+            )
+            .unwrap();
+        let mut session = library.load_user_session().unwrap();
+        session.viewport.camera_pan_x = 200.0;
+        session.viewport.camera_pan_y = 300.0;
+        session.viewport.camera_zoom = 2.0;
+        session.viewport.canvas_background = CanvasBackground::Dots;
+        library.save_user_session(&session).unwrap();
+
+        let second_items = library.load_board_items().unwrap();
+        let second_annotations = library.load_canvas_annotations().unwrap();
+        let reopened = library.load_user_session().unwrap();
+        assert_eq!(reopened.active_board_id, second_board.id);
+        assert_eq!(reopened.viewport.camera_pan_x, 200.0);
+        assert_eq!(reopened.viewport.canvas_background, CanvasBackground::Dots);
+        assert_eq!(second_items.len(), 1);
+        assert_eq!(second_items[0].item.id, second_item.item.id);
+        assert_eq!(second_annotations.len(), 1);
+        assert_eq!(second_annotations[0].id, second_annotation.id);
+
+        library.set_active_board(first_board.id).unwrap();
+        let first_items = library.load_board_items().unwrap();
+        let first_annotations = library.load_canvas_annotations().unwrap();
+        let reopened_first = library.load_user_session().unwrap();
+        assert_eq!(reopened_first.active_board_id, first_board.id);
+        assert_eq!(reopened_first.viewport.camera_pan_x, 0.0);
+        assert_eq!(
+            reopened_first.viewport.canvas_background,
+            CanvasBackground::None
+        );
+        assert_eq!(first_items.len(), 1);
+        assert_eq!(first_items[0].item.id, first_item.item.id);
+        assert_eq!(first_annotations.len(), 1);
+        assert_eq!(first_annotations[0].id, first_annotation.id);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn workspace_settings_remain_global_across_active_boards() {
+        let root = temp_root("reference-global-settings-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_board = library.list_boards().unwrap()[0].clone();
+        let second_board = library.create_board("Second").unwrap();
+        library.set_active_board(second_board.id).unwrap();
+
+        let mut session = library.load_user_session().unwrap();
+        session.settings.auto_image_scaling = false;
+        session.settings.import_gap = 48.0;
+        session.settings.semantic_search_enabled = false;
+        session.settings.canvas_image_mode = CanvasImageMode::Original;
+        session.settings.canvas_image_max_side = 4096;
+        session.settings.rotation_snap_degrees = 45.0;
+        session.settings.default_textbox_background = true;
+        session.viewport.camera_pan_x = 90.0;
+        session.viewport.canvas_background = CanvasBackground::Grid;
+        library.save_user_session(&session).unwrap();
+
+        library.set_active_board(first_board.id).unwrap();
+        let reopened = library.load_user_session().unwrap();
+
+        assert_eq!(reopened.active_board_id, first_board.id);
+        assert!(!reopened.settings.auto_image_scaling);
+        assert_eq!(reopened.settings.import_gap, 48.0);
+        assert!(!reopened.settings.semantic_search_enabled);
+        assert_eq!(
+            reopened.settings.canvas_image_mode,
+            CanvasImageMode::Original
+        );
+        assert_eq!(reopened.settings.canvas_image_max_side, 4096);
+        assert_eq!(reopened.settings.rotation_snap_degrees, 45.0);
+        assert!(reopened.settings.default_textbox_background);
+        assert_eq!(reopened.viewport.camera_pan_x, 0.0);
+        assert_eq!(reopened.viewport.canvas_background, CanvasBackground::None);
+
+        library.set_active_board(second_board.id).unwrap();
+        let second_reopened = library.load_user_session().unwrap();
+        assert_eq!(second_reopened.viewport.camera_pan_x, 90.0);
+        assert_eq!(
+            second_reopened.viewport.canvas_background,
+            CanvasBackground::Grid
+        );
+        assert_eq!(second_reopened.settings.import_gap, 48.0);
+
+        drop(library);
+        let library = Library::initialize(root.clone()).unwrap();
+        library.set_active_board(first_board.id).unwrap();
+        let first_after_reopen = library.load_user_session().unwrap();
+        assert_eq!(first_after_reopen.viewport.camera_pan_x, 0.0);
+        assert_eq!(
+            first_after_reopen.viewport.canvas_background,
+            CanvasBackground::None
+        );
+        library.set_active_board(second_board.id).unwrap();
+        let second_after_reopen = library.load_user_session().unwrap();
+        assert_eq!(second_after_reopen.viewport.camera_pan_x, 90.0);
+        assert_eq!(
+            second_after_reopen.viewport.canvas_background,
+            CanvasBackground::Grid
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn existing_user_session_rows_migrate_to_default_preferences() {
