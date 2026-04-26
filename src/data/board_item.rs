@@ -1,3 +1,11 @@
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Board {
+    pub id: i64,
+    pub name: String,
+    pub archived: bool,
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct BoardItem {

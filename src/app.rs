@@ -655,6 +655,7 @@ pub struct ReferenceApp {
     wgpu_render_state: Option<eframe::egui_wgpu::RenderState>,
     library: Option<crate::storage::Library>,
     import_worker: Option<crate::jobs::ImportWorker>,
+    active_board_id: i64,
     crop_undo_stack: Vec<CropUndoEntry>,
     max_texture_side: usize,
     settings: crate::data::WorkspaceSettings,
@@ -707,6 +708,7 @@ impl ReferenceApp {
                     wgpu_render_state: cc.wgpu_render_state.clone(),
                     library: Some(library.clone()),
                     import_worker: Some(import_worker),
+                    active_board_id: 1,
                     crop_undo_stack: Vec::new(),
                     max_texture_side,
                     settings: crate::data::WorkspaceSettings {
@@ -869,6 +871,7 @@ impl ReferenceApp {
                 wgpu_render_state: cc.wgpu_render_state.clone(),
                 library: None,
                 import_worker: None,
+                active_board_id: 1,
                 crop_undo_stack: Vec::new(),
                 max_texture_side,
                 settings: crate::data::WorkspaceSettings {
@@ -955,6 +958,7 @@ impl ReferenceApp {
         match library.load_user_session() {
             Ok(session) => {
                 self.canvas.apply_viewport_state(&session.viewport);
+                self.active_board_id = session.active_board_id;
                 self.settings = session.settings;
                 self.canvas
                     .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
@@ -2081,6 +2085,7 @@ impl ReferenceApp {
         };
 
         let session = crate::data::UserSession {
+            active_board_id: self.active_board_id,
             viewport: self.canvas.viewport_state(),
             settings: self.settings.clone(),
         };
@@ -3402,6 +3407,7 @@ mod tests {
             wgpu_render_state: None,
             library,
             import_worker: None,
+            active_board_id: 1,
             crop_undo_stack: Vec::new(),
             max_texture_side: 8192,
             settings: crate::data::WorkspaceSettings {
