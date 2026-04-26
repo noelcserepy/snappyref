@@ -27,6 +27,12 @@ use crate::data::{
 };
 use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
 
+#[derive(Clone, Copy)]
+enum StackOrderMove {
+    Front,
+    Back,
+}
+
 impl CanvasState {
     pub fn add_loaded_item(&mut self, ctx: &egui::Context, loaded: LoadedCanvasItem) {
         let is_vector_preview = matches!(
@@ -618,6 +624,10 @@ impl CanvasState {
         self.document.stack_order = stack_order;
     }
 
+    pub fn canvas_stack_order(&self) -> Vec<CanvasStackItem> {
+        self.ordered_canvas_items_back_to_front()
+    }
+
     pub fn clear_for_board_switch(&mut self) {
         self.finish_textbox_edit();
         self.document.images.clear();
@@ -977,6 +987,14 @@ impl CanvasState {
         )
     }
 
+    pub fn move_selected_canvas_items_to_front(&mut self) -> bool {
+        self.move_selected_canvas_items(StackOrderMove::Front)
+    }
+
+    pub fn move_selected_canvas_items_to_back(&mut self) -> bool {
+        self.move_selected_canvas_items(StackOrderMove::Back)
+    }
+
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn delete_selected_images(&mut self) -> Vec<i64> {
         let selected_ids = self.document.selected_item_ids.clone();
@@ -1268,6 +1286,58 @@ impl CanvasState {
                 .iter()
                 .any(|annotation| annotation.id == annotation_id),
         }
+    }
+
+    fn move_selected_canvas_items(&mut self, direction: StackOrderMove) -> bool {
+        let selected = self.selected_canvas_stack_items();
+        if selected.is_empty() {
+            return false;
+        }
+
+        let ordered = self.ordered_canvas_items_back_to_front();
+        let mut unmoved = Vec::with_capacity(ordered.len().saturating_sub(selected.len()));
+        let mut moved = Vec::with_capacity(selected.len());
+        for item in ordered {
+            if selected.contains(&item) {
+                moved.push(item);
+            } else {
+                unmoved.push(item);
+            }
+        }
+
+        let next_order = match direction {
+            StackOrderMove::Front => {
+                unmoved.extend(moved);
+                unmoved
+            }
+            StackOrderMove::Back => {
+                moved.extend(unmoved);
+                moved
+            }
+        };
+
+        if next_order == self.document.stack_order {
+            return false;
+        }
+        self.document.stack_order = next_order;
+        true
+    }
+
+    fn selected_canvas_stack_items(&self) -> Vec<CanvasStackItem> {
+        self.document
+            .selected_item_ids
+            .iter()
+            .copied()
+            .map(CanvasStackItem::Placement)
+            .chain(
+                self.document
+                    .selected_annotation_ids
+                    .iter()
+                    .copied()
+                    .map(CanvasStackItem::Annotation),
+            )
+            .filter(|item| self.stack_item_exists(*item))
+            .collect()
     }
 
     pub(super) fn annotation_by_id_mut(

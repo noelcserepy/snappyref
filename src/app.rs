@@ -41,6 +41,8 @@ enum ContextMenuAction {
     Paste,
     Duplicate,
     DeleteFromBoard,
+    MoveToFront,
+    MoveToBack,
     Crop,
     SearchUsingImage,
     RemoveFromLibrary,
@@ -1913,6 +1915,16 @@ impl ReferenceApp {
                 enabled: has_selection,
             },
             ContextMenuItem {
+                action: ContextMenuAction::MoveToFront,
+                label: "Move to Front",
+                enabled: has_selection,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::MoveToBack,
+                label: "Move to Back",
+                enabled: has_selection,
+            },
+            ContextMenuItem {
                 action: ContextMenuAction::Crop,
                 label: "Crop",
                 enabled: exactly_one_image_only,
@@ -1954,11 +1966,34 @@ impl ReferenceApp {
             ContextMenuAction::DeleteFromBoard => {
                 delete_selected_items(&mut self.canvas, self.library.as_ref(), &mut self.status);
             }
+            ContextMenuAction::MoveToFront => self.move_selected_canvas_items_to_front(),
+            ContextMenuAction::MoveToBack => self.move_selected_canvas_items_to_back(),
             ContextMenuAction::Crop => {
                 self.status = "Hold C and drag over the selected image to crop".to_owned();
             }
             ContextMenuAction::SearchUsingImage => self.search_using_selected_image(),
             ContextMenuAction::RemoveFromLibrary => self.request_selected_assets_library_remove(),
+        }
+    }
+
+    fn move_selected_canvas_items_to_front(&mut self) {
+        if self.canvas.move_selected_canvas_items_to_front() {
+            self.persist_canvas_stack_order();
+        }
+    }
+
+    fn move_selected_canvas_items_to_back(&mut self) {
+        if self.canvas.move_selected_canvas_items_to_back() {
+            self.persist_canvas_stack_order();
+        }
+    }
+
+    fn persist_canvas_stack_order(&mut self) {
+        let Some(library) = &self.library else {
+            return;
+        };
+        if let Err(error) = library.save_canvas_stack_order(&self.canvas.canvas_stack_order()) {
+            self.status = error;
         }
     }
 
@@ -4389,6 +4424,8 @@ mod tests {
                 "Paste",
                 "Duplicate",
                 "Delete (from board)",
+                "Move to Front",
+                "Move to Back",
                 "Crop",
                 "Search using image",
                 "Remove from Library..."
@@ -4401,6 +4438,8 @@ mod tests {
             &items,
             super::ContextMenuAction::DeleteFromBoard
         ));
+        assert!(item_enabled(&items, super::ContextMenuAction::MoveToFront));
+        assert!(item_enabled(&items, super::ContextMenuAction::MoveToBack));
         assert!(!item_enabled(&items, super::ContextMenuAction::Crop));
         assert!(!item_enabled(
             &items,
@@ -4409,6 +4448,59 @@ mod tests {
         assert!(item_enabled(
             &items,
             super::ContextMenuAction::RemoveFromLibrary
+        ));
+    }
+
+    #[test]
+    fn stack_order_context_actions_are_disabled_without_canvas_item_selection() {
+        let app = test_app(None);
+
+        let items = app.context_menu_items();
+
+        assert!(!item_enabled(&items, super::ContextMenuAction::MoveToFront));
+        assert!(!item_enabled(&items, super::ContextMenuAction::MoveToBack));
+    }
+
+    #[test]
+    fn stack_order_context_actions_are_enabled_for_image_and_annotation_selections() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.canvas.add_loaded_item(&ctx, test_loaded_item(1, 1));
+        app.canvas.add_annotation(crate::data::CanvasAnnotation {
+            id: 20,
+            kind: CanvasAnnotationKind::Textbox,
+            start_x: 10.0,
+            start_y: 10.0,
+            end_x: 70.0,
+            end_y: 40.0,
+            text: "caption".to_owned(),
+            text_size: CanvasTextSize::M,
+            stroke_width: CanvasStrokeWidth::M,
+            color: crate::data::CanvasAnnotationColor::Default,
+            background_enabled: false,
+            archived: false,
+        });
+
+        app.canvas.select_content(&[1], &[]);
+        let image_only = app.context_menu_items();
+        assert!(item_enabled(
+            &image_only,
+            super::ContextMenuAction::MoveToFront
+        ));
+        assert!(item_enabled(
+            &image_only,
+            super::ContextMenuAction::MoveToBack
+        ));
+
+        app.canvas.select_content(&[], &[20]);
+        let annotation_only = app.context_menu_items();
+        assert!(item_enabled(
+            &annotation_only,
+            super::ContextMenuAction::MoveToFront
+        ));
+        assert!(item_enabled(
+            &annotation_only,
+            super::ContextMenuAction::MoveToBack
         ));
     }
 
@@ -4489,6 +4581,90 @@ mod tests {
         assert!(app.pending_library_remove.is_none());
         assert!(library.load_board_items().unwrap().is_empty());
         assert!(source_item.asset.original_path.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn move_to_front_context_action_persists_canvas_stack_order() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-context-move-front");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_path = library
+            .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let second_path = library
+            .store_rgba_image("second", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+        let first = library
+            .persist_imported_image(&first_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let second = library
+            .persist_imported_image(
+                &second_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Textbox,
+                egui::pos2(10.0, 12.0),
+                egui::pos2(110.0, 72.0),
+                "hello",
+                CanvasTextSize::default(),
+                CanvasStrokeWidth::default(),
+                crate::data::CanvasAnnotationColor::default(),
+                false,
+            )
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.canvas
+            .add_loaded_item(&ctx, test_loaded_item(first.item.id, 1));
+        app.canvas
+            .add_loaded_item(&ctx, test_loaded_item(second.item.id, 1));
+        app.canvas.add_annotation(annotation.clone());
+        app.canvas.set_canvas_stack_order(vec![
+            crate::data::CanvasStackItem::Placement(first.item.id),
+            crate::data::CanvasStackItem::Annotation(annotation.id),
+            crate::data::CanvasStackItem::Placement(second.item.id),
+        ]);
+        app.canvas
+            .select_content(&[first.item.id], &[annotation.id]);
+
+        app.handle_context_menu_action(
+            super::ContextMenuAction::MoveToFront,
+            &ctx,
+            egui::Rect::EVERYTHING,
+        );
+
+        assert_eq!(
+            library.load_canvas_stack_order().unwrap(),
+            vec![
+                crate::data::CanvasStackItem::Placement(second.item.id),
+                crate::data::CanvasStackItem::Placement(first.item.id),
+                crate::data::CanvasStackItem::Annotation(annotation.id),
+            ]
+        );
+
+        app.handle_context_menu_action(
+            super::ContextMenuAction::MoveToBack,
+            &ctx,
+            egui::Rect::EVERYTHING,
+        );
+
+        assert_eq!(
+            library.load_canvas_stack_order().unwrap(),
+            vec![
+                crate::data::CanvasStackItem::Placement(first.item.id),
+                crate::data::CanvasStackItem::Annotation(annotation.id),
+                crate::data::CanvasStackItem::Placement(second.item.id),
+            ]
+        );
 
         let _ = fs::remove_dir_all(root);
     }
