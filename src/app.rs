@@ -230,6 +230,14 @@ struct ClipboardBoardSelection {
 }
 
 #[derive(Clone, Debug)]
+struct BoardImportPlaceholder {
+    queue_id: u64,
+    label: String,
+    center_world: egui::Pos2,
+    size_world: egui::Vec2,
+}
+
+#[derive(Clone, Debug)]
 struct CropUndoEntry {
     previous_record: crate::data::BoardItemWithAsset,
     previous_rgba: Vec<u8>,
@@ -674,6 +682,7 @@ pub struct ReferenceApp {
     frame_perf: FramePerfState,
     residency: ImageResidencyCoordinator,
     next_import_queue_id: u64,
+    import_placeholders_by_board: std::collections::HashMap<i64, Vec<BoardImportPlaceholder>>,
     hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
@@ -737,6 +746,7 @@ impl ReferenceApp {
                     frame_perf: FramePerfState::default(),
                     residency: ImageResidencyCoordinator::default(),
                     next_import_queue_id: 1,
+                    import_placeholders_by_board: std::collections::HashMap::new(),
                     hover_preview_dimensions: std::collections::HashMap::new(),
                     #[cfg(debug_assertions)]
                     verification_mode: config.verification_mode,
@@ -900,6 +910,7 @@ impl ReferenceApp {
                 frame_perf: FramePerfState::default(),
                 residency: ImageResidencyCoordinator::default(),
                 next_import_queue_id: 1,
+                import_placeholders_by_board: std::collections::HashMap::new(),
                 hover_preview_dimensions: std::collections::HashMap::new(),
                 #[cfg(debug_assertions)]
                 verification_mode: config.verification_mode,
@@ -926,6 +937,7 @@ impl ReferenceApp {
                 for record in records {
                     if let Err(error) =
                         import_worker.enqueue(crate::jobs::ImportRequest::LoadExisting {
+                            target_board_id: self.active_board_id,
                             record,
                             max_texture_side: self.max_texture_side,
                             canvas_image_settings: crate::jobs::CanvasImageSettings {
@@ -1026,6 +1038,7 @@ impl ReferenceApp {
         self.crop_undo_stack.clear();
         self.canvas.clear_for_board_switch();
         self.load_user_session();
+        self.restore_active_board_import_placeholders();
         self.enqueue_existing_items();
     }
 
@@ -1089,12 +1102,42 @@ impl ReferenceApp {
     ) {
         let scale =
             crate::jobs::initial_import_scale(width, height, self.settings.auto_image_scaling);
-        self.canvas.add_import_placeholder(
+        let size_world = egui::vec2(width as f32 * scale, height as f32 * scale);
+        let placeholders = self
+            .import_placeholders_by_board
+            .entry(self.active_board_id)
+            .or_default();
+        placeholders.retain(|placeholder| placeholder.queue_id != queue_id);
+        placeholders.push(BoardImportPlaceholder {
             queue_id,
-            placeholder_world,
-            egui::vec2(width as f32 * scale, height as f32 * scale),
-            label,
-        );
+            label: label.clone(),
+            center_world: placeholder_world,
+            size_world,
+        });
+        self.canvas
+            .add_import_placeholder(queue_id, placeholder_world, size_world, label);
+    }
+
+    fn remove_import_placeholder_for_board(&mut self, board_id: i64, queue_id: u64) {
+        if let Some(placeholders) = self.import_placeholders_by_board.get_mut(&board_id) {
+            placeholders.retain(|placeholder| placeholder.queue_id != queue_id);
+        }
+        if board_id == self.active_board_id {
+            self.canvas.remove_import_placeholder(queue_id);
+        }
+    }
+
+    fn restore_active_board_import_placeholders(&mut self) {
+        if let Some(placeholders) = self.import_placeholders_by_board.get(&self.active_board_id) {
+            for placeholder in placeholders.clone() {
+                self.canvas.add_import_placeholder(
+                    placeholder.queue_id,
+                    placeholder.center_world,
+                    placeholder.size_world,
+                    placeholder.label,
+                );
+            }
+        }
     }
 
     fn import_layout_snapshot(&self) -> Result<Vec<crate::data::BoardLayoutItem>, String> {
@@ -1313,6 +1356,7 @@ impl ReferenceApp {
         const FALLBACK_HEIGHT: u32 = 240;
 
         for source in dropped_sources {
+            let target_board_id = self.active_board_id;
             let queue_id = self.next_import_queue_id();
             let label = Self::import_source_label(&source);
             let dimensions = match &source {
@@ -1339,6 +1383,7 @@ impl ReferenceApp {
 
             let request = match &source {
                 ExternalImportSource::Path(source_path) => crate::jobs::ImportRequest::ImportPath {
+                    target_board_id,
                     queue_id,
                     source_path: source_path.clone(),
                     desired_world,
@@ -1357,6 +1402,7 @@ impl ReferenceApp {
                     }),
                 },
                 ExternalImportSource::Url(url) => crate::jobs::ImportRequest::ImportUrl {
+                    target_board_id,
                     queue_id,
                     url: url.clone(),
                     desired_world,
@@ -1382,7 +1428,7 @@ impl ReferenceApp {
                 .expect("checked import worker")
                 .enqueue(request)
             {
-                self.canvas.remove_import_placeholder(queue_id);
+                self.remove_import_placeholder_for_board(target_board_id, queue_id);
                 self.status = error;
                 continue;
             }
@@ -1463,6 +1509,7 @@ impl ReferenceApp {
             .as_ref()
             .expect("checked import worker")
             .enqueue(crate::jobs::ImportRequest::ImportClipboard {
+                target_board_id: self.active_board_id,
                 queue_id,
                 rgba,
                 width,
@@ -1483,7 +1530,7 @@ impl ReferenceApp {
                 }),
             })
         {
-            self.canvas.remove_import_placeholder(queue_id);
+            self.remove_import_placeholder_for_board(self.active_board_id, queue_id);
             self.status = error;
             return;
         }
@@ -1529,6 +1576,7 @@ impl ReferenceApp {
             .as_ref()
             .expect("checked import worker")
             .enqueue(crate::jobs::ImportRequest::ImportUrl {
+                target_board_id: self.active_board_id,
                 queue_id,
                 url: url.clone(),
                 desired_world,
@@ -1547,7 +1595,7 @@ impl ReferenceApp {
                 }),
             })
         {
-            self.canvas.remove_import_placeholder(queue_id);
+            self.remove_import_placeholder_for_board(self.active_board_id, queue_id);
             self.status = error;
             return true;
         }
@@ -1668,63 +1716,7 @@ impl ReferenceApp {
         for result in results {
             match result {
                 crate::jobs::ImportResult::Loaded(loaded) => {
-                    if let Some(queue_id) = loaded.queue_id {
-                        self.canvas.remove_import_placeholder(queue_id);
-                    }
-                    let origin = loaded.origin;
-                    let loaded_tier = loaded.loaded_tier;
-                    let loaded_record = loaded.record.clone();
-                    let existing_load_diagnostics = loaded.existing_load_diagnostics.clone();
-                    self.residency.note_loaded_item(loaded.record.item.id);
-                    if self
-                        .canvas
-                        .record_for_item_id(loaded.record.item.id)
-                        .is_some_and(|current| current.item.asset_id != loaded.record.item.asset_id)
-                    {
-                        continue;
-                    }
-                    let mut trace = loaded.trace;
-                    #[cfg(feature = "semantic-search")]
-                    let queued_asset = (self.settings.semantic_search_enabled
-                        && asset_mime_type_supports_raster_derivatives(
-                            &loaded.record.asset.mime_type,
-                        ))
-                    .then(|| {
-                        (
-                            loaded.record.asset.id,
-                            loaded.record.asset.original_path.clone(),
-                        )
-                    });
-                    let ui_integration_started_at = Instant::now();
-                    self.canvas.add_loaded_item(ctx, loaded);
-                    #[cfg(feature = "semantic-search")]
-                    if let Some((asset_id, original_path)) = queued_asset {
-                        self.search.queue_asset_index(asset_id, original_path);
-                    }
-                    if let Some(trace) = &mut trace {
-                        trace.timings.ui_integration = ui_integration_started_at.elapsed();
-                    }
-                    self.log_loaded_timing(
-                        origin,
-                        Some(&loaded_record),
-                        existing_load_diagnostics.as_ref(),
-                        trace,
-                    );
-                    if loaded_tier == crate::data::CanvasImageCacheTier::Working
-                        && asset_mime_type_supports_raster_derivatives(
-                            &loaded_record.asset.mime_type,
-                        )
-                    {
-                        if let Some(error) = self.residency.queue_backfill(
-                            self.import_worker.as_ref(),
-                            &loaded_record,
-                            &self.settings,
-                            crate::data::CanvasImageCacheTier::Overview,
-                        ) {
-                            self.status = error;
-                        }
-                    }
-                    self.status = "Imported image".to_owned();
+                    self.integrate_loaded_import(ctx, loaded)
                 }
                 crate::jobs::ImportResult::Cropped(cropped) => {
                     let previous_snapshot = match self.canvas.snapshot_item_image(cropped.item_id) {
@@ -1841,13 +1833,17 @@ impl ReferenceApp {
                     }
                 }
                 crate::jobs::ImportResult::Failed {
+                    target_board_id,
                     queue_id,
                     item_id,
                     context,
                     error,
                 } => {
                     if let Some(queue_id) = queue_id {
-                        self.canvas.remove_import_placeholder(queue_id);
+                        self.remove_import_placeholder_for_board(
+                            target_board_id.unwrap_or(self.active_board_id),
+                            queue_id,
+                        );
                     }
                     self.residency.note_failed_item(&mut self.canvas, item_id);
                     if let Some(item_id) = item_id {
@@ -1875,6 +1871,70 @@ impl ReferenceApp {
         if hit_result_cap {
             ctx.request_repaint();
         }
+    }
+
+    fn integrate_loaded_import(
+        &mut self,
+        ctx: &egui::Context,
+        loaded: crate::jobs::LoadedCanvasItem,
+    ) {
+        if let Some(queue_id) = loaded.queue_id {
+            self.remove_import_placeholder_for_board(loaded.target_board_id, queue_id);
+        }
+        let origin = loaded.origin;
+        let loaded_tier = loaded.loaded_tier;
+        let loaded_record = loaded.record.clone();
+        let existing_load_diagnostics = loaded.existing_load_diagnostics.clone();
+        self.residency.note_loaded_item(loaded.record.item.id);
+        if loaded.target_board_id != self.active_board_id {
+            self.status = "Imported image".to_owned();
+            return;
+        }
+        if self
+            .canvas
+            .record_for_item_id(loaded.record.item.id)
+            .is_some_and(|current| current.item.asset_id != loaded.record.item.asset_id)
+        {
+            return;
+        }
+        let mut trace = loaded.trace;
+        #[cfg(feature = "semantic-search")]
+        let queued_asset = (self.settings.semantic_search_enabled
+            && asset_mime_type_supports_raster_derivatives(&loaded.record.asset.mime_type))
+        .then(|| {
+            (
+                loaded.record.asset.id,
+                loaded.record.asset.original_path.clone(),
+            )
+        });
+        let ui_integration_started_at = Instant::now();
+        self.canvas.add_loaded_item(ctx, loaded);
+        #[cfg(feature = "semantic-search")]
+        if let Some((asset_id, original_path)) = queued_asset {
+            self.search.queue_asset_index(asset_id, original_path);
+        }
+        if let Some(trace) = &mut trace {
+            trace.timings.ui_integration = ui_integration_started_at.elapsed();
+        }
+        self.log_loaded_timing(
+            origin,
+            Some(&loaded_record),
+            existing_load_diagnostics.as_ref(),
+            trace,
+        );
+        if loaded_tier == crate::data::CanvasImageCacheTier::Working
+            && asset_mime_type_supports_raster_derivatives(&loaded_record.asset.mime_type)
+        {
+            if let Some(error) = self.residency.queue_backfill(
+                self.import_worker.as_ref(),
+                &loaded_record,
+                &self.settings,
+                crate::data::CanvasImageCacheTier::Overview,
+            ) {
+                self.status = error;
+            }
+        }
+        self.status = "Imported image".to_owned();
     }
 
     fn handle_crop_undo(&mut self, ctx: &egui::Context) {
@@ -1914,6 +1974,7 @@ impl ReferenceApp {
         self.canvas.add_loaded_item(
             ctx,
             crate::jobs::LoadedCanvasItem {
+                target_board_id: self.active_board_id,
                 queue_id: None,
                 preview_width: entry.previous_preview_width,
                 preview_height: entry.previous_preview_height,
@@ -2292,6 +2353,7 @@ impl ReferenceApp {
         self.canvas.add_loaded_item(
             ctx,
             crate::jobs::LoadedCanvasItem {
+                target_board_id: self.active_board_id,
                 queue_id: None,
                 record,
                 preview_rgba: rgba,
@@ -2356,6 +2418,7 @@ impl ReferenceApp {
         self.canvas.add_loaded_item(
             ctx,
             crate::jobs::LoadedCanvasItem {
+                target_board_id: self.active_board_id,
                 queue_id: None,
                 record,
                 preview_rgba: first.clone(),
@@ -2424,6 +2487,7 @@ impl ReferenceApp {
         self.canvas.add_loaded_item(
             ctx,
             crate::jobs::LoadedCanvasItem {
+                target_board_id: self.active_board_id,
                 queue_id: None,
                 record,
                 preview_rgba: Vec::new(),
@@ -2585,6 +2649,7 @@ impl ReferenceApp {
             let enqueue_result = self.import_worker.as_ref().and_then(|import_worker| {
                 import_worker
                     .enqueue(crate::jobs::ImportRequest::ImportClipboard {
+                        target_board_id: self.active_board_id,
                         queue_id,
                         rgba,
                         width,
@@ -2604,7 +2669,7 @@ impl ReferenceApp {
                     .err()
             });
             if let Some(error) = enqueue_result {
-                self.canvas.remove_import_placeholder(queue_id);
+                self.remove_import_placeholder_for_board(self.active_board_id, queue_id);
                 self.status = error;
                 return;
             }
@@ -2998,6 +3063,7 @@ impl eframe::App for ReferenceApp {
         if let Some(error) = self.residency.dispatch_pending_tier_requests(
             self.import_worker.as_ref(),
             &mut self.canvas,
+            self.active_board_id,
             &self.settings,
             self.max_texture_side,
         ) {
@@ -3281,6 +3347,7 @@ mod tests {
             canvas.add_loaded_item(
                 &ctx,
                 LoadedCanvasItem {
+                    target_board_id: 1,
                     queue_id: None,
                     record,
                     preview_rgba: rgba,
@@ -3615,6 +3682,7 @@ mod tests {
         app.canvas.add_loaded_item(
             &ctx,
             LoadedCanvasItem {
+                target_board_id: 1,
                 queue_id: None,
                 record: record.clone(),
                 preview_rgba: vec![255, 255, 255, 255],
@@ -3784,6 +3852,7 @@ mod tests {
             app.canvas.add_loaded_item(
                 &ctx,
                 LoadedCanvasItem {
+                    target_board_id: 1,
                     queue_id: None,
                     record,
                     preview_rgba: vec![255; width as usize * 100 * 4],
@@ -3831,6 +3900,55 @@ mod tests {
         );
 
         assert_eq!(reserved, egui::pos2(100.0 + app.settings.import_gap, 0.0));
+    }
+
+    #[test]
+    fn completed_import_for_inactive_board_does_not_enter_active_canvas() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-inactive-import-completion");
+        let library = Library::initialize(root.clone()).unwrap();
+        let second = library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library));
+        app.active_board_id = 1;
+        let loaded = test_loaded_item(41, second.id);
+
+        app.integrate_loaded_import(&ctx, loaded);
+
+        assert!(app.canvas.record_for_item_id(41).is_none());
+        assert_eq!(app.status, "Imported image");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn completed_import_for_active_board_enters_active_canvas() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.active_board_id = 1;
+        let loaded = test_loaded_item(42, 1);
+
+        app.integrate_loaded_import(&ctx, loaded);
+
+        assert!(app.canvas.record_for_item_id(42).is_some());
+        assert_eq!(app.status, "Imported image");
+    }
+
+    #[test]
+    fn queued_import_placeholders_are_scoped_to_their_board_across_switches() {
+        let root = temp_library_root("reference-placeholder-board-scope");
+        let library = Library::initialize(root.clone()).unwrap();
+        let second = library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library));
+        app.active_board_id = 1;
+        app.queue_import_placeholder(9, "first".to_owned(), egui::pos2(10.0, 20.0), 100, 100);
+
+        app.switch_to_board(second.id);
+        assert_eq!(app.canvas.import_placeholder_count(), 0);
+
+        app.switch_to_board(1);
+        assert_eq!(app.canvas.import_placeholder_count(), 1);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -3890,6 +4008,7 @@ mod tests {
             status: String::new(),
             perf_log: None,
             next_import_queue_id: 1,
+            import_placeholders_by_board: std::collections::HashMap::new(),
             hover_preview_dimensions: std::collections::HashMap::new(),
             #[cfg(debug_assertions)]
             verification_mode: None,
@@ -3914,5 +4033,45 @@ mod tests {
 
     fn test_viewport_world() -> egui::Rect {
         egui::Rect::from_min_max(egui::pos2(-240.0, -180.0), egui::pos2(240.0, 180.0))
+    }
+
+    fn test_loaded_item(item_id: i64, target_board_id: i64) -> LoadedCanvasItem {
+        let asset = ImageAsset {
+            id: item_id,
+            original_path: PathBuf::from(format!("fixture-{item_id}.png")),
+            filename: format!("fixture-{item_id}.png"),
+            mime_type: "image/png".to_owned(),
+            width: 1,
+            height: 1,
+            file_size: 4,
+            imported_at: 0,
+        };
+        let record = BoardItemWithAsset {
+            item: BoardItem {
+                id: item_id,
+                asset_id: item_id,
+                x: 0.0,
+                y: 0.0,
+                scale: 1.0,
+                rotation: 0.0,
+                z_index: 0,
+                archived: false,
+            },
+            asset,
+        };
+        LoadedCanvasItem {
+            target_board_id,
+            queue_id: Some(item_id as u64),
+            record,
+            preview_rgba: vec![255, 255, 255, 255],
+            preview_width: 1,
+            preview_height: 1,
+            animated_preview: None,
+            preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+            loaded_tier: crate::data::CanvasImageCacheTier::Working,
+            existing_load_diagnostics: None,
+            origin: crate::jobs::ImportOrigin::Clipboard,
+            trace: None,
+        }
     }
 }
