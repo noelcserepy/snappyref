@@ -219,6 +219,34 @@ impl CanvasState {
         self.document.selected_item_ids.clone()
     }
 
+    pub fn selected_annotation_ids(&self) -> Vec<i64> {
+        self.document.selected_annotation_ids.clone()
+    }
+
+    pub fn all_item_ids(&self) -> Vec<i64> {
+        self.document
+            .images
+            .iter()
+            .map(|image| image.record.item.id)
+            .collect()
+    }
+
+    pub fn all_annotation_ids(&self) -> Vec<i64> {
+        self.document
+            .annotations
+            .iter()
+            .map(|annotation| annotation.id)
+            .collect()
+    }
+
+    pub fn annotation_for_id(&self, annotation_id: i64) -> Option<CanvasAnnotation> {
+        self.document
+            .annotations
+            .iter()
+            .find(|annotation| annotation.id == annotation_id)
+            .cloned()
+    }
+
     pub fn record_for_item_id(&self, item_id: i64) -> Option<BoardItemWithAsset> {
         self.document
             .images
@@ -819,6 +847,40 @@ impl CanvasState {
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
+    }
+
+    pub fn select_content(&mut self, item_ids: &[i64], annotation_ids: &[i64]) {
+        self.finish_textbox_edit();
+        self.document.selected_item_ids = item_ids
+            .iter()
+            .copied()
+            .filter(|item_id| {
+                self.document
+                    .images
+                    .iter()
+                    .any(|image| image.record.item.id == *item_id)
+            })
+            .collect();
+        self.document.selected_annotation_ids = annotation_ids
+            .iter()
+            .copied()
+            .filter(|annotation_id| {
+                self.document
+                    .annotations
+                    .iter()
+                    .any(|annotation| annotation.id == *annotation_id)
+            })
+            .collect();
+        self.interaction.editing_text_annotation_id = None;
+        self.interaction.image_transform_state = None;
+        self.interaction.textbox_transform_state = None;
+        self.interaction.annotation_drag_state = None;
+    }
+
+    pub fn select_all_content(&mut self) {
+        let item_ids = self.all_item_ids();
+        let annotation_ids = self.all_annotation_ids();
+        self.select_content(&item_ids, &annotation_ids);
     }
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
@@ -1466,7 +1528,7 @@ impl CanvasState {
             .collect()
     }
 
-    pub(super) fn selected_world_bounds(&self) -> Option<egui::Rect> {
+    pub fn selected_world_bounds(&self) -> Option<egui::Rect> {
         let mut selected_rect = self.selected_bounds_world();
 
         for annotation in self.selected_annotations() {
