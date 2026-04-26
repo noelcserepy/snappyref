@@ -94,6 +94,11 @@ pub struct CanvasDocumentChanges {
     pub archived_annotation_ids: Vec<i64>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CanvasContextMenuRequest {
+    pub screen_pos: egui::Pos2,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct CanvasImagePreview {
     pub texture_id: egui::TextureId,
@@ -1409,8 +1414,8 @@ mod tests {
     use super::interaction::{
         handle_textbox_primary_press, hit_test_image_resize_handle, hit_test_textbox_resize_handle,
         image_screen_rect, moved_textbox_rect, normalized_textbox_rect,
-        pending_annotation_from_draft, resized_image_scale, resized_textbox_rect,
-        textbox_screen_rect,
+        open_context_menu_at_pointer, pending_annotation_from_draft, resized_image_scale,
+        resized_textbox_rect, textbox_screen_rect,
     };
     use super::render::{
         annotation_paint_stats_for_annotations, background_lod_layers, background_screen_step,
@@ -1523,6 +1528,7 @@ mod tests {
         texture: Arc<crate::jobs::NativeTextureHandle>,
     ) -> crate::jobs::LoadedCanvasItem {
         crate::jobs::LoadedCanvasItem {
+            target_board_id: 1,
             queue_id: None,
             preview_rgba: vec![255; record.asset.width as usize * record.asset.height as usize * 4],
             preview_width: record.asset.width,
@@ -1544,6 +1550,7 @@ mod tests {
         let first_frame = vec![0, 0, 255, 255];
         let second_frame = vec![0, 255, 0, 255];
         crate::jobs::LoadedCanvasItem {
+            target_board_id: 1,
             queue_id: None,
             preview_rgba: first_frame.clone(),
             preview_width: 1,
@@ -3582,6 +3589,107 @@ mod tests {
                 assert!(rectangles_respect_gap(left_rect, right_rect, gap));
             }
         }
+    }
+
+    #[test]
+    fn context_click_on_unselected_image_selects_it_before_requesting_menu() {
+        let mut state = CanvasState::default();
+        let rect = eframe::egui::Rect::from_min_size(
+            eframe::egui::Pos2::ZERO,
+            eframe::egui::vec2(400.0, 300.0),
+        );
+        eframe::egui::__run_test_ui(|ui| {
+            push_test_image(ui, &mut state, 1, 40, 40, 1.0, eframe::egui::pos2(0.0, 0.0));
+            push_test_image(
+                ui,
+                &mut state,
+                2,
+                40,
+                40,
+                1.0,
+                eframe::egui::pos2(100.0, 0.0),
+            );
+        });
+        state.select_items(&[1]);
+
+        open_context_menu_at_pointer(
+            &mut state,
+            rect,
+            rect.center() + eframe::egui::vec2(100.0, 0.0),
+        );
+
+        assert_eq!(state.selected_item_ids(), vec![2]);
+        assert!(state.take_context_menu_request().is_some());
+    }
+
+    #[test]
+    fn context_click_on_unselected_annotation_selects_it_before_requesting_menu() {
+        let mut state = CanvasState::default();
+        let rect = eframe::egui::Rect::from_min_size(
+            eframe::egui::Pos2::ZERO,
+            eframe::egui::vec2(400.0, 300.0),
+        );
+        eframe::egui::__run_test_ui(|ui| {
+            push_test_image(ui, &mut state, 1, 40, 40, 1.0, eframe::egui::pos2(0.0, 0.0));
+        });
+        state.add_annotation(CanvasAnnotation {
+            id: 20,
+            kind: CanvasAnnotationKind::Textbox,
+            start_x: 80.0,
+            start_y: 0.0,
+            end_x: 160.0,
+            end_y: 40.0,
+            text: "note".to_owned(),
+            text_size: default_text_size(),
+            stroke_width: default_stroke_width(),
+            color: default_annotation_color(),
+            background_enabled: false,
+            archived: false,
+        });
+        state.select_items(&[1]);
+
+        open_context_menu_at_pointer(
+            &mut state,
+            rect,
+            rect.center() + eframe::egui::vec2(120.0, 20.0),
+        );
+
+        assert!(state.selected_item_ids().is_empty());
+        assert_eq!(state.selected_annotation_ids(), vec![20]);
+        assert!(state.take_context_menu_request().is_some());
+    }
+
+    #[test]
+    fn context_click_inside_existing_mixed_selection_preserves_selection() {
+        let mut state = CanvasState::default();
+        let rect = eframe::egui::Rect::from_min_size(
+            eframe::egui::Pos2::ZERO,
+            eframe::egui::vec2(400.0, 300.0),
+        );
+        eframe::egui::__run_test_ui(|ui| {
+            push_test_image(ui, &mut state, 1, 40, 40, 1.0, eframe::egui::pos2(0.0, 0.0));
+        });
+        state.add_annotation(CanvasAnnotation {
+            id: 20,
+            kind: CanvasAnnotationKind::Textbox,
+            start_x: 80.0,
+            start_y: 0.0,
+            end_x: 160.0,
+            end_y: 40.0,
+            text: "note".to_owned(),
+            text_size: default_text_size(),
+            stroke_width: default_stroke_width(),
+            color: default_annotation_color(),
+            background_enabled: false,
+            archived: false,
+        });
+        state.select_content(&[1], &[20]);
+
+        open_context_menu_at_pointer(&mut state, rect, rect.center());
+
+        assert_eq!(state.selected_item_ids(), vec![1]);
+        assert_eq!(state.selected_annotation_ids(), vec![20]);
+        assert!(state.take_context_menu_request().is_some());
     }
 
     fn layout_item(id: i64, width: f32, height: f32) -> SelectedLayoutItem {

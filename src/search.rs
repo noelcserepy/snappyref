@@ -12,8 +12,8 @@ use crate::palette::{
     search_result_tile,
 };
 use crate::semantic_search::{
-    DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, SemanticSearchConfig,
-    SemanticSearchService,
+    DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, SearchScope,
+    SemanticSearchConfig, SemanticSearchService,
 };
 use crate::storage::Library;
 
@@ -153,6 +153,7 @@ impl SearchController {
     pub(crate) fn drive_verification_search(
         &mut self,
         query: &str,
+        scope: SearchScope,
         enabled: &mut bool,
         library: Option<&Library>,
         canvas: &mut CanvasState,
@@ -165,6 +166,7 @@ impl SearchController {
 
         self.overlay.open = true;
         self.overlay.focus_requested = true;
+        self.overlay.scope = scope;
         if self.overlay.query.trim() != query.trim() {
             self.overlay.query = query.to_owned();
             self.overlay.last_query_edit_at = None;
@@ -343,8 +345,17 @@ impl SearchController {
                             input_id,
                             self.overlay.image_pivot.as_ref(),
                             canvas,
+                            self.overlay.scope,
                         );
                         let response = input_result.response;
+                        let tab_toggled_scope = response.has_focus()
+                            && ctx.input_mut(|input| {
+                                input.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
+                            });
+                        if input_result.scope_toggled || tab_toggled_scope {
+                            self.toggle_scope();
+                            self.submit_query(canvas);
+                        }
                         let pivot_backspace_dismissed = self.overlay.image_pivot.is_some()
                             && self.overlay.query.is_empty()
                             && response.has_focus()
@@ -710,6 +721,18 @@ impl SearchController {
             .select_initial(self.overlay.results.len());
     }
 
+    fn toggle_scope(&mut self) {
+        self.overlay.scope = match self.overlay.scope {
+            SearchScope::ThisBoard => SearchScope::Library,
+            SearchScope::Library => SearchScope::ThisBoard,
+        };
+        self.overlay.last_submitted_query.clear();
+        self.overlay.results.clear();
+        self.overlay.result_selection.clear();
+        self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
+        self.overlay.has_more_results = false;
+    }
+
     fn start_result_drag(&mut self, index: usize) {
         if !self.overlay.result_selection.contains(index) {
             self.update_result_selection(index, SearchSelectionMode::Replace);
@@ -828,7 +851,7 @@ impl SearchController {
         self.submit_query(canvas);
     }
 
-    fn submit_query(&mut self, canvas: &mut CanvasState) {
+    pub(crate) fn submit_query(&mut self, canvas: &mut CanvasState) {
         let query = self.overlay.query.trim().to_owned();
         let pivot = self.overlay.image_pivot;
         if query.is_empty() && pivot.is_none() {
@@ -854,13 +877,18 @@ impl SearchController {
                 } else {
                     Some(query.as_str())
                 };
-                service.search_with_image_pivot_with_limit(
+                service.search_with_image_pivot_with_limit_in_scope(
+                    self.overlay.scope,
                     pivot.asset_id,
                     text,
                     self.overlay.result_limit + 1,
                 )
             }
-            None => service.search_with_limit(&query, self.overlay.result_limit + 1),
+            None => service.search_with_limit_in_scope(
+                self.overlay.scope,
+                &query,
+                self.overlay.result_limit + 1,
+            ),
         };
 
         match search_result {
@@ -912,7 +940,38 @@ fn result_is_on_bottom_row(index: usize, last_index: usize, columns: usize) -> b
 #[cfg(test)]
 mod tests {
     use super::{SearchController, SearchSelectionMode, result_is_on_bottom_row};
-    use crate::semantic_search::SearchResultGroup;
+    use crate::semantic_search::{SearchResultGroup, SearchScope};
+
+    #[test]
+    fn search_scope_defaults_to_this_board_and_resets_on_close() {
+        let mut search = SearchController::default();
+        assert_eq!(search.overlay.scope, SearchScope::ThisBoard);
+
+        search.overlay.scope = SearchScope::Library;
+        search.close_overlay(None);
+
+        assert_eq!(search.overlay.scope, SearchScope::ThisBoard);
+    }
+
+    #[test]
+    fn toggling_search_scope_invalidates_current_results() {
+        let mut search = SearchController::default();
+        search.overlay.query = "boat".to_owned();
+        search.overlay.last_submitted_query = "boat".to_owned();
+        search.overlay.results = vec![SearchResultGroup {
+            asset_id: 10,
+            asset_original_path: None,
+            similarity: 0.9,
+            item_ids: vec![101],
+            instance_count: 1,
+        }];
+
+        search.toggle_scope();
+
+        assert_eq!(search.overlay.scope, SearchScope::Library);
+        assert!(search.overlay.last_submitted_query.is_empty());
+        assert!(search.overlay.results.is_empty());
+    }
 
     #[test]
     fn result_selection_toggles_additive_indices() {
@@ -989,6 +1048,7 @@ mod tests {
         search.overlay.results = (0..5)
             .map(|index| SearchResultGroup {
                 asset_id: index,
+                asset_original_path: None,
                 similarity: 0.9,
                 item_ids: vec![100 + index],
                 instance_count: 1,
@@ -1007,12 +1067,14 @@ mod tests {
         search.overlay.results = vec![
             SearchResultGroup {
                 asset_id: 10,
+                asset_original_path: None,
                 similarity: 0.9,
                 item_ids: vec![101, 102],
                 instance_count: 2,
             },
             SearchResultGroup {
                 asset_id: 11,
+                asset_original_path: None,
                 similarity: 0.8,
                 item_ids: vec![201],
                 instance_count: 1,
@@ -1033,12 +1095,14 @@ mod tests {
         search.overlay.results = vec![
             SearchResultGroup {
                 asset_id: 10,
+                asset_original_path: None,
                 similarity: 0.9,
                 item_ids: vec![101],
                 instance_count: 1,
             },
             SearchResultGroup {
                 asset_id: 11,
+                asset_original_path: None,
                 similarity: 0.8,
                 item_ids: vec![201],
                 instance_count: 1,
@@ -1055,12 +1119,14 @@ mod tests {
         search.overlay.results = vec![
             SearchResultGroup {
                 asset_id: 10,
+                asset_original_path: None,
                 similarity: 0.9,
                 item_ids: vec![101, 102],
                 instance_count: 2,
             },
             SearchResultGroup {
                 asset_id: 11,
+                asset_original_path: None,
                 similarity: 0.8,
                 item_ids: vec![201],
                 instance_count: 1,

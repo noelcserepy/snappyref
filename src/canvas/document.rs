@@ -219,6 +219,34 @@ impl CanvasState {
         self.document.selected_item_ids.clone()
     }
 
+    pub fn selected_annotation_ids(&self) -> Vec<i64> {
+        self.document.selected_annotation_ids.clone()
+    }
+
+    pub fn all_item_ids(&self) -> Vec<i64> {
+        self.document
+            .images
+            .iter()
+            .map(|image| image.record.item.id)
+            .collect()
+    }
+
+    pub fn all_annotation_ids(&self) -> Vec<i64> {
+        self.document
+            .annotations
+            .iter()
+            .map(|annotation| annotation.id)
+            .collect()
+    }
+
+    pub fn annotation_for_id(&self, annotation_id: i64) -> Option<CanvasAnnotation> {
+        self.document
+            .annotations
+            .iter()
+            .find(|annotation| annotation.id == annotation_id)
+            .cloned()
+    }
+
     pub fn record_for_item_id(&self, item_id: i64) -> Option<BoardItemWithAsset> {
         self.document
             .images
@@ -317,6 +345,10 @@ impl CanvasState {
 
     pub fn take_pending_annotation(&mut self) -> Option<PendingAnnotation> {
         self.interaction.pending_annotation.take()
+    }
+
+    pub fn take_context_menu_request(&mut self) -> Option<super::CanvasContextMenuRequest> {
+        self.interaction.pending_context_menu_request.take()
     }
 
     pub fn add_import_placeholder(
@@ -572,6 +604,20 @@ impl CanvasState {
         self.render.textbox_layout_cache.clear();
     }
 
+    pub fn clear_for_board_switch(&mut self) {
+        self.finish_textbox_edit();
+        self.document.images.clear();
+        self.document.annotations.clear();
+        self.document.selected_item_ids.clear();
+        self.document.selected_annotation_ids.clear();
+        self.document.dirty_item_ids.clear();
+        self.document.dirty_annotation_ids.clear();
+        self.document.pending_archived_annotation_ids.clear();
+        self.interaction = Default::default();
+        self.render.textbox_layout_cache.clear();
+        self.render.pending_image_tier_loads.clear();
+    }
+
     pub fn take_document_changes(&mut self) -> CanvasDocumentChanges {
         let dirty_ids = std::mem::take(&mut self.document.dirty_item_ids);
         let updated_items = dirty_ids
@@ -807,6 +853,40 @@ impl CanvasState {
         self.interaction.annotation_drag_state = None;
     }
 
+    pub fn select_content(&mut self, item_ids: &[i64], annotation_ids: &[i64]) {
+        self.finish_textbox_edit();
+        self.document.selected_item_ids = item_ids
+            .iter()
+            .copied()
+            .filter(|item_id| {
+                self.document
+                    .images
+                    .iter()
+                    .any(|image| image.record.item.id == *item_id)
+            })
+            .collect();
+        self.document.selected_annotation_ids = annotation_ids
+            .iter()
+            .copied()
+            .filter(|annotation_id| {
+                self.document
+                    .annotations
+                    .iter()
+                    .any(|annotation| annotation.id == *annotation_id)
+            })
+            .collect();
+        self.interaction.editing_text_annotation_id = None;
+        self.interaction.image_transform_state = None;
+        self.interaction.textbox_transform_state = None;
+        self.interaction.annotation_drag_state = None;
+    }
+
+    pub fn select_all_content(&mut self) {
+        let item_ids = self.all_item_ids();
+        let annotation_ids = self.all_annotation_ids();
+        self.select_content(&item_ids, &annotation_ids);
+    }
+
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn select_single_annotation(&mut self, annotation_id: i64) {
         self.finish_textbox_edit();
@@ -934,6 +1014,21 @@ impl CanvasState {
             .retain(|item_id, _| !removed_ids.contains(item_id));
         self.interaction.pending_crop = None;
         removed_ids
+    }
+
+    pub fn remove_assets(&mut self, asset_ids: &[i64]) -> Vec<i64> {
+        if asset_ids.is_empty() {
+            return Vec::new();
+        }
+
+        let item_ids = self
+            .document
+            .images
+            .iter()
+            .filter(|image| asset_ids.contains(&image.record.asset.id))
+            .map(|image| image.record.item.id)
+            .collect::<Vec<_>>();
+        self.delete_items(&item_ids)
     }
 
     pub(super) fn is_selected(&self, item_id: i64) -> bool {
@@ -1452,7 +1547,7 @@ impl CanvasState {
             .collect()
     }
 
-    pub(super) fn selected_world_bounds(&self) -> Option<egui::Rect> {
+    pub fn selected_world_bounds(&self) -> Option<egui::Rect> {
         let mut selected_rect = self.selected_bounds_world();
 
         for annotation in self.selected_annotations() {

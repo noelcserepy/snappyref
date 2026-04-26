@@ -5,7 +5,7 @@ use std::thread;
 
 use crate::storage::{EmbeddingStatus, Library};
 
-use super::index::{BruteForceIndex, VectorIndex, decode_f32_blob};
+use super::index::{BruteForceIndex, SearchScope, VectorIndex, decode_f32_blob};
 use super::model::{EmbeddingModel, ModelSpec, OrtDualEncoderModel};
 
 const IMAGE_PIVOT_CANDIDATE_LIMIT: usize = 50;
@@ -19,6 +19,7 @@ pub struct SemanticSearchConfig {
 pub struct SearchResultGroup {
     #[allow(dead_code)]
     pub asset_id: i64,
+    pub asset_original_path: Option<PathBuf>,
     #[allow(dead_code)]
     pub similarity: f32,
     pub item_ids: Vec<i64>,
@@ -169,8 +170,24 @@ impl SemanticSearchService {
             .map_err(|error| format!("failed to queue embedding backfill: {error}"))
     }
 
+    #[allow(dead_code)]
     pub fn search_with_image_pivot_with_limit(
         &self,
+        source_asset_id: i64,
+        text_query: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<SearchResultGroup>, String> {
+        self.search_with_image_pivot_with_limit_in_scope(
+            SearchScope::ThisBoard,
+            source_asset_id,
+            text_query,
+            limit,
+        )
+    }
+
+    pub fn search_with_image_pivot_with_limit_in_scope(
+        &self,
+        scope: SearchScope,
         source_asset_id: i64,
         text_query: Option<&str>,
         limit: usize,
@@ -183,6 +200,7 @@ impl SemanticSearchService {
 
         let index = BruteForceIndex::new(self.library.clone());
         let mut hits = index.search(
+            scope,
             self.model_key,
             &source_embedding,
             IMAGE_PIVOT_CANDIDATE_LIMIT,
@@ -219,34 +237,21 @@ impl SemanticSearchService {
         }
 
         hits.truncate(limit);
-        let asset_ids = hits.iter().map(|hit| hit.asset_id).collect::<Vec<_>>();
-        let instances = self.library.board_item_instances_for_assets(&asset_ids)?;
-
-        let mut instances_by_asset: HashMap<i64, Vec<i64>> = HashMap::new();
-        for instance in instances {
-            instances_by_asset
-                .entry(instance.asset_id)
-                .or_default()
-                .push(instance.item_id);
-        }
-
-        Ok(hits
-            .into_iter()
-            .map(|hit| {
-                let item_ids = instances_by_asset.remove(&hit.asset_id).unwrap_or_default();
-                SearchResultGroup {
-                    asset_id: hit.asset_id,
-                    similarity: hit.similarity,
-                    instance_count: item_ids.len(),
-                    item_ids,
-                }
-            })
-            .filter(|group| !group.item_ids.is_empty())
-            .collect())
+        self.group_hits(scope, hits)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn search_with_limit(
         &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchResultGroup>, String> {
+        self.search_with_limit_in_scope(SearchScope::ThisBoard, query, limit)
+    }
+
+    pub fn search_with_limit_in_scope(
+        &self,
+        scope: SearchScope,
         query: &str,
         limit: usize,
     ) -> Result<Vec<SearchResultGroup>, String> {
@@ -267,9 +272,18 @@ impl SemanticSearchService {
 
         let query_embedding = model.embed_text(query)?;
         let index = BruteForceIndex::new(self.library.clone());
-        let hits = index.search(self.model_key, &query_embedding, limit)?;
+        let hits = index.search(scope, self.model_key, &query_embedding, limit)?;
+        self.group_hits(scope, hits)
+    }
+
+    fn group_hits(
+        &self,
+        scope: SearchScope,
+        hits: Vec<crate::storage::AssetSearchHit>,
+    ) -> Result<Vec<SearchResultGroup>, String> {
         let asset_ids = hits.iter().map(|hit| hit.asset_id).collect::<Vec<_>>();
         let instances = self.library.board_item_instances_for_assets(&asset_ids)?;
+        let asset_original_paths = self.library.asset_original_paths_for_assets(&asset_ids)?;
 
         let mut instances_by_asset: HashMap<i64, Vec<i64>> = HashMap::new();
         for instance in instances {
@@ -285,12 +299,13 @@ impl SemanticSearchService {
                 let item_ids = instances_by_asset.remove(&hit.asset_id).unwrap_or_default();
                 SearchResultGroup {
                     asset_id: hit.asset_id,
+                    asset_original_path: asset_original_paths.get(&hit.asset_id).cloned(),
                     similarity: hit.similarity,
                     instance_count: item_ids.len(),
                     item_ids,
                 }
             })
-            .filter(|group| !group.item_ids.is_empty())
+            .filter(|group| scope == SearchScope::Library || !group.item_ids.is_empty())
             .collect())
     }
 
@@ -395,11 +410,205 @@ fn ensure_model(
 mod tests {
     use super::{IndexResult, SemanticSearchConfig, SemanticSearchService};
     use crate::semantic_search::DEFAULT_SEMANTIC_SEARCH_MODEL;
+    use crate::semantic_search::index::SearchScope;
+    use crate::semantic_search::model::{ModelSpec, ResizeStrategy};
     use crate::storage::Library;
     use eframe::egui;
+    use image::imageops::FilterType;
     use std::fs;
     use std::process::Command;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn library_scope_image_pivot_returns_unplaced_asset_without_creating_placement() {
+        let root = temp_root("reference-library-scope-service-test");
+        let library = Library::initialize(root.join("library")).unwrap();
+        let source_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let unplaced_path = library
+            .store_rgba_image("unplaced", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+
+        let source = library
+            .persist_imported_image(
+                &source_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let unplaced = library
+            .persist_imported_image(
+                &unplaced_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library.archive_board_items(&[unplaced.item.id]).unwrap();
+        library
+            .upsert_asset_embedding_blob(source.asset.id, "test-model", &[1.0, 0.0])
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(unplaced.asset.id, "test-model", &[0.9, 0.1])
+            .unwrap();
+
+        let service = SemanticSearchService::new(
+            library.clone(),
+            SemanticSearchConfig {
+                enabled: false,
+                model: test_model_spec(),
+            },
+        )
+        .unwrap();
+
+        let results = service
+            .search_with_image_pivot_with_limit_in_scope(
+                SearchScope::Library,
+                source.asset.id,
+                None,
+                5,
+            )
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].asset_id, unplaced.asset.id);
+        assert_eq!(
+            results[0].asset_original_path.as_deref(),
+            Some(unplaced.asset.original_path.as_path())
+        );
+        assert!(results[0].item_ids.is_empty());
+        assert_eq!(results[0].instance_count, 0);
+        assert_eq!(library.load_board_items().unwrap().len(), 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn this_board_scope_image_pivot_returns_active_board_placements_only() {
+        let root = temp_root("reference-board-scope-service-test");
+        let library = Library::initialize(root.join("library")).unwrap();
+        let second_board = library.create_board("Second").unwrap();
+        let source_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let active_path = library
+            .store_rgba_image("active", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+        let inactive_path = library
+            .store_rgba_image("inactive", &[0, 0, 255, 255], 1, 1)
+            .unwrap();
+
+        let source = library
+            .persist_imported_image(
+                &source_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let active = library
+            .persist_imported_image(
+                &active_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let inactive = library
+            .persist_imported_image_to_board(
+                second_board.id,
+                &inactive_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(20.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(source.asset.id, "test-model", &[1.0, 0.0])
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(active.asset.id, "test-model", &[0.8, 0.2])
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(inactive.asset.id, "test-model", &[0.99, 0.01])
+            .unwrap();
+
+        let service = SemanticSearchService::new(
+            library.clone(),
+            SemanticSearchConfig {
+                enabled: false,
+                model: test_model_spec(),
+            },
+        )
+        .unwrap();
+
+        let results = service
+            .search_with_image_pivot_with_limit_in_scope(
+                SearchScope::ThisBoard,
+                source.asset.id,
+                None,
+                5,
+            )
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].asset_id, active.asset.id);
+        assert_eq!(results[0].item_ids, vec![active.item.id]);
+        assert_eq!(results[0].instance_count, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn test_model_spec() -> ModelSpec {
+        ModelSpec {
+            model_key: "test-model",
+            dimension: 2,
+            input_size: 1,
+            repo_id: "test",
+            text_model_file: "text.onnx",
+            vision_model_file: "vision.onnx",
+            tokenizer_file: "tokenizer.json",
+            token_length: 1,
+            pad_id: 0,
+            pad_token: "<pad>",
+            text_output_name: "text",
+            vision_output_name: "vision",
+            normalize_mean: None,
+            normalize_std: None,
+            resize_filter: FilterType::Nearest,
+            resize_strategy: ResizeStrategy::Exact,
+        }
+    }
+
+    fn temp_root(prefix: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "{}-{}",
+            prefix,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 
     #[test]
     #[ignore = "downloads the active retrieval model and a sample image for live smoke validation"]

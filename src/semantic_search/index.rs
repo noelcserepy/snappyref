@@ -1,8 +1,21 @@
 use crate::storage::{AssetSearchHit, Library};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchScope {
+    ThisBoard,
+    Library,
+}
+
+impl Default for SearchScope {
+    fn default() -> Self {
+        Self::ThisBoard
+    }
+}
+
 pub trait VectorIndex: Send + Sync {
     fn search(
         &self,
+        scope: SearchScope,
         model_key: &str,
         query_embedding: &[f32],
         limit: usize,
@@ -22,13 +35,16 @@ impl BruteForceIndex {
 impl VectorIndex for BruteForceIndex {
     fn search(
         &self,
+        scope: SearchScope,
         model_key: &str,
         query_embedding: &[f32],
         limit: usize,
     ) -> Result<Vec<AssetSearchHit>, String> {
-        let mut hits = self
-            .library
-            .load_active_canvas_embeddings(model_key)?
+        let embeddings = match scope {
+            SearchScope::ThisBoard => self.library.load_active_canvas_embeddings(model_key)?,
+            SearchScope::Library => self.library.load_library_embeddings(model_key)?,
+        };
+        let mut hits = embeddings
             .into_iter()
             .map(|row| {
                 let embedding = decode_f32_blob(&row.embedding_blob)?;
@@ -43,6 +59,89 @@ impl VectorIndex for BruteForceIndex {
         hits.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));
         hits.truncate(limit);
         Ok(hits)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BruteForceIndex, SearchScope, VectorIndex};
+    use crate::storage::Library;
+    use eframe::egui;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn library_scope_search_includes_assets_without_active_placements() {
+        let root = temp_root("reference-library-scope-index-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let active_path = library
+            .store_rgba_image("active", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let unplaced_path = library
+            .store_rgba_image("unplaced", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+
+        let active = library
+            .persist_imported_image(
+                &active_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let unplaced = library
+            .persist_imported_image(
+                &unplaced_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library.archive_board_items(&[unplaced.item.id]).unwrap();
+        library
+            .upsert_asset_embedding_blob(active.asset.id, "test-model", &[0.0, 1.0])
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(unplaced.asset.id, "test-model", &[1.0, 0.0])
+            .unwrap();
+
+        let index = BruteForceIndex::new(library);
+        let board_hits = index
+            .search(SearchScope::ThisBoard, "test-model", &[1.0, 0.0], 5)
+            .unwrap();
+        let library_hits = index
+            .search(SearchScope::Library, "test-model", &[1.0, 0.0], 5)
+            .unwrap();
+
+        assert_eq!(board_hits.len(), 1);
+        assert_eq!(board_hits[0].asset_id, active.asset.id);
+        assert_eq!(library_hits[0].asset_id, unplaced.asset.id);
+        assert!(
+            library_hits
+                .iter()
+                .any(|hit| hit.asset_id == active.asset.id)
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn temp_root(prefix: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "{}-{}",
+            prefix,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
     }
 }
 

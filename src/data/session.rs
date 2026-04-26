@@ -96,6 +96,7 @@ impl Default for WorkspaceSettings {
 
 #[derive(Clone, Debug)]
 pub struct UserSession {
+    pub active_board_id: i64,
     pub viewport: ViewportState,
     pub settings: WorkspaceSettings,
 }
@@ -103,6 +104,7 @@ pub struct UserSession {
 impl Default for UserSession {
     fn default() -> Self {
         Self {
+            active_board_id: 1,
             viewport: ViewportState::default(),
             settings: WorkspaceSettings::default(),
         }
