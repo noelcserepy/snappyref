@@ -1523,6 +1523,7 @@ mod tests {
         texture: Arc<crate::jobs::NativeTextureHandle>,
     ) -> crate::jobs::LoadedCanvasItem {
         crate::jobs::LoadedCanvasItem {
+            target_board_id: 1,
             queue_id: None,
             preview_rgba: vec![255; record.asset.width as usize * record.asset.height as usize * 4],
             preview_width: record.asset.width,
@@ -1544,6 +1545,7 @@ mod tests {
         let first_frame = vec![0, 0, 255, 255];
         let second_frame = vec![0, 255, 0, 255];
         crate::jobs::LoadedCanvasItem {
+            target_board_id: 1,
             queue_id: None,
             preview_rgba: first_frame.clone(),
             preview_width: 1,

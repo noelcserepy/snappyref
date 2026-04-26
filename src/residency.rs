@@ -64,6 +64,7 @@ impl ImageResidencyCoordinator {
         &mut self,
         import_worker: Option<&ImportWorker>,
         canvas: &mut CanvasState,
+        active_board_id: i64,
         settings: &WorkspaceSettings,
         max_texture_side: usize,
     ) -> Option<String> {
@@ -88,6 +89,7 @@ impl ImageResidencyCoordinator {
             };
             self.inflight_image_tier_loads.insert(item_id, target_tier);
             if let Err(error) = import_worker.enqueue(ImportRequest::LoadExisting {
+                target_board_id: active_board_id,
                 record,
                 max_texture_side,
                 canvas_image_settings: canvas_image_settings(settings),

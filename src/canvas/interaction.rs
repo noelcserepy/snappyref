@@ -1412,6 +1412,7 @@ mod tests {
         canvas.add_loaded_item(
             ctx,
             LoadedCanvasItem {
+                target_board_id: 1,
                 queue_id: None,
                 record,
                 preview_rgba: rgba,

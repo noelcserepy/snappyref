@@ -353,8 +353,37 @@ impl Library {
         desired_world: egui::Pos2,
         initial_scale: f32,
     ) -> Result<BoardItemWithAsset, String> {
-        let mut connection = self.connection()?;
+        let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
+        self.persist_imported_image_to_board(
+            active_board_id,
+            stored_path,
+            mime_type,
+            width,
+            height,
+            file_size,
+            desired_world,
+            initial_scale,
+        )
+    }
+
+    pub fn persist_imported_image_to_board(
+        &self,
+        board_id: i64,
+        stored_path: &Path,
+        mime_type: &str,
+        width: u32,
+        height: u32,
+        file_size: u64,
+        desired_world: egui::Pos2,
+        initial_scale: f32,
+    ) -> Result<BoardItemWithAsset, String> {
+        let mut connection = self.connection()?;
+        if !board_is_non_archived(&connection, board_id)? {
+            return Err(format!(
+                "cannot import to missing or archived board {board_id}"
+            ));
+        }
         let transaction = connection
             .transaction()
             .map_err(|error| format!("failed to start transaction: {error}"))?;
@@ -369,7 +398,7 @@ impl Library {
         )?;
         let item = insert_board_item_row(
             &transaction,
-            active_board_id,
+            board_id,
             asset.id,
             desired_world,
             initial_scale,
@@ -608,6 +637,26 @@ impl Library {
     pub fn load_board_items(&self) -> Result<Vec<BoardItemWithAsset>, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
+        self.load_board_items_for_board_id(&connection, active_board_id)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn load_board_items_for_board(
+        &self,
+        board_id: i64,
+    ) -> Result<Vec<BoardItemWithAsset>, String> {
+        let connection = self.connection()?;
+        if !board_is_non_archived(&connection, board_id)? {
+            return Err(format!("cannot load missing or archived board {board_id}"));
+        }
+        self.load_board_items_for_board_id(&connection, board_id)
+    }
+
+    fn load_board_items_for_board_id(
+        &self,
+        connection: &Connection,
+        board_id: i64,
+    ) -> Result<Vec<BoardItemWithAsset>, String> {
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -635,7 +684,7 @@ impl Library {
             .map_err(|error| format!("failed to prepare board-items query: {error}"))?;
 
         let rows = statement
-            .query_map(params![active_board_id], |row| {
+            .query_map(params![board_id], |row| {
                 Ok(BoardItemWithAsset {
                     item: BoardItem {
                         id: row.get(0)?,
@@ -668,6 +717,26 @@ impl Library {
     pub fn load_board_layout_items(&self) -> Result<Vec<BoardLayoutItem>, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
+        self.load_board_layout_items_for_board_id(&connection, active_board_id)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn load_board_layout_items_for_board(
+        &self,
+        board_id: i64,
+    ) -> Result<Vec<BoardLayoutItem>, String> {
+        let connection = self.connection()?;
+        if !board_is_non_archived(&connection, board_id)? {
+            return Err(format!("cannot load missing or archived board {board_id}"));
+        }
+        self.load_board_layout_items_for_board_id(&connection, board_id)
+    }
+
+    fn load_board_layout_items_for_board_id(
+        &self,
+        connection: &Connection,
+        board_id: i64,
+    ) -> Result<Vec<BoardLayoutItem>, String> {
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -685,7 +754,7 @@ impl Library {
             .map_err(|error| format!("failed to prepare board-layout query: {error}"))?;
 
         let rows = statement
-            .query_map(params![active_board_id], |row| {
+            .query_map(params![board_id], |row| {
                 Ok(BoardLayoutItem {
                     id: row.get(0)?,
                     x: row.get(1)?,

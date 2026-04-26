@@ -139,6 +139,7 @@ pub struct ExistingLoadDiagnostics {
 #[derive(Clone, Debug)]
 pub enum ImportRequest {
     ImportPath {
+        target_board_id: i64,
         queue_id: u64,
         source_path: PathBuf,
         desired_world: egui::Pos2,
@@ -151,6 +152,7 @@ pub enum ImportRequest {
         trace: Option<ImportTrace>,
     },
     ImportClipboard {
+        target_board_id: i64,
         queue_id: u64,
         rgba: Vec<u8>,
         width: u32,
@@ -165,6 +167,7 @@ pub enum ImportRequest {
         trace: Option<ImportTrace>,
     },
     ImportUrl {
+        target_board_id: i64,
         queue_id: u64,
         url: String,
         desired_world: egui::Pos2,
@@ -182,6 +185,7 @@ pub enum ImportRequest {
         canvas_image_settings: CanvasImageSettings,
     },
     LoadExisting {
+        target_board_id: i64,
         record: BoardItemWithAsset,
         max_texture_side: usize,
         canvas_image_settings: CanvasImageSettings,
@@ -210,6 +214,7 @@ pub enum ImportResult {
         error: String,
     },
     Failed {
+        target_board_id: Option<i64>,
         queue_id: Option<u64>,
         item_id: Option<i64>,
         context: String,
@@ -337,6 +342,7 @@ impl Drop for NativeTextureHandle {
 
 #[derive(Debug)]
 pub struct LoadedCanvasItem {
+    pub target_board_id: i64,
     pub queue_id: Option<u64>,
     pub record: BoardItemWithAsset,
     pub preview_rgba: Vec<u8>,
@@ -448,6 +454,7 @@ impl ImportWorker {
                 while let Some(request) = worker_queue.pop(kind) {
                     let result = match request {
                         ImportRequest::ImportPath {
+                            target_board_id,
                             queue_id,
                             source_path,
                             desired_world,
@@ -460,6 +467,7 @@ impl ImportWorker {
                             trace,
                         } => import_path(
                             &worker_library,
+                            target_board_id,
                             queue_id,
                             source_path,
                             desired_world,
@@ -473,6 +481,7 @@ impl ImportWorker {
                             worker_render_state.as_ref(),
                         ),
                         ImportRequest::ImportClipboard {
+                            target_board_id,
                             queue_id,
                             rgba,
                             width,
@@ -487,6 +496,7 @@ impl ImportWorker {
                             trace,
                         } => import_clipboard(
                             &worker_library,
+                            target_board_id,
                             queue_id,
                             rgba,
                             width,
@@ -502,6 +512,7 @@ impl ImportWorker {
                             worker_render_state.as_ref(),
                         ),
                         ImportRequest::ImportUrl {
+                            target_board_id,
                             queue_id,
                             url,
                             desired_world,
@@ -514,6 +525,7 @@ impl ImportWorker {
                             trace,
                         } => import_url(
                             &worker_library,
+                            target_board_id,
                             queue_id,
                             url,
                             desired_world,
@@ -538,6 +550,7 @@ impl ImportWorker {
                             worker_render_state.as_ref(),
                         ),
                         ImportRequest::LoadExisting {
+                            target_board_id,
                             record,
                             max_texture_side,
                             canvas_image_settings,
@@ -546,6 +559,7 @@ impl ImportWorker {
                             trace,
                         } => load_existing(
                             &worker_library,
+                            target_board_id,
                             record,
                             max_texture_side,
                             canvas_image_settings,
@@ -736,8 +750,10 @@ pub fn import_path_sync(
     auto_scale: bool,
     import_gap: f32,
 ) -> Result<LoadedCanvasItem, String> {
+    let target_board_id = library.load_user_session()?.active_board_id;
     import_path_sync_traced(
         library,
+        target_board_id,
         None,
         source_path,
         desired_world,
@@ -762,8 +778,10 @@ pub fn import_clipboard_sync(
     auto_scale: bool,
     import_gap: f32,
 ) -> Result<LoadedCanvasItem, String> {
+    let target_board_id = library.load_user_session()?.active_board_id;
     import_clipboard_sync_traced(
         library,
+        target_board_id,
         0,
         rgba,
         width,
@@ -951,6 +969,7 @@ pub fn startup_trace(
         };
         match load_existing(
             library,
+            1,
             record.clone(),
             usize::MAX,
             canvas_image_settings,
@@ -1061,6 +1080,7 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
     let started_at = Instant::now();
     let result = import_path_sync_traced(
         &library,
+        1,
         None,
         source_path.clone(),
         egui::Pos2::ZERO,
@@ -1115,6 +1135,7 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
 
 fn import_path_sync_traced(
     library: &Library,
+    target_board_id: i64,
     queue_id: Option<u64>,
     source_path: PathBuf,
     desired_world: egui::Pos2,
@@ -1136,6 +1157,7 @@ fn import_path_sync_traced(
     if is_svg_path(&source_path) {
         return import_svg_path_sync_traced(
             library,
+            target_board_id,
             queue_id,
             source_path,
             desired_world,
@@ -1158,6 +1180,7 @@ fn import_path_sync_traced(
         initial_import_scale(decoded.source_width, decoded.source_height, auto_scale);
     let arranged_world = resolve_import_world(
         library,
+        target_board_id,
         desired_world,
         reserved_world,
         viewport_world,
@@ -1172,7 +1195,8 @@ fn import_path_sync_traced(
         .map_err(|error| format!("{}: {error}", source_path.display()))?;
 
     let record = library
-        .persist_imported_image(
+        .persist_imported_image_to_board(
+            target_board_id,
             &stored_path,
             &decoded.mime_type,
             decoded.source_width,
@@ -1228,6 +1252,7 @@ fn import_path_sync_traced(
     }
 
     Ok(LoadedCanvasItem {
+        target_board_id,
         queue_id,
         record,
         preview_rgba: preview.rgba,
@@ -1244,6 +1269,7 @@ fn import_path_sync_traced(
 
 fn import_svg_path_sync_traced(
     library: &Library,
+    target_board_id: i64,
     queue_id: Option<u64>,
     source_path: PathBuf,
     desired_world: egui::Pos2,
@@ -1263,6 +1289,7 @@ fn import_svg_path_sync_traced(
     let initial_scale = initial_import_scale(svg.width, svg.height, auto_scale);
     let arranged_world = resolve_import_world(
         library,
+        target_board_id,
         desired_world,
         reserved_world,
         viewport_world,
@@ -1279,7 +1306,8 @@ fn import_svg_path_sync_traced(
         .map_err(|error| format!("failed to read stored SVG metadata: {error}"))?
         .len();
     let record = library
-        .persist_imported_image(
+        .persist_imported_image_to_board(
+            target_board_id,
             &stored_path,
             SVG_MIME_TYPE,
             svg.width,
@@ -1297,6 +1325,7 @@ fn import_svg_path_sync_traced(
     }
 
     Ok(LoadedCanvasItem {
+        target_board_id,
         queue_id,
         record,
         preview_rgba: Vec::new(),
@@ -1317,6 +1346,7 @@ fn import_svg_path_sync_traced(
 
 fn import_path(
     library: &Library,
+    target_board_id: i64,
     queue_id: u64,
     source_path: PathBuf,
     desired_world: egui::Pos2,
@@ -1331,6 +1361,7 @@ fn import_path(
 ) -> ImportResult {
     match import_path_sync_traced(
         library,
+        target_board_id,
         Some(queue_id),
         source_path.clone(),
         desired_world,
@@ -1345,6 +1376,7 @@ fn import_path(
     ) {
         Ok(loaded) => ImportResult::Loaded(loaded),
         Err(error) => ImportResult::Failed {
+            target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
             item_id: None,
             context: source_path.display().to_string(),
@@ -1355,6 +1387,7 @@ fn import_path(
 
 fn import_url(
     library: &Library,
+    target_board_id: i64,
     queue_id: u64,
     url: String,
     desired_world: egui::Pos2,
@@ -1369,6 +1402,7 @@ fn import_url(
 ) -> ImportResult {
     match import_url_sync_traced(
         library,
+        target_board_id,
         Some(queue_id),
         &url,
         desired_world,
@@ -1383,6 +1417,7 @@ fn import_url(
     ) {
         Ok(loaded) => ImportResult::Loaded(loaded),
         Err(error) => ImportResult::Failed {
+            target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
             item_id: None,
             context: url,
@@ -1393,6 +1428,7 @@ fn import_url(
 
 fn import_clipboard(
     library: &Library,
+    target_board_id: i64,
     queue_id: u64,
     rgba: Vec<u8>,
     width: u32,
@@ -1409,6 +1445,7 @@ fn import_clipboard(
 ) -> ImportResult {
     match import_clipboard_sync_traced(
         library,
+        target_board_id,
         queue_id,
         rgba,
         width,
@@ -1425,6 +1462,7 @@ fn import_clipboard(
     ) {
         Ok(loaded) => ImportResult::Loaded(loaded),
         Err(error) => ImportResult::Failed {
+            target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
             item_id: None,
             context: "clipboard".to_owned(),
@@ -1441,6 +1479,7 @@ struct DownloadedUrlImage {
 
 fn import_url_sync_traced(
     library: &Library,
+    target_board_id: i64,
     queue_id: Option<u64>,
     url: &str,
     desired_world: egui::Pos2,
@@ -1468,6 +1507,7 @@ fn import_url_sync_traced(
     if downloaded_url_image_is_svg(&downloaded) {
         return import_downloaded_svg_sync_traced(
             library,
+            target_board_id,
             queue_id,
             downloaded,
             desired_world,
@@ -1495,6 +1535,7 @@ fn import_url_sync_traced(
         initial_import_scale(decoded.source_width, decoded.source_height, auto_scale);
     let arranged_world = resolve_import_world(
         library,
+        target_board_id,
         desired_world,
         reserved_world,
         viewport_world,
@@ -1507,7 +1548,8 @@ fn import_url_sync_traced(
     let source_name = remote_image_source_name(&downloaded.url);
     let stored_path =
         library.store_original_bytes(&source_name, &decoded.extension, &downloaded.bytes)?;
-    let record = library.persist_imported_image(
+    let record = library.persist_imported_image_to_board(
+        target_board_id,
         &stored_path,
         &decoded.mime_type,
         decoded.source_width,
@@ -1572,6 +1614,7 @@ fn import_url_sync_traced(
     }
 
     Ok(LoadedCanvasItem {
+        target_board_id,
         queue_id,
         record,
         preview_rgba: preview.rgba,
@@ -1588,6 +1631,7 @@ fn import_url_sync_traced(
 
 fn import_downloaded_svg_sync_traced(
     library: &Library,
+    target_board_id: i64,
     queue_id: Option<u64>,
     downloaded: DownloadedUrlImage,
     desired_world: egui::Pos2,
@@ -1609,6 +1653,7 @@ fn import_downloaded_svg_sync_traced(
     let initial_scale = initial_import_scale(svg.width, svg.height, auto_scale);
     let arranged_world = resolve_import_world(
         library,
+        target_board_id,
         desired_world,
         reserved_world,
         viewport_world,
@@ -1620,7 +1665,8 @@ fn import_downloaded_svg_sync_traced(
     let store_started_at = Instant::now();
     let source_name = remote_image_source_name(&downloaded.url);
     let stored_path = library.store_original_bytes(&source_name, "svg", &svg.bytes)?;
-    let record = library.persist_imported_image(
+    let record = library.persist_imported_image_to_board(
+        target_board_id,
         &stored_path,
         SVG_MIME_TYPE,
         svg.width,
@@ -1637,6 +1683,7 @@ fn import_downloaded_svg_sync_traced(
     }
 
     Ok(LoadedCanvasItem {
+        target_board_id,
         queue_id,
         record,
         preview_rgba: Vec::new(),
@@ -1657,6 +1704,7 @@ fn import_downloaded_svg_sync_traced(
 
 fn import_clipboard_sync_traced(
     library: &Library,
+    target_board_id: i64,
     queue_id: u64,
     rgba: Vec<u8>,
     width: u32,
@@ -1685,6 +1733,7 @@ fn import_clipboard_sync_traced(
     let initial_scale = initial_import_scale(width, height, auto_scale);
     let arranged_world = resolve_import_world(
         library,
+        target_board_id,
         desired_world,
         reserved_world,
         viewport_world,
@@ -1692,7 +1741,8 @@ fn import_clipboard_sync_traced(
         height as f32 * initial_scale.max(0.01),
         import_gap,
     )?;
-    let record = library.persist_imported_image(
+    let record = library.persist_imported_image_to_board(
+        target_board_id,
         &stored_path,
         image::ImageFormat::Png.to_mime_type(),
         width,
@@ -1726,6 +1776,7 @@ fn import_clipboard_sync_traced(
     }
 
     Ok(LoadedCanvasItem {
+        target_board_id,
         queue_id: Some(queue_id),
         record,
         preview_rgba: preview.rgba,
@@ -1742,6 +1793,7 @@ fn import_clipboard_sync_traced(
 
 fn load_existing(
     library: &Library,
+    target_board_id: i64,
     record: BoardItemWithAsset,
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
@@ -1764,6 +1816,7 @@ fn load_existing(
                     trace.timings.worker_total = worker_started_at.elapsed();
                 }
                 return ImportResult::Loaded(LoadedCanvasItem {
+                    target_board_id,
                     queue_id: None,
                     preview_rgba: Vec::new(),
                     preview_width: svg.width,
@@ -1786,6 +1839,7 @@ fn load_existing(
             }
             Err(error) => {
                 return ImportResult::Failed {
+                    target_board_id: None,
                     queue_id: None,
                     item_id: Some(record.item.id),
                     context: record.asset.original_path.display().to_string(),
@@ -1813,6 +1867,7 @@ fn load_existing(
                     Ok(preview_texture) => preview_texture,
                     Err(error) => {
                         return ImportResult::Failed {
+                            target_board_id: None,
                             queue_id: None,
                             item_id: Some(record.item.id),
                             context: record.asset.original_path.display().to_string(),
@@ -1827,6 +1882,7 @@ fn load_existing(
                 trace.timings.worker_total = worker_started_at.elapsed();
             }
             ImportResult::Loaded(LoadedCanvasItem {
+                target_board_id,
                 queue_id: None,
                 record,
                 preview_rgba: preview.rgba,
@@ -1841,6 +1897,7 @@ fn load_existing(
             })
         }
         Err(error) => ImportResult::Failed {
+            target_board_id: None,
             queue_id: None,
             item_id: Some(record.item.id),
             context: record.asset.original_path.display().to_string(),
@@ -1862,6 +1919,7 @@ fn measure_first_visible_load_ms(
     for record in records {
         let loaded = load_existing(
             library,
+            1,
             record.clone(),
             usize::MAX,
             CanvasImageSettings::default(),
@@ -1907,6 +1965,7 @@ fn measure_interactive_import_ms(
         for record in backlog {
             match load_existing(
                 library,
+                1,
                 record.clone(),
                 usize::MAX,
                 CanvasImageSettings::default(),
@@ -1950,6 +2009,7 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
             PERF_BACKLOG_IMAGE_SIZE,
         )?;
         worker.enqueue(ImportRequest::LoadExisting {
+            target_board_id: 1,
             record: perf_record(
                 index as i64 + 1,
                 &path,
@@ -1967,6 +2027,7 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
 
     let started_at = Instant::now();
     worker.enqueue(ImportRequest::ImportClipboard {
+        target_board_id: 1,
         queue_id: 1,
         rgba: solid_rgba(1200, 900),
         width: 1200,
@@ -2128,6 +2189,7 @@ fn crop_item(
     let source_context = request.source_asset.original_path.display().to_string();
     if original_mime_type_is_svg(&request.source_asset.mime_type) {
         return ImportResult::Failed {
+            target_board_id: None,
             queue_id: None,
             item_id: Some(request.item_id),
             context: source_context,
@@ -2139,6 +2201,7 @@ fn crop_item(
         Ok(decoded) => decoded,
         Err(error) => {
             return ImportResult::Failed {
+                target_board_id: None,
                 queue_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
@@ -2150,6 +2213,7 @@ fn crop_item(
         Some(image) => image,
         None => {
             return ImportResult::Failed {
+                target_board_id: None,
                 queue_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
@@ -2183,6 +2247,7 @@ fn crop_item(
         Ok(path) => path,
         Err(error) => {
             return ImportResult::Failed {
+                target_board_id: None,
                 queue_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
@@ -2196,6 +2261,7 @@ fn crop_item(
         Err(error) => {
             let _ = std::fs::remove_file(&stored_path);
             return ImportResult::Failed {
+                target_board_id: None,
                 queue_id: None,
                 item_id: Some(request.item_id),
                 context: stored_path.display().to_string(),
@@ -2209,6 +2275,7 @@ fn crop_item(
             Err(error) => {
                 let _ = std::fs::remove_file(&stored_path);
                 return ImportResult::Failed {
+                    target_board_id: None,
                     queue_id: None,
                     item_id: Some(request.item_id),
                     context: source_context,
@@ -2226,6 +2293,7 @@ fn crop_item(
         Err(error) => {
             let _ = std::fs::remove_file(&stored_path);
             return ImportResult::Failed {
+                target_board_id: None,
                 queue_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
@@ -2238,6 +2306,7 @@ fn crop_item(
         Err(error) => {
             let _ = std::fs::remove_file(&stored_path);
             return ImportResult::Failed {
+                target_board_id: None,
                 queue_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
@@ -2766,6 +2835,7 @@ pub fn arrange_rect_world(
 
 fn resolve_import_world(
     library: &Library,
+    target_board_id: i64,
     desired_world: egui::Pos2,
     reserved_world: Option<egui::Pos2>,
     viewport_world: egui::Rect,
@@ -2774,17 +2844,18 @@ fn resolve_import_world(
     import_gap: f32,
 ) -> Result<egui::Pos2, String> {
     let Some(reserved_world) = reserved_world else {
-        return arrange_rect_world(
-            library,
+        let existing_items = library.load_board_layout_items_for_board(target_board_id)?;
+        return Ok(arrange_rect_with_existing_layout(
+            &existing_items,
             desired_world,
             viewport_world,
             item_width,
             item_height,
             import_gap,
-        );
+        ));
     };
 
-    let existing_items = library.load_board_layout_items()?;
+    let existing_items = library.load_board_layout_items_for_board(target_board_id)?;
     let reserved_rect = egui::Rect::from_center_size(
         reserved_world,
         egui::vec2(item_width.max(0.0), item_height.max(0.0)),
@@ -3159,6 +3230,7 @@ mod tests {
         let tall = match import_clipboard(
             &library,
             1,
+            1,
             tall_rgba,
             390,
             844,
@@ -3177,6 +3249,7 @@ mod tests {
         };
         let small = match import_clipboard(
             &library,
+            1,
             2,
             small_rgba,
             160,
@@ -3197,6 +3270,50 @@ mod tests {
 
         assert!((displayed_area(&tall) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
         assert_eq!(small.record.item.scale, 1.0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active() {
+        let root = temp_library_root("clipboard-import-target-board");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        seed_board_item(&library, 1, 42.0, 24.0, 160, 120, 1.0);
+        let second = library.create_board("Second").unwrap();
+
+        let loaded = match import_clipboard(
+            &library,
+            second.id,
+            1,
+            solid_rgba(160, 120),
+            160,
+            120,
+            eframe::egui::pos2(42.0, 24.0),
+            None,
+            test_viewport_world(),
+            usize::MAX,
+            CanvasImageSettings::default(),
+            false,
+            crate::data::DEFAULT_IMPORT_GAP,
+            None,
+            None,
+        ) {
+            ImportResult::Loaded(loaded) => loaded,
+            other => panic!("expected target-board clipboard import to load, got {other:?}"),
+        };
+
+        assert_eq!(loaded.target_board_id, second.id);
+        assert_eq!(loaded.record.item.x, 42.0);
+        assert_eq!(loaded.record.item.y, 24.0);
+        assert_eq!(
+            library.load_board_items_for_board(first.id).unwrap().len(),
+            1
+        );
+        assert_eq!(
+            library.load_board_items_for_board(second.id).unwrap().len(),
+            1
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -3309,6 +3426,7 @@ mod tests {
         let first = match import_clipboard(
             &library,
             1,
+            1,
             solid_rgba(200, 200),
             200,
             200,
@@ -3328,6 +3446,7 @@ mod tests {
 
         let second = match import_clipboard(
             &library,
+            1,
             2,
             solid_rgba(200, 200),
             200,
@@ -3369,6 +3488,7 @@ mod tests {
 
         let loaded = match import_clipboard(
             &library,
+            1,
             2,
             solid_rgba(100, 100),
             100,
@@ -3402,6 +3522,7 @@ mod tests {
 
         let loaded = match import_clipboard(
             &library,
+            1,
             2,
             solid_rgba(100, 100),
             100,
@@ -3444,6 +3565,7 @@ mod tests {
 
         let loaded = import_url_sync_traced(
             &library,
+            1,
             Some(7),
             &url,
             eframe::egui::Pos2::ZERO,
@@ -3500,6 +3622,7 @@ mod tests {
 
         let loaded = import_url_sync_traced(
             &library,
+            1,
             Some(9),
             &url,
             eframe::egui::Pos2::ZERO,
@@ -3696,6 +3819,7 @@ static char * sample_xpm[] = {
 
         let loaded = match load_existing(
             &library,
+            1,
             imported.record.clone(),
             usize::MAX,
             CanvasImageSettings::default(),
@@ -3740,6 +3864,7 @@ static char * sample_xpm[] = {
         for index in 0..5 {
             result_tx
                 .send(ImportResult::Failed {
+                    target_board_id: None,
                     queue_id: None,
                     item_id: Some(index),
                     context: format!("item-{index}"),
@@ -3792,6 +3917,7 @@ static char * sample_xpm[] = {
 
         let loaded = match import_clipboard(
             &library,
+            1,
             1,
             solid_rgba(64, 64),
             64,
@@ -3903,6 +4029,7 @@ static char * sample_xpm[] = {
 
         let first = match load_existing(
             &library,
+            1,
             record.clone(),
             usize::MAX,
             settings,
@@ -3924,6 +4051,7 @@ static char * sample_xpm[] = {
 
         let second = match load_existing(
             &library,
+            1,
             record.clone(),
             usize::MAX,
             settings,
@@ -3968,6 +4096,7 @@ static char * sample_xpm[] = {
 
         let loaded = match load_existing(
             &library,
+            1,
             record,
             usize::MAX,
             downscaled_canvas_settings(2000),
@@ -4030,6 +4159,7 @@ static char * sample_xpm[] = {
 
         match load_existing(
             &library,
+            1,
             record.clone(),
             usize::MAX,
             first_settings,
@@ -4060,6 +4190,7 @@ static char * sample_xpm[] = {
 
         let second = match load_existing(
             &library,
+            1,
             record.clone(),
             usize::MAX,
             second_settings,
@@ -4120,6 +4251,7 @@ static char * sample_xpm[] = {
 
         match load_existing(
             &library,
+            1,
             record,
             usize::MAX,
             CanvasImageSettings {
@@ -4171,6 +4303,7 @@ static char * sample_xpm[] = {
 
         match load_existing(
             &library,
+            1,
             record,
             usize::MAX,
             downscaled_canvas_settings(2000),
