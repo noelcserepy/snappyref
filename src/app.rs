@@ -86,6 +86,14 @@ struct ClipboardBoardSelection {
     source_center_y: f32,
     items: Vec<ClipboardBoardItem>,
     annotations: Vec<ClipboardAnnotation>,
+    #[serde(default)]
+    stack_order: Vec<ClipboardStackEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ClipboardStackEntry {
+    kind: String,
+    index: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2189,8 +2197,10 @@ impl ReferenceApp {
     fn copy_selected_board_payload(&self) -> Option<ClipboardBoardSelection> {
         let source_bounds = self.canvas.selected_world_bounds()?;
         let mut items = Vec::new();
+        let mut item_ids = Vec::new();
         for item_id in self.canvas.selected_item_ids() {
             let record = self.canvas.record_for_item_id(item_id)?;
+            item_ids.push(item_id);
             items.push(ClipboardBoardItem {
                 asset_id: record.item.asset_id,
                 x: record.item.x,
@@ -2204,8 +2214,10 @@ impl ReferenceApp {
         }
 
         let mut annotations = Vec::new();
+        let mut annotation_ids = Vec::new();
         for annotation_id in self.canvas.selected_annotation_ids() {
             let annotation = self.canvas.annotation_for_id(annotation_id)?;
+            annotation_ids.push(annotation_id);
             annotations.push(ClipboardAnnotation {
                 kind: annotation.kind.as_str().to_owned(),
                 start_x: annotation.start_x,
@@ -2220,12 +2232,35 @@ impl ReferenceApp {
             });
         }
 
+        let stack_order = self
+            .canvas
+            .canvas_stack_order()
+            .into_iter()
+            .filter_map(|item| match item {
+                crate::data::CanvasStackItem::Placement(item_id) => item_ids
+                    .iter()
+                    .position(|id| *id == item_id)
+                    .map(|index| ClipboardStackEntry {
+                        kind: "placement".to_owned(),
+                        index,
+                    }),
+                crate::data::CanvasStackItem::Annotation(annotation_id) => annotation_ids
+                    .iter()
+                    .position(|id| *id == annotation_id)
+                    .map(|index| ClipboardStackEntry {
+                        kind: "annotation".to_owned(),
+                        index,
+                    }),
+            })
+            .collect();
+
         (!items.is_empty() || !annotations.is_empty()).then(|| ClipboardBoardSelection {
             kind: COPY_PAYLOAD_KIND.to_owned(),
             source_center_x: source_bounds.center().x,
             source_center_y: source_bounds.center().y,
             items,
             annotations,
+            stack_order,
         })
     }
 
@@ -2310,10 +2345,55 @@ impl ReferenceApp {
 
         self.canvas
             .select_content(&pasted_item_ids, &pasted_annotation_ids);
+        self.move_pasted_content_to_front(&pasted_item_ids, &pasted_annotation_ids, payload);
         let count = pasted_item_ids.len() + pasted_annotation_ids.len();
         let noun = if count == 1 { "item" } else { "items" };
         self.status = format!("Pasted {count} {noun}");
         Ok(())
+    }
+
+    fn move_pasted_content_to_front(
+        &mut self,
+        pasted_item_ids: &[i64],
+        pasted_annotation_ids: &[i64],
+        payload: &ClipboardBoardSelection,
+    ) {
+        let mut pasted_stack_order = Vec::new();
+        for entry in &payload.stack_order {
+            match entry.kind.as_str() {
+                "placement" => {
+                    if let Some(item_id) = pasted_item_ids.get(entry.index) {
+                        pasted_stack_order.push(crate::data::CanvasStackItem::Placement(*item_id));
+                    }
+                }
+                "annotation" => {
+                    if let Some(annotation_id) = pasted_annotation_ids.get(entry.index) {
+                        pasted_stack_order
+                            .push(crate::data::CanvasStackItem::Annotation(*annotation_id));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if pasted_stack_order.len() != pasted_item_ids.len() + pasted_annotation_ids.len() {
+            pasted_stack_order = pasted_item_ids
+                .iter()
+                .copied()
+                .map(crate::data::CanvasStackItem::Placement)
+                .chain(
+                    pasted_annotation_ids
+                        .iter()
+                        .copied()
+                        .map(crate::data::CanvasStackItem::Annotation),
+                )
+                .collect();
+        }
+
+        let mut next_stack_order = self.canvas.canvas_stack_order();
+        next_stack_order.retain(|item| !pasted_stack_order.contains(item));
+        next_stack_order.extend(pasted_stack_order);
+        self.canvas.set_canvas_stack_order(next_stack_order);
+        self.persist_canvas_stack_order();
     }
 
     fn placement_anchor_for_payload(
@@ -3936,8 +4016,8 @@ fn generated_board_name(boards: &[crate::data::Board]) -> String {
 mod tests {
     use super::{ArrangementAction, CropUndoEntry, ReferenceApp, apply_arrangement_action};
     use crate::data::{
-        BoardItem, BoardItemWithAsset, CanvasAnnotationKind, CanvasStrokeWidth, CanvasTextSize,
-        ImageAsset,
+        BoardItem, BoardItemWithAsset, CanvasAnnotationKind, CanvasStackItem, CanvasStrokeWidth,
+        CanvasTextSize, ImageAsset,
     };
     use crate::jobs::LoadedCanvasItem;
     #[cfg(feature = "semantic-search")]
@@ -4153,6 +4233,15 @@ mod tests {
             },
         );
         app.canvas.add_annotation(source_annotation.clone());
+        let source_stack_order = vec![
+            CanvasStackItem::Annotation(source_annotation.id),
+            CanvasStackItem::Placement(source_item.item.id),
+        ];
+        app.canvas
+            .set_canvas_stack_order(source_stack_order.clone());
+        library
+            .save_canvas_stack_order(&source_stack_order)
+            .unwrap();
         app.canvas
             .select_content(&[source_item.item.id], &[source_annotation.id]);
 
@@ -4190,6 +4279,216 @@ mod tests {
             app.canvas.selected_annotation_ids(),
             vec![pasted_annotations[0].id]
         );
+        let pasted_stack_order = vec![
+            CanvasStackItem::Annotation(pasted_annotations[0].id),
+            CanvasStackItem::Placement(pasted_items[0].item.id),
+        ];
+        assert_eq!(
+            library.load_canvas_stack_order().unwrap(),
+            pasted_stack_order
+        );
+        library.set_active_board(first.id).unwrap();
+        assert_eq!(
+            library.load_canvas_stack_order().unwrap(),
+            source_stack_order
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn paste_preserves_mixed_selection_stack_order_and_places_group_at_front() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-mixed-paste-stack-order");
+        let library = Library::initialize(root.clone()).unwrap();
+        let image_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let back_item = library
+            .persist_imported_image(&image_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let source_item = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(10.0, 20.0), 1.0, 0.0, 0)
+            .unwrap();
+        let source_annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Line,
+                egui::pos2(40.0, 60.0),
+                egui::pos2(80.0, 90.0),
+                "",
+                CanvasTextSize::M,
+                CanvasStrokeWidth::M,
+                crate::data::CanvasAnnotationColor::Gold,
+                false,
+            )
+            .unwrap();
+        let front_item = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(100.0, 100.0), 1.0, 0.0, 0)
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        for record in [&back_item, &source_item, &front_item] {
+            app.canvas.add_loaded_item(
+                &ctx,
+                LoadedCanvasItem {
+                    target_board_id: 1,
+                    queue_id: None,
+                    record: record.clone(),
+                    preview_rgba: vec![255, 0, 0, 255],
+                    preview_width: 1,
+                    preview_height: 1,
+                    animated_preview: None,
+                    preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                    loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                    existing_load_diagnostics: None,
+                    origin: crate::jobs::ImportOrigin::Existing,
+                    trace: None,
+                },
+            );
+        }
+        app.canvas.add_annotation(source_annotation.clone());
+        app.canvas.set_canvas_stack_order(vec![
+            CanvasStackItem::Placement(back_item.item.id),
+            CanvasStackItem::Annotation(source_annotation.id),
+            CanvasStackItem::Placement(source_item.item.id),
+            CanvasStackItem::Placement(front_item.item.id),
+        ]);
+        app.canvas
+            .select_content(&[source_item.item.id], &[source_annotation.id]);
+
+        let payload = app.copy_selected_board_payload().unwrap();
+        app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
+            .unwrap();
+
+        let pasted_item_id = app.canvas.selected_item_ids()[0];
+        let pasted_annotation_id = app.canvas.selected_annotation_ids()[0];
+        assert_eq!(
+            app.canvas.canvas_stack_order(),
+            vec![
+                CanvasStackItem::Placement(back_item.item.id),
+                CanvasStackItem::Annotation(source_annotation.id),
+                CanvasStackItem::Placement(source_item.item.id),
+                CanvasStackItem::Placement(front_item.item.id),
+                CanvasStackItem::Annotation(pasted_annotation_id),
+                CanvasStackItem::Placement(pasted_item_id),
+            ]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn paste_preserves_image_only_stack_order_and_places_group_at_front() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-image-paste-stack-order");
+        let library = Library::initialize(root.clone()).unwrap();
+        let image_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let back_item = library
+            .persist_imported_image(&image_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let lower_selected = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(10.0, 20.0), 1.0, 0.0, 0)
+            .unwrap();
+        let upper_selected = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(30.0, 40.0), 1.0, 0.0, 0)
+            .unwrap();
+        let front_item = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(100.0, 100.0), 1.0, 0.0, 0)
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        for record in [&back_item, &lower_selected, &upper_selected, &front_item] {
+            add_loaded_record(&mut app, &ctx, record.clone());
+        }
+        app.canvas.set_canvas_stack_order(vec![
+            CanvasStackItem::Placement(back_item.item.id),
+            CanvasStackItem::Placement(upper_selected.item.id),
+            CanvasStackItem::Placement(lower_selected.item.id),
+            CanvasStackItem::Placement(front_item.item.id),
+        ]);
+        app.canvas
+            .select_items(&[lower_selected.item.id, upper_selected.item.id]);
+
+        let payload = app.copy_selected_board_payload().unwrap();
+        app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
+            .unwrap();
+
+        let selected = app.canvas.selected_item_ids();
+        let pasted_lower_id = selected[0];
+        let pasted_upper_id = selected[1];
+        let expected = vec![
+            CanvasStackItem::Placement(back_item.item.id),
+            CanvasStackItem::Placement(upper_selected.item.id),
+            CanvasStackItem::Placement(lower_selected.item.id),
+            CanvasStackItem::Placement(front_item.item.id),
+            CanvasStackItem::Placement(pasted_upper_id),
+            CanvasStackItem::Placement(pasted_lower_id),
+        ];
+        assert_eq!(app.canvas.canvas_stack_order(), expected);
+        assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn paste_preserves_annotation_only_stack_order_and_places_group_at_front() {
+        let root = temp_library_root("reference-annotation-paste-stack-order");
+        let library = Library::initialize(root.clone()).unwrap();
+        let back_annotation = test_canvas_annotation(1, egui::pos2(0.0, 0.0));
+        let lower_selected = test_canvas_annotation(2, egui::pos2(10.0, 20.0));
+        let upper_selected = test_canvas_annotation(3, egui::pos2(30.0, 40.0));
+        let front_annotation = test_canvas_annotation(4, egui::pos2(100.0, 100.0));
+        for annotation in [
+            &back_annotation,
+            &lower_selected,
+            &upper_selected,
+            &front_annotation,
+        ] {
+            library
+                .create_canvas_annotation(
+                    annotation.kind,
+                    egui::pos2(annotation.start_x, annotation.start_y),
+                    egui::pos2(annotation.end_x, annotation.end_y),
+                    &annotation.text,
+                    annotation.text_size,
+                    annotation.stroke_width,
+                    annotation.color,
+                    annotation.background_enabled,
+                )
+                .unwrap();
+        }
+        let annotations = library.load_canvas_annotations().unwrap();
+        let back_id = annotations[0].id;
+        let lower_id = annotations[1].id;
+        let upper_id = annotations[2].id;
+        let front_id = annotations[3].id;
+        let mut app = test_app(Some(library.clone()));
+        app.canvas.add_annotations(annotations);
+        app.canvas.set_canvas_stack_order(vec![
+            CanvasStackItem::Annotation(back_id),
+            CanvasStackItem::Annotation(upper_id),
+            CanvasStackItem::Annotation(lower_id),
+            CanvasStackItem::Annotation(front_id),
+        ]);
+        app.canvas.select_content(&[], &[lower_id, upper_id]);
+
+        let payload = app.copy_selected_board_payload().unwrap();
+        app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
+            .unwrap();
+
+        let selected = app.canvas.selected_annotation_ids();
+        let pasted_lower_id = selected[0];
+        let pasted_upper_id = selected[1];
+        let expected = vec![
+            CanvasStackItem::Annotation(back_id),
+            CanvasStackItem::Annotation(upper_id),
+            CanvasStackItem::Annotation(lower_id),
+            CanvasStackItem::Annotation(front_id),
+            CanvasStackItem::Annotation(pasted_upper_id),
+            CanvasStackItem::Annotation(pasted_lower_id),
+        ];
+        assert_eq!(app.canvas.canvas_stack_order(), expected);
+        assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -4245,6 +4544,10 @@ mod tests {
             },
         );
         app.canvas.add_annotation(source_annotation.clone());
+        app.canvas.set_canvas_stack_order(vec![
+            CanvasStackItem::Annotation(source_annotation.id),
+            CanvasStackItem::Placement(source_item.item.id),
+        ]);
         app.canvas
             .select_content(&[source_item.item.id], &[source_annotation.id]);
 
@@ -4280,6 +4583,115 @@ mod tests {
             app.canvas.selected_annotation_ids(),
             vec![duplicated_annotation.id]
         );
+        let expected = vec![
+            CanvasStackItem::Annotation(source_annotation.id),
+            CanvasStackItem::Placement(source_item.item.id),
+            CanvasStackItem::Annotation(duplicated_annotation.id),
+            CanvasStackItem::Placement(duplicated_item.item.id),
+        ];
+        assert_eq!(app.canvas.canvas_stack_order(), expected);
+        assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn duplicate_preserves_image_only_stack_order_and_places_group_at_front() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-image-duplicate-stack-order");
+        let library = Library::initialize(root.clone()).unwrap();
+        let image_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let back_item = library
+            .persist_imported_image(&image_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let lower_selected = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(10.0, 20.0), 1.0, 0.0, 0)
+            .unwrap();
+        let upper_selected = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(30.0, 40.0), 1.0, 0.0, 0)
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.settings.import_gap = 24.0;
+        for record in [&back_item, &lower_selected, &upper_selected] {
+            add_loaded_record(&mut app, &ctx, record.clone());
+        }
+        app.canvas.set_canvas_stack_order(vec![
+            CanvasStackItem::Placement(back_item.item.id),
+            CanvasStackItem::Placement(upper_selected.item.id),
+            CanvasStackItem::Placement(lower_selected.item.id),
+        ]);
+        app.canvas
+            .select_items(&[lower_selected.item.id, upper_selected.item.id]);
+
+        app.duplicate_selection_with_gap();
+
+        let selected = app.canvas.selected_item_ids();
+        let duplicated_lower_id = selected[0];
+        let duplicated_upper_id = selected[1];
+        let expected = vec![
+            CanvasStackItem::Placement(back_item.item.id),
+            CanvasStackItem::Placement(upper_selected.item.id),
+            CanvasStackItem::Placement(lower_selected.item.id),
+            CanvasStackItem::Placement(duplicated_upper_id),
+            CanvasStackItem::Placement(duplicated_lower_id),
+        ];
+        assert_eq!(app.canvas.canvas_stack_order(), expected);
+        assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn duplicate_preserves_annotation_only_stack_order_and_places_group_at_front() {
+        let root = temp_library_root("reference-annotation-duplicate-stack-order");
+        let library = Library::initialize(root.clone()).unwrap();
+        let back_annotation = test_canvas_annotation(1, egui::pos2(0.0, 0.0));
+        let lower_selected = test_canvas_annotation(2, egui::pos2(10.0, 20.0));
+        let upper_selected = test_canvas_annotation(3, egui::pos2(30.0, 40.0));
+        for annotation in [&back_annotation, &lower_selected, &upper_selected] {
+            library
+                .create_canvas_annotation(
+                    annotation.kind,
+                    egui::pos2(annotation.start_x, annotation.start_y),
+                    egui::pos2(annotation.end_x, annotation.end_y),
+                    &annotation.text,
+                    annotation.text_size,
+                    annotation.stroke_width,
+                    annotation.color,
+                    annotation.background_enabled,
+                )
+                .unwrap();
+        }
+        let annotations = library.load_canvas_annotations().unwrap();
+        let back_id = annotations[0].id;
+        let lower_id = annotations[1].id;
+        let upper_id = annotations[2].id;
+        let mut app = test_app(Some(library.clone()));
+        app.settings.import_gap = 24.0;
+        app.canvas.add_annotations(annotations);
+        app.canvas.set_canvas_stack_order(vec![
+            CanvasStackItem::Annotation(back_id),
+            CanvasStackItem::Annotation(upper_id),
+            CanvasStackItem::Annotation(lower_id),
+        ]);
+        app.canvas.select_content(&[], &[lower_id, upper_id]);
+
+        app.duplicate_selection_with_gap();
+
+        let selected = app.canvas.selected_annotation_ids();
+        let duplicated_lower_id = selected[0];
+        let duplicated_upper_id = selected[1];
+        let expected = vec![
+            CanvasStackItem::Annotation(back_id),
+            CanvasStackItem::Annotation(upper_id),
+            CanvasStackItem::Annotation(lower_id),
+            CanvasStackItem::Annotation(duplicated_upper_id),
+            CanvasStackItem::Annotation(duplicated_lower_id),
+        ];
+        assert_eq!(app.canvas.canvas_stack_order(), expected);
+        assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -4392,6 +4804,14 @@ mod tests {
         assert_eq!(payload.kind, super::COPY_PAYLOAD_KIND);
         assert_eq!(payload.items.len(), 1);
         assert_eq!(payload.annotations.len(), 1);
+        assert_eq!(
+            payload
+                .stack_order
+                .iter()
+                .map(|entry| (entry.kind.as_str(), entry.index))
+                .collect::<Vec<_>>(),
+            vec![("placement", 0), ("annotation", 0)]
+        );
     }
 
     #[test]
@@ -5480,6 +5900,43 @@ mod tests {
             existing_load_diagnostics: None,
             origin: crate::jobs::ImportOrigin::Clipboard,
             trace: None,
+        }
+    }
+
+    fn add_loaded_record(app: &mut ReferenceApp, ctx: &egui::Context, record: BoardItemWithAsset) {
+        app.canvas.add_loaded_item(
+            ctx,
+            LoadedCanvasItem {
+                target_board_id: 1,
+                queue_id: None,
+                record,
+                preview_rgba: vec![255, 0, 0, 255],
+                preview_width: 1,
+                preview_height: 1,
+                animated_preview: None,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+    }
+
+    fn test_canvas_annotation(id: i64, start: egui::Pos2) -> crate::data::CanvasAnnotation {
+        crate::data::CanvasAnnotation {
+            id,
+            kind: CanvasAnnotationKind::Line,
+            start_x: start.x,
+            start_y: start.y,
+            end_x: start.x + 40.0,
+            end_y: start.y + 30.0,
+            text: String::new(),
+            text_size: CanvasTextSize::M,
+            stroke_width: CanvasStrokeWidth::M,
+            color: crate::data::CanvasAnnotationColor::Gold,
+            background_enabled: false,
+            archived: false,
         }
     }
 }
