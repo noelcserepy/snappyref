@@ -258,6 +258,8 @@ pub struct AppConfig {
     verification_mode: Option<VerificationMode>,
     #[cfg(debug_assertions)]
     verification_search_query: Option<String>,
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    verification_search_scope: crate::semantic_search::SearchScope,
 }
 
 #[derive(Clone, Debug)]
@@ -308,6 +310,8 @@ impl AppConfig {
         let mut verification_mode = None;
         #[cfg(debug_assertions)]
         let mut verification_search_query = None;
+        #[cfg(all(debug_assertions, feature = "semantic-search"))]
+        let mut verification_search_scope = crate::semantic_search::SearchScope::ThisBoard;
         let mut arguments = std::env::args().skip(1);
 
         while let Some(argument) = arguments.next() {
@@ -424,10 +428,22 @@ impl AppConfig {
                 {
                     verification_search_query = Some(query.to_owned());
                 }
+            } else if let Some(query) = argument.strip_prefix("--verify-search-library=") {
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                {
+                    verification_search_query = Some(query.to_owned());
+                    verification_search_scope = crate::semantic_search::SearchScope::Library;
+                }
             } else if cfg!(debug_assertions) && argument == "--verify-search" {
                 #[cfg(debug_assertions)]
                 {
                     verification_search_query = arguments.next();
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-search-library" {
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                {
+                    verification_search_query = arguments.next();
+                    verification_search_scope = crate::semantic_search::SearchScope::Library;
                 }
             }
         }
@@ -443,6 +459,8 @@ impl AppConfig {
             verification_mode,
             #[cfg(debug_assertions)]
             verification_search_query,
+            #[cfg(all(debug_assertions, feature = "semantic-search"))]
+            verification_search_scope,
         }
     }
 
@@ -688,6 +706,8 @@ pub struct ReferenceApp {
     verification_mode: Option<VerificationMode>,
     #[cfg(debug_assertions)]
     verification_search_query: Option<String>,
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    verification_search_scope: crate::semantic_search::SearchScope,
     #[cfg(debug_assertions)]
     sidebar_hot_preview: bool,
 }
@@ -752,6 +772,8 @@ impl ReferenceApp {
                     verification_mode: config.verification_mode,
                     #[cfg(debug_assertions)]
                     verification_search_query: None,
+                    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                    verification_search_scope: config.verification_search_scope,
                     #[cfg(debug_assertions)]
                     sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                 };
@@ -841,6 +863,7 @@ impl ReferenceApp {
                         app.search.overlay.open = true;
                         app.search.overlay.focus_requested = true;
                         app.search.overlay.query = query;
+                        app.search.overlay.scope = config.verification_search_scope;
                         app.search.overlay.last_query_edit_at = Some(Instant::now());
                     }
                     app.verification_search_query =
@@ -916,6 +939,8 @@ impl ReferenceApp {
                 verification_mode: config.verification_mode,
                 #[cfg(debug_assertions)]
                 verification_search_query: None,
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                verification_search_scope: config.verification_search_scope,
                 #[cfg(debug_assertions)]
                 sidebar_hot_preview: config.open_sidebar_hot_on_start(),
             },
@@ -2703,6 +2728,7 @@ impl ReferenceApp {
         };
         self.search.drive_verification_search(
             &query,
+            self.verification_search_scope,
             &mut self.settings.semantic_search_enabled,
             self.library.as_ref(),
             &mut self.canvas,
@@ -4014,6 +4040,8 @@ mod tests {
             verification_mode: None,
             #[cfg(debug_assertions)]
             verification_search_query: None,
+            #[cfg(all(debug_assertions, feature = "semantic-search"))]
+            verification_search_scope: crate::semantic_search::SearchScope::ThisBoard,
             #[cfg(debug_assertions)]
             sidebar_hot_preview: false,
         }

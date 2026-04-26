@@ -1030,28 +1030,24 @@ impl Library {
         model_key: &str,
     ) -> Result<Vec<ImageEmbeddingJob>, String> {
         let connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
         let mut statement = connection
             .prepare(
                 "SELECT
                     a.id,
                     a.original_path
                  FROM assets a
-                 JOIN board_items b ON b.asset_id = a.id
                  LEFT JOIN asset_embeddings e
                     ON e.asset_id = a.id
                     AND e.model_key = ?1
                     AND e.status = 'ready'
-                 WHERE b.archived = 0
-                   AND b.board_id = ?2
-                   AND e.asset_id IS NULL
+                 WHERE e.asset_id IS NULL
                  GROUP BY a.id, a.original_path
                  ORDER BY a.id ASC",
             )
             .map_err(|error| format!("failed to prepare embedding-backfill query: {error}"))?;
 
         let rows = statement
-            .query_map(params![model_key, active_board_id], |row| {
+            .query_map(params![model_key], |row| {
                 Ok(ImageEmbeddingJob {
                     asset_id: row.get(0)?,
                     original_path: PathBuf::from(row.get::<_, String>(1)?),
@@ -1098,6 +1094,39 @@ impl Library {
 
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("failed to collect active embeddings: {error}"))
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn load_library_embeddings(
+        &self,
+        model_key: &str,
+    ) -> Result<Vec<ActiveCanvasEmbedding>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT
+                    e.asset_id,
+                    e.embedding_blob
+                 FROM asset_embeddings e
+                 JOIN assets a ON a.id = e.asset_id
+                 WHERE e.model_key = ?1
+                   AND e.status = 'ready'
+                   AND e.embedding_blob IS NOT NULL
+                 ORDER BY e.asset_id ASC",
+            )
+            .map_err(|error| format!("failed to prepare library-embedding query: {error}"))?;
+
+        let rows = statement
+            .query_map(params![model_key], |row| {
+                Ok(ActiveCanvasEmbedding {
+                    asset_id: row.get(0)?,
+                    embedding_blob: row.get(1)?,
+                })
+            })
+            .map_err(|error| format!("failed to read library-embedding query: {error}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect library embeddings: {error}"))
     }
 
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
@@ -1180,6 +1209,42 @@ impl Library {
 
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("failed to collect board-search instances: {error}"))
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn asset_original_paths_for_assets(
+        &self,
+        asset_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, PathBuf>, String> {
+        if asset_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+
+        let connection = self.connection()?;
+        let placeholders = std::iter::repeat_n("?", asset_ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT id, original_path
+             FROM assets
+             WHERE id IN ({placeholders})"
+        );
+
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| format!("failed to prepare asset-path query: {error}"))?;
+
+        let rows = statement
+            .query_map(params_from_iter(asset_ids.iter().copied()), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    PathBuf::from(row.get::<_, String>(1)?),
+                ))
+            })
+            .map_err(|error| format!("failed to read asset-path query: {error}"))?;
+
+        rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
+            .map_err(|error| format!("failed to collect asset paths: {error}"))
     }
 
     pub fn load_user_session(&self) -> Result<UserSession, String> {
@@ -2847,9 +2912,9 @@ mod tests {
     }
 
     #[test]
-    fn live_canvas_embedding_backfill_skips_ready_assets_and_archived_items() {
+    fn embedding_backfill_includes_unplaced_library_assets() {
         let root = std::env::temp_dir().join(format!(
-            "reference-embedding-test-{}",
+            "reference-library-embedding-test-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -2864,8 +2929,8 @@ mod tests {
         let pending_path = library
             .store_rgba_image("pending", &[0, 255, 0, 255], 1, 1)
             .unwrap();
-        let archived_path = library
-            .store_rgba_image("archived", &[0, 0, 255, 255], 1, 1)
+        let unplaced_path = library
+            .store_rgba_image("unplaced", &[0, 0, 255, 255], 1, 1)
             .unwrap();
 
         let ready = library
@@ -2882,9 +2947,9 @@ mod tests {
                 1.0,
             )
             .unwrap();
-        let archived = library
+        let unplaced = library
             .persist_imported_image(
-                &archived_path,
+                &unplaced_path,
                 "image/png",
                 1,
                 1,
@@ -2894,7 +2959,7 @@ mod tests {
             )
             .unwrap();
 
-        library.archive_board_items(&[archived.item.id]).unwrap();
+        library.archive_board_items(&[unplaced.item.id]).unwrap();
         library
             .upsert_asset_embedding_blob(ready.asset.id, "mobileclip_s0", &[1.0, 0.0])
             .unwrap();
@@ -2903,8 +2968,8 @@ mod tests {
             .missing_live_canvas_asset_jobs_for_model("mobileclip_s0")
             .unwrap();
 
-        assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].asset_id, pending.asset.id);
+        let job_asset_ids = jobs.iter().map(|job| job.asset_id).collect::<Vec<_>>();
+        assert_eq!(job_asset_ids, vec![pending.asset.id, unplaced.asset.id]);
 
         let _ = fs::remove_dir_all(root);
     }
