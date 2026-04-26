@@ -3739,6 +3739,151 @@ mod tests {
     }
 
     #[test]
+    fn selected_canvas_item_moves_to_absolute_front_and_back() {
+        let mut state = CanvasState::default();
+        eframe::egui::__run_test_ui(|ui| {
+            push_test_image(ui, &mut state, 1, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
+            push_test_image(ui, &mut state, 2, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
+        });
+        state.add_annotation(CanvasAnnotation {
+            id: 20,
+            kind: CanvasAnnotationKind::Textbox,
+            start_x: -40.0,
+            start_y: -40.0,
+            end_x: 40.0,
+            end_y: 40.0,
+            text: "note".to_owned(),
+            text_size: default_text_size(),
+            stroke_width: default_stroke_width(),
+            color: default_annotation_color(),
+            background_enabled: false,
+            archived: false,
+        });
+        state.set_canvas_stack_order(vec![
+            CanvasStackItem::Placement(1),
+            CanvasStackItem::Annotation(20),
+            CanvasStackItem::Placement(2),
+        ]);
+        state.select_content(&[1], &[]);
+
+        assert!(state.move_selected_canvas_items_to_front());
+        assert_eq!(
+            state.ordered_canvas_items_back_to_front(),
+            vec![
+                CanvasStackItem::Annotation(20),
+                CanvasStackItem::Placement(2),
+                CanvasStackItem::Placement(1),
+            ]
+        );
+
+        assert!(state.move_selected_canvas_items_to_back());
+        assert_eq!(
+            state.ordered_canvas_items_back_to_front(),
+            vec![
+                CanvasStackItem::Placement(1),
+                CanvasStackItem::Annotation(20),
+                CanvasStackItem::Placement(2),
+            ]
+        );
+    }
+
+    #[test]
+    fn mixed_selected_canvas_items_move_as_ordered_block() {
+        let mut state = CanvasState::default();
+        eframe::egui::__run_test_ui(|ui| {
+            push_test_image(ui, &mut state, 1, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
+            push_test_image(ui, &mut state, 2, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
+            push_test_image(ui, &mut state, 3, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
+        });
+        for annotation_id in [20, 21] {
+            state.add_annotation(CanvasAnnotation {
+                id: annotation_id,
+                kind: CanvasAnnotationKind::Textbox,
+                start_x: -40.0,
+                start_y: -40.0,
+                end_x: 40.0,
+                end_y: 40.0,
+                text: format!("note {annotation_id}"),
+                text_size: default_text_size(),
+                stroke_width: default_stroke_width(),
+                color: default_annotation_color(),
+                background_enabled: false,
+                archived: false,
+            });
+        }
+        state.set_canvas_stack_order(vec![
+            CanvasStackItem::Placement(1),
+            CanvasStackItem::Annotation(20),
+            CanvasStackItem::Placement(2),
+            CanvasStackItem::Annotation(21),
+            CanvasStackItem::Placement(3),
+        ]);
+        state.select_content(&[3, 1], &[20]);
+
+        assert!(state.move_selected_canvas_items_to_front());
+        assert_eq!(
+            state.ordered_canvas_items_back_to_front(),
+            vec![
+                CanvasStackItem::Placement(2),
+                CanvasStackItem::Annotation(21),
+                CanvasStackItem::Placement(1),
+                CanvasStackItem::Annotation(20),
+                CanvasStackItem::Placement(3),
+            ]
+        );
+
+        assert!(state.move_selected_canvas_items_to_back());
+        assert_eq!(
+            state.ordered_canvas_items_back_to_front(),
+            vec![
+                CanvasStackItem::Placement(1),
+                CanvasStackItem::Annotation(20),
+                CanvasStackItem::Placement(3),
+                CanvasStackItem::Placement(2),
+                CanvasStackItem::Annotation(21),
+            ]
+        );
+    }
+
+    #[test]
+    fn moved_canvas_stack_order_controls_overlapping_context_selection() {
+        let mut state = CanvasState::default();
+        let rect = eframe::egui::Rect::from_min_size(
+            eframe::egui::Pos2::ZERO,
+            eframe::egui::vec2(400.0, 300.0),
+        );
+        eframe::egui::__run_test_ui(|ui| {
+            push_test_image(ui, &mut state, 1, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
+        });
+        state.add_annotation(CanvasAnnotation {
+            id: 20,
+            kind: CanvasAnnotationKind::Textbox,
+            start_x: -40.0,
+            start_y: -40.0,
+            end_x: 40.0,
+            end_y: 40.0,
+            text: "note".to_owned(),
+            text_size: default_text_size(),
+            stroke_width: default_stroke_width(),
+            color: default_annotation_color(),
+            background_enabled: false,
+            archived: false,
+        });
+        state.set_canvas_stack_order(vec![
+            CanvasStackItem::Annotation(20),
+            CanvasStackItem::Placement(1),
+        ]);
+        state.select_content(&[], &[20]);
+
+        assert!(state.move_selected_canvas_items_to_front());
+        open_context_menu_at_pointer(&mut state, rect, rect.center());
+
+        assert!(state.selected_item_ids().is_empty());
+        assert_eq!(state.selected_annotation_ids(), vec![20]);
+        assert!(state.take_context_menu_request().is_some());
+    }
+
+    #[test]
     fn context_click_inside_existing_mixed_selection_preserves_selection() {
         let mut state = CanvasState::default();
         let rect = eframe::egui::Rect::from_min_size(

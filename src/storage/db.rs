@@ -1758,6 +1758,43 @@ impl Library {
         load_canvas_stack_order_for_board_id(&connection, active_board_id)
     }
 
+    pub fn save_canvas_stack_order(&self, stack_order: &[CanvasStackItem]) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start canvas-stack transaction: {error}"))?;
+        transaction
+            .execute(
+                "DELETE FROM canvas_stack_items
+                 WHERE board_id = ?1",
+                params![active_board_id],
+            )
+            .map_err(|error| format!("failed to clear canvas stack order: {error}"))?;
+        for (stack_index, item) in stack_order.iter().enumerate() {
+            transaction
+                .execute(
+                    "INSERT INTO canvas_stack_items (
+                        board_id,
+                        item_kind,
+                        item_id,
+                        stack_index
+                     ) VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        active_board_id,
+                        item.kind(),
+                        item.item_id(),
+                        stack_index as i64
+                    ],
+                )
+                .map_err(|error| format!("failed to save canvas stack order: {error}"))?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit canvas stack order: {error}"))?;
+        Ok(())
+    }
+
     pub fn create_canvas_annotation(
         &self,
         kind: CanvasAnnotationKind,
@@ -3251,6 +3288,57 @@ mod tests {
                 CanvasStackItem::Annotation(annotation.id),
             ]
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn saved_canvas_stack_order_round_trips_for_active_board() {
+        let root = temp_root("reference-stack-order-save-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_path = library
+            .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let second_path = library
+            .store_rgba_image("second", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+        let first = library
+            .persist_imported_image(&first_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let second = library
+            .persist_imported_image(
+                &second_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Textbox,
+                egui::pos2(10.0, 12.0),
+                egui::pos2(110.0, 72.0),
+                "hello",
+                CanvasTextSize::default(),
+                crate::data::CanvasStrokeWidth::default(),
+                crate::data::CanvasAnnotationColor::default(),
+                false,
+            )
+            .unwrap();
+
+        let saved = vec![
+            CanvasStackItem::Annotation(annotation.id),
+            CanvasStackItem::Placement(second.item.id),
+            CanvasStackItem::Placement(first.item.id),
+        ];
+        library.save_canvas_stack_order(&saved).unwrap();
+
+        drop(library);
+        let library = Library::initialize(root.clone()).unwrap();
+        assert_eq!(library.load_canvas_stack_order().unwrap(), saved);
 
         let _ = fs::remove_dir_all(root);
     }
