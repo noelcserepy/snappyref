@@ -7,12 +7,13 @@ use super::{
     CanvasImage, CropState, DragState, ImageTransformState, ImportPlaceholder, MarqueeState,
     PendingAnnotation, SearchDragPreview, TextboxLayoutCacheEntry, TextboxTransformState,
 };
-use crate::data::{CanvasAnnotation, CanvasImageCacheTier};
+use crate::data::{CanvasAnnotation, CanvasImageCacheTier, CanvasStackItem};
 
 #[derive(Default)]
 pub(super) struct CanvasDocumentState {
     pub images: Vec<CanvasImage>,
     pub annotations: Vec<CanvasAnnotation>,
+    pub stack_order: Vec<CanvasStackItem>,
     pub selected_item_ids: Vec<i64>,
     pub selected_annotation_ids: Vec<i64>,
     pub dirty_item_ids: Vec<i64>,

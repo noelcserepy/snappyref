@@ -6,13 +6,14 @@ use super::geometry::{
 };
 use super::render::textbox_pointer_region;
 use super::{
-    ANNOTATION_HIT_RADIUS, AnnotationDraftState, AnnotationDragState, CanvasImage, CanvasState,
-    CropState, DragState, IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN, IMAGE_RESIZE_HIT_RADIUS,
-    ImageResizeHandle, ImageTransformState, MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM,
-    MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation, SelectedLayoutItem, TEXTBOX_DRAG_THRESHOLD_SCREEN,
-    TEXTBOX_RESIZE_HIT_RADIUS, TextboxPointerRegion, TextboxResizeHandle, TextboxTransformState,
+    ANNOTATION_HIT_RADIUS, AnnotationDraftState, AnnotationDragState, CanvasHit, CanvasImage,
+    CanvasState, CropState, DragState, IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN,
+    IMAGE_RESIZE_HIT_RADIUS, ImageResizeHandle, ImageTransformState, MAX_CANVAS_ZOOM,
+    MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation, SelectedLayoutItem,
+    TEXTBOX_DRAG_THRESHOLD_SCREEN, TEXTBOX_RESIZE_HIT_RADIUS, TextboxPointerRegion,
+    TextboxResizeHandle, TextboxTransformState,
 };
-use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasTextSize};
+use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasStackItem, CanvasTextSize};
 
 pub(super) fn handle_input(
     ui: &egui::Ui,
@@ -149,60 +150,66 @@ pub(super) fn handle_input(
         {
             handle_textbox_primary_press(ui, rect, state, &annotation, pointer_pos);
             return;
-        } else if let Some(annotation_id) = hit_test_annotation(state, rect, pointer_pos) {
-            let annotation = state.annotation_by_id(annotation_id).cloned();
-            if shift_held {
-                if state.interaction.editing_text_annotation_id.is_some() {
-                    state.finish_textbox_edit();
+        } else if let Some(hit) = hit_test_canvas_item(state, rect, pointer_pos) {
+            match hit {
+                CanvasHit::Annotation(annotation_id) => {
+                    let annotation = state.annotation_by_id(annotation_id).cloned();
+                    if shift_held {
+                        if state.interaction.editing_text_annotation_id.is_some() {
+                            state.finish_textbox_edit();
+                        }
+                        state.add_annotation_to_selection(annotation_id);
+                        state.interaction.drag_state = None;
+                        state.interaction.marquee_state = None;
+                        state.interaction.crop_state = None;
+                        state.interaction.annotation_draft_state = None;
+                        return;
+                    }
+                    if let Some(annotation) = annotation
+                        && annotation.kind == CanvasAnnotationKind::Textbox
+                    {
+                        if handle_textbox_primary_press(ui, rect, state, &annotation, pointer_pos) {
+                            return;
+                        }
+                    } else {
+                        if state.interaction.editing_text_annotation_id.is_some() {
+                            state.finish_textbox_edit();
+                        }
+                        state.document.selected_item_ids.clear();
+                        state.document.selected_annotation_ids = vec![annotation_id];
+                        begin_annotation_drag(state, rect, annotation_id, pointer_pos);
+                        state.interaction.image_transform_state = None;
+                        state.interaction.marquee_state = None;
+                        state.interaction.crop_state = None;
+                        state.interaction.annotation_draft_state = None;
+                        return;
+                    }
                 }
-                state.add_annotation_to_selection(annotation_id);
-                state.interaction.drag_state = None;
-                state.interaction.marquee_state = None;
-                state.interaction.crop_state = None;
-                state.interaction.annotation_draft_state = None;
-                return;
-            }
-            if let Some(annotation) = annotation
-                && annotation.kind == CanvasAnnotationKind::Textbox
-            {
-                if handle_textbox_primary_press(ui, rect, state, &annotation, pointer_pos) {
+                CanvasHit::Placement(item_id) => {
+                    if shift_held {
+                        state.add_to_selection(item_id);
+                    } else if !state.is_selected(item_id) {
+                        state.set_single_selection(item_id);
+                    }
+
+                    let pointer_world = state.screen_to_world(pointer_pos, rect);
+                    let starting_items = state.selected_layout_items();
+
+                    state.interaction.drag_state = Some(DragState {
+                        pointer_start_world: pointer_world,
+                        starting_items,
+                        snap_preview_rect_world: None,
+                    });
+                    state.interaction.image_transform_state = None;
+                    state.interaction.textbox_transform_state = None;
+                    state.interaction.annotation_drag_state = None;
+                    state.interaction.marquee_state = None;
+                    state.interaction.crop_state = None;
+                    state.interaction.annotation_draft_state = None;
+                    state.clear_move_preview_placeholders();
                     return;
                 }
-            } else {
-                if state.interaction.editing_text_annotation_id.is_some() {
-                    state.finish_textbox_edit();
-                }
-                state.document.selected_item_ids.clear();
-                state.document.selected_annotation_ids = vec![annotation_id];
-                begin_annotation_drag(state, rect, annotation_id, pointer_pos);
-                state.interaction.image_transform_state = None;
-                state.interaction.marquee_state = None;
-                state.interaction.crop_state = None;
-                state.interaction.annotation_draft_state = None;
-                return;
             }
-        } else if let Some(item_id) = hit_test_image(state, rect, pointer_pos) {
-            if shift_held {
-                state.add_to_selection(item_id);
-            } else if !state.is_selected(item_id) {
-                state.set_single_selection(item_id);
-            }
-
-            let pointer_world = state.screen_to_world(pointer_pos, rect);
-            let starting_items = state.selected_layout_items();
-
-            state.interaction.drag_state = Some(DragState {
-                pointer_start_world: pointer_world,
-                starting_items,
-                snap_preview_rect_world: None,
-            });
-            state.interaction.image_transform_state = None;
-            state.interaction.textbox_transform_state = None;
-            state.interaction.annotation_drag_state = None;
-            state.interaction.marquee_state = None;
-            state.interaction.crop_state = None;
-            state.interaction.annotation_draft_state = None;
-            state.clear_move_preview_placeholders();
         } else {
             state.interaction.drag_state = None;
             state.interaction.image_transform_state = None;
@@ -501,15 +508,20 @@ pub(super) fn open_context_menu_at_pointer(
     rect: egui::Rect,
     pointer_pos: egui::Pos2,
 ) {
-    if let Some(annotation_id) = hit_test_annotation(state, rect, pointer_pos) {
-        if !state.is_annotation_selected(annotation_id) {
-            state.finish_textbox_edit();
-            state.document.selected_item_ids.clear();
-            state.document.selected_annotation_ids = vec![annotation_id];
-        }
-    } else if let Some(item_id) = hit_test_image(state, rect, pointer_pos) {
-        if !state.is_selected(item_id) {
-            state.set_single_selection(item_id);
+    if let Some(hit) = hit_test_canvas_item(state, rect, pointer_pos) {
+        match hit {
+            CanvasHit::Annotation(annotation_id) => {
+                if !state.is_annotation_selected(annotation_id) {
+                    state.finish_textbox_edit();
+                    state.document.selected_item_ids.clear();
+                    state.document.selected_annotation_ids = vec![annotation_id];
+                }
+            }
+            CanvasHit::Placement(item_id) => {
+                if !state.is_selected(item_id) {
+                    state.set_single_selection(item_id);
+                }
+            }
         }
     }
 
@@ -558,6 +570,35 @@ fn hit_test_image(state: &CanvasState, rect: egui::Rect, pointer_pos: egui::Pos2
             )
         })
         .map(|image| image.record.item.id)
+}
+
+pub(super) fn hit_test_canvas_item(
+    state: &CanvasState,
+    rect: egui::Rect,
+    pointer_pos: egui::Pos2,
+) -> Option<CanvasHit> {
+    state
+        .ordered_canvas_items_back_to_front()
+        .into_iter()
+        .rev()
+        .find_map(|item| match item {
+            CanvasStackItem::Placement(item_id) => state
+                .image_by_item_id(item_id)
+                .filter(|image| {
+                    image_contains_screen_point(
+                        &image.record,
+                        pointer_pos,
+                        state.pan,
+                        state.zoom,
+                        rect.center(),
+                    )
+                })
+                .map(|_| CanvasHit::Placement(item_id)),
+            CanvasStackItem::Annotation(annotation_id) => state
+                .annotation_by_id(annotation_id)
+                .filter(|annotation| annotation_hit_test(state, rect, annotation, pointer_pos))
+                .map(|_| CanvasHit::Annotation(annotation_id)),
+        })
 }
 
 fn begin_image_resize(

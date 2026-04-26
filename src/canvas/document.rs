@@ -22,8 +22,8 @@ use super::{
 };
 use crate::data::{
     BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
-    CanvasAnnotationKind, CanvasBackground, CanvasImageCacheTier, CanvasStrokeWidth,
-    CanvasTextSize, ViewportState,
+    CanvasAnnotationKind, CanvasBackground, CanvasImageCacheTier, CanvasStackItem,
+    CanvasStrokeWidth, CanvasTextSize, ViewportState,
 };
 use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
 
@@ -78,6 +78,9 @@ impl CanvasState {
             loaded_tier: loaded.loaded_tier,
             animation,
         });
+        self.append_missing_stack_item(CanvasStackItem::Placement(
+            self.document.images.last().unwrap().record.item.id,
+        ));
         self.document
             .images
             .sort_by_key(|image| image.record.item.z_index);
@@ -99,6 +102,9 @@ impl CanvasState {
             loaded_tier: CanvasImageCacheTier::Working,
             animation,
         });
+        self.append_missing_stack_item(CanvasStackItem::Placement(
+            self.document.images.last().unwrap().record.item.id,
+        ));
         self.document
             .images
             .sort_by_key(|image| image.record.item.z_index);
@@ -578,6 +584,7 @@ impl CanvasState {
             .annotations
             .retain(|item| item.id != annotation.id);
         self.document.annotations.push(annotation.clone());
+        self.append_missing_stack_item(CanvasStackItem::Annotation(annotation.id));
         if annotation.kind == CanvasAnnotationKind::Textbox
             && self.interaction.editing_text_annotation_id.is_none()
         {
@@ -601,13 +608,21 @@ impl CanvasState {
 
     pub fn add_annotations(&mut self, annotations: Vec<CanvasAnnotation>) {
         self.document.annotations = annotations;
+        for annotation in self.document.annotations.clone() {
+            self.append_missing_stack_item(CanvasStackItem::Annotation(annotation.id));
+        }
         self.render.textbox_layout_cache.clear();
+    }
+
+    pub fn set_canvas_stack_order(&mut self, stack_order: Vec<CanvasStackItem>) {
+        self.document.stack_order = stack_order;
     }
 
     pub fn clear_for_board_switch(&mut self) {
         self.finish_textbox_edit();
         self.document.images.clear();
         self.document.annotations.clear();
+        self.document.stack_order.clear();
         self.document.selected_item_ids.clear();
         self.document.selected_annotation_ids.clear();
         self.document.dirty_item_ids.clear();
@@ -996,6 +1011,9 @@ impl CanvasState {
         self.document
             .selected_item_ids
             .retain(|item_id| !removed_ids.contains(item_id));
+        self.document.stack_order.retain(|item| {
+            !matches!(item, CanvasStackItem::Placement(item_id) if removed_ids.contains(item_id))
+        });
         self.document
             .dirty_item_ids
             .retain(|item_id| !removed_ids.contains(item_id));
@@ -1134,6 +1152,9 @@ impl CanvasState {
         self.document
             .annotations
             .retain(|annotation| annotation.id != annotation_id);
+        self.document
+            .stack_order
+            .retain(|item| *item != CanvasStackItem::Annotation(annotation_id));
         self.invalidate_textbox_layout_cache(annotation_id);
         self.document
             .selected_annotation_ids
@@ -1204,6 +1225,49 @@ impl CanvasState {
             .annotations
             .iter()
             .find(|annotation| annotation.id == annotation_id)
+    }
+
+    pub(super) fn ordered_canvas_items_back_to_front(&self) -> Vec<CanvasStackItem> {
+        let mut ordered = Vec::new();
+        for item in &self.document.stack_order {
+            if self.stack_item_exists(*item) && !ordered.contains(item) {
+                ordered.push(*item);
+            }
+        }
+        for image in &self.document.images {
+            let item = CanvasStackItem::Placement(image.record.item.id);
+            if !ordered.contains(&item) {
+                ordered.push(item);
+            }
+        }
+        for annotation in &self.document.annotations {
+            let item = CanvasStackItem::Annotation(annotation.id);
+            if !ordered.contains(&item) {
+                ordered.push(item);
+            }
+        }
+        ordered
+    }
+
+    fn append_missing_stack_item(&mut self, item: CanvasStackItem) {
+        if !self.document.stack_order.contains(&item) {
+            self.document.stack_order.push(item);
+        }
+    }
+
+    fn stack_item_exists(&self, item: CanvasStackItem) -> bool {
+        match item {
+            CanvasStackItem::Placement(item_id) => self
+                .document
+                .images
+                .iter()
+                .any(|image| image.record.item.id == item_id),
+            CanvasStackItem::Annotation(annotation_id) => self
+                .document
+                .annotations
+                .iter()
+                .any(|annotation| annotation.id == annotation_id),
+        }
     }
 
     pub(super) fn annotation_by_id_mut(
