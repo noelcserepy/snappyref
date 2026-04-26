@@ -572,6 +572,20 @@ impl CanvasState {
         self.render.textbox_layout_cache.clear();
     }
 
+    pub fn clear_for_board_switch(&mut self) {
+        self.finish_textbox_edit();
+        self.document.images.clear();
+        self.document.annotations.clear();
+        self.document.selected_item_ids.clear();
+        self.document.selected_annotation_ids.clear();
+        self.document.dirty_item_ids.clear();
+        self.document.dirty_annotation_ids.clear();
+        self.document.pending_archived_annotation_ids.clear();
+        self.interaction = Default::default();
+        self.render.textbox_layout_cache.clear();
+        self.render.pending_image_tier_loads.clear();
+    }
+
     pub fn take_document_changes(&mut self) -> CanvasDocumentChanges {
         let dirty_ids = std::mem::take(&mut self.document.dirty_item_ids);
         let updated_items = dirty_ids

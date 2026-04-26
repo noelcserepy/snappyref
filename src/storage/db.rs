@@ -409,6 +409,43 @@ impl Library {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
+    pub fn list_board_summaries(&self) -> Result<Vec<crate::data::BoardSummary>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT
+                    boards.id,
+                    boards.name,
+                    boards.archived,
+                    COUNT(board_items.id)
+                 FROM boards
+                 LEFT JOIN board_items
+                   ON board_items.board_id = boards.id
+                  AND board_items.archived = 0
+                 WHERE boards.archived = 0
+                 GROUP BY boards.id, boards.name, boards.archived
+                 ORDER BY boards.id ASC",
+            )
+            .map_err(|error| format!("failed to prepare board summaries query: {error}"))?;
+
+        let rows = statement
+            .query_map([], |row| {
+                Ok(crate::data::BoardSummary {
+                    board: Board {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        archived: row.get::<_, i64>(2)? != 0,
+                    },
+                    image_count: row.get::<_, i64>(3)? as usize,
+                })
+            })
+            .map_err(|error| format!("failed to read board summaries query: {error}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect board summaries: {error}"))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn create_board(&self, name: &str) -> Result<Board, String> {
         let connection = self.connection()?;
         connection

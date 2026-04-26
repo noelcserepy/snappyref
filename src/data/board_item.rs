@@ -6,6 +6,13 @@ pub struct Board {
     pub archived: bool,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoardSummary {
+    pub board: Board,
+    pub image_count: usize,
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct BoardItem {
