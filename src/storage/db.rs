@@ -3419,6 +3419,78 @@ mod tests {
     }
 
     #[test]
+    fn cropped_relink_requires_new_asset_embedding() {
+        let root = std::env::temp_dir().join(format!(
+            "reference-crop-embedding-relink-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let original_path = library
+            .store_rgba_image("original", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let cropped_path = library
+            .store_rgba_image("cropped", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+
+        let record = library
+            .persist_imported_image(
+                &original_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(record.asset.id, "mobileclip_s0", &[1.0, 0.0])
+            .unwrap();
+
+        let relinked_asset = library
+            .create_asset_and_relink_board_item(
+                record.item.id,
+                &cropped_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(0.0, 0.0),
+            )
+            .unwrap();
+
+        assert_eq!(
+            library
+                .load_asset_embedding(relinked_asset.id, "mobileclip_s0")
+                .unwrap(),
+            None
+        );
+        assert!(
+            library
+                .load_active_canvas_embeddings("mobileclip_s0")
+                .unwrap()
+                .is_empty()
+        );
+
+        library
+            .upsert_asset_embedding_blob(relinked_asset.id, "mobileclip_s0", &[0.0, 1.0])
+            .unwrap();
+        let embeddings = library
+            .load_active_canvas_embeddings("mobileclip_s0")
+            .unwrap();
+
+        assert_eq!(embeddings.len(), 1);
+        assert_eq!(embeddings[0].asset_id, relinked_asset.id);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn embedding_helpers_scope_to_requested_model_key() {
         let root = std::env::temp_dir().join(format!(
             "reference-embedding-model-key-test-{}",

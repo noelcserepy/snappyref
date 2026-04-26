@@ -3348,7 +3348,7 @@ impl ReferenceApp {
 
     #[cfg(feature = "semantic-search")]
     fn handle_search_results(&mut self) {
-        self.search.handle_results();
+        self.search.handle_results(&mut self.canvas);
     }
 
     #[cfg(feature = "semantic-search")]
