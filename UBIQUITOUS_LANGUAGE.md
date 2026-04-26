@@ -14,6 +14,18 @@
 | **Canvas Background** | The board-local visual guide mode for the canvas. | Grid setting, workspace background |
 | **Viewport** | The board-local pan and zoom state. | Camera, view, canvas position |
 
+## Layering
+
+| Term | Definition | Aliases to avoid |
+| --- | --- | --- |
+| **Canvas Item** | A board-local visible object that participates in selection, deletion, copy/paste, and stack ordering. | Thing, element, object |
+| **Stack Order** | The unified front-to-back ordering of placements and annotations on a board. | Layer order, draw order, z-height |
+| **Front** | The highest position in a board's stack order. | Top, above everything |
+| **Back** | The lowest position in a board's stack order. | Bottom, behind everything |
+| **Move to Front** | The command that moves selected canvas items to the front while preserving their relative stack order. | Bring forward, raise |
+| **Move to Back** | The command that moves selected canvas items to the back while preserving their relative stack order. | Send backward, lower |
+| **Relative Stack Order** | The order selected canvas items have among themselves before a stack-order command or copy/paste operation. | Internal order, selection order |
+
 ## Search and context
 
 | Term | Definition | Aliases to avoid |
@@ -72,6 +84,10 @@
 - An **Asset** can have zero or more **Placements**.
 - A **Board** can have zero or more **Placements** and zero or more **Annotations**.
 - An **Annotation** belongs to exactly one **Board** and does not belong to the **Library**.
+- A **Canvas Item** is either a **Placement** or an **Annotation**.
+- A **Board** has one **Stack Order** shared by all of its **Canvas Items**.
+- **Move to Front** and **Move to Back** preserve **Relative Stack Order** for multi-selection.
+- A pasted group preserves its **Relative Stack Order** and is placed at the **Front** of the **Active Board**.
 - Exactly one **Board** is the **Active Board** at a time.
 - **This Board** search returns **Placement Results** for the **Active Board**.
 - **Library Scope** search returns **Asset Results** from the **Library**.
@@ -84,13 +100,17 @@
 >
 > **Domain expert:** "Both: the image enters the **Library** as an **Asset**, and the visible item on **My Board** is a **Placement** of that asset."
 >
+> **Dev:** "Does that **Placement** share **Stack Order** with **Annotations** like arrows and textboxes?"
+>
+> **Domain expert:** "Yes. **Placements** and **Annotations** are both **Canvas Items**, so **Move to Front** and **Move to Back** operate on one unified **Stack Order**."
+>
+> **Dev:** "If a mixed selection is moved or pasted, do we reorder the selected items?"
+>
+> **Domain expert:** "No. Preserve their **Relative Stack Order**; pasted groups land at the **Front** so new content is visible."
+>
 > **Dev:** "If they press **Delete (from board)**, does the **Asset** disappear from **Library Scope** search?"
 >
-> **Domain expert:** "No. **Delete (from board)** only removes the **Placement** from the **Active Board**. Use **Remove from Library** when the asset should stop appearing in library search."
->
-> **Dev:** "So **This Board** search returns placements, but **Library Scope** search returns assets, including **Unplaced Assets**?"
->
-> **Domain expert:** "Exactly. Search scope changes eligibility, not the user's core interaction model."
+> **Domain expert:** "No. **Delete (from board)** only removes board-local **Canvas Items** from the **Active Board**. Use **Remove from Library** when the asset should stop appearing in library search."
 
 ## Flagged ambiguities
 
@@ -100,3 +120,5 @@
 - "Search all photos" should be called **Library Scope** search, not a board named "All Photos" or "Library".
 - "Annotation", "note", "textbox", and "drawing" need separation. Use **Annotation** as the umbrella term and **Textbox** for text-bearing annotations.
 - "Remove from Library" does not mean **Physical Deletion** in v1. It means **Archived Asset** behavior: removed from boards and search while files are kept for later cleanup.
+- "Move to front/back" should not be confused with one-step movement. Use **Move to Front** and **Move to Back** for absolute stack extremes; reserve "bring forward" and "send backward" for possible future one-step commands.
+- "Z-height", "z-index", "layer order", and "draw order" all describe **Stack Order** in user/domain language. Use implementation terms only in code.
