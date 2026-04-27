@@ -54,6 +54,7 @@ pub struct SemanticSearchService {
     library: Library,
     model_key: &'static str,
     model_state: Arc<Mutex<ModelState>>,
+    text_embedding_cache: Arc<Mutex<HashMap<String, Vec<f32>>>>,
     index_tx: mpsc::Sender<IndexRequest>,
     result_rx: mpsc::Receiver<IndexResult>,
 }
@@ -146,6 +147,7 @@ impl SemanticSearchService {
             library,
             model_key: config.model.model_key,
             model_state,
+            text_embedding_cache: Arc::new(Mutex::new(HashMap::new())),
             index_tx,
             result_rx,
         };
@@ -209,13 +211,7 @@ impl SemanticSearchService {
 
         let text_query = text_query.map(str::trim).filter(|query| !query.is_empty());
         if let Some(query) = text_query {
-            let model = self.ready_model().map_err(|error| {
-                if error == "Loading model…" {
-                    let _ = self.index_tx.send(IndexRequest::Init);
-                }
-                error
-            })?;
-            let query_embedding = model.embed_text(query)?;
+            let query_embedding = self.text_embedding(query)?;
 
             let asset_ids = hits.iter().map(|hit| hit.asset_id).collect::<Vec<_>>();
             let mut candidate_embeddings: HashMap<i64, Vec<f32>> = HashMap::new();
@@ -260,17 +256,7 @@ impl SemanticSearchService {
             return Ok(Vec::new());
         }
 
-        let model = match self.ready_model() {
-            Ok(model) => model,
-            Err(error) => {
-                if error == "Loading model…" {
-                    let _ = self.index_tx.send(IndexRequest::Init);
-                }
-                return Err(error);
-            }
-        };
-
-        let query_embedding = model.embed_text(query)?;
+        let query_embedding = self.text_embedding(query)?;
         let index = BruteForceIndex::new(self.library.clone());
         let hits = index.search(scope, self.model_key, &query_embedding, limit)?;
         self.group_hits(scope, hits)
@@ -330,6 +316,32 @@ impl SemanticSearchService {
             ModelState::Ready(model) => Ok(model.clone()),
             ModelState::Failed(error) => Err(error.clone()),
         }
+    }
+
+    fn text_embedding(&self, query: &str) -> Result<Vec<f32>, String> {
+        let query = query.trim();
+        if let Some(embedding) = self
+            .text_embedding_cache
+            .lock()
+            .map_err(|_| "semantic-search text embedding cache poisoned".to_owned())?
+            .get(query)
+            .cloned()
+        {
+            return Ok(embedding);
+        }
+
+        let model = self.ready_model().map_err(|error| {
+            if error == "Loading model…" {
+                let _ = self.index_tx.send(IndexRequest::Init);
+            }
+            error
+        })?;
+        let embedding = model.embed_text(query)?;
+        self.text_embedding_cache
+            .lock()
+            .map_err(|_| "semantic-search text embedding cache poisoned".to_owned())?
+            .insert(query.to_owned(), embedding.clone());
+        Ok(embedding)
     }
 }
 

@@ -28,6 +28,8 @@ enum ArrangementAction {
 enum SupportedShortcutAction {
     DeleteSelection,
     DuplicateSelection,
+    MoveSelectionToFront,
+    MoveSelectionToBack,
     ToggleSidebar,
     FocusSelection,
     Arrange(ArrangementAction),
@@ -43,7 +45,6 @@ enum ContextMenuAction {
     DeleteFromBoard,
     MoveToFront,
     MoveToBack,
-    Crop,
     SearchUsingImage,
     RemoveFromLibrary,
 }
@@ -52,6 +53,7 @@ enum ContextMenuAction {
 struct ContextMenuItem {
     action: ContextMenuAction,
     label: &'static str,
+    shortcut: Option<&'static str>,
     enabled: bool,
 }
 
@@ -211,6 +213,28 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
             shift: false,
         }),
         shortcut_action: Some(SupportedShortcutAction::DuplicateSelection),
+    },
+    SupportedShortcut {
+        action: "Move selection to front",
+        windows: "Ctrl+.",
+        mac: "⌘.",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::Period,
+            command: true,
+            shift: false,
+        }),
+        shortcut_action: Some(SupportedShortcutAction::MoveSelectionToFront),
+    },
+    SupportedShortcut {
+        action: "Move selection to back",
+        windows: "Ctrl+,",
+        mac: "⌘,",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::Comma,
+            command: true,
+            shift: false,
+        }),
+        shortcut_action: Some(SupportedShortcutAction::MoveSelectionToBack),
     },
     SupportedShortcut {
         action: "Toggle sidebar",
@@ -1905,46 +1929,49 @@ impl ReferenceApp {
             ContextMenuItem {
                 action: ContextMenuAction::Copy,
                 label: "Copy",
+                shortcut: Some("⌘C"),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::Paste,
                 label: "Paste",
+                shortcut: Some("⌘V"),
                 enabled: true,
             },
             ContextMenuItem {
                 action: ContextMenuAction::Duplicate,
                 label: "Duplicate",
+                shortcut: Some("⌘D"),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::DeleteFromBoard,
                 label: "Delete (from board)",
+                shortcut: Some("del"),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::MoveToFront,
                 label: "Move to Front",
+                shortcut: Some("⌘."),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::MoveToBack,
                 label: "Move to Back",
+                shortcut: Some("⌘,"),
                 enabled: has_selection,
-            },
-            ContextMenuItem {
-                action: ContextMenuAction::Crop,
-                label: "Crop",
-                enabled: exactly_one_image_only,
             },
             ContextMenuItem {
                 action: ContextMenuAction::SearchUsingImage,
                 label: "Search using image",
+                shortcut: Some("⌘F"),
                 enabled: exactly_one_image_only,
             },
             ContextMenuItem {
                 action: ContextMenuAction::RemoveFromLibrary,
                 label: "Remove from Library...",
+                shortcut: None,
                 enabled: has_selected_image,
             },
         ]
@@ -1976,9 +2003,6 @@ impl ReferenceApp {
             }
             ContextMenuAction::MoveToFront => self.move_selected_canvas_items_to_front(),
             ContextMenuAction::MoveToBack => self.move_selected_canvas_items_to_back(),
-            ContextMenuAction::Crop => {
-                self.status = "Hold C and drag over the selected image to crop".to_owned();
-            }
             ContextMenuAction::SearchUsingImage => self.search_using_selected_image(),
             ContextMenuAction::RemoveFromLibrary => self.request_selected_assets_library_remove(),
         }
@@ -2101,15 +2125,15 @@ impl ReferenceApp {
         };
 
         let mut close_menu = false;
-        egui::Area::new(egui::Id::new("board_context_menu"))
+        let menu_response = egui::Area::new(egui::Id::new("board_context_menu"))
             .order(egui::Order::Tooltip)
             .fixed_pos(pos)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.set_min_width(190.0);
+                    ui.set_width(250.0);
+                    ui.spacing_mut().item_spacing.y = 2.0;
                     for item in self.context_menu_items() {
-                        let response = ui
-                            .add_enabled(item.enabled, egui::Button::new(item.label).frame(false));
+                        let response = context_menu_row(ui, &item);
                         if response.clicked() {
                             self.handle_context_menu_action(item.action, ctx, screen_rect);
                             close_menu = true;
@@ -2118,14 +2142,37 @@ impl ReferenceApp {
                 });
             });
 
-        let clicked_elsewhere = ctx.input(|input| {
-            input.pointer.button_pressed(egui::PointerButton::Primary)
-                || input.pointer.button_pressed(egui::PointerButton::Secondary)
-                || input.key_pressed(egui::Key::Escape)
+        let should_close = ctx.input(|input| {
+            context_menu_should_close(
+                close_menu,
+                just_opened,
+                menu_response.response.rect,
+                input.pointer.latest_pos(),
+                input.pointer.button_pressed(egui::PointerButton::Primary),
+                input.pointer.button_pressed(egui::PointerButton::Secondary),
+                input.key_pressed(egui::Key::Escape),
+            )
         });
-        if close_menu || (clicked_elsewhere && !just_opened) {
+        if should_close {
             self.context_menu_pos = None;
         }
+    }
+
+    fn blocks_canvas_input(&self, ctx: &egui::Context) -> bool {
+        self.context_menu_pos.is_some()
+            || self.pending_board_delete.is_some()
+            || self.pending_library_remove.is_some()
+            || {
+                #[cfg(feature = "semantic-search")]
+                {
+                    self.search.blocks_canvas_input(ctx)
+                }
+                #[cfg(not(feature = "semantic-search"))]
+                {
+                    let _ = ctx;
+                    false
+                }
+            }
     }
 
     fn show_library_remove_confirmation(&mut self, ctx: &egui::Context) {
@@ -2185,6 +2232,7 @@ impl ReferenceApp {
         self.search.overlay.last_query_edit_at = None;
         self.search.overlay.open = true;
         self.search.overlay.focus_requested = true;
+        self.search.overlay.suppress_next_outside_click = true;
         self.canvas.clear_search_matches();
         self.search.submit_query(&mut self.canvas);
     }
@@ -2734,6 +2782,8 @@ impl ReferenceApp {
                 SupportedShortcutAction::DeleteSelection => delete_shortcut_pressed(ctx),
                 SupportedShortcutAction::FocusSelection
                 | SupportedShortcutAction::DuplicateSelection
+                | SupportedShortcutAction::MoveSelectionToFront
+                | SupportedShortcutAction::MoveSelectionToBack
                 | SupportedShortcutAction::ToggleSidebar
                 | SupportedShortcutAction::ApplyDefaultAverageArea
                 | SupportedShortcutAction::AverageSelectionArea
@@ -2761,6 +2811,18 @@ impl ReferenceApp {
                         continue;
                     }
                     self.duplicate_selection_with_gap();
+                }
+                SupportedShortcutAction::MoveSelectionToFront => {
+                    if !self.canvas.has_selection() {
+                        continue;
+                    }
+                    self.move_selected_canvas_items_to_front();
+                }
+                SupportedShortcutAction::MoveSelectionToBack => {
+                    if !self.canvas.has_selection() {
+                        continue;
+                    }
+                    self.move_selected_canvas_items_to_back();
                 }
                 SupportedShortcutAction::FocusSelection => {
                     if !self.canvas.has_selection() {
@@ -3716,6 +3778,91 @@ fn asset_mime_type_supports_raster_derivatives(mime_type: &str) -> bool {
         .eq_ignore_ascii_case("image/svg+xml")
 }
 
+fn context_menu_should_close(
+    action_clicked: bool,
+    just_opened: bool,
+    menu_rect: egui::Rect,
+    pointer_pos: Option<egui::Pos2>,
+    primary_pressed: bool,
+    secondary_pressed: bool,
+    escape_pressed: bool,
+) -> bool {
+    if action_clicked || escape_pressed {
+        return true;
+    }
+    if just_opened || (!primary_pressed && !secondary_pressed) {
+        return false;
+    }
+    pointer_pos.is_none_or(|pos| !menu_rect.contains(pos))
+}
+
+fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egui::Response {
+    let row_height = 28.0;
+    let shortcut_width: f32 = 54.0;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), row_height),
+        if item.enabled {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        },
+    );
+
+    let rounding = egui::CornerRadius::same(4);
+    if response.hovered() && item.enabled {
+        ui.painter()
+            .rect_filled(rect, rounding, egui::Color32::from_white_alpha(18));
+    }
+
+    let text_color = if item.enabled {
+        crate::theme::TEXT
+    } else {
+        crate::theme::TEXT_MUTED
+    };
+    let shortcut_color = if item.enabled {
+        crate::theme::TEXT_SUBTLE
+    } else {
+        crate::theme::TEXT_MUTED
+    };
+
+    let label_pos = egui::pos2(rect.left() + 8.0, rect.center().y - 7.5);
+    ui.painter().text(
+        label_pos,
+        egui::Align2::LEFT_TOP,
+        item.label,
+        egui::FontId::proportional(13.0),
+        text_color,
+    );
+
+    if let Some(shortcut) = item.shortcut {
+        let pill_size = egui::vec2(shortcut_width.min(rect.width() * 0.35), 20.0);
+        let pill_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 8.0 - pill_size.x * 0.5, rect.center().y),
+            pill_size,
+        );
+        ui.painter().rect_filled(
+            pill_rect,
+            egui::CornerRadius::same(4),
+            egui::Color32::from_white_alpha(12),
+        );
+        ui.painter().rect_stroke(
+            pill_rect,
+            egui::CornerRadius::same(4),
+            egui::Stroke::new(1.0, egui::Color32::from_white_alpha(16)),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            pill_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            shortcut,
+            egui::FontId::monospace(11.0),
+            shortcut_color,
+        );
+    }
+
+    response
+}
+
 impl eframe::App for ReferenceApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let screen_rect = ui.ctx().viewport_rect();
@@ -3777,13 +3924,7 @@ impl eframe::App for ReferenceApp {
             .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
         self.canvas.set_layout_gap(self.settings.import_gap);
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
-        #[cfg(feature = "semantic-search")]
-        let suppress_canvas_input = self.search.blocks_canvas_input(ui.ctx())
-            || self.pending_board_delete.is_some()
-            || self.pending_library_remove.is_some();
-        #[cfg(not(feature = "semantic-search"))]
-        let suppress_canvas_input =
-            self.pending_board_delete.is_some() || self.pending_library_remove.is_some();
+        let suppress_canvas_input = self.blocks_canvas_input(ui.ctx());
         self.frame_perf.canvas = crate::canvas::show(
             ui,
             screen_rect,
@@ -4025,6 +4166,8 @@ mod tests {
         PALETTE_WIDTH, search_result_grid_content_height, search_result_grid_layout,
         search_result_tile_height,
     };
+    #[cfg(feature = "semantic-search")]
+    use crate::semantic_search::SearchScope;
     use crate::sidebar::should_close_sidebar;
     use crate::storage::Library;
     use eframe::egui;
@@ -4846,9 +4989,24 @@ mod tests {
                 "Delete (from board)",
                 "Move to Front",
                 "Move to Back",
-                "Crop",
                 "Search using image",
                 "Remove from Library..."
+            ]
+        );
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| (item.action, item.shortcut))
+                .collect::<Vec<_>>(),
+            vec![
+                (super::ContextMenuAction::Copy, Some("⌘C")),
+                (super::ContextMenuAction::Paste, Some("⌘V")),
+                (super::ContextMenuAction::Duplicate, Some("⌘D")),
+                (super::ContextMenuAction::DeleteFromBoard, Some("del")),
+                (super::ContextMenuAction::MoveToFront, Some("⌘.")),
+                (super::ContextMenuAction::MoveToBack, Some("⌘,")),
+                (super::ContextMenuAction::SearchUsingImage, Some("⌘F")),
+                (super::ContextMenuAction::RemoveFromLibrary, None),
             ]
         );
         assert!(item_enabled(&items, super::ContextMenuAction::Copy));
@@ -4860,7 +5018,6 @@ mod tests {
         ));
         assert!(item_enabled(&items, super::ContextMenuAction::MoveToFront));
         assert!(item_enabled(&items, super::ContextMenuAction::MoveToBack));
-        assert!(!item_enabled(&items, super::ContextMenuAction::Crop));
         assert!(!item_enabled(
             &items,
             super::ContextMenuAction::SearchUsingImage
@@ -4869,6 +5026,50 @@ mod tests {
             &items,
             super::ContextMenuAction::RemoveFromLibrary
         ));
+    }
+
+    #[test]
+    fn context_menu_primary_press_inside_menu_keeps_menu_open_for_click_release() {
+        let menu_rect =
+            egui::Rect::from_min_size(egui::pos2(100.0, 120.0), egui::vec2(190.0, 240.0));
+
+        assert!(!super::context_menu_should_close(
+            false,
+            false,
+            menu_rect,
+            Some(menu_rect.center()),
+            true,
+            false,
+            false,
+        ));
+    }
+
+    #[test]
+    fn context_menu_primary_press_outside_menu_closes_menu() {
+        let menu_rect =
+            egui::Rect::from_min_size(egui::pos2(100.0, 120.0), egui::vec2(190.0, 240.0));
+
+        assert!(super::context_menu_should_close(
+            false,
+            false,
+            menu_rect,
+            Some(egui::pos2(menu_rect.right() + 8.0, menu_rect.center().y)),
+            true,
+            false,
+            false,
+        ));
+    }
+
+    #[test]
+    fn open_context_menu_blocks_canvas_input_behind_menu() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+
+        assert!(!app.blocks_canvas_input(&ctx));
+
+        app.context_menu_pos = Some(egui::pos2(520.0, 260.0));
+
+        assert!(app.blocks_canvas_input(&ctx));
     }
 
     #[test]
@@ -4925,7 +5126,7 @@ mod tests {
     }
 
     #[test]
-    fn crop_and_image_search_context_actions_require_exactly_one_image() {
+    fn image_search_context_action_requires_exactly_one_image() {
         let ctx = egui::Context::default();
         let mut app = test_app(None);
         app.canvas.add_loaded_item(&ctx, test_loaded_item(1, 1));
@@ -4933,7 +5134,6 @@ mod tests {
 
         app.canvas.select_items(&[1]);
         let single = app.context_menu_items();
-        assert!(item_enabled(&single, super::ContextMenuAction::Crop));
         assert!(item_enabled(
             &single,
             super::ContextMenuAction::SearchUsingImage
@@ -4941,7 +5141,6 @@ mod tests {
 
         app.canvas.select_items(&[1, 2]);
         let multiple = app.context_menu_items();
-        assert!(!item_enabled(&multiple, super::ContextMenuAction::Crop));
         assert!(!item_enabled(
             &multiple,
             super::ContextMenuAction::SearchUsingImage
@@ -5184,9 +5383,50 @@ mod tests {
         );
 
         assert!(app.search.overlay.open);
+        assert!(app.search.overlay.suppress_next_outside_click);
         let pivot = app.search.overlay.image_pivot.unwrap();
         assert_eq!(pivot.asset_id, 42);
         assert_eq!(pivot.item_id, 42);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_using_image_context_action_survives_activation_click_outside_overlay() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.settings.semantic_search_enabled = true;
+        app.canvas.add_loaded_item(&ctx, test_loaded_item(42, 1));
+        app.canvas.select_items(&[42]);
+
+        app.handle_context_menu_action(
+            super::ContextMenuAction::SearchUsingImage,
+            &ctx,
+            egui::Rect::EVERYTHING,
+        );
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events: vec![
+                    egui::Event::PointerMoved(egui::pos2(520.0, 320.0)),
+                    egui::Event::PointerButton {
+                        pos: egui::pos2(520.0, 320.0),
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::default(),
+                    },
+                ],
+                ..Default::default()
+            },
+            |ui| {
+                app.show_search_overlay(
+                    ui.ctx(),
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),
+                )
+            },
+        );
+
+        assert!(app.search.overlay.open);
+        assert!(!app.search.overlay.suppress_next_outside_click);
     }
 
     #[test]
@@ -5613,6 +5853,37 @@ mod tests {
 
         assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("semantic_search_input"))));
         assert!(!app.search.overlay.focus_requested);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn tab_switches_search_scope_from_any_search_overlay_focus_state() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.search.overlay.open = true;
+        app.search.overlay.focus_requested = true;
+        app.search.overlay.scope = SearchScope::ThisBoard;
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: Some(egui::Key::Tab),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::default(),
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                app.show_search_overlay(
+                    ui.ctx(),
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),
+                )
+            },
+        );
+
+        assert_eq!(app.search.overlay.scope, SearchScope::Library);
     }
 
     #[cfg(feature = "semantic-search")]
