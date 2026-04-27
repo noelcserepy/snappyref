@@ -28,6 +28,8 @@ enum ArrangementAction {
 enum SupportedShortcutAction {
     DeleteSelection,
     DuplicateSelection,
+    MoveSelectionToFront,
+    MoveSelectionToBack,
     ToggleSidebar,
     FocusSelection,
     Arrange(ArrangementAction),
@@ -41,7 +43,8 @@ enum ContextMenuAction {
     Paste,
     Duplicate,
     DeleteFromBoard,
-    Crop,
+    MoveToFront,
+    MoveToBack,
     SearchUsingImage,
     RemoveFromLibrary,
 }
@@ -50,6 +53,7 @@ enum ContextMenuAction {
 struct ContextMenuItem {
     action: ContextMenuAction,
     label: &'static str,
+    shortcut: Option<&'static str>,
     enabled: bool,
 }
 
@@ -84,6 +88,14 @@ struct ClipboardBoardSelection {
     source_center_y: f32,
     items: Vec<ClipboardBoardItem>,
     annotations: Vec<ClipboardAnnotation>,
+    #[serde(default)]
+    stack_order: Vec<ClipboardStackEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ClipboardStackEntry {
+    kind: String,
+    index: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -203,6 +215,28 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: Some(SupportedShortcutAction::DuplicateSelection),
     },
     SupportedShortcut {
+        action: "Move selection to front",
+        windows: "Ctrl+.",
+        mac: "⌘.",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::Period,
+            command: true,
+            shift: false,
+        }),
+        shortcut_action: Some(SupportedShortcutAction::MoveSelectionToFront),
+    },
+    SupportedShortcut {
+        action: "Move selection to back",
+        windows: "Ctrl+,",
+        mac: "⌘,",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::Comma,
+            command: true,
+            shift: false,
+        }),
+        shortcut_action: Some(SupportedShortcutAction::MoveSelectionToBack),
+    },
+    SupportedShortcut {
         action: "Toggle sidebar",
         windows: "Ctrl+B",
         mac: "⌘B",
@@ -310,6 +344,8 @@ pub struct AppConfig {
     perf_decode_path: Option<std::path::PathBuf>,
     perf_import_path: Option<std::path::PathBuf>,
     startup_trace: bool,
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    search_latency_log: bool,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
     #[cfg(debug_assertions)]
@@ -353,6 +389,33 @@ enum VerificationMode {
     BackgroundDots,
     BackgroundTransition,
     ActiveBoardChip,
+    SearchLatency,
+}
+
+#[cfg(all(debug_assertions, feature = "semantic-search"))]
+#[derive(Clone, Debug)]
+struct SearchLatencyProbe {
+    phase: SearchLatencyProbePhase,
+    selected_item_id: Option<i64>,
+    probe_started_at: Instant,
+    command_started_at: Option<Instant>,
+    tab_started_at: Option<Instant>,
+    board_result_ready_ms: Option<f64>,
+    library_result_ready_ms: Option<f64>,
+    board_results_ms: Option<f64>,
+}
+
+#[cfg(all(debug_assertions, feature = "semantic-search"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SearchLatencyProbePhase {
+    WaitExistingImage,
+    OpenSearch,
+    WaitBoardResults,
+    WaitBoardPaint,
+    SwitchToLibrary,
+    WaitLibraryResults,
+    WaitLibraryPaint,
+    Done,
 }
 
 impl AppConfig {
@@ -363,6 +426,8 @@ impl AppConfig {
         let mut perf_decode_path = None;
         let mut perf_import_path = None;
         let mut startup_trace = false;
+        #[cfg(all(debug_assertions, feature = "semantic-search"))]
+        let mut search_latency_log = std::env::var_os("REFERENCE_SEARCH_LATENCY_LOG").is_some();
         #[cfg(debug_assertions)]
         let mut verification_mode = None;
         #[cfg(debug_assertions)]
@@ -390,6 +455,13 @@ impl AppConfig {
                 perf_import_path = Some(std::path::PathBuf::from(path));
             } else if argument == "--startup-trace" {
                 startup_trace = true;
+            } else if cfg!(all(debug_assertions, feature = "semantic-search"))
+                && argument == "--search-latency-log"
+            {
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                {
+                    search_latency_log = true;
+                }
             } else if cfg!(debug_assertions) && argument == "--verify-sidebar" {
                 #[cfg(debug_assertions)]
                 {
@@ -485,6 +557,11 @@ impl AppConfig {
                 {
                     verification_mode = Some(VerificationMode::ActiveBoardChip);
                 }
+            } else if cfg!(debug_assertions) && argument == "--verify-search-latency" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::SearchLatency);
+                }
             } else if let Some(query) = argument.strip_prefix("--verify-search=") {
                 #[cfg(debug_assertions)]
                 {
@@ -517,6 +594,8 @@ impl AppConfig {
             perf_decode_path,
             perf_import_path,
             startup_trace,
+            #[cfg(all(debug_assertions, feature = "semantic-search"))]
+            search_latency_log,
             #[cfg(debug_assertions)]
             verification_mode,
             #[cfg(debug_assertions)]
@@ -775,6 +854,8 @@ pub struct ReferenceApp {
     hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    search_latency_probe: Option<SearchLatencyProbe>,
     #[cfg(debug_assertions)]
     verification_search_query: Option<String>,
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -844,6 +925,8 @@ impl ReferenceApp {
                     hover_preview_dimensions: std::collections::HashMap::new(),
                     #[cfg(debug_assertions)]
                     verification_mode: config.verification_mode,
+                    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                    search_latency_probe: None,
                     #[cfg(debug_assertions)]
                     verification_search_query: None,
                     #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -851,6 +934,9 @@ impl ReferenceApp {
                     #[cfg(debug_assertions)]
                     sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                 };
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                app.search
+                    .set_latency_logging_enabled(config.search_latency_log);
                 app.load_user_session();
                 #[cfg(feature = "semantic-search")]
                 app.sync_semantic_search_service();
@@ -930,6 +1016,13 @@ impl ReferenceApp {
                 #[cfg(debug_assertions)]
                 if let Some(mode) = config.background_verification_mode() {
                     app.seed_background_verification(mode);
+                }
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                if matches!(
+                    config.verification_mode,
+                    Some(VerificationMode::SearchLatency)
+                ) {
+                    app.seed_search_latency_probe();
                 }
                 #[cfg(debug_assertions)]
                 if let Some(query) = config.verification_search_query().map(ToOwned::to_owned) {
@@ -1018,6 +1111,8 @@ impl ReferenceApp {
                 hover_preview_dimensions: std::collections::HashMap::new(),
                 #[cfg(debug_assertions)]
                 verification_mode: config.verification_mode,
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                search_latency_probe: None,
                 #[cfg(debug_assertions)]
                 verification_search_query: None,
                 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -1035,6 +1130,11 @@ impl ReferenceApp {
         let Some(import_worker) = &self.import_worker else {
             return;
         };
+
+        match library.load_canvas_stack_order() {
+            Ok(stack_order) => self.canvas.set_canvas_stack_order(stack_order),
+            Err(error) => self.status = error,
+        }
 
         match library.load_board_items() {
             Ok(mut records) => {
@@ -1890,36 +1990,49 @@ impl ReferenceApp {
             ContextMenuItem {
                 action: ContextMenuAction::Copy,
                 label: "Copy",
+                shortcut: Some("⌘ C"),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::Paste,
                 label: "Paste",
+                shortcut: Some("⌘ V"),
                 enabled: true,
             },
             ContextMenuItem {
                 action: ContextMenuAction::Duplicate,
                 label: "Duplicate",
+                shortcut: Some("⌘ D"),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::DeleteFromBoard,
                 label: "Delete (from board)",
+                shortcut: Some("del"),
                 enabled: has_selection,
             },
             ContextMenuItem {
-                action: ContextMenuAction::Crop,
-                label: "Crop",
-                enabled: exactly_one_image_only,
+                action: ContextMenuAction::MoveToFront,
+                label: "Move to Front",
+                shortcut: Some("⌘ ."),
+                enabled: has_selection,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::MoveToBack,
+                label: "Move to Back",
+                shortcut: Some("⌘ ,"),
+                enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::SearchUsingImage,
                 label: "Search using image",
+                shortcut: Some("⌘ F"),
                 enabled: exactly_one_image_only,
             },
             ContextMenuItem {
                 action: ContextMenuAction::RemoveFromLibrary,
                 label: "Remove from Library...",
+                shortcut: None,
                 enabled: has_selected_image,
             },
         ]
@@ -1949,11 +2062,31 @@ impl ReferenceApp {
             ContextMenuAction::DeleteFromBoard => {
                 delete_selected_items(&mut self.canvas, self.library.as_ref(), &mut self.status);
             }
-            ContextMenuAction::Crop => {
-                self.status = "Hold C and drag over the selected image to crop".to_owned();
-            }
+            ContextMenuAction::MoveToFront => self.move_selected_canvas_items_to_front(),
+            ContextMenuAction::MoveToBack => self.move_selected_canvas_items_to_back(),
             ContextMenuAction::SearchUsingImage => self.search_using_selected_image(),
             ContextMenuAction::RemoveFromLibrary => self.request_selected_assets_library_remove(),
+        }
+    }
+
+    fn move_selected_canvas_items_to_front(&mut self) {
+        if self.canvas.move_selected_canvas_items_to_front() {
+            self.persist_canvas_stack_order();
+        }
+    }
+
+    fn move_selected_canvas_items_to_back(&mut self) {
+        if self.canvas.move_selected_canvas_items_to_back() {
+            self.persist_canvas_stack_order();
+        }
+    }
+
+    fn persist_canvas_stack_order(&mut self) {
+        let Some(library) = &self.library else {
+            return;
+        };
+        if let Err(error) = library.save_canvas_stack_order(&self.canvas.canvas_stack_order()) {
+            self.status = error;
         }
     }
 
@@ -2053,15 +2186,15 @@ impl ReferenceApp {
         };
 
         let mut close_menu = false;
-        egui::Area::new(egui::Id::new("board_context_menu"))
+        let menu_response = egui::Area::new(egui::Id::new("board_context_menu"))
             .order(egui::Order::Tooltip)
             .fixed_pos(pos)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.set_min_width(190.0);
+                    ui.set_width(250.0);
+                    ui.spacing_mut().item_spacing.y = 2.0;
                     for item in self.context_menu_items() {
-                        let response = ui
-                            .add_enabled(item.enabled, egui::Button::new(item.label).frame(false));
+                        let response = context_menu_row(ui, &item);
                         if response.clicked() {
                             self.handle_context_menu_action(item.action, ctx, screen_rect);
                             close_menu = true;
@@ -2070,14 +2203,37 @@ impl ReferenceApp {
                 });
             });
 
-        let clicked_elsewhere = ctx.input(|input| {
-            input.pointer.button_pressed(egui::PointerButton::Primary)
-                || input.pointer.button_pressed(egui::PointerButton::Secondary)
-                || input.key_pressed(egui::Key::Escape)
+        let should_close = ctx.input(|input| {
+            context_menu_should_close(
+                close_menu,
+                just_opened,
+                menu_response.response.rect,
+                input.pointer.latest_pos(),
+                input.pointer.button_pressed(egui::PointerButton::Primary),
+                input.pointer.button_pressed(egui::PointerButton::Secondary),
+                input.key_pressed(egui::Key::Escape),
+            )
         });
-        if close_menu || (clicked_elsewhere && !just_opened) {
+        if should_close {
             self.context_menu_pos = None;
         }
+    }
+
+    fn blocks_canvas_input(&self, ctx: &egui::Context) -> bool {
+        self.context_menu_pos.is_some()
+            || self.pending_board_delete.is_some()
+            || self.pending_library_remove.is_some()
+            || {
+                #[cfg(feature = "semantic-search")]
+                {
+                    self.search.blocks_canvas_input(ctx)
+                }
+                #[cfg(not(feature = "semantic-search"))]
+                {
+                    let _ = ctx;
+                    false
+                }
+            }
     }
 
     fn show_library_remove_confirmation(&mut self, ctx: &egui::Context) {
@@ -2134,9 +2290,13 @@ impl ReferenceApp {
             asset_id: record.asset.id,
             item_id: record.item.id,
         });
+        #[cfg(all(debug_assertions, feature = "semantic-search"))]
+        self.search
+            .begin_image_search_latency_trace("selected_image_search", record.asset.id);
         self.search.overlay.last_query_edit_at = None;
         self.search.overlay.open = true;
         self.search.overlay.focus_requested = true;
+        self.search.overlay.suppress_next_outside_click = true;
         self.canvas.clear_search_matches();
         self.search.submit_query(&mut self.canvas);
     }
@@ -2149,8 +2309,10 @@ impl ReferenceApp {
     fn copy_selected_board_payload(&self) -> Option<ClipboardBoardSelection> {
         let source_bounds = self.canvas.selected_world_bounds()?;
         let mut items = Vec::new();
+        let mut item_ids = Vec::new();
         for item_id in self.canvas.selected_item_ids() {
             let record = self.canvas.record_for_item_id(item_id)?;
+            item_ids.push(item_id);
             items.push(ClipboardBoardItem {
                 asset_id: record.item.asset_id,
                 x: record.item.x,
@@ -2164,8 +2326,10 @@ impl ReferenceApp {
         }
 
         let mut annotations = Vec::new();
+        let mut annotation_ids = Vec::new();
         for annotation_id in self.canvas.selected_annotation_ids() {
             let annotation = self.canvas.annotation_for_id(annotation_id)?;
+            annotation_ids.push(annotation_id);
             annotations.push(ClipboardAnnotation {
                 kind: annotation.kind.as_str().to_owned(),
                 start_x: annotation.start_x,
@@ -2180,12 +2344,35 @@ impl ReferenceApp {
             });
         }
 
+        let stack_order = self
+            .canvas
+            .canvas_stack_order()
+            .into_iter()
+            .filter_map(|item| match item {
+                crate::data::CanvasStackItem::Placement(item_id) => item_ids
+                    .iter()
+                    .position(|id| *id == item_id)
+                    .map(|index| ClipboardStackEntry {
+                        kind: "placement".to_owned(),
+                        index,
+                    }),
+                crate::data::CanvasStackItem::Annotation(annotation_id) => annotation_ids
+                    .iter()
+                    .position(|id| *id == annotation_id)
+                    .map(|index| ClipboardStackEntry {
+                        kind: "annotation".to_owned(),
+                        index,
+                    }),
+            })
+            .collect();
+
         (!items.is_empty() || !annotations.is_empty()).then(|| ClipboardBoardSelection {
             kind: COPY_PAYLOAD_KIND.to_owned(),
             source_center_x: source_bounds.center().x,
             source_center_y: source_bounds.center().y,
             items,
             annotations,
+            stack_order,
         })
     }
 
@@ -2270,10 +2457,55 @@ impl ReferenceApp {
 
         self.canvas
             .select_content(&pasted_item_ids, &pasted_annotation_ids);
+        self.move_pasted_content_to_front(&pasted_item_ids, &pasted_annotation_ids, payload);
         let count = pasted_item_ids.len() + pasted_annotation_ids.len();
         let noun = if count == 1 { "item" } else { "items" };
         self.status = format!("Pasted {count} {noun}");
         Ok(())
+    }
+
+    fn move_pasted_content_to_front(
+        &mut self,
+        pasted_item_ids: &[i64],
+        pasted_annotation_ids: &[i64],
+        payload: &ClipboardBoardSelection,
+    ) {
+        let mut pasted_stack_order = Vec::new();
+        for entry in &payload.stack_order {
+            match entry.kind.as_str() {
+                "placement" => {
+                    if let Some(item_id) = pasted_item_ids.get(entry.index) {
+                        pasted_stack_order.push(crate::data::CanvasStackItem::Placement(*item_id));
+                    }
+                }
+                "annotation" => {
+                    if let Some(annotation_id) = pasted_annotation_ids.get(entry.index) {
+                        pasted_stack_order
+                            .push(crate::data::CanvasStackItem::Annotation(*annotation_id));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if pasted_stack_order.len() != pasted_item_ids.len() + pasted_annotation_ids.len() {
+            pasted_stack_order = pasted_item_ids
+                .iter()
+                .copied()
+                .map(crate::data::CanvasStackItem::Placement)
+                .chain(
+                    pasted_annotation_ids
+                        .iter()
+                        .copied()
+                        .map(crate::data::CanvasStackItem::Annotation),
+                )
+                .collect();
+        }
+
+        let mut next_stack_order = self.canvas.canvas_stack_order();
+        next_stack_order.retain(|item| !pasted_stack_order.contains(item));
+        next_stack_order.extend(pasted_stack_order);
+        self.canvas.set_canvas_stack_order(next_stack_order);
+        self.persist_canvas_stack_order();
     }
 
     fn placement_anchor_for_payload(
@@ -2614,6 +2846,8 @@ impl ReferenceApp {
                 SupportedShortcutAction::DeleteSelection => delete_shortcut_pressed(ctx),
                 SupportedShortcutAction::FocusSelection
                 | SupportedShortcutAction::DuplicateSelection
+                | SupportedShortcutAction::MoveSelectionToFront
+                | SupportedShortcutAction::MoveSelectionToBack
                 | SupportedShortcutAction::ToggleSidebar
                 | SupportedShortcutAction::ApplyDefaultAverageArea
                 | SupportedShortcutAction::AverageSelectionArea
@@ -2641,6 +2875,18 @@ impl ReferenceApp {
                         continue;
                     }
                     self.duplicate_selection_with_gap();
+                }
+                SupportedShortcutAction::MoveSelectionToFront => {
+                    if !self.canvas.has_selection() {
+                        continue;
+                    }
+                    self.move_selected_canvas_items_to_front();
+                }
+                SupportedShortcutAction::MoveSelectionToBack => {
+                    if !self.canvas.has_selection() {
+                        continue;
+                    }
+                    self.move_selected_canvas_items_to_back();
                 }
                 SupportedShortcutAction::FocusSelection => {
                     if !self.canvas.has_selection() {
@@ -3170,6 +3416,23 @@ impl ReferenceApp {
         }
     }
 
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    fn seed_search_latency_probe(&mut self) {
+        self.settings.semantic_search_enabled = true;
+        self.sync_semantic_search_service();
+        self.search_latency_probe = Some(SearchLatencyProbe {
+            phase: SearchLatencyProbePhase::WaitExistingImage,
+            selected_item_id: None,
+            probe_started_at: Instant::now(),
+            command_started_at: None,
+            tab_started_at: None,
+            board_results_ms: None,
+            board_result_ready_ms: None,
+            library_result_ready_ms: None,
+        });
+        eprintln!("[search-latency] probe started; waiting for first existing canvas image");
+    }
+
     #[cfg(debug_assertions)]
     fn seed_import_verification_placeholders(&mut self, ctx: &egui::Context) {
         self.canvas
@@ -3328,12 +3591,138 @@ impl ReferenceApp {
             .is_none_or(|query| self.search.verification_search_settled(query))
     }
 
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    fn drive_search_latency_probe(&mut self, ctx: &egui::Context) -> bool {
+        let Some(mut probe) = self.search_latency_probe.take() else {
+            return false;
+        };
+
+        match probe.phase {
+            SearchLatencyProbePhase::WaitExistingImage => {
+                let item_ids = self.canvas.all_item_ids();
+                let preferred = item_ids.iter().copied().find(|item_id| {
+                    self.canvas
+                        .record_for_item_id(*item_id)
+                        .is_some_and(|record| record.asset.id == 179)
+                });
+                if let Some(item_id) = preferred.or_else(|| item_ids.first().copied()) {
+                    let wait_ms = probe.probe_started_at.elapsed().as_secs_f64() * 1000.0;
+                    let asset_id = self
+                        .canvas
+                        .record_for_item_id(item_id)
+                        .map(|record| record.asset.id)
+                        .unwrap_or_default();
+                    probe.selected_item_id = Some(item_id);
+                    self.canvas.select_items(&[item_id]);
+                    eprintln!(
+                        "[search-latency] selected_existing_item_id={item_id} selected_asset_id={asset_id} wait_for_item_ms={wait_ms:.2}"
+                    );
+                    probe.phase = SearchLatencyProbePhase::OpenSearch;
+                }
+            }
+            SearchLatencyProbePhase::OpenSearch => {
+                let Some(selected_item_id) = probe.selected_item_id else {
+                    probe.phase = SearchLatencyProbePhase::WaitExistingImage;
+                    self.search_latency_probe = Some(probe);
+                    return true;
+                };
+                self.canvas.select_items(&[selected_item_id]);
+                let started_at = Instant::now();
+                self.search_using_selected_image();
+                probe.command_started_at = Some(started_at);
+                probe.phase = SearchLatencyProbePhase::WaitBoardResults;
+                eprintln!("[search-latency] command_f_opened_image_search");
+            }
+            SearchLatencyProbePhase::WaitBoardResults => {
+                if self.search.verification_result_count() > 0
+                    && self.search.verification_scope()
+                        == crate::semantic_search::SearchScope::ThisBoard
+                {
+                    let ready_ms = probe
+                        .command_started_at
+                        .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0)
+                        .unwrap_or_default();
+                    probe.board_result_ready_ms = Some(ready_ms);
+                    eprintln!("[search-latency] board_result_ready_ms={ready_ms:.2}");
+                    probe.phase = SearchLatencyProbePhase::WaitBoardPaint;
+                }
+            }
+            SearchLatencyProbePhase::WaitBoardPaint => {
+                if self.search.verification_result_count() > 0
+                    && self.search.verification_scope()
+                        == crate::semantic_search::SearchScope::ThisBoard
+                {
+                    let board_ms = probe
+                        .command_started_at
+                        .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0)
+                        .unwrap_or_default();
+                    eprintln!("[search-latency] board_results_ms={board_ms:.2}");
+                    probe.board_results_ms = Some(board_ms);
+                    probe.phase = SearchLatencyProbePhase::SwitchToLibrary;
+                }
+            }
+            SearchLatencyProbePhase::SwitchToLibrary => {
+                let started_at = Instant::now();
+                self.search.verification_toggle_scope(&mut self.canvas);
+                probe.tab_started_at = Some(started_at);
+                probe.phase = SearchLatencyProbePhase::WaitLibraryResults;
+                eprintln!("[search-latency] tab_pressed_switch_to_library");
+            }
+            SearchLatencyProbePhase::WaitLibraryResults => {
+                if self.search.verification_result_count() > 0
+                    && self.search.verification_scope()
+                        == crate::semantic_search::SearchScope::Library
+                {
+                    let ready_ms = probe
+                        .tab_started_at
+                        .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0)
+                        .unwrap_or_default();
+                    probe.library_result_ready_ms = Some(ready_ms);
+                    eprintln!("[search-latency] library_result_ready_ms={ready_ms:.2}");
+                    probe.phase = SearchLatencyProbePhase::WaitLibraryPaint;
+                }
+            }
+            SearchLatencyProbePhase::WaitLibraryPaint => {
+                if self.search.verification_result_count() > 0
+                    && self.search.verification_scope()
+                        == crate::semantic_search::SearchScope::Library
+                {
+                    let library_ms = probe
+                        .tab_started_at
+                        .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0)
+                        .unwrap_or_default();
+                    let board_ms = probe.board_results_ms.unwrap_or_default();
+                    let board_ready_ms = probe.board_result_ready_ms.unwrap_or_default();
+                    let library_ready_ms = probe.library_result_ready_ms.unwrap_or_default();
+                    eprintln!(
+                        "[search-latency] summary board_ready_ms={board_ready_ms:.2} board_painted_ms={board_ms:.2} library_ready_ms={library_ready_ms:.2} library_painted_ms={library_ms:.2}"
+                    );
+                    probe.phase = SearchLatencyProbePhase::Done;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+            SearchLatencyProbePhase::Done => {}
+        }
+
+        let active = probe.phase != SearchLatencyProbePhase::Done;
+        self.search_latency_probe = Some(probe);
+        if active {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
+        active
+    }
+
     #[cfg(not(all(debug_assertions, feature = "semantic-search")))]
     fn drive_verification_search(&mut self) {}
 
     #[cfg(not(all(debug_assertions, feature = "semantic-search")))]
     fn verification_search_settled(&self) -> bool {
         true
+    }
+
+    #[cfg(not(all(debug_assertions, feature = "semantic-search")))]
+    fn drive_search_latency_probe(&mut self, _ctx: &egui::Context) -> bool {
+        false
     }
 
     #[cfg(feature = "semantic-search")]
@@ -3596,6 +3985,91 @@ fn asset_mime_type_supports_raster_derivatives(mime_type: &str) -> bool {
         .eq_ignore_ascii_case("image/svg+xml")
 }
 
+fn context_menu_should_close(
+    action_clicked: bool,
+    just_opened: bool,
+    menu_rect: egui::Rect,
+    pointer_pos: Option<egui::Pos2>,
+    primary_pressed: bool,
+    secondary_pressed: bool,
+    escape_pressed: bool,
+) -> bool {
+    if action_clicked || escape_pressed {
+        return true;
+    }
+    if just_opened || (!primary_pressed && !secondary_pressed) {
+        return false;
+    }
+    pointer_pos.is_none_or(|pos| !menu_rect.contains(pos))
+}
+
+fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egui::Response {
+    let row_height = 28.0;
+    let shortcut_width: f32 = 54.0;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), row_height),
+        if item.enabled {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        },
+    );
+
+    let rounding = egui::CornerRadius::same(4);
+    if response.hovered() && item.enabled {
+        ui.painter()
+            .rect_filled(rect, rounding, egui::Color32::from_white_alpha(18));
+    }
+
+    let text_color = if item.enabled {
+        crate::theme::TEXT
+    } else {
+        crate::theme::TEXT_MUTED
+    };
+    let shortcut_color = if item.enabled {
+        crate::theme::TEXT_SUBTLE
+    } else {
+        crate::theme::TEXT_MUTED
+    };
+
+    let label_pos = egui::pos2(rect.left() + 8.0, rect.center().y - 7.5);
+    ui.painter().text(
+        label_pos,
+        egui::Align2::LEFT_TOP,
+        item.label,
+        egui::FontId::proportional(13.0),
+        text_color,
+    );
+
+    if let Some(shortcut) = item.shortcut {
+        let pill_size = egui::vec2(shortcut_width.min(rect.width() * 0.35), 20.0);
+        let pill_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 8.0 - pill_size.x * 0.5, rect.center().y),
+            pill_size,
+        );
+        ui.painter().rect_filled(
+            pill_rect,
+            egui::CornerRadius::same(4),
+            egui::Color32::from_white_alpha(12),
+        );
+        ui.painter().rect_stroke(
+            pill_rect,
+            egui::CornerRadius::same(4),
+            egui::Stroke::new(1.0, egui::Color32::from_white_alpha(16)),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            pill_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            shortcut,
+            egui::FontId::monospace(11.0),
+            shortcut_color,
+        );
+    }
+
+    response
+}
+
 impl eframe::App for ReferenceApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let screen_rect = ui.ctx().viewport_rect();
@@ -3608,6 +4082,7 @@ impl eframe::App for ReferenceApp {
         #[cfg(feature = "semantic-search")]
         self.handle_search_results();
         self.handle_crop_undo(ui.ctx());
+        self.drive_search_latency_probe(ui.ctx());
         self.drive_verification_search();
 
         #[cfg(debug_assertions)]
@@ -3657,13 +4132,7 @@ impl eframe::App for ReferenceApp {
             .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
         self.canvas.set_layout_gap(self.settings.import_gap);
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
-        #[cfg(feature = "semantic-search")]
-        let suppress_canvas_input = self.search.blocks_canvas_input(ui.ctx())
-            || self.pending_board_delete.is_some()
-            || self.pending_library_remove.is_some();
-        #[cfg(not(feature = "semantic-search"))]
-        let suppress_canvas_input =
-            self.pending_board_delete.is_some() || self.pending_library_remove.is_some();
+        let suppress_canvas_input = self.blocks_canvas_input(ui.ctx());
         self.frame_perf.canvas = crate::canvas::show(
             ui,
             screen_rect,
@@ -3896,8 +4365,8 @@ fn generated_board_name(boards: &[crate::data::Board]) -> String {
 mod tests {
     use super::{ArrangementAction, CropUndoEntry, ReferenceApp, apply_arrangement_action};
     use crate::data::{
-        BoardItem, BoardItemWithAsset, CanvasAnnotationKind, CanvasStrokeWidth, CanvasTextSize,
-        ImageAsset,
+        BoardItem, BoardItemWithAsset, CanvasAnnotationKind, CanvasStackItem, CanvasStrokeWidth,
+        CanvasTextSize, ImageAsset,
     };
     use crate::jobs::LoadedCanvasItem;
     #[cfg(feature = "semantic-search")]
@@ -3905,6 +4374,8 @@ mod tests {
         PALETTE_WIDTH, search_result_grid_content_height, search_result_grid_layout,
         search_result_tile_height,
     };
+    #[cfg(feature = "semantic-search")]
+    use crate::semantic_search::SearchScope;
     use crate::sidebar::should_close_sidebar;
     use crate::storage::Library;
     use eframe::egui;
@@ -4113,6 +4584,15 @@ mod tests {
             },
         );
         app.canvas.add_annotation(source_annotation.clone());
+        let source_stack_order = vec![
+            CanvasStackItem::Annotation(source_annotation.id),
+            CanvasStackItem::Placement(source_item.item.id),
+        ];
+        app.canvas
+            .set_canvas_stack_order(source_stack_order.clone());
+        library
+            .save_canvas_stack_order(&source_stack_order)
+            .unwrap();
         app.canvas
             .select_content(&[source_item.item.id], &[source_annotation.id]);
 
@@ -4150,6 +4630,216 @@ mod tests {
             app.canvas.selected_annotation_ids(),
             vec![pasted_annotations[0].id]
         );
+        let pasted_stack_order = vec![
+            CanvasStackItem::Annotation(pasted_annotations[0].id),
+            CanvasStackItem::Placement(pasted_items[0].item.id),
+        ];
+        assert_eq!(
+            library.load_canvas_stack_order().unwrap(),
+            pasted_stack_order
+        );
+        library.set_active_board(first.id).unwrap();
+        assert_eq!(
+            library.load_canvas_stack_order().unwrap(),
+            source_stack_order
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn paste_preserves_mixed_selection_stack_order_and_places_group_at_front() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-mixed-paste-stack-order");
+        let library = Library::initialize(root.clone()).unwrap();
+        let image_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let back_item = library
+            .persist_imported_image(&image_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let source_item = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(10.0, 20.0), 1.0, 0.0, 0)
+            .unwrap();
+        let source_annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Line,
+                egui::pos2(40.0, 60.0),
+                egui::pos2(80.0, 90.0),
+                "",
+                CanvasTextSize::M,
+                CanvasStrokeWidth::M,
+                crate::data::CanvasAnnotationColor::Gold,
+                false,
+            )
+            .unwrap();
+        let front_item = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(100.0, 100.0), 1.0, 0.0, 0)
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        for record in [&back_item, &source_item, &front_item] {
+            app.canvas.add_loaded_item(
+                &ctx,
+                LoadedCanvasItem {
+                    target_board_id: 1,
+                    queue_id: None,
+                    record: record.clone(),
+                    preview_rgba: vec![255, 0, 0, 255],
+                    preview_width: 1,
+                    preview_height: 1,
+                    animated_preview: None,
+                    preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                    loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                    existing_load_diagnostics: None,
+                    origin: crate::jobs::ImportOrigin::Existing,
+                    trace: None,
+                },
+            );
+        }
+        app.canvas.add_annotation(source_annotation.clone());
+        app.canvas.set_canvas_stack_order(vec![
+            CanvasStackItem::Placement(back_item.item.id),
+            CanvasStackItem::Annotation(source_annotation.id),
+            CanvasStackItem::Placement(source_item.item.id),
+            CanvasStackItem::Placement(front_item.item.id),
+        ]);
+        app.canvas
+            .select_content(&[source_item.item.id], &[source_annotation.id]);
+
+        let payload = app.copy_selected_board_payload().unwrap();
+        app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
+            .unwrap();
+
+        let pasted_item_id = app.canvas.selected_item_ids()[0];
+        let pasted_annotation_id = app.canvas.selected_annotation_ids()[0];
+        assert_eq!(
+            app.canvas.canvas_stack_order(),
+            vec![
+                CanvasStackItem::Placement(back_item.item.id),
+                CanvasStackItem::Annotation(source_annotation.id),
+                CanvasStackItem::Placement(source_item.item.id),
+                CanvasStackItem::Placement(front_item.item.id),
+                CanvasStackItem::Annotation(pasted_annotation_id),
+                CanvasStackItem::Placement(pasted_item_id),
+            ]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn paste_preserves_image_only_stack_order_and_places_group_at_front() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-image-paste-stack-order");
+        let library = Library::initialize(root.clone()).unwrap();
+        let image_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let back_item = library
+            .persist_imported_image(&image_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let lower_selected = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(10.0, 20.0), 1.0, 0.0, 0)
+            .unwrap();
+        let upper_selected = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(30.0, 40.0), 1.0, 0.0, 0)
+            .unwrap();
+        let front_item = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(100.0, 100.0), 1.0, 0.0, 0)
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        for record in [&back_item, &lower_selected, &upper_selected, &front_item] {
+            add_loaded_record(&mut app, &ctx, record.clone());
+        }
+        app.canvas.set_canvas_stack_order(vec![
+            CanvasStackItem::Placement(back_item.item.id),
+            CanvasStackItem::Placement(upper_selected.item.id),
+            CanvasStackItem::Placement(lower_selected.item.id),
+            CanvasStackItem::Placement(front_item.item.id),
+        ]);
+        app.canvas
+            .select_items(&[lower_selected.item.id, upper_selected.item.id]);
+
+        let payload = app.copy_selected_board_payload().unwrap();
+        app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
+            .unwrap();
+
+        let selected = app.canvas.selected_item_ids();
+        let pasted_lower_id = selected[0];
+        let pasted_upper_id = selected[1];
+        let expected = vec![
+            CanvasStackItem::Placement(back_item.item.id),
+            CanvasStackItem::Placement(upper_selected.item.id),
+            CanvasStackItem::Placement(lower_selected.item.id),
+            CanvasStackItem::Placement(front_item.item.id),
+            CanvasStackItem::Placement(pasted_upper_id),
+            CanvasStackItem::Placement(pasted_lower_id),
+        ];
+        assert_eq!(app.canvas.canvas_stack_order(), expected);
+        assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn paste_preserves_annotation_only_stack_order_and_places_group_at_front() {
+        let root = temp_library_root("reference-annotation-paste-stack-order");
+        let library = Library::initialize(root.clone()).unwrap();
+        let back_annotation = test_canvas_annotation(1, egui::pos2(0.0, 0.0));
+        let lower_selected = test_canvas_annotation(2, egui::pos2(10.0, 20.0));
+        let upper_selected = test_canvas_annotation(3, egui::pos2(30.0, 40.0));
+        let front_annotation = test_canvas_annotation(4, egui::pos2(100.0, 100.0));
+        for annotation in [
+            &back_annotation,
+            &lower_selected,
+            &upper_selected,
+            &front_annotation,
+        ] {
+            library
+                .create_canvas_annotation(
+                    annotation.kind,
+                    egui::pos2(annotation.start_x, annotation.start_y),
+                    egui::pos2(annotation.end_x, annotation.end_y),
+                    &annotation.text,
+                    annotation.text_size,
+                    annotation.stroke_width,
+                    annotation.color,
+                    annotation.background_enabled,
+                )
+                .unwrap();
+        }
+        let annotations = library.load_canvas_annotations().unwrap();
+        let back_id = annotations[0].id;
+        let lower_id = annotations[1].id;
+        let upper_id = annotations[2].id;
+        let front_id = annotations[3].id;
+        let mut app = test_app(Some(library.clone()));
+        app.canvas.add_annotations(annotations);
+        app.canvas.set_canvas_stack_order(vec![
+            CanvasStackItem::Annotation(back_id),
+            CanvasStackItem::Annotation(upper_id),
+            CanvasStackItem::Annotation(lower_id),
+            CanvasStackItem::Annotation(front_id),
+        ]);
+        app.canvas.select_content(&[], &[lower_id, upper_id]);
+
+        let payload = app.copy_selected_board_payload().unwrap();
+        app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
+            .unwrap();
+
+        let selected = app.canvas.selected_annotation_ids();
+        let pasted_lower_id = selected[0];
+        let pasted_upper_id = selected[1];
+        let expected = vec![
+            CanvasStackItem::Annotation(back_id),
+            CanvasStackItem::Annotation(upper_id),
+            CanvasStackItem::Annotation(lower_id),
+            CanvasStackItem::Annotation(front_id),
+            CanvasStackItem::Annotation(pasted_upper_id),
+            CanvasStackItem::Annotation(pasted_lower_id),
+        ];
+        assert_eq!(app.canvas.canvas_stack_order(), expected);
+        assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -4205,6 +4895,10 @@ mod tests {
             },
         );
         app.canvas.add_annotation(source_annotation.clone());
+        app.canvas.set_canvas_stack_order(vec![
+            CanvasStackItem::Annotation(source_annotation.id),
+            CanvasStackItem::Placement(source_item.item.id),
+        ]);
         app.canvas
             .select_content(&[source_item.item.id], &[source_annotation.id]);
 
@@ -4240,6 +4934,115 @@ mod tests {
             app.canvas.selected_annotation_ids(),
             vec![duplicated_annotation.id]
         );
+        let expected = vec![
+            CanvasStackItem::Annotation(source_annotation.id),
+            CanvasStackItem::Placement(source_item.item.id),
+            CanvasStackItem::Annotation(duplicated_annotation.id),
+            CanvasStackItem::Placement(duplicated_item.item.id),
+        ];
+        assert_eq!(app.canvas.canvas_stack_order(), expected);
+        assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn duplicate_preserves_image_only_stack_order_and_places_group_at_front() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-image-duplicate-stack-order");
+        let library = Library::initialize(root.clone()).unwrap();
+        let image_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let back_item = library
+            .persist_imported_image(&image_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let lower_selected = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(10.0, 20.0), 1.0, 0.0, 0)
+            .unwrap();
+        let upper_selected = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(30.0, 40.0), 1.0, 0.0, 0)
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.settings.import_gap = 24.0;
+        for record in [&back_item, &lower_selected, &upper_selected] {
+            add_loaded_record(&mut app, &ctx, record.clone());
+        }
+        app.canvas.set_canvas_stack_order(vec![
+            CanvasStackItem::Placement(back_item.item.id),
+            CanvasStackItem::Placement(upper_selected.item.id),
+            CanvasStackItem::Placement(lower_selected.item.id),
+        ]);
+        app.canvas
+            .select_items(&[lower_selected.item.id, upper_selected.item.id]);
+
+        app.duplicate_selection_with_gap();
+
+        let selected = app.canvas.selected_item_ids();
+        let duplicated_lower_id = selected[0];
+        let duplicated_upper_id = selected[1];
+        let expected = vec![
+            CanvasStackItem::Placement(back_item.item.id),
+            CanvasStackItem::Placement(upper_selected.item.id),
+            CanvasStackItem::Placement(lower_selected.item.id),
+            CanvasStackItem::Placement(duplicated_upper_id),
+            CanvasStackItem::Placement(duplicated_lower_id),
+        ];
+        assert_eq!(app.canvas.canvas_stack_order(), expected);
+        assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn duplicate_preserves_annotation_only_stack_order_and_places_group_at_front() {
+        let root = temp_library_root("reference-annotation-duplicate-stack-order");
+        let library = Library::initialize(root.clone()).unwrap();
+        let back_annotation = test_canvas_annotation(1, egui::pos2(0.0, 0.0));
+        let lower_selected = test_canvas_annotation(2, egui::pos2(10.0, 20.0));
+        let upper_selected = test_canvas_annotation(3, egui::pos2(30.0, 40.0));
+        for annotation in [&back_annotation, &lower_selected, &upper_selected] {
+            library
+                .create_canvas_annotation(
+                    annotation.kind,
+                    egui::pos2(annotation.start_x, annotation.start_y),
+                    egui::pos2(annotation.end_x, annotation.end_y),
+                    &annotation.text,
+                    annotation.text_size,
+                    annotation.stroke_width,
+                    annotation.color,
+                    annotation.background_enabled,
+                )
+                .unwrap();
+        }
+        let annotations = library.load_canvas_annotations().unwrap();
+        let back_id = annotations[0].id;
+        let lower_id = annotations[1].id;
+        let upper_id = annotations[2].id;
+        let mut app = test_app(Some(library.clone()));
+        app.settings.import_gap = 24.0;
+        app.canvas.add_annotations(annotations);
+        app.canvas.set_canvas_stack_order(vec![
+            CanvasStackItem::Annotation(back_id),
+            CanvasStackItem::Annotation(upper_id),
+            CanvasStackItem::Annotation(lower_id),
+        ]);
+        app.canvas.select_content(&[], &[lower_id, upper_id]);
+
+        app.duplicate_selection_with_gap();
+
+        let selected = app.canvas.selected_annotation_ids();
+        let duplicated_lower_id = selected[0];
+        let duplicated_upper_id = selected[1];
+        let expected = vec![
+            CanvasStackItem::Annotation(back_id),
+            CanvasStackItem::Annotation(upper_id),
+            CanvasStackItem::Annotation(lower_id),
+            CanvasStackItem::Annotation(duplicated_upper_id),
+            CanvasStackItem::Annotation(duplicated_lower_id),
+        ];
+        assert_eq!(app.canvas.canvas_stack_order(), expected);
+        assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -4352,6 +5155,14 @@ mod tests {
         assert_eq!(payload.kind, super::COPY_PAYLOAD_KIND);
         assert_eq!(payload.items.len(), 1);
         assert_eq!(payload.annotations.len(), 1);
+        assert_eq!(
+            payload
+                .stack_order
+                .iter()
+                .map(|entry| (entry.kind.as_str(), entry.index))
+                .collect::<Vec<_>>(),
+            vec![("placement", 0), ("annotation", 0)]
+        );
     }
 
     #[test]
@@ -4384,9 +5195,26 @@ mod tests {
                 "Paste",
                 "Duplicate",
                 "Delete (from board)",
-                "Crop",
+                "Move to Front",
+                "Move to Back",
                 "Search using image",
                 "Remove from Library..."
+            ]
+        );
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| (item.action, item.shortcut))
+                .collect::<Vec<_>>(),
+            vec![
+                (super::ContextMenuAction::Copy, Some("⌘ C")),
+                (super::ContextMenuAction::Paste, Some("⌘ V")),
+                (super::ContextMenuAction::Duplicate, Some("⌘ D")),
+                (super::ContextMenuAction::DeleteFromBoard, Some("del")),
+                (super::ContextMenuAction::MoveToFront, Some("⌘ .")),
+                (super::ContextMenuAction::MoveToBack, Some("⌘ ,")),
+                (super::ContextMenuAction::SearchUsingImage, Some("⌘ F")),
+                (super::ContextMenuAction::RemoveFromLibrary, None),
             ]
         );
         assert!(item_enabled(&items, super::ContextMenuAction::Copy));
@@ -4396,7 +5224,8 @@ mod tests {
             &items,
             super::ContextMenuAction::DeleteFromBoard
         ));
-        assert!(!item_enabled(&items, super::ContextMenuAction::Crop));
+        assert!(item_enabled(&items, super::ContextMenuAction::MoveToFront));
+        assert!(item_enabled(&items, super::ContextMenuAction::MoveToBack));
         assert!(!item_enabled(
             &items,
             super::ContextMenuAction::SearchUsingImage
@@ -4408,7 +5237,104 @@ mod tests {
     }
 
     #[test]
-    fn crop_and_image_search_context_actions_require_exactly_one_image() {
+    fn context_menu_primary_press_inside_menu_keeps_menu_open_for_click_release() {
+        let menu_rect =
+            egui::Rect::from_min_size(egui::pos2(100.0, 120.0), egui::vec2(190.0, 240.0));
+
+        assert!(!super::context_menu_should_close(
+            false,
+            false,
+            menu_rect,
+            Some(menu_rect.center()),
+            true,
+            false,
+            false,
+        ));
+    }
+
+    #[test]
+    fn context_menu_primary_press_outside_menu_closes_menu() {
+        let menu_rect =
+            egui::Rect::from_min_size(egui::pos2(100.0, 120.0), egui::vec2(190.0, 240.0));
+
+        assert!(super::context_menu_should_close(
+            false,
+            false,
+            menu_rect,
+            Some(egui::pos2(menu_rect.right() + 8.0, menu_rect.center().y)),
+            true,
+            false,
+            false,
+        ));
+    }
+
+    #[test]
+    fn open_context_menu_blocks_canvas_input_behind_menu() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+
+        assert!(!app.blocks_canvas_input(&ctx));
+
+        app.context_menu_pos = Some(egui::pos2(520.0, 260.0));
+
+        assert!(app.blocks_canvas_input(&ctx));
+    }
+
+    #[test]
+    fn stack_order_context_actions_are_disabled_without_canvas_item_selection() {
+        let app = test_app(None);
+
+        let items = app.context_menu_items();
+
+        assert!(!item_enabled(&items, super::ContextMenuAction::MoveToFront));
+        assert!(!item_enabled(&items, super::ContextMenuAction::MoveToBack));
+    }
+
+    #[test]
+    fn stack_order_context_actions_are_enabled_for_image_and_annotation_selections() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.canvas.add_loaded_item(&ctx, test_loaded_item(1, 1));
+        app.canvas.add_annotation(crate::data::CanvasAnnotation {
+            id: 20,
+            kind: CanvasAnnotationKind::Textbox,
+            start_x: 10.0,
+            start_y: 10.0,
+            end_x: 70.0,
+            end_y: 40.0,
+            text: "caption".to_owned(),
+            text_size: CanvasTextSize::M,
+            stroke_width: CanvasStrokeWidth::M,
+            color: crate::data::CanvasAnnotationColor::Default,
+            background_enabled: false,
+            archived: false,
+        });
+
+        app.canvas.select_content(&[1], &[]);
+        let image_only = app.context_menu_items();
+        assert!(item_enabled(
+            &image_only,
+            super::ContextMenuAction::MoveToFront
+        ));
+        assert!(item_enabled(
+            &image_only,
+            super::ContextMenuAction::MoveToBack
+        ));
+
+        app.canvas.select_content(&[], &[20]);
+        let annotation_only = app.context_menu_items();
+        assert!(item_enabled(
+            &annotation_only,
+            super::ContextMenuAction::MoveToFront
+        ));
+        assert!(item_enabled(
+            &annotation_only,
+            super::ContextMenuAction::MoveToBack
+        ));
+    }
+
+    #[test]
+    fn image_search_context_action_requires_exactly_one_image() {
         let ctx = egui::Context::default();
         let mut app = test_app(None);
         app.canvas.add_loaded_item(&ctx, test_loaded_item(1, 1));
@@ -4416,7 +5342,6 @@ mod tests {
 
         app.canvas.select_items(&[1]);
         let single = app.context_menu_items();
-        assert!(item_enabled(&single, super::ContextMenuAction::Crop));
         assert!(item_enabled(
             &single,
             super::ContextMenuAction::SearchUsingImage
@@ -4424,7 +5349,6 @@ mod tests {
 
         app.canvas.select_items(&[1, 2]);
         let multiple = app.context_menu_items();
-        assert!(!item_enabled(&multiple, super::ContextMenuAction::Crop));
         assert!(!item_enabled(
             &multiple,
             super::ContextMenuAction::SearchUsingImage
@@ -4484,6 +5408,90 @@ mod tests {
         assert!(app.pending_library_remove.is_none());
         assert!(library.load_board_items().unwrap().is_empty());
         assert!(source_item.asset.original_path.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn move_to_front_context_action_persists_canvas_stack_order() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-context-move-front");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_path = library
+            .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let second_path = library
+            .store_rgba_image("second", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+        let first = library
+            .persist_imported_image(&first_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let second = library
+            .persist_imported_image(
+                &second_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Textbox,
+                egui::pos2(10.0, 12.0),
+                egui::pos2(110.0, 72.0),
+                "hello",
+                CanvasTextSize::default(),
+                CanvasStrokeWidth::default(),
+                crate::data::CanvasAnnotationColor::default(),
+                false,
+            )
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.canvas
+            .add_loaded_item(&ctx, test_loaded_item(first.item.id, 1));
+        app.canvas
+            .add_loaded_item(&ctx, test_loaded_item(second.item.id, 1));
+        app.canvas.add_annotation(annotation.clone());
+        app.canvas.set_canvas_stack_order(vec![
+            crate::data::CanvasStackItem::Placement(first.item.id),
+            crate::data::CanvasStackItem::Annotation(annotation.id),
+            crate::data::CanvasStackItem::Placement(second.item.id),
+        ]);
+        app.canvas
+            .select_content(&[first.item.id], &[annotation.id]);
+
+        app.handle_context_menu_action(
+            super::ContextMenuAction::MoveToFront,
+            &ctx,
+            egui::Rect::EVERYTHING,
+        );
+
+        assert_eq!(
+            library.load_canvas_stack_order().unwrap(),
+            vec![
+                crate::data::CanvasStackItem::Placement(second.item.id),
+                crate::data::CanvasStackItem::Placement(first.item.id),
+                crate::data::CanvasStackItem::Annotation(annotation.id),
+            ]
+        );
+
+        app.handle_context_menu_action(
+            super::ContextMenuAction::MoveToBack,
+            &ctx,
+            egui::Rect::EVERYTHING,
+        );
+
+        assert_eq!(
+            library.load_canvas_stack_order().unwrap(),
+            vec![
+                crate::data::CanvasStackItem::Placement(first.item.id),
+                crate::data::CanvasStackItem::Annotation(annotation.id),
+                crate::data::CanvasStackItem::Placement(second.item.id),
+            ]
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -4583,9 +5591,50 @@ mod tests {
         );
 
         assert!(app.search.overlay.open);
+        assert!(app.search.overlay.suppress_next_outside_click);
         let pivot = app.search.overlay.image_pivot.unwrap();
         assert_eq!(pivot.asset_id, 42);
         assert_eq!(pivot.item_id, 42);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_using_image_context_action_survives_activation_click_outside_overlay() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.settings.semantic_search_enabled = true;
+        app.canvas.add_loaded_item(&ctx, test_loaded_item(42, 1));
+        app.canvas.select_items(&[42]);
+
+        app.handle_context_menu_action(
+            super::ContextMenuAction::SearchUsingImage,
+            &ctx,
+            egui::Rect::EVERYTHING,
+        );
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events: vec![
+                    egui::Event::PointerMoved(egui::pos2(520.0, 320.0)),
+                    egui::Event::PointerButton {
+                        pos: egui::pos2(520.0, 320.0),
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::default(),
+                    },
+                ],
+                ..Default::default()
+            },
+            |ui| {
+                app.show_search_overlay(
+                    ui.ctx(),
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),
+                )
+            },
+        );
+
+        assert!(app.search.overlay.open);
+        assert!(!app.search.overlay.suppress_next_outside_click);
     }
 
     #[test]
@@ -5016,6 +6065,37 @@ mod tests {
 
     #[cfg(feature = "semantic-search")]
     #[test]
+    fn tab_switches_search_scope_from_any_search_overlay_focus_state() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.search.overlay.open = true;
+        app.search.overlay.focus_requested = true;
+        app.search.overlay.scope = SearchScope::ThisBoard;
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: Some(egui::Key::Tab),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::default(),
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                app.show_search_overlay(
+                    ui.ctx(),
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),
+                )
+            },
+        );
+
+        assert_eq!(app.search.overlay.scope, SearchScope::Library);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
     fn search_result_grid_layout_balances_five_results_into_five_columns() {
         let shell_content_width = PALETTE_WIDTH - 24.0;
         let grid_layout = search_result_grid_layout(shell_content_width, 5);
@@ -5230,6 +6310,8 @@ mod tests {
             hover_preview_dimensions: std::collections::HashMap::new(),
             #[cfg(debug_assertions)]
             verification_mode: None,
+            #[cfg(all(debug_assertions, feature = "semantic-search"))]
+            search_latency_probe: None,
             #[cfg(debug_assertions)]
             verification_search_query: None,
             #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -5299,6 +6381,43 @@ mod tests {
             existing_load_diagnostics: None,
             origin: crate::jobs::ImportOrigin::Clipboard,
             trace: None,
+        }
+    }
+
+    fn add_loaded_record(app: &mut ReferenceApp, ctx: &egui::Context, record: BoardItemWithAsset) {
+        app.canvas.add_loaded_item(
+            ctx,
+            LoadedCanvasItem {
+                target_board_id: 1,
+                queue_id: None,
+                record,
+                preview_rgba: vec![255, 0, 0, 255],
+                preview_width: 1,
+                preview_height: 1,
+                animated_preview: None,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+    }
+
+    fn test_canvas_annotation(id: i64, start: egui::Pos2) -> crate::data::CanvasAnnotation {
+        crate::data::CanvasAnnotation {
+            id,
+            kind: CanvasAnnotationKind::Line,
+            start_x: start.x,
+            start_y: start.y,
+            end_x: start.x + 40.0,
+            end_y: start.y + 30.0,
+            text: String::new(),
+            text_size: CanvasTextSize::M,
+            stroke_width: CanvasStrokeWidth::M,
+            color: crate::data::CanvasAnnotationColor::Gold,
+            background_enabled: false,
+            archived: false,
         }
     }
 }

@@ -1019,16 +1019,24 @@ pub(crate) fn show_sidebar_hint(
                         truncate_board_name(active_board_name, 28),
                         display_shortcut_label(sidebar_shortcut_label())
                     );
-                    clicked = ui
-                        .add(
-                            egui::Label::new(
-                                egui::RichText::new(label)
-                                    .text_style(egui::TextStyle::Small)
-                                    .color(crate::theme::TEXT_MUTED),
-                            )
-                            .sense(egui::Sense::click()),
-                        )
-                        .clicked();
+                    let galley = ui.painter().layout_no_wrap(
+                        label,
+                        egui::TextStyle::Small.resolve(ui.style()),
+                        crate::theme::TEXT_MUTED,
+                    );
+                    let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+                    ui.painter()
+                        .galley(rect.min, galley, crate::theme::TEXT_MUTED);
+                    let hovered = ui.ctx().input(|input| {
+                        input
+                            .pointer
+                            .latest_pos()
+                            .is_some_and(|pos| rect.contains(pos))
+                    });
+                    if hovered {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    clicked = hovered && ui.input(|input| input.pointer.primary_clicked());
                 });
         });
     clicked
