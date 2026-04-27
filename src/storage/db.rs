@@ -249,6 +249,33 @@ impl Library {
         }
     }
 
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn asset_search_preview_paths_for_assets(
+        &self,
+        asset_ids: &[i64],
+    ) -> std::collections::HashMap<i64, PathBuf> {
+        asset_ids
+            .iter()
+            .filter_map(|asset_id| {
+                self.canvas_image_cache_path_for_tier(
+                    *asset_id,
+                    CanvasImageMode::Downscale,
+                    crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+                    CanvasImageCacheTier::Overview,
+                )
+                .or_else(|| {
+                    self.canvas_image_cache_path_for_tier(
+                        *asset_id,
+                        CanvasImageMode::Downscale,
+                        crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+                        CanvasImageCacheTier::Working,
+                    )
+                })
+                .map(|path| (*asset_id, path))
+            })
+            .collect()
+    }
+
     pub fn legacy_canvas_image_cache_path_for_tier(
         &self,
         asset_id: i64,

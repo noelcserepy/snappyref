@@ -344,6 +344,8 @@ pub struct AppConfig {
     perf_decode_path: Option<std::path::PathBuf>,
     perf_import_path: Option<std::path::PathBuf>,
     startup_trace: bool,
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    search_latency_log: bool,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
     #[cfg(debug_assertions)]
@@ -387,6 +389,33 @@ enum VerificationMode {
     BackgroundDots,
     BackgroundTransition,
     ActiveBoardChip,
+    SearchLatency,
+}
+
+#[cfg(all(debug_assertions, feature = "semantic-search"))]
+#[derive(Clone, Debug)]
+struct SearchLatencyProbe {
+    phase: SearchLatencyProbePhase,
+    selected_item_id: Option<i64>,
+    probe_started_at: Instant,
+    command_started_at: Option<Instant>,
+    tab_started_at: Option<Instant>,
+    board_result_ready_ms: Option<f64>,
+    library_result_ready_ms: Option<f64>,
+    board_results_ms: Option<f64>,
+}
+
+#[cfg(all(debug_assertions, feature = "semantic-search"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SearchLatencyProbePhase {
+    WaitExistingImage,
+    OpenSearch,
+    WaitBoardResults,
+    WaitBoardPaint,
+    SwitchToLibrary,
+    WaitLibraryResults,
+    WaitLibraryPaint,
+    Done,
 }
 
 impl AppConfig {
@@ -397,6 +426,8 @@ impl AppConfig {
         let mut perf_decode_path = None;
         let mut perf_import_path = None;
         let mut startup_trace = false;
+        #[cfg(all(debug_assertions, feature = "semantic-search"))]
+        let mut search_latency_log = std::env::var_os("REFERENCE_SEARCH_LATENCY_LOG").is_some();
         #[cfg(debug_assertions)]
         let mut verification_mode = None;
         #[cfg(debug_assertions)]
@@ -424,6 +455,13 @@ impl AppConfig {
                 perf_import_path = Some(std::path::PathBuf::from(path));
             } else if argument == "--startup-trace" {
                 startup_trace = true;
+            } else if cfg!(all(debug_assertions, feature = "semantic-search"))
+                && argument == "--search-latency-log"
+            {
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                {
+                    search_latency_log = true;
+                }
             } else if cfg!(debug_assertions) && argument == "--verify-sidebar" {
                 #[cfg(debug_assertions)]
                 {
@@ -519,6 +557,11 @@ impl AppConfig {
                 {
                     verification_mode = Some(VerificationMode::ActiveBoardChip);
                 }
+            } else if cfg!(debug_assertions) && argument == "--verify-search-latency" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::SearchLatency);
+                }
             } else if let Some(query) = argument.strip_prefix("--verify-search=") {
                 #[cfg(debug_assertions)]
                 {
@@ -551,6 +594,8 @@ impl AppConfig {
             perf_decode_path,
             perf_import_path,
             startup_trace,
+            #[cfg(all(debug_assertions, feature = "semantic-search"))]
+            search_latency_log,
             #[cfg(debug_assertions)]
             verification_mode,
             #[cfg(debug_assertions)]
@@ -809,6 +854,8 @@ pub struct ReferenceApp {
     hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    search_latency_probe: Option<SearchLatencyProbe>,
     #[cfg(debug_assertions)]
     verification_search_query: Option<String>,
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -878,6 +925,8 @@ impl ReferenceApp {
                     hover_preview_dimensions: std::collections::HashMap::new(),
                     #[cfg(debug_assertions)]
                     verification_mode: config.verification_mode,
+                    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                    search_latency_probe: None,
                     #[cfg(debug_assertions)]
                     verification_search_query: None,
                     #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -885,6 +934,9 @@ impl ReferenceApp {
                     #[cfg(debug_assertions)]
                     sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                 };
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                app.search
+                    .set_latency_logging_enabled(config.search_latency_log);
                 app.load_user_session();
                 #[cfg(feature = "semantic-search")]
                 app.sync_semantic_search_service();
@@ -964,6 +1016,13 @@ impl ReferenceApp {
                 #[cfg(debug_assertions)]
                 if let Some(mode) = config.background_verification_mode() {
                     app.seed_background_verification(mode);
+                }
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                if matches!(
+                    config.verification_mode,
+                    Some(VerificationMode::SearchLatency)
+                ) {
+                    app.seed_search_latency_probe();
                 }
                 #[cfg(debug_assertions)]
                 if let Some(query) = config.verification_search_query().map(ToOwned::to_owned) {
@@ -1052,6 +1111,8 @@ impl ReferenceApp {
                 hover_preview_dimensions: std::collections::HashMap::new(),
                 #[cfg(debug_assertions)]
                 verification_mode: config.verification_mode,
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                search_latency_probe: None,
                 #[cfg(debug_assertions)]
                 verification_search_query: None,
                 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -2229,6 +2290,9 @@ impl ReferenceApp {
             asset_id: record.asset.id,
             item_id: record.item.id,
         });
+        #[cfg(all(debug_assertions, feature = "semantic-search"))]
+        self.search
+            .begin_image_search_latency_trace("selected_image_search", record.asset.id);
         self.search.overlay.last_query_edit_at = None;
         self.search.overlay.open = true;
         self.search.overlay.focus_requested = true;
@@ -3352,6 +3416,23 @@ impl ReferenceApp {
         }
     }
 
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    fn seed_search_latency_probe(&mut self) {
+        self.settings.semantic_search_enabled = true;
+        self.sync_semantic_search_service();
+        self.search_latency_probe = Some(SearchLatencyProbe {
+            phase: SearchLatencyProbePhase::WaitExistingImage,
+            selected_item_id: None,
+            probe_started_at: Instant::now(),
+            command_started_at: None,
+            tab_started_at: None,
+            board_results_ms: None,
+            board_result_ready_ms: None,
+            library_result_ready_ms: None,
+        });
+        eprintln!("[search-latency] probe started; waiting for first existing canvas image");
+    }
+
     #[cfg(debug_assertions)]
     fn seed_import_verification_placeholders(&mut self, ctx: &egui::Context) {
         self.canvas
@@ -3510,12 +3591,138 @@ impl ReferenceApp {
             .is_none_or(|query| self.search.verification_search_settled(query))
     }
 
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    fn drive_search_latency_probe(&mut self, ctx: &egui::Context) -> bool {
+        let Some(mut probe) = self.search_latency_probe.take() else {
+            return false;
+        };
+
+        match probe.phase {
+            SearchLatencyProbePhase::WaitExistingImage => {
+                let item_ids = self.canvas.all_item_ids();
+                let preferred = item_ids.iter().copied().find(|item_id| {
+                    self.canvas
+                        .record_for_item_id(*item_id)
+                        .is_some_and(|record| record.asset.id == 179)
+                });
+                if let Some(item_id) = preferred.or_else(|| item_ids.first().copied()) {
+                    let wait_ms = probe.probe_started_at.elapsed().as_secs_f64() * 1000.0;
+                    let asset_id = self
+                        .canvas
+                        .record_for_item_id(item_id)
+                        .map(|record| record.asset.id)
+                        .unwrap_or_default();
+                    probe.selected_item_id = Some(item_id);
+                    self.canvas.select_items(&[item_id]);
+                    eprintln!(
+                        "[search-latency] selected_existing_item_id={item_id} selected_asset_id={asset_id} wait_for_item_ms={wait_ms:.2}"
+                    );
+                    probe.phase = SearchLatencyProbePhase::OpenSearch;
+                }
+            }
+            SearchLatencyProbePhase::OpenSearch => {
+                let Some(selected_item_id) = probe.selected_item_id else {
+                    probe.phase = SearchLatencyProbePhase::WaitExistingImage;
+                    self.search_latency_probe = Some(probe);
+                    return true;
+                };
+                self.canvas.select_items(&[selected_item_id]);
+                let started_at = Instant::now();
+                self.search_using_selected_image();
+                probe.command_started_at = Some(started_at);
+                probe.phase = SearchLatencyProbePhase::WaitBoardResults;
+                eprintln!("[search-latency] command_f_opened_image_search");
+            }
+            SearchLatencyProbePhase::WaitBoardResults => {
+                if self.search.verification_result_count() > 0
+                    && self.search.verification_scope()
+                        == crate::semantic_search::SearchScope::ThisBoard
+                {
+                    let ready_ms = probe
+                        .command_started_at
+                        .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0)
+                        .unwrap_or_default();
+                    probe.board_result_ready_ms = Some(ready_ms);
+                    eprintln!("[search-latency] board_result_ready_ms={ready_ms:.2}");
+                    probe.phase = SearchLatencyProbePhase::WaitBoardPaint;
+                }
+            }
+            SearchLatencyProbePhase::WaitBoardPaint => {
+                if self.search.verification_result_count() > 0
+                    && self.search.verification_scope()
+                        == crate::semantic_search::SearchScope::ThisBoard
+                {
+                    let board_ms = probe
+                        .command_started_at
+                        .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0)
+                        .unwrap_or_default();
+                    eprintln!("[search-latency] board_results_ms={board_ms:.2}");
+                    probe.board_results_ms = Some(board_ms);
+                    probe.phase = SearchLatencyProbePhase::SwitchToLibrary;
+                }
+            }
+            SearchLatencyProbePhase::SwitchToLibrary => {
+                let started_at = Instant::now();
+                self.search.verification_toggle_scope(&mut self.canvas);
+                probe.tab_started_at = Some(started_at);
+                probe.phase = SearchLatencyProbePhase::WaitLibraryResults;
+                eprintln!("[search-latency] tab_pressed_switch_to_library");
+            }
+            SearchLatencyProbePhase::WaitLibraryResults => {
+                if self.search.verification_result_count() > 0
+                    && self.search.verification_scope()
+                        == crate::semantic_search::SearchScope::Library
+                {
+                    let ready_ms = probe
+                        .tab_started_at
+                        .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0)
+                        .unwrap_or_default();
+                    probe.library_result_ready_ms = Some(ready_ms);
+                    eprintln!("[search-latency] library_result_ready_ms={ready_ms:.2}");
+                    probe.phase = SearchLatencyProbePhase::WaitLibraryPaint;
+                }
+            }
+            SearchLatencyProbePhase::WaitLibraryPaint => {
+                if self.search.verification_result_count() > 0
+                    && self.search.verification_scope()
+                        == crate::semantic_search::SearchScope::Library
+                {
+                    let library_ms = probe
+                        .tab_started_at
+                        .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0)
+                        .unwrap_or_default();
+                    let board_ms = probe.board_results_ms.unwrap_or_default();
+                    let board_ready_ms = probe.board_result_ready_ms.unwrap_or_default();
+                    let library_ready_ms = probe.library_result_ready_ms.unwrap_or_default();
+                    eprintln!(
+                        "[search-latency] summary board_ready_ms={board_ready_ms:.2} board_painted_ms={board_ms:.2} library_ready_ms={library_ready_ms:.2} library_painted_ms={library_ms:.2}"
+                    );
+                    probe.phase = SearchLatencyProbePhase::Done;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+            SearchLatencyProbePhase::Done => {}
+        }
+
+        let active = probe.phase != SearchLatencyProbePhase::Done;
+        self.search_latency_probe = Some(probe);
+        if active {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
+        active
+    }
+
     #[cfg(not(all(debug_assertions, feature = "semantic-search")))]
     fn drive_verification_search(&mut self) {}
 
     #[cfg(not(all(debug_assertions, feature = "semantic-search")))]
     fn verification_search_settled(&self) -> bool {
         true
+    }
+
+    #[cfg(not(all(debug_assertions, feature = "semantic-search")))]
+    fn drive_search_latency_probe(&mut self, _ctx: &egui::Context) -> bool {
+        false
     }
 
     #[cfg(feature = "semantic-search")]
@@ -3875,6 +4082,7 @@ impl eframe::App for ReferenceApp {
         #[cfg(feature = "semantic-search")]
         self.handle_search_results();
         self.handle_crop_undo(ui.ctx());
+        self.drive_search_latency_probe(ui.ctx());
         self.drive_verification_search();
 
         #[cfg(debug_assertions)]
@@ -6102,6 +6310,8 @@ mod tests {
             hover_preview_dimensions: std::collections::HashMap::new(),
             #[cfg(debug_assertions)]
             verification_mode: None,
+            #[cfg(all(debug_assertions, feature = "semantic-search"))]
+            search_latency_probe: None,
             #[cfg(debug_assertions)]
             verification_search_query: None,
             #[cfg(all(debug_assertions, feature = "semantic-search"))]

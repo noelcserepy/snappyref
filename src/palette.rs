@@ -232,7 +232,7 @@ pub(crate) fn search_result_tile(
         && let Some(preview) = canvas.preview_for_item_id(item_id)
     {
         paint_texture_cover(ui, preview_rect, preview.texture_id, preview.texture_size);
-    } else if let Some(path) = &group.asset_original_path {
+    } else if let Some(path) = &group.asset_preview_path {
         if let Some(preview) =
             search_asset_preview(ui.ctx(), group.asset_id, path, asset_preview_cache)
         {
