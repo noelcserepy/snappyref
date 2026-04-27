@@ -1929,19 +1929,19 @@ impl ReferenceApp {
             ContextMenuItem {
                 action: ContextMenuAction::Copy,
                 label: "Copy",
-                shortcut: Some("⌘C"),
+                shortcut: Some("⌘ C"),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::Paste,
                 label: "Paste",
-                shortcut: Some("⌘V"),
+                shortcut: Some("⌘ V"),
                 enabled: true,
             },
             ContextMenuItem {
                 action: ContextMenuAction::Duplicate,
                 label: "Duplicate",
-                shortcut: Some("⌘D"),
+                shortcut: Some("⌘ D"),
                 enabled: has_selection,
             },
             ContextMenuItem {
@@ -1953,19 +1953,19 @@ impl ReferenceApp {
             ContextMenuItem {
                 action: ContextMenuAction::MoveToFront,
                 label: "Move to Front",
-                shortcut: Some("⌘."),
+                shortcut: Some("⌘ ."),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::MoveToBack,
                 label: "Move to Back",
-                shortcut: Some("⌘,"),
+                shortcut: Some("⌘ ,"),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::SearchUsingImage,
                 label: "Search using image",
-                shortcut: Some("⌘F"),
+                shortcut: Some("⌘ F"),
                 enabled: exactly_one_image_only,
             },
             ContextMenuItem {
@@ -4999,13 +4999,13 @@ mod tests {
                 .map(|item| (item.action, item.shortcut))
                 .collect::<Vec<_>>(),
             vec![
-                (super::ContextMenuAction::Copy, Some("⌘C")),
-                (super::ContextMenuAction::Paste, Some("⌘V")),
-                (super::ContextMenuAction::Duplicate, Some("⌘D")),
+                (super::ContextMenuAction::Copy, Some("⌘ C")),
+                (super::ContextMenuAction::Paste, Some("⌘ V")),
+                (super::ContextMenuAction::Duplicate, Some("⌘ D")),
                 (super::ContextMenuAction::DeleteFromBoard, Some("del")),
-                (super::ContextMenuAction::MoveToFront, Some("⌘.")),
-                (super::ContextMenuAction::MoveToBack, Some("⌘,")),
-                (super::ContextMenuAction::SearchUsingImage, Some("⌘F")),
+                (super::ContextMenuAction::MoveToFront, Some("⌘ .")),
+                (super::ContextMenuAction::MoveToBack, Some("⌘ ,")),
+                (super::ContextMenuAction::SearchUsingImage, Some("⌘ F")),
                 (super::ContextMenuAction::RemoveFromLibrary, None),
             ]
         );
