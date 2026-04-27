@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-use std::path::Path;
-use std::time::Instant;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 
@@ -29,7 +30,7 @@ pub(crate) struct SearchOverlayState {
     pub drag_state: Option<SearchResultDragState>,
     pub last_expanded_overlay_rect: Option<egui::Rect>,
     pub results: Vec<SearchResultGroup>,
-    pub asset_preview_cache: HashMap<i64, Option<SearchAssetPreview>>,
+    pub asset_preview_cache: HashMap<i64, SearchAssetPreviewEntry>,
     pub result_limit: usize,
     pub has_more_results: bool,
     pub status: SearchOverlayStatus,
@@ -68,6 +69,18 @@ impl Default for SearchOverlayState {
 pub(crate) struct SearchAssetPreview {
     texture: egui::TextureHandle,
     texture_size: egui::Vec2,
+}
+
+pub(crate) enum SearchAssetPreviewEntry {
+    Loading(Arc<Mutex<Option<Option<DecodedSearchAssetPreview>>>>),
+    Ready(SearchAssetPreview),
+    Failed,
+}
+
+pub(crate) struct DecodedSearchAssetPreview {
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -207,7 +220,7 @@ pub(crate) fn search_result_tile(
     ui: &mut egui::Ui,
     canvas: &crate::canvas::CanvasState,
     group: &SearchResultGroup,
-    asset_preview_cache: &mut HashMap<i64, Option<SearchAssetPreview>>,
+    asset_preview_cache: &mut HashMap<i64, SearchAssetPreviewEntry>,
     lead: bool,
     selected: bool,
     tile_width: f32,
@@ -260,34 +273,96 @@ fn search_asset_preview(
     ctx: &egui::Context,
     asset_id: i64,
     path: &Path,
-    cache: &mut HashMap<i64, Option<SearchAssetPreview>>,
+    cache: &mut HashMap<i64, SearchAssetPreviewEntry>,
 ) -> Option<SearchAssetPreview> {
-    if let Some(cached) = cache.get(&asset_id) {
-        return cached.clone();
+    if let Some(entry) = cache.remove(&asset_id) {
+        match entry {
+            SearchAssetPreviewEntry::Ready(preview) => {
+                cache.insert(asset_id, SearchAssetPreviewEntry::Ready(preview.clone()));
+                return Some(preview);
+            }
+            SearchAssetPreviewEntry::Failed => {
+                cache.insert(asset_id, SearchAssetPreviewEntry::Failed);
+                return None;
+            }
+            SearchAssetPreviewEntry::Loading(result) => {
+                let decoded = result.lock().ok().and_then(|mut result| result.take());
+                match decoded {
+                    Some(Some(decoded)) => {
+                        let preview = upload_search_asset_preview(ctx, asset_id, decoded);
+                        cache.insert(asset_id, SearchAssetPreviewEntry::Ready(preview.clone()));
+                        return Some(preview);
+                    }
+                    Some(None) => {
+                        cache.insert(asset_id, SearchAssetPreviewEntry::Failed);
+                        return None;
+                    }
+                    None => {
+                        cache.insert(asset_id, SearchAssetPreviewEntry::Loading(result));
+                        ctx.request_repaint_after(Duration::from_millis(16));
+                        return None;
+                    }
+                }
+            }
+        }
     }
 
-    let preview = image::open(path).ok().map(|image| {
-        let image = image.thumbnail(
-            SEARCH_RESULT_LIBRARY_PREVIEW_MAX_SIDE,
-            SEARCH_RESULT_LIBRARY_PREVIEW_MAX_SIDE,
-        );
-        let rgba = image.to_rgba8();
-        let texture_size = egui::vec2(rgba.width() as f32, rgba.height() as f32);
-        let texture = ctx.load_texture(
-            format!("search-asset-preview-{asset_id}"),
-            egui::ColorImage::from_rgba_unmultiplied(
-                [rgba.width() as usize, rgba.height() as usize],
-                rgba.as_raw(),
-            ),
-            egui::TextureOptions::LINEAR,
-        );
-        SearchAssetPreview {
-            texture,
-            texture_size,
+    let started_at = Instant::now();
+    let result = Arc::new(Mutex::new(None));
+    let worker_result = result.clone();
+    let worker_ctx = ctx.clone();
+    let worker_path = path.to_path_buf();
+    std::thread::spawn(move || {
+        let decoded = decode_search_asset_preview(&worker_path);
+        if cfg!(debug_assertions) && std::env::var_os("REFERENCE_SEARCH_LATENCY_LOG").is_some() {
+            let elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+            let loaded = decoded.is_some();
+            eprintln!(
+                "[search-phase] search_asset_preview_decode asset_id={asset_id} loaded={loaded} ms={elapsed_ms:.2} path={}",
+                worker_path.display()
+            );
         }
+        if let Ok(mut result) = worker_result.lock() {
+            *result = Some(decoded);
+        }
+        worker_ctx.request_repaint();
     });
-    cache.insert(asset_id, preview.clone());
-    preview
+    cache.insert(asset_id, SearchAssetPreviewEntry::Loading(result));
+    ctx.request_repaint_after(Duration::from_millis(16));
+    None
+}
+
+fn decode_search_asset_preview(path: &PathBuf) -> Option<DecodedSearchAssetPreview> {
+    let image = image::open(path).ok()?.thumbnail(
+        SEARCH_RESULT_LIBRARY_PREVIEW_MAX_SIDE,
+        SEARCH_RESULT_LIBRARY_PREVIEW_MAX_SIDE,
+    );
+    let rgba = image.to_rgba8();
+    Some(DecodedSearchAssetPreview {
+        width: rgba.width(),
+        height: rgba.height(),
+        rgba: rgba.into_raw(),
+    })
+}
+
+fn upload_search_asset_preview(
+    ctx: &egui::Context,
+    asset_id: i64,
+    decoded: DecodedSearchAssetPreview,
+) -> SearchAssetPreview {
+    let texture_size = egui::vec2(decoded.width as f32, decoded.height as f32);
+    let texture = ctx.load_texture(
+        format!("search-asset-preview-{asset_id}"),
+        egui::ColorImage::from_rgba_unmultiplied(
+            [decoded.width as usize, decoded.height as usize],
+            &decoded.rgba,
+        ),
+        egui::TextureOptions::LINEAR,
+    );
+    SearchAssetPreview {
+        texture,
+        texture_size,
+    }
 }
 
 fn paint_texture_cover(

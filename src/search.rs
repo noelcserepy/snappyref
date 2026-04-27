@@ -332,6 +332,15 @@ impl SearchController {
                 let Some(cache_key) = self.prefetch_searches.remove(&request_id) else {
                     return;
                 };
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                if self.latency_log.enabled {
+                    eprintln!(
+                        "[search-latency] prefetch_completed scope={:?} pivot_asset_id={:?} request_id={request_id} results={}",
+                        cache_key.scope,
+                        cache_key.pivot_asset_id,
+                        results.len()
+                    );
+                }
                 let has_more_results = results.len() > cache_key.result_limit;
                 results.truncate(cache_key.result_limit);
                 self.result_cache.insert(
@@ -1002,7 +1011,6 @@ impl SearchController {
         };
         self.overlay.last_submitted_query.clear();
         self.active_search = None;
-        self.prefetch_searches.clear();
         self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
         if self.restore_cached_results() {
             return;
@@ -1155,6 +1163,15 @@ impl SearchController {
             return;
         }
         if let Some(cached) = self.result_cache.get(&cache_key).cloned() {
+            #[cfg(all(debug_assertions, feature = "semantic-search"))]
+            if self.latency_log.enabled {
+                eprintln!(
+                    "[search-latency] submit_query_cache_hit scope={:?} pivot_asset_id={:?} results={}",
+                    cache_key.scope,
+                    cache_key.pivot_asset_id,
+                    cached.results.len()
+                );
+            }
             self.active_search = None;
             self.overlay.last_submitted_query = query;
             self.overlay.results = cached.results;
@@ -1173,6 +1190,13 @@ impl SearchController {
                     (*prefetch_key == cache_key).then_some(*request_id)
                 })
         {
+            #[cfg(all(debug_assertions, feature = "semantic-search"))]
+            if self.latency_log.enabled {
+                eprintln!(
+                    "[search-latency] submit_query_adopt_prefetch scope={:?} pivot_asset_id={:?} request_id={request_id}",
+                    cache_key.scope, cache_key.pivot_asset_id
+                );
+            }
             self.prefetch_searches.remove(&request_id);
             self.active_search = Some(ActiveSearchRequest {
                 request_id,
@@ -1216,6 +1240,13 @@ impl SearchController {
 
         match enqueue_result {
             Ok(()) => {
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                if self.latency_log.enabled {
+                    eprintln!(
+                        "[search-latency] submit_query_enqueued scope={:?} pivot_asset_id={:?} request_id={request_id}",
+                        cache_key.scope, cache_key.pivot_asset_id
+                    );
+                }
                 self.active_search = Some(ActiveSearchRequest {
                     request_id,
                     cache_key,
@@ -1284,6 +1315,13 @@ impl SearchController {
             ),
         };
         if enqueue_result.is_ok() {
+            #[cfg(all(debug_assertions, feature = "semantic-search"))]
+            if self.latency_log.enabled {
+                eprintln!(
+                    "[search-latency] prefetch_enqueued scope={opposite_scope:?} pivot_asset_id={:?} request_id={request_id}",
+                    cache_key.pivot_asset_id
+                );
+            }
             self.prefetch_searches.insert(request_id, cache_key);
         }
     }
