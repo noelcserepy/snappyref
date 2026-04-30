@@ -1,7 +1,7 @@
 pub(crate) trait ActiveBoardLoadHost {
     fn clear_board_local_transients(&mut self);
     fn clear_canvas_for_active_board_load(&mut self);
-    fn load_active_board_user_session(&mut self);
+    fn load_active_board_viewport(&mut self);
     fn restore_active_board_import_placeholders(&mut self);
     fn enqueue_active_board_existing_items(&mut self);
 }
@@ -9,7 +9,7 @@ pub(crate) trait ActiveBoardLoadHost {
 pub(crate) fn load_active_board(host: &mut impl ActiveBoardLoadHost) {
     host.clear_board_local_transients();
     host.clear_canvas_for_active_board_load();
-    host.load_active_board_user_session();
+    host.load_active_board_viewport();
     host.restore_active_board_import_placeholders();
     host.enqueue_active_board_existing_items();
 }
@@ -32,8 +32,8 @@ mod tests {
             self.calls.push("clear_canvas");
         }
 
-        fn load_active_board_user_session(&mut self) {
-            self.calls.push("load_user_session");
+        fn load_active_board_viewport(&mut self) {
+            self.calls.push("load_viewport");
         }
 
         fn restore_active_board_import_placeholders(&mut self) {
@@ -56,7 +56,7 @@ mod tests {
             vec![
                 "clear_transients",
                 "clear_canvas",
-                "load_user_session",
+                "load_viewport",
                 "restore_placeholders",
                 "enqueue_existing"
             ]

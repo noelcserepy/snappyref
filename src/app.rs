@@ -1476,6 +1476,22 @@ impl ReferenceApp {
         }
     }
 
+    fn load_session_viewport(&mut self) {
+        let Some(library) = &self.library else {
+            return;
+        };
+
+        match library.load_session_viewport() {
+            Ok((active_board_id, viewport)) => {
+                self.active_board_id = active_board_id;
+                self.canvas.apply_viewport_state(&viewport);
+                self.document_persistence
+                    .record_saved_user_session(self.current_user_session());
+            }
+            Err(error) => self.status = error,
+        }
+    }
+
     fn startup_viewport_world_rect(&self) -> egui::Rect {
         let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, STARTUP_VIEWPORT_SIZE);
         egui::Rect::from_min_max(
@@ -4211,8 +4227,8 @@ impl crate::active_board_load::ActiveBoardLoadHost for ReferenceApp {
         self.canvas.clear_for_board_switch();
     }
 
-    fn load_active_board_user_session(&mut self) {
-        ReferenceApp::load_user_session(self);
+    fn load_active_board_viewport(&mut self) {
+        ReferenceApp::load_session_viewport(self);
     }
 
     fn restore_active_board_import_placeholders(&mut self) {
@@ -5992,6 +6008,31 @@ mod tests {
         library.set_active_board(second.id).unwrap();
         assert_eq!(app.active_board_id, second.id);
         assert_eq!(app.canvas.background(), crate::data::CanvasBackground::Dots);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn active_board_load_applies_viewport_without_reloading_global_settings() {
+        let root = temp_library_root("reference-active-load-settings-scope");
+        let library = Library::initialize(root.clone()).unwrap();
+        let second = library.create_board("Second").unwrap();
+        library.set_active_board(second.id).unwrap();
+        let mut stored_session = library.load_user_session().unwrap();
+        stored_session.settings.import_gap = 99.0;
+        stored_session.viewport.camera_pan_x = 75.0;
+        stored_session.viewport.canvas_background = crate::data::CanvasBackground::Dots;
+        library.save_user_session(&stored_session).unwrap();
+
+        let mut app = test_app(Some(library.clone()));
+        app.settings.import_gap = 24.0;
+
+        app.load_active_board();
+
+        assert_eq!(app.active_board_id, second.id);
+        assert_eq!(app.canvas.background(), crate::data::CanvasBackground::Dots);
+        assert_eq!(app.canvas.viewport_state().camera_pan_x, 75.0);
+        assert_eq!(app.settings.import_gap, 24.0);
 
         let _ = fs::remove_dir_all(root);
     }

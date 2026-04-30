@@ -1569,6 +1569,14 @@ impl Library {
         }
     }
 
+    pub fn load_session_viewport(&self) -> Result<(i64, ViewportState), String> {
+        let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        let viewport = board_viewport_state(&connection, active_board_id)
+            .map_err(|error| format!("failed to load active board viewport: {error}"))?;
+        Ok((active_board_id, viewport))
+    }
+
     pub fn save_user_session(&self, session: &UserSession) -> Result<(), String> {
         let connection = self.connection()?;
         let active_board_id = if board_is_non_archived(&connection, session.active_board_id)? {
