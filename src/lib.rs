@@ -1,4 +1,5 @@
 mod app;
+mod board_switch;
 mod canvas;
 mod data;
 #[cfg(debug_assertions)]

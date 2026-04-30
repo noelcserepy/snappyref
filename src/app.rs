@@ -1355,22 +1355,9 @@ impl ReferenceApp {
     }
 
     fn switch_to_board(&mut self, board_id: i64) {
-        if self.active_board_id == board_id {
-            return;
-        }
-
-        self.save_active_board_before_transition();
-
-        let Some(library) = &self.library else {
-            self.status = "Storage unavailable".to_owned();
-            return;
-        };
-        if let Err(error) = library.set_active_board(board_id) {
+        if let Err(error) = crate::board_switch::switch_to_board(self, board_id) {
             self.status = error;
-            return;
         }
-
-        self.activate_board_after_transition(board_id);
     }
 
     fn handle_board_action(&mut self, action: Option<SidebarBoardAction>) {
@@ -4496,6 +4483,43 @@ impl eframe::App for ReferenceApp {
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         crate::theme::BACKGROUND.to_normalized_gamma_f32()
+    }
+}
+
+impl crate::board_switch::BoardSwitchHost for ReferenceApp {
+    fn active_board_id(&self) -> i64 {
+        self.active_board_id
+    }
+
+    fn persist_active_board_before_switch(&mut self) {
+        self.save_active_board_before_transition();
+    }
+
+    fn set_active_board_in_library(&mut self, board_id: i64) -> Result<(), String> {
+        let Some(library) = &self.library else {
+            return Err("Storage unavailable".to_owned());
+        };
+        library.set_active_board(board_id)
+    }
+
+    fn clear_board_local_transients(&mut self) {
+        self.clear_active_board_transients();
+    }
+
+    fn clear_canvas_for_board_switch(&mut self) {
+        self.canvas.clear_for_board_switch();
+    }
+
+    fn load_active_board_session(&mut self) {
+        ReferenceApp::load_user_session(self);
+    }
+
+    fn restore_active_board_import_placeholders(&mut self) {
+        ReferenceApp::restore_active_board_import_placeholders(self);
+    }
+
+    fn enqueue_active_board_existing_items(&mut self) {
+        ReferenceApp::enqueue_existing_items(self);
     }
 }
 
