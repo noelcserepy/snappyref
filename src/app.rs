@@ -970,6 +970,7 @@ pub struct ReferenceApp {
     next_import_queue_id: u64,
     import_placeholders_by_board: std::collections::HashMap<i64, Vec<BoardImportPlaceholder>>,
     hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
+    last_saved_user_session: Option<crate::data::UserSession>,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -1041,6 +1042,7 @@ impl ReferenceApp {
                     next_import_queue_id: 1,
                     import_placeholders_by_board: std::collections::HashMap::new(),
                     hover_preview_dimensions: std::collections::HashMap::new(),
+                    last_saved_user_session: None,
                     #[cfg(debug_assertions)]
                     verification_mode: config.verification_mode,
                     #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -1056,6 +1058,12 @@ impl ReferenceApp {
                 app.search
                     .set_latency_logging_enabled(config.search_latency_log);
                 app.load_user_session();
+                if config.open_sidebar_on_start() {
+                    app.sidebar_open = true;
+                }
+                if config.open_sidebar_boards_on_start() {
+                    app.sidebar_tab = SidebarTab::Boards;
+                }
                 #[cfg(feature = "semantic-search")]
                 app.sync_semantic_search_service();
                 if !config.skip_existing_items_on_start() {
@@ -1175,7 +1183,6 @@ impl ReferenceApp {
                 if app.sidebar_hot_preview {
                     app.settings.auto_image_scaling = false;
                     app.settings.import_gap = 32.0;
-                    app.settings.canvas_image_mode = crate::data::CanvasImageMode::Original;
                     app.settings.canvas_image_max_side = crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE;
                     app.canvas
                         .set_background(crate::data::CanvasBackground::Grid);
@@ -1240,6 +1247,7 @@ impl ReferenceApp {
                 next_import_queue_id: 1,
                 import_placeholders_by_board: std::collections::HashMap::new(),
                 hover_preview_dimensions: std::collections::HashMap::new(),
+                last_saved_user_session: None,
                 #[cfg(debug_assertions)]
                 verification_mode: config.verification_mode,
                 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -1271,17 +1279,16 @@ impl ReferenceApp {
             Ok(mut records) => {
                 let viewport_world = self.startup_viewport_world_rect();
                 crate::jobs::sort_records_by_viewport_proximity(&mut records, viewport_world);
+                let (startup_image_settings, startup_image_tier) =
+                    startup_existing_image_load_settings(self.settings.canvas_image_max_side);
                 for record in records {
                     if let Err(error) =
                         import_worker.enqueue(crate::jobs::ImportRequest::LoadExisting {
                             target_board_id: self.active_board_id,
                             record,
                             max_texture_side: self.max_texture_side,
-                            canvas_image_settings: crate::jobs::CanvasImageSettings {
-                                mode: self.settings.canvas_image_mode,
-                                max_side: self.settings.canvas_image_max_side,
-                            },
-                            target_tier: crate::data::CanvasImageCacheTier::Working,
+                            canvas_image_settings: startup_image_settings,
+                            target_tier: startup_image_tier,
                             priority: crate::jobs::ExistingLoadPriority::Startup,
                             trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
                                 queued_at: Instant::now(),
@@ -1518,9 +1525,12 @@ impl ReferenceApp {
                 self.canvas.apply_viewport_state(&session.viewport);
                 self.active_board_id = session.active_board_id;
                 self.settings = session.settings;
+                self.sidebar_open = session.sidebar_open;
+                self.sidebar_tab = sidebar_tab_from_session(&session.sidebar_tab);
                 self.canvas
                     .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
                 self.canvas.set_layout_gap(self.settings.import_gap);
+                self.last_saved_user_session = Some(self.current_user_session());
             }
             Err(error) => self.status = error,
         }
@@ -1875,7 +1885,6 @@ impl ReferenceApp {
                     viewport_world,
                     max_texture_side: self.max_texture_side,
                     canvas_image_settings: crate::jobs::CanvasImageSettings {
-                        mode: self.settings.canvas_image_mode,
                         max_side: self.settings.canvas_image_max_side,
                     },
                     auto_scale: self.settings.auto_image_scaling,
@@ -1894,7 +1903,6 @@ impl ReferenceApp {
                     viewport_world,
                     max_texture_side: self.max_texture_side,
                     canvas_image_settings: crate::jobs::CanvasImageSettings {
-                        mode: self.settings.canvas_image_mode,
                         max_side: self.settings.canvas_image_max_side,
                     },
                     auto_scale: self.settings.auto_image_scaling,
@@ -2008,7 +2016,6 @@ impl ReferenceApp {
                 viewport_world,
                 max_texture_side: self.max_texture_side,
                 canvas_image_settings: crate::jobs::CanvasImageSettings {
-                    mode: self.settings.canvas_image_mode,
                     max_side: self.settings.canvas_image_max_side,
                 },
                 auto_scale: self.settings.auto_image_scaling,
@@ -2069,7 +2076,6 @@ impl ReferenceApp {
                 viewport_world,
                 max_texture_side: self.max_texture_side,
                 canvas_image_settings: crate::jobs::CanvasImageSettings {
-                    mode: self.settings.canvas_image_mode,
                     max_side: self.settings.canvas_image_max_side,
                 },
                 auto_scale: self.settings.auto_image_scaling,
@@ -2771,7 +2777,6 @@ impl ReferenceApp {
 
                     let _ = library.store_canvas_image_cache(
                         asset.id,
-                        self.settings.canvas_image_mode,
                         self.settings.canvas_image_max_side,
                         &cropped.canvas_rgba,
                         cropped.canvas_width,
@@ -3188,7 +3193,6 @@ impl ReferenceApp {
                 request,
                 max_texture_side: self.max_texture_side,
                 canvas_image_settings: crate::jobs::CanvasImageSettings {
-                    mode: self.settings.canvas_image_mode,
                     max_side: self.settings.canvas_image_max_side,
                 },
             }) {
@@ -3269,20 +3273,39 @@ impl ReferenceApp {
         {
             self.status = error;
         }
+        self.persist_user_session_if_changed();
     }
 
-    fn save_user_session(&mut self) {
-        let Some(library) = &self.library else {
-            return;
-        };
-
-        let session = crate::data::UserSession {
+    fn current_user_session(&self) -> crate::data::UserSession {
+        crate::data::UserSession {
             active_board_id: self.active_board_id,
             viewport: self.canvas.viewport_state(),
             settings: self.settings.clone(),
+            sidebar_open: self.sidebar_open,
+            sidebar_tab: sidebar_tab_session_value(self.sidebar_tab).to_owned(),
+        }
+    }
+
+    fn save_user_session(&mut self) {
+        let session = self.current_user_session();
+        self.save_user_session_value(session);
+    }
+
+    fn persist_user_session_if_changed(&mut self) {
+        let session = self.current_user_session();
+        if self.last_saved_user_session.as_ref() != Some(&session) {
+            self.save_user_session_value(session);
+        }
+    }
+
+    fn save_user_session_value(&mut self, session: crate::data::UserSession) {
+        let Some(library) = &self.library else {
+            return;
         };
         if let Err(error) = library.save_user_session(&session) {
             self.status = error;
+        } else {
+            self.last_saved_user_session = Some(session);
         }
     }
 
@@ -3698,7 +3721,6 @@ impl ReferenceApp {
                         viewport_world,
                         max_texture_side: self.max_texture_side,
                         canvas_image_settings: crate::jobs::CanvasImageSettings {
-                            mode: self.settings.canvas_image_mode,
                             max_side: self.settings.canvas_image_max_side,
                         },
                         auto_scale: self.settings.auto_image_scaling,
@@ -4142,6 +4164,34 @@ impl ReferenceApp {
     }
 }
 
+fn startup_existing_image_load_settings(
+    canvas_image_max_side: u32,
+) -> (
+    crate::jobs::CanvasImageSettings,
+    crate::data::CanvasImageCacheTier,
+) {
+    (
+        crate::jobs::CanvasImageSettings {
+            max_side: canvas_image_max_side,
+        },
+        crate::data::CanvasImageCacheTier::Overview,
+    )
+}
+
+fn sidebar_tab_session_value(tab: SidebarTab) -> &'static str {
+    match tab {
+        SidebarTab::Boards => "boards",
+        SidebarTab::Options => "settings",
+    }
+}
+
+fn sidebar_tab_from_session(value: &str) -> SidebarTab {
+    match value {
+        "boards" => SidebarTab::Boards,
+        _ => SidebarTab::Options,
+    }
+}
+
 fn asset_mime_type_supports_raster_derivatives(mime_type: &str) -> bool {
     !mime_type
         .split(';')
@@ -4357,7 +4407,7 @@ impl eframe::App for ReferenceApp {
             visible_canvas_rect,
             &mut self.canvas,
             self.wgpu_render_state.as_ref(),
-            self.settings.canvas_image_mode == crate::data::CanvasImageMode::Downscale,
+            true,
             suppress_canvas_input,
             false,
         );
@@ -4702,13 +4752,20 @@ mod tests {
     }
 
     #[test]
+    fn startup_existing_image_load_uses_overview_cache_tier() {
+        let (settings, tier) = super::startup_existing_image_load_settings(4096);
+
+        assert_eq!(settings.max_side, 4096);
+        assert_eq!(tier, crate::data::CanvasImageCacheTier::Overview);
+    }
+
+    #[test]
     fn save_user_session_round_trips_import_gap() {
         let root = temp_library_root("reference-app-gap");
         let library = Library::initialize(root.clone()).unwrap();
         let mut app = test_app(Some(library.clone()));
         app.settings.auto_image_scaling = false;
         app.settings.import_gap = 37.0;
-        app.settings.canvas_image_mode = crate::data::CanvasImageMode::Original;
         app.settings.canvas_image_max_side = 4096;
         app.canvas
             .set_background(crate::data::CanvasBackground::Grid);
@@ -4718,14 +4775,55 @@ mod tests {
         let session = library.load_user_session().unwrap();
         assert!(!session.settings.auto_image_scaling);
         assert_eq!(session.settings.import_gap, 37.0);
-        assert_eq!(
-            session.settings.canvas_image_mode,
-            crate::data::CanvasImageMode::Original
-        );
         assert_eq!(session.settings.canvas_image_max_side, 4096);
         assert_eq!(
             session.viewport.canvas_background,
             crate::data::CanvasBackground::Grid
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_user_session_round_trips_sidebar_state() {
+        let root = temp_library_root("reference-app-sidebar-session");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.sidebar_open = true;
+        app.sidebar_tab = SidebarTab::Boards;
+
+        app.save_user_session();
+
+        let mut reopened = test_app(Some(library));
+        reopened.load_user_session();
+        assert!(reopened.sidebar_open);
+        assert_eq!(reopened.sidebar_tab, SidebarTab::Boards);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persist_canvas_changes_saves_viewport_changes() {
+        let root = temp_library_root("reference-app-viewport-session");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.canvas
+            .apply_viewport_state(&crate::data::ViewportState {
+                camera_pan_x: 10.0,
+                camera_pan_y: 20.0,
+                camera_zoom: 1.75,
+                canvas_background: crate::data::CanvasBackground::Dots,
+            });
+
+        app.persist_canvas_changes();
+
+        let session = library.load_user_session().unwrap();
+        assert_eq!(session.viewport.camera_pan_x, 10.0);
+        assert_eq!(session.viewport.camera_pan_y, 20.0);
+        assert_eq!(session.viewport.camera_zoom, 1.75);
+        assert_eq!(
+            session.viewport.canvas_background,
+            crate::data::CanvasBackground::Dots
         );
 
         let _ = fs::remove_dir_all(root);
@@ -6330,6 +6428,100 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn board_sidebar_name_click_switches_board_immediately() {
+        let root = temp_library_root("reference-sidebar-name-click-switch");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        let second = library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = first.id;
+        app.sidebar_open = true;
+        app.sidebar_tab = SidebarTab::Boards;
+        #[expect(deprecated)]
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1200.0, 800.0))
+            .build_state(
+                |ctx, app: &mut ReferenceApp| {
+                    render_sidebar_for_test(ctx, app);
+                },
+                app,
+            );
+
+        click_test_pos(&harness, egui::pos2(64.0, 160.0));
+        harness.run();
+
+        assert_eq!(harness.state().active_board_id, second.id);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rapid_sidebar_board_name_clicks_keep_last_requested_board_active() {
+        let root = temp_library_root("reference-rapid-sidebar-board-clicks");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        let second = library.create_board("Second").unwrap();
+        let _third = library.create_board("Third").unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = first.id;
+        app.sidebar_open = true;
+        app.sidebar_tab = SidebarTab::Boards;
+        #[expect(deprecated)]
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1200.0, 800.0))
+            .build_state(
+                |ctx, app: &mut ReferenceApp| {
+                    render_sidebar_for_test(ctx, app);
+                },
+                app,
+            );
+
+        for pos in [
+            egui::pos2(64.0, 160.0),
+            egui::pos2(64.0, 212.0),
+            egui::pos2(64.0, 108.0),
+            egui::pos2(64.0, 160.0),
+        ] {
+            click_test_pos(&harness, pos);
+            harness.run();
+        }
+
+        assert_eq!(harness.state().active_board_id, second.id);
+        assert_eq!(
+            library.load_user_session().unwrap().active_board_id,
+            second.id
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rapid_board_switches_ignore_stale_import_completions_and_last_switch_wins() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-rapid-switch-stale-imports");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        let second = library.create_board("Second").unwrap();
+        let third = library.create_board("Third").unwrap();
+        let mut app = test_app(Some(library));
+        app.active_board_id = first.id;
+
+        app.switch_to_board(second.id);
+        app.integrate_loaded_import(&ctx, test_loaded_item(41, first.id));
+        app.switch_to_board(third.id);
+        app.integrate_loaded_import(&ctx, test_loaded_item(42, second.id));
+        app.switch_to_board(first.id);
+        app.integrate_loaded_import(&ctx, test_loaded_item(43, third.id));
+
+        assert_eq!(app.active_board_id, first.id);
+        assert!(app.canvas.record_for_item_id(41).is_none());
+        assert!(app.canvas.record_for_item_id(42).is_none());
+        assert!(app.canvas.record_for_item_id(43).is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[cfg(feature = "semantic-search")]
     #[test]
     fn switching_boards_clears_selection_search_and_transient_undo() {
@@ -6790,6 +6982,7 @@ mod tests {
             next_import_queue_id: 1,
             import_placeholders_by_board: std::collections::HashMap::new(),
             hover_preview_dimensions: std::collections::HashMap::new(),
+            last_saved_user_session: None,
             #[cfg(debug_assertions)]
             verification_mode: None,
             #[cfg(all(debug_assertions, feature = "semantic-search"))]

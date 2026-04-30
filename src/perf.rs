@@ -123,16 +123,14 @@ pub fn print_startup_trace() -> Result<(), String> {
     let settings = library
         .load_user_session()
         .map(|session| crate::jobs::CanvasImageSettings {
-            mode: session.settings.canvas_image_mode,
             max_side: session.settings.canvas_image_max_side,
         })
         .unwrap_or_default();
 
     let entries = crate::jobs::startup_trace(&library, viewport_world, settings)?;
     println!(
-        "startup_trace items={} mode={} max_side={}",
+        "startup_trace items={} max_side={} tier=overview",
         entries.len(),
-        settings.mode.as_str(),
         settings.max_side
     );
     for entry in &entries {

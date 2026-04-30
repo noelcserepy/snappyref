@@ -397,8 +397,9 @@ fn paint_board_row(
     );
     let title_hit_id = ui.make_persistent_id(("board-name-hit", board_id));
     let title_response = ui.interact(name_rect, title_hit_id, egui::Sense::click());
+    let title_double_clicked = title_response.double_clicked();
     let mut submitted_name = None;
-    if title_response.double_clicked() {
+    if title_double_clicked {
         ui.memory_mut(|memory| memory.request_focus(name_edit_id));
         ui.data_mut(|data| data.insert_persisted(name_edit_id, name.to_owned()));
     }
@@ -406,7 +407,7 @@ fn paint_board_row(
         let mut name_edit = ui
             .data_mut(|data| data.get_persisted::<String>(name_edit_id))
             .unwrap_or_else(|| name.to_owned());
-        let name_response = ui.put(
+        let name_response = ui.place(
             name_rect,
             egui::TextEdit::singleline(&mut name_edit)
                 .id(name_edit_id)
@@ -467,7 +468,7 @@ fn paint_board_row(
         Some(BoardRowAction::Delete)
     } else if let Some(name_edit) = submitted_name {
         Some(BoardRowAction::Rename(name_edit))
-    } else if response.clicked() && !title_response.clicked() {
+    } else if !title_double_clicked && (response.clicked() || title_response.clicked()) {
         Some(BoardRowAction::Switch)
     } else {
         None
@@ -611,28 +612,17 @@ fn paint_settings_section(
     paint_setting_divider(ui);
     changed |= paint_setting_row(
         ui,
-        "Canvas image resolution",
-        "Keeps originals for crop/edit.",
-        |ui| paint_canvas_image_mode_control(ui, &mut settings.canvas_image_mode),
-    );
-    paint_setting_divider(ui);
-    let downscale_enabled = settings.canvas_image_mode == crate::data::CanvasImageMode::Downscale;
-    changed |= paint_setting_row(
-        ui,
         "Default image area",
-        "Average target side for new imports.",
+        "Cached canvas image max side.",
         |ui| {
-            ui.add_enabled_ui(downscale_enabled, |ui| {
-                ui.add(
-                    egui::DragValue::new(&mut settings.canvas_image_max_side)
-                        .speed(64.0)
-                        .range(256..=8192)
-                        .fixed_decimals(0)
-                        .suffix(" px"),
-                )
-                .changed()
-            })
-            .inner
+            ui.add(
+                egui::DragValue::new(&mut settings.canvas_image_max_side)
+                    .speed(64.0)
+                    .range(256..=8192)
+                    .fixed_decimals(0)
+                    .suffix(" px"),
+            )
+            .changed()
         },
     );
     paint_setting_divider(ui);
@@ -728,35 +718,6 @@ fn paint_setting_divider(ui: &mut egui::Ui) {
     let to = egui::pos2(rect.right() + pad, rect.center().y);
     ui.painter()
         .line_segment([from, to], crate::theme::stroke_subtle());
-}
-
-fn paint_canvas_image_mode_control(
-    ui: &mut egui::Ui,
-    canvas_image_mode: &mut crate::data::CanvasImageMode,
-) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
-        let original_clicked = paint_inline_choice(
-            ui,
-            "Original",
-            *canvas_image_mode == crate::data::CanvasImageMode::Original,
-        );
-        if original_clicked {
-            *canvas_image_mode = crate::data::CanvasImageMode::Original;
-            changed = true;
-        }
-        let downscale_clicked = paint_inline_choice(
-            ui,
-            "Downscale",
-            *canvas_image_mode == crate::data::CanvasImageMode::Downscale,
-        );
-        if downscale_clicked {
-            *canvas_image_mode = crate::data::CanvasImageMode::Downscale;
-            changed = true;
-        }
-    });
-    changed
 }
 
 fn paint_background_mode_control(
@@ -1066,7 +1027,8 @@ fn shortcut_label_uses_small_symbol_glyphs(keys: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_shortcut_label, shortcut_label_uses_small_symbol_glyphs};
+    use super::{display_shortcut_label, paint_board_row, shortcut_label_uses_small_symbol_glyphs};
+    use eframe::egui;
 
     #[test]
     fn display_shortcut_label_spaces_compact_modifier_chords() {
@@ -1082,5 +1044,32 @@ mod tests {
         assert!(shortcut_label_uses_small_symbol_glyphs("⇧ ⌘ L"));
         assert!(shortcut_label_uses_small_symbol_glyphs("↵"));
         assert!(!shortcut_label_uses_small_symbol_glyphs("⌘ B"));
+    }
+
+    #[test]
+    fn board_row_rename_mode_consumes_full_row_height() {
+        let ctx = egui::Context::default();
+        let mut cursor_after_row = 0.0;
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(268.0, 200.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                ui.set_width(240.0);
+                ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                let name_edit_id = ui.make_persistent_id(("board-name-edit", 1_i64));
+                ui.memory_mut(|memory| memory.request_focus(name_edit_id));
+
+                paint_board_row(ui, 1, "My Board", "96 images", true, Some("⌘1"), false);
+                cursor_after_row = ui.cursor().min.y;
+            },
+        );
+
+        assert_eq!(cursor_after_row, 48.0);
     }
 }

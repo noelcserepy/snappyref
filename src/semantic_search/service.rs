@@ -904,7 +904,6 @@ mod tests {
         let unplaced_preview_path = library
             .store_canvas_image_cache(
                 unplaced.asset.id,
-                crate::data::CanvasImageMode::Downscale,
                 crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
                 &[0, 255, 0, 255],
                 1,

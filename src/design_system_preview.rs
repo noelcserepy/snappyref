@@ -1359,7 +1359,7 @@ fn spacing_sample_card(
                     .color(crate::theme::TEXT),
             );
             ui.horizontal(|ui| {
-                spacing_pill(ui, "Original");
+                spacing_pill(ui, "Cached");
                 spacing_pill(ui, "Grid");
                 spacing_pill(ui, "24px");
             });
@@ -1876,9 +1876,9 @@ fn current_radio_choice(ui: &mut egui::Ui) {
     row_label(ui, "Radio choice");
     ui.horizontal(|ui| {
         radio_dot(ui, true);
-        ui.label(egui::RichText::new("Original").color(crate::theme::TEXT));
+        ui.label(egui::RichText::new("Grid").color(crate::theme::TEXT));
         radio_dot(ui, false);
-        ui.label(egui::RichText::new("Downscale").color(crate::theme::TEXT));
+        ui.label(egui::RichText::new("Dots").color(crate::theme::TEXT));
     });
 }
 
@@ -1947,8 +1947,8 @@ fn unified_segmented(ui: &mut egui::Ui) {
 fn unified_radio_choice(ui: &mut egui::Ui) {
     row_label(ui, "Radio choice");
     ui.horizontal(|ui| {
-        unified_choice(ui, "Original", true);
-        unified_choice(ui, "Downscale", false);
+        unified_choice(ui, "Grid", true);
+        unified_choice(ui, "Dots", false);
     });
 }
 
@@ -2009,8 +2009,8 @@ fn quiet_segmented(ui: &mut egui::Ui) {
 fn quiet_radio_choice(ui: &mut egui::Ui) {
     row_label(ui, "Radio choice");
     ui.horizontal(|ui| {
-        quiet_text_control(ui, "Original", true);
-        quiet_text_control(ui, "Downscale", false);
+        quiet_text_control(ui, "Grid", true);
+        quiet_text_control(ui, "Dots", false);
     });
 }
 

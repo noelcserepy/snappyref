@@ -12,7 +12,7 @@ use rusqlite::{Connection, Transaction, params, params_from_iter};
 
 use crate::data::{
     Board, BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
-    CanvasAnnotationKind, CanvasBackground, CanvasImageCacheTier, CanvasImageMode, CanvasStackItem,
+    CanvasAnnotationKind, CanvasBackground, CanvasImageCacheTier, CanvasStackItem,
     CanvasStrokeWidth, CanvasTextSize, ImageAsset, UserSession, ViewportState, WorkspaceSettings,
 };
 
@@ -191,19 +191,15 @@ impl Library {
     fn canvas_image_cache_destination_for_tier(
         &self,
         asset_id: i64,
-        mode: CanvasImageMode,
         max_side: u32,
         tier: CanvasImageCacheTier,
         encoding: CanvasImageCacheEncoding,
-    ) -> Option<PathBuf> {
-        match mode {
-            CanvasImageMode::Downscale => Some(self.thumbs_dir.join(format!(
-                "asset-{asset_id}-canvas-v3-downscale-{}-{max_side}.{}",
-                tier.as_str(),
-                encoding.extension()
-            ))),
-            CanvasImageMode::Original => None,
-        }
+    ) -> PathBuf {
+        self.thumbs_dir.join(format!(
+            "asset-{asset_id}-canvas-v3-downscale-{}-{max_side}.{}",
+            tier.as_str(),
+            encoding.extension()
+        ))
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -212,41 +208,25 @@ impl Library {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn canvas_image_cache_path(
-        &self,
-        asset_id: i64,
-        mode: CanvasImageMode,
-        max_side: u32,
-    ) -> Option<PathBuf> {
-        self.canvas_image_cache_path_for_tier(
-            asset_id,
-            mode,
-            max_side,
-            CanvasImageCacheTier::Working,
-        )
+    pub fn canvas_image_cache_path(&self, asset_id: i64, max_side: u32) -> Option<PathBuf> {
+        self.canvas_image_cache_path_for_tier(asset_id, max_side, CanvasImageCacheTier::Working)
     }
 
     pub fn canvas_image_cache_path_for_tier(
         &self,
         asset_id: i64,
-        mode: CanvasImageMode,
         max_side: u32,
         tier: CanvasImageCacheTier,
     ) -> Option<PathBuf> {
-        match mode {
-            CanvasImageMode::Downscale => [
-                CanvasImageCacheEncoding::Jpeg,
-                CanvasImageCacheEncoding::WebpLossless,
-            ]
-            .into_iter()
-            .filter_map(|encoding| {
-                self.canvas_image_cache_destination_for_tier(
-                    asset_id, mode, max_side, tier, encoding,
-                )
-            })
-            .find(|path| path.is_file()),
-            CanvasImageMode::Original => None,
-        }
+        [
+            CanvasImageCacheEncoding::Jpeg,
+            CanvasImageCacheEncoding::WebpLossless,
+        ]
+        .into_iter()
+        .map(|encoding| {
+            self.canvas_image_cache_destination_for_tier(asset_id, max_side, tier, encoding)
+        })
+        .find(|path| path.is_file())
     }
 
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
@@ -259,14 +239,12 @@ impl Library {
             .filter_map(|asset_id| {
                 self.canvas_image_cache_path_for_tier(
                     *asset_id,
-                    CanvasImageMode::Downscale,
                     crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
                     CanvasImageCacheTier::Overview,
                 )
                 .or_else(|| {
                     self.canvas_image_cache_path_for_tier(
                         *asset_id,
-                        CanvasImageMode::Downscale,
                         crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
                         CanvasImageCacheTier::Working,
                     )
@@ -279,23 +257,18 @@ impl Library {
     pub fn legacy_canvas_image_cache_path_for_tier(
         &self,
         asset_id: i64,
-        mode: CanvasImageMode,
         max_side: u32,
         tier: CanvasImageCacheTier,
-    ) -> Option<PathBuf> {
-        match mode {
-            CanvasImageMode::Downscale => Some(self.thumbs_dir.join(format!(
-                "asset-{asset_id}-canvas-v2-downscale-{}-{max_side}.png",
-                tier.as_str()
-            ))),
-            CanvasImageMode::Original => None,
-        }
+    ) -> PathBuf {
+        self.thumbs_dir.join(format!(
+            "asset-{asset_id}-canvas-v2-downscale-{}-{max_side}.png",
+            tier.as_str()
+        ))
     }
 
     pub fn store_canvas_image_cache(
         &self,
         asset_id: i64,
-        mode: CanvasImageMode,
         max_side: u32,
         rgba: &[u8],
         width: u32,
@@ -303,7 +276,6 @@ impl Library {
     ) -> Result<Option<PathBuf>, String> {
         self.store_canvas_image_cache_for_tier(
             asset_id,
-            mode,
             max_side,
             CanvasImageCacheTier::Working,
             rgba,
@@ -315,7 +287,6 @@ impl Library {
     pub fn store_canvas_image_cache_for_tier(
         &self,
         asset_id: i64,
-        mode: CanvasImageMode,
         max_side: u32,
         tier: CanvasImageCacheTier,
         rgba: &[u8],
@@ -324,10 +295,7 @@ impl Library {
     ) -> Result<Option<PathBuf>, String> {
         let encoding = choose_canvas_image_cache_encoding(rgba);
         let destination =
-            self.canvas_image_cache_destination_for_tier(asset_id, mode, max_side, tier, encoding);
-        let Some(destination) = destination else {
-            return Ok(None);
-        };
+            self.canvas_image_cache_destination_for_tier(asset_id, max_side, tier, encoding);
         let file = File::create(&destination)
             .map_err(|error| format!("failed to create asset preview: {error}"))?;
         let writer = BufWriter::new(file);
@@ -1552,41 +1520,40 @@ impl Library {
                     auto_image_scaling,
                     import_gap,
                     semantic_search_enabled,
-                    canvas_image_mode,
                     canvas_image_max_side,
                     rotation_snap_degrees,
-                    default_textbox_background
+                    default_textbox_background,
+                    sidebar_open,
+                    sidebar_tab
                  FROM user_session
                  WHERE id = 1",
             )
             .map_err(|error| format!("failed to prepare user-session query: {error}"))?;
 
         let session = statement.query_row([], |row| {
-            let canvas_image_mode = row
-                .get::<_, String>(3)
-                .ok()
-                .and_then(|value| CanvasImageMode::from_str(&value))
-                .unwrap_or_default();
             Ok(UserSession {
                 active_board_id,
                 viewport: viewport.clone(),
                 settings: WorkspaceSettings {
                     auto_image_scaling: row.get::<_, i64>(0)? != 0,
                     import_gap: row.get(1)?,
-                    canvas_image_mode,
                     canvas_image_max_side: row
-                        .get::<_, i64>(4)
+                        .get::<_, i64>(3)
                         .ok()
                         .map(|value| value.max(1) as u32)
                         .unwrap_or(crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE),
                     semantic_search_enabled: row.get::<_, i64>(2).unwrap_or(0) != 0,
                     rotation_snap_degrees: row
-                        .get::<_, f32>(5)
+                        .get::<_, f32>(4)
                         .ok()
                         .map(|value| value.max(0.0))
                         .unwrap_or(crate::data::DEFAULT_ROTATION_SNAP_DEGREES),
-                    default_textbox_background: row.get::<_, i64>(6).unwrap_or(0) != 0,
+                    default_textbox_background: row.get::<_, i64>(5).unwrap_or(0) != 0,
                 },
+                sidebar_open: row.get::<_, i64>(6).unwrap_or(0) != 0,
+                sidebar_tab: row
+                    .get::<_, String>(7)
+                    .unwrap_or_else(|_| "settings".to_owned()),
             })
         });
 
@@ -1624,9 +1591,11 @@ impl Library {
                     canvas_image_max_side,
                     rotation_snap_degrees,
                     default_textbox_background,
+                    sidebar_open,
+                    sidebar_tab,
                     active_board_id
                  )
-                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                  ON CONFLICT(id) DO UPDATE SET
                     camera_pan_x = excluded.camera_pan_x,
                     camera_pan_y = excluded.camera_pan_y,
@@ -1639,6 +1608,8 @@ impl Library {
                     canvas_image_max_side = excluded.canvas_image_max_side,
                     rotation_snap_degrees = excluded.rotation_snap_degrees,
                     default_textbox_background = excluded.default_textbox_background,
+                    sidebar_open = excluded.sidebar_open,
+                    sidebar_tab = excluded.sidebar_tab,
                     active_board_id = excluded.active_board_id",
                 params![
                     session.viewport.camera_pan_x,
@@ -1656,7 +1627,7 @@ impl Library {
                     } else {
                         0_i64
                     },
-                    session.settings.canvas_image_mode.as_str(),
+                    "downscale",
                     i64::from(session.settings.canvas_image_max_side),
                     session.settings.rotation_snap_degrees,
                     if session.settings.default_textbox_background {
@@ -1664,6 +1635,8 @@ impl Library {
                     } else {
                         0_i64
                     },
+                    if session.sidebar_open { 1_i64 } else { 0_i64 },
+                    session.sidebar_tab.as_str(),
                     active_board_id,
                 ],
             )
@@ -2071,6 +2044,8 @@ impl Library {
                     canvas_image_max_side INTEGER NOT NULL DEFAULT 2000,
                     rotation_snap_degrees REAL NOT NULL DEFAULT 15.0,
                     default_textbox_background INTEGER NOT NULL DEFAULT 0,
+                    sidebar_open INTEGER NOT NULL DEFAULT 0,
+                    sidebar_tab TEXT NOT NULL DEFAULT 'settings',
                     active_board_id INTEGER NOT NULL DEFAULT 1
                 );
 
@@ -2128,6 +2103,8 @@ impl Library {
         ensure_user_session_canvas_image_max_side_column(&connection)?;
         ensure_user_session_rotation_snap_degrees_column(&connection)?;
         ensure_user_session_default_textbox_background_column(&connection)?;
+        ensure_user_session_sidebar_open_column(&connection)?;
+        ensure_user_session_sidebar_tab_column(&connection)?;
         ensure_user_session_active_board_id_column(&connection)?;
         ensure_canvas_annotations_text_size_column(&connection)?;
         ensure_canvas_annotations_stroke_width_column(&connection)?;
@@ -2476,6 +2453,36 @@ fn ensure_user_session_active_board_id_column(connection: &Connection) -> Result
         .map_err(|error| {
             format!("failed to add active_board_id column to user_session: {error}")
         })?;
+
+    Ok(())
+}
+
+fn ensure_user_session_sidebar_open_column(connection: &Connection) -> Result<(), String> {
+    if table_has_column(connection, "user_session", "sidebar_open")? {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE user_session ADD COLUMN sidebar_open INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|error| format!("failed to add sidebar_open column to user_session: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_user_session_sidebar_tab_column(connection: &Connection) -> Result<(), String> {
+    if table_has_column(connection, "user_session", "sidebar_tab")? {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE user_session ADD COLUMN sidebar_tab TEXT NOT NULL DEFAULT 'settings'",
+            [],
+        )
+        .map_err(|error| format!("failed to add sidebar_tab column to user_session: {error}"))?;
 
     Ok(())
 }
@@ -3062,9 +3069,7 @@ fn encode_f32_slice(values: &[f32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::Library;
-    use crate::data::{
-        CanvasAnnotationKind, CanvasBackground, CanvasImageMode, CanvasStackItem, CanvasTextSize,
-    };
+    use crate::data::{CanvasAnnotationKind, CanvasBackground, CanvasStackItem, CanvasTextSize};
     use eframe::egui;
     use rusqlite::Connection;
     use std::fs;
@@ -3629,7 +3634,6 @@ mod tests {
         session.settings.auto_image_scaling = false;
         session.settings.import_gap = 48.0;
         session.settings.semantic_search_enabled = false;
-        session.settings.canvas_image_mode = CanvasImageMode::Original;
         session.settings.canvas_image_max_side = 4096;
         session.settings.rotation_snap_degrees = 45.0;
         session.settings.default_textbox_background = true;
@@ -3644,10 +3648,6 @@ mod tests {
         assert!(!reopened.settings.auto_image_scaling);
         assert_eq!(reopened.settings.import_gap, 48.0);
         assert!(!reopened.settings.semantic_search_enabled);
-        assert_eq!(
-            reopened.settings.canvas_image_mode,
-            CanvasImageMode::Original
-        );
         assert_eq!(reopened.settings.canvas_image_max_side, 4096);
         assert_eq!(reopened.settings.rotation_snap_degrees, 45.0);
         assert!(reopened.settings.default_textbox_background);
@@ -3722,10 +3722,6 @@ mod tests {
         assert!(session.settings.auto_image_scaling);
         assert_eq!(session.settings.import_gap, crate::data::DEFAULT_IMPORT_GAP);
         assert_eq!(
-            session.settings.canvas_image_mode,
-            CanvasImageMode::Downscale
-        );
-        assert_eq!(
             session.settings.canvas_image_max_side,
             crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE
         );
@@ -3748,14 +3744,7 @@ mod tests {
 
         let library = Library::initialize(root.clone()).unwrap();
         let path = library
-            .store_canvas_image_cache(
-                42,
-                CanvasImageMode::Downscale,
-                2000,
-                &[255, 0, 0, 255],
-                1,
-                1,
-            )
+            .store_canvas_image_cache(42, 2000, &[255, 0, 0, 255], 1, 1)
             .unwrap();
         let path = path.unwrap();
 
@@ -3807,7 +3796,7 @@ mod tests {
 
         let library = Library::initialize(root.clone()).unwrap();
         let preview_path = library
-            .store_canvas_image_cache(7, CanvasImageMode::Downscale, 2000, &[255, 0, 0, 255], 1, 1)
+            .store_canvas_image_cache(7, 2000, &[255, 0, 0, 255], 1, 1)
             .unwrap()
             .unwrap();
 
@@ -3832,11 +3821,11 @@ mod tests {
 
         let library = Library::initialize(root.clone()).unwrap();
         let first = library
-            .store_canvas_image_cache(7, CanvasImageMode::Downscale, 2000, &[255, 0, 0, 255], 1, 1)
+            .store_canvas_image_cache(7, 2000, &[255, 0, 0, 255], 1, 1)
             .unwrap()
             .unwrap();
         let second = library
-            .store_canvas_image_cache(7, CanvasImageMode::Downscale, 4000, &[255, 0, 0, 255], 1, 1)
+            .store_canvas_image_cache(7, 4000, &[255, 0, 0, 255], 1, 1)
             .unwrap()
             .unwrap();
 

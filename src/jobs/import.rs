@@ -104,14 +104,12 @@ pub struct FileImportPerfReport {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CanvasImageSettings {
-    pub mode: crate::data::CanvasImageMode,
     pub max_side: u32,
 }
 
 impl Default for CanvasImageSettings {
     fn default() -> Self {
         Self {
-            mode: crate::data::CanvasImageMode::default(),
             max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
         }
     }
@@ -973,7 +971,7 @@ pub fn startup_trace(
             record.clone(),
             usize::MAX,
             canvas_image_settings,
-            CanvasImageCacheTier::Working,
+            CanvasImageCacheTier::Overview,
             Some(trace),
             None,
         ) {
@@ -1107,7 +1105,7 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
         .map(|trace| trace.timings)
         .ok_or_else(|| "missing import trace".to_owned())?;
     let canvas_cache_path =
-        library.canvas_image_cache_path(loaded.record.asset.id, settings.mode, settings.max_side);
+        library.canvas_image_cache_path(loaded.record.asset.id, settings.max_side);
     let canvas_cache_file_size = canvas_cache_path
         .as_ref()
         .and_then(|path| std::fs::metadata(path).ok())
@@ -1216,7 +1214,6 @@ fn import_path_sync_traced(
     )?;
     let _ = library.store_canvas_image_cache(
         record.asset.id,
-        canvas_image_settings.mode,
         canvas_image_settings.max_side,
         &canvas_source.rgba,
         canvas_source.width,
@@ -1569,7 +1566,6 @@ fn import_url_sync_traced(
     )?;
     let _ = library.store_canvas_image_cache(
         record.asset.id,
-        canvas_image_settings.mode,
         canvas_image_settings.max_side,
         &canvas_source.rgba,
         canvas_source.width,
@@ -1756,7 +1752,6 @@ fn import_clipboard_sync_traced(
     let canvas_source = canvas_source_image_from_rgba(width, height, &rgba, canvas_image_settings)?;
     let _ = library.store_canvas_image_cache(
         record.asset.id,
-        canvas_image_settings.mode,
         canvas_image_settings.max_side,
         &canvas_source.rgba,
         canvas_source.width,
@@ -2408,7 +2403,6 @@ fn tier_settings(
     tier: CanvasImageCacheTier,
 ) -> CanvasImageSettings {
     CanvasImageSettings {
-        mode: canvas_image_settings.mode,
         max_side: tier_max_side(canvas_image_settings, tier),
     }
 }
@@ -2449,17 +2443,17 @@ fn load_existing_preview(
     }
 
     let tier_settings = tier_settings(canvas_image_settings, target_tier);
-    let (canvas_source, animated_preview, diagnostics) = match canvas_image_settings.mode {
-        crate::data::CanvasImageMode::Original => {
+    let (canvas_source, animated_preview, diagnostics) =
+        if original_mime_type_supports_animation(&record.asset.mime_type) {
             let decoded = decode_image_file(&record.asset.original_path)?;
-            let source_path = record.asset.original_path.clone();
             let source_file_size = decoded.file_size;
             (
-                PreviewImage {
-                    rgba: decoded.rgba,
-                    width: decoded.width,
-                    height: decoded.height,
-                },
+                preview_image_from_rgba(
+                    decoded.width,
+                    decoded.height,
+                    &decoded.rgba,
+                    tier_settings.max_side.min(max_texture_side as u32) as usize,
+                )?,
                 decoded
                     .animation
                     .as_ref()
@@ -2468,97 +2462,57 @@ fn load_existing_preview(
                             decoded.width,
                             decoded.height,
                             &animation.frames,
-                            max_texture_side,
+                            tier_settings.max_side.min(max_texture_side as u32) as usize,
                         )
                     })
                     .transpose()?,
                 ExistingLoadDiagnostics {
                     source_kind: ExistingLoadSourceKind::Original,
-                    source_path,
+                    source_path: record.asset.original_path.clone(),
                     source_file_size,
                     source_width: decoded.source_width,
                     source_height: decoded.source_height,
                     backfilled_cache: false,
                 },
             )
-        }
-        crate::data::CanvasImageMode::Downscale => {
-            if original_mime_type_supports_animation(&record.asset.mime_type) {
-                let decoded = decode_image_file(&record.asset.original_path)?;
-                let source_file_size = decoded.file_size;
-                (
-                    preview_image_from_rgba(
-                        decoded.width,
-                        decoded.height,
-                        &decoded.rgba,
-                        tier_settings.max_side.min(max_texture_side as u32) as usize,
-                    )?,
-                    decoded
-                        .animation
-                        .as_ref()
-                        .map(|animation| {
-                            preview_animation_from_frames(
-                                decoded.width,
-                                decoded.height,
-                                &animation.frames,
-                                tier_settings.max_side.min(max_texture_side as u32) as usize,
-                            )
-                        })
-                        .transpose()?,
-                    ExistingLoadDiagnostics {
-                        source_kind: ExistingLoadSourceKind::Original,
-                        source_path: record.asset.original_path.clone(),
-                        source_file_size,
-                        source_width: decoded.source_width,
-                        source_height: decoded.source_height,
-                        backfilled_cache: false,
-                    },
-                )
-            } else if let Some(cache_path) = library.canvas_image_cache_path_for_tier(
-                record.asset.id,
-                tier_settings.mode,
-                tier_settings.max_side,
-                target_tier,
-            ) && cache_path.is_file()
-            {
-                match decode_image_file(&cache_path) {
-                    Ok(decoded) => {
-                        let source_file_size = decoded.file_size;
-                        (
-                            PreviewImage {
-                                rgba: decoded.rgba,
-                                width: decoded.width,
-                                height: decoded.height,
-                            },
-                            None,
-                            ExistingLoadDiagnostics {
-                                source_kind: ExistingLoadSourceKind::Cache,
-                                source_path: cache_path,
-                                source_file_size,
-                                source_width: decoded.width,
-                                source_height: decoded.height,
-                                backfilled_cache: false,
-                            },
-                        )
-                    }
-                    Err(_) => {
-                        let _ = std::fs::remove_file(&cache_path);
-                        let (preview, diagnostics) = backfill_canvas_image_cache(
-                            library,
-                            record,
-                            tier_settings,
-                            target_tier,
-                        )?;
-                        (preview, None, diagnostics)
-                    }
+        } else if let Some(cache_path) = library.canvas_image_cache_path_for_tier(
+            record.asset.id,
+            tier_settings.max_side,
+            target_tier,
+        ) && cache_path.is_file()
+        {
+            match decode_image_file(&cache_path) {
+                Ok(decoded) => {
+                    let source_file_size = decoded.file_size;
+                    (
+                        PreviewImage {
+                            rgba: decoded.rgba,
+                            width: decoded.width,
+                            height: decoded.height,
+                        },
+                        None,
+                        ExistingLoadDiagnostics {
+                            source_kind: ExistingLoadSourceKind::Cache,
+                            source_path: cache_path,
+                            source_file_size,
+                            source_width: decoded.width,
+                            source_height: decoded.height,
+                            backfilled_cache: false,
+                        },
+                    )
                 }
-            } else {
-                let (preview, diagnostics) =
-                    backfill_canvas_image_cache(library, record, tier_settings, target_tier)?;
-                (preview, None, diagnostics)
+                Err(_) => {
+                    let _ = std::fs::remove_file(&cache_path);
+                    let (preview, diagnostics) =
+                        backfill_canvas_image_cache(library, record, tier_settings, target_tier)?;
+                    (preview, None, diagnostics)
+                }
             }
-        }
-    };
+        } else {
+            let (preview, diagnostics) =
+                backfill_canvas_image_cache(library, record, tier_settings, target_tier)?;
+            (preview, None, diagnostics)
+        };
 
     let preview = if let Some(animated_preview) = &animated_preview {
         PreviewImage {
@@ -2659,28 +2613,14 @@ fn canvas_source_image_from_rgba(
     rgba: &[u8],
     canvas_image_settings: CanvasImageSettings,
 ) -> Result<PreviewImage, String> {
-    match canvas_image_settings.mode {
-        crate::data::CanvasImageMode::Downscale => {
-            preview_image_from_rgba(width, height, rgba, canvas_image_settings.max_side as usize)
-        }
-        crate::data::CanvasImageMode::Original => Ok(PreviewImage {
-            rgba: rgba.to_vec(),
-            width,
-            height,
-        }),
-    }
+    preview_image_from_rgba(width, height, rgba, canvas_image_settings.max_side as usize)
 }
 
 fn animated_preview_max_side(
     canvas_image_settings: CanvasImageSettings,
     max_texture_side: usize,
 ) -> usize {
-    match canvas_image_settings.mode {
-        crate::data::CanvasImageMode::Downscale => {
-            (canvas_image_settings.max_side as usize).min(max_texture_side)
-        }
-        crate::data::CanvasImageMode::Original => max_texture_side,
-    }
+    (canvas_image_settings.max_side as usize).min(max_texture_side)
 }
 
 fn backfill_canvas_image_cache(
@@ -2705,7 +2645,6 @@ fn backfill_canvas_image_cache(
     let source_path = library
         .store_canvas_image_cache_for_tier(
             record.asset.id,
-            canvas_image_settings.mode,
             canvas_image_settings.max_side,
             tier,
             &canvas_source.rgba,
@@ -2738,28 +2677,24 @@ fn preferred_backfill_source_path(
     tier: CanvasImageCacheTier,
 ) -> Option<PathBuf> {
     match tier {
-        CanvasImageCacheTier::Working => library
-            .legacy_canvas_image_cache_path_for_tier(
-                record.asset.id,
-                canvas_image_settings.mode,
-                canvas_image_settings.max_side,
-                tier,
-            )
-            .filter(|path| path.is_file()),
+        CanvasImageCacheTier::Working => Some(library.legacy_canvas_image_cache_path_for_tier(
+            record.asset.id,
+            canvas_image_settings.max_side,
+            tier,
+        ))
+        .filter(|path| path.is_file()),
         CanvasImageCacheTier::Overview => library
             .canvas_image_cache_path_for_tier(
                 record.asset.id,
-                canvas_image_settings.mode,
                 canvas_image_settings.max_side,
                 CanvasImageCacheTier::Working,
             )
             .or_else(|| {
-                library.legacy_canvas_image_cache_path_for_tier(
+                Some(library.legacy_canvas_image_cache_path_for_tier(
                     record.asset.id,
-                    canvas_image_settings.mode,
                     canvas_image_settings.max_side,
                     CanvasImageCacheTier::Working,
-                )
+                ))
             })
             .filter(|path| path.is_file()),
         CanvasImageCacheTier::Detail => None,
@@ -3132,10 +3067,7 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     fn downscaled_canvas_settings(max_side: u32) -> CanvasImageSettings {
-        CanvasImageSettings {
-            mode: crate::data::CanvasImageMode::Downscale,
-            max_side,
-        }
+        CanvasImageSettings { max_side }
     }
 
     #[test]
@@ -3654,11 +3586,7 @@ mod tests {
         );
         assert!(
             library
-                .canvas_image_cache_path(
-                    loaded.record.asset.id,
-                    crate::data::CanvasImageMode::Downscale,
-                    2000,
-                )
+                .canvas_image_cache_path(loaded.record.asset.id, 2000)
                 .is_none()
         );
 
@@ -3696,11 +3624,7 @@ mod tests {
         );
         assert!(
             library
-                .canvas_image_cache_path(
-                    loaded.record.asset.id,
-                    crate::data::CanvasImageMode::Downscale,
-                    2000,
-                )
+                .canvas_image_cache_path(loaded.record.asset.id, 2000)
                 .is_none()
         );
 
@@ -3745,11 +3669,7 @@ static char * sample_xpm[] = {
         );
         assert!(
             library
-                .canvas_image_cache_path(
-                    loaded.record.asset.id,
-                    crate::data::CanvasImageMode::Downscale,
-                    2000,
-                )
+                .canvas_image_cache_path(loaded.record.asset.id, 2000)
                 .is_some()
         );
 
@@ -3841,11 +3761,7 @@ static char * sample_xpm[] = {
         ));
         assert!(
             library
-                .canvas_image_cache_path(
-                    loaded.record.asset.id,
-                    crate::data::CanvasImageMode::Downscale,
-                    2000,
-                )
+                .canvas_image_cache_path(loaded.record.asset.id, 2000)
                 .is_none()
         );
 
@@ -4023,7 +3939,7 @@ static char * sample_xpm[] = {
         let settings = downscaled_canvas_settings(2000);
         assert!(
             library
-                .canvas_image_cache_path(record.asset.id, settings.mode, settings.max_side)
+                .canvas_image_cache_path(record.asset.id, settings.max_side)
                 .is_none()
         );
 
@@ -4041,7 +3957,7 @@ static char * sample_xpm[] = {
             other => panic!("expected first load_existing to succeed, got {other:?}"),
         };
         let cache_path = library
-            .canvas_image_cache_path(record.asset.id, settings.mode, settings.max_side)
+            .canvas_image_cache_path(record.asset.id, settings.max_side)
             .unwrap();
         assert!(cache_path.is_file());
         assert_eq!(first.preview_width, 2000);
@@ -4140,20 +4056,12 @@ static char * sample_xpm[] = {
         let second_settings = downscaled_canvas_settings(1000);
         assert!(
             library
-                .canvas_image_cache_path(
-                    record.asset.id,
-                    first_settings.mode,
-                    first_settings.max_side,
-                )
+                .canvas_image_cache_path(record.asset.id, first_settings.max_side)
                 .is_none()
         );
         assert!(
             library
-                .canvas_image_cache_path(
-                    record.asset.id,
-                    second_settings.mode,
-                    second_settings.max_side,
-                )
+                .canvas_image_cache_path(record.asset.id, second_settings.max_side)
                 .is_none()
         );
 
@@ -4171,20 +4079,12 @@ static char * sample_xpm[] = {
             other => panic!("expected first cache backfill to succeed, got {other:?}"),
         }
         let first_cache = library
-            .canvas_image_cache_path(
-                record.asset.id,
-                first_settings.mode,
-                first_settings.max_side,
-            )
+            .canvas_image_cache_path(record.asset.id, first_settings.max_side)
             .unwrap();
         assert!(first_cache.is_file());
         assert!(
             library
-                .canvas_image_cache_path(
-                    record.asset.id,
-                    second_settings.mode,
-                    second_settings.max_side,
-                )
+                .canvas_image_cache_path(record.asset.id, second_settings.max_side)
                 .is_none()
         );
 
@@ -4204,69 +4104,10 @@ static char * sample_xpm[] = {
         assert_eq!(second.preview_width, 1000);
         assert_eq!(second.preview_height, 750);
         let second_cache = library
-            .canvas_image_cache_path(
-                record.asset.id,
-                second_settings.mode,
-                second_settings.max_side,
-            )
+            .canvas_image_cache_path(record.asset.id, second_settings.max_side)
             .unwrap();
         assert_ne!(first_cache, second_cache);
         assert!(second_cache.is_file());
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn original_mode_bypasses_canvas_cache() {
-        let root = temp_library_root("load-existing-original-bypass");
-        let library = Library::initialize(root.clone()).unwrap();
-        let original_path = write_png(&root, "source.png", 4000, 3000);
-        let file_size = fs::metadata(&original_path).unwrap().len();
-        let record = library
-            .persist_imported_image(
-                &original_path,
-                "image/png",
-                4000,
-                3000,
-                file_size,
-                eframe::egui::Pos2::ZERO,
-                1.0,
-            )
-            .unwrap();
-
-        let downscaled_settings = downscaled_canvas_settings(2000);
-        let downscaled_cache = library
-            .store_canvas_image_cache(
-                record.asset.id,
-                downscaled_settings.mode,
-                downscaled_settings.max_side,
-                &solid_rgba(2000, 1500),
-                2000,
-                1500,
-            )
-            .unwrap()
-            .unwrap();
-        assert!(downscaled_cache.is_file());
-        fs::remove_file(&record.asset.original_path).unwrap();
-
-        match load_existing(
-            &library,
-            1,
-            record,
-            usize::MAX,
-            CanvasImageSettings {
-                mode: crate::data::CanvasImageMode::Original,
-                max_side: 2000,
-            },
-            CanvasImageCacheTier::Working,
-            None,
-            None,
-        ) {
-            ImportResult::Failed { .. } => {}
-            other => {
-                panic!("expected original mode to fail without the original file, got {other:?}")
-            }
-        }
 
         let _ = fs::remove_dir_all(root);
     }
