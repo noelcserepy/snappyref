@@ -1,6 +1,7 @@
 mod app;
 mod board_switch;
 mod canvas;
+mod crop_flow;
 mod data;
 #[cfg(debug_assertions)]
 mod design_system_preview;

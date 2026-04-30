@@ -2,6 +2,7 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
+use crate::crop_flow::CropFlow;
 use crate::document_persistence::DocumentPersistence;
 use crate::import_intake::{
     ExternalImportSource, ImportIntake, ImportPlacementSettings, ImportRequestConfig,
@@ -17,7 +18,6 @@ use crate::sidebar::{
 };
 
 const COPY_PAYLOAD_KIND: &str = "reference-board-items";
-const MAX_CROP_UNDO_ENTRIES: usize = 32;
 const STARTUP_VIEWPORT_SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
 const MAX_IMPORT_RESULTS_PER_FRAME: usize = 4;
 
@@ -322,15 +322,6 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: None,
     },
 ];
-
-#[derive(Clone, Debug)]
-struct CropUndoEntry {
-    previous_record: crate::data::BoardItemWithAsset,
-    previous_rgba: Vec<u8>,
-    previous_preview_width: u32,
-    previous_preview_height: u32,
-    removed_asset_id: i64,
-}
 
 #[derive(Clone, Debug, Default)]
 pub struct AppConfig {
@@ -936,7 +927,7 @@ pub struct ReferenceApp {
     library: Option<crate::storage::Library>,
     import_worker: Option<crate::jobs::ImportWorker>,
     active_board_id: i64,
-    crop_undo_stack: Vec<CropUndoEntry>,
+    crop_flow: CropFlow,
     max_texture_side: usize,
     settings: crate::data::WorkspaceSettings,
     #[cfg(feature = "semantic-search")]
@@ -997,7 +988,7 @@ impl ReferenceApp {
                     library: Some(library.clone()),
                     import_worker: Some(import_worker),
                     active_board_id: 1,
-                    crop_undo_stack: Vec::new(),
+                    crop_flow: CropFlow::default(),
                     max_texture_side,
                     settings: crate::data::WorkspaceSettings {
                         semantic_search_enabled: false,
@@ -1201,7 +1192,7 @@ impl ReferenceApp {
                 library: None,
                 import_worker: None,
                 active_board_id: 1,
-                crop_undo_stack: Vec::new(),
+                crop_flow: CropFlow::default(),
                 max_texture_side,
                 settings: crate::data::WorkspaceSettings {
                     semantic_search_enabled: false,
@@ -1417,7 +1408,7 @@ impl ReferenceApp {
             self.canvas.clear_search_matches();
             self.canvas.clear_search_drag_preview();
         }
-        self.crop_undo_stack.clear();
+        self.crop_flow.clear_undo_stack();
     }
 
     fn show_board_delete_confirmation(&mut self, ctx: &egui::Context) {
@@ -2615,91 +2606,25 @@ impl ReferenceApp {
                     self.integrate_loaded_import(ctx, loaded)
                 }
                 crate::jobs::ImportResult::Cropped(cropped) => {
-                    let previous_snapshot = match self.canvas.snapshot_item_image(cropped.item_id) {
-                        Ok(snapshot) => snapshot,
-                        Err(error) => {
-                            let _ = std::fs::remove_file(&cropped.stored_path);
-                            self.canvas.clear_crop_pending(cropped.item_id);
-                            self.status = error;
-                            continue;
-                        }
-                    };
-                    let Some(library) = &self.library else {
-                        let _ = std::fs::remove_file(&cropped.stored_path);
-                        self.canvas.clear_crop_pending(cropped.item_id);
-                        self.status = "Storage unavailable".to_owned();
-                        continue;
-                    };
-
-                    let mut updated_item = match self.canvas.projected_cropped_item(&cropped) {
-                        Ok(item) => item,
-                        Err(error) => {
-                            let _ = std::fs::remove_file(&cropped.stored_path);
-                            self.canvas.clear_crop_pending(cropped.item_id);
-                            self.status = error;
-                            continue;
-                        }
-                    };
-
-                    let asset = match library.create_asset_and_relink_board_item(
-                        updated_item.id,
-                        &cropped.stored_path,
-                        image::ImageFormat::Png.to_mime_type(),
-                        cropped.width,
-                        cropped.height,
-                        cropped.file_size,
-                        egui::pos2(updated_item.x, updated_item.y),
-                    ) {
-                        Ok(asset) => asset,
-                        Err(error) => {
-                            let _ = std::fs::remove_file(&cropped.stored_path);
-                            self.canvas.clear_crop_pending(cropped.item_id);
-                            self.status = error;
-                            continue;
-                        }
-                    };
-
-                    let _ = library.store_canvas_image_cache(
-                        asset.id,
+                    match self.crop_flow.integrate_cropped_result(
+                        ctx,
+                        &mut self.canvas,
+                        self.library.as_ref(),
+                        cropped,
                         self.settings.canvas_image_max_side,
-                        &cropped.canvas_rgba,
-                        cropped.canvas_width,
-                        cropped.canvas_height,
-                    );
-                    updated_item.asset_id = asset.id;
-
-                    let updated_item_id = updated_item.id;
-                    let updated_record = crate::data::BoardItemWithAsset {
-                        item: updated_item.clone(),
-                        asset: asset.clone(),
-                    };
-                    match self
-                        .canvas
-                        .apply_cropped_item(ctx, cropped, asset.clone(), updated_item)
-                    {
-                        Ok(()) => {
-                            self.residency.note_loaded_item(updated_item_id);
-                            self.push_crop_undo_entry(CropUndoEntry {
-                                previous_record: previous_snapshot.0,
-                                previous_rgba: previous_snapshot.1,
-                                previous_preview_width: previous_snapshot.2,
-                                previous_preview_height: previous_snapshot.3,
-                                removed_asset_id: asset.id,
-                            });
-                            self.canvas.clear_crop_pending(updated_item_id);
+                        self.settings.semantic_search_enabled,
+                    ) {
+                        Ok(integration) => {
+                            self.residency
+                                .note_loaded_item(integration.updated_record.item.id);
                             #[cfg(feature = "semantic-search")]
-                            if self.settings.semantic_search_enabled
-                                && crate::residency::asset_mime_type_supports_raster_derivatives(
-                                    &asset.mime_type,
-                                )
-                            {
-                                self.search
-                                    .queue_asset_index(asset.id, asset.original_path.clone());
+                            if let Some((asset_id, original_path)) = integration.indexed_asset {
+                                self.search.queue_asset_index(asset_id, original_path);
                             }
                             if let Some(error) =
                                 self.residency.queue_overview_backfill_after_working_load(
                                     self.import_worker.as_ref(),
-                                    &updated_record,
+                                    &integration.updated_record,
                                     &self.settings,
                                     crate::data::CanvasImageCacheTier::Working,
                                 )
@@ -2708,10 +2633,7 @@ impl ReferenceApp {
                             }
                             self.status = "Cropped image".to_owned();
                         }
-                        Err(error) => {
-                            self.canvas.clear_crop_pending(updated_item_id);
-                            self.status = error;
-                        }
+                        Err(error) => self.status = error,
                     }
                 }
                 crate::jobs::ImportResult::CacheTierBackfilled { asset_id, tier } => {
@@ -2840,50 +2762,16 @@ impl ReferenceApp {
             return;
         }
 
-        let Some(library) = &self.library else {
-            self.status = "Storage unavailable".to_owned();
-            return;
-        };
-        let Some(entry) = self.crop_undo_stack.pop() else {
-            return;
-        };
-
-        let removed_path = match library.restore_board_item_and_maybe_remove_asset(
-            &entry.previous_record.item,
-            entry.removed_asset_id,
-        ) {
-            Ok(path) => path,
-            Err(error) => {
-                self.crop_undo_stack.push(entry);
-                self.status = error;
-                return;
-            }
-        };
-
-        if let Some(path) = removed_path {
-            let _ = std::fs::remove_file(&path);
-            let _ = library.remove_asset_canvas_caches(entry.removed_asset_id);
-            self.canvas.evict_cached_asset(entry.removed_asset_id);
-        }
-
-        self.canvas.add_loaded_item(
+        match self.crop_flow.undo_last_crop(
             ctx,
-            crate::jobs::LoadedCanvasItem {
-                target_board_id: self.active_board_id,
-                queue_id: None,
-                preview_width: entry.previous_preview_width,
-                preview_height: entry.previous_preview_height,
-                record: entry.previous_record,
-                preview_rgba: entry.previous_rgba,
-                animated_preview: None,
-                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: crate::data::CanvasImageCacheTier::Working,
-                existing_load_diagnostics: None,
-                origin: crate::jobs::ImportOrigin::Existing,
-                trace: None,
-            },
-        );
-        self.status = "Undid crop".to_owned();
+            &mut self.canvas,
+            self.library.as_ref(),
+            self.active_board_id,
+        ) {
+            Ok(true) => self.status = "Undid crop".to_owned(),
+            Ok(false) => {}
+            Err(error) => self.status = error,
+        }
     }
 
     fn handle_selection_shortcuts(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
@@ -3066,26 +2954,15 @@ impl ReferenceApp {
     }
 
     fn handle_pending_crop_requests(&mut self) {
-        let Some(import_worker) = &self.import_worker else {
-            return;
-        };
-
-        while let Some(request) = self.canvas.take_pending_crop() {
-            let item_id = request.item_id;
-            self.canvas.mark_crop_pending(item_id);
-            if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::Crop {
-                request,
-                max_texture_side: self.max_texture_side,
-                canvas_image_settings: crate::jobs::CanvasImageSettings {
-                    max_side: self.settings.canvas_image_max_side,
-                },
-            }) {
-                self.canvas.clear_crop_pending(item_id);
-                self.status = error;
-                continue;
-            }
-
-            self.status = "Cropping image".to_owned();
+        match self.crop_flow.enqueue_pending_requests(
+            &mut self.canvas,
+            self.import_worker.as_ref(),
+            self.max_texture_side,
+            self.settings.canvas_image_max_side,
+        ) {
+            Ok(true) => self.status = "Cropping image".to_owned(),
+            Ok(false) => {}
+            Err(error) => self.status = error,
         }
     }
 
@@ -3916,13 +3793,6 @@ impl ReferenceApp {
         self.canvas.screen_to_world(import_screen_pos, screen_rect)
     }
 
-    fn push_crop_undo_entry(&mut self, entry: CropUndoEntry) {
-        self.crop_undo_stack.push(entry);
-        if self.crop_undo_stack.len() > MAX_CROP_UNDO_ENTRIES {
-            self.crop_undo_stack.remove(0);
-        }
-    }
-
     fn log_loaded_timing(
         &mut self,
         origin: crate::jobs::ImportOrigin,
@@ -4567,7 +4437,8 @@ fn generated_board_name(boards: &[crate::data::Board]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ArrangementAction, CropUndoEntry, ReferenceApp, apply_arrangement_action};
+    use super::{ArrangementAction, ReferenceApp, apply_arrangement_action};
+    use crate::crop_flow::CropUndoEntry;
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotationKind, CanvasStackItem, CanvasStrokeWidth,
         CanvasTextSize, ImageAsset,
@@ -6422,7 +6293,7 @@ mod tests {
         app.canvas.select_items(&[1]);
         app.search.overlay.open = true;
         app.canvas.set_search_matches(vec![1], Some(1));
-        app.crop_undo_stack.push(CropUndoEntry {
+        app.crop_flow.push_test_undo_entry(CropUndoEntry {
             previous_record: record,
             previous_rgba: vec![255, 255, 255, 255],
             previous_preview_width: 1,
@@ -6434,7 +6305,7 @@ mod tests {
 
         assert!(!app.canvas.has_selection());
         assert!(!app.search.is_open());
-        assert!(app.crop_undo_stack.is_empty());
+        assert!(app.crop_flow.undo_stack_is_empty());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6811,7 +6682,7 @@ mod tests {
             library,
             import_worker: None,
             active_board_id: 1,
-            crop_undo_stack: Vec::new(),
+            crop_flow: super::CropFlow::default(),
             max_texture_side: 8192,
             settings: crate::data::WorkspaceSettings {
                 semantic_search_enabled: false,
