@@ -2359,40 +2359,12 @@ impl ReferenceApp {
 
     #[cfg(feature = "semantic-search")]
     fn search_using_selected_image(&mut self) {
-        let selected = self.canvas.selected_item_ids();
-        if selected.len() != 1 {
-            return;
-        }
-        let Some(record) = self.canvas.record_for_item_id(selected[0]) else {
-            return;
-        };
-
-        self.search.sync_service(
+        self.search.search_using_selected_image(
             self.settings.semantic_search_enabled,
             self.library.as_ref(),
+            &mut self.canvas,
             &mut self.status,
-            Some(&mut self.canvas),
         );
-        self.search.overlay.query.clear();
-        self.search.overlay.last_submitted_query.clear();
-        self.search.overlay.results.clear();
-        self.search.overlay.result_selection.clear();
-        self.search.overlay.active_recent_search_index = 0;
-        self.search.overlay.result_limit = crate::palette::SEARCH_RESULT_PAGE_SIZE;
-        self.search.overlay.has_more_results = false;
-        self.search.overlay.image_pivot = Some(ImageSearchPivot {
-            asset_id: record.asset.id,
-            item_id: record.item.id,
-        });
-        #[cfg(all(debug_assertions, feature = "semantic-search"))]
-        self.search
-            .begin_image_search_latency_trace("selected_image_search", record.asset.id);
-        self.search.overlay.last_query_edit_at = None;
-        self.search.overlay.open = true;
-        self.search.overlay.focus_requested = true;
-        self.search.overlay.suppress_next_outside_click = true;
-        self.canvas.clear_search_matches();
-        self.search.submit_query(&mut self.canvas);
     }
 
     #[cfg(not(feature = "semantic-search"))]

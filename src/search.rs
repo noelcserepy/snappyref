@@ -442,6 +442,25 @@ impl SearchController {
         self.submit_query(canvas);
     }
 
+    pub(crate) fn search_using_selected_image(
+        &mut self,
+        enabled: bool,
+        library: Option<&Library>,
+        canvas: &mut CanvasState,
+        status: &mut String,
+    ) -> bool {
+        let Some(pivot) = selected_image_pivot(canvas) else {
+            return false;
+        };
+
+        self.sync_service(enabled, library, status, Some(canvas));
+        self.open_image_pivot_search(pivot, "selected_image_search", canvas);
+        self.overlay.open = true;
+        self.overlay.focus_requested = true;
+        self.overlay.suppress_next_outside_click = true;
+        true
+    }
+
     pub(crate) fn handle_shortcut(
         &mut self,
         ctx: &egui::Context,
@@ -462,57 +481,15 @@ impl SearchController {
 
         self.sync_service(enabled, library, status, Some(canvas));
 
-        let pivot = {
-            let selected = canvas.selected_item_ids();
-            if selected.len() == 1
-                && let Some(record) = canvas.record_for_item_id(selected[0])
-            {
-                Some(ImageSearchPivot {
-                    asset_id: record.asset.id,
-                    item_id: record.item.id,
-                })
-            } else {
-                None
-            }
-        };
+        let pivot = selected_image_pivot(canvas);
 
         if pivot.is_some() && self.overlay.image_pivot != pivot {
-            #[cfg(all(debug_assertions, feature = "semantic-search"))]
             if let Some(pivot) = pivot {
-                self.begin_image_search_latency_trace("cmd_f_image_search", pivot.asset_id);
+                self.open_image_pivot_search(pivot, "cmd_f_image_search", canvas);
             }
-            self.overlay.query.clear();
-            self.overlay.last_submitted_query.clear();
-            self.overlay.results.clear();
-            self.overlay.result_selection.clear();
-            self.overlay.active_recent_search_index = 0;
-            self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
-            self.overlay.has_more_results = false;
-            self.overlay.image_pivot = pivot;
-            self.overlay.last_query_edit_at = None;
-            canvas.clear_search_matches();
-            self.submit_query(canvas);
         }
 
-        self.overlay.open = true;
-        self.overlay.focus_requested = true;
-        self.overlay.suppress_next_outside_click = true;
-        if !matches!(self.overlay.status, SearchOverlayStatus::Error(_)) {
-            let overlay_status = self
-                .service
-                .as_ref()
-                .map(|service| {
-                    if service.is_ready() {
-                        SearchOverlayStatus::Ready
-                    } else {
-                        SearchOverlayStatus::Loading("Preparing semantic search…".to_owned())
-                    }
-                })
-                .unwrap_or_else(|| {
-                    SearchOverlayStatus::Loading("Preparing semantic search…".to_owned())
-                });
-            self.overlay.status = overlay_status;
-        }
+        self.open_overlay_from_command();
     }
 
     pub(crate) fn show_overlay(
@@ -1140,6 +1117,50 @@ impl SearchController {
         self.submit_query(canvas);
     }
 
+    fn open_image_pivot_search(
+        &mut self,
+        pivot: ImageSearchPivot,
+        latency_source: &'static str,
+        canvas: &mut CanvasState,
+    ) {
+        #[cfg(all(debug_assertions, feature = "semantic-search"))]
+        self.begin_image_search_latency_trace(latency_source, pivot.asset_id);
+        self.overlay.query.clear();
+        self.overlay.last_submitted_query.clear();
+        self.overlay.results.clear();
+        self.overlay.result_selection.clear();
+        self.overlay.active_recent_search_index = 0;
+        self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
+        self.overlay.has_more_results = false;
+        self.overlay.image_pivot = Some(pivot);
+        self.overlay.last_query_edit_at = None;
+        canvas.clear_search_matches();
+        self.submit_query(canvas);
+    }
+
+    fn open_overlay_from_command(&mut self) {
+        self.overlay.open = true;
+        self.overlay.focus_requested = true;
+        self.overlay.suppress_next_outside_click = true;
+        if matches!(self.overlay.status, SearchOverlayStatus::Error(_)) {
+            return;
+        }
+
+        self.overlay.status = self
+            .service
+            .as_ref()
+            .map(|service| {
+                if service.is_ready() {
+                    SearchOverlayStatus::Ready
+                } else {
+                    SearchOverlayStatus::Loading("Preparing semantic search…".to_owned())
+                }
+            })
+            .unwrap_or_else(|| {
+                SearchOverlayStatus::Loading("Preparing semantic search…".to_owned())
+            });
+    }
+
     pub(crate) fn submit_query(&mut self, canvas: &mut CanvasState) {
         let query = self.overlay.query.trim().to_owned();
         let pivot = self.overlay.image_pivot;
@@ -1371,6 +1392,18 @@ impl SearchController {
             .and_then(|group| group.item_ids.first().copied());
         canvas.set_search_matches(item_ids, lead_item_id);
     }
+}
+
+fn selected_image_pivot(canvas: &CanvasState) -> Option<ImageSearchPivot> {
+    let selected = canvas.selected_item_ids();
+    if selected.len() != 1 {
+        return None;
+    }
+    let record = canvas.record_for_item_id(selected[0])?;
+    Some(ImageSearchPivot {
+        asset_id: record.asset.id,
+        item_id: record.item.id,
+    })
 }
 
 fn result_is_on_bottom_row(index: usize, last_index: usize, columns: usize) -> bool {
