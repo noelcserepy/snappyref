@@ -4,6 +4,7 @@ mod canvas;
 mod data;
 #[cfg(debug_assertions)]
 mod design_system_preview;
+mod import_intake;
 mod import_placement;
 mod jobs;
 mod layout_snap;

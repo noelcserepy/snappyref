@@ -2,6 +2,9 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
+use crate::import_intake::{
+    ExternalImportSource, ImportIntake, ImportPlacementSettings, ImportRequestConfig,
+};
 #[cfg(feature = "semantic-search")]
 use crate::palette::ImageSearchPivot;
 use crate::residency::ImageResidencyCoordinator;
@@ -61,12 +64,6 @@ struct ContextMenuItem {
     label: &'static str,
     shortcut: Option<&'static str>,
     enabled: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum ExternalImportSource {
-    Path(std::path::PathBuf),
-    Url(String),
 }
 
 #[derive(Clone, Copy)]
@@ -324,21 +321,6 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: None,
     },
 ];
-
-#[derive(Clone, Debug)]
-struct BoardImportPlaceholder {
-    queue_id: u64,
-    label: String,
-    center_world: egui::Pos2,
-    size_world: egui::Vec2,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ImportReservation {
-    target_board_id: i64,
-    queue_id: u64,
-    reserved_world: Option<egui::Pos2>,
-}
 
 #[derive(Clone, Debug)]
 struct CropUndoEntry {
@@ -966,9 +948,8 @@ pub struct ReferenceApp {
     status: String,
     perf_log: Option<PerfLogState>,
     frame_perf: FramePerfState,
+    import_intake: ImportIntake,
     residency: ImageResidencyCoordinator,
-    next_import_queue_id: u64,
-    import_placeholders_by_board: std::collections::HashMap<i64, Vec<BoardImportPlaceholder>>,
     hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
     last_saved_user_session: Option<crate::data::UserSession>,
     #[cfg(debug_assertions)]
@@ -1038,9 +1019,8 @@ impl ReferenceApp {
                         startup_logged: false,
                     }),
                     frame_perf: FramePerfState::default(),
+                    import_intake: ImportIntake::new(),
                     residency: ImageResidencyCoordinator::default(),
-                    next_import_queue_id: 1,
-                    import_placeholders_by_board: std::collections::HashMap::new(),
                     hover_preview_dimensions: std::collections::HashMap::new(),
                     last_saved_user_session: None,
                     #[cfg(debug_assertions)]
@@ -1243,9 +1223,8 @@ impl ReferenceApp {
                     startup_logged: false,
                 }),
                 frame_perf: FramePerfState::default(),
+                import_intake: ImportIntake::new(),
                 residency: ImageResidencyCoordinator::default(),
-                next_import_queue_id: 1,
-                import_placeholders_by_board: std::collections::HashMap::new(),
                 hover_preview_dimensions: std::collections::HashMap::new(),
                 last_saved_user_session: None,
                 #[cfg(debug_assertions)]
@@ -1531,12 +1510,6 @@ impl ReferenceApp {
         )
     }
 
-    fn next_import_queue_id(&mut self) -> u64 {
-        let queue_id = self.next_import_queue_id;
-        self.next_import_queue_id = self.next_import_queue_id.saturating_add(1);
-        queue_id
-    }
-
     fn visible_canvas_screen_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
         let sidebar_rect = sidebar_rect(screen_rect);
         let left = if self.sidebar_open {
@@ -1547,6 +1520,7 @@ impl ReferenceApp {
         egui::Rect::from_min_max(egui::pos2(left, screen_rect.top()), screen_rect.max)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn queue_import_placeholder_for_board(
         &mut self,
         board_id: i64,
@@ -1556,46 +1530,77 @@ impl ReferenceApp {
         width: u32,
         height: u32,
     ) {
-        let scale =
-            crate::jobs::initial_import_scale(width, height, self.settings.auto_image_scaling);
-        let size_world = egui::vec2(width as f32 * scale, height as f32 * scale);
-        let placeholders = self
-            .import_placeholders_by_board
-            .entry(board_id)
-            .or_default();
-        placeholders.retain(|placeholder| placeholder.queue_id != queue_id);
-        placeholders.push(BoardImportPlaceholder {
+        let placeholder = self.import_intake.queue_placeholder_for_board(
+            board_id,
             queue_id,
-            label: label.clone(),
-            center_world: placeholder_world,
-            size_world,
-        });
+            label,
+            placeholder_world,
+            width,
+            height,
+            self.settings.auto_image_scaling,
+        );
         if board_id == self.active_board_id {
-            self.canvas
-                .add_import_placeholder(queue_id, placeholder_world, size_world, label);
+            self.add_import_placeholder_to_canvas(placeholder);
         }
     }
 
     fn remove_import_placeholder_for_board(&mut self, board_id: i64, queue_id: u64) {
-        if let Some(placeholders) = self.import_placeholders_by_board.get_mut(&board_id) {
-            placeholders.retain(|placeholder| placeholder.queue_id != queue_id);
-        }
+        self.import_intake
+            .remove_placeholder_for_board(board_id, queue_id);
         if board_id == self.active_board_id {
             self.canvas.remove_import_placeholder(queue_id);
         }
     }
 
     fn restore_active_board_import_placeholders(&mut self) {
-        if let Some(placeholders) = self.import_placeholders_by_board.get(&self.active_board_id) {
-            for placeholder in placeholders.clone() {
-                self.canvas.add_import_placeholder(
-                    placeholder.queue_id,
-                    placeholder.center_world,
-                    placeholder.size_world,
-                    placeholder.label,
-                );
-            }
+        for placeholder in self
+            .import_intake
+            .placeholders_for_board(self.active_board_id)
+        {
+            self.add_import_placeholder_to_canvas(placeholder);
         }
+    }
+
+    fn add_import_placeholder_to_canvas(
+        &mut self,
+        placeholder: crate::import_intake::CanvasImportPlaceholder,
+    ) {
+        self.canvas.add_import_placeholder(
+            placeholder.queue_id,
+            placeholder.center_world,
+            placeholder.size_world,
+            placeholder.label,
+        );
+    }
+
+    fn import_size_world(&self, width: u32, height: u32) -> egui::Vec2 {
+        let scale =
+            crate::jobs::initial_import_scale(width, height, self.settings.auto_image_scaling);
+        egui::vec2(width as f32 * scale, height as f32 * scale)
+    }
+
+    fn import_placement_settings(&self) -> ImportPlacementSettings {
+        ImportPlacementSettings {
+            auto_image_scaling: self.settings.auto_image_scaling,
+            import_gap: self.settings.import_gap,
+            snap_distance_world: crate::import_placement::import_snap_distance_world(&self.canvas),
+        }
+    }
+
+    fn import_request_config(&self) -> ImportRequestConfig {
+        ImportRequestConfig {
+            max_texture_side: self.max_texture_side,
+            canvas_image_max_side: self.settings.canvas_image_max_side,
+            auto_image_scaling: self.settings.auto_image_scaling,
+            import_gap: self.settings.import_gap,
+        }
+    }
+
+    fn import_trace(&self) -> Option<crate::jobs::ImportTrace> {
+        self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
+            queued_at: Instant::now(),
+            timings: crate::jobs::ImportTimings::default(),
+        })
     }
 
     fn import_layout_snapshot(&self) -> Result<Vec<crate::data::BoardLayoutItem>, String> {
@@ -1616,9 +1621,7 @@ impl ReferenceApp {
         desired_world: egui::Pos2,
         _viewport_world: egui::Rect,
     ) -> egui::Pos2 {
-        let scale =
-            crate::jobs::initial_import_scale(width, height, self.settings.auto_image_scaling);
-        let size = egui::vec2(width as f32 * scale, height as f32 * scale);
+        let size = self.import_size_world(width, height);
         crate::import_placement::reserve_import_world(
             layout,
             desired_world,
@@ -1635,66 +1638,35 @@ impl ReferenceApp {
         dimensions: Option<(u32, u32)>,
         desired_world: egui::Pos2,
         viewport_world: egui::Rect,
-    ) -> ImportReservation {
-        let target_board_id = self.active_board_id;
-        let queue_id = self.next_import_queue_id();
-        let reserved_world = dimensions.map(|(width, height)| {
-            let reserved_world =
-                self.reserve_import_world(layout, width, height, desired_world, viewport_world);
-            self.queue_import_placeholder_for_board(
-                target_board_id,
-                queue_id,
-                label,
-                reserved_world,
-                width,
-                height,
-            );
-            reserved_world
-        });
-
-        ImportReservation {
-            target_board_id,
-            queue_id,
-            reserved_world,
+    ) -> crate::import_intake::ImportReservation {
+        let _ = viewport_world;
+        let (reservation, placeholder) = self.import_intake.reserve_import(
+            layout,
+            self.active_board_id,
+            label,
+            dimensions,
+            desired_world,
+            self.import_placement_settings(),
+        );
+        if let Some(placeholder) = placeholder {
+            self.add_import_placeholder_to_canvas(placeholder);
         }
+        reservation
     }
 
-    fn remove_import_reservation(&mut self, reservation: ImportReservation) {
-        self.remove_import_placeholder_for_board(reservation.target_board_id, reservation.queue_id);
+    fn remove_import_reservation(&mut self, reservation: crate::import_intake::ImportReservation) {
+        self.import_intake.remove_import_reservation(reservation);
+        if reservation.target_board_id == self.active_board_id {
+            self.canvas.remove_import_placeholder(reservation.queue_id);
+        }
     }
 
     fn normalize_import_url(raw: &str) -> Option<String> {
-        let parsed = url::Url::parse(raw.trim()).ok()?;
-        ((parsed.scheme() == "http") || (parsed.scheme() == "https")).then(|| parsed.to_string())
+        crate::import_intake::normalize_import_url(raw)
     }
 
     fn import_source_label(source: &ExternalImportSource) -> String {
-        match source {
-            ExternalImportSource::Path(path) => path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("image")
-                .to_owned(),
-            ExternalImportSource::Url(url) => {
-                let parsed = url::Url::parse(url).ok();
-                parsed
-                    .as_ref()
-                    .and_then(|parsed| {
-                        parsed
-                            .path_segments()
-                            .and_then(Iterator::last)
-                            .filter(|segment| !segment.is_empty())
-                            .map(str::to_owned)
-                    })
-                    .or_else(|| {
-                        parsed
-                            .as_ref()
-                            .and_then(|parsed| parsed.host_str())
-                            .map(str::to_owned)
-                    })
-                    .unwrap_or_else(|| "image-url".to_owned())
-            }
-        }
+        crate::import_intake::import_source_label(source)
     }
 
     fn hovered_import_sources(&mut self, ui: &egui::Ui) -> Vec<ExternalImportSource> {
@@ -1863,42 +1835,24 @@ impl ReferenceApp {
             );
 
             let request = match &source {
-                ExternalImportSource::Path(source_path) => crate::jobs::ImportRequest::ImportPath {
-                    target_board_id: reservation.target_board_id,
-                    queue_id: reservation.queue_id,
-                    source_path: source_path.clone(),
+                ExternalImportSource::Path(source_path) => {
+                    crate::import_intake::import_path_request(
+                        source_path.clone(),
+                        reservation,
+                        desired_world,
+                        viewport_world,
+                        self.import_request_config(),
+                        self.import_trace(),
+                    )
+                }
+                ExternalImportSource::Url(url) => crate::import_intake::import_url_request(
+                    url.clone(),
+                    reservation,
                     desired_world,
-                    reserved_world: reservation.reserved_world,
                     viewport_world,
-                    max_texture_side: self.max_texture_side,
-                    canvas_image_settings: crate::jobs::CanvasImageSettings {
-                        max_side: self.settings.canvas_image_max_side,
-                    },
-                    auto_scale: self.settings.auto_image_scaling,
-                    import_gap: self.settings.import_gap,
-                    trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
-                        queued_at: Instant::now(),
-                        timings: crate::jobs::ImportTimings::default(),
-                    }),
-                },
-                ExternalImportSource::Url(url) => crate::jobs::ImportRequest::ImportUrl {
-                    target_board_id: reservation.target_board_id,
-                    queue_id: reservation.queue_id,
-                    url: url.clone(),
-                    desired_world,
-                    reserved_world: reservation.reserved_world,
-                    viewport_world,
-                    max_texture_side: self.max_texture_side,
-                    canvas_image_settings: crate::jobs::CanvasImageSettings {
-                        max_side: self.settings.canvas_image_max_side,
-                    },
-                    auto_scale: self.settings.auto_image_scaling,
-                    import_gap: self.settings.import_gap,
-                    trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
-                        queued_at: Instant::now(),
-                        timings: crate::jobs::ImportTimings::default(),
-                    }),
-                },
+                    self.import_request_config(),
+                    self.import_trace(),
+                ),
             };
 
             if let Err(error) = self
@@ -1992,26 +1946,16 @@ impl ReferenceApp {
             .import_worker
             .as_ref()
             .expect("checked import worker")
-            .enqueue(crate::jobs::ImportRequest::ImportClipboard {
-                target_board_id: reservation.target_board_id,
-                queue_id: reservation.queue_id,
+            .enqueue(crate::import_intake::import_clipboard_request(
                 rgba,
                 width,
                 height,
+                reservation,
                 desired_world,
-                reserved_world: reservation.reserved_world,
                 viewport_world,
-                max_texture_side: self.max_texture_side,
-                canvas_image_settings: crate::jobs::CanvasImageSettings {
-                    max_side: self.settings.canvas_image_max_side,
-                },
-                auto_scale: self.settings.auto_image_scaling,
-                import_gap: self.settings.import_gap,
-                trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
-                    queued_at: Instant::now(),
-                    timings: crate::jobs::ImportTimings::default(),
-                }),
-            })
+                self.import_request_config(),
+                self.import_trace(),
+            ))
         {
             self.remove_import_reservation(reservation);
             self.status = error;
@@ -2054,24 +1998,14 @@ impl ReferenceApp {
             .import_worker
             .as_ref()
             .expect("checked import worker")
-            .enqueue(crate::jobs::ImportRequest::ImportUrl {
-                target_board_id: reservation.target_board_id,
-                queue_id: reservation.queue_id,
-                url: url.clone(),
+            .enqueue(crate::import_intake::import_url_request(
+                url.clone(),
+                reservation,
                 desired_world,
-                reserved_world: reservation.reserved_world,
                 viewport_world,
-                max_texture_side: self.max_texture_side,
-                canvas_image_settings: crate::jobs::CanvasImageSettings {
-                    max_side: self.settings.canvas_image_max_side,
-                },
-                auto_scale: self.settings.auto_image_scaling,
-                import_gap: self.settings.import_gap,
-                trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
-                    queued_at: Instant::now(),
-                    timings: crate::jobs::ImportTimings::default(),
-                }),
-            })
+                self.import_request_config(),
+                self.import_trace(),
+            ))
         {
             self.remove_import_reservation(reservation);
             self.status = error;
@@ -3697,23 +3631,16 @@ impl ReferenceApp {
             let rgba = Self::solid_rgba(width, height, color);
             let enqueue_result = self.import_worker.as_ref().and_then(|import_worker| {
                 import_worker
-                    .enqueue(crate::jobs::ImportRequest::ImportClipboard {
-                        target_board_id: reservation.target_board_id,
-                        queue_id: reservation.queue_id,
+                    .enqueue(crate::import_intake::import_clipboard_request(
                         rgba,
                         width,
                         height,
+                        reservation,
                         desired_world,
-                        reserved_world: reservation.reserved_world,
                         viewport_world,
-                        max_texture_side: self.max_texture_side,
-                        canvas_image_settings: crate::jobs::CanvasImageSettings {
-                            max_side: self.settings.canvas_image_max_side,
-                        },
-                        auto_scale: self.settings.auto_image_scaling,
-                        import_gap: self.settings.import_gap,
-                        trace: None,
-                    })
+                        self.import_request_config(),
+                        None,
+                    ))
                     .err()
             });
             if let Some(error) = enqueue_result {
@@ -6995,6 +6922,7 @@ mod tests {
             #[cfg(feature = "semantic-search")]
             search: super::SearchController::default(),
             frame_perf: super::FramePerfState::default(),
+            import_intake: super::ImportIntake::new(),
             residency: super::ImageResidencyCoordinator::default(),
             sidebar_open: false,
             sidebar_tab: super::SidebarTab::default(),
@@ -7003,8 +6931,6 @@ mod tests {
             context_menu_pos: None,
             status: String::new(),
             perf_log: None,
-            next_import_queue_id: 1,
-            import_placeholders_by_board: std::collections::HashMap::new(),
             hover_preview_dimensions: std::collections::HashMap::new(),
             last_saved_user_session: None,
             #[cfg(debug_assertions)]
