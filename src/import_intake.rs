@@ -26,7 +26,6 @@ pub(crate) struct ImportReservation {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ImportPlacementSettings {
-    pub(crate) auto_image_scaling: bool,
     pub(crate) import_target_canvas_area: f32,
     pub(crate) import_gap: f32,
     pub(crate) snap_distance_world: f32,
@@ -66,12 +65,8 @@ impl ImportIntake {
     ) -> (ImportReservation, Option<CanvasImportPlaceholder>) {
         let queue_id = self.next_queue_id();
         let placeholder = dimensions.map(|(width, height)| {
-            let size_world = import_size_world(
-                width,
-                height,
-                settings.auto_image_scaling,
-                settings.import_target_canvas_area,
-            );
+            let size_world =
+                import_preview_size_world(width, height, settings.import_target_canvas_area);
             let reserved_world = crate::import_placement::reserve_import_world(
                 layout,
                 desired_world,
@@ -282,6 +277,14 @@ fn import_size_world(
     egui::vec2(width as f32 * scale, height as f32 * scale)
 }
 
+pub(crate) fn import_preview_size_world(
+    width: u32,
+    height: u32,
+    target_canvas_area: f32,
+) -> egui::Vec2 {
+    import_size_world(width, height, true, target_canvas_area)
+}
+
 fn canvas_image_settings(config: ImportRequestConfig) -> crate::jobs::CanvasImageSettings {
     crate::jobs::CanvasImageSettings {
         max_side: config.canvas_image_max_side,
@@ -304,7 +307,6 @@ mod tests {
             Some((100, 50)),
             eframe::egui::pos2(10.0, 20.0),
             ImportPlacementSettings {
-                auto_image_scaling: false,
                 import_target_canvas_area: crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA,
                 import_gap: 24.0,
                 snap_distance_world: 32.0,
@@ -320,6 +322,28 @@ mod tests {
         assert!(placeholder.is_some());
         assert_eq!(intake.placeholders_for_board(1).len(), 0);
         assert_eq!(intake.placeholders_for_board(2).len(), 1);
+    }
+
+    #[test]
+    fn drop_preview_placeholders_respect_import_area_when_auto_scaling_is_off() {
+        let mut intake = ImportIntake::new();
+        let mut layout = Vec::new();
+
+        let (_reservation, placeholder) = intake.reserve_import(
+            &mut layout,
+            1,
+            "large.png".to_owned(),
+            Some((4000, 3000)),
+            eframe::egui::Pos2::ZERO,
+            ImportPlacementSettings {
+                import_target_canvas_area: 10_000.0,
+                import_gap: 24.0,
+                snap_distance_world: 32.0,
+            },
+        );
+
+        let placeholder = placeholder.expect("known image dimensions should create a preview");
+        assert!(placeholder.size_world.x * placeholder.size_world.y <= 10_000.0 + 1.0);
     }
 
     #[test]

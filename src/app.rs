@@ -1565,18 +1565,15 @@ impl ReferenceApp {
     }
 
     fn import_size_world(&self, width: u32, height: u32) -> egui::Vec2 {
-        let scale = crate::jobs::initial_import_scale(
+        crate::import_intake::import_preview_size_world(
             width,
             height,
-            self.settings.auto_image_scaling,
             self.settings.import_target_canvas_area,
-        );
-        egui::vec2(width as f32 * scale, height as f32 * scale)
+        )
     }
 
     fn import_placement_settings(&self) -> ImportPlacementSettings {
         ImportPlacementSettings {
-            auto_image_scaling: self.settings.auto_image_scaling,
             import_target_canvas_area: self.settings.import_target_canvas_area,
             import_gap: self.settings.import_gap,
             snap_distance_world: crate::import_placement::import_snap_distance_world(&self.canvas),
@@ -1587,7 +1584,7 @@ impl ReferenceApp {
         ImportRequestConfig {
             max_texture_side: self.max_texture_side,
             canvas_image_max_side: self.settings.canvas_image_max_side,
-            auto_image_scaling: self.settings.auto_image_scaling,
+            auto_image_scaling: true,
             import_target_canvas_area: self.settings.import_target_canvas_area,
             import_gap: self.settings.import_gap,
         }
@@ -1788,7 +1785,7 @@ impl ReferenceApp {
             let scale = crate::jobs::initial_import_scale(
                 width,
                 height,
-                self.settings.auto_image_scaling,
+                true,
                 self.settings.import_target_canvas_area,
             );
             let size_world = egui::vec2(width as f32 * scale, height as f32 * scale);
@@ -6723,6 +6720,16 @@ mod tests {
             )),
             "images.example.com"
         );
+    }
+
+    #[test]
+    fn import_requests_preserve_import_area_cap_when_auto_scaling_setting_is_off() {
+        let mut app = test_app(None);
+        app.settings.auto_image_scaling = false;
+
+        let config = app.import_request_config();
+
+        assert!(config.auto_image_scaling);
     }
 
     fn test_app(library: Option<Library>) -> ReferenceApp {
