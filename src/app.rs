@@ -49,6 +49,12 @@ enum ContextMenuAction {
     RemoveFromLibrary,
 }
 
+impl ContextMenuAction {
+    fn is_destructive(self) -> bool {
+        matches!(self, Self::DeleteFromBoard | Self::RemoveFromLibrary)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ContextMenuItem {
     action: ContextMenuAction,
@@ -374,6 +380,7 @@ enum VerificationMode {
     OpenSidebarHot,
     OpenSidebarNarrow,
     OpenSidebarBoards,
+    OpenSidebarBoardsHover,
     OpenPalette,
     OpenPaletteImagePivot,
     DrawArrow,
@@ -390,6 +397,15 @@ enum VerificationMode {
     BackgroundTransition,
     ActiveBoardChip,
     SearchLatency,
+    BoardDeleteConfirmation,
+    LibraryRemoveConfirmation,
+    DesignSystemPreview,
+    CompactControlsComparison,
+    RadiusComparison,
+    DestructiveActionsComparison,
+    SpacingComparison,
+    BoardRowsComparison,
+    BoardRowsComparisonBottom,
 }
 
 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -482,6 +498,11 @@ impl AppConfig {
                 {
                     verification_mode = Some(VerificationMode::OpenSidebarBoards);
                 }
+            } else if cfg!(debug_assertions) && argument == "--verify-sidebar-boards-hover" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::OpenSidebarBoardsHover);
+                }
             } else if cfg!(debug_assertions) && argument == "--verify-palette" {
                 #[cfg(debug_assertions)]
                 {
@@ -562,6 +583,51 @@ impl AppConfig {
                 {
                     verification_mode = Some(VerificationMode::SearchLatency);
                 }
+            } else if cfg!(debug_assertions) && argument == "--verify-board-delete-confirmation" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::BoardDeleteConfirmation);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-library-remove-confirmation" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::LibraryRemoveConfirmation);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-design-system" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::DesignSystemPreview);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-compact-controls" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::CompactControlsComparison);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-radii" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::RadiusComparison);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-destructive-actions" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::DestructiveActionsComparison);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-spacing" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::SpacingComparison);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-board-rows" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::BoardRowsComparison);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-board-rows-bottom" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::BoardRowsComparisonBottom);
+                }
             } else if let Some(query) = argument.strip_prefix("--verify-search=") {
                 #[cfg(debug_assertions)]
                 {
@@ -614,6 +680,7 @@ impl AppConfig {
                     | VerificationMode::OpenSidebarHot
                     | VerificationMode::OpenSidebarNarrow
                     | VerificationMode::OpenSidebarBoards
+                    | VerificationMode::OpenSidebarBoardsHover
             )
         )
     }
@@ -638,7 +705,7 @@ impl AppConfig {
     fn open_sidebar_boards_on_start(&self) -> bool {
         matches!(
             self.verification_mode,
-            Some(VerificationMode::OpenSidebarBoards)
+            Some(VerificationMode::OpenSidebarBoards | VerificationMode::OpenSidebarBoardsHover)
         )
     }
 
@@ -697,6 +764,22 @@ impl AppConfig {
     }
 
     #[cfg(debug_assertions)]
+    fn verify_board_delete_confirmation_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(VerificationMode::BoardDeleteConfirmation)
+        )
+    }
+
+    #[cfg(debug_assertions)]
+    fn verify_library_remove_confirmation_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(VerificationMode::LibraryRemoveConfirmation)
+        )
+    }
+
+    #[cfg(debug_assertions)]
     fn verify_import_placeholders_on_start(&self) -> bool {
         matches!(
             self.verification_mode,
@@ -738,6 +821,15 @@ impl AppConfig {
                     | VerificationMode::BackgroundGrid
                     | VerificationMode::BackgroundDots
                     | VerificationMode::BackgroundTransition
+                    | VerificationMode::BoardDeleteConfirmation
+                    | VerificationMode::LibraryRemoveConfirmation
+                    | VerificationMode::DesignSystemPreview
+                    | VerificationMode::CompactControlsComparison
+                    | VerificationMode::RadiusComparison
+                    | VerificationMode::DestructiveActionsComparison
+                    | VerificationMode::SpacingComparison
+                    | VerificationMode::BoardRowsComparison
+                    | VerificationMode::BoardRowsComparisonBottom
             )
         )
     }
@@ -754,7 +846,26 @@ impl AppConfig {
 
     #[cfg(debug_assertions)]
     pub(crate) fn startup_viewport_size(&self) -> egui::Vec2 {
-        if self.open_sidebar_narrow_on_start() {
+        if matches!(
+            self.verification_mode,
+            Some(
+                VerificationMode::BoardRowsComparison | VerificationMode::BoardRowsComparisonBottom
+            )
+        ) {
+            egui::vec2(1720.0, 1480.0)
+        } else if matches!(
+            self.verification_mode,
+            Some(
+                VerificationMode::CompactControlsComparison
+                    | VerificationMode::RadiusComparison
+                    | VerificationMode::DestructiveActionsComparison
+                    | VerificationMode::SpacingComparison
+                    | VerificationMode::BoardRowsComparison
+                    | VerificationMode::BoardRowsComparisonBottom
+            )
+        ) {
+            egui::vec2(1180.0, 1040.0)
+        } else if self.open_sidebar_narrow_on_start() {
             egui::vec2(780.0, STARTUP_VIEWPORT_SIZE.y)
         } else {
             STARTUP_VIEWPORT_SIZE
@@ -1004,6 +1115,19 @@ impl ReferenceApp {
                 #[cfg(debug_assertions)]
                 if config.verify_context_menu_on_start() {
                     app.seed_context_menu_verification(&cc.egui_ctx);
+                }
+                #[cfg(debug_assertions)]
+                if config.verify_board_delete_confirmation_on_start() {
+                    app.pending_board_delete = Some(PendingBoardDelete {
+                        board_id: app.active_board_id,
+                        board_name: "Moodboard".to_owned(),
+                    });
+                }
+                #[cfg(debug_assertions)]
+                if config.verify_library_remove_confirmation_on_start() {
+                    app.pending_library_remove = Some(PendingLibraryRemove {
+                        asset_ids: vec![1, 2],
+                    });
                 }
                 #[cfg(debug_assertions)]
                 if config.verify_import_placeholders_on_start() {
@@ -1333,33 +1457,49 @@ impl ReferenceApp {
         };
 
         egui::Window::new("Delete board?")
+            .title_bar(false)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .frame(destructive_confirmation_frame(ctx))
             .show(ctx, |ui| {
-                ui.set_min_width(280.0);
-                ui.label(
-                    egui::RichText::new(format!("Delete \"{}\"?", pending.board_name))
-                        .color(crate::theme::TEXT),
-                );
-                ui.add_space(crate::theme::SPACE_1);
-                ui.label(
-                    egui::RichText::new(
-                        "Images stay in the shared Library. Placements, arrows, lines, and textboxes on this board will be removed.",
-                    )
-                    .text_style(egui::TextStyle::Small)
-                    .color(crate::theme::TEXT_MUTED),
-                );
-                ui.add_space(crate::theme::SPACE_3);
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        self.cancel_pending_board_delete();
-                    }
-                    if ui.button("Delete").clicked() {
-                        self.confirm_pending_board_delete();
-                    }
+                ui.set_min_width(destructive_dialog_width());
+                destructive_dialog_header(ui, "Delete board?");
+                destructive_dialog_body(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(format!("Delete \"{}\"?", pending.board_name))
+                            .color(crate::theme::TEXT),
+                    );
+                    ui.add_space(crate::theme::SPACE_1);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(
+                                "Images stay in the shared Library. Placements, arrows, lines, and textboxes on this board will be removed.",
+                            )
+                            .text_style(egui::TextStyle::Small)
+                            .color(crate::theme::TEXT_MUTED),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(crate::theme::SPACE_3);
+                    ui.horizontal(|ui| {
+                        if ui.add(secondary_dialog_button("Cancel")).clicked() {
+                            self.cancel_pending_board_delete();
+                        }
+                        if ui.add(destructive_action_button("Delete board")).clicked() {
+                            self.confirm_pending_board_delete();
+                        }
+                    });
                 });
             });
+    }
+
+    fn modal_open(&self) -> bool {
+        self.pending_board_delete.is_some() || self.pending_library_remove.is_some()
+    }
+
+    fn should_block_sidebar_input(&self) -> bool {
+        self.sidebar_open && !self.modal_open()
     }
 
     fn load_user_session(&mut self) {
@@ -2247,18 +2387,37 @@ impl ReferenceApp {
             "Remove assets from Library?"
         };
         egui::Window::new(title)
+            .title_bar(false)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .frame(destructive_confirmation_frame(ctx))
             .show(ctx, |ui| {
-                ui.label("Placements will be removed from all boards. Original files are kept.");
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        self.pending_library_remove = None;
-                    }
-                    if ui.button("Remove").clicked() {
-                        self.confirm_pending_library_remove();
-                    }
+                ui.set_min_width(destructive_dialog_width());
+                destructive_dialog_header(ui, title);
+                destructive_dialog_body(ui, |ui| {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(
+                                "Placements will be removed from all boards. Original files are kept.",
+                            )
+                            .text_style(egui::TextStyle::Small)
+                            .color(crate::theme::TEXT_MUTED),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(crate::theme::SPACE_3);
+                    ui.horizontal(|ui| {
+                        if ui.add(secondary_dialog_button("Cancel")).clicked() {
+                            self.pending_library_remove = None;
+                        }
+                        if ui
+                            .add(destructive_action_button("Remove from Library"))
+                            .clicked()
+                        {
+                            self.confirm_pending_library_remove();
+                        }
+                    });
                 });
             });
     }
@@ -4021,7 +4180,9 @@ fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egui::Response
             .rect_filled(rect, rounding, egui::Color32::from_white_alpha(18));
     }
 
-    let text_color = if item.enabled {
+    let text_color = if item.enabled && item.action.is_destructive() {
+        crate::theme::DESTRUCTIVE
+    } else if item.enabled {
         crate::theme::TEXT
     } else {
         crate::theme::TEXT_MUTED
@@ -4116,6 +4277,56 @@ impl eframe::App for ReferenceApp {
             return;
         }
 
+        #[cfg(debug_assertions)]
+        if matches!(
+            self.verification_mode,
+            Some(
+                VerificationMode::DesignSystemPreview
+                    | VerificationMode::CompactControlsComparison
+                    | VerificationMode::RadiusComparison
+                    | VerificationMode::DestructiveActionsComparison
+                    | VerificationMode::SpacingComparison
+                    | VerificationMode::BoardRowsComparison
+                    | VerificationMode::BoardRowsComparisonBottom
+            )
+        ) {
+            match self.verification_mode {
+                Some(VerificationMode::CompactControlsComparison) => {
+                    crate::design_system_preview::show_compact_controls_comparison(ui, screen_rect);
+                }
+                Some(VerificationMode::RadiusComparison) => {
+                    crate::design_system_preview::show_radius_comparison(ui, screen_rect);
+                }
+                Some(VerificationMode::DestructiveActionsComparison) => {
+                    crate::design_system_preview::show_destructive_actions_comparison(
+                        ui,
+                        screen_rect,
+                    );
+                }
+                Some(VerificationMode::SpacingComparison) => {
+                    crate::design_system_preview::show_spacing_comparison(ui, screen_rect);
+                }
+                Some(VerificationMode::BoardRowsComparison) => {
+                    crate::design_system_preview::show_board_rows_comparison(ui, screen_rect, 0.0);
+                }
+                Some(VerificationMode::BoardRowsComparisonBottom) => {
+                    crate::design_system_preview::show_board_rows_comparison(
+                        ui,
+                        screen_rect,
+                        560.0,
+                    );
+                }
+                _ => crate::design_system_preview::show(ui, screen_rect),
+            }
+            if self
+                .screenshot_capture
+                .handle_event(ui.ctx(), &mut self.status)
+            {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            return;
+        }
+
         self.handle_clipboard_copy(ui.ctx());
         self.handle_clipboard_paste(ui.ctx(), screen_rect);
         self.handle_hovered_files(ui, screen_rect);
@@ -4125,7 +4336,7 @@ impl eframe::App for ReferenceApp {
         self.handle_board_shortcuts(ui.ctx());
         self.handle_selection_shortcuts(ui.ctx(), screen_rect);
         let sidebar_open = self.sidebar_open;
-        if sidebar_open {
+        if self.should_block_sidebar_input() {
             block_sidebar_input(ui.ctx(), sidebar_rect(screen_rect));
         }
         self.canvas
@@ -4177,9 +4388,19 @@ impl eframe::App for ReferenceApp {
             &mut self.canvas,
             &board_summaries,
             self.active_board_id,
+            #[cfg(debug_assertions)]
+            matches!(
+                self.verification_mode,
+                Some(VerificationMode::OpenSidebarBoardsHover)
+            )
+            .then_some(1),
+            #[cfg(not(debug_assertions))]
+            None,
         );
         self.handle_board_action(sidebar_result.board_action);
-        if sidebar_open {
+        let modal_open =
+            self.pending_board_delete.is_some() || self.pending_library_remove.is_some();
+        if sidebar_open && !modal_open {
             close_sidebar_on_outside_click(
                 ui.ctx(),
                 sidebar_result
@@ -4196,9 +4417,11 @@ impl eframe::App for ReferenceApp {
         self.persist_settings_if_changed(sidebar_result.settings_changed);
         self.show_board_delete_confirmation(ui.ctx());
         self.show_library_remove_confirmation(ui.ctx());
-        self.show_context_menu(ui.ctx(), screen_rect, context_menu_just_opened);
-        if show_sidebar_hint(ui.ctx(), screen_rect, sidebar_open, &active_board_name) {
-            self.sidebar_open = !self.sidebar_open;
+        if !modal_open {
+            self.show_context_menu(ui.ctx(), screen_rect, context_menu_just_opened);
+            if show_sidebar_hint(ui.ctx(), screen_rect, sidebar_open, &active_board_name) {
+                self.sidebar_open = !self.sidebar_open;
+            }
         }
         #[cfg(feature = "semantic-search")]
         self.show_search_overlay(ui.ctx(), screen_rect);
@@ -4237,6 +4460,73 @@ fn delete_shortcut_pressed(ctx: &egui::Context) -> bool {
     {
         ctx.input(|input| input.key_pressed(egui::Key::Delete))
     }
+}
+
+fn destructive_confirmation_frame(ctx: &egui::Context) -> egui::Frame {
+    egui::Frame::window(&ctx.global_style())
+        .fill(crate::theme::SURFACE)
+        .stroke(egui::Stroke::new(1.0, crate::theme::DESTRUCTIVE_STROKE))
+        .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_PANEL))
+        .inner_margin(egui::Margin::same(0))
+}
+
+fn destructive_dialog_width() -> f32 {
+    340.0
+}
+
+fn destructive_dialog_header(ui: &mut egui::Ui, title: &str) {
+    ui.add_space(crate::theme::SPACE_3);
+    ui.horizontal(|ui| {
+        ui.add_space(crate::theme::SPACE_3);
+        ui.label(
+            egui::RichText::new(title)
+                .text_style(egui::TextStyle::Heading)
+                .color(crate::theme::TEXT),
+        );
+    });
+    ui.add_space(crate::theme::SPACE_2);
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        crate::theme::stroke_subtle(),
+    );
+}
+
+fn destructive_dialog_body(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: crate::theme::SPACE_3 as i8,
+            right: crate::theme::SPACE_3 as i8,
+            top: crate::theme::SPACE_3 as i8,
+            bottom: crate::theme::SPACE_3 as i8,
+        })
+        .show(ui, |ui| {
+            add_contents(ui);
+        });
+}
+
+fn destructive_action_button(label: &str) -> egui::Button<'_> {
+    egui::Button::new(
+        egui::RichText::new(label)
+            .text_style(egui::TextStyle::Button)
+            .color(crate::theme::TEXT),
+    )
+    .fill(crate::theme::DESTRUCTIVE_FILL)
+    .stroke(egui::Stroke::new(1.0, crate::theme::DESTRUCTIVE_STROKE))
+    .corner_radius(crate::theme::RADIUS_INLINE)
+}
+
+fn secondary_dialog_button(label: &str) -> egui::Button<'_> {
+    egui::Button::new(
+        egui::RichText::new(label)
+            .text_style(egui::TextStyle::Button)
+            .color(crate::theme::TEXT),
+    )
+    .fill(crate::theme::SURFACE_ELEVATED)
+    .stroke(crate::theme::stroke_subtle())
+    .corner_radius(crate::theme::RADIUS_INLINE)
 }
 
 fn delete_selected_items(
@@ -4376,9 +4666,12 @@ mod tests {
     };
     #[cfg(feature = "semantic-search")]
     use crate::semantic_search::SearchScope;
-    use crate::sidebar::should_close_sidebar;
+    use crate::sidebar::{
+        SidebarTab, block_sidebar_input, should_close_sidebar, show_sidebar, sidebar_rect,
+    };
     use crate::storage::Library;
     use eframe::egui;
+    use egui_kittest::{Harness, kittest::Queryable};
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -5889,6 +6182,7 @@ mod tests {
         library.set_active_board(second.id).unwrap();
         let mut app = test_app(Some(library.clone()));
         app.active_board_id = second.id;
+        app.sidebar_open = true;
 
         app.request_board_delete(second.id, second.name.clone());
 
@@ -5898,6 +6192,7 @@ mod tests {
         app.confirm_pending_board_delete();
 
         assert!(app.pending_board_delete.is_none());
+        assert!(app.sidebar_open);
         assert_eq!(app.active_board_id, first.id);
         assert_eq!(
             library
@@ -5908,6 +6203,122 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![first.id]
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn board_delete_confirmation_keeps_sidebar_open_and_removes_inactive_board() {
+        let root = temp_library_root("reference-delete-inactive-board");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        let second = library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = first.id;
+        app.sidebar_open = true;
+
+        app.request_board_delete(second.id, second.name.clone());
+        app.confirm_pending_board_delete();
+
+        assert!(app.pending_board_delete.is_none());
+        assert!(app.sidebar_open);
+        assert_eq!(app.active_board_id, first.id);
+        assert_eq!(
+            library
+                .list_boards()
+                .unwrap()
+                .iter()
+                .map(|board| board.id)
+                .collect::<Vec<_>>(),
+            vec![first.id]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn board_delete_modal_click_routes_through_egui_layers() {
+        let root = temp_library_root("reference-delete-modal-click-routing");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        let second = library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = second.id;
+        app.sidebar_open = true;
+        app.request_board_delete(second.id, second.name.clone());
+        #[expect(deprecated)]
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1200.0, 800.0))
+            .build_state(
+                |ctx, app: &mut ReferenceApp| {
+                    let screen_rect = test_screen_rect();
+                    if app.should_block_sidebar_input() {
+                        block_sidebar_input(ctx, sidebar_rect(screen_rect));
+                    }
+                    app.show_board_delete_confirmation(ctx);
+                },
+                app,
+            );
+
+        harness.get_by_label("Delete board").click();
+        harness.run();
+
+        assert!(
+            harness.state().pending_board_delete.is_none(),
+            "the modal should receive the delete-button click"
+        );
+        assert!(harness.state().sidebar_open);
+        assert_eq!(harness.state().active_board_id, first.id);
+        assert_eq!(
+            library
+                .list_boards()
+                .unwrap()
+                .iter()
+                .map(|board| board.id)
+                .collect::<Vec<_>>(),
+            vec![first.id]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn board_sidebar_stays_clickable_after_delete_modal_confirms() {
+        let root = temp_library_root("reference-sidebar-click-after-delete");
+        let library = Library::initialize(root.clone()).unwrap();
+        let second = library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = second.id;
+        app.sidebar_open = true;
+        app.sidebar_tab = SidebarTab::Boards;
+        app.request_board_delete(second.id, second.name.clone());
+        #[expect(deprecated)]
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1200.0, 800.0))
+            .build_state(
+                |ctx, app: &mut ReferenceApp| {
+                    render_sidebar_for_test(ctx, app);
+                    app.show_board_delete_confirmation(ctx);
+                },
+                app,
+            );
+
+        harness.get_by_label("Delete board").click();
+        harness.run();
+
+        click_test_pos(&harness, egui::pos2(134.0, 171.0));
+        harness.run();
+
+        let boards = library.list_boards().unwrap();
+        assert_eq!(
+            boards
+                .iter()
+                .map(|board| board.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["My Board", "Board 2"]
+        );
+        assert_eq!(harness.state().active_board_id, boards[1].id);
+        assert!(harness.state().sidebar_open);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6319,6 +6730,36 @@ mod tests {
             #[cfg(debug_assertions)]
             sidebar_hot_preview: false,
         }
+    }
+
+    fn test_screen_rect() -> egui::Rect {
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))
+    }
+
+    fn render_sidebar_for_test(ctx: &egui::Context, app: &mut ReferenceApp) {
+        let screen_rect = test_screen_rect();
+        if app.should_block_sidebar_input() {
+            block_sidebar_input(ctx, sidebar_rect(screen_rect));
+        }
+        let board_summaries = app.board_summaries();
+        let sidebar_result = show_sidebar(
+            ctx,
+            screen_rect,
+            app.sidebar_open,
+            &mut app.sidebar_tab,
+            &mut app.settings,
+            &mut app.canvas,
+            &board_summaries,
+            app.active_board_id,
+            None,
+        );
+        app.handle_board_action(sidebar_result.board_action);
+    }
+
+    fn click_test_pos<State>(harness: &Harness<'_, State>, pos: egui::Pos2) {
+        harness.hover_at(pos);
+        harness.drag_at(pos);
+        harness.drop_at(pos);
     }
 
     fn temp_library_root(prefix: &str) -> PathBuf {

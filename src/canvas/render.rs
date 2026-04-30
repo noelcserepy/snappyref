@@ -998,7 +998,7 @@ fn paint_annotation(
                 let fill_alpha = if selected || editing { 184 } else { 112 };
                 painter.rect_filled(
                     textbox_rect,
-                    crate::theme::CONTROL_RADIUS,
+                    crate::theme::RADIUS_CONTROL,
                     egui::Color32::from_rgba_premultiplied(
                         crate::theme::BACKGROUND.r(),
                         crate::theme::BACKGROUND.g(),
@@ -1010,7 +1010,7 @@ fn paint_annotation(
             if selected || editing {
                 painter.rect_stroke(
                     textbox_rect,
-                    crate::theme::CONTROL_RADIUS,
+                    crate::theme::RADIUS_CONTROL,
                     stroke,
                     egui::StrokeKind::Outside,
                 );
@@ -1091,7 +1091,7 @@ pub(super) fn paint_annotation_draft(
             );
             painter.rect_stroke(
                 textbox_rect,
-                crate::theme::CONTROL_RADIUS,
+                crate::theme::RADIUS_CONTROL,
                 stroke,
                 egui::StrokeKind::Outside,
             );
@@ -1305,7 +1305,7 @@ fn show_textbox_editor_toolbar(
                     } else {
                         crate::theme::stroke_subtle()
                     })
-                    .corner_radius(crate::theme::CONTROL_RADIUS)
+                    .corner_radius(crate::theme::RADIUS_CONTROL)
                     .min_size(egui::vec2(
                         TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
                         crate::theme::CONTROL_HEIGHT,
@@ -1333,7 +1333,7 @@ fn show_textbox_editor_toolbar(
                 } else {
                     crate::theme::stroke_subtle()
                 })
-                .corner_radius(crate::theme::CONTROL_RADIUS)
+                .corner_radius(crate::theme::RADIUS_CONTROL)
                 .min_size(egui::vec2(
                     TOOLBAR_BACKGROUND_BUTTON_WIDTH,
                     crate::theme::CONTROL_HEIGHT,
@@ -1413,7 +1413,7 @@ pub(super) fn show_annotation_style_toolbar(
                         } else {
                             crate::theme::stroke_subtle()
                         })
-                        .corner_radius(crate::theme::CONTROL_RADIUS)
+                        .corner_radius(crate::theme::RADIUS_CONTROL)
                         .min_size(egui::vec2(
                             TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
                             crate::theme::CONTROL_HEIGHT,
@@ -1452,7 +1452,7 @@ fn paint_color_swatch_button(
             } else {
                 crate::theme::stroke_subtle()
             })
-            .corner_radius(crate::theme::CONTROL_RADIUS)
+            .corner_radius(crate::theme::RADIUS_CONTROL)
             .min_size(egui::vec2(
                 TOOLBAR_SWATCH_BUTTON_WIDTH,
                 crate::theme::CONTROL_HEIGHT,

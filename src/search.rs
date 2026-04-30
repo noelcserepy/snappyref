@@ -599,7 +599,7 @@ impl SearchController {
                 egui::Frame::new()
                     .fill(crate::theme::PALETTE_SURFACE)
                     .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(33)))
-                    .corner_radius(egui::CornerRadius::same(12))
+                    .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_PANEL))
                     .shadow(egui::epaint::Shadow {
                         offset: [0, 12],
                         blur: 40,
