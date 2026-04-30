@@ -380,6 +380,7 @@ enum VerificationMode {
     OpenSidebarHot,
     OpenSidebarNarrow,
     OpenSidebarBoards,
+    OpenSidebarBoardsHover,
     OpenPalette,
     OpenPaletteImagePivot,
     DrawArrow,
@@ -403,6 +404,8 @@ enum VerificationMode {
     RadiusComparison,
     DestructiveActionsComparison,
     SpacingComparison,
+    BoardRowsComparison,
+    BoardRowsComparisonBottom,
 }
 
 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -494,6 +497,11 @@ impl AppConfig {
                 #[cfg(debug_assertions)]
                 {
                     verification_mode = Some(VerificationMode::OpenSidebarBoards);
+                }
+            } else if cfg!(debug_assertions) && argument == "--verify-sidebar-boards-hover" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::OpenSidebarBoardsHover);
                 }
             } else if cfg!(debug_assertions) && argument == "--verify-palette" {
                 #[cfg(debug_assertions)]
@@ -610,6 +618,16 @@ impl AppConfig {
                 {
                     verification_mode = Some(VerificationMode::SpacingComparison);
                 }
+            } else if cfg!(debug_assertions) && argument == "--compare-board-rows" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::BoardRowsComparison);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-board-rows-bottom" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::BoardRowsComparisonBottom);
+                }
             } else if let Some(query) = argument.strip_prefix("--verify-search=") {
                 #[cfg(debug_assertions)]
                 {
@@ -662,6 +680,7 @@ impl AppConfig {
                     | VerificationMode::OpenSidebarHot
                     | VerificationMode::OpenSidebarNarrow
                     | VerificationMode::OpenSidebarBoards
+                    | VerificationMode::OpenSidebarBoardsHover
             )
         )
     }
@@ -686,7 +705,7 @@ impl AppConfig {
     fn open_sidebar_boards_on_start(&self) -> bool {
         matches!(
             self.verification_mode,
-            Some(VerificationMode::OpenSidebarBoards)
+            Some(VerificationMode::OpenSidebarBoards | VerificationMode::OpenSidebarBoardsHover)
         )
     }
 
@@ -809,6 +828,8 @@ impl AppConfig {
                     | VerificationMode::RadiusComparison
                     | VerificationMode::DestructiveActionsComparison
                     | VerificationMode::SpacingComparison
+                    | VerificationMode::BoardRowsComparison
+                    | VerificationMode::BoardRowsComparisonBottom
             )
         )
     }
@@ -828,13 +849,22 @@ impl AppConfig {
         if matches!(
             self.verification_mode,
             Some(
+                VerificationMode::BoardRowsComparison | VerificationMode::BoardRowsComparisonBottom
+            )
+        ) {
+            egui::vec2(1720.0, 1480.0)
+        } else if matches!(
+            self.verification_mode,
+            Some(
                 VerificationMode::CompactControlsComparison
                     | VerificationMode::RadiusComparison
                     | VerificationMode::DestructiveActionsComparison
                     | VerificationMode::SpacingComparison
+                    | VerificationMode::BoardRowsComparison
+                    | VerificationMode::BoardRowsComparisonBottom
             )
         ) {
-            egui::vec2(1180.0, 860.0)
+            egui::vec2(1180.0, 1040.0)
         } else if self.open_sidebar_narrow_on_start() {
             egui::vec2(780.0, STARTUP_VIEWPORT_SIZE.y)
         } else {
@@ -1462,6 +1492,14 @@ impl ReferenceApp {
                     });
                 });
             });
+    }
+
+    fn modal_open(&self) -> bool {
+        self.pending_board_delete.is_some() || self.pending_library_remove.is_some()
+    }
+
+    fn should_block_sidebar_input(&self) -> bool {
+        self.sidebar_open && !self.modal_open()
     }
 
     fn load_user_session(&mut self) {
@@ -4142,7 +4180,9 @@ fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egui::Response
             .rect_filled(rect, rounding, egui::Color32::from_white_alpha(18));
     }
 
-    let text_color = if item.enabled {
+    let text_color = if item.enabled && item.action.is_destructive() {
+        crate::theme::DESTRUCTIVE
+    } else if item.enabled {
         crate::theme::TEXT
     } else {
         crate::theme::TEXT_MUTED
@@ -4246,6 +4286,8 @@ impl eframe::App for ReferenceApp {
                     | VerificationMode::RadiusComparison
                     | VerificationMode::DestructiveActionsComparison
                     | VerificationMode::SpacingComparison
+                    | VerificationMode::BoardRowsComparison
+                    | VerificationMode::BoardRowsComparisonBottom
             )
         ) {
             match self.verification_mode {
@@ -4263,6 +4305,16 @@ impl eframe::App for ReferenceApp {
                 }
                 Some(VerificationMode::SpacingComparison) => {
                     crate::design_system_preview::show_spacing_comparison(ui, screen_rect);
+                }
+                Some(VerificationMode::BoardRowsComparison) => {
+                    crate::design_system_preview::show_board_rows_comparison(ui, screen_rect, 0.0);
+                }
+                Some(VerificationMode::BoardRowsComparisonBottom) => {
+                    crate::design_system_preview::show_board_rows_comparison(
+                        ui,
+                        screen_rect,
+                        560.0,
+                    );
                 }
                 _ => crate::design_system_preview::show(ui, screen_rect),
             }
@@ -4284,7 +4336,7 @@ impl eframe::App for ReferenceApp {
         self.handle_board_shortcuts(ui.ctx());
         self.handle_selection_shortcuts(ui.ctx(), screen_rect);
         let sidebar_open = self.sidebar_open;
-        if sidebar_open {
+        if self.should_block_sidebar_input() {
             block_sidebar_input(ui.ctx(), sidebar_rect(screen_rect));
         }
         self.canvas
@@ -4336,9 +4388,19 @@ impl eframe::App for ReferenceApp {
             &mut self.canvas,
             &board_summaries,
             self.active_board_id,
+            #[cfg(debug_assertions)]
+            matches!(
+                self.verification_mode,
+                Some(VerificationMode::OpenSidebarBoardsHover)
+            )
+            .then_some(1),
+            #[cfg(not(debug_assertions))]
+            None,
         );
         self.handle_board_action(sidebar_result.board_action);
-        if sidebar_open {
+        let modal_open =
+            self.pending_board_delete.is_some() || self.pending_library_remove.is_some();
+        if sidebar_open && !modal_open {
             close_sidebar_on_outside_click(
                 ui.ctx(),
                 sidebar_result
@@ -4355,9 +4417,11 @@ impl eframe::App for ReferenceApp {
         self.persist_settings_if_changed(sidebar_result.settings_changed);
         self.show_board_delete_confirmation(ui.ctx());
         self.show_library_remove_confirmation(ui.ctx());
-        self.show_context_menu(ui.ctx(), screen_rect, context_menu_just_opened);
-        if show_sidebar_hint(ui.ctx(), screen_rect, sidebar_open, &active_board_name) {
-            self.sidebar_open = !self.sidebar_open;
+        if !modal_open {
+            self.show_context_menu(ui.ctx(), screen_rect, context_menu_just_opened);
+            if show_sidebar_hint(ui.ctx(), screen_rect, sidebar_open, &active_board_name) {
+                self.sidebar_open = !self.sidebar_open;
+            }
         }
         #[cfg(feature = "semantic-search")]
         self.show_search_overlay(ui.ctx(), screen_rect);
@@ -4602,9 +4666,10 @@ mod tests {
     };
     #[cfg(feature = "semantic-search")]
     use crate::semantic_search::SearchScope;
-    use crate::sidebar::should_close_sidebar;
+    use crate::sidebar::{block_sidebar_input, should_close_sidebar, sidebar_rect};
     use crate::storage::Library;
     use eframe::egui;
+    use egui_kittest::{Harness, kittest::Queryable};
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -6115,6 +6180,7 @@ mod tests {
         library.set_active_board(second.id).unwrap();
         let mut app = test_app(Some(library.clone()));
         app.active_board_id = second.id;
+        app.sidebar_open = true;
 
         app.request_board_delete(second.id, second.name.clone());
 
@@ -6124,7 +6190,83 @@ mod tests {
         app.confirm_pending_board_delete();
 
         assert!(app.pending_board_delete.is_none());
+        assert!(app.sidebar_open);
         assert_eq!(app.active_board_id, first.id);
+        assert_eq!(
+            library
+                .list_boards()
+                .unwrap()
+                .iter()
+                .map(|board| board.id)
+                .collect::<Vec<_>>(),
+            vec![first.id]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn board_delete_confirmation_keeps_sidebar_open_and_removes_inactive_board() {
+        let root = temp_library_root("reference-delete-inactive-board");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        let second = library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = first.id;
+        app.sidebar_open = true;
+
+        app.request_board_delete(second.id, second.name.clone());
+        app.confirm_pending_board_delete();
+
+        assert!(app.pending_board_delete.is_none());
+        assert!(app.sidebar_open);
+        assert_eq!(app.active_board_id, first.id);
+        assert_eq!(
+            library
+                .list_boards()
+                .unwrap()
+                .iter()
+                .map(|board| board.id)
+                .collect::<Vec<_>>(),
+            vec![first.id]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn board_delete_modal_click_routes_through_egui_layers() {
+        let root = temp_library_root("reference-delete-modal-click-routing");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        let second = library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = second.id;
+        app.sidebar_open = true;
+        app.request_board_delete(second.id, second.name.clone());
+        #[expect(deprecated)]
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1200.0, 800.0))
+            .build_state(
+                |ctx, app: &mut ReferenceApp| {
+                    let screen_rect = test_screen_rect();
+                    if app.should_block_sidebar_input() {
+                        block_sidebar_input(ctx, sidebar_rect(screen_rect));
+                    }
+                    app.show_board_delete_confirmation(ctx);
+                },
+                app,
+            );
+
+        harness.get_by_label("Delete board").click();
+        harness.run();
+
+        assert!(
+            harness.state().pending_board_delete.is_none(),
+            "the modal should receive the delete-button click"
+        );
+        assert!(harness.state().sidebar_open);
+        assert_eq!(harness.state().active_board_id, first.id);
         assert_eq!(
             library
                 .list_boards()
@@ -6545,6 +6687,10 @@ mod tests {
             #[cfg(debug_assertions)]
             sidebar_hot_preview: false,
         }
+    }
+
+    fn test_screen_rect() -> egui::Rect {
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))
     }
 
     fn temp_library_root(prefix: &str) -> PathBuf {

@@ -51,7 +51,8 @@ pub(crate) fn block_sidebar_input(ctx: &egui::Context, sidebar_rect: egui::Rect)
         .fixed_pos(sidebar_rect.min)
         .show(ctx, |ui| {
             ui.set_min_size(sidebar_rect.size());
-            ui.allocate_rect(ui.max_rect(), egui::Sense::hover());
+            let local_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, sidebar_rect.size());
+            ui.allocate_rect(local_rect, egui::Sense::hover());
         });
 }
 
@@ -90,6 +91,7 @@ pub(crate) fn show_sidebar(
     canvas: &mut crate::canvas::CanvasState,
     boards: &[crate::data::BoardSummary],
     active_board_id: i64,
+    forced_board_hover_index: Option<usize>,
 ) -> SidebarRenderResult {
     if !sidebar_open {
         return SidebarRenderResult {
@@ -137,7 +139,12 @@ pub(crate) fn show_sidebar(
                 ui.add_space(crate::theme::SPACE_2);
                 match *sidebar_tab {
                     SidebarTab::Boards => {
-                        board_action = paint_sidebar_boards(ui, boards, active_board_id)
+                        board_action = paint_sidebar_boards(
+                            ui,
+                            boards,
+                            active_board_id,
+                            forced_board_hover_index,
+                        )
                     }
                     SidebarTab::Options => {
                         settings_changed |= paint_sidebar_options(ui, settings, canvas);
@@ -233,6 +240,7 @@ fn paint_sidebar_boards(
     ui: &mut egui::Ui,
     boards: &[crate::data::BoardSummary],
     active_board_id: i64,
+    forced_hover_index: Option<usize>,
 ) -> Option<SidebarBoardAction> {
     let mut board_action = None;
     let content_rect = ui.available_rect_before_wrap();
@@ -241,8 +249,8 @@ fn paint_sidebar_boards(
             .id_salt("sidebar_boards_scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_1);
-                ui.add_space(crate::theme::SPACE_2);
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                ui.add_space(crate::theme::SPACE_3);
                 let indent = crate::theme::SPACE_2;
                 ui.scope_builder(
                     egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
@@ -251,6 +259,9 @@ fn paint_sidebar_boards(
                     )),
                     |ui| {
                         for (index, summary) in boards.iter().enumerate() {
+                            if index > 0 {
+                                ui.add_space(crate::theme::SPACE_1);
+                            }
                             let shortcut = board_shortcut_hint(index);
                             match paint_board_row(
                                 ui,
@@ -259,6 +270,7 @@ fn paint_sidebar_boards(
                                 &image_count_label(summary.image_count),
                                 summary.board.id == active_board_id,
                                 shortcut.as_deref(),
+                                forced_hover_index == Some(index),
                             ) {
                                 Some(BoardRowAction::Switch) => {
                                     board_action =
@@ -278,11 +290,11 @@ fn paint_sidebar_boards(
                                 None => {}
                             }
                         }
-                        ui.add_space(crate::theme::SPACE_2);
+                        ui.add_space(crate::theme::SPACE_3);
                         if paint_create_board_button(ui) {
                             board_action = Some(SidebarBoardAction::CreateBoard);
                         }
-                        ui.add_space(crate::theme::SPACE_3);
+                        ui.add_space(crate::theme::SPACE_4);
                         ui.label(
                             egui::RichText::new(
                                 "Boards help you split your canvas into focused collections.",
@@ -310,123 +322,152 @@ fn paint_board_row(
     detail: &str,
     active: bool,
     shortcut: Option<&str>,
+    forced_hover: bool,
 ) -> Option<BoardRowAction> {
-    let height = 36.0;
+    let height = 48.0;
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
         egui::Sense::click(),
     );
-    let fill = if active {
-        crate::theme::SURFACE_ELEVATED
-    } else if response.hovered() {
+    let name_edit_id = ui.make_persistent_id(("board-name-edit", board_id));
+    let renaming = ui.memory(|memory| memory.has_focus(name_edit_id));
+    let pointer_in_row = ui.input(|input| {
+        input
+            .pointer
+            .hover_pos()
+            .is_some_and(|pointer_pos| rect.contains(pointer_pos))
+    });
+    let hot = pointer_in_row || forced_hover || renaming;
+    let fill = if active || hot {
         crate::theme::SURFACE_ELEVATED
     } else {
-        crate::theme::SURFACE
+        egui::Color32::TRANSPARENT
     };
-    ui.painter().rect_filled(
+    ui.painter().rect(
         rect,
         egui::CornerRadius::same(crate::theme::RADIUS_COMPACT),
         fill,
+        if active {
+            crate::theme::stroke_subtle()
+        } else {
+            egui::Stroke::NONE
+        },
+        egui::StrokeKind::Inside,
     );
+    if active {
+        let rail_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.top() + crate::theme::SPACE_2),
+            egui::pos2(rect.left() + 2.0, rect.bottom() - crate::theme::SPACE_2),
+        );
+        ui.painter().rect_filled(
+            rail_rect,
+            egui::CornerRadius::same(crate::theme::RADIUS_MICRO),
+            crate::theme::ACCENT,
+        );
+    }
 
-    let swatch_size = 22.0;
+    let swatch_size = 24.0;
     let swatch_rect = egui::Rect::from_min_size(
         egui::pos2(
-            rect.left() + crate::theme::SPACE_2,
+            rect.left() + crate::theme::SPACE_3,
             rect.center().y - swatch_size * 0.5,
         ),
         egui::vec2(swatch_size, swatch_size),
     );
     ui.painter().rect_filled(
         swatch_rect,
-        egui::CornerRadius::same(crate::theme::RADIUS_MICRO),
-        crate::theme::BORDER,
+        egui::CornerRadius::same(crate::theme::RADIUS_INLINE),
+        egui::Color32::from_white_alpha(if active { 38 } else { 18 }),
     );
 
     let detail_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
     let detail_galley =
         ui.painter()
-            .layout_no_wrap(detail.to_owned(), detail_font, crate::theme::TEXT_SUBTLE);
+            .layout_no_wrap(detail.to_owned(), detail_font, crate::theme::TEXT_MUTED);
 
     let text_x = swatch_rect.right() + crate::theme::SPACE_2;
-    let delete_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.right() - 12.0, rect.center().y),
-        egui::vec2(18.0, 18.0),
+    let action_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.right() - 32.0, rect.center().y),
+        egui::vec2(56.0, 24.0),
     );
-    let shortcut_reserved_width = if shortcut.is_some() { 42.0 } else { 0.0 };
-    let text_right = delete_rect.left() - crate::theme::SPACE_1 - shortcut_reserved_width;
+    let text_right = action_rect.left() - crate::theme::SPACE_2;
     let name_rect = egui::Rect::from_min_max(
-        egui::pos2(text_x, rect.top() + 2.0),
-        egui::pos2(text_right.max(text_x + 24.0), rect.top() + 20.0),
+        egui::pos2(text_x, rect.top() + crate::theme::SPACE_2),
+        egui::pos2(text_right.max(text_x + 24.0), rect.top() + 27.0),
     );
-    let name_edit_id = ui.make_persistent_id(("board-name-edit", board_id));
-    let mut name_edit = ui
-        .data_mut(|data| data.get_persisted::<String>(name_edit_id))
-        .unwrap_or_else(|| name.to_owned());
-    if !ui.memory(|memory| memory.has_focus(name_edit_id)) {
-        name_edit = name.to_owned();
+    let title_hit_id = ui.make_persistent_id(("board-name-hit", board_id));
+    let title_response = ui.interact(name_rect, title_hit_id, egui::Sense::click());
+    let mut submitted_name = None;
+    if title_response.double_clicked() {
+        ui.memory_mut(|memory| memory.request_focus(name_edit_id));
+        ui.data_mut(|data| data.insert_persisted(name_edit_id, name.to_owned()));
     }
-    let name_response = ui.put(
-        name_rect,
-        egui::TextEdit::singleline(&mut name_edit)
-            .id(name_edit_id)
-            .font(egui::TextStyle::Body)
-            .text_color(crate::theme::TEXT)
-            .frame(egui::Frame::NONE)
-            .desired_width(name_rect.width()),
-    );
-    ui.data_mut(|data| data.insert_persisted(name_edit_id, name_edit.clone()));
-    let rename_submitted = name_response.lost_focus()
-        && name_edit != name
-        && ui.input(|input| input.key_pressed(egui::Key::Enter) || input.pointer.any_click());
-
-    let detail_pos = egui::pos2(text_x, rect.center().y + 1.0);
-    ui.painter()
-        .galley(detail_pos, detail_galley, crate::theme::TEXT_SUBTLE);
-
-    let active_dot_rect = egui::Rect::from_center_size(
-        egui::pos2(
-            delete_rect.left() - crate::theme::SPACE_1 - 3.0,
-            rect.center().y,
-        ),
-        egui::vec2(5.0, 5.0),
-    );
-    if active {
-        ui.painter().rect_filled(
-            active_dot_rect,
-            egui::CornerRadius::same(crate::theme::RADIUS_MICRO),
-            crate::theme::ACCENT,
+    if renaming {
+        let mut name_edit = ui
+            .data_mut(|data| data.get_persisted::<String>(name_edit_id))
+            .unwrap_or_else(|| name.to_owned());
+        let name_response = ui.put(
+            name_rect,
+            egui::TextEdit::singleline(&mut name_edit)
+                .id(name_edit_id)
+                .font(egui::TextStyle::Body)
+                .text_color(crate::theme::TEXT)
+                .frame(egui::Frame::NONE)
+                .desired_width(name_rect.width()),
         );
+        ui.data_mut(|data| data.insert_persisted(name_edit_id, name_edit.clone()));
+        let rename_submitted = name_response.lost_focus()
+            && name_edit != name
+            && ui.input(|input| input.key_pressed(egui::Key::Enter) || input.pointer.any_click());
+        if rename_submitted {
+            submitted_name = Some(name_edit);
+        }
+    } else {
+        let title_galley = ui.painter().layout_no_wrap(
+            name.to_owned(),
+            egui::TextStyle::Body.resolve(ui.style()),
+            crate::theme::TEXT,
+        );
+        ui.painter()
+            .galley(name_rect.left_top(), title_galley, crate::theme::TEXT);
     }
-    if let Some(shortcut) = shortcut {
+
+    let detail_pos = egui::pos2(text_x, rect.top() + 28.0);
+    ui.painter()
+        .galley(detail_pos, detail_galley, crate::theme::TEXT_MUTED);
+
+    let delete_response = ui.interact(
+        action_rect,
+        ui.make_persistent_id(("board-delete-hit", board_id)),
+        egui::Sense::click(),
+    );
+    let delete_hot = hot || delete_response.hovered();
+    if delete_hot {
+        ui.painter().text(
+            action_rect.right_center(),
+            egui::Align2::RIGHT_CENTER,
+            "Delete",
+            egui::TextStyle::Small.resolve(ui.style()),
+            crate::theme::DESTRUCTIVE,
+        );
+    } else if let Some(shortcut) = shortcut {
         let font = ui.style().text_styles[&egui::TextStyle::Small].clone();
         let galley = ui.painter().layout_no_wrap(
             display_shortcut_label(shortcut).to_owned(),
             font,
             crate::theme::TEXT_SUBTLE,
         );
-        let right = if active {
-            active_dot_rect.left() - crate::theme::SPACE_1
-        } else {
-            delete_rect.left() - crate::theme::SPACE_1
-        };
         let pos = egui::pos2(
-            right - galley.size().x,
+            action_rect.right() - galley.size().x,
             rect.center().y - galley.size().y * 0.5,
         );
         ui.painter().galley(pos, galley, crate::theme::TEXT_SUBTLE);
     }
-    let delete_response = ui.put(
-        delete_rect,
-        egui::Button::new(egui::RichText::new("x").color(crate::theme::TEXT_SUBTLE))
-            .small()
-            .frame(false),
-    );
-    if delete_response.clicked() {
+    if delete_hot && delete_response.clicked() {
         Some(BoardRowAction::Delete)
-    } else if rename_submitted {
+    } else if let Some(name_edit) = submitted_name {
         Some(BoardRowAction::Rename(name_edit))
-    } else if response.clicked() && !name_response.clicked() {
+    } else if response.clicked() && !title_response.clicked() {
         Some(BoardRowAction::Switch)
     } else {
         None
@@ -434,7 +475,7 @@ fn paint_board_row(
 }
 
 fn paint_create_board_button(ui: &mut egui::Ui) -> bool {
-    let height = 30.0;
+    let height = 36.0;
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
         egui::Sense::click(),
@@ -446,7 +487,7 @@ fn paint_create_board_button(ui: &mut egui::Ui) -> bool {
         if response.hovered() {
             crate::theme::SURFACE_ELEVATED
         } else {
-            egui::Color32::TRANSPARENT
+            egui::Color32::from_white_alpha(4)
         },
         dash_stroke,
         egui::StrokeKind::Inside,
@@ -454,7 +495,7 @@ fn paint_create_board_button(ui: &mut egui::Ui) -> bool {
 
     let plus_font = ui.style().text_styles[&egui::TextStyle::Body].clone();
     let plus_galley = ui.painter().layout_no_wrap(
-        "+  Create new board".to_owned(),
+        "+  New board".to_owned(),
         plus_font,
         crate::theme::TEXT_SUBTLE,
     );

@@ -32,13 +32,14 @@ Default to left-aligned content and titles. Center alignment should be an explic
 - `ACCENT`: use for active selection, focus, and the few states that need emphasis without adding a new hue. Do not use for generic decoration.
 - `DESTRUCTIVE`, `DESTRUCTIVE_STROKE`, and `DESTRUCTIVE_FILL`: use for destructive labels, confirmation borders, and destructive confirmation actions. The base is `#CA3C25`; keep repeated row affordances quiet unless hovered or focused.
 - Spacing constants: use `SPACE_1`/`SPACE_2`/`SPACE_3`/`SPACE_4`/`SPACE_6`/`SPACE_8` for 4/8/12/16/24/32px spacing. Do not reintroduce a 20px token. Values of 1-3px are allowed only as local optical corrections; map other near-token spacing back to the semantic scale unless a component has a documented reason.
+- Stack spacing: use `SPACE_1` between repeated rows in one navigation/list stack when each row owns its internal padding; use `SPACE_2` between denser inline controls; use `SPACE_3` between a row stack and its immediate follow-up action; use `SPACE_4` before explanatory helper text or a new content group; use `SPACE_6` or larger only between major sections. Hover/focus state must not change allocated row size or stack spacing.
 - Radius constants: use `RADIUS_NONE` for structural fills and rules, `RADIUS_MICRO` for tiny marks and thumbnails, `RADIUS_INLINE` for quiet inline settings controls, `RADIUS_COMPACT` for rows/chips/hints/inset groups, `RADIUS_CONTROL` for explicit buttons and canvas toolbars, and `RADIUS_PANEL` for floating panels and major overlays.
 - Alignment helpers in `src/ui_layout.rs`: use `row_center_y` for mixed inline rows, `row_end_center_y_layout` for trailing action groups, `column_left` for default stacked content, `column_center_x` only for brief centered status/spatial previews, `centered_single` only for one child that should occupy the available rect, and `centered_pos` for manually painted content centered in a rect. Avoid ad hoc center math unless a component has a documented optical correction.
 
 ## Components And Patterns
 
 - Sidebar: app-level settings and board navigation live in `src/sidebar.rs`. It should stay compact, left-anchored, and dismissible; do not turn it into a persistent inspector unless the product flow changes.
-- Sidebar board row: use for board switching, rename, delete affordance, active-board indication, and shortcut hints. Do not reuse it for generic lists unless the list has board-level navigation semantics.
+- Sidebar board row: use for board switching, rename, delete affordance, active-board indication, and shortcut hints. Treat it as a compact navigation row: active rows get a left rail and quiet fill, idle rows stay transparent, shortcuts read as metadata, and destructive delete language appears only when the full row rect is hovered or focused. Normal rows paint static text; mount text-editing controls only during rename so hover/focus cannot change row geometry. Do not reuse it for generic lists unless the list has board-level navigation semantics.
 - Sidebar subcard: use for grouped settings inside the sidebar. Do not nest cards inside it.
 - Quiet inline controls: use for compact setting choices and binary setting values in read-heavy panels. Only the active state gets a quiet frame; inactive choices should read as available text, not separate pills. Do not use this for canvas toolbars where the target needs to stay visually explicit.
 - Destructive actions: use explicit destructive language and reserved destructive color in context menus and confirmations. Do not make repeated row-level delete affordances loud by default.
@@ -50,8 +51,10 @@ Default to left-aligned content and titles. Center alignment should be an explic
 
 - Preview location: `src/design_system_preview.rs`, exposed through `--verify-design-system` in debug builds.
 - Command: `cargo run -- --verify-design-system --screenshot /tmp/reference-design-system.png`
+- Sidebar board-row probes: `cargo run -- --verify-sidebar-boards --screenshot /tmp/reference-sidebar-boards.png` and `cargo run -- --verify-sidebar-boards-hover --screenshot /tmp/reference-sidebar-boards-hover.png`
 - Destructive confirmation probes: `cargo run -- --verify-board-delete-confirmation --screenshot /tmp/reference-board-delete-confirmation.png` and `cargo run -- --verify-library-remove-confirmation --screenshot /tmp/reference-library-remove-confirmation.png`
 - Required checks before publishing design-system changes: `cargo fmt`, `cargo check`, then capture and inspect the preview screenshot.
+- When sharing screenshots in chat, use a unique filename or copy the verified screenshot to a timestamped `/tmp` path before embedding it. Reusing the same `/tmp/*.png` path can show stale cached images in the chat even when the file on disk is current.
 - Supported mode: dark theme only.
 - Screenshot artifacts are temporary evidence and should not be committed unless explicitly requested.
 
@@ -72,3 +75,4 @@ Update implementation, the debug preview, and this document together when shared
 - Temporary comparison: compact control consolidation is available with `cargo run -- --compare-compact-controls --screenshot /tmp/reference-compact-controls.png`. Option C is selected for sidebar settings; palette pills and canvas toolbar controls still need focused follow-up before migration.
 - Temporary comparison: radius semantics are available with `cargo run -- --compare-radii --screenshot /tmp/reference-radii.png`. The selected merge collapses previous row/chip/group values into `RADIUS_COMPACT`.
 - Temporary comparison: spacing scale consolidation is available with `cargo run -- --compare-spacing --screenshot /tmp/reference-spacing.png`. Option B is selected: keep `4/8/12/16/24/32`, retire `20` as a named token, and allow documented 1-3px optical corrections.
+- Temporary comparison: sidebar board-row component variants are available with `cargo run -- --compare-board-rows --screenshot /tmp/reference-board-rows.png`; option B is selected. Use `--compare-board-rows-bottom` for a deterministic scrolled lower capture.

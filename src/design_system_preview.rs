@@ -57,7 +57,7 @@ pub(crate) fn show_compact_controls_comparison(ui: &mut egui::Ui, screen_rect: e
     ui.painter()
         .rect_filled(screen_rect, 0, crate::theme::BACKGROUND);
 
-    let panel_width = 1040.0_f32.min(screen_rect.width() - crate::theme::SPACE_8 * 2.0);
+    let panel_width = 1500.0_f32.min(screen_rect.width() - crate::theme::SPACE_8 * 2.0);
     let panel_rect = egui::Rect::from_min_size(
         egui::pos2(
             screen_rect.center().x - panel_width * 0.5,
@@ -256,6 +256,66 @@ pub(crate) fn show_spacing_comparison(ui: &mut egui::Ui, screen_rect: egui::Rect
         });
 }
 
+pub(crate) fn show_board_rows_comparison(
+    ui: &mut egui::Ui,
+    screen_rect: egui::Rect,
+    scroll_offset: f32,
+) {
+    ui.painter()
+        .rect_filled(screen_rect, 0, crate::theme::BACKGROUND);
+
+    let panel_width = 1040.0_f32.min(screen_rect.width() - crate::theme::SPACE_8 * 2.0);
+    let panel_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            screen_rect.center().x - panel_width * 0.5,
+            screen_rect.top() + crate::theme::SPACE_6,
+        ),
+        egui::vec2(
+            panel_width,
+            screen_rect.height() - crate::theme::SPACE_6 * 2.0,
+        ),
+    );
+
+    egui::Area::new(egui::Id::new("board_rows_comparison"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(panel_rect.min)
+        .show(ui.ctx(), |ui| {
+            ui.set_min_size(panel_rect.size());
+            egui::Frame::new()
+                .fill(crate::theme::SURFACE)
+                .stroke(crate::theme::stroke_subtle())
+                .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_PANEL))
+                .inner_margin(egui::Margin::same(crate::theme::SPACE_4 as i8))
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("board_rows_comparison_scroll")
+                        .vertical_scroll_offset(scroll_offset)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing =
+                                egui::vec2(crate::theme::SPACE_4, crate::theme::SPACE_3);
+                            ui.label(
+                                egui::RichText::new("Sidebar board-row component")
+                                    .text_style(crate::theme::display_text_style())
+                                    .color(crate::theme::TEXT),
+                            );
+                            ui.label(
+                                egui::RichText::new(
+                                    "Decision: make board switching, active state, counts, shortcuts, rename, delete, and create affordances easier to scan without making the sidebar feel heavy.",
+                                )
+                                .text_style(egui::TextStyle::Body)
+                                .color(crate::theme::TEXT_MUTED),
+                            );
+
+                            board_rows_variant_current(ui);
+                            board_rows_variant_recommended(ui);
+                            board_rows_variant_spacious(ui);
+                            board_rows_recommendation(ui);
+                        });
+                });
+        });
+}
+
 fn color_tokens(ui: &mut egui::Ui) {
     section_label(ui, "Color roles");
     let tokens = [
@@ -311,6 +371,473 @@ fn color_tokens(ui: &mut egui::Ui) {
                 );
                 ui.end_row();
             }
+        });
+}
+
+fn board_rows_variant_current(ui: &mut egui::Ui) {
+    board_rows_variant_frame(
+        ui,
+        "A",
+        "Current compact row",
+        "Keeps the existing 36px list-item model. Highest density, but the active dot, shortcut, delete action, and title compete in the same small band.",
+        |ui| {
+            board_rows_state_grid(ui, BoardRowVariant::Current);
+        },
+    );
+}
+
+fn board_rows_variant_recommended(ui: &mut egui::Ui) {
+    board_rows_variant_frame(
+        ui,
+        "B",
+        "Recommended: navigational row",
+        "Treat the board row as navigation first: clearer left active rail, calmer metadata, hidden-until-relevant destructive action, and a create row that belongs to the same list.",
+        |ui| {
+            board_rows_state_grid(ui, BoardRowVariant::Navigational);
+        },
+    );
+}
+
+fn board_rows_variant_spacious(ui: &mut egui::Ui) {
+    board_rows_variant_frame(
+        ui,
+        "C",
+        "Spacious board card",
+        "Gives every board more breathing room and moves metadata into chips. Easier to read, but too tall for a dense sidebar with many boards.",
+        |ui| {
+            board_rows_state_grid(ui, BoardRowVariant::Spacious);
+        },
+    );
+}
+
+fn board_rows_variant_frame(
+    ui: &mut egui::Ui,
+    id: &str,
+    title: &str,
+    rationale: &str,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    egui::Frame::new()
+        .fill(egui::Color32::from_white_alpha(5))
+        .stroke(crate::theme::stroke_subtle())
+        .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_CONTROL))
+        .inner_margin(egui::Margin::same(crate::theme::SPACE_3 as i8))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing =
+                egui::vec2(crate::theme::SPACE_3, crate::theme::SPACE_2);
+            ui.horizontal(|ui| {
+                badge(ui, id, crate::theme::ACCENT, crate::theme::BACKGROUND);
+                ui.label(
+                    egui::RichText::new(title)
+                        .text_style(egui::TextStyle::Heading)
+                        .color(crate::theme::TEXT),
+                );
+            });
+            ui.label(
+                egui::RichText::new(rationale)
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_MUTED),
+            );
+            ui.add_space(crate::theme::SPACE_1);
+            add_contents(ui);
+        });
+}
+
+#[derive(Clone, Copy)]
+enum BoardRowVariant {
+    Current,
+    Navigational,
+    Spacious,
+}
+
+#[derive(Clone, Copy)]
+enum BoardRowState {
+    Active,
+    Idle,
+    Hover,
+    Renaming,
+}
+
+fn board_rows_state_grid(ui: &mut egui::Ui, variant: BoardRowVariant) {
+    egui::Frame::new()
+        .fill(crate::theme::SURFACE)
+        .stroke(crate::theme::stroke_subtle())
+        .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_COMPACT))
+        .inner_margin(egui::Margin::same(crate::theme::SPACE_2 as i8))
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.set_width(520.0);
+                board_rows_state_legend(ui);
+                ui.add_space(crate::theme::SPACE_1);
+                let rows = [
+                    ("My Board", "107 images", "Cmd 1", BoardRowState::Active),
+                    ("Board 2", "0 images", "Cmd 2", BoardRowState::Idle),
+                    ("Client Pulls", "24 images", "Cmd 3", BoardRowState::Hover),
+                    (
+                        "Mood references",
+                        "8 images",
+                        "Cmd 4",
+                        BoardRowState::Renaming,
+                    ),
+                ];
+                for (index, (name, detail, shortcut, state)) in rows.iter().enumerate() {
+                    paint_board_row_variant(ui, variant, name, detail, shortcut, *state);
+                    if index < rows.len() - 1 {
+                        ui.add_space(crate::theme::SPACE_1);
+                    }
+                }
+                ui.add_space(crate::theme::SPACE_2);
+                paint_create_board_variant(ui, variant);
+            });
+        });
+}
+
+fn board_rows_state_legend(ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+        for label in ["active", "idle", "hover/focus", "renaming", "create"] {
+            ui.label(
+                egui::RichText::new(label)
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_SUBTLE),
+            );
+        }
+    });
+}
+
+fn paint_board_row_variant(
+    ui: &mut egui::Ui,
+    variant: BoardRowVariant,
+    name: &str,
+    detail: &str,
+    shortcut: &str,
+    state: BoardRowState,
+) {
+    match variant {
+        BoardRowVariant::Current => paint_board_row_current(ui, name, detail, shortcut, state),
+        BoardRowVariant::Navigational => {
+            paint_board_row_navigational(ui, name, detail, shortcut, state);
+        }
+        BoardRowVariant::Spacious => paint_board_row_spacious(ui, name, detail, shortcut, state),
+    }
+}
+
+fn paint_board_row_current(
+    ui: &mut egui::Ui,
+    name: &str,
+    detail: &str,
+    shortcut: &str,
+    state: BoardRowState,
+) {
+    let active = matches!(state, BoardRowState::Active);
+    let hot = active || matches!(state, BoardRowState::Hover | BoardRowState::Renaming);
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 36.0), egui::Sense::hover());
+    ui.painter().rect_filled(
+        rect,
+        egui::CornerRadius::same(crate::theme::RADIUS_COMPACT),
+        if hot {
+            crate::theme::SURFACE_ELEVATED
+        } else {
+            crate::theme::SURFACE
+        },
+    );
+    let swatch = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + crate::theme::SPACE_2, rect.top() + 7.0),
+        egui::vec2(22.0, 22.0),
+    );
+    ui.painter().rect_filled(
+        swatch,
+        egui::CornerRadius::same(crate::theme::RADIUS_MICRO),
+        egui::Color32::from_white_alpha(if active { 34 } else { 18 }),
+    );
+    let text_x = swatch.right() + crate::theme::SPACE_2;
+    paint_board_row_text(
+        ui,
+        egui::pos2(text_x, rect.top() + 11.0),
+        name,
+        crate::theme::TEXT,
+    );
+    paint_board_row_small_left(
+        ui,
+        egui::pos2(text_x, rect.bottom() - 9.0),
+        detail,
+        crate::theme::TEXT_SUBTLE,
+    );
+    let right = rect.right() - crate::theme::SPACE_2;
+    paint_board_row_small(
+        ui,
+        egui::pos2(right - 44.0, rect.center().y),
+        shortcut,
+        crate::theme::TEXT_SUBTLE,
+    );
+    if active {
+        ui.painter().circle_filled(
+            egui::pos2(right - 22.0, rect.center().y),
+            2.8,
+            crate::theme::ACCENT,
+        );
+    }
+    paint_board_row_small(
+        ui,
+        egui::pos2(right, rect.center().y),
+        "x",
+        crate::theme::TEXT_SUBTLE,
+    );
+}
+
+fn paint_board_row_navigational(
+    ui: &mut egui::Ui,
+    name: &str,
+    detail: &str,
+    shortcut: &str,
+    state: BoardRowState,
+) {
+    let active = matches!(state, BoardRowState::Active);
+    let hover = matches!(state, BoardRowState::Hover | BoardRowState::Renaming);
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 44.0), egui::Sense::hover());
+    ui.painter().rect(
+        rect,
+        egui::CornerRadius::same(crate::theme::RADIUS_COMPACT),
+        if active || hover {
+            crate::theme::SURFACE_ELEVATED
+        } else {
+            egui::Color32::TRANSPARENT
+        },
+        if active {
+            crate::theme::stroke_subtle()
+        } else {
+            egui::Stroke::NONE
+        },
+        egui::StrokeKind::Inside,
+    );
+    if active {
+        let rail = egui::Rect::from_min_max(
+            rect.left_top() + egui::vec2(0.0, crate::theme::SPACE_2),
+            egui::pos2(rect.left() + 2.0, rect.bottom() - crate::theme::SPACE_2),
+        );
+        ui.painter()
+            .rect_filled(rail, crate::theme::RADIUS_MICRO, crate::theme::ACCENT);
+    }
+    let swatch = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + crate::theme::SPACE_3, rect.top() + 10.0),
+        egui::vec2(24.0, 24.0),
+    );
+    ui.painter().rect_filled(
+        swatch,
+        egui::CornerRadius::same(crate::theme::RADIUS_INLINE),
+        egui::Color32::from_white_alpha(if active { 38 } else { 18 }),
+    );
+    let text_x = swatch.right() + crate::theme::SPACE_2;
+    let title = if matches!(state, BoardRowState::Renaming) {
+        "Mood references|"
+    } else {
+        name
+    };
+    paint_board_row_text(
+        ui,
+        egui::pos2(text_x, rect.top() + 13.0),
+        title,
+        crate::theme::TEXT,
+    );
+    paint_board_row_small_left(
+        ui,
+        egui::pos2(text_x, rect.bottom() - 10.0),
+        detail,
+        crate::theme::TEXT_MUTED,
+    );
+    let action_color = if hover {
+        crate::theme::DESTRUCTIVE
+    } else {
+        crate::theme::TEXT_SUBTLE
+    };
+    paint_board_row_small(
+        ui,
+        egui::pos2(rect.right() - crate::theme::SPACE_3, rect.center().y),
+        if hover { "Delete" } else { shortcut },
+        action_color,
+    );
+}
+
+fn paint_board_row_spacious(
+    ui: &mut egui::Ui,
+    name: &str,
+    detail: &str,
+    shortcut: &str,
+    state: BoardRowState,
+) {
+    let active = matches!(state, BoardRowState::Active);
+    let hover = matches!(state, BoardRowState::Hover | BoardRowState::Renaming);
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 58.0), egui::Sense::hover());
+    ui.painter().rect(
+        rect,
+        egui::CornerRadius::same(crate::theme::RADIUS_CONTROL),
+        if active {
+            crate::theme::SURFACE_ELEVATED
+        } else {
+            crate::theme::SURFACE
+        },
+        if active || hover {
+            crate::theme::stroke_subtle()
+        } else {
+            egui::Stroke::NONE
+        },
+        egui::StrokeKind::Inside,
+    );
+    let swatch = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.left() + crate::theme::SPACE_3,
+            rect.top() + crate::theme::SPACE_3,
+        ),
+        egui::vec2(30.0, 30.0),
+    );
+    ui.painter().rect_filled(
+        swatch,
+        egui::CornerRadius::same(crate::theme::RADIUS_COMPACT),
+        egui::Color32::from_white_alpha(if active { 42 } else { 20 }),
+    );
+    let text_x = swatch.right() + crate::theme::SPACE_3;
+    paint_board_row_text(
+        ui,
+        egui::pos2(text_x, rect.top() + 18.0),
+        name,
+        crate::theme::TEXT,
+    );
+    board_meta_chip(
+        ui,
+        egui::pos2(text_x, rect.bottom() - 15.0),
+        detail,
+        egui::Color32::from_white_alpha(10),
+    );
+    board_meta_chip(
+        ui,
+        egui::pos2(rect.right() - 58.0, rect.bottom() - 15.0),
+        shortcut,
+        egui::Color32::TRANSPARENT,
+    );
+    paint_board_row_small(
+        ui,
+        egui::pos2(rect.right() - crate::theme::SPACE_3, rect.top() + 18.0),
+        if hover { "..." } else { "" },
+        crate::theme::TEXT_SUBTLE,
+    );
+}
+
+fn paint_create_board_variant(ui: &mut egui::Ui, variant: BoardRowVariant) {
+    let height = match variant {
+        BoardRowVariant::Current => 30.0,
+        BoardRowVariant::Navigational => 36.0,
+        BoardRowVariant::Spacious => 42.0,
+    };
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::hover(),
+    );
+    ui.painter().rect(
+        rect,
+        egui::CornerRadius::same(match variant {
+            BoardRowVariant::Spacious => crate::theme::RADIUS_CONTROL,
+            _ => crate::theme::RADIUS_COMPACT,
+        }),
+        match variant {
+            BoardRowVariant::Navigational => egui::Color32::from_white_alpha(4),
+            _ => egui::Color32::TRANSPARENT,
+        },
+        crate::theme::stroke_subtle(),
+        egui::StrokeKind::Inside,
+    );
+    let label = match variant {
+        BoardRowVariant::Current => "+  Create new board",
+        BoardRowVariant::Navigational => "+  New board",
+        BoardRowVariant::Spacious => "Create board",
+    };
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::TextStyle::Body.resolve(ui.style()),
+        crate::theme::TEXT_SUBTLE,
+    );
+}
+
+fn paint_board_row_text(ui: &mut egui::Ui, pos: egui::Pos2, text: &str, color: egui::Color32) {
+    ui.painter().text(
+        pos,
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::TextStyle::Body.resolve(ui.style()),
+        color,
+    );
+}
+
+fn paint_board_row_small(ui: &mut egui::Ui, pos: egui::Pos2, text: &str, color: egui::Color32) {
+    ui.painter().text(
+        pos,
+        egui::Align2::RIGHT_CENTER,
+        text,
+        egui::TextStyle::Small.resolve(ui.style()),
+        color,
+    );
+}
+
+fn paint_board_row_small_left(
+    ui: &mut egui::Ui,
+    pos: egui::Pos2,
+    text: &str,
+    color: egui::Color32,
+) {
+    ui.painter().text(
+        pos,
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::TextStyle::Small.resolve(ui.style()),
+        color,
+    );
+}
+
+fn board_meta_chip(ui: &mut egui::Ui, center: egui::Pos2, text: &str, fill: egui::Color32) {
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::TextStyle::Small.resolve(ui.style()),
+        crate::theme::TEXT_SUBTLE,
+    );
+    let rect = egui::Rect::from_center_size(
+        center + egui::vec2(galley.size().x * 0.5, 0.0),
+        galley.size() + egui::vec2(10.0, 4.0),
+    );
+    ui.painter().rect_filled(
+        rect,
+        egui::CornerRadius::same(crate::theme::RADIUS_INLINE),
+        fill,
+    );
+    ui.painter().galley(
+        crate::ui_layout::centered_pos(rect, galley.size()),
+        galley,
+        crate::theme::TEXT_SUBTLE,
+    );
+}
+
+fn board_rows_recommendation(ui: &mut egui::Ui) {
+    egui::Frame::new()
+        .fill(crate::theme::SURFACE_ELEVATED)
+        .stroke(crate::theme::stroke_subtle())
+        .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_CONTROL))
+        .inner_margin(egui::Margin::same(crate::theme::SPACE_3 as i8))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new("Recommendation: B Navigational row")
+                    .text_style(egui::TextStyle::Heading)
+                    .color(crate::theme::TEXT),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "Use the board row as a navigation component, not a tiny card. Keep the row compact, add a clear active rail, reserve filled treatment for active/hover, show shortcuts as metadata, and reveal destructive language only when the row is hovered or focused.",
+                )
+                .text_style(egui::TextStyle::Small)
+                .color(crate::theme::TEXT_MUTED),
+            );
         });
 }
 

@@ -1030,7 +1030,7 @@ fn paint_annotation(
                         )
                         .galley,
                     content_rect,
-                        color,
+                    color,
                 );
             }
         }
