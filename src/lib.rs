@@ -1,3 +1,4 @@
+mod active_board_load;
 mod app;
 mod board_switch;
 mod canvas;

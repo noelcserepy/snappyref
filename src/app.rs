@@ -1371,16 +1371,13 @@ impl ReferenceApp {
         };
 
         let deleted_active_board = pending.board_id == self.active_board_id;
-        let next_active_board_id = match library.delete_board(pending.board_id) {
-            Ok(board_id) => board_id,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
+        if let Err(error) = library.delete_board(pending.board_id) {
+            self.status = error;
+            return;
+        }
 
         if deleted_active_board {
-            self.activate_board_after_transition(next_active_board_id);
+            self.load_active_board();
         }
 
         self.status = format!("Deleted {}", pending.board_name);
@@ -1391,13 +1388,8 @@ impl ReferenceApp {
         self.save_user_session();
     }
 
-    fn activate_board_after_transition(&mut self, board_id: i64) {
-        self.active_board_id = board_id;
-        self.clear_active_board_transients();
-        self.canvas.clear_for_board_switch();
-        self.load_user_session();
-        self.restore_active_board_import_placeholders();
-        self.enqueue_existing_items();
+    fn load_active_board(&mut self) {
+        crate::active_board_load::load_active_board(self);
     }
 
     fn clear_active_board_transients(&mut self) {
@@ -4205,15 +4197,21 @@ impl crate::board_switch::BoardSwitchHost for ReferenceApp {
         library.set_active_board(board_id)
     }
 
+    fn load_active_board(&mut self) {
+        ReferenceApp::load_active_board(self);
+    }
+}
+
+impl crate::active_board_load::ActiveBoardLoadHost for ReferenceApp {
     fn clear_board_local_transients(&mut self) {
         self.clear_active_board_transients();
     }
 
-    fn clear_canvas_for_board_switch(&mut self) {
+    fn clear_canvas_for_active_board_load(&mut self) {
         self.canvas.clear_for_board_switch();
     }
 
-    fn load_active_board_session(&mut self) {
+    fn load_active_board_user_session(&mut self) {
         ReferenceApp::load_user_session(self);
     }
 

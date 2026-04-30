@@ -9,11 +9,7 @@ pub(crate) trait BoardSwitchHost {
 
     fn persist_active_board_before_switch(&mut self);
     fn set_active_board_in_library(&mut self, board_id: i64) -> Result<(), String>;
-    fn clear_board_local_transients(&mut self);
-    fn clear_canvas_for_board_switch(&mut self);
-    fn load_active_board_session(&mut self);
-    fn restore_active_board_import_placeholders(&mut self);
-    fn enqueue_active_board_existing_items(&mut self);
+    fn load_active_board(&mut self);
 }
 
 pub(crate) fn switch_to_board(
@@ -26,11 +22,7 @@ pub(crate) fn switch_to_board(
 
     host.persist_active_board_before_switch();
     host.set_active_board_in_library(target_board_id)?;
-    host.clear_board_local_transients();
-    host.clear_canvas_for_board_switch();
-    host.load_active_board_session();
-    host.restore_active_board_import_placeholders();
-    host.enqueue_active_board_existing_items();
+    host.load_active_board();
 
     Ok(BoardSwitchResult::Switched {
         active_board_id: host.active_board_id(),
@@ -66,24 +58,8 @@ mod tests {
             Ok(())
         }
 
-        fn clear_board_local_transients(&mut self) {
-            self.calls.push("clear_transients");
-        }
-
-        fn clear_canvas_for_board_switch(&mut self) {
-            self.calls.push("clear_canvas");
-        }
-
-        fn load_active_board_session(&mut self) {
-            self.calls.push("load_session");
-        }
-
-        fn restore_active_board_import_placeholders(&mut self) {
-            self.calls.push("restore_placeholders");
-        }
-
-        fn enqueue_active_board_existing_items(&mut self) {
-            self.calls.push("enqueue_existing");
+        fn load_active_board(&mut self) {
+            self.calls.push("load_active_board");
         }
     }
 
@@ -101,7 +77,7 @@ mod tests {
     }
 
     #[test]
-    fn switch_runs_transition_steps_in_order() {
+    fn switch_persists_activates_library_and_loads_active_board() {
         let mut host = FakeHost {
             active_board_id: 1,
             ..Default::default()
@@ -112,15 +88,7 @@ mod tests {
         assert_eq!(result, BoardSwitchResult::Switched { active_board_id: 2 });
         assert_eq!(
             host.calls,
-            vec![
-                "persist",
-                "set_active",
-                "clear_transients",
-                "clear_canvas",
-                "load_session",
-                "restore_placeholders",
-                "enqueue_existing"
-            ]
+            vec!["persist", "set_active", "load_active_board"]
         );
     }
 
