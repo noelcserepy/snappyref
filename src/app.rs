@@ -2,6 +2,7 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
+use crate::document_persistence::DocumentPersistence;
 use crate::import_intake::{
     ExternalImportSource, ImportIntake, ImportPlacementSettings, ImportRequestConfig,
 };
@@ -951,7 +952,7 @@ pub struct ReferenceApp {
     import_intake: ImportIntake,
     residency: ImageResidencyCoordinator,
     hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
-    last_saved_user_session: Option<crate::data::UserSession>,
+    document_persistence: DocumentPersistence,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -1022,7 +1023,7 @@ impl ReferenceApp {
                     import_intake: ImportIntake::new(),
                     residency: ImageResidencyCoordinator::default(),
                     hover_preview_dimensions: std::collections::HashMap::new(),
-                    last_saved_user_session: None,
+                    document_persistence: DocumentPersistence::default(),
                     #[cfg(debug_assertions)]
                     verification_mode: config.verification_mode,
                     #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -1226,7 +1227,7 @@ impl ReferenceApp {
                 import_intake: ImportIntake::new(),
                 residency: ImageResidencyCoordinator::default(),
                 hover_preview_dimensions: std::collections::HashMap::new(),
-                last_saved_user_session: None,
+                document_persistence: DocumentPersistence::default(),
                 #[cfg(debug_assertions)]
                 verification_mode: config.verification_mode,
                 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -1255,29 +1256,18 @@ impl ReferenceApp {
         }
 
         match library.load_board_items() {
-            Ok(mut records) => {
+            Ok(records) => {
                 let viewport_world = self.startup_viewport_world_rect();
-                crate::jobs::sort_records_by_viewport_proximity(&mut records, viewport_world);
-                let (startup_image_settings, startup_image_tier) =
-                    startup_existing_image_load_settings(self.settings.canvas_image_max_side);
-                for record in records {
-                    if let Err(error) =
-                        import_worker.enqueue(crate::jobs::ImportRequest::LoadExisting {
-                            target_board_id: self.active_board_id,
-                            record,
-                            max_texture_side: self.max_texture_side,
-                            canvas_image_settings: startup_image_settings,
-                            target_tier: startup_image_tier,
-                            priority: crate::jobs::ExistingLoadPriority::Startup,
-                            trace: self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
-                                queued_at: Instant::now(),
-                                timings: crate::jobs::ImportTimings::default(),
-                            }),
-                        })
-                    {
-                        self.status = error;
-                        break;
-                    }
+                if let Err(error) = self.residency.queue_startup_existing_loads(
+                    import_worker,
+                    records,
+                    viewport_world,
+                    self.active_board_id,
+                    &self.settings,
+                    self.max_texture_side,
+                    self.perf_log.is_some(),
+                ) {
+                    self.status = error;
                 }
             }
             Err(error) => {
@@ -1496,7 +1486,8 @@ impl ReferenceApp {
                 self.canvas
                     .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
                 self.canvas.set_layout_gap(self.settings.import_gap);
-                self.last_saved_user_session = Some(self.current_user_session());
+                self.document_persistence
+                    .record_saved_user_session(self.current_user_session());
             }
             Err(error) => self.status = error,
         }
@@ -2726,20 +2717,22 @@ impl ReferenceApp {
                             self.canvas.clear_crop_pending(updated_item_id);
                             #[cfg(feature = "semantic-search")]
                             if self.settings.semantic_search_enabled
-                                && asset_mime_type_supports_raster_derivatives(&asset.mime_type)
+                                && crate::residency::asset_mime_type_supports_raster_derivatives(
+                                    &asset.mime_type,
+                                )
                             {
                                 self.search
                                     .queue_asset_index(asset.id, asset.original_path.clone());
                             }
-                            if asset_mime_type_supports_raster_derivatives(&asset.mime_type) {
-                                if let Some(error) = self.residency.queue_backfill(
+                            if let Some(error) =
+                                self.residency.queue_overview_backfill_after_working_load(
                                     self.import_worker.as_ref(),
                                     &updated_record,
                                     &self.settings,
-                                    crate::data::CanvasImageCacheTier::Overview,
-                                ) {
-                                    self.status = error;
-                                }
+                                    crate::data::CanvasImageCacheTier::Working,
+                                )
+                            {
+                                self.status = error;
                             }
                             self.status = "Cropped image".to_owned();
                         }
@@ -2832,7 +2825,9 @@ impl ReferenceApp {
         let mut trace = loaded.trace;
         #[cfg(feature = "semantic-search")]
         let queued_asset = (self.settings.semantic_search_enabled
-            && asset_mime_type_supports_raster_derivatives(&loaded.record.asset.mime_type))
+            && crate::residency::asset_mime_type_supports_raster_derivatives(
+                &loaded.record.asset.mime_type,
+            ))
         .then(|| {
             (
                 loaded.record.asset.id,
@@ -2854,17 +2849,13 @@ impl ReferenceApp {
             existing_load_diagnostics.as_ref(),
             trace,
         );
-        if loaded_tier == crate::data::CanvasImageCacheTier::Working
-            && asset_mime_type_supports_raster_derivatives(&loaded_record.asset.mime_type)
-        {
-            if let Some(error) = self.residency.queue_backfill(
-                self.import_worker.as_ref(),
-                &loaded_record,
-                &self.settings,
-                crate::data::CanvasImageCacheTier::Overview,
-            ) {
-                self.status = error;
-            }
+        if let Some(error) = self.residency.queue_overview_backfill_after_working_load(
+            self.import_worker.as_ref(),
+            &loaded_record,
+            &self.settings,
+            loaded_tier,
+        ) {
+            self.status = error;
         }
         self.status = "Imported image".to_owned();
     }
@@ -3166,35 +3157,14 @@ impl ReferenceApp {
     }
 
     fn persist_canvas_changes(&mut self) {
-        let Some(library) = &self.library else {
-            return;
-        };
-
-        let changes = self.canvas.take_document_changes();
-        if !changes.archived_annotation_ids.is_empty()
-            && let Err(error) = library.archive_canvas_annotations(&changes.archived_annotation_ids)
-        {
+        let session = self.current_user_session();
+        if let Err(error) = self.document_persistence.commit_canvas_changes(
+            self.library.as_ref(),
+            &mut self.canvas,
+            session,
+        ) {
             self.status = error;
         }
-
-        for item in changes.updated_items {
-            if let Err(error) = library.update_board_item(&item) {
-                self.status = error;
-            }
-        }
-
-        for annotation in changes.updated_annotations {
-            if let Err(error) = library.update_canvas_annotation(&annotation) {
-                self.status = error;
-            }
-        }
-
-        if let Some(stack_order) = changes.stack_order
-            && let Err(error) = library.save_canvas_stack_order(&stack_order)
-        {
-            self.status = error;
-        }
-        self.persist_user_session_if_changed();
     }
 
     fn current_user_session(&self) -> crate::data::UserSession {
@@ -3209,24 +3179,11 @@ impl ReferenceApp {
 
     fn save_user_session(&mut self) {
         let session = self.current_user_session();
-        self.save_user_session_value(session);
-    }
-
-    fn persist_user_session_if_changed(&mut self) {
-        let session = self.current_user_session();
-        if self.last_saved_user_session.as_ref() != Some(&session) {
-            self.save_user_session_value(session);
-        }
-    }
-
-    fn save_user_session_value(&mut self, session: crate::data::UserSession) {
-        let Some(library) = &self.library else {
-            return;
-        };
-        if let Err(error) = library.save_user_session(&session) {
+        if let Err(error) = self
+            .document_persistence
+            .save_user_session(self.library.as_ref(), session)
+        {
             self.status = error;
-        } else {
-            self.last_saved_user_session = Some(session);
         }
     }
 
@@ -4078,20 +4035,6 @@ impl ReferenceApp {
     }
 }
 
-fn startup_existing_image_load_settings(
-    canvas_image_max_side: u32,
-) -> (
-    crate::jobs::CanvasImageSettings,
-    crate::data::CanvasImageCacheTier,
-) {
-    (
-        crate::jobs::CanvasImageSettings {
-            max_side: canvas_image_max_side,
-        },
-        crate::data::CanvasImageCacheTier::Overview,
-    )
-}
-
 fn sidebar_tab_session_value(tab: SidebarTab) -> &'static str {
     match tab {
         SidebarTab::Boards => "boards",
@@ -4104,15 +4047,6 @@ fn sidebar_tab_from_session(value: &str) -> SidebarTab {
         "boards" => SidebarTab::Boards,
         _ => SidebarTab::Options,
     }
-}
-
-fn asset_mime_type_supports_raster_derivatives(mime_type: &str) -> bool {
-    !mime_type
-        .split(';')
-        .next()
-        .unwrap_or(mime_type)
-        .trim()
-        .eq_ignore_ascii_case("image/svg+xml")
 }
 
 fn context_menu_should_close(
@@ -4700,14 +4634,6 @@ mod tests {
             calls += 1;
         });
         assert_eq!(calls, 0);
-    }
-
-    #[test]
-    fn startup_existing_image_load_uses_overview_cache_tier() {
-        let (settings, tier) = super::startup_existing_image_load_settings(4096);
-
-        assert_eq!(settings.max_side, 4096);
-        assert_eq!(tier, crate::data::CanvasImageCacheTier::Overview);
     }
 
     #[test]
@@ -6932,7 +6858,7 @@ mod tests {
             status: String::new(),
             perf_log: None,
             hover_preview_dimensions: std::collections::HashMap::new(),
-            last_saved_user_session: None,
+            document_persistence: super::DocumentPersistence::default(),
             #[cfg(debug_assertions)]
             verification_mode: None,
             #[cfg(all(debug_assertions, feature = "semantic-search"))]

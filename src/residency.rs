@@ -1,8 +1,12 @@
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use crate::canvas::CanvasState;
 use crate::data::{BoardItemWithAsset, CanvasImageCacheTier, WorkspaceSettings};
-use crate::jobs::{CanvasImageSettings, ExistingLoadPriority, ImportRequest, ImportWorker};
+use crate::jobs::{
+    CanvasImageSettings, ExistingLoadPriority, ImportRequest, ImportTimings, ImportTrace,
+    ImportWorker,
+};
 
 #[derive(Default)]
 pub(crate) struct ImageResidencyCoordinator {
@@ -11,6 +15,35 @@ pub(crate) struct ImageResidencyCoordinator {
 }
 
 impl ImageResidencyCoordinator {
+    pub(crate) fn queue_startup_existing_loads(
+        &self,
+        import_worker: &ImportWorker,
+        mut records: Vec<BoardItemWithAsset>,
+        viewport_world: eframe::egui::Rect,
+        active_board_id: i64,
+        settings: &WorkspaceSettings,
+        max_texture_side: usize,
+        trace_enabled: bool,
+    ) -> Result<(), String> {
+        crate::jobs::sort_records_by_viewport_proximity(&mut records, viewport_world);
+        let (canvas_image_settings, target_tier) = startup_existing_image_load_settings(settings);
+        for record in records {
+            import_worker.enqueue(ImportRequest::LoadExisting {
+                target_board_id: active_board_id,
+                record,
+                max_texture_side,
+                canvas_image_settings,
+                target_tier,
+                priority: ExistingLoadPriority::Startup,
+                trace: trace_enabled.then(|| ImportTrace {
+                    queued_at: Instant::now(),
+                    timings: ImportTimings::default(),
+                }),
+            })?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn note_loaded_item(&mut self, item_id: i64) {
         self.inflight_image_tier_loads.remove(&item_id);
     }
@@ -55,6 +88,26 @@ impl ImageResidencyCoordinator {
             return Some(error);
         }
         None
+    }
+
+    pub(crate) fn queue_overview_backfill_after_working_load(
+        &mut self,
+        import_worker: Option<&ImportWorker>,
+        record: &BoardItemWithAsset,
+        settings: &WorkspaceSettings,
+        loaded_tier: CanvasImageCacheTier,
+    ) -> Option<String> {
+        if loaded_tier != CanvasImageCacheTier::Working
+            || !asset_mime_type_supports_raster_derivatives(&record.asset.mime_type)
+        {
+            return None;
+        }
+        self.queue_backfill(
+            import_worker,
+            record,
+            settings,
+            CanvasImageCacheTier::Overview,
+        )
     }
 
     pub(crate) fn dispatch_pending_tier_requests(
@@ -117,9 +170,27 @@ fn canvas_image_settings(settings: &WorkspaceSettings) -> CanvasImageSettings {
     }
 }
 
+pub(crate) fn startup_existing_image_load_settings(
+    settings: &WorkspaceSettings,
+) -> (CanvasImageSettings, CanvasImageCacheTier) {
+    (
+        canvas_image_settings(settings),
+        CanvasImageCacheTier::Overview,
+    )
+}
+
+pub(crate) fn asset_mime_type_supports_raster_derivatives(mime_type: &str) -> bool {
+    !mime_type
+        .split(';')
+        .next()
+        .unwrap_or(mime_type)
+        .trim()
+        .eq_ignore_ascii_case("image/svg+xml")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ImageResidencyCoordinator;
+    use super::{ImageResidencyCoordinator, startup_existing_image_load_settings};
     use crate::canvas::CanvasState;
     use crate::data::CanvasImageCacheTier;
 
@@ -148,5 +219,18 @@ mod tests {
 
         assert_eq!(error, None);
         assert!(!residency.has_pending_backfill(42, CanvasImageCacheTier::Overview));
+    }
+
+    #[test]
+    fn startup_existing_image_load_uses_overview_cache_tier() {
+        let settings = crate::data::WorkspaceSettings {
+            canvas_image_max_side: 4096,
+            ..Default::default()
+        };
+
+        let (image_settings, tier) = startup_existing_image_load_settings(&settings);
+
+        assert_eq!(image_settings.max_side, 4096);
+        assert_eq!(tier, CanvasImageCacheTier::Overview);
     }
 }
