@@ -1519,6 +1519,7 @@ impl Library {
                 "SELECT
                     auto_image_scaling,
                     import_gap,
+                    import_target_canvas_area,
                     semantic_search_enabled,
                     canvas_image_max_side,
                     rotation_snap_degrees,
@@ -1537,22 +1538,27 @@ impl Library {
                 settings: WorkspaceSettings {
                     auto_image_scaling: row.get::<_, i64>(0)? != 0,
                     import_gap: row.get(1)?,
+                    import_target_canvas_area: row
+                        .get::<_, f32>(2)
+                        .ok()
+                        .map(|value| value.max(1.0))
+                        .unwrap_or(crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA),
                     canvas_image_max_side: row
-                        .get::<_, i64>(3)
+                        .get::<_, i64>(4)
                         .ok()
                         .map(|value| value.max(1) as u32)
                         .unwrap_or(crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE),
-                    semantic_search_enabled: row.get::<_, i64>(2).unwrap_or(0) != 0,
+                    semantic_search_enabled: row.get::<_, i64>(3).unwrap_or(0) != 0,
                     rotation_snap_degrees: row
-                        .get::<_, f32>(4)
+                        .get::<_, f32>(5)
                         .ok()
                         .map(|value| value.max(0.0))
                         .unwrap_or(crate::data::DEFAULT_ROTATION_SNAP_DEGREES),
-                    default_textbox_background: row.get::<_, i64>(5).unwrap_or(0) != 0,
+                    default_textbox_background: row.get::<_, i64>(6).unwrap_or(0) != 0,
                 },
-                sidebar_open: row.get::<_, i64>(6).unwrap_or(0) != 0,
+                sidebar_open: row.get::<_, i64>(7).unwrap_or(0) != 0,
                 sidebar_tab: row
-                    .get::<_, String>(7)
+                    .get::<_, String>(8)
                     .unwrap_or_else(|_| "settings".to_owned()),
             })
         });
@@ -1567,6 +1573,14 @@ impl Library {
             }
             Err(error) => Err(format!("failed to load user session: {error}")),
         }
+    }
+
+    pub fn load_session_viewport(&self) -> Result<(i64, ViewportState), String> {
+        let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        let viewport = board_viewport_state(&connection, active_board_id)
+            .map_err(|error| format!("failed to load active board viewport: {error}"))?;
+        Ok((active_board_id, viewport))
     }
 
     pub fn save_user_session(&self, session: &UserSession) -> Result<(), String> {
@@ -1585,6 +1599,7 @@ impl Library {
                     camera_zoom,
                     auto_image_scaling,
                     import_gap,
+                    import_target_canvas_area,
                     canvas_background,
                     semantic_search_enabled,
                     canvas_image_mode,
@@ -1595,13 +1610,14 @@ impl Library {
                     sidebar_tab,
                     active_board_id
                  )
-                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
                  ON CONFLICT(id) DO UPDATE SET
                     camera_pan_x = excluded.camera_pan_x,
                     camera_pan_y = excluded.camera_pan_y,
                     camera_zoom = excluded.camera_zoom,
                     auto_image_scaling = excluded.auto_image_scaling,
                     import_gap = excluded.import_gap,
+                    import_target_canvas_area = excluded.import_target_canvas_area,
                     canvas_background = excluded.canvas_background,
                     semantic_search_enabled = excluded.semantic_search_enabled,
                     canvas_image_mode = excluded.canvas_image_mode,
@@ -1621,6 +1637,7 @@ impl Library {
                         0_i64
                     },
                     session.settings.import_gap,
+                    session.settings.import_target_canvas_area,
                     session.viewport.canvas_background.as_str(),
                     if session.settings.semantic_search_enabled {
                         1_i64
@@ -2038,6 +2055,7 @@ impl Library {
                     camera_zoom   REAL NOT NULL,
                     auto_image_scaling INTEGER NOT NULL DEFAULT 1,
                     import_gap    REAL NOT NULL DEFAULT 24.0,
+                    import_target_canvas_area REAL NOT NULL DEFAULT 90000.0,
                     canvas_background TEXT NOT NULL DEFAULT 'none',
                     semantic_search_enabled INTEGER NOT NULL DEFAULT 1,
                     canvas_image_mode TEXT NOT NULL DEFAULT 'downscale',
@@ -2097,6 +2115,7 @@ impl Library {
         ensure_board_items_board_id_column(&connection)?;
         ensure_user_session_auto_image_scaling_column(&connection)?;
         ensure_user_session_import_gap_column(&connection)?;
+        ensure_user_session_import_target_canvas_area_column(&connection)?;
         ensure_user_session_canvas_background_column(&connection)?;
         ensure_user_session_semantic_search_enabled_column(&connection)?;
         ensure_user_session_canvas_image_mode_column(&connection)?;
@@ -2883,6 +2902,38 @@ fn ensure_user_session_import_gap_column(connection: &Connection) -> Result<(), 
     Ok(())
 }
 
+fn ensure_user_session_import_target_canvas_area_column(
+    connection: &Connection,
+) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(user_session)")
+        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("failed to read user_session schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
+
+    if columns
+        .iter()
+        .any(|column| column == "import_target_canvas_area")
+    {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            "ALTER TABLE user_session ADD COLUMN import_target_canvas_area REAL NOT NULL DEFAULT 90000.0",
+            [],
+        )
+        .map_err(|error| {
+            format!("failed to add import_target_canvas_area column to user_session: {error}")
+        })?;
+
+    Ok(())
+}
+
 fn ensure_user_session_canvas_background_column(connection: &Connection) -> Result<(), String> {
     let mut statement = connection
         .prepare("PRAGMA table_info(user_session)")
@@ -3633,6 +3684,7 @@ mod tests {
         let mut session = library.load_user_session().unwrap();
         session.settings.auto_image_scaling = false;
         session.settings.import_gap = 48.0;
+        session.settings.import_target_canvas_area = 45_000.0;
         session.settings.semantic_search_enabled = false;
         session.settings.canvas_image_max_side = 4096;
         session.settings.rotation_snap_degrees = 45.0;
@@ -3647,6 +3699,7 @@ mod tests {
         assert_eq!(reopened.active_board_id, first_board.id);
         assert!(!reopened.settings.auto_image_scaling);
         assert_eq!(reopened.settings.import_gap, 48.0);
+        assert_eq!(reopened.settings.import_target_canvas_area, 45_000.0);
         assert!(!reopened.settings.semantic_search_enabled);
         assert_eq!(reopened.settings.canvas_image_max_side, 4096);
         assert_eq!(reopened.settings.rotation_snap_degrees, 45.0);
@@ -3662,6 +3715,7 @@ mod tests {
             CanvasBackground::Grid
         );
         assert_eq!(second_reopened.settings.import_gap, 48.0);
+        assert_eq!(second_reopened.settings.import_target_canvas_area, 45_000.0);
 
         drop(library);
         let library = Library::initialize(root.clone()).unwrap();
@@ -3721,6 +3775,10 @@ mod tests {
         assert_eq!(session.viewport.camera_zoom, 1.5);
         assert!(session.settings.auto_image_scaling);
         assert_eq!(session.settings.import_gap, crate::data::DEFAULT_IMPORT_GAP);
+        assert_eq!(
+            session.settings.import_target_canvas_area,
+            crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA
+        );
         assert_eq!(
             session.settings.canvas_image_max_side,
             crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE

@@ -70,6 +70,7 @@
 | **My Board** | The default name for the first board in a library. | Board 1, default scene |
 | **Board N** | The generated name for additional boards after the first board. | New board, untitled board |
 | **Board Switch** | The operation that saves the active board, clears transient UI state, and loads another board. | Scene change, canvas swap |
+| **Active Board Load** | The runtime operation that makes the app match the Library's current **Active Board** after startup, **Board Switch**, or active **Board Deletion**. It clears board-local transient UI state, clears the canvas, loads the **User Session**, restores **Import Placeholders**, and starts **Existing Image Load**. | Board reload, canvas reload |
 | **Last Requested Board** | The board selected by the most recent board switch request during rapid switching. | Latest board, final board |
 | **Board Creation** | The instant creation of a new empty board that becomes active immediately. | New file, new project |
 | **Board Deletion** | A confirmed operation that archives a board and removes its board-local annotations while preserving library assets. | Delete canvas, delete project |
@@ -116,6 +117,7 @@
 - **Move to Front** and **Move to Back** preserve **Relative Stack Order** for multi-selection.
 - A pasted group preserves its **Relative Stack Order** and is placed at the **Front** of the **Active Board**.
 - Exactly one **Board** is the **Active Board** at a time.
+- **Active Board Load** reads the **Active Board** from the persisted **User Session**; callers must update the **Library** before invoking it.
 - During rapid **Board Switches**, the **Last Requested Board** should become the **Active Board**.
 - **This Board** search returns **Placement Results** for the **Active Board**.
 - **Library Scope** search returns **Asset Results** from the **Library**.

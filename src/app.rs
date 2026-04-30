@@ -1371,16 +1371,13 @@ impl ReferenceApp {
         };
 
         let deleted_active_board = pending.board_id == self.active_board_id;
-        let next_active_board_id = match library.delete_board(pending.board_id) {
-            Ok(board_id) => board_id,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
+        if let Err(error) = library.delete_board(pending.board_id) {
+            self.status = error;
+            return;
+        }
 
         if deleted_active_board {
-            self.activate_board_after_transition(next_active_board_id);
+            self.load_active_board();
         }
 
         self.status = format!("Deleted {}", pending.board_name);
@@ -1391,13 +1388,8 @@ impl ReferenceApp {
         self.save_user_session();
     }
 
-    fn activate_board_after_transition(&mut self, board_id: i64) {
-        self.active_board_id = board_id;
-        self.clear_active_board_transients();
-        self.canvas.clear_for_board_switch();
-        self.load_user_session();
-        self.restore_active_board_import_placeholders();
-        self.enqueue_existing_items();
+    fn load_active_board(&mut self) {
+        crate::active_board_load::load_active_board(self);
     }
 
     fn clear_active_board_transients(&mut self) {
@@ -1484,6 +1476,22 @@ impl ReferenceApp {
         }
     }
 
+    fn load_session_viewport(&mut self) {
+        let Some(library) = &self.library else {
+            return;
+        };
+
+        match library.load_session_viewport() {
+            Ok((active_board_id, viewport)) => {
+                self.active_board_id = active_board_id;
+                self.canvas.apply_viewport_state(&viewport);
+                self.document_persistence
+                    .record_saved_user_session(self.current_user_session());
+            }
+            Err(error) => self.status = error,
+        }
+    }
+
     fn startup_viewport_world_rect(&self) -> egui::Rect {
         let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, STARTUP_VIEWPORT_SIZE);
         egui::Rect::from_min_max(
@@ -1520,6 +1528,7 @@ impl ReferenceApp {
             width,
             height,
             self.settings.auto_image_scaling,
+            self.settings.import_target_canvas_area,
         );
         if board_id == self.active_board_id {
             self.add_import_placeholder_to_canvas(placeholder);
@@ -1556,14 +1565,16 @@ impl ReferenceApp {
     }
 
     fn import_size_world(&self, width: u32, height: u32) -> egui::Vec2 {
-        let scale =
-            crate::jobs::initial_import_scale(width, height, self.settings.auto_image_scaling);
-        egui::vec2(width as f32 * scale, height as f32 * scale)
+        crate::import_intake::import_preview_size_world(
+            width,
+            height,
+            self.settings.import_target_canvas_area,
+        )
     }
 
     fn import_placement_settings(&self) -> ImportPlacementSettings {
         ImportPlacementSettings {
-            auto_image_scaling: self.settings.auto_image_scaling,
+            import_target_canvas_area: self.settings.import_target_canvas_area,
             import_gap: self.settings.import_gap,
             snap_distance_world: crate::import_placement::import_snap_distance_world(&self.canvas),
         }
@@ -1573,7 +1584,8 @@ impl ReferenceApp {
         ImportRequestConfig {
             max_texture_side: self.max_texture_side,
             canvas_image_max_side: self.settings.canvas_image_max_side,
-            auto_image_scaling: self.settings.auto_image_scaling,
+            auto_image_scaling: true,
+            import_target_canvas_area: self.settings.import_target_canvas_area,
             import_gap: self.settings.import_gap,
         }
     }
@@ -1770,8 +1782,12 @@ impl ReferenceApp {
                 desired_world,
                 viewport_world,
             );
-            let scale =
-                crate::jobs::initial_import_scale(width, height, self.settings.auto_image_scaling);
+            let scale = crate::jobs::initial_import_scale(
+                width,
+                height,
+                true,
+                self.settings.import_target_canvas_area,
+            );
             let size_world = egui::vec2(width as f32 * scale, height as f32 * scale);
             previews.push((reserved_world, size_world));
         }
@@ -4205,16 +4221,22 @@ impl crate::board_switch::BoardSwitchHost for ReferenceApp {
         library.set_active_board(board_id)
     }
 
+    fn load_active_board(&mut self) {
+        ReferenceApp::load_active_board(self);
+    }
+}
+
+impl crate::active_board_load::ActiveBoardLoadHost for ReferenceApp {
     fn clear_board_local_transients(&mut self) {
         self.clear_active_board_transients();
     }
 
-    fn clear_canvas_for_board_switch(&mut self) {
+    fn clear_canvas_for_active_board_load(&mut self) {
         self.canvas.clear_for_board_switch();
     }
 
-    fn load_active_board_session(&mut self) {
-        ReferenceApp::load_user_session(self);
+    fn load_active_board_viewport(&mut self) {
+        ReferenceApp::load_session_viewport(self);
     }
 
     fn restore_active_board_import_placeholders(&mut self) {
@@ -4486,6 +4508,7 @@ mod tests {
         let mut app = test_app(Some(library.clone()));
         app.settings.auto_image_scaling = false;
         app.settings.import_gap = 37.0;
+        app.settings.import_target_canvas_area = 45_000.0;
         app.settings.canvas_image_max_side = 4096;
         app.canvas
             .set_background(crate::data::CanvasBackground::Grid);
@@ -4495,6 +4518,7 @@ mod tests {
         let session = library.load_user_session().unwrap();
         assert!(!session.settings.auto_image_scaling);
         assert_eq!(session.settings.import_gap, 37.0);
+        assert_eq!(session.settings.import_target_canvas_area, 45_000.0);
         assert_eq!(session.settings.canvas_image_max_side, 4096);
         assert_eq!(
             session.viewport.canvas_background,
@@ -5999,6 +6023,31 @@ mod tests {
     }
 
     #[test]
+    fn active_board_load_applies_viewport_without_reloading_global_settings() {
+        let root = temp_library_root("reference-active-load-settings-scope");
+        let library = Library::initialize(root.clone()).unwrap();
+        let second = library.create_board("Second").unwrap();
+        library.set_active_board(second.id).unwrap();
+        let mut stored_session = library.load_user_session().unwrap();
+        stored_session.settings.import_gap = 99.0;
+        stored_session.viewport.camera_pan_x = 75.0;
+        stored_session.viewport.canvas_background = crate::data::CanvasBackground::Dots;
+        library.save_user_session(&stored_session).unwrap();
+
+        let mut app = test_app(Some(library.clone()));
+        app.settings.import_gap = 24.0;
+
+        app.load_active_board();
+
+        assert_eq!(app.active_board_id, second.id);
+        assert_eq!(app.canvas.background(), crate::data::CanvasBackground::Dots);
+        assert_eq!(app.canvas.viewport_state().camera_pan_x, 75.0);
+        assert_eq!(app.settings.import_gap, 24.0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn board_delete_requires_confirmation_before_archiving_active_board() {
         let root = temp_library_root("reference-confirm-delete-board");
         let library = Library::initialize(root.clone()).unwrap();
@@ -6671,6 +6720,16 @@ mod tests {
             )),
             "images.example.com"
         );
+    }
+
+    #[test]
+    fn import_requests_preserve_import_area_cap_when_auto_scaling_setting_is_off() {
+        let mut app = test_app(None);
+        app.settings.auto_image_scaling = false;
+
+        let config = app.import_request_config();
+
+        assert!(config.auto_image_scaling);
     }
 
     fn test_app(library: Option<Library>) -> ReferenceApp {

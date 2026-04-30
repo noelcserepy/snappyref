@@ -18,7 +18,7 @@ use crate::jobs::image_formats::{
 };
 use crate::storage::Library;
 
-pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
+pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA;
 const URL_IMPORT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const URL_IMPORT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const URL_IMPORT_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
@@ -146,6 +146,7 @@ pub enum ImportRequest {
         max_texture_side: usize,
         canvas_image_settings: CanvasImageSettings,
         auto_scale: bool,
+        target_canvas_area: f32,
         import_gap: f32,
         trace: Option<ImportTrace>,
     },
@@ -161,6 +162,7 @@ pub enum ImportRequest {
         max_texture_side: usize,
         canvas_image_settings: CanvasImageSettings,
         auto_scale: bool,
+        target_canvas_area: f32,
         import_gap: f32,
         trace: Option<ImportTrace>,
     },
@@ -174,6 +176,7 @@ pub enum ImportRequest {
         max_texture_side: usize,
         canvas_image_settings: CanvasImageSettings,
         auto_scale: bool,
+        target_canvas_area: f32,
         import_gap: f32,
         trace: Option<ImportTrace>,
     },
@@ -461,6 +464,7 @@ impl ImportWorker {
                             max_texture_side,
                             canvas_image_settings,
                             auto_scale,
+                            target_canvas_area,
                             import_gap,
                             trace,
                         } => import_path(
@@ -474,6 +478,7 @@ impl ImportWorker {
                             max_texture_side,
                             canvas_image_settings,
                             auto_scale,
+                            target_canvas_area,
                             import_gap,
                             trace,
                             worker_render_state.as_ref(),
@@ -490,6 +495,7 @@ impl ImportWorker {
                             max_texture_side,
                             canvas_image_settings,
                             auto_scale,
+                            target_canvas_area,
                             import_gap,
                             trace,
                         } => import_clipboard(
@@ -505,6 +511,7 @@ impl ImportWorker {
                             max_texture_side,
                             canvas_image_settings,
                             auto_scale,
+                            target_canvas_area,
                             import_gap,
                             trace,
                             worker_render_state.as_ref(),
@@ -519,6 +526,7 @@ impl ImportWorker {
                             max_texture_side,
                             canvas_image_settings,
                             auto_scale,
+                            target_canvas_area,
                             import_gap,
                             trace,
                         } => import_url(
@@ -532,6 +540,7 @@ impl ImportWorker {
                             max_texture_side,
                             canvas_image_settings,
                             auto_scale,
+                            target_canvas_area,
                             import_gap,
                             trace,
                             worker_render_state.as_ref(),
@@ -760,6 +769,7 @@ pub fn import_path_sync(
         usize::MAX,
         CanvasImageSettings::default(),
         auto_scale,
+        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
         import_gap,
         None,
         None,
@@ -790,6 +800,7 @@ pub fn import_clipboard_sync(
         usize::MAX,
         CanvasImageSettings::default(),
         auto_scale,
+        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
         import_gap,
         None,
         None,
@@ -1087,6 +1098,7 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
         usize::MAX,
         settings,
         true,
+        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
         crate::data::DEFAULT_IMPORT_GAP,
         Some(trace),
         None,
@@ -1142,6 +1154,7 @@ fn import_path_sync_traced(
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
+    target_canvas_area: f32,
     import_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
@@ -1162,6 +1175,7 @@ fn import_path_sync_traced(
             reserved_world,
             viewport_world,
             auto_scale,
+            target_canvas_area,
             import_gap,
             worker_started_at,
             trace,
@@ -1174,8 +1188,12 @@ fn import_path_sync_traced(
     if let Some(trace) = &mut trace {
         trace.timings.decode_or_load = decode_started_at.elapsed();
     }
-    let initial_scale =
-        initial_import_scale(decoded.source_width, decoded.source_height, auto_scale);
+    let initial_scale = initial_import_scale(
+        decoded.source_width,
+        decoded.source_height,
+        auto_scale,
+        target_canvas_area,
+    );
     let arranged_world = resolve_import_world(
         library,
         target_board_id,
@@ -1273,6 +1291,7 @@ fn import_svg_path_sync_traced(
     reserved_world: Option<egui::Pos2>,
     viewport_world: egui::Rect,
     auto_scale: bool,
+    target_canvas_area: f32,
     import_gap: f32,
     worker_started_at: Instant,
     mut trace: Option<ImportTrace>,
@@ -1283,7 +1302,7 @@ fn import_svg_path_sync_traced(
         trace.timings.decode_or_load = decode_started_at.elapsed();
     }
 
-    let initial_scale = initial_import_scale(svg.width, svg.height, auto_scale);
+    let initial_scale = initial_import_scale(svg.width, svg.height, auto_scale, target_canvas_area);
     let arranged_world = resolve_import_world(
         library,
         target_board_id,
@@ -1352,6 +1371,7 @@ fn import_path(
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
+    target_canvas_area: f32,
     import_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
@@ -1367,6 +1387,7 @@ fn import_path(
         max_texture_side,
         canvas_image_settings,
         auto_scale,
+        target_canvas_area,
         import_gap,
         trace,
         wgpu_render_state,
@@ -1393,6 +1414,7 @@ fn import_url(
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
+    target_canvas_area: f32,
     import_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
@@ -1408,6 +1430,7 @@ fn import_url(
         max_texture_side,
         canvas_image_settings,
         auto_scale,
+        target_canvas_area,
         import_gap,
         trace,
         wgpu_render_state,
@@ -1436,6 +1459,7 @@ fn import_clipboard(
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
+    target_canvas_area: f32,
     import_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
@@ -1453,6 +1477,7 @@ fn import_clipboard(
         max_texture_side,
         canvas_image_settings,
         auto_scale,
+        target_canvas_area,
         import_gap,
         trace,
         wgpu_render_state,
@@ -1485,6 +1510,7 @@ fn import_url_sync_traced(
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
+    target_canvas_area: f32,
     import_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
@@ -1511,6 +1537,7 @@ fn import_url_sync_traced(
             reserved_world,
             viewport_world,
             auto_scale,
+            target_canvas_area,
             import_gap,
             worker_started_at,
             trace,
@@ -1528,8 +1555,12 @@ fn import_url_sync_traced(
         trace.timings.decode_or_load += decode_started_at.elapsed();
     }
 
-    let initial_scale =
-        initial_import_scale(decoded.source_width, decoded.source_height, auto_scale);
+    let initial_scale = initial_import_scale(
+        decoded.source_width,
+        decoded.source_height,
+        auto_scale,
+        target_canvas_area,
+    );
     let arranged_world = resolve_import_world(
         library,
         target_board_id,
@@ -1634,6 +1665,7 @@ fn import_downloaded_svg_sync_traced(
     reserved_world: Option<egui::Pos2>,
     viewport_world: egui::Rect,
     auto_scale: bool,
+    target_canvas_area: f32,
     import_gap: f32,
     worker_started_at: Instant,
     mut trace: Option<ImportTrace>,
@@ -1646,7 +1678,7 @@ fn import_downloaded_svg_sync_traced(
         trace.timings.decode_or_load += decode_started_at.elapsed();
     }
 
-    let initial_scale = initial_import_scale(svg.width, svg.height, auto_scale);
+    let initial_scale = initial_import_scale(svg.width, svg.height, auto_scale, target_canvas_area);
     let arranged_world = resolve_import_world(
         library,
         target_board_id,
@@ -1711,6 +1743,7 @@ fn import_clipboard_sync_traced(
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
+    target_canvas_area: f32,
     import_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
@@ -1726,7 +1759,7 @@ fn import_clipboard_sync_traced(
     let file_size = std::fs::metadata(&stored_path)
         .map_err(|error| format!("failed to read clipboard image metadata: {error}"))?
         .len();
-    let initial_scale = initial_import_scale(width, height, auto_scale);
+    let initial_scale = initial_import_scale(width, height, auto_scale, target_canvas_area);
     let arranged_world = resolve_import_world(
         library,
         target_board_id,
@@ -2033,6 +2066,7 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
         max_texture_side: usize::MAX,
         canvas_image_settings: CanvasImageSettings::default(),
         auto_scale: true,
+        target_canvas_area: DEFAULT_IMPORT_TARGET_CANVAS_AREA,
         import_gap: crate::data::DEFAULT_IMPORT_GAP,
         trace: Some(ImportTrace {
             queued_at: started_at,
@@ -2721,15 +2755,19 @@ fn backfill_cache_tier(
     }
 }
 
-pub fn initial_import_scale(asset_width: u32, asset_height: u32, auto_scale: bool) -> f32 {
+pub fn initial_import_scale(
+    asset_width: u32,
+    asset_height: u32,
+    auto_scale: bool,
+    target_canvas_area: f32,
+) -> f32 {
     if !auto_scale || asset_width == 0 || asset_height == 0 {
         return 1.0;
     }
 
+    let target_canvas_area = target_canvas_area.max(1.0);
     let asset_area = asset_width as f32 * asset_height as f32;
-    (DEFAULT_IMPORT_TARGET_CANVAS_AREA / asset_area)
-        .sqrt()
-        .min(1.0)
+    (target_canvas_area / asset_area).sqrt().min(1.0)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3072,7 +3110,7 @@ mod tests {
 
     #[test]
     fn scales_down_large_portrait_images_to_target_area() {
-        let scale = initial_import_scale(1000, 1500, true);
+        let scale = initial_import_scale(1000, 1500, true, DEFAULT_IMPORT_TARGET_CANVAS_AREA);
         assert!(
             (scale - (DEFAULT_IMPORT_TARGET_CANVAS_AREA / 1_500_000.0).sqrt()).abs() < f32::EPSILON
         );
@@ -3080,20 +3118,34 @@ mod tests {
 
     #[test]
     fn scales_down_large_landscape_images_by_area_cap() {
-        let scale = initial_import_scale(1920, 1080, true);
+        let scale = initial_import_scale(1920, 1080, true, DEFAULT_IMPORT_TARGET_CANVAS_AREA);
         assert!(
             (scale - (DEFAULT_IMPORT_TARGET_CANVAS_AREA / 2_073_600.0).sqrt()).abs() < f32::EPSILON
         );
     }
 
     #[test]
+    fn scales_down_large_images_to_configured_target_area() {
+        let target_area = 40_000.0;
+        let scale = initial_import_scale(1000, 1500, true, target_area);
+
+        assert!((scale - (target_area / 1_500_000.0).sqrt()).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn keeps_smaller_images_at_full_scale() {
-        assert_eq!(initial_import_scale(180, 240, true), 1.0);
+        assert_eq!(
+            initial_import_scale(180, 240, true, DEFAULT_IMPORT_TARGET_CANVAS_AREA),
+            1.0
+        );
     }
 
     #[test]
     fn disabling_auto_scale_keeps_full_scale() {
-        assert_eq!(initial_import_scale(1200, 2000, false), 1.0);
+        assert_eq!(
+            initial_import_scale(1200, 2000, false, DEFAULT_IMPORT_TARGET_CANVAS_AREA),
+            1.0
+        );
     }
 
     #[test]
@@ -3172,6 +3224,7 @@ mod tests {
             usize::MAX,
             CanvasImageSettings::default(),
             true,
+            DEFAULT_IMPORT_TARGET_CANVAS_AREA,
             crate::data::DEFAULT_IMPORT_GAP,
             None,
             None,
@@ -3192,6 +3245,7 @@ mod tests {
             usize::MAX,
             CanvasImageSettings::default(),
             false,
+            DEFAULT_IMPORT_TARGET_CANVAS_AREA,
             crate::data::DEFAULT_IMPORT_GAP,
             None,
             None,
@@ -3202,6 +3256,39 @@ mod tests {
 
         assert!((displayed_area(&tall) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
         assert_eq!(small.record.item.scale, 1.0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn clipboard_import_uses_configured_target_area() {
+        let root = temp_library_root("clipboard-import-custom-area");
+        let library = Library::initialize(root.clone()).unwrap();
+        let target_area = 40_000.0;
+
+        let loaded = match import_clipboard(
+            &library,
+            1,
+            1,
+            solid_rgba(1000, 1500),
+            1000,
+            1500,
+            eframe::egui::Pos2::ZERO,
+            None,
+            test_viewport_world(),
+            usize::MAX,
+            CanvasImageSettings::default(),
+            true,
+            target_area,
+            crate::data::DEFAULT_IMPORT_GAP,
+            None,
+            None,
+        ) {
+            ImportResult::Loaded(loaded) => loaded,
+            other => panic!("expected loaded clipboard image, got {other:?}"),
+        };
+
+        assert!((displayed_area(&loaded) - target_area).abs() < 0.1);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -3227,6 +3314,7 @@ mod tests {
             usize::MAX,
             CanvasImageSettings::default(),
             false,
+            DEFAULT_IMPORT_TARGET_CANVAS_AREA,
             crate::data::DEFAULT_IMPORT_GAP,
             None,
             None,
@@ -3368,6 +3456,7 @@ mod tests {
             usize::MAX,
             CanvasImageSettings::default(),
             false,
+            DEFAULT_IMPORT_TARGET_CANVAS_AREA,
             gap,
             None,
             None,
@@ -3389,6 +3478,7 @@ mod tests {
             usize::MAX,
             CanvasImageSettings::default(),
             false,
+            DEFAULT_IMPORT_TARGET_CANVAS_AREA,
             gap,
             None,
             None,
@@ -3431,6 +3521,7 @@ mod tests {
             usize::MAX,
             CanvasImageSettings::default(),
             false,
+            DEFAULT_IMPORT_TARGET_CANVAS_AREA,
             crate::data::DEFAULT_IMPORT_GAP,
             None,
             None,
@@ -3465,6 +3556,7 @@ mod tests {
             usize::MAX,
             CanvasImageSettings::default(),
             false,
+            DEFAULT_IMPORT_TARGET_CANVAS_AREA,
             gap,
             None,
             None,
@@ -3506,6 +3598,7 @@ mod tests {
             usize::MAX,
             CanvasImageSettings::default(),
             false,
+            DEFAULT_IMPORT_TARGET_CANVAS_AREA,
             crate::data::DEFAULT_IMPORT_GAP,
             None,
             None,
@@ -3563,6 +3656,7 @@ mod tests {
             usize::MAX,
             CanvasImageSettings::default(),
             false,
+            DEFAULT_IMPORT_TARGET_CANVAS_AREA,
             crate::data::DEFAULT_IMPORT_GAP,
             None,
             None,
@@ -3844,6 +3938,7 @@ static char * sample_xpm[] = {
             usize::MAX,
             CanvasImageSettings::default(),
             false,
+            DEFAULT_IMPORT_TARGET_CANVAS_AREA,
             crate::data::DEFAULT_IMPORT_GAP,
             Some(trace),
             None,

@@ -2,6 +2,7 @@ use super::CanvasBackground;
 
 pub const DEFAULT_IMPORT_GAP: f32 = 24.0;
 pub const DEFAULT_CANVAS_IMAGE_MAX_SIDE: u32 = 2000;
+pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
 pub const DEFAULT_ROTATION_SNAP_DEGREES: f32 = 15.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -44,6 +45,7 @@ impl Default for ViewportState {
 pub struct WorkspaceSettings {
     pub auto_image_scaling: bool,
     pub import_gap: f32,
+    pub import_target_canvas_area: f32,
     pub canvas_image_max_side: u32,
     pub semantic_search_enabled: bool,
     pub rotation_snap_degrees: f32,
@@ -55,6 +57,7 @@ impl Default for WorkspaceSettings {
         Self {
             auto_image_scaling: true,
             import_gap: DEFAULT_IMPORT_GAP,
+            import_target_canvas_area: DEFAULT_IMPORT_TARGET_CANVAS_AREA,
             canvas_image_max_side: DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             semantic_search_enabled: true,
             rotation_snap_degrees: DEFAULT_ROTATION_SNAP_DEGREES,

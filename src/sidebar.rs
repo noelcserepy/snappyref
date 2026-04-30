@@ -612,8 +612,24 @@ fn paint_settings_section(
     paint_setting_divider(ui);
     changed |= paint_setting_row(
         ui,
-        "Default image area",
-        "Cached canvas image max side.",
+        "Import image area",
+        "Target area for auto-scaled imports.",
+        |ui| {
+            ui.add(
+                egui::DragValue::new(&mut settings.import_target_canvas_area)
+                    .speed(1024.0)
+                    .range(10_000.0..=1_000_000.0)
+                    .fixed_decimals(0)
+                    .suffix(" units"),
+            )
+            .changed()
+        },
+    );
+    paint_setting_divider(ui);
+    changed |= paint_setting_row(
+        ui,
+        "Canvas cache max side",
+        "Largest cached canvas image side.",
         |ui| {
             ui.add(
                 egui::DragValue::new(&mut settings.canvas_image_max_side)
