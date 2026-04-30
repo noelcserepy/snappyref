@@ -91,6 +91,7 @@ pub struct CanvasDocumentChanges {
     pub updated_items: Vec<crate::data::BoardItem>,
     pub updated_annotations: Vec<CanvasAnnotation>,
     pub archived_annotation_ids: Vec<i64>,
+    pub stack_order: Option<Vec<crate::data::CanvasStackItem>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -240,6 +241,8 @@ struct DragState {
     pointer_start_world: egui::Pos2,
     starting_items: Vec<SelectedLayoutItem>,
     snap_preview_rect_world: Option<egui::Rect>,
+    started_at_seconds: f64,
+    moved: bool,
 }
 
 #[derive(Clone)]
@@ -440,6 +443,8 @@ impl CanvasState {
             pointer_start_world: egui::Pos2::ZERO,
             starting_items: self.selected_layout_items(),
             snap_preview_rect_world: None,
+            started_at_seconds: 0.0,
+            moved: false,
         };
         let snap_preview_rect =
             interaction::compute_drag_snap_preview(self, rect, &drag_state, world_delta);

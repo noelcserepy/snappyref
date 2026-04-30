@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use crate::storage::{AssetSearchHit, EmbeddingStatus, Library};
 
-use super::index::{BruteForceIndex, SearchScope, VectorIndex, decode_f32_blob};
+use super::index::{SearchScope, decode_f32_blob, search_embeddings_for_scope};
 use super::model::{EmbeddingModel, ModelSpec, OrtDualEncoderModel};
 
 const IMAGE_PIVOT_CANDIDATE_LIMIT: usize = 50;
@@ -532,8 +532,7 @@ fn search_assets(
 ) -> Result<Vec<AssetSearchHit>, String> {
     match scope {
         SearchScope::ThisBoard => {
-            let index = BruteForceIndex::new(library.clone());
-            index.search(scope, model_key, query_embedding, limit)
+            search_embeddings_for_scope(library, scope, model_key, query_embedding, limit)
         }
         SearchScope::Library => search_cached_library_embeddings(
             library,
@@ -731,7 +730,7 @@ fn group_hits(
                 item_ids,
             }
         })
-        .filter(|group| scope == SearchScope::Library || !group.item_ids.is_empty())
+        .filter(|group| scope.includes_unplaced_assets() || !group.item_ids.is_empty())
         .collect())
 }
 

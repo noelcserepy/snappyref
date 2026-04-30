@@ -333,6 +333,13 @@ struct BoardImportPlaceholder {
     size_world: egui::Vec2,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ImportReservation {
+    target_board_id: i64,
+    queue_id: u64,
+    reserved_world: Option<egui::Pos2>,
+}
+
 #[derive(Clone, Debug)]
 struct CropUndoEntry {
     previous_record: crate::data::BoardItemWithAsset,
@@ -1256,7 +1263,7 @@ impl ReferenceApp {
         };
 
         match library.load_canvas_stack_order() {
-            Ok(stack_order) => self.canvas.set_canvas_stack_order(stack_order),
+            Ok(stack_order) => self.canvas.restore_canvas_stack_order(stack_order),
             Err(error) => self.status = error,
         }
 
@@ -1345,8 +1352,7 @@ impl ReferenceApp {
             return;
         }
 
-        self.persist_canvas_changes();
-        self.save_user_session();
+        self.save_active_board_before_transition();
 
         let Some(library) = &self.library else {
             self.status = "Storage unavailable".to_owned();
@@ -1357,19 +1363,7 @@ impl ReferenceApp {
             return;
         }
 
-        self.active_board_id = board_id;
-        #[cfg(feature = "semantic-search")]
-        self.search.close_overlay(Some(&mut self.canvas));
-        #[cfg(not(feature = "semantic-search"))]
-        {
-            self.canvas.clear_search_matches();
-            self.canvas.clear_search_drag_preview();
-        }
-        self.crop_undo_stack.clear();
-        self.canvas.clear_for_board_switch();
-        self.load_user_session();
-        self.restore_active_board_import_placeholders();
-        self.enqueue_existing_items();
+        self.activate_board_after_transition(board_id);
     }
 
     fn handle_board_action(&mut self, action: Option<SidebarBoardAction>) {
@@ -1415,8 +1409,7 @@ impl ReferenceApp {
             return;
         };
 
-        self.persist_canvas_changes();
-        self.save_user_session();
+        self.save_active_board_before_transition();
 
         let Some(library) = &self.library else {
             self.status = "Storage unavailable".to_owned();
@@ -1433,22 +1426,35 @@ impl ReferenceApp {
         };
 
         if deleted_active_board {
-            self.active_board_id = next_active_board_id;
-            #[cfg(feature = "semantic-search")]
-            self.search.close_overlay(Some(&mut self.canvas));
-            #[cfg(not(feature = "semantic-search"))]
-            {
-                self.canvas.clear_search_matches();
-                self.canvas.clear_search_drag_preview();
-            }
-            self.crop_undo_stack.clear();
-            self.canvas.clear_for_board_switch();
-            self.load_user_session();
-            self.restore_active_board_import_placeholders();
-            self.enqueue_existing_items();
+            self.activate_board_after_transition(next_active_board_id);
         }
 
         self.status = format!("Deleted {}", pending.board_name);
+    }
+
+    fn save_active_board_before_transition(&mut self) {
+        self.persist_canvas_changes();
+        self.save_user_session();
+    }
+
+    fn activate_board_after_transition(&mut self, board_id: i64) {
+        self.active_board_id = board_id;
+        self.clear_active_board_transients();
+        self.canvas.clear_for_board_switch();
+        self.load_user_session();
+        self.restore_active_board_import_placeholders();
+        self.enqueue_existing_items();
+    }
+
+    fn clear_active_board_transients(&mut self) {
+        #[cfg(feature = "semantic-search")]
+        self.search.close_overlay(Some(&mut self.canvas));
+        #[cfg(not(feature = "semantic-search"))]
+        {
+            self.canvas.clear_search_matches();
+            self.canvas.clear_search_drag_preview();
+        }
+        self.crop_undo_stack.clear();
     }
 
     fn show_board_delete_confirmation(&mut self, ctx: &egui::Context) {
@@ -1544,8 +1550,9 @@ impl ReferenceApp {
         egui::Rect::from_min_max(egui::pos2(left, screen_rect.top()), screen_rect.max)
     }
 
-    fn queue_import_placeholder(
+    fn queue_import_placeholder_for_board(
         &mut self,
+        board_id: i64,
         queue_id: u64,
         label: String,
         placeholder_world: egui::Pos2,
@@ -1557,7 +1564,7 @@ impl ReferenceApp {
         let size_world = egui::vec2(width as f32 * scale, height as f32 * scale);
         let placeholders = self
             .import_placeholders_by_board
-            .entry(self.active_board_id)
+            .entry(board_id)
             .or_default();
         placeholders.retain(|placeholder| placeholder.queue_id != queue_id);
         placeholders.push(BoardImportPlaceholder {
@@ -1566,8 +1573,10 @@ impl ReferenceApp {
             center_world: placeholder_world,
             size_world,
         });
-        self.canvas
-            .add_import_placeholder(queue_id, placeholder_world, size_world, label);
+        if board_id == self.active_board_id {
+            self.canvas
+                .add_import_placeholder(queue_id, placeholder_world, size_world, label);
+        }
     }
 
     fn remove_import_placeholder_for_board(&mut self, board_id: i64, queue_id: u64) {
@@ -1620,6 +1629,41 @@ impl ReferenceApp {
             self.settings.import_gap,
             crate::import_placement::import_snap_distance_world(&self.canvas),
         )
+    }
+
+    fn reserve_import(
+        &mut self,
+        layout: &mut Vec<crate::data::BoardLayoutItem>,
+        label: String,
+        dimensions: Option<(u32, u32)>,
+        desired_world: egui::Pos2,
+        viewport_world: egui::Rect,
+    ) -> ImportReservation {
+        let target_board_id = self.active_board_id;
+        let queue_id = self.next_import_queue_id();
+        let reserved_world = dimensions.map(|(width, height)| {
+            let reserved_world =
+                self.reserve_import_world(layout, width, height, desired_world, viewport_world);
+            self.queue_import_placeholder_for_board(
+                target_board_id,
+                queue_id,
+                label,
+                reserved_world,
+                width,
+                height,
+            );
+            reserved_world
+        });
+
+        ImportReservation {
+            target_board_id,
+            queue_id,
+            reserved_world,
+        }
+    }
+
+    fn remove_import_reservation(&mut self, reservation: ImportReservation) {
+        self.remove_import_placeholder_for_board(reservation.target_board_id, reservation.queue_id);
     }
 
     fn normalize_import_url(raw: &str) -> Option<String> {
@@ -1808,38 +1852,26 @@ impl ReferenceApp {
         const FALLBACK_HEIGHT: u32 = 240;
 
         for source in dropped_sources {
-            let target_board_id = self.active_board_id;
-            let queue_id = self.next_import_queue_id();
             let label = Self::import_source_label(&source);
             let dimensions = match &source {
                 ExternalImportSource::Path(path) => image::image_dimensions(path).ok(),
                 ExternalImportSource::Url(_) => Some((FALLBACK_WIDTH, FALLBACK_HEIGHT)),
             };
-            let reserved_world = dimensions.map(|(width, height)| {
-                let reserved_world = self.reserve_import_world(
-                    &mut layout,
-                    width,
-                    height,
-                    desired_world,
-                    viewport_world,
-                );
-                self.queue_import_placeholder(
-                    queue_id,
-                    label.clone(),
-                    reserved_world,
-                    width,
-                    height,
-                );
-                reserved_world
-            });
+            let reservation = self.reserve_import(
+                &mut layout,
+                label,
+                dimensions,
+                desired_world,
+                viewport_world,
+            );
 
             let request = match &source {
                 ExternalImportSource::Path(source_path) => crate::jobs::ImportRequest::ImportPath {
-                    target_board_id,
-                    queue_id,
+                    target_board_id: reservation.target_board_id,
+                    queue_id: reservation.queue_id,
                     source_path: source_path.clone(),
                     desired_world,
-                    reserved_world,
+                    reserved_world: reservation.reserved_world,
                     viewport_world,
                     max_texture_side: self.max_texture_side,
                     canvas_image_settings: crate::jobs::CanvasImageSettings {
@@ -1854,11 +1886,11 @@ impl ReferenceApp {
                     }),
                 },
                 ExternalImportSource::Url(url) => crate::jobs::ImportRequest::ImportUrl {
-                    target_board_id,
-                    queue_id,
+                    target_board_id: reservation.target_board_id,
+                    queue_id: reservation.queue_id,
                     url: url.clone(),
                     desired_world,
-                    reserved_world,
+                    reserved_world: reservation.reserved_world,
                     viewport_world,
                     max_texture_side: self.max_texture_side,
                     canvas_image_settings: crate::jobs::CanvasImageSettings {
@@ -1880,7 +1912,7 @@ impl ReferenceApp {
                 .expect("checked import worker")
                 .enqueue(request)
             {
-                self.remove_import_placeholder_for_board(target_board_id, queue_id);
+                self.remove_import_reservation(reservation);
                 self.status = error;
                 continue;
             }
@@ -1946,7 +1978,6 @@ impl ReferenceApp {
         let rgba = clipboard_image.bytes.into_owned();
         let width = clipboard_image.width as u32;
         let height = clipboard_image.height as u32;
-        let queue_id = self.next_import_queue_id();
         let mut layout = match self.import_layout_snapshot() {
             Ok(layout) => layout,
             Err(error) => {
@@ -1954,14 +1985,12 @@ impl ReferenceApp {
                 return;
             }
         };
-        let reserved_world =
-            self.reserve_import_world(&mut layout, width, height, desired_world, viewport_world);
-        self.queue_import_placeholder(
-            queue_id,
+        let reservation = self.reserve_import(
+            &mut layout,
             "Clipboard".to_owned(),
-            reserved_world,
-            width,
-            height,
+            Some((width, height)),
+            desired_world,
+            viewport_world,
         );
 
         if let Err(error) = self
@@ -1969,13 +1998,13 @@ impl ReferenceApp {
             .as_ref()
             .expect("checked import worker")
             .enqueue(crate::jobs::ImportRequest::ImportClipboard {
-                target_board_id: self.active_board_id,
-                queue_id,
+                target_board_id: reservation.target_board_id,
+                queue_id: reservation.queue_id,
                 rgba,
                 width,
                 height,
                 desired_world,
-                reserved_world: Some(reserved_world),
+                reserved_world: reservation.reserved_world,
                 viewport_world,
                 max_texture_side: self.max_texture_side,
                 canvas_image_settings: crate::jobs::CanvasImageSettings {
@@ -1990,7 +2019,7 @@ impl ReferenceApp {
                 }),
             })
         {
-            self.remove_import_placeholder_for_board(self.active_board_id, queue_id);
+            self.remove_import_reservation(reservation);
             self.status = error;
             return;
         }
@@ -2012,7 +2041,6 @@ impl ReferenceApp {
         };
 
         let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let queue_id = self.next_import_queue_id();
         let mut layout = match self.import_layout_snapshot() {
             Ok(layout) => layout,
             Err(error) => {
@@ -2020,14 +2048,12 @@ impl ReferenceApp {
                 return true;
             }
         };
-        let reserved_world =
-            self.reserve_import_world(&mut layout, 360, 240, desired_world, viewport_world);
-        self.queue_import_placeholder(
-            queue_id,
+        let reservation = self.reserve_import(
+            &mut layout,
             Self::import_source_label(&ExternalImportSource::Url(url.clone())),
-            reserved_world,
-            360,
-            240,
+            Some((360, 240)),
+            desired_world,
+            viewport_world,
         );
 
         if let Err(error) = self
@@ -2035,11 +2061,11 @@ impl ReferenceApp {
             .as_ref()
             .expect("checked import worker")
             .enqueue(crate::jobs::ImportRequest::ImportUrl {
-                target_board_id: self.active_board_id,
-                queue_id,
+                target_board_id: reservation.target_board_id,
+                queue_id: reservation.queue_id,
                 url: url.clone(),
                 desired_world,
-                reserved_world: Some(reserved_world),
+                reserved_world: reservation.reserved_world,
                 viewport_world,
                 max_texture_side: self.max_texture_side,
                 canvas_image_settings: crate::jobs::CanvasImageSettings {
@@ -2054,7 +2080,7 @@ impl ReferenceApp {
                 }),
             })
         {
-            self.remove_import_placeholder_for_board(self.active_board_id, queue_id);
+            self.remove_import_reservation(reservation);
             self.status = error;
             return true;
         }
@@ -2211,22 +2237,13 @@ impl ReferenceApp {
 
     fn move_selected_canvas_items_to_front(&mut self) {
         if self.canvas.move_selected_canvas_items_to_front() {
-            self.persist_canvas_stack_order();
+            self.persist_canvas_changes();
         }
     }
 
     fn move_selected_canvas_items_to_back(&mut self) {
         if self.canvas.move_selected_canvas_items_to_back() {
-            self.persist_canvas_stack_order();
-        }
-    }
-
-    fn persist_canvas_stack_order(&mut self) {
-        let Some(library) = &self.library else {
-            return;
-        };
-        if let Err(error) = library.save_canvas_stack_order(&self.canvas.canvas_stack_order()) {
-            self.status = error;
+            self.persist_canvas_changes();
         }
     }
 
@@ -2664,7 +2681,7 @@ impl ReferenceApp {
         next_stack_order.retain(|item| !pasted_stack_order.contains(item));
         next_stack_order.extend(pasted_stack_order);
         self.canvas.set_canvas_stack_order(next_stack_order);
-        self.persist_canvas_stack_order();
+        self.persist_canvas_changes();
     }
 
     fn placement_anchor_for_payload(
@@ -3246,6 +3263,12 @@ impl ReferenceApp {
                 self.status = error;
             }
         }
+
+        if let Some(stack_order) = changes.stack_order
+            && let Err(error) = library.save_canvas_stack_order(&stack_order)
+        {
+            self.status = error;
+        }
     }
 
     fn save_user_session(&mut self) {
@@ -3617,20 +3640,12 @@ impl ReferenceApp {
         .into_iter()
         .enumerate()
         {
-            let queue_id = self.next_import_queue_id();
-            let reserved_world = self.reserve_import_world(
+            let _reservation = self.reserve_import(
                 &mut layout,
-                width,
-                height,
+                label.to_owned(),
+                Some((width, height)),
                 desired_world,
                 viewport_world,
-            );
-            self.queue_import_placeholder(
-                queue_id,
-                label.to_owned(),
-                reserved_world,
-                width,
-                height,
             );
             self.status = format!("Queued debug import placeholder {}", index + 1);
         }
@@ -3662,32 +3677,24 @@ impl ReferenceApp {
             ("Beta", 180, 140, [70, 142, 255, 255]),
             ("Gamma", 180, 140, [73, 179, 122, 255]),
         ] {
-            let queue_id = self.next_import_queue_id();
-            let reserved_world = self.reserve_import_world(
+            let reservation = self.reserve_import(
                 &mut layout,
-                width,
-                height,
+                label.to_owned(),
+                Some((width, height)),
                 desired_world,
                 viewport_world,
-            );
-            self.queue_import_placeholder(
-                queue_id,
-                label.to_owned(),
-                reserved_world,
-                width,
-                height,
             );
             let rgba = Self::solid_rgba(width, height, color);
             let enqueue_result = self.import_worker.as_ref().and_then(|import_worker| {
                 import_worker
                     .enqueue(crate::jobs::ImportRequest::ImportClipboard {
-                        target_board_id: self.active_board_id,
-                        queue_id,
+                        target_board_id: reservation.target_board_id,
+                        queue_id: reservation.queue_id,
                         rgba,
                         width,
                         height,
                         desired_world,
-                        reserved_world: Some(reserved_world),
+                        reserved_world: reservation.reserved_world,
                         viewport_world,
                         max_texture_side: self.max_texture_side,
                         canvas_image_settings: crate::jobs::CanvasImageSettings {
@@ -3701,7 +3708,7 @@ impl ReferenceApp {
                     .err()
             });
             if let Some(error) = enqueue_result {
-                self.remove_import_placeholder_for_board(self.active_board_id, queue_id);
+                self.remove_import_reservation(reservation);
                 self.status = error;
                 return;
             }
@@ -6583,8 +6590,22 @@ mod tests {
     fn queued_import_placeholders_replace_and_cleanup_by_queue_id() {
         let mut app = test_app(None);
 
-        app.queue_import_placeholder(7, "first".to_owned(), egui::pos2(10.0, 20.0), 300, 200);
-        app.queue_import_placeholder(7, "second".to_owned(), egui::pos2(30.0, 40.0), 120, 90);
+        app.queue_import_placeholder_for_board(
+            app.active_board_id,
+            7,
+            "first".to_owned(),
+            egui::pos2(10.0, 20.0),
+            300,
+            200,
+        );
+        app.queue_import_placeholder_for_board(
+            app.active_board_id,
+            7,
+            "second".to_owned(),
+            egui::pos2(30.0, 40.0),
+            120,
+            90,
+        );
 
         assert_eq!(app.canvas.import_placeholder_count(), 1);
         app.canvas.remove_import_placeholder(7);
@@ -6594,7 +6615,14 @@ mod tests {
     #[test]
     fn reserve_import_world_accounts_for_pending_placeholders() {
         let mut app = test_app(None);
-        app.queue_import_placeholder(1, "first".to_owned(), egui::pos2(0.0, 0.0), 100, 100);
+        app.queue_import_placeholder_for_board(
+            app.active_board_id,
+            1,
+            "first".to_owned(),
+            egui::pos2(0.0, 0.0),
+            100,
+            100,
+        );
 
         let mut layout = app.import_layout_snapshot().unwrap();
         let reserved = app.reserve_import_world(
@@ -6606,6 +6634,42 @@ mod tests {
         );
 
         assert_eq!(reserved, egui::pos2(100.0 + app.settings.import_gap, 0.0));
+    }
+
+    #[test]
+    fn import_reservation_captures_board_queue_and_optional_placeholder() {
+        let root = temp_library_root("reference-import-reservation");
+        let library = Library::initialize(root.clone()).unwrap();
+        let second = library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library));
+        app.active_board_id = second.id;
+        let mut layout = Vec::new();
+
+        let known = app.reserve_import(
+            &mut layout,
+            "known".to_owned(),
+            Some((100, 80)),
+            egui::Pos2::ZERO,
+            test_viewport_world(),
+        );
+        let unknown = app.reserve_import(
+            &mut layout,
+            "unknown".to_owned(),
+            None,
+            egui::pos2(200.0, 0.0),
+            test_viewport_world(),
+        );
+
+        assert_eq!(known.target_board_id, second.id);
+        assert_eq!(known.queue_id, 1);
+        assert_eq!(known.reserved_world, Some(egui::Pos2::ZERO));
+        assert_eq!(unknown.target_board_id, second.id);
+        assert_eq!(unknown.queue_id, 2);
+        assert_eq!(unknown.reserved_world, None);
+        assert_eq!(app.canvas.import_placeholder_count(), 1);
+        assert_eq!(layout.len(), 1);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -6646,7 +6710,14 @@ mod tests {
         let second = library.create_board("Second").unwrap();
         let mut app = test_app(Some(library));
         app.active_board_id = 1;
-        app.queue_import_placeholder(9, "first".to_owned(), egui::pos2(10.0, 20.0), 100, 100);
+        app.queue_import_placeholder_for_board(
+            app.active_board_id,
+            9,
+            "first".to_owned(),
+            egui::pos2(10.0, 20.0),
+            100,
+            100,
+        );
 
         app.switch_to_board(second.id);
         assert_eq!(app.canvas.import_placeholder_count(), 0);
