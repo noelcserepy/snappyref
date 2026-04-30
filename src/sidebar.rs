@@ -47,7 +47,7 @@ pub(crate) fn block_sidebar_input(ctx: &egui::Context, sidebar_rect: egui::Rect)
     }
 
     egui::Area::new(egui::Id::new("sidebar_blocker"))
-        .order(egui::Order::Foreground)
+        .order(egui::Order::Middle)
         .fixed_pos(sidebar_rect.min)
         .show(ctx, |ui| {
             ui.set_min_size(sidebar_rect.size());

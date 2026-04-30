@@ -4666,7 +4666,9 @@ mod tests {
     };
     #[cfg(feature = "semantic-search")]
     use crate::semantic_search::SearchScope;
-    use crate::sidebar::{block_sidebar_input, should_close_sidebar, sidebar_rect};
+    use crate::sidebar::{
+        SidebarTab, block_sidebar_input, should_close_sidebar, show_sidebar, sidebar_rect,
+    };
     use crate::storage::Library;
     use eframe::egui;
     use egui_kittest::{Harness, kittest::Queryable};
@@ -6280,6 +6282,47 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn board_sidebar_stays_clickable_after_delete_modal_confirms() {
+        let root = temp_library_root("reference-sidebar-click-after-delete");
+        let library = Library::initialize(root.clone()).unwrap();
+        let second = library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = second.id;
+        app.sidebar_open = true;
+        app.sidebar_tab = SidebarTab::Boards;
+        app.request_board_delete(second.id, second.name.clone());
+        #[expect(deprecated)]
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1200.0, 800.0))
+            .build_state(
+                |ctx, app: &mut ReferenceApp| {
+                    render_sidebar_for_test(ctx, app);
+                    app.show_board_delete_confirmation(ctx);
+                },
+                app,
+            );
+
+        harness.get_by_label("Delete board").click();
+        harness.run();
+
+        click_test_pos(&harness, egui::pos2(134.0, 171.0));
+        harness.run();
+
+        let boards = library.list_boards().unwrap();
+        assert_eq!(
+            boards
+                .iter()
+                .map(|board| board.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["My Board", "Board 2"]
+        );
+        assert_eq!(harness.state().active_board_id, boards[1].id);
+        assert!(harness.state().sidebar_open);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[cfg(feature = "semantic-search")]
     #[test]
     fn switching_boards_clears_selection_search_and_transient_undo() {
@@ -6691,6 +6734,32 @@ mod tests {
 
     fn test_screen_rect() -> egui::Rect {
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))
+    }
+
+    fn render_sidebar_for_test(ctx: &egui::Context, app: &mut ReferenceApp) {
+        let screen_rect = test_screen_rect();
+        if app.should_block_sidebar_input() {
+            block_sidebar_input(ctx, sidebar_rect(screen_rect));
+        }
+        let board_summaries = app.board_summaries();
+        let sidebar_result = show_sidebar(
+            ctx,
+            screen_rect,
+            app.sidebar_open,
+            &mut app.sidebar_tab,
+            &mut app.settings,
+            &mut app.canvas,
+            &board_summaries,
+            app.active_board_id,
+            None,
+        );
+        app.handle_board_action(sidebar_result.board_action);
+    }
+
+    fn click_test_pos<State>(harness: &Harness<'_, State>, pos: egui::Pos2) {
+        harness.hover_at(pos);
+        harness.drag_at(pos);
+        harness.drop_at(pos);
     }
 
     fn temp_library_root(prefix: &str) -> PathBuf {
