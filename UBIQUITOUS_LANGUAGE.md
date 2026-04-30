@@ -14,6 +14,18 @@
 | **Canvas Background** | The board-local visual guide mode for the canvas. | Grid setting, workspace background |
 | **Viewport** | The board-local pan and zoom state. | Camera, view, canvas position |
 
+## Session and preferences
+
+| Term | Definition | Aliases to avoid |
+| --- | --- | --- |
+| **User Session** | The persisted state that restores the user's active board, viewport, workspace settings, and sidebar state. | Preferences row, app state |
+| **Workspace Settings** | Global user preferences that apply across boards, such as import gap, image sizing, rotation snap, semantic search, and textbox defaults. | Board settings, options |
+| **Sidebar State** | The persisted open/closed state and selected tab of the sidebar. | Sidebar settings, panel state |
+| **Sidebar Tab** | One of the sidebar's top-level modes, such as Boards or Settings. | Sidebar page, sidebar mode |
+| **Boards Tab** | The sidebar tab for creating, switching, renaming, and deleting boards. | Board list, board browser |
+| **Settings Tab** | The sidebar tab for workspace settings and shortcuts. | Options tab, preferences tab |
+| **Session Dirty State** | The app's knowledge that current user session state differs from the last saved session. | Unsaved preferences, dirty app state |
+
 ## Layering
 
 | Term | Definition | Aliases to avoid |
@@ -39,6 +51,18 @@
 | **Context** | A meaningful set of images plus optional text or metadata signals used for later retrieval. | Tag, folder, smart group |
 | **Smart Context Model** | The later retrieval model that uses boards, spatial clusters, import batches, nearby text, and groups as context signals. | Auto organization, smart tagging |
 
+## Image loading
+
+| Term | Definition | Aliases to avoid |
+| --- | --- | --- |
+| **Canvas Image Cache** | The app-owned cached raster derivative used to draw an asset on the canvas quickly. | Thumbnail cache, preview cache |
+| **Overview Tier** | The smallest canvas image cache tier used for fast startup and first paint. | Thumbnail, low-res image |
+| **Working Tier** | The default interactive canvas image cache tier used after visible images are promoted from overview quality. | Downscale, normal preview |
+| **Detail Tier** | The highest canvas image cache tier used only when screen size justifies more resolution. | Original, full-res |
+| **Existing Image Load** | Loading a persisted placement's asset back onto a board after startup or board switch. | Startup import, reload |
+| **Backfill** | Creating a missing canvas image cache tier in the background after another tier has already made the image usable. | Preload, recache |
+| **Promotion** | Requesting a higher cache tier for a visible image when the current tier is insufficient. | Upgrade, reload |
+
 ## Board lifecycle
 
 | Term | Definition | Aliases to avoid |
@@ -46,6 +70,7 @@
 | **My Board** | The default name for the first board in a library. | Board 1, default scene |
 | **Board N** | The generated name for additional boards after the first board. | New board, untitled board |
 | **Board Switch** | The operation that saves the active board, clears transient UI state, and loads another board. | Scene change, canvas swap |
+| **Last Requested Board** | The board selected by the most recent board switch request during rapid switching. | Latest board, final board |
 | **Board Creation** | The instant creation of a new empty board that becomes active immediately. | New file, new project |
 | **Board Deletion** | A confirmed operation that archives a board and removes its board-local annotations while preserving library assets. | Delete canvas, delete project |
 | **Archived Board** | A board hidden from v1 UI after deletion. | Deleted board, trashed board |
@@ -86,11 +111,16 @@
 - An **Annotation** belongs to exactly one **Board** and does not belong to the **Library**.
 - A **Canvas Item** is either a **Placement** or an **Annotation**.
 - A **Board** has one **Stack Order** shared by all of its **Canvas Items**.
+- A **Board** has one persisted **Viewport**.
+- A **User Session** has exactly one **Active Board**, one **Workspace Settings** value, and one **Sidebar State**.
 - **Move to Front** and **Move to Back** preserve **Relative Stack Order** for multi-selection.
 - A pasted group preserves its **Relative Stack Order** and is placed at the **Front** of the **Active Board**.
 - Exactly one **Board** is the **Active Board** at a time.
+- During rapid **Board Switches**, the **Last Requested Board** should become the **Active Board**.
 - **This Board** search returns **Placement Results** for the **Active Board**.
 - **Library Scope** search returns **Asset Results** from the **Library**.
+- An **Existing Image Load** may start at **Overview Tier** and later receive **Promotion** to **Working Tier** or **Detail Tier**.
+- **Backfill** creates missing **Canvas Image Cache** tiers without blocking board interaction.
 - **Delete (from board)** removes **Placements** and **Annotations** from the **Active Board** but does not remove **Assets** from the **Library**.
 - **Remove from Library** archives **Assets** and removes their **Placements** across all **Boards**.
 
@@ -111,6 +141,14 @@
 > **Dev:** "If they press **Delete (from board)**, does the **Asset** disappear from **Library Scope** search?"
 >
 > **Domain expert:** "No. **Delete (from board)** only removes board-local **Canvas Items** from the **Active Board**. Use **Remove from Library** when the asset should stop appearing in library search."
+>
+> **Dev:** "When the app restarts, should it restore the **Settings Tab**, **Viewport**, and active board?"
+>
+> **Domain expert:** "Yes. Those belong to the **User Session**. **Workspace Settings** are global, while each **Board** keeps its own **Viewport**."
+>
+> **Dev:** "Should startup load every placement at **Detail Tier**?"
+>
+> **Domain expert:** "No. An **Existing Image Load** should make the board usable with **Overview Tier** first, then use **Promotion** and **Backfill** for higher tiers."
 
 ## Flagged ambiguities
 
@@ -122,3 +160,7 @@
 - "Remove from Library" does not mean **Physical Deletion** in v1. It means **Archived Asset** behavior: removed from boards and search while files are kept for later cleanup.
 - "Move to front/back" should not be confused with one-step movement. Use **Move to Front** and **Move to Back** for absolute stack extremes; reserve "bring forward" and "send backward" for possible future one-step commands.
 - "Z-height", "z-index", "layer order", and "draw order" all describe **Stack Order** in user/domain language. Use implementation terms only in code.
+- "Settings" was used for both **Workspace Settings** and the **Settings Tab**. Use **Workspace Settings** for persisted preferences and **Settings Tab** for the sidebar UI location.
+- "Downscale" was used as both a user-facing mode and an implementation detail. Use **Canvas Image Cache** and cache-tier terms instead; the obsolete Original/Downscale mode distinction should not be domain language.
+- "Original" should mean the stored **Managed Original**, not a canvas display mode or cache tier.
+- "Blocked board switching" can mean either failed activation or slow image visibility. Use **Board Switch** for activation and **Existing Image Load** for image availability.
