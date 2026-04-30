@@ -1,8 +1,12 @@
 mod app;
+mod board_switch;
 mod canvas;
+mod crop_flow;
 mod data;
 #[cfg(debug_assertions)]
 mod design_system_preview;
+mod document_persistence;
+mod import_intake;
 mod import_placement;
 mod jobs;
 mod layout_snap;
