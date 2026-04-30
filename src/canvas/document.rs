@@ -621,7 +621,15 @@ impl CanvasState {
     }
 
     pub fn set_canvas_stack_order(&mut self, stack_order: Vec<CanvasStackItem>) {
+        if self.document.stack_order != stack_order {
+            self.document.stack_order = stack_order;
+            self.document.stack_order_dirty = true;
+        }
+    }
+
+    pub fn restore_canvas_stack_order(&mut self, stack_order: Vec<CanvasStackItem>) {
         self.document.stack_order = stack_order;
+        self.document.stack_order_dirty = false;
     }
 
     pub fn canvas_stack_order(&self) -> Vec<CanvasStackItem> {
@@ -638,6 +646,7 @@ impl CanvasState {
         self.document.dirty_item_ids.clear();
         self.document.dirty_annotation_ids.clear();
         self.document.pending_archived_annotation_ids.clear();
+        self.document.stack_order_dirty = false;
         self.interaction = Default::default();
         self.render.textbox_layout_cache.clear();
         self.render.pending_image_tier_loads.clear();
@@ -668,12 +677,19 @@ impl CanvasState {
             })
             .collect();
 
+        let stack_order = self
+            .document
+            .stack_order_dirty
+            .then(|| self.ordered_canvas_items_back_to_front());
+        self.document.stack_order_dirty = false;
+
         CanvasDocumentChanges {
             updated_items,
             updated_annotations,
             archived_annotation_ids: std::mem::take(
                 &mut self.document.pending_archived_annotation_ids,
             ),
+            stack_order,
         }
     }
 
@@ -1320,6 +1336,7 @@ impl CanvasState {
             return false;
         }
         self.document.stack_order = next_order;
+        self.document.stack_order_dirty = true;
         true
     }
 

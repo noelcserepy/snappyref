@@ -19,6 +19,7 @@ pub(super) struct CanvasDocumentState {
     pub dirty_item_ids: Vec<i64>,
     pub dirty_annotation_ids: Vec<i64>,
     pub pending_archived_annotation_ids: Vec<i64>,
+    pub stack_order_dirty: bool,
 }
 
 #[derive(Default)]

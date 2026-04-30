@@ -1,4 +1,4 @@
-use crate::storage::{AssetSearchHit, Library};
+use crate::storage::{ActiveCanvasEmbedding, AssetSearchHit, Library};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SearchScope {
@@ -12,59 +12,51 @@ impl Default for SearchScope {
     }
 }
 
-pub trait VectorIndex: Send + Sync {
-    fn search(
-        &self,
-        scope: SearchScope,
-        model_key: &str,
-        query_embedding: &[f32],
-        limit: usize,
-    ) -> Result<Vec<AssetSearchHit>, String>;
-}
-
-pub struct BruteForceIndex {
-    library: Library,
-}
-
-impl BruteForceIndex {
-    pub fn new(library: Library) -> Self {
-        Self { library }
+impl SearchScope {
+    pub(crate) fn includes_unplaced_assets(self) -> bool {
+        matches!(self, Self::Library)
     }
 }
 
-impl VectorIndex for BruteForceIndex {
-    fn search(
-        &self,
-        scope: SearchScope,
-        model_key: &str,
-        query_embedding: &[f32],
-        limit: usize,
-    ) -> Result<Vec<AssetSearchHit>, String> {
-        let embeddings = match scope {
-            SearchScope::ThisBoard => self.library.load_active_canvas_embeddings(model_key)?,
-            SearchScope::Library => self.library.load_library_embeddings(model_key)?,
-        };
-        let mut hits = embeddings
-            .into_iter()
-            .map(|row| {
-                let embedding = decode_f32_blob(&row.embedding_blob)?;
-                let similarity = cosine_similarity(query_embedding, &embedding)?;
-                Ok(AssetSearchHit {
-                    asset_id: row.asset_id,
-                    similarity,
-                })
+pub fn search_embeddings_for_scope(
+    library: &Library,
+    scope: SearchScope,
+    model_key: &str,
+    query_embedding: &[f32],
+    limit: usize,
+) -> Result<Vec<AssetSearchHit>, String> {
+    let embeddings = match scope {
+        SearchScope::ThisBoard => library.load_active_canvas_embeddings(model_key)?,
+        SearchScope::Library => library.load_library_embeddings(model_key)?,
+    };
+    search_embedding_rows(embeddings, query_embedding, limit)
+}
+
+fn search_embedding_rows(
+    embeddings: Vec<ActiveCanvasEmbedding>,
+    query_embedding: &[f32],
+    limit: usize,
+) -> Result<Vec<AssetSearchHit>, String> {
+    let mut hits = embeddings
+        .into_iter()
+        .map(|row| {
+            let embedding = decode_f32_blob(&row.embedding_blob)?;
+            let similarity = cosine_similarity(query_embedding, &embedding)?;
+            Ok(AssetSearchHit {
+                asset_id: row.asset_id,
+                similarity,
             })
-            .collect::<Result<Vec<_>, String>>()?;
+        })
+        .collect::<Result<Vec<_>, String>>()?;
 
-        hits.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));
-        hits.truncate(limit);
-        Ok(hits)
-    }
+    hits.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));
+    hits.truncate(limit);
+    Ok(hits)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BruteForceIndex, SearchScope, VectorIndex};
+    use super::{SearchScope, search_embeddings_for_scope};
     use crate::storage::Library;
     use eframe::egui;
     use std::fs;
@@ -111,13 +103,22 @@ mod tests {
             .upsert_asset_embedding_blob(unplaced.asset.id, "test-model", &[1.0, 0.0])
             .unwrap();
 
-        let index = BruteForceIndex::new(library);
-        let board_hits = index
-            .search(SearchScope::ThisBoard, "test-model", &[1.0, 0.0], 5)
-            .unwrap();
-        let library_hits = index
-            .search(SearchScope::Library, "test-model", &[1.0, 0.0], 5)
-            .unwrap();
+        let board_hits = search_embeddings_for_scope(
+            &library,
+            SearchScope::ThisBoard,
+            "test-model",
+            &[1.0, 0.0],
+            5,
+        )
+        .unwrap();
+        let library_hits = search_embeddings_for_scope(
+            &library,
+            SearchScope::Library,
+            "test-model",
+            &[1.0, 0.0],
+            5,
+        )
+        .unwrap();
 
         assert_eq!(board_hits.len(), 1);
         assert_eq!(board_hits[0].asset_id, active.asset.id);

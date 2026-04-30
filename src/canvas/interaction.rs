@@ -1,4 +1,5 @@
 use eframe::egui;
+use std::time::Duration;
 
 use super::geometry::{
     image_contains_screen_point, image_screen_center_for_record, image_screen_corners_for_record,
@@ -14,6 +15,8 @@ use super::{
     TextboxResizeHandle, TextboxTransformState,
 };
 use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasStackItem, CanvasTextSize};
+
+const IMAGE_MOVE_DEBOUNCE_SECONDS: f64 = 0.150;
 
 pub(super) fn handle_input(
     ui: &egui::Ui,
@@ -199,6 +202,8 @@ pub(super) fn handle_input(
                         pointer_start_world: pointer_world,
                         starting_items,
                         snap_preview_rect_world: None,
+                        started_at_seconds: ui.input(|input| input.time),
+                        moved: false,
                     });
                     state.interaction.image_transform_state = None;
                     state.interaction.textbox_transform_state = None;
@@ -362,6 +367,13 @@ pub(super) fn handle_input(
         && primary_down
         && let Some(pointer_pos) = pointer_pos
     {
+        let elapsed_seconds = ui.input(|input| input.time) - drag_state.started_at_seconds;
+        if elapsed_seconds < IMAGE_MOVE_DEBOUNCE_SECONDS {
+            ui.ctx().request_repaint_after(Duration::from_secs_f64(
+                IMAGE_MOVE_DEBOUNCE_SECONDS - elapsed_seconds,
+            ));
+            return;
+        }
         let pointer_world = state.screen_to_world(pointer_pos, rect);
         let world_delta = pointer_world - drag_state.pointer_start_world;
         let snap_preview_rect = compute_drag_snap_preview(state, rect, &drag_state, world_delta);
@@ -373,6 +385,7 @@ pub(super) fn handle_input(
         );
         if let Some(active_drag_state) = &mut state.interaction.drag_state {
             active_drag_state.snap_preview_rect_world = snap_preview_rect;
+            active_drag_state.moved = true;
         }
     }
 
@@ -403,8 +416,10 @@ pub(super) fn handle_input(
                 state.mark_annotation_dirty(annotation_id);
             }
         } else if let Some(drag_state) = state.interaction.drag_state.take() {
-            for item in drag_state.starting_items {
-                state.mark_dirty(item.id);
+            if drag_state.moved {
+                for item in drag_state.starting_items {
+                    state.mark_dirty(item.id);
+                }
             }
             state.clear_move_preview_placeholders();
         }
@@ -1343,6 +1358,8 @@ mod tests {
             pointer_start_world: egui::Pos2::ZERO,
             starting_items: canvas.selected_layout_items(),
             snap_preview_rect_world: None,
+            started_at_seconds: 0.0,
+            moved: false,
         };
 
         let snap_rect = compute_drag_snap_preview(
@@ -1373,6 +1390,8 @@ mod tests {
             pointer_start_world: egui::Pos2::ZERO,
             starting_items: canvas.selected_layout_items(),
             snap_preview_rect_world: None,
+            started_at_seconds: 0.0,
+            moved: false,
         };
 
         let snap_rect = compute_drag_snap_preview(
@@ -1411,6 +1430,8 @@ mod tests {
             pointer_start_world: egui::Pos2::ZERO,
             starting_items: canvas.selected_layout_items(),
             snap_preview_rect_world: None,
+            started_at_seconds: 0.0,
+            moved: false,
         };
 
         let (delta, snap_rect) = (0..=200)
@@ -1443,6 +1464,8 @@ mod tests {
             pointer_start_world: egui::Pos2::ZERO,
             starting_items: canvas.selected_layout_items(),
             snap_preview_rect_world: None,
+            started_at_seconds: 0.0,
+            moved: false,
         };
 
         let first_delta = egui::vec2(-50.0, 0.0);
