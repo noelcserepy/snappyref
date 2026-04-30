@@ -1,6 +1,8 @@
 mod app;
 mod canvas;
 mod data;
+#[cfg(debug_assertions)]
+mod design_system_preview;
 mod import_placement;
 mod jobs;
 mod layout_snap;
@@ -18,6 +20,7 @@ mod semantic_search;
 mod sidebar;
 mod storage;
 mod theme;
+mod ui_layout;
 
 pub fn run() -> eframe::Result<()> {
     let config = app::AppConfig::from_env();

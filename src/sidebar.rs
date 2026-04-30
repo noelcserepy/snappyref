@@ -117,9 +117,9 @@ pub(crate) fn show_sidebar(
             let shape_rect = sidebar_rect;
             let radius = egui::CornerRadius {
                 nw: 0,
-                ne: crate::theme::CARD_RADIUS,
+                ne: crate::theme::RADIUS_PANEL,
                 sw: 0,
-                se: crate::theme::CARD_RADIUS,
+                se: crate::theme::RADIUS_PANEL,
             };
             ui.painter().rect(
                 shape_rect,
@@ -220,7 +220,7 @@ fn paint_sidebar_options(
                 paint_sidebar_subcard(ui, |ui| {
                     changed |= paint_settings_section(ui, settings, canvas);
                 });
-                ui.add_space(crate::theme::SPACE_5);
+                ui.add_space(crate::theme::SPACE_6);
                 paint_sidebar_section_header(ui, "Shortcuts", None);
                 paint_supported_shortcuts_section(ui);
                 ui.add_space(crate::theme::SPACE_4);
@@ -323,8 +323,11 @@ fn paint_board_row(
     } else {
         crate::theme::SURFACE
     };
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(5), fill);
+    ui.painter().rect_filled(
+        rect,
+        egui::CornerRadius::same(crate::theme::RADIUS_COMPACT),
+        fill,
+    );
 
     let swatch_size = 22.0;
     let swatch_rect = egui::Rect::from_min_size(
@@ -336,7 +339,7 @@ fn paint_board_row(
     );
     ui.painter().rect_filled(
         swatch_rect,
-        egui::CornerRadius::same(3),
+        egui::CornerRadius::same(crate::theme::RADIUS_MICRO),
         crate::theme::BORDER,
     );
 
@@ -391,7 +394,7 @@ fn paint_board_row(
     if active {
         ui.painter().rect_filled(
             active_dot_rect,
-            egui::CornerRadius::same(3),
+            egui::CornerRadius::same(crate::theme::RADIUS_MICRO),
             crate::theme::ACCENT,
         );
     }
@@ -439,7 +442,7 @@ fn paint_create_board_button(ui: &mut egui::Ui) -> bool {
     let dash_stroke = egui::Stroke::new(1.0, crate::theme::BORDER);
     ui.painter().rect(
         rect,
-        egui::CornerRadius::same(5),
+        egui::CornerRadius::same(crate::theme::RADIUS_COMPACT),
         if response.hovered() {
             crate::theme::SURFACE_ELEVATED
         } else {
@@ -494,7 +497,7 @@ fn paint_sidebar_section_header(ui: &mut egui::Ui, title: &str, detail: Option<&
                     .color(crate::theme::TEXT),
             );
             if let Some(detail) = detail {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.with_layout(crate::ui_layout::row_end_center_y_layout(), |ui| {
                     ui.label(
                         egui::RichText::new(detail)
                             .text_style(egui::TextStyle::Small)
@@ -517,7 +520,7 @@ fn paint_sidebar_subcard(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui:
         egui::Frame::new()
             .fill(egui::Color32::from_white_alpha(5))
             .stroke(crate::theme::stroke_subtle())
-            .corner_radius(egui::CornerRadius::same(7))
+            .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_COMPACT))
             .inner_margin(egui::Margin {
                 left: crate::theme::SPACE_3 as i8,
                 right: crate::theme::SPACE_3 as i8,
@@ -657,24 +660,20 @@ fn paint_setting_row(
 ) -> bool {
     let mut changed = false;
     ui.add_space(crate::theme::SPACE_2 + 2.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_3;
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            changed |= add_control(ui);
-            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
-                ui.label(
-                    egui::RichText::new(title)
-                        .text_style(egui::TextStyle::Body)
-                        .color(crate::theme::TEXT),
-                );
-                ui.label(
-                    egui::RichText::new(detail)
-                        .text_style(egui::TextStyle::Small)
-                        .color(crate::theme::TEXT_SUBTLE),
-                );
-            });
-        });
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
+        ui.label(
+            egui::RichText::new(title)
+                .text_style(egui::TextStyle::Body)
+                .color(crate::theme::TEXT),
+        );
+        ui.label(
+            egui::RichText::new(detail)
+                .text_style(egui::TextStyle::Small)
+                .color(crate::theme::TEXT_SUBTLE),
+        );
+        ui.add_space(crate::theme::SPACE_2);
+        changed |= add_control(ui);
     });
     ui.add_space(crate::theme::SPACE_2 + 2.0);
     changed
@@ -695,54 +694,28 @@ fn paint_canvas_image_mode_control(
     canvas_image_mode: &mut crate::data::CanvasImageMode,
 ) -> bool {
     let mut changed = false;
-    ui.spacing_mut().item_spacing.x = crate::theme::SPACE_3;
-    let downscale_clicked = paint_radio_pill(
-        ui,
-        "Downscale",
-        *canvas_image_mode == crate::data::CanvasImageMode::Downscale,
-    );
-    if downscale_clicked {
-        *canvas_image_mode = crate::data::CanvasImageMode::Downscale;
-        changed = true;
-    }
-    let original_clicked = paint_radio_pill(
-        ui,
-        "Original",
-        *canvas_image_mode == crate::data::CanvasImageMode::Original,
-    );
-    if original_clicked {
-        *canvas_image_mode = crate::data::CanvasImageMode::Original;
-        changed = true;
-    }
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+        let original_clicked = paint_inline_choice(
+            ui,
+            "Original",
+            *canvas_image_mode == crate::data::CanvasImageMode::Original,
+        );
+        if original_clicked {
+            *canvas_image_mode = crate::data::CanvasImageMode::Original;
+            changed = true;
+        }
+        let downscale_clicked = paint_inline_choice(
+            ui,
+            "Downscale",
+            *canvas_image_mode == crate::data::CanvasImageMode::Downscale,
+        );
+        if downscale_clicked {
+            *canvas_image_mode = crate::data::CanvasImageMode::Downscale;
+            changed = true;
+        }
+    });
     changed
-}
-
-fn paint_radio_pill(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
-    let font = ui.style().text_styles[&egui::TextStyle::Small].clone();
-    let galley = ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), font, crate::theme::TEXT);
-    let circle_size = 11.0;
-    let gap = crate::theme::SPACE_1 + 1.0;
-    let total = egui::vec2(circle_size + gap + galley.size().x, 16.0);
-    let (rect, response) = ui.allocate_exact_size(total, egui::Sense::click());
-    let circle_center = egui::pos2(rect.left() + circle_size * 0.5, rect.center().y);
-    let stroke_color = egui::Color32::from_white_alpha(90);
-    ui.painter().circle_stroke(
-        circle_center,
-        circle_size * 0.5 - 0.7,
-        egui::Stroke::new(1.4, stroke_color),
-    );
-    if selected {
-        ui.painter()
-            .circle_filled(circle_center, 2.5, crate::theme::ACCENT);
-    }
-    let label_pos = egui::pos2(
-        circle_center.x + circle_size * 0.5 + gap,
-        rect.center().y - galley.size().y * 0.5,
-    );
-    ui.painter().galley(label_pos, galley, crate::theme::TEXT);
-    response.clicked()
 }
 
 fn paint_background_mode_control(
@@ -758,78 +731,15 @@ fn paint_background_mode_control(
         ("Dots", crate::data::CanvasBackground::Dots),
     ];
 
-    let font = ui.style().text_styles[&egui::TextStyle::Small].clone();
-    let h_pad = crate::theme::SPACE_3;
-    let v_pad = 4.0;
-    let seg_gap = 0.0;
-    let outer_pad = 2.0;
-
-    let mut seg_widths = [0.0_f32; 3];
-    let mut total_w = 0.0_f32;
-    for (i, (label, _)) in segments.iter().enumerate() {
-        let galley =
-            ui.painter()
-                .layout_no_wrap((*label).to_owned(), font.clone(), crate::theme::TEXT);
-        seg_widths[i] = galley.size().x + h_pad * 2.0;
-        total_w += seg_widths[i];
-    }
-    total_w += seg_gap * 2.0 + outer_pad * 2.0;
-    let inner_h = font.size + v_pad * 2.0;
-    let outer_h = inner_h + outer_pad * 2.0;
-
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(total_w, outer_h), egui::Sense::hover());
-    let container_bg = egui::Color32::from_black_alpha(64);
-    ui.painter().rect(
-        rect,
-        egui::CornerRadius::same(5),
-        container_bg,
-        crate::theme::stroke_subtle(),
-        egui::StrokeKind::Inside,
-    );
-
-    let mut cursor_x = rect.left() + outer_pad;
-    for (i, (label, value)) in segments.iter().enumerate() {
-        let seg_rect = egui::Rect::from_min_size(
-            egui::pos2(cursor_x, rect.top() + outer_pad),
-            egui::vec2(seg_widths[i], inner_h),
-        );
-        let selected = background == *value;
-        let response = ui.interact(
-            seg_rect,
-            egui::Id::new(("sidebar_bg_segment", *label)),
-            egui::Sense::click(),
-        );
-        if selected {
-            ui.painter().rect_filled(
-                seg_rect,
-                egui::CornerRadius::same(3),
-                egui::Color32::from_white_alpha(20),
-            );
-        } else if response.hovered() {
-            ui.painter().rect_filled(
-                seg_rect,
-                egui::CornerRadius::same(3),
-                egui::Color32::from_white_alpha(8),
-            );
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+        for (label, value) in segments {
+            let selected = background == value;
+            if paint_inline_choice(ui, label, selected) {
+                background = value;
+            }
         }
-        let text_color = if selected {
-            crate::theme::TEXT
-        } else {
-            crate::theme::TEXT_MUTED
-        };
-        let galley = ui
-            .painter()
-            .layout_no_wrap((*label).to_owned(), font.clone(), text_color);
-        let text_pos = egui::pos2(
-            seg_rect.center().x - galley.size().x * 0.5,
-            seg_rect.center().y - galley.size().y * 0.5,
-        );
-        ui.painter().galley(text_pos, galley, text_color);
-        if response.clicked() {
-            background = *value;
-        }
-        cursor_x += seg_widths[i] + seg_gap;
-    }
+    });
 
     if background != before {
         canvas.set_background(background);
@@ -837,6 +747,51 @@ fn paint_background_mode_control(
     } else {
         false
     }
+}
+
+fn paint_inline_choice(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
+    paint_inline_choice_response(ui, label, selected).clicked()
+}
+
+fn paint_inline_choice_response(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+    let text_color = if selected {
+        crate::theme::TEXT
+    } else {
+        crate::theme::TEXT_MUTED
+    };
+    let font = ui.style().text_styles[&egui::TextStyle::Button].clone();
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font, text_color);
+    let pad = egui::vec2(10.0, 5.0);
+    let size = egui::vec2((galley.size().x + pad.x * 2.0).max(32.0), 24.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let fill = if selected {
+        egui::Color32::from_white_alpha(12)
+    } else if response.hovered() {
+        egui::Color32::from_white_alpha(7)
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    if selected || response.hovered() {
+        ui.painter().rect(
+            rect,
+            egui::CornerRadius::same(crate::theme::RADIUS_INLINE),
+            fill,
+            if selected {
+                crate::theme::stroke_subtle()
+            } else {
+                egui::Stroke::NONE
+            },
+            egui::StrokeKind::Inside,
+        );
+    }
+    ui.painter().galley(
+        crate::ui_layout::centered_pos(rect, galley.size()),
+        galley,
+        text_color,
+    );
+    response
 }
 
 fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
@@ -893,9 +848,9 @@ fn paint_shortcut_row(ui: &mut egui::Ui, shortcut: &SupportedShortcut) {
     ui.add_space(3.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.with_layout(crate::ui_layout::row_end_center_y_layout(), |ui| {
             paint_shortcut_pill(ui, keys);
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.with_layout(crate::ui_layout::row_center_y_layout(), |ui| {
                 ui.label(
                     egui::RichText::new(shortcut.action)
                         .text_style(egui::TextStyle::Small)
@@ -914,12 +869,12 @@ fn paint_shortcut_pill(ui: &mut egui::Ui, keys: &str) {
         font.size += 3.0;
     }
     let galley = ui.painter().layout_no_wrap(keys, font, crate::theme::TEXT);
-    let pad = egui::vec2(6.0, 2.0);
+    let pad = egui::vec2(6.0, 1.0);
     let size = galley.size() + pad * 2.0;
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     ui.painter().rect(
         rect,
-        egui::CornerRadius::same(4),
+        egui::CornerRadius::same(crate::theme::RADIUS_MICRO),
         egui::Color32::from_white_alpha(15),
         crate::theme::stroke_subtle(),
         egui::StrokeKind::Inside,
@@ -941,43 +896,13 @@ fn paint_shortcut_divider(ui: &mut egui::Ui) {
 }
 
 fn paint_switch(ui: &mut egui::Ui, value: &mut bool) -> egui::Response {
-    let desired_size = egui::vec2(40.0, 24.0);
-    let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    let label = if *value { "On" } else { "Off" };
+    let before = *value;
+    let mut response = paint_inline_choice_response(ui, label, before);
     if response.clicked() {
         *value = !*value;
         response.mark_changed();
     }
-
-    let track_color = if *value {
-        crate::theme::ACCENT
-    } else {
-        crate::theme::SURFACE_ELEVATED
-    };
-    let knob_color = if *value {
-        crate::theme::TEXT
-    } else {
-        crate::theme::TEXT_MUTED
-    };
-    let animation = ui.ctx().animate_bool(response.id, *value);
-    let knob_radius = 9.0;
-    let knob_x = egui::lerp((rect.left() + 12.0)..=(rect.right() - 12.0), animation);
-    let track_rect = rect.shrink2(egui::vec2(1.0, 3.0));
-    let stroke_color = if response.hovered() {
-        crate::theme::BORDER_STRONG
-    } else {
-        crate::theme::BORDER
-    };
-
-    ui.painter().rect(
-        track_rect,
-        track_rect.height() * 0.5,
-        track_color,
-        egui::Stroke::new(1.0, stroke_color),
-        egui::StrokeKind::Middle,
-    );
-    ui.painter()
-        .circle_filled(egui::pos2(knob_x, rect.center().y), knob_radius, knob_color);
-
     response
 }
 
@@ -1006,7 +931,7 @@ pub(crate) fn show_sidebar_hint(
             egui::Frame::new()
                 .fill(crate::theme::SURFACE_ELEVATED)
                 .stroke(crate::theme::stroke_subtle())
-                .corner_radius(egui::CornerRadius::same(6))
+                .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_COMPACT))
                 .inner_margin(egui::Margin {
                     left: 8,
                     right: 8,

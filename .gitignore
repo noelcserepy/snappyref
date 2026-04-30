@@ -1,4 +1,5 @@
 target/
 library/
 .claude/
+.agents/
 tests/fixtures/external/files/

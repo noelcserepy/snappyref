@@ -231,7 +231,7 @@ pub(crate) fn search_result_tile(
     let tile_radius = if selected {
         0
     } else {
-        crate::theme::CARD_RADIUS
+        crate::theme::RADIUS_PANEL
     };
 
     let preview_rect = egui::Rect::from_min_size(
@@ -402,14 +402,14 @@ pub(crate) fn paint_palette_input_row(
     let mut pivot_dismissed = false;
     egui::Frame::new()
         .inner_margin(egui::Margin {
-            left: 18,
-            right: 14,
-            top: 14,
-            bottom: 12,
+            left: crate::theme::SPACE_4 as i8,
+            right: crate::theme::SPACE_4 as i8,
+            top: crate::theme::SPACE_3 as i8,
+            bottom: crate::theme::SPACE_3 as i8,
         })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
+                ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
                 let placeholder = if let Some(pivot) = pivot {
                     if paint_image_pivot_pill(ui, canvas, pivot) {
                         pivot_dismissed = true;
@@ -492,16 +492,16 @@ fn paint_image_pivot_pill(
     egui::Frame::new()
         .fill(egui::Color32::from_white_alpha(18))
         .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(28)))
-        .corner_radius(egui::CornerRadius::same(6))
+        .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_COMPACT))
         .inner_margin(egui::Margin {
-            left: 4,
-            right: 4,
-            top: 3,
-            bottom: 3,
+            left: crate::theme::SPACE_1 as i8,
+            right: crate::theme::SPACE_1 as i8,
+            top: crate::theme::SPACE_1 as i8,
+            bottom: crate::theme::SPACE_1 as i8,
         })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
 
                 let (thumb_rect, _) = ui
                     .allocate_exact_size(egui::vec2(thumb_size, thumb_size), egui::Sense::hover());
@@ -532,7 +532,7 @@ fn paint_image_pivot_pill(
                 } else {
                     ui.painter().rect_filled(
                         thumb_rect,
-                        egui::CornerRadius::same(3),
+                        egui::CornerRadius::same(crate::theme::RADIUS_MICRO),
                         crate::theme::SURFACE_ELEVATED,
                     );
                 }
@@ -602,11 +602,14 @@ fn paint_kbd_pill(ui: &mut egui::Ui, label: &str) {
     };
 
     let (rect, _) = ui.allocate_exact_size(KBD_PILL_SIZE, egui::Sense::hover());
-    ui.painter()
-        .rect_filled(rect, 4, egui::Color32::from_white_alpha(15));
+    ui.painter().rect_filled(
+        rect,
+        crate::theme::RADIUS_INLINE,
+        egui::Color32::from_white_alpha(15),
+    );
     ui.painter().rect_stroke(
         rect,
-        4,
+        crate::theme::RADIUS_INLINE,
         egui::Stroke::new(1.0, egui::Color32::from_white_alpha(15)),
         egui::StrokeKind::Inside,
     );
@@ -617,7 +620,7 @@ fn paint_kbd_pill(ui: &mut egui::Ui, label: &str) {
         crate::theme::TEXT_MUTED,
     );
     ui.painter().galley(
-        rect.center() - galley.size() * 0.5,
+        crate::ui_layout::centered_pos(rect, galley.size()),
         galley,
         crate::theme::TEXT_MUTED,
     );
@@ -640,7 +643,7 @@ fn footer_hint_label(ui: &mut egui::Ui, label: &str) {
         egui::Sense::hover(),
     );
     ui.painter().galley(
-        rect.center() - galley.size() * 0.5,
+        crate::ui_layout::centered_pos(rect, galley.size()),
         galley,
         crate::theme::TEXT_SUBTLE,
     );
@@ -660,10 +663,10 @@ pub(crate) fn paint_palette_empty_state(
     let mut selected_recent_search = None;
     egui::Frame::new()
         .inner_margin(egui::Margin {
-            left: 8,
-            right: 8,
-            top: 12,
-            bottom: 6,
+            left: crate::theme::SPACE_2 as i8,
+            right: crate::theme::SPACE_2 as i8,
+            top: crate::theme::SPACE_3 as i8,
+            bottom: crate::theme::SPACE_2 as i8,
         })
         .show(ui, |ui| {
             selected_recent_search = paint_palette_empty_group(
@@ -709,10 +712,10 @@ fn paint_palette_empty_group(
     let mut selected_recent_search = None;
     egui::Frame::new()
         .inner_margin(egui::Margin {
-            left: 6,
-            right: 6,
-            top: 4,
-            bottom: 4,
+            left: crate::theme::SPACE_2 as i8,
+            right: crate::theme::SPACE_2 as i8,
+            top: crate::theme::SPACE_1 as i8,
+            bottom: crate::theme::SPACE_1 as i8,
         })
         .show(ui, |ui| {
             ui.label(
@@ -732,7 +735,7 @@ fn paint_palette_empty_group(
         if active || response.hovered() {
             ui.painter().rect_filled(
                 rect.shrink2(egui::vec2(2.0, 2.0)),
-                crate::theme::CARD_RADIUS,
+                crate::theme::RADIUS_PANEL,
                 if active {
                     crate::theme::SURFACE_ELEVATED
                 } else {
@@ -766,14 +769,14 @@ pub(crate) fn paint_palette_footer(
     egui::Frame::new()
         .fill(egui::Color32::from_black_alpha(38))
         .inner_margin(egui::Margin {
-            left: 16,
-            right: 16,
-            top: 9,
-            bottom: 9,
+            left: crate::theme::SPACE_4 as i8,
+            right: crate::theme::SPACE_4 as i8,
+            top: crate::theme::SPACE_2 as i8,
+            bottom: crate::theme::SPACE_2 as i8,
         })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
+                ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
                 if result_count == 0 {
                     let idle_text = match status {
                         SearchOverlayStatus::Idle => "Ready".to_owned(),
@@ -797,13 +800,13 @@ pub(crate) fn paint_palette_footer(
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         paint_kbd_pill(ui, "↓");
-                        ui.add_space(6.0);
+                        ui.add_space(crate::theme::SPACE_2);
                         footer_hint_label(ui, "more");
                     });
                 }
                 ui.add_space(14.0);
                 scope_toggled = paint_footer_scope_toggle(ui, scope);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.with_layout(crate::ui_layout::row_end_center_y_layout(), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     if result_count == 0 {
                         footer_hint_label(ui, "select");
