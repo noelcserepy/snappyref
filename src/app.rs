@@ -1528,6 +1528,7 @@ impl ReferenceApp {
             width,
             height,
             self.settings.auto_image_scaling,
+            self.settings.import_target_canvas_area,
         );
         if board_id == self.active_board_id {
             self.add_import_placeholder_to_canvas(placeholder);
@@ -1564,14 +1565,19 @@ impl ReferenceApp {
     }
 
     fn import_size_world(&self, width: u32, height: u32) -> egui::Vec2 {
-        let scale =
-            crate::jobs::initial_import_scale(width, height, self.settings.auto_image_scaling);
+        let scale = crate::jobs::initial_import_scale(
+            width,
+            height,
+            self.settings.auto_image_scaling,
+            self.settings.import_target_canvas_area,
+        );
         egui::vec2(width as f32 * scale, height as f32 * scale)
     }
 
     fn import_placement_settings(&self) -> ImportPlacementSettings {
         ImportPlacementSettings {
             auto_image_scaling: self.settings.auto_image_scaling,
+            import_target_canvas_area: self.settings.import_target_canvas_area,
             import_gap: self.settings.import_gap,
             snap_distance_world: crate::import_placement::import_snap_distance_world(&self.canvas),
         }
@@ -1582,6 +1588,7 @@ impl ReferenceApp {
             max_texture_side: self.max_texture_side,
             canvas_image_max_side: self.settings.canvas_image_max_side,
             auto_image_scaling: self.settings.auto_image_scaling,
+            import_target_canvas_area: self.settings.import_target_canvas_area,
             import_gap: self.settings.import_gap,
         }
     }
@@ -1778,8 +1785,12 @@ impl ReferenceApp {
                 desired_world,
                 viewport_world,
             );
-            let scale =
-                crate::jobs::initial_import_scale(width, height, self.settings.auto_image_scaling);
+            let scale = crate::jobs::initial_import_scale(
+                width,
+                height,
+                self.settings.auto_image_scaling,
+                self.settings.import_target_canvas_area,
+            );
             let size_world = egui::vec2(width as f32 * scale, height as f32 * scale);
             previews.push((reserved_world, size_world));
         }
@@ -4500,6 +4511,7 @@ mod tests {
         let mut app = test_app(Some(library.clone()));
         app.settings.auto_image_scaling = false;
         app.settings.import_gap = 37.0;
+        app.settings.import_target_canvas_area = 45_000.0;
         app.settings.canvas_image_max_side = 4096;
         app.canvas
             .set_background(crate::data::CanvasBackground::Grid);
@@ -4509,6 +4521,7 @@ mod tests {
         let session = library.load_user_session().unwrap();
         assert!(!session.settings.auto_image_scaling);
         assert_eq!(session.settings.import_gap, 37.0);
+        assert_eq!(session.settings.import_target_canvas_area, 45_000.0);
         assert_eq!(session.settings.canvas_image_max_side, 4096);
         assert_eq!(
             session.viewport.canvas_background,

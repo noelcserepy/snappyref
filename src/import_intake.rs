@@ -27,6 +27,7 @@ pub(crate) struct ImportReservation {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ImportPlacementSettings {
     pub(crate) auto_image_scaling: bool,
+    pub(crate) import_target_canvas_area: f32,
     pub(crate) import_gap: f32,
     pub(crate) snap_distance_world: f32,
 }
@@ -36,6 +37,7 @@ pub(crate) struct ImportRequestConfig {
     pub(crate) max_texture_side: usize,
     pub(crate) canvas_image_max_side: u32,
     pub(crate) auto_image_scaling: bool,
+    pub(crate) import_target_canvas_area: f32,
     pub(crate) import_gap: f32,
 }
 
@@ -64,7 +66,12 @@ impl ImportIntake {
     ) -> (ImportReservation, Option<CanvasImportPlaceholder>) {
         let queue_id = self.next_queue_id();
         let placeholder = dimensions.map(|(width, height)| {
-            let size_world = import_size_world(width, height, settings.auto_image_scaling);
+            let size_world = import_size_world(
+                width,
+                height,
+                settings.auto_image_scaling,
+                settings.import_target_canvas_area,
+            );
             let reserved_world = crate::import_placement::reserve_import_world(
                 layout,
                 desired_world,
@@ -121,12 +128,18 @@ impl ImportIntake {
         width: u32,
         height: u32,
         auto_image_scaling: bool,
+        import_target_canvas_area: f32,
     ) -> CanvasImportPlaceholder {
         let placeholder = CanvasImportPlaceholder {
             queue_id,
             label,
             center_world,
-            size_world: import_size_world(width, height, auto_image_scaling),
+            size_world: import_size_world(
+                width,
+                height,
+                auto_image_scaling,
+                import_target_canvas_area,
+            ),
         };
         self.queue_placeholder(board_id, placeholder.clone());
         placeholder
@@ -200,6 +213,7 @@ pub(crate) fn import_path_request(
         max_texture_side: config.max_texture_side,
         canvas_image_settings: canvas_image_settings(config),
         auto_scale: config.auto_image_scaling,
+        target_canvas_area: config.import_target_canvas_area,
         import_gap: config.import_gap,
         trace,
     }
@@ -223,6 +237,7 @@ pub(crate) fn import_url_request(
         max_texture_side: config.max_texture_side,
         canvas_image_settings: canvas_image_settings(config),
         auto_scale: config.auto_image_scaling,
+        target_canvas_area: config.import_target_canvas_area,
         import_gap: config.import_gap,
         trace,
     }
@@ -250,13 +265,20 @@ pub(crate) fn import_clipboard_request(
         max_texture_side: config.max_texture_side,
         canvas_image_settings: canvas_image_settings(config),
         auto_scale: config.auto_image_scaling,
+        target_canvas_area: config.import_target_canvas_area,
         import_gap: config.import_gap,
         trace,
     }
 }
 
-fn import_size_world(width: u32, height: u32, auto_image_scaling: bool) -> egui::Vec2 {
-    let scale = crate::jobs::initial_import_scale(width, height, auto_image_scaling);
+fn import_size_world(
+    width: u32,
+    height: u32,
+    auto_image_scaling: bool,
+    target_canvas_area: f32,
+) -> egui::Vec2 {
+    let scale =
+        crate::jobs::initial_import_scale(width, height, auto_image_scaling, target_canvas_area);
     egui::vec2(width as f32 * scale, height as f32 * scale)
 }
 
@@ -283,6 +305,7 @@ mod tests {
             eframe::egui::pos2(10.0, 20.0),
             ImportPlacementSettings {
                 auto_image_scaling: false,
+                import_target_canvas_area: crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA,
                 import_gap: 24.0,
                 snap_distance_world: 32.0,
             },
