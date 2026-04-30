@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::canvas::CanvasState;
-use crate::data::{BoardItemWithAsset, CanvasImageCacheTier, CanvasImageMode, WorkspaceSettings};
+use crate::data::{BoardItemWithAsset, CanvasImageCacheTier, WorkspaceSettings};
 use crate::jobs::{CanvasImageSettings, ExistingLoadPriority, ImportRequest, ImportWorker};
 
 #[derive(Default)]
@@ -39,9 +39,6 @@ impl ImageResidencyCoordinator {
         settings: &WorkspaceSettings,
         tier: CanvasImageCacheTier,
     ) -> Option<String> {
-        if settings.canvas_image_mode != CanvasImageMode::Downscale {
-            return None;
-        }
         let Some(import_worker) = import_worker else {
             return None;
         };
@@ -68,9 +65,6 @@ impl ImageResidencyCoordinator {
         settings: &WorkspaceSettings,
         max_texture_side: usize,
     ) -> Option<String> {
-        if settings.canvas_image_mode != CanvasImageMode::Downscale {
-            return None;
-        }
         let Some(import_worker) = import_worker else {
             return None;
         };
@@ -119,7 +113,6 @@ impl ImageResidencyCoordinator {
 
 fn canvas_image_settings(settings: &WorkspaceSettings) -> CanvasImageSettings {
     CanvasImageSettings {
-        mode: settings.canvas_image_mode,
         max_side: settings.canvas_image_max_side,
     }
 }

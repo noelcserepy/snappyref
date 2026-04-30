@@ -401,6 +401,9 @@ fn desired_image_tier(
     item_id: i64,
 ) -> Option<CanvasImageCacheTier> {
     let image = state.image_by_item_id(item_id)?;
+    if image.loaded_tier < CanvasImageCacheTier::Working {
+        return Some(CanvasImageCacheTier::Working);
+    }
     if image.loaded_tier >= CanvasImageCacheTier::Detail {
         return None;
     }
@@ -1707,4 +1710,91 @@ pub(super) fn annotation_paint_stats_for_annotations(
         }
     }
     stats
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::canvas::{CanvasDocumentState, CanvasRenderState};
+    use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
+    use std::path::PathBuf;
+
+    #[test]
+    fn visible_overview_image_promotes_to_working_tier() {
+        let mut state = CanvasState {
+            document: CanvasDocumentState {
+                images: vec![test_image(7, CanvasImageCacheTier::Overview, [256, 256])],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+
+        state.request_image_tier_load(
+            7,
+            desired_image_tier(&state, rect, 7).expect("overview should promote"),
+        );
+
+        assert_eq!(
+            state.render.pending_image_tier_loads.get(&7).copied(),
+            Some(CanvasImageCacheTier::Working)
+        );
+    }
+
+    #[test]
+    fn working_image_promotes_to_detail_only_when_screen_size_exceeds_texture_threshold() {
+        let state = CanvasState {
+            zoom: 2.0,
+            document: CanvasDocumentState {
+                images: vec![test_image(9, CanvasImageCacheTier::Working, [256, 256])],
+                ..Default::default()
+            },
+            render: CanvasRenderState::default(),
+            ..Default::default()
+        };
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+
+        assert_eq!(
+            desired_image_tier(&state, rect, 9),
+            Some(CanvasImageCacheTier::Detail)
+        );
+    }
+
+    fn test_image(
+        item_id: i64,
+        loaded_tier: CanvasImageCacheTier,
+        texture_size: [usize; 2],
+    ) -> CanvasImage {
+        CanvasImage {
+            record: BoardItemWithAsset {
+                item: BoardItem {
+                    id: item_id,
+                    asset_id: item_id,
+                    x: 0.0,
+                    y: 0.0,
+                    scale: 1.0,
+                    rotation: 0.0,
+                    z_index: item_id as i32,
+                    archived: false,
+                },
+                asset: ImageAsset {
+                    id: item_id,
+                    original_path: PathBuf::from(format!("image-{item_id}.png")),
+                    filename: format!("image-{item_id}.png"),
+                    mime_type: "image/png".to_owned(),
+                    width: texture_size[0] as u32,
+                    height: texture_size[1] as u32,
+                    file_size: 0,
+                    imported_at: 0,
+                },
+            },
+            texture: CanvasTexture::Svg {
+                uri: format!("bytes://image-{item_id}.svg"),
+                bytes: std::sync::Arc::<[u8]>::from([]),
+                size: texture_size,
+            },
+            loaded_tier,
+            animation: None,
+        }
+    }
 }
