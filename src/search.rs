@@ -34,6 +34,7 @@ pub(crate) struct SearchController {
     result_cache: HashMap<SearchCacheKey, SearchCacheEntry>,
     active_search: Option<ActiveSearchRequest>,
     prefetch_searches: HashMap<u64, SearchCacheKey>,
+    pending_result_selection: Option<PendingResultSelection>,
     next_search_request_id: u64,
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
     latency_log: SearchLatencyLog,
@@ -58,6 +59,12 @@ struct ActiveSearchRequest {
     request_id: u64,
     cache_key: SearchCacheKey,
     query: String,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingResultSelection {
+    index: usize,
+    mode: SearchSelectionMode,
 }
 
 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -302,7 +309,7 @@ impl SearchController {
                         has_more_results: self.overlay.has_more_results,
                     },
                 );
-                self.select_initial_result();
+                self.select_after_results_refresh();
                 self.overlay.status = SearchOverlayStatus::Ready;
                 self.apply_search_matches(canvas);
                 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -322,6 +329,7 @@ impl SearchController {
                 self.overlay.status = SearchOverlayStatus::Error(error);
                 self.overlay.results.clear();
                 self.overlay.result_selection.clear();
+                self.pending_result_selection = None;
                 self.overlay.has_more_results = false;
                 canvas.clear_search_matches();
             }
@@ -407,6 +415,7 @@ impl SearchController {
             self.overlay.last_submitted_query.clear();
             self.overlay.results.clear();
             self.overlay.result_selection.clear();
+            self.pending_result_selection = None;
             self.overlay.active_recent_search_index = 0;
             self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
             self.overlay.has_more_results = false;
@@ -617,6 +626,7 @@ impl SearchController {
                             self.overlay.active_recent_search_index = 0;
                             self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
                             self.overlay.has_more_results = false;
+                            self.pending_result_selection = None;
                             if self.overlay.query.trim().is_empty()
                                 && self.overlay.image_pivot.is_none()
                             {
@@ -899,13 +909,14 @@ impl SearchController {
             } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
                 if lead_is_on_bottom_row && self.overlay.has_more_results {
                     let next_row_index = lead_index + grid_layout.columns;
+                    self.pending_result_selection = Some(PendingResultSelection {
+                        index: next_row_index,
+                        mode: arrow_selection_mode,
+                    });
                     self.overlay.result_limit += SEARCH_RESULT_PAGE_SIZE;
                     self.submit_query(canvas);
-                    if !self.overlay.results.is_empty() {
-                        let index = next_row_index.min(self.overlay.results.len() - 1);
-                        self.update_result_selection(index, arrow_selection_mode);
+                    if self.pending_result_selection.is_none() {
                         self.overlay.scroll_lead_result_into_view = true;
-                        self.apply_search_matches(canvas);
                     }
                 } else {
                     let index = (lead_index + grid_layout.columns).min(last_index);
@@ -955,6 +966,7 @@ impl SearchController {
         self.result_cache.clear();
         self.active_search = None;
         self.prefetch_searches.clear();
+        self.pending_result_selection = None;
         if let Some(canvas) = canvas {
             canvas.clear_search_matches();
             canvas.clear_search_drag_preview();
@@ -994,6 +1006,7 @@ impl SearchController {
         }
         self.overlay.results.clear();
         self.overlay.result_selection.clear();
+        self.pending_result_selection = None;
         self.overlay.has_more_results = false;
     }
 
@@ -1097,6 +1110,7 @@ impl SearchController {
         self.active_search = None;
         self.overlay.results.clear();
         self.overlay.result_selection.clear();
+        self.pending_result_selection = None;
         self.overlay.active_recent_search_index = 0;
         self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
         self.overlay.has_more_results = false;
@@ -1112,6 +1126,7 @@ impl SearchController {
         self.active_search = None;
         self.overlay.results.clear();
         self.overlay.result_selection.clear();
+        self.pending_result_selection = None;
         self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
         self.overlay.has_more_results = false;
         self.submit_query(canvas);
@@ -1129,6 +1144,7 @@ impl SearchController {
         self.overlay.last_submitted_query.clear();
         self.overlay.results.clear();
         self.overlay.result_selection.clear();
+        self.pending_result_selection = None;
         self.overlay.active_recent_search_index = 0;
         self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
         self.overlay.has_more_results = false;
@@ -1168,6 +1184,7 @@ impl SearchController {
             self.active_search = None;
             self.overlay.results.clear();
             self.overlay.result_selection.clear();
+            self.pending_result_selection = None;
             self.overlay.last_submitted_query.clear();
             self.overlay.has_more_results = false;
             self.overlay.status = SearchOverlayStatus::Ready;
@@ -1197,7 +1214,7 @@ impl SearchController {
             self.overlay.last_submitted_query = query;
             self.overlay.results = cached.results;
             self.overlay.has_more_results = cached.has_more_results;
-            self.select_initial_result();
+            self.select_after_results_refresh();
             self.overlay.status = SearchOverlayStatus::Ready;
             self.apply_search_matches(canvas);
             #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -1281,6 +1298,7 @@ impl SearchController {
                 self.overlay.status = SearchOverlayStatus::Error(error);
                 self.overlay.results.clear();
                 self.overlay.result_selection.clear();
+                self.pending_result_selection = None;
                 self.overlay.has_more_results = false;
                 canvas.clear_search_matches();
             }
@@ -1371,7 +1389,7 @@ impl SearchController {
         self.active_search = None;
         self.overlay.results = cached.results;
         self.overlay.has_more_results = cached.has_more_results;
-        self.select_initial_result();
+        self.select_after_results_refresh();
         self.overlay.status = SearchOverlayStatus::Ready;
         #[cfg(all(debug_assertions, feature = "semantic-search"))]
         self.log_active_results_ready(cache_key.scope);
@@ -1391,6 +1409,22 @@ impl SearchController {
             .get(self.overlay.result_selection.lead().unwrap_or(0))
             .and_then(|group| group.item_ids.first().copied());
         canvas.set_search_matches(item_ids, lead_item_id);
+    }
+
+    fn select_after_results_refresh(&mut self) {
+        let Some(pending) = self.pending_result_selection.take() else {
+            self.select_initial_result();
+            return;
+        };
+
+        if self.overlay.results.is_empty() {
+            self.overlay.result_selection.clear();
+            return;
+        }
+
+        let index = pending.index.min(self.overlay.results.len() - 1);
+        self.update_result_selection(index, pending.mode);
+        self.overlay.scroll_lead_result_into_view = true;
     }
 }
 
@@ -1413,10 +1447,12 @@ fn result_is_on_bottom_row(index: usize, last_index: usize, columns: usize) -> b
 #[cfg(test)]
 mod tests {
     use super::{
-        SEARCH_RESULT_PAGE_SIZE, SearchCacheEntry, SearchCacheKey, SearchController,
-        SearchIndexResult, SearchSelectionMode, result_is_on_bottom_row,
+        ActiveSearchRequest, PendingResultSelection, SEARCH_RESULT_PAGE_SIZE, SearchCacheEntry,
+        SearchCacheKey, SearchController, SearchIndexResult, SearchSelectionMode,
+        result_is_on_bottom_row,
     };
-    use crate::semantic_search::{SearchResultGroup, SearchScope};
+    use crate::canvas::CanvasState;
+    use crate::semantic_search::{SearchQueryResult, SearchResultGroup, SearchScope};
 
     #[test]
     fn search_scope_defaults_to_this_board_and_resets_on_close() {
@@ -1574,6 +1610,45 @@ mod tests {
     }
 
     #[test]
+    fn result_expansion_selects_pending_next_row_column_after_async_refresh() {
+        let mut search = SearchController::default();
+        let mut canvas = CanvasState::default();
+        search.overlay.query = "mountain".to_owned();
+        search.overlay.last_submitted_query = "mountain".to_owned();
+        search.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE * 3;
+        search.overlay.results = search_result_groups(10);
+        search.overlay.result_selection.replace(9);
+        search.pending_result_selection = Some(PendingResultSelection {
+            index: 10,
+            mode: SearchSelectionMode::Replace,
+        });
+        let cache_key = SearchCacheKey {
+            scope: SearchScope::ThisBoard,
+            query: "mountain".to_owned(),
+            pivot_asset_id: None,
+            result_limit: search.overlay.result_limit,
+        };
+        search.active_search = Some(ActiveSearchRequest {
+            request_id: 7,
+            cache_key,
+            query: "mountain".to_owned(),
+        });
+
+        search.process_search_result(
+            SearchQueryResult::Completed {
+                request_id: 7,
+                results: search_result_groups(16),
+            },
+            &mut canvas,
+        );
+
+        assert_eq!(search.overlay.results.len(), SEARCH_RESULT_PAGE_SIZE * 3);
+        assert_eq!(search.overlay.result_selection.lead(), Some(10));
+        assert_eq!(search.overlay.result_selection.selected(), &[10]);
+        assert!(search.overlay.scroll_lead_result_into_view);
+    }
+
+    #[test]
     fn initial_result_becomes_range_anchor() {
         let mut search = SearchController::default();
         search.overlay.results = (0..5)
@@ -1672,5 +1747,18 @@ mod tests {
         ];
 
         assert_eq!(search.all_result_item_ids(), vec![101, 201]);
+    }
+
+    fn search_result_groups(count: usize) -> Vec<SearchResultGroup> {
+        (0..count)
+            .map(|index| SearchResultGroup {
+                asset_id: index as i64,
+                asset_preview_path: None,
+                asset_original_path: None,
+                similarity: 0.9,
+                item_ids: vec![100 + index as i64],
+                instance_count: 1,
+            })
+            .collect()
     }
 }

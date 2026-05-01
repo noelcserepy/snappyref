@@ -1,17 +1,57 @@
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::Instant;
+
+use eframe::egui;
 
 use crate::canvas::CanvasState;
 use crate::data::{BoardItemWithAsset, CanvasImageCacheTier, WorkspaceSettings};
 use crate::jobs::{
-    CanvasImageSettings, ExistingLoadPriority, ImportRequest, ImportTimings, ImportTrace,
-    ImportWorker,
+    CanvasImageSettings, CroppedCanvasItem, ExistingLoadDiagnostics, ExistingLoadPriority,
+    ImportOrigin, ImportRequest, ImportResult, ImportTimings, ImportTrace, ImportWorker,
+    LoadedCanvasItem,
 };
 
 #[derive(Default)]
 pub(crate) struct ImageResidencyCoordinator {
     pending_cache_backfills: HashSet<(i64, CanvasImageCacheTier)>,
     inflight_image_tier_loads: HashMap<i64, CanvasImageCacheTier>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ImportPlaceholderRemoval {
+    pub(crate) target_board_id: i64,
+    pub(crate) queue_id: u64,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LoadedImportLog {
+    pub(crate) origin: ImportOrigin,
+    pub(crate) record: BoardItemWithAsset,
+    pub(crate) diagnostics: Option<ExistingLoadDiagnostics>,
+    pub(crate) trace: Option<ImportTrace>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LoadedImportOutcome {
+    pub(crate) placeholder_removal: Option<ImportPlaceholderRemoval>,
+    pub(crate) status: Option<String>,
+    pub(crate) indexed_asset: Option<(i64, PathBuf)>,
+    pub(crate) log: Option<LoadedImportLog>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FailedImportOutcome {
+    pub(crate) placeholder_removal: Option<ImportPlaceholderRemoval>,
+    pub(crate) status: String,
+}
+
+#[derive(Debug)]
+pub(crate) enum ImportResultResidencyOutcome {
+    Loaded(LoadedImportOutcome),
+    Cropped(CroppedCanvasItem),
+    Failed(FailedImportOutcome),
+    Status(Option<String>),
 }
 
 impl ImageResidencyCoordinator {
@@ -48,10 +88,160 @@ impl ImageResidencyCoordinator {
         self.inflight_image_tier_loads.remove(&item_id);
     }
 
+    pub(crate) fn process_import_result(
+        &mut self,
+        ctx: &egui::Context,
+        canvas: &mut CanvasState,
+        import_worker: Option<&ImportWorker>,
+        active_board_id: i64,
+        settings: &WorkspaceSettings,
+        result: ImportResult,
+    ) -> ImportResultResidencyOutcome {
+        match result {
+            ImportResult::Loaded(loaded) => {
+                ImportResultResidencyOutcome::Loaded(self.integrate_loaded_import(
+                    ctx,
+                    canvas,
+                    import_worker,
+                    active_board_id,
+                    settings,
+                    loaded,
+                ))
+            }
+            ImportResult::Cropped(cropped) => ImportResultResidencyOutcome::Cropped(cropped),
+            ImportResult::CacheTierBackfilled { asset_id, tier } => {
+                let status = self.note_backfill_completed(asset_id, tier, None);
+                ImportResultResidencyOutcome::Status(status)
+            }
+            ImportResult::CacheTierBackfillFailed {
+                asset_id,
+                tier,
+                error,
+            } => {
+                let status = self.note_backfill_completed(asset_id, tier, Some(error));
+                ImportResultResidencyOutcome::Status(status)
+            }
+            ImportResult::Failed {
+                target_board_id,
+                queue_id,
+                item_id,
+                context,
+                error,
+            } => ImportResultResidencyOutcome::Failed(self.integrate_failed_import(
+                canvas,
+                active_board_id,
+                target_board_id,
+                queue_id,
+                item_id,
+                context,
+                error,
+            )),
+        }
+    }
+
+    pub(crate) fn integrate_loaded_import(
+        &mut self,
+        ctx: &egui::Context,
+        canvas: &mut CanvasState,
+        import_worker: Option<&ImportWorker>,
+        active_board_id: i64,
+        settings: &WorkspaceSettings,
+        loaded: LoadedCanvasItem,
+    ) -> LoadedImportOutcome {
+        let placeholder_removal = loaded.queue_id.map(|queue_id| ImportPlaceholderRemoval {
+            target_board_id: loaded.target_board_id,
+            queue_id,
+        });
+        let origin = loaded.origin;
+        let loaded_tier = loaded.loaded_tier;
+        let loaded_record = loaded.record.clone();
+        let existing_load_diagnostics = loaded.existing_load_diagnostics.clone();
+        self.note_loaded_item(loaded.record.item.id);
+
+        if loaded.target_board_id != active_board_id {
+            return LoadedImportOutcome {
+                placeholder_removal,
+                status: Some("Imported image".to_owned()),
+                indexed_asset: None,
+                log: None,
+            };
+        }
+
+        if canvas
+            .record_for_item_id(loaded.record.item.id)
+            .is_some_and(|current| current.item.asset_id != loaded.record.item.asset_id)
+        {
+            return LoadedImportOutcome {
+                placeholder_removal,
+                status: None,
+                indexed_asset: None,
+                log: None,
+            };
+        }
+
+        let indexed_asset = (settings.semantic_search_enabled
+            && asset_mime_type_supports_raster_derivatives(&loaded.record.asset.mime_type))
+        .then(|| {
+            (
+                loaded.record.asset.id,
+                loaded.record.asset.original_path.clone(),
+            )
+        });
+
+        let mut trace = loaded.trace;
+        let ui_integration_started_at = Instant::now();
+        canvas.add_loaded_item(ctx, loaded);
+        if let Some(trace) = &mut trace {
+            trace.timings.ui_integration = ui_integration_started_at.elapsed();
+        }
+        let _ = self.queue_overview_backfill_after_working_load(
+            import_worker,
+            &loaded_record,
+            settings,
+            loaded_tier,
+        );
+
+        LoadedImportOutcome {
+            placeholder_removal,
+            status: Some("Imported image".to_owned()),
+            indexed_asset,
+            log: Some(LoadedImportLog {
+                origin,
+                record: loaded_record,
+                diagnostics: existing_load_diagnostics,
+                trace,
+            }),
+        }
+    }
+
     pub(crate) fn note_failed_item(&mut self, canvas: &mut CanvasState, item_id: Option<i64>) {
         if let Some(item_id) = item_id {
             self.inflight_image_tier_loads.remove(&item_id);
             canvas.clear_pending_image_tier_load(item_id);
+        }
+    }
+
+    fn integrate_failed_import(
+        &mut self,
+        canvas: &mut CanvasState,
+        active_board_id: i64,
+        target_board_id: Option<i64>,
+        queue_id: Option<u64>,
+        item_id: Option<i64>,
+        context: String,
+        error: String,
+    ) -> FailedImportOutcome {
+        let placeholder_removal = queue_id.map(|queue_id| ImportPlaceholderRemoval {
+            target_board_id: target_board_id.unwrap_or(active_board_id),
+            queue_id,
+        });
+        self.note_failed_item(canvas, item_id);
+        if let Some(item_id) = item_id {
+            canvas.clear_crop_pending(item_id);
+        }
+        FailedImportOutcome {
+            placeholder_removal,
+            status: format!("{context}: {error}"),
         }
     }
 
