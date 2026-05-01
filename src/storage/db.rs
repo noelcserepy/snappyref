@@ -23,6 +23,58 @@ pub struct Library {
     db_path: PathBuf,
 }
 
+const USER_SESSION_PAYLOAD_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+struct StoredUserSessionPayload {
+    #[serde(default = "current_user_session_payload_version")]
+    version: u32,
+    #[serde(default)]
+    workspace_settings: WorkspaceSettings,
+    #[serde(default)]
+    sidebar: StoredSidebarState,
+}
+
+impl StoredUserSessionPayload {
+    fn from_session(session: &UserSession) -> Self {
+        Self {
+            version: USER_SESSION_PAYLOAD_VERSION,
+            workspace_settings: session.settings.clone(),
+            sidebar: StoredSidebarState {
+                open: session.sidebar_open,
+                tab: session.sidebar_tab.clone(),
+            },
+        }
+    }
+}
+
+impl Default for StoredUserSessionPayload {
+    fn default() -> Self {
+        Self {
+            version: USER_SESSION_PAYLOAD_VERSION,
+            workspace_settings: WorkspaceSettings::default(),
+            sidebar: StoredSidebarState::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+struct StoredSidebarState {
+    #[serde(default)]
+    open: bool,
+    #[serde(default = "default_sidebar_tab")]
+    tab: String,
+}
+
+impl Default for StoredSidebarState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            tab: default_sidebar_tab(),
+        }
+    }
+}
+
 static DESTINATION_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
@@ -1525,42 +1577,17 @@ impl Library {
                     rotation_snap_degrees,
                     default_textbox_background,
                     sidebar_open,
-                    sidebar_tab
+                    sidebar_tab,
+                    session_payload
                  FROM user_session
                  WHERE id = 1",
             )
             .map_err(|error| format!("failed to prepare user-session query: {error}"))?;
 
         let session = statement.query_row([], |row| {
-            Ok(UserSession {
-                active_board_id,
-                viewport: viewport.clone(),
-                settings: WorkspaceSettings {
-                    auto_image_scaling: row.get::<_, i64>(0)? != 0,
-                    import_gap: row.get(1)?,
-                    import_target_canvas_area: row
-                        .get::<_, f32>(2)
-                        .ok()
-                        .map(|value| value.max(1.0))
-                        .unwrap_or(crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA),
-                    canvas_image_max_side: row
-                        .get::<_, i64>(4)
-                        .ok()
-                        .map(|value| value.max(1) as u32)
-                        .unwrap_or(crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE),
-                    semantic_search_enabled: row.get::<_, i64>(3).unwrap_or(0) != 0,
-                    rotation_snap_degrees: row
-                        .get::<_, f32>(5)
-                        .ok()
-                        .map(|value| value.max(0.0))
-                        .unwrap_or(crate::data::DEFAULT_ROTATION_SNAP_DEGREES),
-                    default_textbox_background: row.get::<_, i64>(6).unwrap_or(0) != 0,
-                },
-                sidebar_open: row.get::<_, i64>(7).unwrap_or(0) != 0,
-                sidebar_tab: row
-                    .get::<_, String>(8)
-                    .unwrap_or_else(|_| "settings".to_owned()),
-            })
+            let legacy = legacy_user_session_from_row(row, active_board_id, viewport.clone())?;
+            let payload = row.get::<_, Option<String>>(9).ok().flatten();
+            Ok(apply_user_session_payload(legacy, payload))
         });
 
         match session {
@@ -1590,6 +1617,7 @@ impl Library {
         } else {
             active_board_id(&connection)?
         };
+        let session_payload = encode_user_session_payload(session)?;
         connection
             .execute(
                 "INSERT INTO user_session (
@@ -1608,9 +1636,10 @@ impl Library {
                     default_textbox_background,
                     sidebar_open,
                     sidebar_tab,
+                    session_payload,
                     active_board_id
                  )
-                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
                  ON CONFLICT(id) DO UPDATE SET
                     camera_pan_x = excluded.camera_pan_x,
                     camera_pan_y = excluded.camera_pan_y,
@@ -1626,6 +1655,7 @@ impl Library {
                     default_textbox_background = excluded.default_textbox_background,
                     sidebar_open = excluded.sidebar_open,
                     sidebar_tab = excluded.sidebar_tab,
+                    session_payload = excluded.session_payload,
                     active_board_id = excluded.active_board_id",
                 params![
                     session.viewport.camera_pan_x,
@@ -1654,6 +1684,7 @@ impl Library {
                     },
                     if session.sidebar_open { 1_i64 } else { 0_i64 },
                     session.sidebar_tab.as_str(),
+                    session_payload,
                     active_board_id,
                 ],
             )
@@ -2064,6 +2095,7 @@ impl Library {
                     default_textbox_background INTEGER NOT NULL DEFAULT 0,
                     sidebar_open INTEGER NOT NULL DEFAULT 0,
                     sidebar_tab TEXT NOT NULL DEFAULT 'settings',
+                    session_payload TEXT,
                     active_board_id INTEGER NOT NULL DEFAULT 1
                 );
 
@@ -2125,6 +2157,7 @@ impl Library {
         ensure_user_session_sidebar_open_column(&connection)?;
         ensure_user_session_sidebar_tab_column(&connection)?;
         ensure_user_session_active_board_id_column(&connection)?;
+        ensure_user_session_payload_column(&connection)?;
         ensure_canvas_annotations_text_size_column(&connection)?;
         ensure_canvas_annotations_stroke_width_column(&connection)?;
         ensure_canvas_annotations_color_column(&connection)?;
@@ -2156,6 +2189,14 @@ fn unix_timestamp_seconds() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or(0)
+}
+
+fn current_user_session_payload_version() -> u32 {
+    USER_SESSION_PAYLOAD_VERSION
+}
+
+fn default_sidebar_tab() -> String {
+    "settings".to_owned()
 }
 
 fn unix_timestamp_millis() -> u128 {
@@ -2506,6 +2547,77 @@ fn ensure_user_session_sidebar_tab_column(connection: &Connection) -> Result<(),
     Ok(())
 }
 
+fn ensure_user_session_payload_column(connection: &Connection) -> Result<(), String> {
+    if !table_has_column(connection, "user_session", "session_payload")? {
+        connection
+            .execute(
+                "ALTER TABLE user_session ADD COLUMN session_payload TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("failed to add session_payload column to user_session: {error}")
+            })?;
+    }
+
+    backfill_user_session_payload(connection)
+}
+
+fn backfill_user_session_payload(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT
+                auto_image_scaling,
+                import_gap,
+                import_target_canvas_area,
+                semantic_search_enabled,
+                canvas_image_max_side,
+                rotation_snap_degrees,
+                default_textbox_background,
+                sidebar_open,
+                sidebar_tab,
+                session_payload
+             FROM user_session
+             WHERE id = 1",
+        )
+        .map_err(|error| format!("failed to prepare user-session payload backfill: {error}"))?;
+
+    let payload = statement.query_row([], |row| {
+        let existing = row.get::<_, Option<String>>(9).ok().flatten();
+        if existing
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+        {
+            return Ok(None);
+        }
+
+        let legacy = legacy_user_session_from_row(row, 1, ViewportState::default())?;
+        Ok(Some(StoredUserSessionPayload::from_session(&legacy)))
+    });
+
+    let payload = match payload {
+        Ok(payload) => payload,
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(error) => return Err(format!("failed to backfill user session payload: {error}")),
+    };
+
+    let Some(payload) = payload else {
+        return Ok(());
+    };
+    let payload_json = serde_json::to_string(&payload)
+        .map_err(|error| format!("failed to encode user session payload backfill: {error}"))?;
+    connection
+        .execute(
+            "UPDATE user_session
+             SET session_payload = ?1
+             WHERE id = 1",
+            params![payload_json],
+        )
+        .map_err(|error| format!("failed to save user session payload backfill: {error}"))?;
+
+    Ok(())
+}
+
 fn migrate_default_board_viewport(connection: &Connection) -> Result<(), String> {
     let session = connection.query_row(
         "SELECT camera_pan_x, camera_pan_y, camera_zoom, canvas_background
@@ -2644,6 +2756,65 @@ fn board_viewport_state(
             })
         },
     )
+}
+
+fn legacy_user_session_from_row(
+    row: &rusqlite::Row<'_>,
+    active_board_id: i64,
+    viewport: ViewportState,
+) -> Result<UserSession, rusqlite::Error> {
+    Ok(UserSession {
+        active_board_id,
+        viewport,
+        settings: WorkspaceSettings {
+            auto_image_scaling: row.get::<_, i64>(0)? != 0,
+            import_gap: row.get(1)?,
+            import_target_canvas_area: row
+                .get::<_, f32>(2)
+                .ok()
+                .map(|value| value.max(1.0))
+                .unwrap_or(crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA),
+            canvas_image_max_side: row
+                .get::<_, i64>(4)
+                .ok()
+                .map(|value| value.max(1) as u32)
+                .unwrap_or(crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE),
+            semantic_search_enabled: row.get::<_, i64>(3).unwrap_or(0) != 0,
+            rotation_snap_degrees: row
+                .get::<_, f32>(5)
+                .ok()
+                .map(|value| value.max(0.0))
+                .unwrap_or(crate::data::DEFAULT_ROTATION_SNAP_DEGREES),
+            default_textbox_background: row.get::<_, i64>(6).unwrap_or(0) != 0,
+        },
+        sidebar_open: row.get::<_, i64>(7).unwrap_or(0) != 0,
+        sidebar_tab: row
+            .get::<_, String>(8)
+            .unwrap_or_else(|_| default_sidebar_tab()),
+    })
+}
+
+fn apply_user_session_payload(mut session: UserSession, payload: Option<String>) -> UserSession {
+    let Some(payload) = payload else {
+        return session;
+    };
+    if payload.trim().is_empty() {
+        return session;
+    }
+
+    let Ok(stored) = serde_json::from_str::<StoredUserSessionPayload>(&payload) else {
+        return session;
+    };
+
+    session.settings = stored.workspace_settings;
+    session.sidebar_open = stored.sidebar.open;
+    session.sidebar_tab = stored.sidebar.tab;
+    session
+}
+
+fn encode_user_session_payload(session: &UserSession) -> Result<String, String> {
+    serde_json::to_string(&StoredUserSessionPayload::from_session(session))
+        .map_err(|error| format!("failed to encode user session payload: {error}"))
 }
 
 fn ensure_canvas_annotations_text_size_column(connection: &Connection) -> Result<(), String> {
@@ -3733,6 +3904,173 @@ mod tests {
             second_after_reopen.viewport.canvas_background,
             CanvasBackground::Grid
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
+        let root = temp_root("reference-session-payload-precedence");
+        let library = Library::initialize(root.clone()).unwrap();
+
+        let mut session = library.load_user_session().unwrap();
+        session.settings.auto_image_scaling = false;
+        session.settings.import_gap = 48.0;
+        session.settings.import_target_canvas_area = 45_000.0;
+        session.settings.semantic_search_enabled = false;
+        session.settings.canvas_image_max_side = 4096;
+        session.settings.rotation_snap_degrees = 45.0;
+        session.settings.default_textbox_background = true;
+        session.sidebar_open = true;
+        session.sidebar_tab = "boards".to_owned();
+        library.save_user_session(&session).unwrap();
+        drop(library);
+
+        let connection = Connection::open(root.join("library.db")).unwrap();
+        connection
+            .execute(
+                "UPDATE user_session
+                 SET auto_image_scaling = 1,
+                     import_gap = 12.0,
+                     import_target_canvas_area = 12.0,
+                     semantic_search_enabled = 1,
+                     canvas_image_max_side = 100,
+                     rotation_snap_degrees = 5.0,
+                     default_textbox_background = 0,
+                     sidebar_open = 0,
+                     sidebar_tab = 'settings'
+                 WHERE id = 1",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let reloaded = library.load_user_session().unwrap();
+
+        assert!(!reloaded.settings.auto_image_scaling);
+        assert_eq!(reloaded.settings.import_gap, 48.0);
+        assert_eq!(reloaded.settings.import_target_canvas_area, 45_000.0);
+        assert!(!reloaded.settings.semantic_search_enabled);
+        assert_eq!(reloaded.settings.canvas_image_max_side, 4096);
+        assert_eq!(reloaded.settings.rotation_snap_degrees, 45.0);
+        assert!(reloaded.settings.default_textbox_background);
+        assert!(reloaded.sidebar_open);
+        assert_eq!(reloaded.sidebar_tab, "boards");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn existing_legacy_user_session_columns_backfill_payload() {
+        let root = temp_root("reference-session-payload-backfill");
+        let db_path = root.join("library.db");
+        let connection = Connection::open(&db_path).unwrap();
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE user_session (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    camera_pan_x REAL NOT NULL,
+                    camera_pan_y REAL NOT NULL,
+                    camera_zoom REAL NOT NULL,
+                    auto_image_scaling INTEGER NOT NULL DEFAULT 1,
+                    import_gap REAL NOT NULL DEFAULT 24.0,
+                    import_target_canvas_area REAL NOT NULL DEFAULT 90000.0,
+                    canvas_background TEXT NOT NULL DEFAULT 'none',
+                    semantic_search_enabled INTEGER NOT NULL DEFAULT 1,
+                    canvas_image_mode TEXT NOT NULL DEFAULT 'downscale',
+                    canvas_image_max_side INTEGER NOT NULL DEFAULT 2000,
+                    rotation_snap_degrees REAL NOT NULL DEFAULT 15.0,
+                    default_textbox_background INTEGER NOT NULL DEFAULT 0,
+                    sidebar_open INTEGER NOT NULL DEFAULT 0,
+                    sidebar_tab TEXT NOT NULL DEFAULT 'settings',
+                    active_board_id INTEGER NOT NULL DEFAULT 1
+                );
+
+                INSERT INTO user_session (
+                    id,
+                    camera_pan_x,
+                    camera_pan_y,
+                    camera_zoom,
+                    auto_image_scaling,
+                    import_gap,
+                    import_target_canvas_area,
+                    canvas_background,
+                    semantic_search_enabled,
+                    canvas_image_max_side,
+                    rotation_snap_degrees,
+                    default_textbox_background,
+                    sidebar_open,
+                    sidebar_tab,
+                    active_board_id
+                )
+                VALUES (
+                    1,
+                    10.0,
+                    20.0,
+                    1.5,
+                    0,
+                    48.0,
+                    45000.0,
+                    'grid',
+                    0,
+                    4096,
+                    45.0,
+                    1,
+                    1,
+                    'boards',
+                    1
+                );
+                ",
+            )
+            .unwrap();
+        drop(connection);
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let session = library.load_user_session().unwrap();
+
+        assert_eq!(session.viewport.camera_pan_x, 10.0);
+        assert_eq!(session.viewport.camera_pan_y, 20.0);
+        assert_eq!(session.viewport.camera_zoom, 1.5);
+        assert_eq!(session.viewport.canvas_background, CanvasBackground::Grid);
+        assert!(!session.settings.auto_image_scaling);
+        assert_eq!(session.settings.import_gap, 48.0);
+        assert_eq!(session.settings.import_target_canvas_area, 45_000.0);
+        assert!(!session.settings.semantic_search_enabled);
+        assert_eq!(session.settings.canvas_image_max_side, 4096);
+        assert_eq!(session.settings.rotation_snap_degrees, 45.0);
+        assert!(session.settings.default_textbox_background);
+        assert!(session.sidebar_open);
+        assert_eq!(session.sidebar_tab, "boards");
+        drop(library);
+
+        let connection = Connection::open(root.join("library.db")).unwrap();
+        let payload: Option<String> = connection
+            .query_row(
+                "SELECT session_payload FROM user_session WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(payload.as_deref().is_some_and(|value| !value.is_empty()));
+        connection
+            .execute(
+                "UPDATE user_session
+                 SET import_gap = 12.0,
+                     sidebar_open = 0,
+                     sidebar_tab = 'settings'
+                 WHERE id = 1",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let library = Library::initialize(root.clone()).unwrap();
+        let reloaded = library.load_user_session().unwrap();
+        assert_eq!(reloaded.settings.import_gap, 48.0);
+        assert!(reloaded.sidebar_open);
+        assert_eq!(reloaded.sidebar_tab, "boards");
 
         let _ = fs::remove_dir_all(root);
     }
