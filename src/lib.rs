@@ -12,6 +12,7 @@ mod import_intake;
 mod import_placement;
 mod jobs;
 mod layout_snap;
+mod library_location;
 mod native_capture;
 mod native_drop;
 #[cfg(feature = "semantic-search")]
@@ -31,7 +32,7 @@ mod ui_layout;
 pub fn run() -> eframe::Result<()> {
     let config = app::AppConfig::from_env();
     if config.startup_trace_requested() {
-        if let Err(error) = perf::print_startup_trace() {
+        if let Err(error) = config.library_root().and_then(perf::print_startup_trace) {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));
