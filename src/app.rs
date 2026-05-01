@@ -951,10 +951,7 @@ impl ReferenceApp {
                     active_board_id: 1,
                     crop_flow: CropFlow::default(),
                     max_texture_side,
-                    settings: crate::data::WorkspaceSettings {
-                        semantic_search_enabled: false,
-                        ..Default::default()
-                    },
+                    settings: crate::data::WorkspaceSettings::default(),
                     #[cfg(feature = "semantic-search")]
                     search: SearchController::default(),
                     sidebar_open: config.open_sidebar_on_start(),
@@ -1155,10 +1152,7 @@ impl ReferenceApp {
                 active_board_id: 1,
                 crop_flow: CropFlow::default(),
                 max_texture_side,
-                settings: crate::data::WorkspaceSettings {
-                    semantic_search_enabled: false,
-                    ..Default::default()
-                },
+                settings: crate::data::WorkspaceSettings::default(),
                 #[cfg(feature = "semantic-search")]
                 search: SearchController::default(),
                 sidebar_open: config.open_sidebar_on_start(),
@@ -1425,6 +1419,7 @@ impl ReferenceApp {
                 self.canvas.apply_viewport_state(&session.viewport);
                 self.active_board_id = session.active_board_id;
                 self.settings = session.settings;
+                self.settings.normalize_core_features();
                 self.sidebar_open = session.sidebar_open;
                 self.sidebar_tab = sidebar_tab_from_session(&session.sidebar_tab);
                 self.canvas
@@ -6470,10 +6465,7 @@ mod tests {
             active_board_id: 1,
             crop_flow: super::CropFlow::default(),
             max_texture_side: 8192,
-            settings: crate::data::WorkspaceSettings {
-                semantic_search_enabled: false,
-                ..Default::default()
-            },
+            settings: crate::data::WorkspaceSettings::default(),
             #[cfg(feature = "semantic-search")]
             search: super::SearchController::default(),
             frame_perf: super::FramePerfState::default(),

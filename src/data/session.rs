@@ -66,6 +66,29 @@ impl Default for WorkspaceSettings {
     }
 }
 
+impl WorkspaceSettings {
+    pub fn normalize_core_features(&mut self) {
+        self.semantic_search_enabled = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorkspaceSettings;
+
+    #[test]
+    fn normalizes_semantic_search_to_enabled_for_core_search() {
+        let mut settings = WorkspaceSettings {
+            semantic_search_enabled: false,
+            ..Default::default()
+        };
+
+        settings.normalize_core_features();
+
+        assert!(settings.semantic_search_enabled);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct UserSession {
     pub active_board_id: i64,

@@ -672,29 +672,6 @@ fn paint_settings_section(
         )
         .changed()
     });
-    paint_setting_divider(ui);
-    changed |= paint_setting_row(
-        ui,
-        "Semantic search",
-        #[cfg(feature = "semantic-search")]
-        "Experimental; downloads a model on first use.",
-        #[cfg(not(feature = "semantic-search"))]
-        "Feature disabled in this build.",
-        |ui| {
-            #[cfg(feature = "semantic-search")]
-            {
-                paint_switch(ui, &mut settings.semantic_search_enabled).changed()
-            }
-            #[cfg(not(feature = "semantic-search"))]
-            {
-                ui.add_enabled(
-                    false,
-                    egui::widgets::Checkbox::without_text(&mut settings.semantic_search_enabled),
-                )
-                .changed()
-            }
-        },
-    );
 
     changed
 }

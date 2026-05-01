@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use hf_hub::api::sync::Api;
@@ -63,6 +63,106 @@ pub const AVAILABLE_SEMANTIC_SEARCH_MODELS: &[ModelSpec] = &[SIGLIP2_BASE_PATCH1
 
 pub const DEFAULT_SEMANTIC_SEARCH_MODEL: ModelSpec = SIGLIP2_BASE_PATCH16_224_INT8;
 
+pub(crate) struct ResolvedModelAssets {
+    tokenizer_path: PathBuf,
+    text_model_path: PathBuf,
+    vision_model_path: PathBuf,
+}
+
+pub(crate) enum ModelAssetResolution {
+    Packaged(ResolvedModelAssets),
+    HuggingFace,
+}
+
+pub(crate) fn resolve_packaged_model_assets(
+    spec: &ModelSpec,
+    app_root: &Path,
+) -> Option<ResolvedModelAssets> {
+    let model_root = app_root.join("models").join(spec.model_key);
+    let assets = ResolvedModelAssets {
+        tokenizer_path: model_root.join(spec.tokenizer_file),
+        text_model_path: model_root.join(spec.text_model_file),
+        vision_model_path: model_root.join(spec.vision_model_file),
+    };
+
+    if model_asset_exists(&assets.tokenizer_path)
+        && model_asset_exists(&assets.text_model_path)
+        && model_asset_exists(&assets.vision_model_path)
+    {
+        Some(assets)
+    } else {
+        None
+    }
+}
+
+fn model_asset_exists(path: &Path) -> bool {
+    path.metadata()
+        .map(|metadata| metadata.is_file() && metadata.len() > 0)
+        .unwrap_or(false)
+}
+
+pub(crate) fn resolve_model_assets_from_app_root(
+    spec: &ModelSpec,
+    app_root: &Path,
+) -> ModelAssetResolution {
+    match resolve_packaged_model_assets(spec, app_root) {
+        Some(assets) => ModelAssetResolution::Packaged(assets),
+        None => ModelAssetResolution::HuggingFace,
+    }
+}
+
+fn resolve_model_assets<F>(
+    spec: &ModelSpec,
+    on_progress: &mut F,
+) -> Result<ResolvedModelAssets, String>
+where
+    F: FnMut(&str),
+{
+    let app_root = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+
+    if let Some(app_root) = app_root {
+        if let ModelAssetResolution::Packaged(assets) =
+            resolve_model_assets_from_app_root(spec, &app_root)
+        {
+            on_progress("Loading packaged model assets…");
+            return Ok(assets);
+        }
+    }
+
+    download_model_assets(spec, on_progress)
+}
+
+fn download_model_assets<F>(
+    spec: &ModelSpec,
+    on_progress: &mut F,
+) -> Result<ResolvedModelAssets, String>
+where
+    F: FnMut(&str),
+{
+    on_progress("Downloading model assets…");
+    let repo = Api::new()
+        .map_err(|error| format!("failed to initialize Hugging Face API: {error}"))?
+        .model(spec.repo_id.to_owned());
+
+    let tokenizer_path = repo
+        .get(spec.tokenizer_file)
+        .map_err(|error| format!("failed to fetch tokenizer: {error}"))?;
+    let text_model_path = repo
+        .get(spec.text_model_file)
+        .map_err(|error| format!("failed to fetch text model: {error}"))?;
+    let vision_model_path = repo
+        .get(spec.vision_model_file)
+        .map_err(|error| format!("failed to fetch vision model: {error}"))?;
+
+    Ok(ResolvedModelAssets {
+        tokenizer_path,
+        text_model_path,
+        vision_model_path,
+    })
+}
+
 pub struct OrtDualEncoderModel {
     spec: ModelSpec,
     tokenizer: Tokenizer,
@@ -75,22 +175,9 @@ impl OrtDualEncoderModel {
     where
         F: FnMut(&str),
     {
-        on_progress("Downloading model assets…");
-        let repo = Api::new()
-            .map_err(|error| format!("failed to initialize Hugging Face API: {error}"))?
-            .model(spec.repo_id.to_owned());
+        let assets = resolve_model_assets(&spec, &mut on_progress)?;
 
-        let tokenizer_path = repo
-            .get(spec.tokenizer_file)
-            .map_err(|error| format!("failed to fetch tokenizer: {error}"))?;
-        let text_model_path = repo
-            .get(spec.text_model_file)
-            .map_err(|error| format!("failed to fetch text model: {error}"))?;
-        let vision_model_path = repo
-            .get(spec.vision_model_file)
-            .map_err(|error| format!("failed to fetch vision model: {error}"))?;
-
-        let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
+        let mut tokenizer = Tokenizer::from_file(&assets.tokenizer_path)
             .map_err(|error| format!("failed to load tokenizer: {error}"))?;
         tokenizer
             .with_truncation(Some(TruncationParams {
@@ -108,11 +195,11 @@ impl OrtDualEncoderModel {
         on_progress("Initializing model…");
         let text_session = Session::builder()
             .map_err(|error| format!("failed to create text session builder: {error}"))?
-            .commit_from_file(&text_model_path)
+            .commit_from_file(&assets.text_model_path)
             .map_err(|error| format!("failed to load text model: {error}"))?;
         let vision_session = Session::builder()
             .map_err(|error| format!("failed to create vision session builder: {error}"))?
-            .commit_from_file(&vision_model_path)
+            .commit_from_file(&assets.vision_model_path)
             .map_err(|error| format!("failed to load vision model: {error}"))?;
 
         Ok(Self {
@@ -238,4 +325,77 @@ fn normalize(mut values: Vec<f32>) -> Vec<f32> {
         }
     }
     values
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DEFAULT_SEMANTIC_SEARCH_MODEL, ModelAssetResolution, resolve_model_assets_from_app_root,
+        resolve_packaged_model_assets,
+    };
+
+    #[test]
+    fn resolves_packaged_model_assets_when_all_files_exist() {
+        let root =
+            std::env::temp_dir().join(format!("reference-model-assets-{}", std::process::id()));
+        let model_root = root
+            .join("models")
+            .join(DEFAULT_SEMANTIC_SEARCH_MODEL.model_key);
+        std::fs::create_dir_all(model_root.join("onnx")).unwrap();
+        std::fs::write(
+            model_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.tokenizer_file),
+            "{}",
+        )
+        .unwrap();
+        std::fs::write(
+            model_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.text_model_file),
+            "model",
+        )
+        .unwrap();
+        std::fs::write(
+            model_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.vision_model_file),
+            "model",
+        )
+        .unwrap();
+
+        let assets = resolve_packaged_model_assets(&DEFAULT_SEMANTIC_SEARCH_MODEL, &root).unwrap();
+
+        assert_eq!(
+            assets.tokenizer_path,
+            model_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.tokenizer_file)
+        );
+        assert_eq!(
+            assets.text_model_path,
+            model_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.text_model_file)
+        );
+        assert_eq!(
+            assets.vision_model_path,
+            model_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.vision_model_file)
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn falls_back_to_hugging_face_when_packaged_assets_are_incomplete() {
+        let root = std::env::temp_dir().join(format!(
+            "reference-model-assets-missing-{}",
+            std::process::id()
+        ));
+        let model_root = root
+            .join("models")
+            .join(DEFAULT_SEMANTIC_SEARCH_MODEL.model_key);
+        std::fs::create_dir_all(model_root.join("onnx")).unwrap();
+        std::fs::write(
+            model_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.tokenizer_file),
+            "{}",
+        )
+        .unwrap();
+
+        let resolution = resolve_model_assets_from_app_root(&DEFAULT_SEMANTIC_SEARCH_MODEL, &root);
+
+        assert!(matches!(resolution, ModelAssetResolution::HuggingFace));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
