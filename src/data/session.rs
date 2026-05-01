@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use super::CanvasBackground;
 
 pub const DEFAULT_IMPORT_GAP: f32 = 24.0;
@@ -41,15 +43,46 @@ impl Default for ViewportState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceSettings {
+    #[serde(default = "default_auto_image_scaling")]
     pub auto_image_scaling: bool,
+    #[serde(default = "default_import_gap")]
     pub import_gap: f32,
+    #[serde(default = "default_import_target_canvas_area")]
     pub import_target_canvas_area: f32,
+    #[serde(default = "default_canvas_image_max_side")]
     pub canvas_image_max_side: u32,
+    #[serde(default = "default_semantic_search_enabled")]
     pub semantic_search_enabled: bool,
+    #[serde(default = "default_rotation_snap_degrees")]
     pub rotation_snap_degrees: f32,
+    #[serde(default)]
     pub default_textbox_background: bool,
+}
+
+fn default_auto_image_scaling() -> bool {
+    true
+}
+
+fn default_import_gap() -> f32 {
+    DEFAULT_IMPORT_GAP
+}
+
+fn default_import_target_canvas_area() -> f32 {
+    DEFAULT_IMPORT_TARGET_CANVAS_AREA
+}
+
+fn default_canvas_image_max_side() -> u32 {
+    DEFAULT_CANVAS_IMAGE_MAX_SIDE
+}
+
+fn default_semantic_search_enabled() -> bool {
+    true
+}
+
+fn default_rotation_snap_degrees() -> f32 {
+    DEFAULT_ROTATION_SNAP_DEGREES
 }
 
 impl Default for WorkspaceSettings {
@@ -63,6 +96,29 @@ impl Default for WorkspaceSettings {
             rotation_snap_degrees: DEFAULT_ROTATION_SNAP_DEGREES,
             default_textbox_background: false,
         }
+    }
+}
+
+impl WorkspaceSettings {
+    pub fn normalize_core_features(&mut self) {
+        self.semantic_search_enabled = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorkspaceSettings;
+
+    #[test]
+    fn normalizes_semantic_search_to_enabled_for_core_search() {
+        let mut settings = WorkspaceSettings {
+            semantic_search_enabled: false,
+            ..Default::default()
+        };
+
+        settings.normalize_core_features();
+
+        assert!(settings.semantic_search_enabled);
     }
 }
 

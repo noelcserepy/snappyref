@@ -106,11 +106,8 @@ pub fn print_report() -> Result<(), String> {
     Ok(())
 }
 
-pub fn print_startup_trace() -> Result<(), String> {
-    let library_root = std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .join("library");
-    let library = crate::storage::Library::initialize(library_root)?;
+pub fn print_startup_trace(library_root: &std::path::Path) -> Result<(), String> {
+    let library = crate::storage::Library::initialize(library_root.to_path_buf())?;
     let mut canvas = crate::canvas::CanvasState::default();
     if let Ok(session) = library.load_user_session() {
         canvas.apply_viewport_state(&session.viewport);

@@ -284,9 +284,10 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
 ];
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct AppConfig {
     pub screenshot_path: Option<std::path::PathBuf>,
+    library_root: Result<std::path::PathBuf, String>,
     perf_log: bool,
     perf_report: bool,
     perf_decode_path: Option<std::path::PathBuf>,
@@ -392,6 +393,7 @@ impl AppConfig {
         let mut verification_search_query = None;
         #[cfg(all(debug_assertions, feature = "semantic-search"))]
         let mut verification_search_scope = crate::semantic_search::SearchScope::ThisBoard;
+        let library_root = crate::library_location::resolve_library_root();
         let mut arguments = std::env::args().skip(1);
 
         while let Some(argument) = arguments.next() {
@@ -610,6 +612,7 @@ impl AppConfig {
             verification_search_query,
             #[cfg(all(debug_assertions, feature = "semantic-search"))]
             verification_search_scope,
+            library_root,
         }
     }
 
@@ -878,6 +881,12 @@ impl AppConfig {
     pub fn startup_trace_requested(&self) -> bool {
         self.startup_trace
     }
+
+    pub(crate) fn library_root(&self) -> Result<&std::path::Path, String> {
+        self.library_root
+            .as_deref()
+            .map_err(std::clone::Clone::clone)
+    }
 }
 
 pub struct ReferenceApp {
@@ -920,9 +929,6 @@ pub struct ReferenceApp {
 impl ReferenceApp {
     pub fn new(cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
         crate::native_drop::install_url_drop_bridge(cc);
-        let library_root = std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join("library");
         let screenshot_path = config.screenshot_path.clone();
         let window_capture = if screenshot_path.is_some() {
             None
@@ -931,7 +937,12 @@ impl ReferenceApp {
         };
         let max_texture_side = cc.egui_ctx.input(|input| input.max_texture_side.max(1));
 
-        match crate::storage::Library::initialize(library_root) {
+        let library = config
+            .library_root()
+            .map(std::path::Path::to_path_buf)
+            .and_then(crate::storage::Library::initialize);
+
+        match library {
             Ok(library) => {
                 let import_worker = crate::jobs::ImportWorker::new(
                     library.clone(),
@@ -951,10 +962,7 @@ impl ReferenceApp {
                     active_board_id: 1,
                     crop_flow: CropFlow::default(),
                     max_texture_side,
-                    settings: crate::data::WorkspaceSettings {
-                        semantic_search_enabled: false,
-                        ..Default::default()
-                    },
+                    settings: crate::data::WorkspaceSettings::default(),
                     #[cfg(feature = "semantic-search")]
                     search: SearchController::default(),
                     sidebar_open: config.open_sidebar_on_start(),
@@ -1155,10 +1163,7 @@ impl ReferenceApp {
                 active_board_id: 1,
                 crop_flow: CropFlow::default(),
                 max_texture_side,
-                settings: crate::data::WorkspaceSettings {
-                    semantic_search_enabled: false,
-                    ..Default::default()
-                },
+                settings: crate::data::WorkspaceSettings::default(),
                 #[cfg(feature = "semantic-search")]
                 search: SearchController::default(),
                 sidebar_open: config.open_sidebar_on_start(),
@@ -1425,6 +1430,7 @@ impl ReferenceApp {
                 self.canvas.apply_viewport_state(&session.viewport);
                 self.active_board_id = session.active_board_id;
                 self.settings = session.settings;
+                self.settings.normalize_core_features();
                 self.sidebar_open = session.sidebar_open;
                 self.sidebar_tab = sidebar_tab_from_session(&session.sidebar_tab);
                 self.canvas
@@ -6470,10 +6476,7 @@ mod tests {
             active_board_id: 1,
             crop_flow: super::CropFlow::default(),
             max_texture_side: 8192,
-            settings: crate::data::WorkspaceSettings {
-                semantic_search_enabled: false,
-                ..Default::default()
-            },
+            settings: crate::data::WorkspaceSettings::default(),
             #[cfg(feature = "semantic-search")]
             search: super::SearchController::default(),
             frame_perf: super::FramePerfState::default(),

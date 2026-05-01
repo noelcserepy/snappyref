@@ -37,4 +37,5 @@ This repo uses GitHub Actions for verification and packaging.
 
 - The Windows build is produced on a Windows runner.
 - The macOS build is produced on a macOS runner.
-- The semantic-search model is not bundled into the binaries; it is downloaded on first use from Hugging Face.
+- Release artifacts include the semantic-search model next to the executable under `models/`.
+- Development builds still fall back to downloading the model from Hugging Face when packaged model files are absent.

@@ -43,8 +43,23 @@ jobs:
       - name: Package artifact
         shell: pwsh
         run: |
+          $packageRoot = Join-Path $env:RUNNER_TEMP "reference-windows-package"
+          New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+          Copy-Item target\release\reference.exe $packageRoot
+          python scripts\fetch-semantic-model.py --target (Join-Path $packageRoot "models")
+          $modelRoot = Join-Path $packageRoot "models\siglip2_base_patch16_224_int8"
+          @(
+            "tokenizer.json",
+            "onnx\text_model_int8.onnx",
+            "onnx\vision_model_int8.onnx"
+          ) | ForEach-Object {
+            $path = Join-Path $modelRoot $_
+            if (-not (Test-Path $path)) {
+              throw "missing packaged model asset: $path"
+            }
+          }
           $zipPath = Join-Path $env:RUNNER_TEMP "reference-windows-${{ github.sha }}.zip"
-          Compress-Archive -Path target\release\reference.exe -DestinationPath $zipPath -Force
+          Compress-Archive -Path "$packageRoot\*" -DestinationPath $zipPath -Force
 
       - uses: actions/upload-artifact@v4
         with:
@@ -79,8 +94,17 @@ jobs:
 
       - name: Package artifact
         run: |
+          package_root="${RUNNER_TEMP}/reference-macos-package"
+          rm -rf "$package_root"
+          mkdir -p "$package_root"
+          cp target/release/reference "$package_root/"
+          python3 scripts/fetch-semantic-model.py --target "$package_root/models"
+          model_root="$package_root/models/siglip2_base_patch16_224_int8"
+          test -s "$model_root/tokenizer.json"
+          test -s "$model_root/onnx/text_model_int8.onnx"
+          test -s "$model_root/onnx/vision_model_int8.onnx"
           zip_path="${RUNNER_TEMP}/reference-macos-${{ github.sha }}.zip"
-          (cd target/release && zip -9 "$zip_path" reference)
+          (cd "$package_root" && zip -9 -r "$zip_path" reference models)
 
       - uses: actions/upload-artifact@v4
         with:
