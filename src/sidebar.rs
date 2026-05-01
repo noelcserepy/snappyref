@@ -86,6 +86,7 @@ pub(crate) fn show_sidebar(
     ctx: &egui::Context,
     screen_rect: egui::Rect,
     sidebar_open: bool,
+    input_enabled: bool,
     sidebar_tab: &mut SidebarTab,
     settings: &mut crate::data::WorkspaceSettings,
     canvas: &mut crate::canvas::CanvasState,
@@ -135,20 +136,27 @@ pub(crate) fn show_sidebar(
             let ui_builder = egui::UiBuilder::new().max_rect(inner_rect);
             ui.scope_builder(ui_builder, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-                paint_sidebar_tabs(ui, sidebar_tab);
-                ui.add_space(crate::theme::SPACE_2);
-                match *sidebar_tab {
-                    SidebarTab::Boards => {
-                        board_action = paint_sidebar_boards(
-                            ui,
-                            boards,
-                            active_board_id,
-                            forced_board_hover_index,
-                        )
+                let mut paint_contents = |ui: &mut egui::Ui| {
+                    paint_sidebar_tabs(ui, sidebar_tab);
+                    ui.add_space(crate::theme::SPACE_2);
+                    match *sidebar_tab {
+                        SidebarTab::Boards => {
+                            board_action = paint_sidebar_boards(
+                                ui,
+                                boards,
+                                active_board_id,
+                                forced_board_hover_index,
+                            )
+                        }
+                        SidebarTab::Options => {
+                            settings_changed |= paint_sidebar_options(ui, settings, canvas);
+                        }
                     }
-                    SidebarTab::Options => {
-                        settings_changed |= paint_sidebar_options(ui, settings, canvas);
-                    }
+                };
+                if input_enabled {
+                    paint_contents(ui);
+                } else {
+                    ui.add_enabled_ui(false, |ui| paint_contents(ui));
                 }
             });
         });
@@ -179,6 +187,9 @@ fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
             egui::Id::new(("sidebar_tab", label)),
             egui::Sense::click(),
         );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), *label)
+        });
         if response.clicked() {
             *sidebar_tab = *tab_value;
         }
@@ -397,6 +408,13 @@ fn paint_board_row(
     );
     let title_hit_id = ui.make_persistent_id(("board-name-hit", board_id));
     let title_response = ui.interact(name_rect, title_hit_id, egui::Sense::click());
+    title_response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            ui.is_enabled(),
+            format!("Board {name}"),
+        )
+    });
     let title_double_clicked = title_response.double_clicked();
     let mut submitted_name = None;
     if title_double_clicked {
@@ -442,6 +460,13 @@ fn paint_board_row(
         ui.make_persistent_id(("board-delete-hit", board_id)),
         egui::Sense::click(),
     );
+    delete_response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            ui.is_enabled(),
+            format!("Delete board {name}"),
+        )
+    });
     let delete_hot = hot || delete_response.hovered();
     if delete_hot {
         ui.painter().text(
@@ -481,6 +506,9 @@ fn paint_create_board_button(ui: &mut egui::Ui) -> bool {
         egui::vec2(ui.available_width(), height),
         egui::Sense::click(),
     );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "New board")
+    });
     let dash_stroke = egui::Stroke::new(1.0, crate::theme::BORDER);
     ui.painter().rect(
         rect,
@@ -761,6 +789,9 @@ fn paint_inline_choice_response(ui: &mut egui::Ui, label: &str, selected: bool) 
     let pad = egui::vec2(10.0, 5.0);
     let size = egui::vec2((galley.size().x + pad.x * 2.0).max(32.0), 24.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+    });
     let fill = if selected {
         egui::Color32::from_white_alpha(12)
     } else if response.hovered() {
