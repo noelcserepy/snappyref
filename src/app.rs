@@ -3734,6 +3734,9 @@ fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egui::Response
             egui::Sense::hover()
         },
     );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, item.enabled, item.label)
+    });
 
     let rounding = egui::CornerRadius::same(4);
     if response.hovered() && item.enabled {
@@ -3944,6 +3947,7 @@ impl eframe::App for ReferenceApp {
             ui.ctx(),
             screen_rect,
             sidebar_open,
+            !self.modal_open(),
             &mut self.sidebar_tab,
             &mut self.settings,
             &mut self.canvas,
@@ -3958,7 +3962,12 @@ impl eframe::App for ReferenceApp {
             #[cfg(not(debug_assertions))]
             None,
         );
-        self.handle_board_action(sidebar_result.board_action);
+        let board_action = if self.modal_open() {
+            None
+        } else {
+            sidebar_result.board_action
+        };
+        self.handle_board_action(board_action);
         let modal_open =
             self.pending_board_delete.is_some() || self.pending_library_remove.is_some();
         if sidebar_open && !modal_open {
@@ -4188,10 +4197,11 @@ fn generated_board_name(boards: &[crate::data::Board]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ArrangementAction, ReferenceApp, apply_arrangement_action};
+    #[cfg(feature = "semantic-search")]
     use crate::crop_flow::CropUndoEntry;
     use crate::data::{
-        BoardItem, BoardItemWithAsset, CanvasAnnotationKind, CanvasStackItem, CanvasStrokeWidth,
-        CanvasTextSize, ImageAsset,
+        BoardItem, BoardItemWithAsset, CanvasAnnotationKind, CanvasBackground, CanvasStackItem,
+        CanvasStrokeWidth, CanvasTextSize, ImageAsset,
     };
     use crate::jobs::LoadedCanvasItem;
     #[cfg(feature = "semantic-search")]
@@ -5853,19 +5863,13 @@ mod tests {
         app.active_board_id = second.id;
         app.sidebar_open = true;
         app.request_board_delete(second.id, second.name.clone());
-        #[expect(deprecated)]
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(1200.0, 800.0))
-            .build_state(
-                |ctx, app: &mut ReferenceApp| {
-                    let screen_rect = test_screen_rect();
-                    if app.should_block_sidebar_input() {
-                        block_sidebar_input(ctx, sidebar_rect(screen_rect));
-                    }
-                    app.show_board_delete_confirmation(ctx);
-                },
-                app,
-            );
+        let mut harness = app_harness(app, |ctx, app| {
+            let screen_rect = test_screen_rect();
+            if app.should_block_sidebar_input() {
+                block_sidebar_input(ctx, sidebar_rect(screen_rect));
+            }
+            app.show_board_delete_confirmation(ctx);
+        });
 
         harness.get_by_label("Delete board").click();
         harness.run();
@@ -5899,21 +5903,15 @@ mod tests {
         app.sidebar_open = true;
         app.sidebar_tab = SidebarTab::Boards;
         app.request_board_delete(second.id, second.name.clone());
-        #[expect(deprecated)]
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(1200.0, 800.0))
-            .build_state(
-                |ctx, app: &mut ReferenceApp| {
-                    render_sidebar_for_test(ctx, app);
-                    app.show_board_delete_confirmation(ctx);
-                },
-                app,
-            );
+        let mut harness = app_harness(app, |ctx, app| {
+            render_sidebar_for_test(ctx, app);
+            app.show_board_delete_confirmation(ctx);
+        });
 
         harness.get_by_label("Delete board").click();
         harness.run();
 
-        click_test_pos(&harness, egui::pos2(134.0, 171.0));
+        harness.get_by_label("New board").click();
         harness.run();
 
         let boards = library.list_boards().unwrap();
@@ -5940,17 +5938,11 @@ mod tests {
         app.active_board_id = first.id;
         app.sidebar_open = true;
         app.sidebar_tab = SidebarTab::Boards;
-        #[expect(deprecated)]
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(1200.0, 800.0))
-            .build_state(
-                |ctx, app: &mut ReferenceApp| {
-                    render_sidebar_for_test(ctx, app);
-                },
-                app,
-            );
+        let mut harness = app_harness(app, |ctx, app| {
+            render_sidebar_for_test(ctx, app);
+        });
 
-        click_test_pos(&harness, egui::pos2(64.0, 160.0));
+        harness.get_by_label("Board Second").click();
         harness.run();
 
         assert_eq!(harness.state().active_board_id, second.id);
@@ -5969,23 +5961,17 @@ mod tests {
         app.active_board_id = first.id;
         app.sidebar_open = true;
         app.sidebar_tab = SidebarTab::Boards;
-        #[expect(deprecated)]
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(1200.0, 800.0))
-            .build_state(
-                |ctx, app: &mut ReferenceApp| {
-                    render_sidebar_for_test(ctx, app);
-                },
-                app,
-            );
+        let mut harness = app_harness(app, |ctx, app| {
+            render_sidebar_for_test(ctx, app);
+        });
 
-        for pos in [
-            egui::pos2(64.0, 160.0),
-            egui::pos2(64.0, 212.0),
-            egui::pos2(64.0, 108.0),
-            egui::pos2(64.0, 160.0),
+        for label in [
+            "Board Second",
+            "Board Third",
+            "Board My Board",
+            "Board Second",
         ] {
-            click_test_pos(&harness, pos);
+            harness.get_by_label(label).click();
             harness.run();
         }
 
@@ -5993,6 +5979,125 @@ mod tests {
         assert_eq!(
             library.load_user_session().unwrap().active_board_id,
             second.id
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn board_delete_modal_blocks_sidebar_board_switches_until_closed() {
+        let root = temp_library_root("reference-delete-modal-blocks-sidebar");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        let second = library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = first.id;
+        app.sidebar_open = true;
+        app.sidebar_tab = SidebarTab::Boards;
+        app.request_board_delete(second.id, second.name.clone());
+        let mut harness = app_harness(app, |ctx, app| {
+            render_sidebar_for_test(ctx, app);
+            app.show_board_delete_confirmation(ctx);
+        });
+
+        harness.get_by_label("Board Second").click();
+        harness.run();
+
+        assert_eq!(harness.state().active_board_id, first.id);
+        assert!(harness.state().pending_board_delete.is_some());
+
+        harness.get_by_label("Cancel").click();
+        harness.run();
+
+        assert!(harness.state().pending_board_delete.is_none());
+        harness.get_by_label("Board Second").click();
+        harness.run();
+
+        assert_eq!(harness.state().active_board_id, second.id);
+        assert_eq!(
+            library.load_user_session().unwrap().active_board_id,
+            second.id
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn board_delete_modal_blocks_sidebar_tabs_and_settings() {
+        let root = temp_library_root("reference-delete-modal-blocks-sidebar-state");
+        let library = Library::initialize(root.clone()).unwrap();
+        let second = library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.sidebar_open = true;
+        app.sidebar_tab = SidebarTab::Boards;
+        app.settings.auto_image_scaling = true;
+        app.canvas.set_background(CanvasBackground::Grid);
+        app.request_board_delete(second.id, second.name.clone());
+        let mut harness = app_harness(app, |ctx, app| {
+            render_sidebar_for_test(ctx, app);
+            app.show_board_delete_confirmation(ctx);
+        });
+
+        harness.get_by_label("Settings").click();
+        harness.run();
+
+        assert_eq!(harness.state().sidebar_tab, SidebarTab::Boards);
+
+        harness.state_mut().sidebar_tab = SidebarTab::Options;
+        harness.run();
+        let rotation_snap_rect = harness.get_by_label("Rotation snap").rect();
+        harness.get_by_label("Dots").click();
+        drag_test_pos(
+            &harness,
+            egui::pos2(
+                rotation_snap_rect.left() + 28.0,
+                rotation_snap_rect.bottom() + 34.0,
+            ),
+            egui::pos2(
+                rotation_snap_rect.left() + 128.0,
+                rotation_snap_rect.bottom() + 34.0,
+            ),
+        );
+        harness.run();
+
+        assert_eq!(harness.state().sidebar_tab, SidebarTab::Options);
+        assert_eq!(harness.state().canvas.background(), CanvasBackground::Grid);
+        assert_eq!(harness.state().settings.rotation_snap_degrees, 15.0);
+        assert!(harness.state().settings.auto_image_scaling);
+        assert!(harness.state().pending_board_delete.is_some());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sidebar_board_lifecycle_clicks_create_switch_and_persist_active_board() {
+        let root = temp_library_root("reference-sidebar-board-lifecycle");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first = library.list_boards().unwrap()[0].clone();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = first.id;
+        app.sidebar_open = true;
+        app.sidebar_tab = SidebarTab::Boards;
+        let mut harness = app_harness(app, |ctx, app| {
+            render_sidebar_for_test(ctx, app);
+        });
+
+        harness.get_by_label("New board").click();
+        harness.run();
+
+        let boards = library.list_boards().unwrap();
+        assert_eq!(boards.len(), 2);
+        assert_eq!(boards[1].name, "Board 2");
+        assert_eq!(harness.state().active_board_id, boards[1].id);
+        assert!(harness.state().sidebar_open);
+
+        harness.get_by_label("Board My Board").click();
+        harness.run();
+
+        assert_eq!(harness.state().active_board_id, first.id);
+        assert_eq!(
+            library.load_user_session().unwrap().active_board_id,
+            first.id
         );
 
         let _ = fs::remove_dir_all(root);
@@ -6204,6 +6309,126 @@ mod tests {
         );
 
         assert_eq!(app.search.overlay.scope, SearchScope::Library);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_keyboard_flow_owns_tab_and_escape_through_app_render_path() {
+        let root = temp_library_root("reference-search-keyboard-routing");
+        let library = Library::initialize(root.clone()).unwrap();
+        let second = library.create_board("Second").unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.settings.semantic_search_enabled = true;
+        app.search.overlay.scope = SearchScope::ThisBoard;
+        let mut harness = app_harness(app, |ctx, app| {
+            let screen_rect = test_screen_rect();
+            app.handle_search_shortcut(ctx);
+            app.handle_board_shortcuts(ctx);
+            app.show_search_overlay(ctx, screen_rect);
+        });
+
+        harness.key_press_modifiers(
+            egui::Modifiers {
+                command: true,
+                ..Default::default()
+            },
+            egui::Key::F,
+        );
+        harness.step();
+
+        assert!(harness.state().search.overlay.open);
+        assert!(
+            harness
+                .ctx
+                .memory(|memory| { memory.has_focus(egui::Id::new("semantic_search_input")) })
+        );
+
+        harness.key_press(egui::Key::Tab);
+        harness.step();
+
+        assert_eq!(harness.state().search.overlay.scope, SearchScope::Library);
+        assert_eq!(harness.state().active_board_id, 1);
+
+        harness.key_press_modifiers(
+            egui::Modifiers {
+                command: true,
+                ..Default::default()
+            },
+            egui::Key::Num2,
+        );
+        harness.step();
+
+        assert_eq!(harness.state().active_board_id, 1);
+
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+
+        assert!(!harness.state().search.overlay.open);
+        assert!(harness.state().search.overlay.query.is_empty());
+        assert_eq!(library.load_user_session().unwrap().active_board_id, 1);
+        assert_ne!(second.id, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn context_menu_move_to_front_routes_through_rendered_menu_row() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-context-menu-move-front");
+        let library = Library::initialize(root.clone()).unwrap();
+        let image_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let back_item = library
+            .persist_imported_image(&image_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let selected_item = library
+            .create_board_item_from_asset(back_item.asset.id, egui::pos2(10.0, 20.0), 1.0, 0.0, 0)
+            .unwrap();
+        let front_annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Line,
+                egui::pos2(40.0, 60.0),
+                egui::pos2(80.0, 90.0),
+                "",
+                CanvasTextSize::M,
+                CanvasStrokeWidth::M,
+                crate::data::CanvasAnnotationColor::Gold,
+                false,
+            )
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        add_loaded_record(&mut app, &ctx, back_item.clone());
+        add_loaded_record(&mut app, &ctx, selected_item.clone());
+        app.canvas.add_annotation(front_annotation.clone());
+        app.canvas.set_canvas_stack_order(vec![
+            CanvasStackItem::Placement(back_item.item.id),
+            CanvasStackItem::Placement(selected_item.item.id),
+            CanvasStackItem::Annotation(front_annotation.id),
+        ]);
+        app.canvas.select_items(&[selected_item.item.id]);
+        app.context_menu_pos = Some(egui::pos2(300.0, 300.0));
+        let mut harness = app_harness(app, |ctx, app| {
+            app.show_context_menu(ctx, test_screen_rect(), false);
+        });
+
+        harness.get_by_label("Move to Front").click();
+        harness.run();
+
+        assert_eq!(
+            harness.state().canvas.canvas_stack_order(),
+            vec![
+                CanvasStackItem::Placement(back_item.item.id),
+                CanvasStackItem::Annotation(front_annotation.id),
+                CanvasStackItem::Placement(selected_item.item.id),
+            ]
+        );
+        assert_eq!(
+            library.load_canvas_stack_order().unwrap(),
+            harness.state().canvas.canvas_stack_order()
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[cfg(feature = "semantic-search")]
@@ -6518,6 +6743,7 @@ mod tests {
             ctx,
             screen_rect,
             app.sidebar_open,
+            !app.modal_open(),
             &mut app.sidebar_tab,
             &mut app.settings,
             &mut app.canvas,
@@ -6525,13 +6751,39 @@ mod tests {
             app.active_board_id,
             None,
         );
-        app.handle_board_action(sidebar_result.board_action);
+        let board_action = if app.modal_open() {
+            None
+        } else {
+            sidebar_result.board_action
+        };
+        app.handle_board_action(board_action);
     }
 
-    fn click_test_pos<State>(harness: &Harness<'_, State>, pos: egui::Pos2) {
-        harness.hover_at(pos);
-        harness.drag_at(pos);
-        harness.drop_at(pos);
+    fn app_harness<'a>(
+        app: ReferenceApp,
+        mut render: impl FnMut(&egui::Context, &mut ReferenceApp) + 'a,
+    ) -> Harness<'a, ReferenceApp> {
+        #[expect(deprecated)]
+        Harness::builder()
+            .with_size(egui::vec2(1200.0, 800.0))
+            .with_pixels_per_point(1.0)
+            .with_os(egui::os::OperatingSystem::Nix)
+            .with_theme(egui::Theme::Dark)
+            .with_max_steps(4)
+            .build_state(
+                move |ctx, app| {
+                    crate::theme::configure_theme(ctx);
+                    render(ctx, app);
+                },
+                app,
+            )
+    }
+
+    fn drag_test_pos<State>(harness: &Harness<'_, State>, from: egui::Pos2, to: egui::Pos2) {
+        harness.hover_at(from);
+        harness.drag_at(from);
+        harness.hover_at(to);
+        harness.drop_at(to);
     }
 
     fn temp_library_root(prefix: &str) -> PathBuf {
