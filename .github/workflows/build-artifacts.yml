@@ -46,6 +46,7 @@ jobs:
           $packageRoot = Join-Path $env:RUNNER_TEMP "reference-windows-package"
           New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
           Copy-Item target\release\reference.exe $packageRoot
+          Copy-Item UPDATE.txt $packageRoot
           python scripts\fetch-semantic-model.py --target (Join-Path $packageRoot "models")
           $modelRoot = Join-Path $packageRoot "models\siglip2_base_patch16_224_int8"
           @(
@@ -60,6 +61,10 @@ jobs:
           }
           $zipPath = Join-Path $env:RUNNER_TEMP "reference-windows-${{ github.sha }}.zip"
           Compress-Archive -Path "$packageRoot\*" -DestinationPath $zipPath -Force
+
+      - name: Check archive contract
+        shell: bash
+        run: scripts/check-release-archive.sh "${RUNNER_TEMP}/reference-windows-${{ github.sha }}.zip" reference.exe
 
       - uses: actions/upload-artifact@v4
         with:
@@ -98,13 +103,17 @@ jobs:
           rm -rf "$package_root"
           mkdir -p "$package_root"
           cp target/release/reference "$package_root/"
+          cp UPDATE.txt "$package_root/"
           python3 scripts/fetch-semantic-model.py --target "$package_root/models"
           model_root="$package_root/models/siglip2_base_patch16_224_int8"
           test -s "$model_root/tokenizer.json"
           test -s "$model_root/onnx/text_model_int8.onnx"
           test -s "$model_root/onnx/vision_model_int8.onnx"
           zip_path="${RUNNER_TEMP}/reference-macos-${{ github.sha }}.zip"
-          (cd "$package_root" && zip -9 -r "$zip_path" reference models)
+          (cd "$package_root" && zip -9 -r "$zip_path" reference models UPDATE.txt)
+
+      - name: Check archive contract
+        run: scripts/check-release-archive.sh "${RUNNER_TEMP}/reference-macos-${{ github.sha }}.zip" reference
 
       - uses: actions/upload-artifact@v4
         with:

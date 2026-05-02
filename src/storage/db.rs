@@ -3291,7 +3291,9 @@ fn encode_f32_slice(values: &[f32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::Library;
-    use crate::data::{CanvasAnnotationKind, CanvasBackground, CanvasStackItem, CanvasTextSize};
+    use crate::data::{
+        CanvasAnnotationKind, CanvasBackground, CanvasStackItem, CanvasTextSize, UserSession,
+    };
     use eframe::egui;
     use rusqlite::Connection;
     use std::fs;
@@ -3307,6 +3309,104 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    #[test]
+    fn update_preservation_smoke() {
+        let app_root = temp_root("reference-update-preservation-test");
+        let library_root = app_root.join("library");
+        fs::create_dir_all(&library_root).unwrap();
+        fs::write(app_root.join("Reference.app"), b"old app bundle").unwrap();
+        fs::write(app_root.join("UPDATE.txt"), b"old update notes").unwrap();
+
+        let original_bytes = [255, 0, 0, 255];
+        let library = Library::initialize(library_root.clone()).unwrap();
+        let first_board = library.list_boards().unwrap()[0].clone();
+        let second_board = library.create_board("Second").unwrap();
+        library.set_active_board(second_board.id).unwrap();
+        let original_path = library
+            .store_rgba_image("preserved-original", &original_bytes, 1, 1)
+            .unwrap();
+        let imported = library
+            .persist_imported_image(
+                &original_path,
+                "image/png",
+                1,
+                1,
+                original_bytes.len() as u64,
+                egui::pos2(42.0, 24.0),
+                1.5,
+            )
+            .unwrap();
+        let mut session = UserSession {
+            active_board_id: second_board.id,
+            ..UserSession::default()
+        };
+        session.viewport.camera_pan_x = 123.0;
+        session.viewport.camera_pan_y = 456.0;
+        session.viewport.camera_zoom = 1.75;
+        session.viewport.canvas_background = CanvasBackground::Grid;
+        session.settings.auto_image_scaling = false;
+        session.settings.import_gap = 36.0;
+        session.settings.import_target_canvas_area = 54_321.0;
+        session.settings.semantic_search_enabled = false;
+        session.settings.canvas_image_max_side = 4096;
+        session.settings.rotation_snap_degrees = 30.0;
+        session.settings.default_textbox_background = true;
+        session.sidebar_open = true;
+        session.sidebar_tab = "boards".to_owned();
+        library.save_user_session(&session).unwrap();
+        let stored_original_bytes = fs::read(&imported.asset.original_path).unwrap();
+        drop(library);
+
+        fs::remove_file(app_root.join("Reference.app")).unwrap();
+        fs::remove_file(app_root.join("UPDATE.txt")).unwrap();
+        fs::write(app_root.join("Reference.app"), b"new app bundle").unwrap();
+        fs::write(app_root.join("UPDATE.txt"), b"new update notes").unwrap();
+
+        let reopened = Library::initialize(library_root.clone()).unwrap();
+        let boards = reopened.list_boards().unwrap();
+        let reloaded_session = reopened.load_user_session().unwrap();
+        let items = reopened.load_board_items().unwrap();
+
+        assert_eq!(
+            boards.iter().map(|board| board.id).collect::<Vec<_>>(),
+            vec![first_board.id, second_board.id]
+        );
+        assert_eq!(reloaded_session.active_board_id, second_board.id);
+        assert_eq!(reloaded_session.viewport.camera_pan_x, 123.0);
+        assert_eq!(reloaded_session.viewport.camera_pan_y, 456.0);
+        assert_eq!(reloaded_session.viewport.camera_zoom, 1.75);
+        assert_eq!(
+            reloaded_session.viewport.canvas_background,
+            CanvasBackground::Grid
+        );
+        assert!(!reloaded_session.settings.auto_image_scaling);
+        assert_eq!(reloaded_session.settings.import_gap, 36.0);
+        assert_eq!(
+            reloaded_session.settings.import_target_canvas_area,
+            54_321.0
+        );
+        assert!(!reloaded_session.settings.semantic_search_enabled);
+        assert_eq!(reloaded_session.settings.canvas_image_max_side, 4096);
+        assert_eq!(reloaded_session.settings.rotation_snap_degrees, 30.0);
+        assert!(reloaded_session.settings.default_textbox_background);
+        assert!(reloaded_session.sidebar_open);
+        assert_eq!(reloaded_session.sidebar_tab, "boards");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].item.id, imported.item.id);
+        assert_eq!(items[0].asset.id, imported.asset.id);
+        assert_eq!(items[0].item.x, 42.0);
+        assert_eq!(items[0].item.y, 24.0);
+        assert_eq!(items[0].item.scale, 1.5);
+        assert_eq!(items[0].asset.original_path, imported.asset.original_path);
+        assert!(items[0].asset.original_path.exists());
+        assert_eq!(
+            fs::read(&items[0].asset.original_path).unwrap(),
+            stored_original_bytes
+        );
+
+        let _ = fs::remove_dir_all(app_root);
     }
 
     #[test]

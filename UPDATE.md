@@ -73,6 +73,29 @@ To update:
 4. Do not delete or replace the library/ folder.
 ```
 
+## Publishing A Manual Update Zip
+
+When `main` is ready for the next version, publish update zips through the
+tagged release workflow:
+
+1. Switch to `main` and pull the latest changes.
+2. Run the release gate locally:
+   - `cargo fmt --check`
+   - `cargo check --locked --no-default-features --features semantic-search`
+   - `cargo test --locked --no-default-features update_preservation_smoke`
+3. Bump the package version if this is a real release.
+4. Commit and push the version bump.
+5. Create and push a version tag, for example `v0.2.0`.
+6. Let the GitHub Actions release workflow build and upload the Windows and
+   macOS zips.
+7. Download the release zips and run the real-zip update smoke checklist before
+   broadly publishing the release.
+
+For a test zip that should not create a GitHub release, run the manual
+`Build Artifacts` workflow from GitHub Actions and set `ref` to `main`, a
+branch, or a commit SHA. Download the generated workflow artifacts and treat
+them as update-shaped test zips only.
+
 ## Verification
 
 Add a release-preservation smoke test before treating this path as supported:
