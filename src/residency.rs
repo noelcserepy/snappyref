@@ -70,6 +70,7 @@ impl ImageResidencyCoordinator {
         for record in records {
             import_worker.enqueue(ImportRequest::LoadExisting {
                 target_board_id: active_board_id,
+                queue_id: None,
                 record,
                 max_texture_side,
                 canvas_image_settings,
@@ -327,6 +328,7 @@ impl ImageResidencyCoordinator {
             self.inflight_image_tier_loads.insert(item_id, target_tier);
             if let Err(error) = import_worker.enqueue(ImportRequest::LoadExisting {
                 target_board_id: active_board_id,
+                queue_id: None,
                 record,
                 max_texture_side,
                 canvas_image_settings: canvas_image_settings(settings),

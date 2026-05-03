@@ -129,6 +129,7 @@ pub struct UserSession {
     pub settings: WorkspaceSettings,
     pub sidebar_open: bool,
     pub sidebar_tab: String,
+    pub recent_searches: Vec<String>,
 }
 
 impl Default for UserSession {
@@ -139,6 +140,7 @@ impl Default for UserSession {
             settings: WorkspaceSettings::default(),
             sidebar_open: false,
             sidebar_tab: "settings".to_owned(),
+            recent_searches: Vec::new(),
         }
     }
 }

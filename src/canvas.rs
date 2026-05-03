@@ -552,6 +552,52 @@ fn best_compact_layout(
     best_layout.map(|(placements, width, height, _, _, _)| (placements, width, height))
 }
 
+pub(crate) fn compact_layout_for_sizes(
+    sizes: &[egui::Vec2],
+    gap: f32,
+    center_world: egui::Pos2,
+) -> Vec<(egui::Pos2, egui::Vec2)> {
+    if sizes.is_empty() {
+        return Vec::new();
+    }
+    if sizes.len() == 1 {
+        return vec![(center_world, sizes[0])];
+    }
+
+    let mut items = sizes
+        .iter()
+        .enumerate()
+        .map(|(index, size)| SelectedLayoutItem {
+            id: index as i64,
+            x: 0.0,
+            y: 0.0,
+            width: size.x,
+            height: size.y,
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| {
+        right
+            .width
+            .max(right.height)
+            .total_cmp(&left.width.max(left.height))
+            .then_with(|| (right.width * right.height).total_cmp(&(left.width * left.height)))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    let Some((placements, width, height)) = best_compact_layout(&items, gap) else {
+        return sizes.iter().map(|size| (center_world, *size)).collect();
+    };
+    let local_center = egui::pos2(width * 0.5, height * 0.5);
+    placements
+        .into_iter()
+        .filter_map(|(id, placement)| {
+            sizes
+                .get(id as usize)
+                .map(|size| (center_world + (placement - local_center), *size))
+        })
+        .collect()
+}
+
 fn compact_candidate_widths(items: &[SelectedLayoutItem], gap: f32) -> Vec<f32> {
     let total_area = items
         .iter()
