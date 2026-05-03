@@ -34,6 +34,8 @@ struct StoredUserSessionPayload {
     workspace_settings: WorkspaceSettings,
     #[serde(default)]
     sidebar: StoredSidebarState,
+    #[serde(default)]
+    recent_searches: Vec<String>,
 }
 
 impl StoredUserSessionPayload {
@@ -45,6 +47,7 @@ impl StoredUserSessionPayload {
                 open: session.sidebar_open,
                 tab: session.sidebar_tab.clone(),
             },
+            recent_searches: session.recent_searches.clone(),
         }
     }
 }
@@ -55,6 +58,7 @@ impl Default for StoredUserSessionPayload {
             version: USER_SESSION_PAYLOAD_VERSION,
             workspace_settings: WorkspaceSettings::default(),
             sidebar: StoredSidebarState::default(),
+            recent_searches: Vec::new(),
         }
     }
 }
@@ -960,6 +964,39 @@ impl Library {
         Ok(())
     }
 
+    pub fn load_asset(&self, asset_id: i64) -> Result<ImageAsset, String> {
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                "SELECT
+                    id,
+                    original_path,
+                    filename,
+                    mime_type,
+                    width,
+                    height,
+                    file_size,
+                    imported_at
+                 FROM assets
+                 WHERE id = ?1
+                   AND archived = 0",
+                params![asset_id],
+                |row| {
+                    Ok(ImageAsset {
+                        id: row.get(0)?,
+                        original_path: PathBuf::from(row.get::<_, String>(1)?),
+                        filename: row.get(2)?,
+                        mime_type: row.get(3)?,
+                        width: row.get::<_, u32>(4)?,
+                        height: row.get::<_, u32>(5)?,
+                        file_size: row.get::<_, i64>(6)? as u64,
+                        imported_at: row.get(7)?,
+                    })
+                },
+            )
+            .map_err(|error| format!("failed to load asset {asset_id}: {error}"))
+    }
+
     pub fn archive_board_items(&self, item_ids: &[i64]) -> Result<(), String> {
         if item_ids.is_empty() {
             return Ok(());
@@ -1189,35 +1226,7 @@ impl Library {
     ) -> Result<BoardItemWithAsset, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
-        let asset = connection
-            .query_row(
-                "SELECT
-                    id,
-                    original_path,
-                    filename,
-                    mime_type,
-                    width,
-                    height,
-                    file_size,
-                    imported_at
-                 FROM assets
-                 WHERE id = ?1
-                   AND archived = 0",
-                params![asset_id],
-                |row| {
-                    Ok(ImageAsset {
-                        id: row.get(0)?,
-                        original_path: PathBuf::from(row.get::<_, String>(1)?),
-                        filename: row.get(2)?,
-                        mime_type: row.get(3)?,
-                        width: row.get::<_, u32>(4)?,
-                        height: row.get::<_, u32>(5)?,
-                        file_size: row.get::<_, i64>(6)? as u64,
-                        imported_at: row.get(7)?,
-                    })
-                },
-            )
-            .map_err(|error| format!("failed to load asset {asset_id} for paste: {error}"))?;
+        let asset = self.load_asset(asset_id)?;
 
         connection
             .execute(
@@ -2808,6 +2817,7 @@ fn legacy_user_session_from_row(
         sidebar_tab: row
             .get::<_, String>(8)
             .unwrap_or_else(|_| default_sidebar_tab()),
+        recent_searches: Vec::new(),
     })
 }
 
@@ -2826,6 +2836,7 @@ fn apply_user_session_payload(mut session: UserSession, payload: Option<String>)
     session.settings = stored.workspace_settings;
     session.sidebar_open = stored.sidebar.open;
     session.sidebar_tab = stored.sidebar.tab;
+    session.recent_searches = stored.recent_searches;
     session
 }
 

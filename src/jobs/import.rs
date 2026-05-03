@@ -188,6 +188,7 @@ pub enum ImportRequest {
     },
     LoadExisting {
         target_board_id: i64,
+        queue_id: Option<u64>,
         record: BoardItemWithAsset,
         max_texture_side: usize,
         canvas_image_settings: CanvasImageSettings,
@@ -556,6 +557,7 @@ impl ImportWorker {
                         ),
                         ImportRequest::LoadExisting {
                             target_board_id,
+                            queue_id,
                             record,
                             max_texture_side,
                             canvas_image_settings,
@@ -565,6 +567,7 @@ impl ImportWorker {
                         } => load_existing(
                             &worker_library,
                             target_board_id,
+                            queue_id,
                             record,
                             max_texture_side,
                             canvas_image_settings,
@@ -977,6 +980,7 @@ pub fn startup_trace(
         match load_existing(
             library,
             1,
+            None,
             record.clone(),
             usize::MAX,
             canvas_image_settings,
@@ -1817,9 +1821,10 @@ fn import_clipboard_sync_traced(
     })
 }
 
-fn load_existing(
+pub(crate) fn load_existing(
     library: &Library,
     target_board_id: i64,
+    queue_id: Option<u64>,
     record: BoardItemWithAsset,
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
@@ -1843,7 +1848,7 @@ fn load_existing(
                 }
                 return ImportResult::Loaded(LoadedCanvasItem {
                     target_board_id,
-                    queue_id: None,
+                    queue_id,
                     preview_rgba: Vec::new(),
                     preview_width: svg.width,
                     preview_height: svg.height,
@@ -1865,8 +1870,8 @@ fn load_existing(
             }
             Err(error) => {
                 return ImportResult::Failed {
-                    target_board_id: None,
-                    queue_id: None,
+                    target_board_id: Some(target_board_id),
+                    queue_id,
                     item_id: Some(record.item.id),
                     context: record.asset.original_path.display().to_string(),
                     error,
@@ -1893,8 +1898,8 @@ fn load_existing(
                     Ok(preview_texture) => preview_texture,
                     Err(error) => {
                         return ImportResult::Failed {
-                            target_board_id: None,
-                            queue_id: None,
+                            target_board_id: Some(target_board_id),
+                            queue_id,
                             item_id: Some(record.item.id),
                             context: record.asset.original_path.display().to_string(),
                             error,
@@ -1909,7 +1914,7 @@ fn load_existing(
             }
             ImportResult::Loaded(LoadedCanvasItem {
                 target_board_id,
-                queue_id: None,
+                queue_id,
                 record,
                 preview_rgba: preview.rgba,
                 preview_width: preview.width,
@@ -1923,8 +1928,8 @@ fn load_existing(
             })
         }
         Err(error) => ImportResult::Failed {
-            target_board_id: None,
-            queue_id: None,
+            target_board_id: Some(target_board_id),
+            queue_id,
             item_id: Some(record.item.id),
             context: record.asset.original_path.display().to_string(),
             error,
@@ -1946,6 +1951,7 @@ fn measure_first_visible_load_ms(
         let loaded = load_existing(
             library,
             1,
+            None,
             record.clone(),
             usize::MAX,
             CanvasImageSettings::default(),
@@ -1992,6 +1998,7 @@ fn measure_interactive_import_ms(
             match load_existing(
                 library,
                 1,
+                None,
                 record.clone(),
                 usize::MAX,
                 CanvasImageSettings::default(),
@@ -2036,6 +2043,7 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
         )?;
         worker.enqueue(ImportRequest::LoadExisting {
             target_board_id: 1,
+            queue_id: None,
             record: perf_record(
                 index as i64 + 1,
                 &path,
@@ -3849,6 +3857,7 @@ static char * sample_xpm[] = {
         let loaded = match load_existing(
             &library,
             1,
+            None,
             imported.record.clone(),
             usize::MAX,
             CanvasImageSettings::default(),
@@ -4056,6 +4065,7 @@ static char * sample_xpm[] = {
         let first = match load_existing(
             &library,
             1,
+            None,
             record.clone(),
             usize::MAX,
             settings,
@@ -4078,6 +4088,7 @@ static char * sample_xpm[] = {
         let second = match load_existing(
             &library,
             1,
+            None,
             record.clone(),
             usize::MAX,
             settings,
@@ -4123,6 +4134,7 @@ static char * sample_xpm[] = {
         let loaded = match load_existing(
             &library,
             1,
+            None,
             record,
             usize::MAX,
             downscaled_canvas_settings(2000),
@@ -4178,6 +4190,7 @@ static char * sample_xpm[] = {
         match load_existing(
             &library,
             1,
+            None,
             record.clone(),
             usize::MAX,
             first_settings,
@@ -4201,6 +4214,7 @@ static char * sample_xpm[] = {
         let second = match load_existing(
             &library,
             1,
+            None,
             record.clone(),
             usize::MAX,
             second_settings,
@@ -4255,6 +4269,7 @@ static char * sample_xpm[] = {
         match load_existing(
             &library,
             1,
+            None,
             record,
             usize::MAX,
             downscaled_canvas_settings(2000),

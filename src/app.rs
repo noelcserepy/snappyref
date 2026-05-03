@@ -1433,6 +1433,8 @@ impl ReferenceApp {
                 self.settings.normalize_core_features();
                 self.sidebar_open = session.sidebar_open;
                 self.sidebar_tab = sidebar_tab_from_session(&session.sidebar_tab);
+                #[cfg(feature = "semantic-search")]
+                self.search.set_recent_searches(session.recent_searches);
                 self.canvas
                     .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
                 self.canvas.set_layout_gap(self.settings.import_gap);
@@ -2536,7 +2538,9 @@ impl ReferenceApp {
         let mut status = status;
         #[cfg(feature = "semantic-search")]
         if let Some((asset_id, original_path)) = outcome.indexed_asset {
-            if let Err(error) = self.search.queue_asset_index(asset_id, original_path) {
+            if let Err(error) = self.search.queue_asset_index(asset_id, original_path)
+                && status.is_none()
+            {
                 status = Some(error);
             }
         }
@@ -2823,6 +2827,10 @@ impl ReferenceApp {
             settings: self.settings.clone(),
             sidebar_open: self.sidebar_open,
             sidebar_tab: sidebar_tab_session_value(self.sidebar_tab).to_owned(),
+            #[cfg(feature = "semantic-search")]
+            recent_searches: self.search.recent_searches().to_vec(),
+            #[cfg(not(feature = "semantic-search"))]
+            recent_searches: Vec::new(),
         }
     }
 
@@ -3487,22 +3495,34 @@ impl ReferenceApp {
 
     #[cfg(feature = "semantic-search")]
     fn show_search_overlay(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
-        if let Some(drop_request) = self.search.show_overlay(ctx, screen_rect, &mut self.canvas) {
-            self.handle_search_drop(drop_request, screen_rect);
+        if let Some(drop_request) = self.search.show_overlay(
+            ctx,
+            screen_rect,
+            &mut self.canvas,
+            crate::search::SearchPlacementPreviewConfig {
+                import_target_canvas_area: self.settings.import_target_canvas_area,
+                import_gap: self.settings.import_gap,
+            },
+        ) {
+            self.handle_search_drop(ctx, drop_request, screen_rect);
+        }
+        if self.search.take_recent_searches_dirty() {
+            self.save_user_session();
         }
     }
 
     #[cfg(feature = "semantic-search")]
     fn handle_search_drop(
         &mut self,
+        ctx: &egui::Context,
         drop_request: crate::search::SearchDropRequest,
         screen_rect: egui::Rect,
     ) {
-        if drop_request.item_ids.is_empty() {
+        if drop_request.item_ids.is_empty() && drop_request.asset_ids.is_empty() {
             return;
         }
 
-        let Some(library) = &self.library else {
+        let Some(library) = self.library.clone() else {
             self.status = "Storage unavailable".to_owned();
             return;
         };
@@ -3529,28 +3549,117 @@ impl ReferenceApp {
             }
         };
 
-        let mut duplicated_ids = Vec::new();
+        let mut added_ids = Vec::new();
         for record in duplicated {
-            duplicated_ids.push(record.item.id);
+            added_ids.push(record.item.id);
             if let Err(error) = self.canvas.add_reference_item(record) {
                 self.status = error;
                 return;
             }
         }
 
-        self.canvas.select_items(&duplicated_ids);
-        if duplicated_ids.len() > 1 {
+        let mut layout = match self.import_layout_snapshot() {
+            Ok(layout) => layout,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
+        let viewport_world = self.import_viewport_world_rect(screen_rect);
+
+        for asset_id in drop_request.asset_ids {
+            let asset = match library.load_asset(asset_id) {
+                Ok(asset) => asset,
+                Err(error) => {
+                    self.status = error;
+                    return;
+                }
+            };
+            let reservation = self.reserve_import(
+                &mut layout,
+                asset.filename.clone(),
+                Some((asset.width, asset.height)),
+                drop_world,
+                viewport_world,
+            );
+            let placed_world = reservation.reserved_world.unwrap_or(drop_world);
+            let scale = crate::jobs::initial_import_scale(
+                asset.width,
+                asset.height,
+                true,
+                self.settings.import_target_canvas_area,
+            );
+            let record =
+                match library.create_board_item_from_asset(asset_id, placed_world, scale, 0.0, 0) {
+                    Ok(record) => record,
+                    Err(error) => {
+                        self.remove_import_reservation(reservation);
+                        self.status = error;
+                        return;
+                    }
+                };
+            let item_id = record.item.id;
+            added_ids.push(item_id);
+            if let Some(import_worker) = &self.import_worker {
+                if let Err(error) =
+                    import_worker.enqueue(crate::jobs::ImportRequest::LoadExisting {
+                        target_board_id: self.active_board_id,
+                        queue_id: Some(reservation.queue_id),
+                        record,
+                        max_texture_side: self.max_texture_side,
+                        canvas_image_settings: crate::jobs::CanvasImageSettings {
+                            max_side: self.settings.canvas_image_max_side,
+                        },
+                        target_tier: crate::data::CanvasImageCacheTier::Working,
+                        priority: crate::jobs::ExistingLoadPriority::Background,
+                        trace: None,
+                    })
+                {
+                    self.remove_import_reservation(reservation);
+                    self.status = error;
+                    return;
+                }
+            } else {
+                match crate::jobs::load_existing(
+                    &library,
+                    self.active_board_id,
+                    Some(reservation.queue_id),
+                    record,
+                    self.max_texture_side,
+                    crate::jobs::CanvasImageSettings {
+                        max_side: self.settings.canvas_image_max_side,
+                    },
+                    crate::data::CanvasImageCacheTier::Working,
+                    None,
+                    self.wgpu_render_state.as_ref(),
+                ) {
+                    crate::jobs::ImportResult::Loaded(loaded) => {
+                        self.integrate_loaded_import(ctx, loaded);
+                    }
+                    crate::jobs::ImportResult::Failed { error, .. } => {
+                        self.remove_import_reservation(reservation);
+                        self.status = error;
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        self.canvas.select_items(&added_ids);
+        if added_ids.len() > 1 {
             self.canvas
                 .arrange_selected_compact(self.settings.import_gap);
         }
         self.persist_canvas_changes();
-        let noun = if duplicated_ids.len() == 1 {
+        let noun = if added_ids.len() == 1 {
             "image"
         } else {
             "images"
         };
-        self.status = format!("Added {} search {noun}", duplicated_ids.len());
+        self.status = format!("Added {} search {noun}", added_ids.len());
         self.canvas.clear_search_drag_preview();
+        self.canvas.clear_move_preview_placeholders();
         self.search.close_overlay(Some(&mut self.canvas));
     }
 
@@ -4237,7 +4346,7 @@ mod tests {
         search_result_tile_height,
     };
     #[cfg(feature = "semantic-search")]
-    use crate::semantic_search::SearchScope;
+    use crate::semantic_search::{SearchResultGroup, SearchScope};
     use crate::sidebar::{
         SidebarTab, block_sidebar_input, should_close_sidebar, show_sidebar, sidebar_rect,
     };
@@ -4246,7 +4355,7 @@ mod tests {
     use egui_kittest::{Harness, kittest::Queryable};
     use std::fs;
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     #[test]
     fn persist_settings_if_changed_true_calls_save_once() {
@@ -6398,6 +6507,657 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn enter_places_unplaced_library_search_result_on_empty_active_board() {
+        let root = temp_library_root("reference-library-search-enter-unplaced");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_path = library
+            .store_rgba_image("library-only", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let library_item = library
+            .persist_imported_image(&first_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let empty_board = library.create_board("Empty").unwrap();
+        library.set_active_board(empty_board.id).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = empty_board.id;
+        app.search.overlay.open = true;
+        app.search.overlay.scope = SearchScope::Library;
+        app.search.overlay.results = vec![SearchResultGroup {
+            asset_id: library_item.asset.id,
+            asset_preview_path: None,
+            asset_original_path: Some(library_item.asset.original_path.clone()),
+            similarity: 0.9,
+            item_ids: Vec::new(),
+            instance_count: 0,
+        }];
+        app.search.overlay.result_selection.replace(0);
+        let mut harness = app_harness(app, |ctx, app| {
+            app.show_search_overlay(ctx, test_screen_rect());
+        });
+
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        harness.hover_at(egui::pos2(900.0, 600.0));
+        harness.drag_at(egui::pos2(900.0, 600.0));
+        harness.drop_at(egui::pos2(900.0, 600.0));
+        harness.step();
+
+        let active_items = library.load_board_items().unwrap();
+        assert_eq!(active_items.len(), 1);
+        assert_eq!(active_items[0].asset.id, library_item.asset.id);
+        assert_eq!(
+            harness.state().canvas.selected_item_ids(),
+            vec![active_items[0].item.id]
+        );
+        assert!(!harness.state().search.overlay.open);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn enter_places_unplaced_library_search_result_at_import_scale() {
+        let root = temp_library_root("reference-library-search-enter-import-scale");
+        let library = Library::initialize(root.clone()).unwrap();
+        let width = 1000_u32;
+        let height = 1000_u32;
+        let first_path = library
+            .store_rgba_image(
+                "library-only-large",
+                &vec![255; width as usize * height as usize * 4],
+                width,
+                height,
+            )
+            .unwrap();
+        let library_item = library
+            .persist_imported_image(
+                &first_path,
+                "image/png",
+                width,
+                height,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library
+            .archive_board_items(&[library_item.item.id])
+            .unwrap();
+        let empty_board = library.create_board("Empty").unwrap();
+        library.set_active_board(empty_board.id).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = empty_board.id;
+        app.search.overlay.open = true;
+        app.search.overlay.scope = SearchScope::Library;
+        app.search.overlay.results = vec![SearchResultGroup {
+            asset_id: library_item.asset.id,
+            asset_preview_path: None,
+            asset_original_path: Some(library_item.asset.original_path.clone()),
+            similarity: 0.9,
+            item_ids: Vec::new(),
+            instance_count: 0,
+        }];
+        app.search.overlay.result_selection.replace(0);
+        let mut harness = app_harness(app, |ctx, app| {
+            app.show_search_overlay(ctx, test_screen_rect());
+        });
+
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        harness.hover_at(egui::pos2(900.0, 600.0));
+        harness.drag_at(egui::pos2(900.0, 600.0));
+        harness.drop_at(egui::pos2(900.0, 600.0));
+        harness.step();
+
+        let active_items = library.load_board_items().unwrap();
+        let expected_scale = crate::jobs::initial_import_scale(
+            width,
+            height,
+            true,
+            crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        );
+        assert_eq!(active_items.len(), 1);
+        assert_eq!(active_items[0].item.scale, expected_scale);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn library_scope_survives_search_result_placement() {
+        let root = temp_library_root("reference-library-search-scope-after-placement");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_path = library
+            .store_rgba_image("library-only", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let library_item = library
+            .persist_imported_image(&first_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        library
+            .archive_board_items(&[library_item.item.id])
+            .unwrap();
+        let empty_board = library.create_board("Empty").unwrap();
+        library.set_active_board(empty_board.id).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = empty_board.id;
+        app.search.overlay.open = true;
+        app.search.overlay.scope = SearchScope::Library;
+        app.search.overlay.results = vec![SearchResultGroup {
+            asset_id: library_item.asset.id,
+            asset_preview_path: None,
+            asset_original_path: Some(library_item.asset.original_path.clone()),
+            similarity: 0.9,
+            item_ids: Vec::new(),
+            instance_count: 0,
+        }];
+        app.search.overlay.result_selection.replace(0);
+        let mut harness = app_harness(app, |ctx, app| {
+            app.show_search_overlay(ctx, test_screen_rect());
+        });
+
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        harness.hover_at(egui::pos2(900.0, 600.0));
+        harness.drag_at(egui::pos2(900.0, 600.0));
+        harness.drop_at(egui::pos2(900.0, 600.0));
+        harness.step();
+
+        assert_eq!(harness.state().search.overlay.scope, SearchScope::Library);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("reference-library-search-visible-before-worker");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_path = library
+            .store_rgba_image("library-only", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let library_item = library
+            .persist_imported_image(&first_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        library
+            .archive_board_items(&[library_item.item.id])
+            .unwrap();
+        let empty_board = library.create_board("Empty").unwrap();
+        library.set_active_board(empty_board.id).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.import_worker = Some(crate::jobs::ImportWorker::new(
+            library.clone(),
+            ctx.clone(),
+            None,
+        ));
+        app.active_board_id = empty_board.id;
+        app.search.overlay.open = true;
+        app.search.overlay.scope = SearchScope::Library;
+        app.search.overlay.results = vec![SearchResultGroup {
+            asset_id: library_item.asset.id,
+            asset_preview_path: None,
+            asset_original_path: Some(library_item.asset.original_path.clone()),
+            similarity: 0.9,
+            item_ids: Vec::new(),
+            instance_count: 0,
+        }];
+        app.search.overlay.result_selection.replace(0);
+        let mut harness = app_harness(app, |ctx, app| {
+            app.show_search_overlay(ctx, test_screen_rect());
+        });
+
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        harness.hover_at(egui::pos2(900.0, 600.0));
+        harness.drag_at(egui::pos2(900.0, 600.0));
+        harness.drop_at(egui::pos2(900.0, 600.0));
+        harness.step();
+
+        let active_items = library.load_board_items().unwrap();
+        assert_eq!(active_items.len(), 1);
+        assert_eq!(harness.state().canvas.import_placeholder_count(), 1);
+        assert!(
+            harness
+                .state()
+                .canvas
+                .record_for_item_id(active_items[0].item.id)
+                .is_none()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn long_search_error_does_not_expand_palette_width() {
+        let mut app = test_app(None);
+        app.search.overlay.open = true;
+        app.search.overlay.query = "boat".to_owned();
+        app.search.overlay.status = crate::palette::SearchOverlayStatus::Error(format!(
+            "failed to open image /Users/noelcserepy/dev/reference/target/debug/library/originals/{}-image-2025-08-05-160929.jpg: Format error decoding Jpeg: Error parsing image. Illegal start bytes: 8950",
+            "1777813588290-19"
+        ));
+        let mut harness = app_harness(app, |ctx, app| {
+            app.show_search_overlay(ctx, test_screen_rect());
+        });
+
+        harness.step();
+
+        let overlay_width = harness
+            .state()
+            .search
+            .overlay
+            .last_expanded_overlay_rect
+            .map(|rect| rect.width())
+            .unwrap();
+        assert!(overlay_width <= PALETTE_WIDTH + 2.0);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn command_enter_library_search_results_show_pending_cursor_placeholders() {
+        let root = temp_library_root("reference-library-search-cmd-enter-placeholder-preview");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_path = library
+            .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
+            .unwrap();
+        let second_path = library
+            .store_rgba_image("second", &vec![180; 20 * 10 * 4], 20, 10)
+            .unwrap();
+        let first = library
+            .persist_imported_image(
+                &first_path,
+                "image/png",
+                10,
+                10,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let second = library
+            .persist_imported_image(
+                &second_path,
+                "image/png",
+                20,
+                10,
+                4,
+                egui::pos2(20.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library
+            .archive_board_items(&[first.item.id, second.item.id])
+            .unwrap();
+        let empty_board = library.create_board("Empty").unwrap();
+        library.set_active_board(empty_board.id).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = empty_board.id;
+        app.search.overlay.open = true;
+        app.search.overlay.scope = SearchScope::Library;
+        app.search.overlay.results = vec![
+            SearchResultGroup {
+                asset_id: first.asset.id,
+                asset_preview_path: None,
+                asset_original_path: Some(first.asset.original_path.clone()),
+                similarity: 0.9,
+                item_ids: Vec::new(),
+                instance_count: 0,
+            },
+            SearchResultGroup {
+                asset_id: second.asset.id,
+                asset_preview_path: None,
+                asset_original_path: Some(second.asset.original_path.clone()),
+                similarity: 0.8,
+                item_ids: Vec::new(),
+                instance_count: 0,
+            },
+        ];
+        app.search.overlay.result_selection.replace(0);
+        let mut harness = app_harness(app, |ctx, app| {
+            app.show_search_overlay(ctx, test_screen_rect());
+        });
+
+        harness.key_press_modifiers(
+            egui::Modifiers {
+                command: true,
+                ..Default::default()
+            },
+            egui::Key::Enter,
+        );
+        harness.step();
+
+        assert_eq!(harness.state().canvas.move_preview_placeholder_count(), 2);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn multi_select_enter_library_search_results_show_pending_cursor_placeholders() {
+        let root = temp_library_root("reference-library-search-multi-enter-placeholder-preview");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_path = library
+            .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
+            .unwrap();
+        let second_path = library
+            .store_rgba_image("second", &vec![180; 20 * 10 * 4], 20, 10)
+            .unwrap();
+        let first = library
+            .persist_imported_image(
+                &first_path,
+                "image/png",
+                10,
+                10,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let second = library
+            .persist_imported_image(
+                &second_path,
+                "image/png",
+                20,
+                10,
+                4,
+                egui::pos2(20.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library
+            .archive_board_items(&[first.item.id, second.item.id])
+            .unwrap();
+        let empty_board = library.create_board("Empty").unwrap();
+        library.set_active_board(empty_board.id).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = empty_board.id;
+        app.search.overlay.open = true;
+        app.search.overlay.scope = SearchScope::Library;
+        app.search.overlay.results = vec![
+            SearchResultGroup {
+                asset_id: first.asset.id,
+                asset_preview_path: None,
+                asset_original_path: Some(first.asset.original_path.clone()),
+                similarity: 0.9,
+                item_ids: Vec::new(),
+                instance_count: 0,
+            },
+            SearchResultGroup {
+                asset_id: second.asset.id,
+                asset_preview_path: None,
+                asset_original_path: Some(second.asset.original_path.clone()),
+                similarity: 0.8,
+                item_ids: Vec::new(),
+                instance_count: 0,
+            },
+        ];
+        app.search.overlay.result_selection.replace(0);
+        app.search.overlay.result_selection.toggle(1);
+        let mut harness = app_harness(app, |ctx, app| {
+            app.show_search_overlay(ctx, test_screen_rect());
+        });
+
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+
+        assert_eq!(harness.state().canvas.move_preview_placeholder_count(), 2);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn clicked_multi_select_enter_places_all_selected_library_results() {
+        let root = temp_library_root("reference-library-search-click-multi-enter-drop");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_path = library
+            .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
+            .unwrap();
+        let second_path = library
+            .store_rgba_image("second", &vec![180; 20 * 10 * 4], 20, 10)
+            .unwrap();
+        let first = library
+            .persist_imported_image(
+                &first_path,
+                "image/png",
+                10,
+                10,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let second = library
+            .persist_imported_image(
+                &second_path,
+                "image/png",
+                20,
+                10,
+                4,
+                egui::pos2(20.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library
+            .archive_board_items(&[first.item.id, second.item.id])
+            .unwrap();
+        let empty_board = library.create_board("Empty").unwrap();
+        library.set_active_board(empty_board.id).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = empty_board.id;
+        app.search.overlay.open = true;
+        app.search.overlay.scope = SearchScope::Library;
+        app.search.overlay.results = vec![
+            SearchResultGroup {
+                asset_id: first.asset.id,
+                asset_preview_path: None,
+                asset_original_path: Some(first.asset.original_path.clone()),
+                similarity: 0.9,
+                item_ids: Vec::new(),
+                instance_count: 0,
+            },
+            SearchResultGroup {
+                asset_id: second.asset.id,
+                asset_preview_path: None,
+                asset_original_path: Some(second.asset.original_path.clone()),
+                similarity: 0.8,
+                item_ids: Vec::new(),
+                instance_count: 0,
+            },
+        ];
+        app.search.overlay.result_selection.replace(0);
+        let mut harness = app_harness(app, |ctx, app| {
+            app.show_search_overlay(ctx, test_screen_rect());
+        });
+
+        harness.event_modifiers(
+            egui::Event::PointerButton {
+                pos: egui::pos2(472.0, 206.0),
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::CTRL,
+            },
+            egui::Modifiers::CTRL,
+        );
+        harness.event_modifiers(
+            egui::Event::PointerButton {
+                pos: egui::pos2(472.0, 206.0),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::CTRL,
+            },
+            egui::Modifiers::CTRL,
+        );
+        harness.step();
+        assert_eq!(
+            harness
+                .state()
+                .search
+                .overlay
+                .result_selection
+                .selected()
+                .len(),
+            2
+        );
+
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        assert_eq!(harness.state().canvas.move_preview_placeholder_count(), 2);
+
+        harness.hover_at(egui::pos2(900.0, 600.0));
+        harness.drag_at(egui::pos2(900.0, 600.0));
+        harness.drop_at(egui::pos2(900.0, 600.0));
+        harness.step();
+
+        let mut asset_ids = library
+            .load_board_items()
+            .unwrap()
+            .into_iter()
+            .map(|record| record.asset.id)
+            .collect::<Vec<_>>();
+        asset_ids.sort_unstable();
+        let mut expected_asset_ids = vec![first.asset.id, second.asset.id];
+        expected_asset_ids.sort_unstable();
+        assert_eq!(asset_ids, expected_asset_ids);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn command_enter_places_all_unplaced_library_search_results_on_empty_active_board() {
+        let root = temp_library_root("reference-library-search-command-enter-unplaced");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_path = library
+            .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let second_path = library
+            .store_rgba_image("second", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+        let first = library
+            .persist_imported_image(&first_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let second = library
+            .persist_imported_image(
+                &second_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(20.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let empty_board = library.create_board("Empty").unwrap();
+        library.set_active_board(empty_board.id).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = empty_board.id;
+        app.search.overlay.open = true;
+        app.search.overlay.scope = SearchScope::Library;
+        app.search.overlay.results = vec![
+            SearchResultGroup {
+                asset_id: first.asset.id,
+                asset_preview_path: None,
+                asset_original_path: Some(first.asset.original_path.clone()),
+                similarity: 0.9,
+                item_ids: Vec::new(),
+                instance_count: 0,
+            },
+            SearchResultGroup {
+                asset_id: second.asset.id,
+                asset_preview_path: None,
+                asset_original_path: Some(second.asset.original_path.clone()),
+                similarity: 0.8,
+                item_ids: Vec::new(),
+                instance_count: 0,
+            },
+        ];
+        app.search.overlay.result_selection.replace(0);
+        let mut harness = app_harness(app, |ctx, app| {
+            app.show_search_overlay(ctx, test_screen_rect());
+        });
+
+        harness.key_press_modifiers(
+            egui::Modifiers {
+                command: true,
+                ..Default::default()
+            },
+            egui::Key::Enter,
+        );
+        harness.step();
+        harness.hover_at(egui::pos2(900.0, 600.0));
+        harness.drag_at(egui::pos2(900.0, 600.0));
+        harness.drop_at(egui::pos2(900.0, 600.0));
+        harness.step();
+
+        let mut asset_ids = library
+            .load_board_items()
+            .unwrap()
+            .into_iter()
+            .map(|record| record.asset.id)
+            .collect::<Vec<_>>();
+        asset_ids.sort_unstable();
+        let mut expected_asset_ids = vec![first.asset.id, second.asset.id];
+        expected_asset_ids.sort_unstable();
+        assert_eq!(asset_ids, expected_asset_ids);
+        assert_eq!(harness.state().canvas.selected_item_ids().len(), 2);
+        assert!(!harness.state().search.overlay.open);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn submitted_search_is_saved_to_recent_searches() {
+        let root = temp_library_root("reference-search-recent-session");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.search.overlay.open = true;
+        app.search.overlay.query = "brutalist chair".to_owned();
+        app.search.overlay.last_query_edit_at = Some(Instant::now() - Duration::from_millis(200));
+        let mut harness = app_harness(app, |ctx, app| {
+            app.show_search_overlay(ctx, test_screen_rect());
+        });
+
+        harness.step();
+
+        assert_eq!(
+            library.load_user_session().unwrap().recent_searches,
+            vec!["brutalist chair".to_owned()]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn empty_recent_searches_do_not_submit_boilerplate_query() {
+        let root = temp_library_root("reference-search-no-boilerplate-recent");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.search.overlay.open = true;
+        let mut harness = app_harness(app, |ctx, app| {
+            app.show_search_overlay(ctx, test_screen_rect());
+        });
+
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+
+        assert!(harness.state().search.overlay.query.is_empty());
+        assert!(
+            library
+                .load_user_session()
+                .unwrap()
+                .recent_searches
+                .is_empty()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn context_menu_move_to_front_routes_through_rendered_menu_row() {
         let ctx = egui::Context::default();
@@ -6465,6 +7225,17 @@ mod tests {
         let grid_layout = search_result_grid_layout(shell_content_width, 5);
 
         assert_eq!(grid_layout.columns, 5);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_result_grid_layout_keeps_partial_rows_at_five_column_width() {
+        let shell_content_width = PALETTE_WIDTH - 24.0;
+        let five_result_layout = search_result_grid_layout(shell_content_width, 5);
+        let two_result_layout = search_result_grid_layout(shell_content_width, 2);
+
+        assert_eq!(two_result_layout.columns, 5);
+        assert_eq!(two_result_layout.tile_width, five_result_layout.tile_width);
     }
 
     #[cfg(feature = "semantic-search")]

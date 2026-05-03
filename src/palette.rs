@@ -13,11 +13,12 @@ pub(crate) const PALETTE_WIDTH: f32 = 660.0;
 pub(crate) const PALETTE_GRID_COLUMNS: usize = 5;
 pub(crate) const PALETTE_GRID_MAX_HEIGHT: f32 = 360.0;
 pub(crate) const SEARCH_RESULT_PAGE_SIZE: usize = 5;
-pub(crate) const RECENT_SEARCHES: [&str; 3] = ["boat", "forest path", "still life"];
 
 const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 144.0;
 const SEARCH_RESULT_LIBRARY_PREVIEW_MAX_SIDE: u32 = 512;
 const KBD_PILL_SIZE: egui::Vec2 = egui::vec2(28.0, 28.0);
+const PALETTE_CHROME_Y_MARGIN: i8 = crate::theme::SPACE_3 as i8;
+const PALETTE_FOOTER_STATUS_WIDTH: f32 = 96.0;
 
 pub(crate) struct SearchOverlayState {
     pub open: bool,
@@ -163,6 +164,8 @@ impl SearchSelection {
 #[derive(Clone, Debug)]
 pub(crate) struct SearchResultDragState {
     pub item_ids: Vec<i64>,
+    pub asset_ids: Vec<i64>,
+    pub asset_placeholder_sizes: Vec<egui::Vec2>,
     pub outside_overlay: bool,
     pub placement_pending: bool,
 }
@@ -198,7 +201,11 @@ pub(crate) fn search_result_grid_layout(
     result_count: usize,
 ) -> SearchResultGridLayout {
     let gap = crate::theme::SPACE_2;
-    let columns = PALETTE_GRID_COLUMNS.min(result_count.max(1));
+    let columns = if result_count == 0 {
+        1
+    } else {
+        PALETTE_GRID_COLUMNS
+    };
     let tile_width = (available_width - gap * (columns.saturating_sub(1) as f32)) / columns as f32;
     SearchResultGridLayout {
         columns,
@@ -404,11 +411,12 @@ pub(crate) fn paint_palette_input_row(
         .inner_margin(egui::Margin {
             left: crate::theme::SPACE_4 as i8,
             right: crate::theme::SPACE_4 as i8,
-            top: crate::theme::SPACE_3 as i8,
-            bottom: crate::theme::SPACE_3 as i8,
+            top: PALETTE_CHROME_Y_MARGIN,
+            bottom: PALETTE_CHROME_Y_MARGIN,
         })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
+                ui.set_min_height(KBD_PILL_SIZE.y);
                 ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
                 let placeholder = if let Some(pivot) = pivot {
                     if paint_image_pivot_pill(ui, canvas, pivot) {
@@ -417,8 +425,10 @@ pub(crate) fn paint_palette_input_row(
                     "Refine with a term..."
                 } else {
                     let (icon_rect, _) =
-                        ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-                    paint_search_icon(ui, icon_rect, crate::theme::TEXT_SUBTLE);
+                        ui.allocate_exact_size(KBD_PILL_SIZE, egui::Sense::hover());
+                    let search_icon_rect =
+                        egui::Rect::from_center_size(icon_rect.center(), egui::vec2(16.0, 16.0));
+                    paint_search_icon(ui, search_icon_rect, crate::theme::TEXT_SUBTLE);
                     "Search images"
                 };
 
@@ -433,11 +443,13 @@ pub(crate) fn paint_palette_input_row(
                 visuals.selection.bg_fill = crate::theme::SURFACE_ELEVATED;
                 ui.style_mut().visuals = visuals;
 
+                let text_width = (ui.available_width() - 42.0).max(160.0);
                 let resp = ui.add(
                     egui::TextEdit::singleline(query)
                         .id(input_id)
-                        .desired_width((ui.available_width() - 42.0).max(160.0))
+                        .desired_width(text_width)
                         .hint_text(placeholder)
+                        .vertical_align(egui::Align::Center)
                         .frame(egui::Frame::NONE),
                 );
                 paint_kbd_pill(ui, "esc");
@@ -649,6 +661,17 @@ fn footer_hint_label(ui: &mut egui::Ui, label: &str) {
     );
 }
 
+fn footer_hint_label_width(ui: &egui::Ui, label: &str) -> f32 {
+    ui.painter()
+        .layout_no_wrap(
+            label.to_owned(),
+            egui::FontId::proportional(11.0),
+            crate::theme::TEXT_SUBTLE,
+        )
+        .size()
+        .x
+}
+
 pub(crate) fn paint_palette_divider(ui: &mut egui::Ui) {
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
@@ -658,8 +681,9 @@ pub(crate) fn paint_palette_divider(ui: &mut egui::Ui) {
 
 pub(crate) fn paint_palette_empty_state(
     ui: &mut egui::Ui,
+    recent_searches: &[String],
     active_recent_search_index: usize,
-) -> Option<&'static str> {
+) -> Option<String> {
     let mut selected_recent_search = None;
     egui::Frame::new()
         .inner_margin(egui::Margin {
@@ -672,7 +696,7 @@ pub(crate) fn paint_palette_empty_state(
             selected_recent_search = paint_palette_empty_group(
                 ui,
                 "RECENT",
-                &RECENT_SEARCHES,
+                recent_searches,
                 active_recent_search_index,
             );
         });
@@ -680,12 +704,7 @@ pub(crate) fn paint_palette_empty_state(
 }
 
 pub(crate) fn paint_palette_no_results_state(ui: &mut egui::Ui, status: &SearchOverlayStatus) {
-    let text = match status {
-        SearchOverlayStatus::Loading(message) => message.as_str(),
-        SearchOverlayStatus::Indexing => "Indexing…",
-        SearchOverlayStatus::Error(message) => message.as_str(),
-        SearchOverlayStatus::Idle | SearchOverlayStatus::Ready => "No results",
-    };
+    let text = palette_status_text(status, "No results");
     egui::Frame::new()
         .inner_margin(egui::Margin {
             left: 18,
@@ -694,11 +713,15 @@ pub(crate) fn paint_palette_no_results_state(ui: &mut egui::Ui, status: &SearchO
             bottom: 24,
         })
         .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(text)
-                    .text_style(egui::TextStyle::Small)
-                    .color(crate::theme::TEXT_SUBTLE)
-                    .size(11.0),
+            ui.add_sized(
+                egui::vec2(ui.available_width(), 16.0),
+                egui::Label::new(
+                    egui::RichText::new(text)
+                        .text_style(egui::TextStyle::Small)
+                        .color(crate::theme::TEXT_SUBTLE)
+                        .size(11.0),
+                )
+                .truncate(),
             );
         });
 }
@@ -706,9 +729,9 @@ pub(crate) fn paint_palette_no_results_state(ui: &mut egui::Ui, status: &SearchO
 fn paint_palette_empty_group(
     ui: &mut egui::Ui,
     title: &str,
-    rows: &'static [&'static str],
+    rows: &[String],
     active_recent_search_index: usize,
-) -> Option<&'static str> {
+) -> Option<String> {
     let mut selected_recent_search = None;
     egui::Frame::new()
         .inner_margin(egui::Margin {
@@ -746,12 +769,12 @@ fn paint_palette_empty_group(
         ui.painter().text(
             egui::pos2(rect.left() + 14.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            *row,
+            row.as_str(),
             egui::TextStyle::Body.resolve(ui.style()),
             crate::theme::TEXT,
         );
         if response.clicked() {
-            selected_recent_search = Some(*row);
+            selected_recent_search = Some(row.clone());
         }
     }
     ui.add_space(4.0);
@@ -771,38 +794,56 @@ pub(crate) fn paint_palette_footer(
         .inner_margin(egui::Margin {
             left: crate::theme::SPACE_4 as i8,
             right: crate::theme::SPACE_4 as i8,
-            top: crate::theme::SPACE_2 as i8,
-            bottom: crate::theme::SPACE_2 as i8,
+            top: PALETTE_CHROME_Y_MARGIN,
+            bottom: PALETTE_CHROME_Y_MARGIN,
         })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
+                ui.set_min_height(KBD_PILL_SIZE.y);
                 ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
                 if result_count == 0 {
-                    let idle_text = match status {
-                        SearchOverlayStatus::Idle => "Ready".to_owned(),
-                        SearchOverlayStatus::Indexing => "Indexing…".to_owned(),
-                        SearchOverlayStatus::Loading(msg) => msg.clone(),
-                        SearchOverlayStatus::Ready => "Ready".to_owned(),
-                        SearchOverlayStatus::Error(err) => err.clone(),
-                    };
-                    let dot_rect = ui
-                        .allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover())
-                        .0;
-                    ui.painter()
-                        .circle_filled(dot_rect.center(), 3.0, crate::theme::INDEXED_DOT);
-                    ui.label(
-                        egui::RichText::new(idle_text)
-                            .text_style(egui::TextStyle::Small)
-                            .color(crate::theme::TEXT_SUBTLE)
-                            .size(11.0),
+                    let idle_text = palette_status_text(status, "Ready");
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(PALETTE_FOOTER_STATUS_WIDTH, KBD_PILL_SIZE.y),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            let dot_rect = ui
+                                .allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover())
+                                .0;
+                            ui.painter().circle_filled(
+                                dot_rect.center(),
+                                3.0,
+                                crate::theme::INDEXED_DOT,
+                            );
+                            ui.add_sized(
+                                egui::vec2(
+                                    PALETTE_FOOTER_STATUS_WIDTH - 6.0 - crate::theme::SPACE_2,
+                                    KBD_PILL_SIZE.y,
+                                ),
+                                egui::Label::new(
+                                    egui::RichText::new(idle_text)
+                                        .text_style(egui::TextStyle::Small)
+                                        .color(crate::theme::TEXT_SUBTLE)
+                                        .size(11.0),
+                                )
+                                .truncate(),
+                            );
+                        },
                     );
                 } else if has_more_results {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        paint_kbd_pill(ui, "↓");
-                        ui.add_space(crate::theme::SPACE_2);
-                        footer_hint_label(ui, "more");
-                    });
+                    let more_hint_width = KBD_PILL_SIZE.x
+                        + crate::theme::SPACE_2
+                        + footer_hint_label_width(ui, "more");
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(more_hint_width, KBD_PILL_SIZE.y),
+                        crate::ui_layout::row_center_y_layout(),
+                        |ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            paint_kbd_pill(ui, "↓");
+                            ui.add_space(crate::theme::SPACE_2);
+                            footer_hint_label(ui, "more");
+                        },
+                    );
                 }
                 ui.add_space(14.0);
                 scope_toggled = paint_footer_scope_toggle(ui, scope);
@@ -827,4 +868,34 @@ pub(crate) fn paint_palette_footer(
             });
         });
     scope_toggled
+}
+
+fn palette_status_text(status: &SearchOverlayStatus, idle_text: &'static str) -> String {
+    match status {
+        SearchOverlayStatus::Loading(message) => message.clone(),
+        SearchOverlayStatus::Indexing => "Indexing...".to_owned(),
+        SearchOverlayStatus::Error(message) => {
+            let _has_details = !message.trim().is_empty();
+            "Search error".to_owned()
+        }
+        SearchOverlayStatus::Idle | SearchOverlayStatus::Ready => idle_text.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{KBD_PILL_SIZE, PALETTE_CHROME_Y_MARGIN, PALETTE_FOOTER_STATUS_WIDTH};
+
+    #[test]
+    fn palette_header_and_footer_share_chrome_height() {
+        let header_height = KBD_PILL_SIZE.y + f32::from(PALETTE_CHROME_Y_MARGIN) * 2.0;
+        let footer_height = KBD_PILL_SIZE.y + f32::from(PALETTE_CHROME_Y_MARGIN) * 2.0;
+
+        assert_eq!(header_height, footer_height);
+    }
+
+    #[test]
+    fn palette_footer_status_reservation_stays_compact() {
+        assert!(PALETTE_FOOTER_STATUS_WIDTH <= 96.0);
+    }
 }

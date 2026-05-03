@@ -588,9 +588,41 @@ impl CanvasState {
         self.interaction.move_preview_placeholders.clear();
     }
 
+    pub fn set_move_preview_placeholders(&mut self, placeholders: Vec<(egui::Pos2, egui::Vec2)>) {
+        self.interaction.move_preview_placeholders.clear();
+        self.interaction
+            .move_preview_placeholders
+            .extend(
+                placeholders
+                    .into_iter()
+                    .map(|(center_world, size_world)| ImportPlaceholder {
+                        queue_id: 0,
+                        center_world,
+                        size_world,
+                        label: String::new(),
+                    }),
+            );
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn move_preview_placeholder_count(&self) -> usize {
         self.interaction.move_preview_placeholders.len()
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn move_preview_placeholder_layout_items(&self) -> Vec<BoardLayoutItem> {
+        self.interaction
+            .move_preview_placeholders
+            .iter()
+            .enumerate()
+            .map(|(index, placeholder)| BoardLayoutItem {
+                id: index as i64,
+                x: placeholder.center_world.x,
+                y: placeholder.center_world.y,
+                width: placeholder.size_world.x,
+                height: placeholder.size_world.y,
+            })
+            .collect()
     }
 
     pub fn update_search_drag_preview(
