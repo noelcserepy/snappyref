@@ -127,6 +127,12 @@ struct CanvasImage {
 }
 
 #[derive(Clone)]
+struct PendingCropPreview {
+    image: CanvasImage,
+    rgba: Vec<u8>,
+}
+
+#[derive(Clone)]
 enum CanvasTexture {
     Managed(egui::TextureHandle),
     Native(Arc<crate::jobs::NativeTextureHandle>),
@@ -1435,11 +1441,11 @@ mod tests {
         unified_canvas_paint_order_for_state,
     };
     use super::{
-        AnnotationDraftState, CanvasImage, CanvasState, CanvasTexture,
-        FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, SelectedLayoutItem,
-        TEXTBOX_EDITOR_TOOLBAR_CLEARANCE, TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN,
-        TextboxPointerRegion, TextboxResizeHandle, best_compact_layout, horizontal_layout,
-        legacy_best_compact_layout, vertical_layout,
+        AnnotationDraftState, CanvasCropRequest, CanvasImage, CanvasState, CanvasTexture,
+        FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, PixelCropRect,
+        SelectedLayoutItem, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
+        TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion, TextboxResizeHandle,
+        best_compact_layout, horizontal_layout, legacy_best_compact_layout, vertical_layout,
     };
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
@@ -1660,9 +1666,6 @@ mod tests {
                     width: 2,
                     height: 2,
                     file_size: 0,
-                    canvas_rgba: vec![200; 16],
-                    canvas_width: 2,
-                    canvas_height: 2,
                     preview_rgba: vec![200; 16],
                     preview_width: 2,
                     preview_height: 2,
@@ -3343,6 +3346,118 @@ mod tests {
         });
 
         assert!(!state.can_start_crop_on_item(42));
+    }
+
+    #[test]
+    fn pending_crop_preview_uses_cached_pixels_before_worker_finishes() {
+        let ctx = eframe::egui::Context::default();
+        let mut state = super::CanvasState::default();
+        let record = test_record(42, 42, 8, 8);
+        let source_rgba = (0..16)
+            .flat_map(|index| [index, 0, 0, 255])
+            .collect::<Vec<_>>();
+        state.add_loaded_item(
+            &ctx,
+            crate::jobs::LoadedCanvasItem {
+                target_board_id: 1,
+                queue_id: None,
+                record,
+                preview_rgba: source_rgba.clone(),
+                preview_width: 4,
+                preview_height: 4,
+                animated_preview: None,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+
+        let request = CanvasCropRequest {
+            item_id: 42,
+            source_asset: test_record(42, 42, 8, 8).asset,
+            crop_rect: PixelCropRect {
+                x: 2,
+                y: 2,
+                width: 4,
+                height: 4,
+            },
+            crop_offset_local: eframe::egui::vec2(2.0, 2.0),
+        };
+
+        state.apply_pending_crop_preview(&ctx, &request).unwrap();
+
+        let preview = state.preview_for_item_id(42).unwrap();
+        assert_eq!(preview.texture_size, eframe::egui::vec2(2.0, 2.0));
+        let record = state.record_for_item_id(42).unwrap();
+        assert_eq!((record.asset.width, record.asset.height), (4, 4));
+        assert_eq!((record.item.x, record.item.y), (2.0, 2.0));
+
+        let original = state.snapshot_item_image(42).unwrap();
+        assert_eq!(original.0.asset.width, 8);
+        assert_eq!(original.1, source_rgba);
+    }
+
+    #[test]
+    fn final_crop_integration_after_pending_preview_applies_crop_offset_once() {
+        let ctx = eframe::egui::Context::default();
+        let mut state = super::CanvasState::default();
+        let record = test_record(42, 42, 8, 8);
+        state.add_loaded_item(
+            &ctx,
+            crate::jobs::LoadedCanvasItem {
+                target_board_id: 1,
+                queue_id: None,
+                record,
+                preview_rgba: vec![255; 4 * 4 * 4],
+                preview_width: 4,
+                preview_height: 4,
+                animated_preview: None,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+        let request = CanvasCropRequest {
+            item_id: 42,
+            source_asset: test_record(42, 42, 8, 8).asset,
+            crop_rect: PixelCropRect {
+                x: 2,
+                y: 2,
+                width: 4,
+                height: 4,
+            },
+            crop_offset_local: eframe::egui::vec2(2.0, 2.0),
+        };
+        state.apply_pending_crop_preview(&ctx, &request).unwrap();
+        let cropped = crate::jobs::CroppedCanvasItem {
+            item_id: 42,
+            stored_path: std::path::PathBuf::from("cropped.png"),
+            width: 4,
+            height: 4,
+            file_size: 0,
+            preview_rgba: vec![128; 2 * 2 * 4],
+            preview_width: 2,
+            preview_height: 2,
+            preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+            loaded_tier: CanvasImageCacheTier::Overview,
+            crop_offset_local: eframe::egui::vec2(2.0, 2.0),
+        };
+        let mut updated_item = state.projected_cropped_item(&cropped).unwrap();
+        let mut asset = test_record(42, 99, 4, 4).asset;
+        asset.original_path = std::path::PathBuf::from("cropped.png");
+        updated_item.asset_id = asset.id;
+
+        state
+            .apply_cropped_item(&ctx, cropped, asset, updated_item)
+            .unwrap();
+
+        let record = state.record_for_item_id(42).unwrap();
+        assert_eq!(record.item.asset_id, 99);
+        assert_eq!((record.item.x, record.item.y), (2.0, 2.0));
     }
 
     #[test]

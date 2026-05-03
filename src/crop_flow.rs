@@ -32,6 +32,7 @@ impl CropFlow {
 
     pub(crate) fn enqueue_pending_requests(
         &self,
+        ctx: &eframe::egui::Context,
         canvas: &mut crate::canvas::CanvasState,
         import_worker: Option<&crate::jobs::ImportWorker>,
         max_texture_side: usize,
@@ -45,6 +46,10 @@ impl CropFlow {
         while let Some(request) = canvas.take_pending_crop() {
             let item_id = request.item_id;
             canvas.mark_crop_pending(item_id);
+            if let Err(error) = canvas.apply_pending_crop_preview(ctx, &request) {
+                canvas.clear_crop_pending(item_id);
+                return Err(error);
+            }
             if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::Crop {
                 request,
                 max_texture_side,
@@ -67,7 +72,7 @@ impl CropFlow {
         canvas: &mut crate::canvas::CanvasState,
         library: Option<&crate::storage::Library>,
         cropped: crate::jobs::CroppedCanvasItem,
-        canvas_image_max_side: u32,
+        _canvas_image_max_side: u32,
         semantic_search_enabled: bool,
     ) -> Result<CroppedImageIntegration, String> {
         let item_id = cropped.item_id;
@@ -113,13 +118,6 @@ impl CropFlow {
             }
         };
 
-        let _ = library.store_canvas_image_cache(
-            asset.id,
-            canvas_image_max_side,
-            &cropped.canvas_rgba,
-            cropped.canvas_width,
-            cropped.canvas_height,
-        );
         updated_item.asset_id = asset.id;
 
         let updated_item_id = updated_item.id;
@@ -222,4 +220,110 @@ impl CropFlow {
 
 fn cleanup_failed_crop(stored_path: &std::path::Path) {
     let _ = std::fs::remove_file(stored_path);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use eframe::egui;
+
+    use super::CropFlow;
+    use crate::canvas::{CanvasCropRequest, CanvasState, PixelCropRect};
+    use crate::data::{BoardItem, BoardItemWithAsset, CanvasImageCacheTier, ImageAsset};
+    use crate::jobs::{ImportOrigin, ImportWorker, ImportedPreviewTexture, LoadedCanvasItem};
+    use crate::storage::Library;
+
+    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn enqueue_pending_crop_shows_cached_preview_before_worker_result() {
+        let root = temp_library_root("crop-flow-pending-preview");
+        let library = Library::initialize(root.join("library")).unwrap();
+        let source_path = library
+            .store_rgba_image("source", &vec![255; 8 * 8 * 4], 8, 8)
+            .unwrap();
+        let ctx = egui::Context::default();
+        let mut canvas = CanvasState::default();
+        let mut record = test_record(42, 42, 8, 8);
+        record.asset.original_path = source_path.clone();
+        let preview_rgba = (0..16)
+            .flat_map(|index| [index, 0, 0, 255])
+            .collect::<Vec<_>>();
+        canvas.add_loaded_item(
+            &ctx,
+            LoadedCanvasItem {
+                target_board_id: 1,
+                queue_id: None,
+                record: record.clone(),
+                preview_rgba,
+                preview_width: 4,
+                preview_height: 4,
+                animated_preview: None,
+                preview_texture: ImportedPreviewTexture::Cpu,
+                loaded_tier: CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+        canvas.set_pending_crop_for_test(CanvasCropRequest {
+            item_id: 42,
+            source_asset: record.asset,
+            crop_rect: PixelCropRect {
+                x: 2,
+                y: 2,
+                width: 4,
+                height: 4,
+            },
+            crop_offset_local: egui::vec2(2.0, 2.0),
+        });
+        let worker = ImportWorker::new(library, ctx.clone(), None);
+
+        let enqueued = CropFlow::default()
+            .enqueue_pending_requests(&ctx, &mut canvas, Some(&worker), 4096, 2000)
+            .unwrap();
+
+        assert!(enqueued);
+        assert_eq!(
+            canvas.preview_for_item_id(42).unwrap().texture_size,
+            egui::vec2(2.0, 2.0)
+        );
+        let record = canvas.record_for_item_id(42).unwrap();
+        assert_eq!((record.asset.width, record.asset.height), (4, 4));
+        assert_eq!((record.item.x, record.item.y), (2.0, 2.0));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn test_record(item_id: i64, asset_id: i64, width: u32, height: u32) -> BoardItemWithAsset {
+        BoardItemWithAsset {
+            item: BoardItem {
+                id: item_id,
+                asset_id,
+                x: 0.0,
+                y: 0.0,
+                scale: 1.0,
+                rotation: 0.0,
+                z_index: 0,
+                archived: false,
+            },
+            asset: ImageAsset {
+                id: asset_id,
+                original_path: PathBuf::from(format!("image-{asset_id}.png")),
+                filename: format!("image-{asset_id}.png"),
+                mime_type: "image/png".to_owned(),
+                width,
+                height,
+                file_size: 0,
+                imported_at: 0,
+            },
+        }
+    }
+
+    fn temp_library_root(label: &str) -> PathBuf {
+        let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("reference-{label}-{counter}"))
+    }
 }

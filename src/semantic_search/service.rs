@@ -292,6 +292,14 @@ impl SemanticSearchService {
     }
 
     pub fn enqueue_asset_index(&self, asset_id: i64, original_path: PathBuf) -> Result<(), String> {
+        if self
+            .library
+            .load_asset_embedding(asset_id, self.model_key)?
+            .is_some()
+        {
+            return Ok(());
+        }
+
         self.index_tx
             .send(IndexRequest::Asset {
                 asset_id,
@@ -1028,6 +1036,54 @@ mod tests {
         assert_eq!(results[0].asset_id, active.asset.id);
         assert_eq!(results[0].item_ids, vec![active.item.id]);
         assert_eq!(results[0].instance_count, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn enqueue_asset_index_skips_assets_with_ready_embedding() {
+        let root = temp_root("reference-ready-index-skip-service-test");
+        let library = Library::initialize(root.join("library")).unwrap();
+        let source_path = library
+            .store_rgba_image("ready", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let record = library
+            .persist_imported_image(
+                &source_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(record.asset.id, "test-model", &[1.0, 0.0])
+            .unwrap();
+
+        let service = SemanticSearchService::new(
+            library.clone(),
+            SemanticSearchConfig {
+                enabled: false,
+                model: test_model_spec(),
+            },
+        )
+        .unwrap();
+
+        service
+            .enqueue_asset_index(record.asset.id, source_path)
+            .unwrap();
+
+        assert!(service.try_recv_all().is_empty());
+        let embedding = library
+            .load_asset_embedding(record.asset.id, "test-model")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::semantic_search::index::decode_f32_blob(&embedding).unwrap(),
+            vec![1.0, 0.0]
+        );
 
         let _ = fs::remove_dir_all(root);
     }

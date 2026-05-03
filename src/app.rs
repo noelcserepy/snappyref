@@ -2472,6 +2472,7 @@ impl ReferenceApp {
         ctx: &egui::Context,
         cropped: crate::jobs::CroppedCanvasItem,
     ) {
+        let ui_integration_started_at = Instant::now();
         match self.crop_flow.integrate_cropped_result(
             ctx,
             &mut self.canvas,
@@ -2481,21 +2482,26 @@ impl ReferenceApp {
             self.settings.semantic_search_enabled,
         ) {
             Ok(integration) => {
+                let ui_integration_ms = ui_integration_started_at.elapsed().as_secs_f64() * 1000.0;
                 self.residency
                     .note_loaded_item(integration.updated_record.item.id);
+                let mut status = "Cropped image".to_owned();
                 #[cfg(feature = "semantic-search")]
                 if let Some((asset_id, original_path)) = integration.indexed_asset {
-                    self.search.queue_asset_index(asset_id, original_path);
+                    if let Err(error) = self.search.queue_asset_index(asset_id, original_path) {
+                        status = error;
+                    }
                 }
-                if let Some(error) = self.residency.queue_overview_backfill_after_working_load(
+                if let Some(error) = self.residency.queue_backfill(
                     self.import_worker.as_ref(),
                     &integration.updated_record,
                     &self.settings,
                     crate::data::CanvasImageCacheTier::Working,
                 ) {
-                    self.status = error;
+                    status = error;
                 }
-                self.status = "Cropped image".to_owned();
+                self.log_cropped_timing(&integration.updated_record, ui_integration_ms);
+                self.status = status;
             }
             Err(error) => self.status = error,
         }
@@ -2525,9 +2531,14 @@ impl ReferenceApp {
                 placeholder.queue_id,
             );
         }
+        let status = outcome.status;
+        #[cfg(feature = "semantic-search")]
+        let mut status = status;
         #[cfg(feature = "semantic-search")]
         if let Some((asset_id, original_path)) = outcome.indexed_asset {
-            self.search.queue_asset_index(asset_id, original_path);
+            if let Err(error) = self.search.queue_asset_index(asset_id, original_path) {
+                status = Some(error);
+            }
         }
         if let Some(log) = outcome.log {
             self.log_loaded_timing(
@@ -2537,7 +2548,7 @@ impl ReferenceApp {
                 log.trace,
             );
         }
-        if let Some(status) = outcome.status {
+        if let Some(status) = status {
             self.status = status;
         }
     }
@@ -2741,8 +2752,9 @@ impl ReferenceApp {
         }
     }
 
-    fn handle_pending_crop_requests(&mut self) {
+    fn handle_pending_crop_requests(&mut self, ctx: &egui::Context) {
         match self.crop_flow.enqueue_pending_requests(
+            ctx,
             &mut self.canvas,
             self.import_worker.as_ref(),
             self.max_texture_side,
@@ -3689,6 +3701,21 @@ impl ReferenceApp {
             }
         }
     }
+
+    fn log_cropped_timing(
+        &mut self,
+        record: &crate::data::BoardItemWithAsset,
+        ui_integration_ms: f64,
+    ) {
+        if self.perf_log.is_none() {
+            return;
+        }
+
+        eprintln!(
+            "[perf] crop_integrated item_id={} asset_id={} file={} ui_ms={:.2}",
+            record.item.id, record.asset.id, record.asset.filename, ui_integration_ms
+        );
+    }
 }
 
 fn sidebar_tab_session_value(tab: SidebarTab) -> &'static str {
@@ -3934,7 +3961,7 @@ impl eframe::App for ReferenceApp {
         ) {
             self.status = error;
         }
-        self.handle_pending_crop_requests();
+        self.handle_pending_crop_requests(ui.ctx());
         self.handle_pending_annotation_requests();
         self.persist_canvas_changes();
         let board_summaries = self.board_summaries();

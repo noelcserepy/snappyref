@@ -33,6 +33,68 @@ enum StackOrderMove {
     Back,
 }
 
+struct CachedCropPreview {
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
+fn crop_cached_preview(
+    rgba: &[u8],
+    preview_width: u32,
+    preview_height: u32,
+    asset_width: u32,
+    asset_height: u32,
+    crop_rect: super::PixelCropRect,
+) -> Result<CachedCropPreview, String> {
+    if preview_width == 0 || preview_height == 0 || asset_width == 0 || asset_height == 0 {
+        return Err("cannot crop zero-sized preview".to_owned());
+    }
+    let expected_len = preview_width as usize * preview_height as usize * 4;
+    if rgba.len() != expected_len {
+        return Err("cached preview pixels did not match preview dimensions".to_owned());
+    }
+
+    let x0 = scale_floor(crop_rect.x, preview_width, asset_width).min(preview_width - 1);
+    let y0 = scale_floor(crop_rect.y, preview_height, asset_height).min(preview_height - 1);
+    let x1 = scale_ceil(
+        crop_rect.x.saturating_add(crop_rect.width),
+        preview_width,
+        asset_width,
+    )
+    .clamp(x0 + 1, preview_width);
+    let y1 = scale_ceil(
+        crop_rect.y.saturating_add(crop_rect.height),
+        preview_height,
+        asset_height,
+    )
+    .clamp(y0 + 1, preview_height);
+    let width = x1 - x0;
+    let height = y1 - y0;
+    let mut cropped = Vec::with_capacity(width as usize * height as usize * 4);
+    for y in y0..y1 {
+        let row_start = (y as usize * preview_width as usize + x0 as usize) * 4;
+        let row_end = row_start + width as usize * 4;
+        cropped.extend_from_slice(&rgba[row_start..row_end]);
+    }
+
+    Ok(CachedCropPreview {
+        rgba: cropped,
+        width,
+        height,
+    })
+}
+
+fn scale_floor(value: u32, target: u32, source: u32) -> u32 {
+    ((value as u64 * target as u64) / source as u64) as u32
+}
+
+fn scale_ceil(value: u32, target: u32, source: u32) -> u32 {
+    let numerator = value as u64 * target as u64;
+    let denominator = source as u64;
+    numerator.div_ceil(denominator) as u32
+}
+
 impl CanvasState {
     pub fn add_loaded_item(&mut self, ctx: &egui::Context, loaded: LoadedCanvasItem) {
         let is_vector_preview = matches!(
@@ -121,6 +183,16 @@ impl CanvasState {
         &self,
         item_id: i64,
     ) -> Result<(BoardItemWithAsset, Vec<u8>, u32, u32), String> {
+        if let Some(preview) = self.render.pending_crop_previews.get(&item_id) {
+            let [width, height] = preview.image.texture.size();
+            return Ok((
+                preview.image.record.clone(),
+                preview.rgba.clone(),
+                width as u32,
+                height as u32,
+            ));
+        }
+
         let image = self
             .image_by_item_id(item_id)
             .ok_or_else(|| format!("missing canvas item {}", item_id))?;
@@ -142,14 +214,88 @@ impl CanvasState {
         &self,
         cropped: &CroppedCanvasItem,
     ) -> Result<crate::data::BoardItem, String> {
-        let Some(image) = self.image_by_item_id(cropped.item_id) else {
-            return Err(format!("missing canvas item {}", cropped.item_id));
-        };
+        let source_item =
+            if let Some(preview) = self.render.pending_crop_previews.get(&cropped.item_id) {
+                preview.image.record.item.clone()
+            } else {
+                let Some(image) = self.image_by_item_id(cropped.item_id) else {
+                    return Err(format!("missing canvas item {}", cropped.item_id));
+                };
+                image.record.item.clone()
+            };
 
-        let mut item = image.record.item.clone();
+        let mut item = source_item;
         let asset_id = item.asset_id;
         merge_cropped_item_fields(&mut item, asset_id, cropped.crop_offset_local);
         Ok(item)
+    }
+
+    pub fn apply_pending_crop_preview(
+        &mut self,
+        ctx: &egui::Context,
+        request: &CanvasCropRequest,
+    ) -> Result<(), String> {
+        let image_index = self
+            .document
+            .images
+            .iter()
+            .position(|image| image.record.item.id == request.item_id)
+            .ok_or_else(|| format!("missing canvas item {}", request.item_id))?;
+        let original_image = self.document.images[image_index].clone();
+        let source_rgba = self
+            .render
+            .asset_rgba_cache
+            .get(&request.source_asset.id)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "missing cached pixels for asset {}",
+                    request.source_asset.id
+                )
+            })?;
+        self.render
+            .pending_crop_previews
+            .entry(request.item_id)
+            .or_insert_with(|| super::PendingCropPreview {
+                image: original_image.clone(),
+                rgba: source_rgba.clone(),
+            });
+
+        let [source_width, source_height] = original_image.texture.size();
+        let preview = crop_cached_preview(
+            &source_rgba,
+            source_width as u32,
+            source_height as u32,
+            request.source_asset.width,
+            request.source_asset.height,
+            request.crop_rect,
+        )?;
+        let texture = canvas_texture_from_preview(
+            ctx,
+            format!(
+                "asset-{}-item-{}-pending-crop",
+                request.source_asset.id, request.item_id
+            ),
+            &preview.rgba,
+            preview.width,
+            preview.height,
+            crate::jobs::ImportedPreviewTexture::Cpu,
+        );
+        let mut asset = request.source_asset.clone();
+        asset.width = request.crop_rect.width;
+        asset.height = request.crop_rect.height;
+        let mut item = original_image.record.item.clone();
+        let asset_id = item.asset_id;
+        merge_cropped_item_fields(&mut item, asset_id, request.crop_offset_local);
+
+        let image = &mut self.document.images[image_index];
+        image.record.item = item;
+        image.record.asset = asset;
+        image.texture = texture;
+        image.loaded_tier = CanvasImageCacheTier::Working;
+        image.animation = None;
+
+        Ok(())
     }
 
     pub fn apply_cropped_item(
@@ -188,6 +334,7 @@ impl CanvasState {
         self.render
             .pending_image_tier_loads
             .remove(&cropped.item_id);
+        self.render.pending_crop_previews.remove(&cropped.item_id);
         Ok(())
     }
 
@@ -353,6 +500,11 @@ impl CanvasState {
 
     pub fn take_pending_crop(&mut self) -> Option<CanvasCropRequest> {
         self.interaction.pending_crop.take()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_pending_crop_for_test(&mut self, request: CanvasCropRequest) {
+        self.interaction.pending_crop = Some(request);
     }
 
     pub fn take_pending_annotation(&mut self) -> Option<PendingAnnotation> {
@@ -571,6 +723,15 @@ impl CanvasState {
     }
 
     pub fn clear_crop_pending(&mut self, item_id: i64) {
+        if let Some(preview) = self.render.pending_crop_previews.remove(&item_id)
+            && let Some(image) = self
+                .document
+                .images
+                .iter_mut()
+                .find(|image| image.record.item.id == item_id)
+        {
+            *image = preview.image;
+        }
         self.interaction
             .crop_pending_item_ids
             .retain(|pending_id| *pending_id != item_id);
