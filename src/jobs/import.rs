@@ -116,6 +116,7 @@ impl Default for CanvasImageSettings {
 }
 
 const OVERVIEW_CACHE_MAX_SIDE: u32 = 256;
+const INTERACTIVE_CROP_PREVIEW_MAX_SIDE: u32 = 1024;
 const DETAIL_CACHE_MAX_SIDE: u32 = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -364,9 +365,6 @@ pub struct CroppedCanvasItem {
     pub width: u32,
     pub height: u32,
     pub file_size: u64,
-    pub canvas_rgba: Vec<u8>,
-    pub canvas_width: u32,
-    pub canvas_height: u32,
     pub preview_rgba: Vec<u8>,
     pub preview_width: u32,
     pub preview_height: u32,
@@ -2267,7 +2265,7 @@ fn crop_item(
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or("image");
-    let stored_path = match library.store_rgba_image(
+    let stored_path = match library.store_cropped_rgba_image(
         &format!("{base_name}-crop"),
         &cropped_rgba,
         width,
@@ -2298,26 +2296,14 @@ fn crop_item(
             };
         }
     };
-    let canvas_source =
-        match canvas_source_image_from_rgba(width, height, &cropped_rgba, canvas_image_settings) {
-            Ok(preview) => preview,
-            Err(error) => {
-                let _ = std::fs::remove_file(&stored_path);
-                return ImportResult::Failed {
-                    target_board_id: None,
-                    queue_id: None,
-                    item_id: Some(request.item_id),
-                    context: source_context,
-                    error,
-                };
-            }
-        };
-    let preview = match preview_image_from_rgba(
-        canvas_source.width,
-        canvas_source.height,
-        &canvas_source.rgba,
+    let preview_max_side = animated_preview_max_side(
+        CanvasImageSettings {
+            max_side: INTERACTIVE_CROP_PREVIEW_MAX_SIDE.min(canvas_image_settings.max_side),
+        },
         max_texture_side,
-    ) {
+    );
+    let preview = match fast_preview_image_from_rgba(width, height, &cropped_rgba, preview_max_side)
+    {
         Ok(preview) => preview,
         Err(error) => {
             let _ = std::fs::remove_file(&stored_path);
@@ -2343,21 +2329,17 @@ fn crop_item(
             };
         }
     };
-
     ImportResult::Cropped(CroppedCanvasItem {
         item_id: request.item_id,
         stored_path,
         width,
         height,
         file_size,
-        canvas_rgba: canvas_source.rgba,
-        canvas_width: canvas_source.width,
-        canvas_height: canvas_source.height,
         preview_rgba: preview.rgba,
         preview_width: preview.width,
         preview_height: preview.height,
         preview_texture,
-        loaded_tier: CanvasImageCacheTier::Working,
+        loaded_tier: CanvasImageCacheTier::Overview,
         crop_offset_local: request.crop_offset_local,
     })
 }
@@ -2648,6 +2630,39 @@ fn canvas_source_image_from_rgba(
     canvas_image_settings: CanvasImageSettings,
 ) -> Result<PreviewImage, String> {
     preview_image_from_rgba(width, height, rgba, canvas_image_settings.max_side as usize)
+}
+
+fn fast_preview_image_from_rgba(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    max_side: usize,
+) -> Result<PreviewImage, String> {
+    let (preview_width, preview_height) =
+        crate::jobs::image_formats::fitted_texture_size(width as usize, height as usize, max_side);
+
+    if preview_width == width as usize && preview_height == height as usize {
+        return Ok(PreviewImage {
+            rgba: rgba.to_vec(),
+            width,
+            height,
+        });
+    }
+
+    let image = RgbaImage::from_raw(width, height, rgba.to_vec())
+        .ok_or_else(|| "failed to rebuild RGBA image for crop preview resize".to_owned())?;
+    let resized = image::imageops::resize(
+        &image,
+        preview_width as u32,
+        preview_height as u32,
+        image::imageops::FilterType::Nearest,
+    );
+
+    Ok(PreviewImage {
+        rgba: resized.into_raw(),
+        width: preview_width as u32,
+        height: preview_height as u32,
+    })
 }
 
 fn animated_preview_max_side(

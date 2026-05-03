@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
 use image::codecs::jpeg::JpegEncoder;
+use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::codecs::webp::WebPEncoder;
 use image::{ColorType, ExtendedColorType, ImageEncoder, ImageFormat};
 use rusqlite::{Connection, Transaction, params, params_from_iter};
@@ -237,6 +238,22 @@ impl Library {
             ImageFormat::Png,
         )
         .map_err(|error| format!("failed to write clipboard image: {error}"))?;
+        Ok(destination)
+    }
+
+    pub fn store_cropped_rgba_image(
+        &self,
+        source_name: &str,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<PathBuf, String> {
+        let destination = self.destination_path(source_name, "png");
+        let output = File::create(&destination)
+            .map_err(|error| format!("failed to create cropped image: {error}"))?;
+        PngEncoder::new_with_quality(output, CompressionType::Fast, FilterType::NoFilter)
+            .write_image(rgba, width, height, ExtendedColorType::Rgba8)
+            .map_err(|error| format!("failed to write cropped image: {error}"))?;
         Ok(destination)
     }
 

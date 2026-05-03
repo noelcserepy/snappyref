@@ -5,7 +5,8 @@ use eframe::egui;
 use super::{
     AnnotationDraftState, AnnotationDragState, CanvasContextMenuRequest, CanvasCropRequest,
     CanvasImage, CropState, DragState, ImageTransformState, ImportPlaceholder, MarqueeState,
-    PendingAnnotation, SearchDragPreview, TextboxLayoutCacheEntry, TextboxTransformState,
+    PendingAnnotation, PendingCropPreview, SearchDragPreview, TextboxLayoutCacheEntry,
+    TextboxTransformState,
 };
 use crate::data::{CanvasAnnotation, CanvasImageCacheTier, CanvasStackItem};
 
@@ -52,5 +53,6 @@ pub(super) struct CanvasRenderState {
     pub asset_rgba_cache: HashMap<i64, Vec<u8>>,
     pub textbox_layout_cache: HashMap<i64, TextboxLayoutCacheEntry>,
     pub pending_image_tier_loads: HashMap<i64, CanvasImageCacheTier>,
+    pub pending_crop_previews: HashMap<i64, PendingCropPreview>,
     pub animation_time_override_seconds: Option<f32>,
 }

@@ -383,12 +383,20 @@ impl SearchController {
             .is_some_and(|rect| rect.contains(pointer_pos))
     }
 
-    pub(crate) fn queue_asset_index(&mut self, asset_id: i64, original_path: PathBuf) {
+    pub(crate) fn queue_asset_index(
+        &mut self,
+        asset_id: i64,
+        original_path: PathBuf,
+    ) -> Result<(), String> {
         let Some(service) = &self.service else {
-            return;
+            return Err(
+                "Semantic search service unavailable; cropped image was not queued for indexing"
+                    .to_owned(),
+            );
         };
-        let _ = service.enqueue_asset_index(asset_id, original_path);
+        service.enqueue_asset_index(asset_id, original_path)?;
         self.overlay.status = SearchOverlayStatus::Indexing;
+        Ok(())
     }
 
     pub(crate) fn drive_verification_search(
@@ -1463,6 +1471,20 @@ mod tests {
         search.close_overlay(None);
 
         assert_eq!(search.overlay.scope, SearchScope::ThisBoard);
+    }
+
+    #[test]
+    fn queue_asset_index_reports_missing_service() {
+        let mut search = SearchController::default();
+
+        let error = search
+            .queue_asset_index(7, std::path::PathBuf::from("/tmp/cropped.png"))
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            "Semantic search service unavailable; cropped image was not queued for indexing"
+        );
     }
 
     #[test]
