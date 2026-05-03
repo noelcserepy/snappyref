@@ -764,6 +764,7 @@ impl SearchController {
                                                                     } else if input
                                                                         .modifiers
                                                                         .command
+                                                                        || input.modifiers.ctrl
                                                                     {
                                                                         SearchSelectionMode::Toggle
                                                                     } else {

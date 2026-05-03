@@ -661,6 +661,17 @@ fn footer_hint_label(ui: &mut egui::Ui, label: &str) {
     );
 }
 
+fn footer_hint_label_width(ui: &egui::Ui, label: &str) -> f32 {
+    ui.painter()
+        .layout_no_wrap(
+            label.to_owned(),
+            egui::FontId::proportional(11.0),
+            crate::theme::TEXT_SUBTLE,
+        )
+        .size()
+        .x
+}
+
 pub(crate) fn paint_palette_divider(ui: &mut egui::Ui) {
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
@@ -820,12 +831,19 @@ pub(crate) fn paint_palette_footer(
                         },
                     );
                 } else if has_more_results {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        paint_kbd_pill(ui, "↓");
-                        ui.add_space(crate::theme::SPACE_2);
-                        footer_hint_label(ui, "more");
-                    });
+                    let more_hint_width = KBD_PILL_SIZE.x
+                        + crate::theme::SPACE_2
+                        + footer_hint_label_width(ui, "more");
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(more_hint_width, KBD_PILL_SIZE.y),
+                        crate::ui_layout::row_center_y_layout(),
+                        |ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            paint_kbd_pill(ui, "↓");
+                            ui.add_space(crate::theme::SPACE_2);
+                            footer_hint_label(ui, "more");
+                        },
+                    );
                 }
                 ui.add_space(14.0);
                 scope_toggled = paint_footer_scope_toggle(ui, scope);

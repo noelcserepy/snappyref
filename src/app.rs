@@ -6910,6 +6910,124 @@ mod tests {
 
     #[cfg(feature = "semantic-search")]
     #[test]
+    fn clicked_multi_select_enter_places_all_selected_library_results() {
+        let root = temp_library_root("reference-library-search-click-multi-enter-drop");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_path = library
+            .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
+            .unwrap();
+        let second_path = library
+            .store_rgba_image("second", &vec![180; 20 * 10 * 4], 20, 10)
+            .unwrap();
+        let first = library
+            .persist_imported_image(
+                &first_path,
+                "image/png",
+                10,
+                10,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let second = library
+            .persist_imported_image(
+                &second_path,
+                "image/png",
+                20,
+                10,
+                4,
+                egui::pos2(20.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library
+            .archive_board_items(&[first.item.id, second.item.id])
+            .unwrap();
+        let empty_board = library.create_board("Empty").unwrap();
+        library.set_active_board(empty_board.id).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = empty_board.id;
+        app.search.overlay.open = true;
+        app.search.overlay.scope = SearchScope::Library;
+        app.search.overlay.results = vec![
+            SearchResultGroup {
+                asset_id: first.asset.id,
+                asset_preview_path: None,
+                asset_original_path: Some(first.asset.original_path.clone()),
+                similarity: 0.9,
+                item_ids: Vec::new(),
+                instance_count: 0,
+            },
+            SearchResultGroup {
+                asset_id: second.asset.id,
+                asset_preview_path: None,
+                asset_original_path: Some(second.asset.original_path.clone()),
+                similarity: 0.8,
+                item_ids: Vec::new(),
+                instance_count: 0,
+            },
+        ];
+        app.search.overlay.result_selection.replace(0);
+        let mut harness = app_harness(app, |ctx, app| {
+            app.show_search_overlay(ctx, test_screen_rect());
+        });
+
+        harness.event_modifiers(
+            egui::Event::PointerButton {
+                pos: egui::pos2(472.0, 206.0),
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::CTRL,
+            },
+            egui::Modifiers::CTRL,
+        );
+        harness.event_modifiers(
+            egui::Event::PointerButton {
+                pos: egui::pos2(472.0, 206.0),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::CTRL,
+            },
+            egui::Modifiers::CTRL,
+        );
+        harness.step();
+        assert_eq!(
+            harness
+                .state()
+                .search
+                .overlay
+                .result_selection
+                .selected()
+                .len(),
+            2
+        );
+
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        assert_eq!(harness.state().canvas.move_preview_placeholder_count(), 2);
+
+        harness.hover_at(egui::pos2(900.0, 600.0));
+        harness.drag_at(egui::pos2(900.0, 600.0));
+        harness.drop_at(egui::pos2(900.0, 600.0));
+        harness.step();
+
+        let mut asset_ids = library
+            .load_board_items()
+            .unwrap()
+            .into_iter()
+            .map(|record| record.asset.id)
+            .collect::<Vec<_>>();
+        asset_ids.sort_unstable();
+        let mut expected_asset_ids = vec![first.asset.id, second.asset.id];
+        expected_asset_ids.sort_unstable();
+        assert_eq!(asset_ids, expected_asset_ids);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
     fn command_enter_places_all_unplaced_library_search_results_on_empty_active_board() {
         let root = temp_library_root("reference-library-search-command-enter-unplaced");
         let library = Library::initialize(root.clone()).unwrap();
