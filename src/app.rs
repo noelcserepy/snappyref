@@ -386,7 +386,7 @@ impl AppConfig {
         let mut perf_import_path = None;
         let mut startup_trace = false;
         #[cfg(all(debug_assertions, feature = "semantic-search"))]
-        let mut search_latency_log = std::env::var_os("REFERENCE_SEARCH_LATENCY_LOG").is_some();
+        let mut search_latency_log = std::env::var_os("SNAPPYREF_SEARCH_LATENCY_LOG").is_some();
         #[cfg(debug_assertions)]
         let mut verification_mode = None;
         #[cfg(debug_assertions)]
@@ -889,7 +889,7 @@ impl AppConfig {
     }
 }
 
-pub struct ReferenceApp {
+pub struct SnappyRefApp {
     canvas: crate::canvas::CanvasState,
     screenshot_capture: crate::screenshot::ScreenshotCapture,
     window_capture: Option<crate::native_capture::NativeWindowCapture>,
@@ -926,7 +926,7 @@ pub struct ReferenceApp {
     sidebar_hot_preview: bool,
 }
 
-impl ReferenceApp {
+impl SnappyRefApp {
     pub fn new(cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
         crate::native_drop::install_url_drop_bridge(cc);
         let screenshot_path = config.screenshot_path.clone();
@@ -3931,7 +3931,7 @@ fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egui::Response
     response
 }
 
-impl eframe::App for ReferenceApp {
+impl eframe::App for SnappyRefApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let screen_rect = ui.ctx().viewport_rect();
         ui.set_clip_rect(screen_rect);
@@ -4148,7 +4148,7 @@ impl eframe::App for ReferenceApp {
     }
 }
 
-impl crate::board_switch::BoardSwitchHost for ReferenceApp {
+impl crate::board_switch::BoardSwitchHost for SnappyRefApp {
     fn active_board_id(&self) -> i64 {
         self.active_board_id
     }
@@ -4165,11 +4165,11 @@ impl crate::board_switch::BoardSwitchHost for ReferenceApp {
     }
 
     fn load_active_board(&mut self) {
-        ReferenceApp::load_active_board(self);
+        SnappyRefApp::load_active_board(self);
     }
 }
 
-impl crate::active_board_load::ActiveBoardLoadHost for ReferenceApp {
+impl crate::active_board_load::ActiveBoardLoadHost for SnappyRefApp {
     fn clear_board_local_transients(&mut self) {
         self.clear_active_board_transients();
     }
@@ -4179,15 +4179,15 @@ impl crate::active_board_load::ActiveBoardLoadHost for ReferenceApp {
     }
 
     fn load_active_board_viewport(&mut self) {
-        ReferenceApp::load_session_viewport(self);
+        SnappyRefApp::load_session_viewport(self);
     }
 
     fn restore_active_board_import_placeholders(&mut self) {
-        ReferenceApp::restore_active_board_import_placeholders(self);
+        SnappyRefApp::restore_active_board_import_placeholders(self);
     }
 
     fn enqueue_active_board_existing_items(&mut self) {
-        ReferenceApp::enqueue_existing_items(self);
+        SnappyRefApp::enqueue_existing_items(self);
     }
 }
 
@@ -4332,7 +4332,7 @@ fn generated_board_name(boards: &[crate::data::Board]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ArrangementAction, ReferenceApp, apply_arrangement_action};
+    use super::{ArrangementAction, SnappyRefApp, apply_arrangement_action};
     #[cfg(feature = "semantic-search")]
     use crate::crop_flow::CropUndoEntry;
     use crate::data::{
@@ -4360,7 +4360,7 @@ mod tests {
     #[test]
     fn persist_settings_if_changed_true_calls_save_once() {
         let mut calls = 0;
-        ReferenceApp::persist_settings_if_changed_with(true, || {
+        SnappyRefApp::persist_settings_if_changed_with(true, || {
             calls += 1;
         });
         assert_eq!(calls, 1);
@@ -4369,7 +4369,7 @@ mod tests {
     #[test]
     fn persist_settings_if_changed_false_skips_save() {
         let mut calls = 0;
-        ReferenceApp::persist_settings_if_changed_with(false, || {
+        SnappyRefApp::persist_settings_if_changed_with(false, || {
             calls += 1;
         });
         assert_eq!(calls, 0);
@@ -4377,7 +4377,7 @@ mod tests {
 
     #[test]
     fn save_user_session_round_trips_import_gap() {
-        let root = temp_library_root("reference-app-gap");
+        let root = temp_library_root("snappyref-app-gap");
         let library = Library::initialize(root.clone()).unwrap();
         let mut app = test_app(Some(library.clone()));
         app.settings.auto_image_scaling = false;
@@ -4404,7 +4404,7 @@ mod tests {
 
     #[test]
     fn save_user_session_round_trips_sidebar_state() {
-        let root = temp_library_root("reference-app-sidebar-session");
+        let root = temp_library_root("snappyref-app-sidebar-session");
         let library = Library::initialize(root.clone()).unwrap();
         let mut app = test_app(Some(library.clone()));
         app.sidebar_open = true;
@@ -4422,7 +4422,7 @@ mod tests {
 
     #[test]
     fn persist_canvas_changes_saves_viewport_changes() {
-        let root = temp_library_root("reference-app-viewport-session");
+        let root = temp_library_root("snappyref-app-viewport-session");
         let library = Library::initialize(root.clone()).unwrap();
         let mut app = test_app(Some(library.clone()));
         app.canvas
@@ -4551,7 +4551,7 @@ mod tests {
     #[test]
     fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-cross-board-paste");
+        let root = temp_library_root("snappyref-cross-board-paste");
         let library = Library::initialize(root.clone()).unwrap();
         let first = library.list_boards().unwrap()[0].clone();
         let second = library.create_board("Second").unwrap();
@@ -4666,7 +4666,7 @@ mod tests {
     #[test]
     fn paste_preserves_mixed_selection_stack_order_and_places_group_at_front() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-mixed-paste-stack-order");
+        let root = temp_library_root("snappyref-mixed-paste-stack-order");
         let library = Library::initialize(root.clone()).unwrap();
         let image_path = library
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
@@ -4746,7 +4746,7 @@ mod tests {
     #[test]
     fn paste_preserves_image_only_stack_order_and_places_group_at_front() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-image-paste-stack-order");
+        let root = temp_library_root("snappyref-image-paste-stack-order");
         let library = Library::initialize(root.clone()).unwrap();
         let image_path = library
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
@@ -4799,7 +4799,7 @@ mod tests {
 
     #[test]
     fn paste_preserves_annotation_only_stack_order_and_places_group_at_front() {
-        let root = temp_library_root("reference-annotation-paste-stack-order");
+        let root = temp_library_root("snappyref-annotation-paste-stack-order");
         let library = Library::initialize(root.clone()).unwrap();
         let back_annotation = test_canvas_annotation(1, egui::pos2(0.0, 0.0));
         let lower_selected = test_canvas_annotation(2, egui::pos2(10.0, 20.0));
@@ -4863,7 +4863,7 @@ mod tests {
     #[test]
     fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-mixed-duplicate");
+        let root = temp_library_root("snappyref-mixed-duplicate");
         let library = Library::initialize(root.clone()).unwrap();
         let image_path = library
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
@@ -4965,7 +4965,7 @@ mod tests {
     #[test]
     fn duplicate_preserves_image_only_stack_order_and_places_group_at_front() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-image-duplicate-stack-order");
+        let root = temp_library_root("snappyref-image-duplicate-stack-order");
         let library = Library::initialize(root.clone()).unwrap();
         let image_path = library
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
@@ -5012,7 +5012,7 @@ mod tests {
 
     #[test]
     fn duplicate_preserves_annotation_only_stack_order_and_places_group_at_front() {
-        let root = temp_library_root("reference-annotation-duplicate-stack-order");
+        let root = temp_library_root("snappyref-annotation-duplicate-stack-order");
         let library = Library::initialize(root.clone()).unwrap();
         let back_annotation = test_canvas_annotation(1, egui::pos2(0.0, 0.0));
         let lower_selected = test_canvas_annotation(2, egui::pos2(10.0, 20.0));
@@ -5379,7 +5379,7 @@ mod tests {
     #[test]
     fn remove_from_library_context_action_waits_for_confirmation() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-context-remove-confirm");
+        let root = temp_library_root("snappyref-context-remove-confirm");
         let library = Library::initialize(root.clone()).unwrap();
         let image_path = library
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
@@ -5436,7 +5436,7 @@ mod tests {
     #[test]
     fn move_to_front_context_action_persists_canvas_stack_order() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-context-move-front");
+        let root = temp_library_root("snappyref-context-move-front");
         let library = Library::initialize(root.clone()).unwrap();
         let first_path = library
             .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
@@ -5520,7 +5520,7 @@ mod tests {
     #[test]
     fn delete_from_board_archives_image_placements_but_hard_deletes_annotations() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-delete-from-board");
+        let root = temp_library_root("snappyref-delete-from-board");
         let library = Library::initialize(root.clone()).unwrap();
         let image_path = library
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
@@ -5660,7 +5660,7 @@ mod tests {
 
     #[test]
     fn sidebar_create_board_generates_name_switches_and_stays_open() {
-        let root = temp_library_root("reference-create-board");
+        let root = temp_library_root("snappyref-create-board");
         let library = Library::initialize(root.clone()).unwrap();
         let mut app = test_app(Some(library.clone()));
         app.sidebar_open = true;
@@ -5683,7 +5683,7 @@ mod tests {
 
     #[test]
     fn generated_board_names_fill_smallest_visible_gap() {
-        let root = temp_library_root("reference-board-name-gap");
+        let root = temp_library_root("snappyref-board-name-gap");
         let library = Library::initialize(root.clone()).unwrap();
         let board_2 = library.create_board("Board 2").unwrap();
         library.create_board("Board 3").unwrap();
@@ -5708,7 +5708,7 @@ mod tests {
     #[test]
     fn command_n_creates_board_without_opening_sidebar() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-cmd-n-board");
+        let root = temp_library_root("snappyref-cmd-n-board");
         let library = Library::initialize(root.clone()).unwrap();
         let mut app = test_app(Some(library.clone()));
         app.sidebar_open = false;
@@ -5746,7 +5746,7 @@ mod tests {
     #[test]
     fn command_number_switches_visible_board() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-cmd-number-board");
+        let root = temp_library_root("snappyref-cmd-number-board");
         let library = Library::initialize(root.clone()).unwrap();
         let second = library.create_board("Second").unwrap();
         let third = library.create_board("Third").unwrap();
@@ -5787,7 +5787,7 @@ mod tests {
     #[test]
     fn command_zero_switches_tenth_visible_board() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-cmd-zero-board");
+        let root = temp_library_root("snappyref-cmd-zero-board");
         let library = Library::initialize(root.clone()).unwrap();
         let mut tenth = None;
         for index in 2..=10 {
@@ -5829,7 +5829,7 @@ mod tests {
     #[test]
     fn board_shortcuts_are_suppressed_while_search_is_open() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-board-shortcut-search");
+        let root = temp_library_root("snappyref-board-shortcut-search");
         let library = Library::initialize(root.clone()).unwrap();
         library.create_board("Second").unwrap();
         let mut app = test_app(Some(library.clone()));
@@ -5863,7 +5863,7 @@ mod tests {
 
     #[test]
     fn switching_boards_saves_previous_viewport_and_loads_target_viewport() {
-        let root = temp_library_root("reference-board-switch-viewport");
+        let root = temp_library_root("snappyref-board-switch-viewport");
         let library = Library::initialize(root.clone()).unwrap();
         let first = library.list_boards().unwrap()[0].clone();
         let second = library.create_board("Second").unwrap();
@@ -5903,7 +5903,7 @@ mod tests {
 
     #[test]
     fn active_board_load_applies_viewport_without_reloading_global_settings() {
-        let root = temp_library_root("reference-active-load-settings-scope");
+        let root = temp_library_root("snappyref-active-load-settings-scope");
         let library = Library::initialize(root.clone()).unwrap();
         let second = library.create_board("Second").unwrap();
         library.set_active_board(second.id).unwrap();
@@ -5928,7 +5928,7 @@ mod tests {
 
     #[test]
     fn board_delete_requires_confirmation_before_archiving_active_board() {
-        let root = temp_library_root("reference-confirm-delete-board");
+        let root = temp_library_root("snappyref-confirm-delete-board");
         let library = Library::initialize(root.clone()).unwrap();
         let first = library.list_boards().unwrap()[0].clone();
         let second = library.create_board("Second").unwrap();
@@ -5962,7 +5962,7 @@ mod tests {
 
     #[test]
     fn board_delete_confirmation_keeps_sidebar_open_and_removes_inactive_board() {
-        let root = temp_library_root("reference-delete-inactive-board");
+        let root = temp_library_root("snappyref-delete-inactive-board");
         let library = Library::initialize(root.clone()).unwrap();
         let first = library.list_boards().unwrap()[0].clone();
         let second = library.create_board("Second").unwrap();
@@ -5991,7 +5991,7 @@ mod tests {
 
     #[test]
     fn board_delete_modal_click_routes_through_egui_layers() {
-        let root = temp_library_root("reference-delete-modal-click-routing");
+        let root = temp_library_root("snappyref-delete-modal-click-routing");
         let library = Library::initialize(root.clone()).unwrap();
         let first = library.list_boards().unwrap()[0].clone();
         let second = library.create_board("Second").unwrap();
@@ -6031,7 +6031,7 @@ mod tests {
 
     #[test]
     fn board_sidebar_stays_clickable_after_delete_modal_confirms() {
-        let root = temp_library_root("reference-sidebar-click-after-delete");
+        let root = temp_library_root("snappyref-sidebar-click-after-delete");
         let library = Library::initialize(root.clone()).unwrap();
         let second = library.create_board("Second").unwrap();
         let mut app = test_app(Some(library.clone()));
@@ -6066,7 +6066,7 @@ mod tests {
 
     #[test]
     fn board_sidebar_name_click_switches_board_immediately() {
-        let root = temp_library_root("reference-sidebar-name-click-switch");
+        let root = temp_library_root("snappyref-sidebar-name-click-switch");
         let library = Library::initialize(root.clone()).unwrap();
         let first = library.list_boards().unwrap()[0].clone();
         let second = library.create_board("Second").unwrap();
@@ -6088,7 +6088,7 @@ mod tests {
 
     #[test]
     fn rapid_sidebar_board_name_clicks_keep_last_requested_board_active() {
-        let root = temp_library_root("reference-rapid-sidebar-board-clicks");
+        let root = temp_library_root("snappyref-rapid-sidebar-board-clicks");
         let library = Library::initialize(root.clone()).unwrap();
         let first = library.list_boards().unwrap()[0].clone();
         let second = library.create_board("Second").unwrap();
@@ -6122,7 +6122,7 @@ mod tests {
 
     #[test]
     fn board_delete_modal_blocks_sidebar_board_switches_until_closed() {
-        let root = temp_library_root("reference-delete-modal-blocks-sidebar");
+        let root = temp_library_root("snappyref-delete-modal-blocks-sidebar");
         let library = Library::initialize(root.clone()).unwrap();
         let first = library.list_boards().unwrap()[0].clone();
         let second = library.create_board("Second").unwrap();
@@ -6160,7 +6160,7 @@ mod tests {
 
     #[test]
     fn board_delete_modal_blocks_sidebar_tabs_and_settings() {
-        let root = temp_library_root("reference-delete-modal-blocks-sidebar-state");
+        let root = temp_library_root("snappyref-delete-modal-blocks-sidebar-state");
         let library = Library::initialize(root.clone()).unwrap();
         let second = library.create_board("Second").unwrap();
         let mut app = test_app(Some(library.clone()));
@@ -6207,7 +6207,7 @@ mod tests {
 
     #[test]
     fn sidebar_board_lifecycle_clicks_create_switch_and_persist_active_board() {
-        let root = temp_library_root("reference-sidebar-board-lifecycle");
+        let root = temp_library_root("snappyref-sidebar-board-lifecycle");
         let library = Library::initialize(root.clone()).unwrap();
         let first = library.list_boards().unwrap()[0].clone();
         let mut app = test_app(Some(library.clone()));
@@ -6242,7 +6242,7 @@ mod tests {
     #[test]
     fn rapid_board_switches_ignore_stale_import_completions_and_last_switch_wins() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-rapid-switch-stale-imports");
+        let root = temp_library_root("snappyref-rapid-switch-stale-imports");
         let library = Library::initialize(root.clone()).unwrap();
         let first = library.list_boards().unwrap()[0].clone();
         let second = library.create_board("Second").unwrap();
@@ -6269,7 +6269,7 @@ mod tests {
     #[test]
     fn switching_boards_clears_selection_search_and_transient_undo() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-board-switch-cleanup");
+        let root = temp_library_root("snappyref-board-switch-cleanup");
         let library = Library::initialize(root.clone()).unwrap();
         let second = library.create_board("Second").unwrap();
         let mut app = test_app(Some(library.clone()));
@@ -6450,7 +6450,7 @@ mod tests {
     #[cfg(feature = "semantic-search")]
     #[test]
     fn search_keyboard_flow_owns_tab_and_escape_through_app_render_path() {
-        let root = temp_library_root("reference-search-keyboard-routing");
+        let root = temp_library_root("snappyref-search-keyboard-routing");
         let library = Library::initialize(root.clone()).unwrap();
         let second = library.create_board("Second").unwrap();
         let mut app = test_app(Some(library.clone()));
@@ -6510,7 +6510,7 @@ mod tests {
     #[cfg(feature = "semantic-search")]
     #[test]
     fn enter_places_unplaced_library_search_result_on_empty_active_board() {
-        let root = temp_library_root("reference-library-search-enter-unplaced");
+        let root = temp_library_root("snappyref-library-search-enter-unplaced");
         let library = Library::initialize(root.clone()).unwrap();
         let first_path = library
             .store_rgba_image("library-only", &[255, 0, 0, 255], 1, 1)
@@ -6559,7 +6559,7 @@ mod tests {
     #[cfg(feature = "semantic-search")]
     #[test]
     fn enter_places_unplaced_library_search_result_at_import_scale() {
-        let root = temp_library_root("reference-library-search-enter-import-scale");
+        let root = temp_library_root("snappyref-library-search-enter-import-scale");
         let library = Library::initialize(root.clone()).unwrap();
         let width = 1000_u32;
         let height = 1000_u32;
@@ -6627,7 +6627,7 @@ mod tests {
     #[cfg(feature = "semantic-search")]
     #[test]
     fn library_scope_survives_search_result_placement() {
-        let root = temp_library_root("reference-library-search-scope-after-placement");
+        let root = temp_library_root("snappyref-library-search-scope-after-placement");
         let library = Library::initialize(root.clone()).unwrap();
         let first_path = library
             .store_rgba_image("library-only", &[255, 0, 0, 255], 1, 1)
@@ -6673,7 +6673,7 @@ mod tests {
     #[test]
     fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-library-search-visible-before-worker");
+        let root = temp_library_root("snappyref-library-search-visible-before-worker");
         let library = Library::initialize(root.clone()).unwrap();
         let first_path = library
             .store_rgba_image("library-only", &[255, 0, 0, 255], 1, 1)
@@ -6736,7 +6736,7 @@ mod tests {
         app.search.overlay.open = true;
         app.search.overlay.query = "boat".to_owned();
         app.search.overlay.status = crate::palette::SearchOverlayStatus::Error(format!(
-            "failed to open image /Users/noelcserepy/dev/reference/target/debug/library/originals/{}-image-2025-08-05-160929.jpg: Format error decoding Jpeg: Error parsing image. Illegal start bytes: 8950",
+            "failed to open image /Users/noelcserepy/dev/snappyref/target/debug/library/originals/{}-image-2025-08-05-160929.jpg: Format error decoding Jpeg: Error parsing image. Illegal start bytes: 8950",
             "1777813588290-19"
         ));
         let mut harness = app_harness(app, |ctx, app| {
@@ -6758,7 +6758,7 @@ mod tests {
     #[cfg(feature = "semantic-search")]
     #[test]
     fn command_enter_library_search_results_show_pending_cursor_placeholders() {
-        let root = temp_library_root("reference-library-search-cmd-enter-placeholder-preview");
+        let root = temp_library_root("snappyref-library-search-cmd-enter-placeholder-preview");
         let library = Library::initialize(root.clone()).unwrap();
         let first_path = library
             .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
@@ -6837,7 +6837,7 @@ mod tests {
     #[cfg(feature = "semantic-search")]
     #[test]
     fn multi_select_enter_library_search_results_show_pending_cursor_placeholders() {
-        let root = temp_library_root("reference-library-search-multi-enter-placeholder-preview");
+        let root = temp_library_root("snappyref-library-search-multi-enter-placeholder-preview");
         let library = Library::initialize(root.clone()).unwrap();
         let first_path = library
             .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
@@ -6911,7 +6911,7 @@ mod tests {
     #[cfg(feature = "semantic-search")]
     #[test]
     fn clicked_multi_select_enter_places_all_selected_library_results() {
-        let root = temp_library_root("reference-library-search-click-multi-enter-drop");
+        let root = temp_library_root("snappyref-library-search-click-multi-enter-drop");
         let library = Library::initialize(root.clone()).unwrap();
         let first_path = library
             .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
@@ -7029,7 +7029,7 @@ mod tests {
     #[cfg(feature = "semantic-search")]
     #[test]
     fn command_enter_places_all_unplaced_library_search_results_on_empty_active_board() {
-        let root = temp_library_root("reference-library-search-command-enter-unplaced");
+        let root = temp_library_root("snappyref-library-search-command-enter-unplaced");
         let library = Library::initialize(root.clone()).unwrap();
         let first_path = library
             .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
@@ -7112,7 +7112,7 @@ mod tests {
     #[cfg(feature = "semantic-search")]
     #[test]
     fn submitted_search_is_saved_to_recent_searches() {
-        let root = temp_library_root("reference-search-recent-session");
+        let root = temp_library_root("snappyref-search-recent-session");
         let library = Library::initialize(root.clone()).unwrap();
         let mut app = test_app(Some(library.clone()));
         app.search.overlay.open = true;
@@ -7135,7 +7135,7 @@ mod tests {
     #[cfg(feature = "semantic-search")]
     #[test]
     fn empty_recent_searches_do_not_submit_boilerplate_query() {
-        let root = temp_library_root("reference-search-no-boilerplate-recent");
+        let root = temp_library_root("snappyref-search-no-boilerplate-recent");
         let library = Library::initialize(root.clone()).unwrap();
         let mut app = test_app(Some(library.clone()));
         app.search.overlay.open = true;
@@ -7161,7 +7161,7 @@ mod tests {
     #[test]
     fn context_menu_move_to_front_routes_through_rendered_menu_row() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-context-menu-move-front");
+        let root = temp_library_root("snappyref-context-menu-move-front");
         let library = Library::initialize(root.clone()).unwrap();
         let image_path = library
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
@@ -7355,7 +7355,7 @@ mod tests {
 
     #[test]
     fn import_reservation_captures_board_queue_and_optional_placeholder() {
-        let root = temp_library_root("reference-import-reservation");
+        let root = temp_library_root("snappyref-import-reservation");
         let library = Library::initialize(root.clone()).unwrap();
         let second = library.create_board("Second").unwrap();
         let mut app = test_app(Some(library));
@@ -7392,7 +7392,7 @@ mod tests {
     #[test]
     fn completed_import_for_inactive_board_does_not_enter_active_canvas() {
         let ctx = egui::Context::default();
-        let root = temp_library_root("reference-inactive-import-completion");
+        let root = temp_library_root("snappyref-inactive-import-completion");
         let library = Library::initialize(root.clone()).unwrap();
         let second = library.create_board("Second").unwrap();
         let mut app = test_app(Some(library));
@@ -7422,7 +7422,7 @@ mod tests {
 
     #[test]
     fn queued_import_placeholders_are_scoped_to_their_board_across_switches() {
-        let root = temp_library_root("reference-placeholder-board-scope");
+        let root = temp_library_root("snappyref-placeholder-board-scope");
         let library = Library::initialize(root.clone()).unwrap();
         let second = library.create_board("Second").unwrap();
         let mut app = test_app(Some(library));
@@ -7448,30 +7448,30 @@ mod tests {
     #[test]
     fn normalize_import_url_accepts_http_and_https_only() {
         assert_eq!(
-            ReferenceApp::normalize_import_url(" https://example.com/cat.png?size=large "),
+            SnappyRefApp::normalize_import_url(" https://example.com/cat.png?size=large "),
             Some("https://example.com/cat.png?size=large".to_owned())
         );
         assert_eq!(
-            ReferenceApp::normalize_import_url("http://example.com/dog.gif"),
+            SnappyRefApp::normalize_import_url("http://example.com/dog.gif"),
             Some("http://example.com/dog.gif".to_owned())
         );
         assert_eq!(
-            ReferenceApp::normalize_import_url("file:///tmp/cat.png"),
+            SnappyRefApp::normalize_import_url("file:///tmp/cat.png"),
             None
         );
-        assert_eq!(ReferenceApp::normalize_import_url("not a url"), None);
+        assert_eq!(SnappyRefApp::normalize_import_url("not a url"), None);
     }
 
     #[test]
     fn import_source_label_prefers_url_path_basename_then_host() {
         assert_eq!(
-            ReferenceApp::import_source_label(&super::ExternalImportSource::Url(
+            SnappyRefApp::import_source_label(&super::ExternalImportSource::Url(
                 "https://images.example.com/path/cat.gif?size=large".to_owned()
             )),
             "cat.gif"
         );
         assert_eq!(
-            ReferenceApp::import_source_label(&super::ExternalImportSource::Url(
+            SnappyRefApp::import_source_label(&super::ExternalImportSource::Url(
                 "https://images.example.com".to_owned()
             )),
             "images.example.com"
@@ -7488,8 +7488,8 @@ mod tests {
         assert!(config.auto_image_scaling);
     }
 
-    fn test_app(library: Option<Library>) -> ReferenceApp {
-        ReferenceApp {
+    fn test_app(library: Option<Library>) -> SnappyRefApp {
+        SnappyRefApp {
             canvas: crate::canvas::CanvasState::default(),
             screenshot_capture: crate::screenshot::ScreenshotCapture::new(None),
             window_capture: None,
@@ -7531,7 +7531,7 @@ mod tests {
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))
     }
 
-    fn render_sidebar_for_test(ctx: &egui::Context, app: &mut ReferenceApp) {
+    fn render_sidebar_for_test(ctx: &egui::Context, app: &mut SnappyRefApp) {
         let screen_rect = test_screen_rect();
         if app.should_block_sidebar_input() {
             block_sidebar_input(ctx, sidebar_rect(screen_rect));
@@ -7558,9 +7558,9 @@ mod tests {
     }
 
     fn app_harness<'a>(
-        app: ReferenceApp,
-        mut render: impl FnMut(&egui::Context, &mut ReferenceApp) + 'a,
-    ) -> Harness<'a, ReferenceApp> {
+        app: SnappyRefApp,
+        mut render: impl FnMut(&egui::Context, &mut SnappyRefApp) + 'a,
+    ) -> Harness<'a, SnappyRefApp> {
         #[expect(deprecated)]
         Harness::builder()
             .with_size(egui::vec2(1200.0, 800.0))
@@ -7647,7 +7647,7 @@ mod tests {
         }
     }
 
-    fn add_loaded_record(app: &mut ReferenceApp, ctx: &egui::Context, record: BoardItemWithAsset) {
+    fn add_loaded_record(app: &mut SnappyRefApp, ctx: &egui::Context, record: BoardItemWithAsset) {
         app.canvas.add_loaded_item(
             ctx,
             LoadedCanvasItem {

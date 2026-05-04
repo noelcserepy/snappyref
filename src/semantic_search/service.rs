@@ -704,7 +704,7 @@ fn warm_search_embedding_cache(
 }
 
 fn semantic_search_phase_log_enabled() -> bool {
-    cfg!(debug_assertions) && std::env::var_os("REFERENCE_SEARCH_LATENCY_LOG").is_some()
+    cfg!(debug_assertions) && std::env::var_os("SNAPPYREF_SEARCH_LATENCY_LOG").is_some()
 }
 
 fn group_hits(
@@ -871,7 +871,7 @@ mod tests {
 
     #[test]
     fn library_scope_image_pivot_returns_unplaced_asset_without_creating_placement() {
-        let root = temp_root("reference-library-scope-service-test");
+        let root = temp_root("snappyref-library-scope-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
         let source_path = library
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
@@ -957,7 +957,7 @@ mod tests {
 
     #[test]
     fn this_board_scope_image_pivot_returns_active_board_placements_only() {
-        let root = temp_root("reference-board-scope-service-test");
+        let root = temp_root("snappyref-board-scope-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
         let second_board = library.create_board("Second").unwrap();
         let source_path = library
@@ -1042,7 +1042,7 @@ mod tests {
 
     #[test]
     fn enqueue_asset_index_skips_assets_with_ready_embedding() {
-        let root = temp_root("reference-ready-index-skip-service-test");
+        let root = temp_root("snappyref-ready-index-skip-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
         let source_path = library
             .store_rgba_image("ready", &[255, 0, 0, 255], 1, 1)
@@ -1126,7 +1126,7 @@ mod tests {
     #[ignore = "downloads the active retrieval model and a sample image for live smoke validation"]
     fn live_smoke_indexes_and_queries_single_image() {
         let root = std::env::temp_dir().join(format!(
-            "reference-semantic-search-{}",
+            "snappyref-semantic-search-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()

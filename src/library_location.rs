@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-pub(crate) const REFERENCE_LIBRARY_ROOT_ENV: &str = "REFERENCE_LIBRARY_ROOT";
+pub(crate) const SNAPPYREF_LIBRARY_ROOT_ENV: &str = "SNAPPYREF_LIBRARY_ROOT";
 
 pub(crate) fn resolve_library_root() -> Result<PathBuf, String> {
     let current_exe = std::env::current_exe()
@@ -8,7 +8,7 @@ pub(crate) fn resolve_library_root() -> Result<PathBuf, String> {
     let install_root = current_exe
         .parent()
         .ok_or_else(|| format!("Executable path has no parent: {}", current_exe.display()))?;
-    let override_root = std::env::var_os(REFERENCE_LIBRARY_ROOT_ENV).map(PathBuf::from);
+    let override_root = std::env::var_os(SNAPPYREF_LIBRARY_ROOT_ENV).map(PathBuf::from);
 
     Ok(library_root_from_parts(install_root, override_root))
 }
@@ -23,8 +23,8 @@ mod tests {
 
     #[test]
     fn override_root_wins() {
-        let install_root = Path::new("/fake/Reference");
-        let override_root = PathBuf::from("/tmp/reference-library");
+        let install_root = Path::new("/fake/SnappyRef");
+        let override_root = PathBuf::from("/tmp/snappyref-library");
 
         let root = library_root_from_parts(install_root, Some(override_root.clone()));
 
@@ -33,10 +33,10 @@ mod tests {
 
     #[test]
     fn default_root_uses_install_root_library() {
-        let install_root = Path::new("/fake/Reference");
+        let install_root = Path::new("/fake/SnappyRef");
 
         let root = library_root_from_parts(install_root, None);
 
-        assert_eq!(root, PathBuf::from("/fake/Reference/library"));
+        assert_eq!(root, PathBuf::from("/fake/SnappyRef/library"));
     }
 }

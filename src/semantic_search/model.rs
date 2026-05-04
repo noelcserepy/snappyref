@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn resolves_packaged_model_assets_when_all_files_exist() {
         let root =
-            std::env::temp_dir().join(format!("reference-model-assets-{}", std::process::id()));
+            std::env::temp_dir().join(format!("snappyref-model-assets-{}", std::process::id()));
         let model_root = root
             .join("models")
             .join(DEFAULT_SEMANTIC_SEARCH_MODEL.model_key);
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn falls_back_to_hugging_face_when_packaged_assets_are_incomplete() {
         let root = std::env::temp_dir().join(format!(
-            "reference-model-assets-missing-{}",
+            "snappyref-model-assets-missing-{}",
             std::process::id()
         ));
         let model_root = root

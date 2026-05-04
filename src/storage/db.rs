@@ -3341,10 +3341,10 @@ mod tests {
 
     #[test]
     fn update_preservation_smoke() {
-        let app_root = temp_root("reference-update-preservation-test");
+        let app_root = temp_root("snappyref-update-preservation-test");
         let library_root = app_root.join("library");
         fs::create_dir_all(&library_root).unwrap();
-        fs::write(app_root.join("Reference.app"), b"old app bundle").unwrap();
+        fs::write(app_root.join("SnappyRef.app"), b"old app bundle").unwrap();
         fs::write(app_root.join("UPDATE.txt"), b"old update notes").unwrap();
 
         let original_bytes = [255, 0, 0, 255];
@@ -3387,9 +3387,9 @@ mod tests {
         let stored_original_bytes = fs::read(&imported.asset.original_path).unwrap();
         drop(library);
 
-        fs::remove_file(app_root.join("Reference.app")).unwrap();
+        fs::remove_file(app_root.join("SnappyRef.app")).unwrap();
         fs::remove_file(app_root.join("UPDATE.txt")).unwrap();
-        fs::write(app_root.join("Reference.app"), b"new app bundle").unwrap();
+        fs::write(app_root.join("SnappyRef.app"), b"new app bundle").unwrap();
         fs::write(app_root.join("UPDATE.txt"), b"new update notes").unwrap();
 
         let reopened = Library::initialize(library_root.clone()).unwrap();
@@ -3439,7 +3439,7 @@ mod tests {
 
     #[test]
     fn new_library_has_default_non_archived_active_board() {
-        let root = temp_root("reference-default-board-test");
+        let root = temp_root("snappyref-default-board-test");
         let library = Library::initialize(root.clone()).unwrap();
 
         let boards = library.list_boards().unwrap();
@@ -3455,7 +3455,7 @@ mod tests {
 
     #[test]
     fn existing_single_canvas_data_migrates_to_my_board() {
-        let root = temp_root("reference-board-migration-test");
+        let root = temp_root("snappyref-board-migration-test");
         let db_path = root.join("library.db");
         let connection = Connection::open(&db_path).unwrap();
         connection
@@ -3552,7 +3552,7 @@ mod tests {
 
     #[test]
     fn existing_canvas_data_migrates_to_unified_stack_with_annotations_above_placements() {
-        let root = temp_root("reference-stack-order-migration-test");
+        let root = temp_root("snappyref-stack-order-migration-test");
         let db_path = root.join("library.db");
         let connection = Connection::open(&db_path).unwrap();
         connection
@@ -3638,7 +3638,7 @@ mod tests {
 
     #[test]
     fn created_annotations_round_trip_through_canvas_stack_order() {
-        let root = temp_root("reference-stack-order-annotation-test");
+        let root = temp_root("snappyref-stack-order-annotation-test");
         let library = Library::initialize(root.clone()).unwrap();
         let path = library
             .store_rgba_image("placed", &[255, 0, 0, 255], 1, 1)
@@ -3676,7 +3676,7 @@ mod tests {
 
     #[test]
     fn saved_canvas_stack_order_round_trips_for_active_board() {
-        let root = temp_root("reference-stack-order-save-test");
+        let root = temp_root("snappyref-stack-order-save-test");
         let library = Library::initialize(root.clone()).unwrap();
         let first_path = library
             .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
@@ -3727,7 +3727,7 @@ mod tests {
 
     #[test]
     fn active_board_persists_and_scopes_items_annotations_and_viewport() {
-        let root = temp_root("reference-board-scope-test");
+        let root = temp_root("snappyref-board-scope-test");
         let library = Library::initialize(root.clone()).unwrap();
         let first_board = library.list_boards().unwrap()[0].clone();
         let first_path = library
@@ -3823,7 +3823,7 @@ mod tests {
 
     #[test]
     fn board_rename_allows_duplicates_and_preserves_name_for_empty_edits() {
-        let root = temp_root("reference-board-rename-test");
+        let root = temp_root("snappyref-board-rename-test");
         let library = Library::initialize(root.clone()).unwrap();
         let first = library.list_boards().unwrap()[0].clone();
         let second = library.create_board("Second").unwrap();
@@ -3840,7 +3840,7 @@ mod tests {
 
     #[test]
     fn delete_board_archives_board_preserves_assets_and_cleans_board_content() {
-        let root = temp_root("reference-board-delete-test");
+        let root = temp_root("snappyref-board-delete-test");
         let library = Library::initialize(root.clone()).unwrap();
         let first = library.list_boards().unwrap()[0].clone();
         let second = library.create_board("Second").unwrap();
@@ -3908,7 +3908,7 @@ mod tests {
 
     #[test]
     fn archive_assets_removes_their_placements_from_all_boards_and_preserves_files() {
-        let root = temp_root("reference-archive-assets-test");
+        let root = temp_root("snappyref-archive-assets-test");
         let library = Library::initialize(root.clone()).unwrap();
         let second = library.create_board("Second").unwrap();
         let first_path = library
@@ -3974,7 +3974,7 @@ mod tests {
 
     #[test]
     fn workspace_settings_remain_global_across_active_boards() {
-        let root = temp_root("reference-global-settings-test");
+        let root = temp_root("snappyref-global-settings-test");
         let library = Library::initialize(root.clone()).unwrap();
         let first_board = library.list_boards().unwrap()[0].clone();
         let second_board = library.create_board("Second").unwrap();
@@ -4038,7 +4038,7 @@ mod tests {
 
     #[test]
     fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
-        let root = temp_root("reference-session-payload-precedence");
+        let root = temp_root("snappyref-session-payload-precedence");
         let library = Library::initialize(root.clone()).unwrap();
 
         let mut session = library.load_user_session().unwrap();
@@ -4091,7 +4091,7 @@ mod tests {
 
     #[test]
     fn existing_legacy_user_session_columns_backfill_payload() {
-        let root = temp_root("reference-session-payload-backfill");
+        let root = temp_root("snappyref-session-payload-backfill");
         let db_path = root.join("library.db");
         let connection = Connection::open(&db_path).unwrap();
         connection
@@ -4206,7 +4206,7 @@ mod tests {
     #[test]
     fn existing_user_session_rows_migrate_to_default_preferences() {
         let root = std::env::temp_dir().join(format!(
-            "reference-storage-test-{}",
+            "snappyref-storage-test-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -4258,7 +4258,7 @@ mod tests {
     #[test]
     fn canvas_image_cache_path_is_deterministic() {
         let root = std::env::temp_dir().join(format!(
-            "reference-thumb-path-test-{}",
+            "snappyref-thumb-path-test-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -4284,7 +4284,7 @@ mod tests {
     #[test]
     fn clipboard_images_get_unique_destination_paths() {
         let root = std::env::temp_dir().join(format!(
-            "reference-clipboard-path-test-{}",
+            "snappyref-clipboard-path-test-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -4310,7 +4310,7 @@ mod tests {
     #[test]
     fn store_and_remove_canvas_image_cache_round_trips_thumb_file() {
         let root = std::env::temp_dir().join(format!(
-            "reference-thumb-store-test-{}",
+            "snappyref-thumb-store-test-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -4335,7 +4335,7 @@ mod tests {
     #[test]
     fn remove_asset_canvas_caches_removes_all_variants_for_asset() {
         let root = std::env::temp_dir().join(format!(
-            "reference-thumb-remove-variants-test-{}",
+            "snappyref-thumb-remove-variants-test-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -4364,7 +4364,7 @@ mod tests {
     #[test]
     fn embedding_backfill_includes_unplaced_library_assets() {
         let root = std::env::temp_dir().join(format!(
-            "reference-library-embedding-test-{}",
+            "snappyref-library-embedding-test-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -4427,7 +4427,7 @@ mod tests {
     #[test]
     fn cropped_relink_requires_new_asset_embedding() {
         let root = std::env::temp_dir().join(format!(
-            "reference-crop-embedding-relink-test-{}",
+            "snappyref-crop-embedding-relink-test-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -4499,7 +4499,7 @@ mod tests {
     #[test]
     fn embedding_helpers_scope_to_requested_model_key() {
         let root = std::env::temp_dir().join(format!(
-            "reference-embedding-model-key-test-{}",
+            "snappyref-embedding-model-key-test-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -4556,7 +4556,7 @@ mod tests {
     #[test]
     fn canvas_annotations_round_trip_and_archive() {
         let root = std::env::temp_dir().join(format!(
-            "reference-annotation-test-{}",
+            "snappyref-annotation-test-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -4599,7 +4599,7 @@ mod tests {
     #[test]
     fn existing_canvas_annotations_rows_migrate_text_size_to_default_m() {
         let root = std::env::temp_dir().join(format!(
-            "reference-annotation-migration-test-{}",
+            "snappyref-annotation-migration-test-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()

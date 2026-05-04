@@ -1158,12 +1158,12 @@ pub(crate) fn legacy_compact_layout_area_for_sizes(
 impl ImagePassResources {
     fn new(device: &eframe::wgpu::Device, target_format: eframe::wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(eframe::wgpu::ShaderModuleDescriptor {
-            label: Some("reference_canvas_image_shader"),
+            label: Some("snappyref_canvas_image_shader"),
             source: eframe::wgpu::ShaderSource::Wgsl(IMAGE_PASS_SHADER.into()),
         });
         let texture_bind_group_layout =
             device.create_bind_group_layout(&eframe::wgpu::BindGroupLayoutDescriptor {
-                label: Some("reference_canvas_image_bind_group_layout"),
+                label: Some("snappyref_canvas_image_bind_group_layout"),
                 entries: &[
                     eframe::wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -1188,7 +1188,7 @@ impl ImagePassResources {
                 ],
             });
         let sampler = device.create_sampler(&eframe::wgpu::SamplerDescriptor {
-            label: Some("reference_canvas_image_sampler"),
+            label: Some("snappyref_canvas_image_sampler"),
             mag_filter: eframe::wgpu::FilterMode::Linear,
             min_filter: eframe::wgpu::FilterMode::Linear,
             mipmap_filter: eframe::wgpu::MipmapFilterMode::Linear,
@@ -1196,14 +1196,14 @@ impl ImagePassResources {
         });
         let pipeline_layout =
             device.create_pipeline_layout(&eframe::wgpu::PipelineLayoutDescriptor {
-                label: Some("reference_canvas_image_pipeline_layout"),
+                label: Some("snappyref_canvas_image_pipeline_layout"),
                 bind_group_layouts: &[Some(&texture_bind_group_layout)],
                 immediate_size: 0,
             });
         let vertex_attributes = eframe::wgpu::vertex_attr_array![0 => Float32x2];
         let instance_attributes = eframe::wgpu::vertex_attr_array![1 => Float32x2, 2 => Float32x2, 3 => Float32x2, 4 => Float32x2];
         let pipeline = device.create_render_pipeline(&eframe::wgpu::RenderPipelineDescriptor {
-            label: Some("reference_canvas_image_pipeline"),
+            label: Some("snappyref_canvas_image_pipeline"),
             layout: Some(&pipeline_layout),
             vertex: eframe::wgpu::VertexState {
                 module: &shader,
@@ -1252,7 +1252,7 @@ impl ImagePassResources {
         let vertex_buffer = eframe::wgpu::util::DeviceExt::create_buffer_init(
             device,
             &eframe::wgpu::util::BufferInitDescriptor {
-                label: Some("reference_canvas_image_vertices"),
+                label: Some("snappyref_canvas_image_vertices"),
                 contents: bytemuck::cast_slice(&vertices),
                 usage: eframe::wgpu::BufferUsages::VERTEX,
             },
@@ -1299,7 +1299,7 @@ impl eframe::egui_wgpu::CallbackTrait for ImagePassCallback {
         let instance_buffer = eframe::wgpu::util::DeviceExt::create_buffer_init(
             device,
             &eframe::wgpu::util::BufferInitDescriptor {
-                label: Some("reference_canvas_image_instances"),
+                label: Some("snappyref_canvas_image_instances"),
                 contents: bytemuck::cast_slice(&self.instances),
                 usage: eframe::wgpu::BufferUsages::VERTEX,
             },

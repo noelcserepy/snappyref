@@ -13,17 +13,17 @@ if [[ ! -f "$source_image" ]]; then
 fi
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-reference_bin=${REFERENCE_BIN:-"$repo_root/target/release/reference"}
+snappyref_bin=${SNAPPYREF_BIN:-"$repo_root/target/release/snappyref"}
 
-if [[ ! -x "$reference_bin" ]]; then
-  echo "release binary not found: $reference_bin" >&2
+if [[ ! -x "$snappyref_bin" ]]; then
+  echo "release binary not found: $snappyref_bin" >&2
   echo "run: cargo build --release" >&2
   exit 2
 fi
 
-work_dir=${REFERENCE_DECODE_BENCH_DIR:-$(mktemp -d)}
+work_dir=${SNAPPYREF_DECODE_BENCH_DIR:-$(mktemp -d)}
 cleanup_work_dir=0
-if [[ -z "${REFERENCE_DECODE_BENCH_DIR:-}" ]]; then
+if [[ -z "${SNAPPYREF_DECODE_BENCH_DIR:-}" ]]; then
   cleanup_work_dir=1
 fi
 cleanup() {
@@ -119,7 +119,7 @@ generate_optional_ffmpeg jxl
 
 printf 'decode benchmark source=%s work_dir=%s\n' "$source_image" "$work_dir"
 for image in "${generated[@]}"; do
-  if ! "$reference_bin" --perf-decode "$image"; then
+  if ! "$snappyref_bin" --perf-decode "$image"; then
     printf 'decode_failed source=%s\n' "$image"
   fi
 done

@@ -18,9 +18,9 @@ Use this repo-local guide when inspecting the app, verifying a UI state, or addi
   - `--verify-arrow`
   - `--verify-textbox`
 - Use the built-in screenshot path with a file target, for example:
-  - `cargo run -- --verify-search=boat --screenshot /tmp/reference-search.png`
-  - `cargo run -- --verify-arrow --screenshot /tmp/reference-arrow.png`
-  - `cargo run -- --verify-textbox --screenshot /tmp/reference-textbox.png`
+  - `cargo run -- --verify-search=boat --screenshot /tmp/snappyref-search.png`
+  - `cargo run -- --verify-arrow --screenshot /tmp/snappyref-arrow.png`
+  - `cargo run -- --verify-textbox --screenshot /tmp/snappyref-textbox.png`
 - Inspect the resulting PNG directly before changing anything else.
 - If a state depends on persisted viewport or session data, reset it inside the probe so the screenshot is deterministic.
 
@@ -38,7 +38,7 @@ Use this repo-local guide when inspecting the app, verifying a UI state, or addi
 ## Implementation Pattern
 
 - Extend the existing verification enum or command parsing in `src/app.rs`.
-- Seed the app state in `ReferenceApp::new(...)`.
+- Seed the app state in `SnappyRefApp::new(...)`.
 - Let the current `ScreenshotCapture` path write the PNG and close the app.
 - Run `cargo check` after changes.
 - Capture a screenshot and confirm the intended state is visible.

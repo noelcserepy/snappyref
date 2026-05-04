@@ -85,14 +85,14 @@ Current implementation status:
 - Canvas rendering uses egui's SVG loader from the original bytes, so display-size rasterization is owned by the renderer cache rather than persisted as the asset representation.
 - Semantic-search indexing and cache-tier backfills are skipped for SVG until explicit raster derivatives are added.
 - Cropping SVG is explicitly rejected for now, rather than silently rasterizing or failing through the raster decoder.
-- Debug verification is available with `cargo run -- --verify-svg --screenshot /tmp/reference-svg.png`.
+- Debug verification is available with `cargo run -- --verify-svg --screenshot /tmp/snappyref-svg.png`.
 
 ## Benchmark Shape
 
 Add a decode-only CLI probe beside the existing end-to-end import probe:
 
 ```bash
-target/release/reference --perf-decode /path/to/image
+target/release/snappyref --perf-decode /path/to/image
 ```
 
 Expected output:
@@ -116,7 +116,7 @@ Measured with:
 
 ```bash
 cargo build --release
-REFERENCE_DECODE_BENCH_DIR=/tmp/reference-decode-bench scripts/benchmark-decoders.sh /Users/noelcserepy/Downloads/bailey-zindel-NRQV-hBF10M-unsplash.jpg
+SNAPPYREF_DECODE_BENCH_DIR=/tmp/snappyref-decode-bench scripts/benchmark-decoders.sh /Users/noelcserepy/Downloads/bailey-zindel-NRQV-hBF10M-unsplash.jpg
 ```
 
 The source image is a 4.75 MB progressive JPEG at `7360x4912` (`36.15 MP`). Generated benchmark variants use the same visual content where tooling supports it.

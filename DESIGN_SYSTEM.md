@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Reference is a dense local-first desktop reference board. The design system protects a quiet, shortcut-friendly workspace where images and annotations stay primary and app chrome stays predictable, compact, and low-friction.
+SnappyRef is a dense local-first desktop reference board. The design system protects a quiet, shortcut-friendly workspace where images and annotations stay primary and app chrome stays predictable, compact, and low-friction.
 
 ## Project Paths
 
@@ -10,12 +10,12 @@ Reference is a dense local-first desktop reference board. The design system prot
 - Layout helpers: `src/ui_layout.rs`
 - Shared UI patterns: `src/sidebar.rs`, `src/palette.rs`, `src/canvas/render.rs`
 - Permanent preview: debug probe in `src/design_system_preview.rs`
-- Verification entry point: `cargo run -- --verify-design-system --screenshot /tmp/reference-design-system.png`
+- Verification entry point: `cargo run -- --verify-design-system --screenshot /tmp/snappyref-design-system.png`
 - Temporary comparisons: add narrow debug-only probes in `src/app.rs` and remove them after the decision unless they become reusable verification states.
 
 ## Visual Vocabulary
 
-Reference uses a dark, layout-first interface. Surfaces are quiet and compact; spacing and alignment do more work than borders or decoration. The canvas background is the dominant workspace, while sidebars, palettes, context menus, and toolbars should feel temporary and subordinate to arranging references.
+SnappyRef uses a dark, layout-first interface. Surfaces are quiet and compact; spacing and alignment do more work than borders or decoration. The canvas background is the dominant workspace, while sidebars, palettes, context menus, and toolbars should feel temporary and subordinate to arranging references.
 
 The app favors low-radius rectangular controls, restrained contrast, and concise labels. Use warmer surface tones only where they help separate overlays from the canvas. Use emphasis sparingly: selected items, active focus, and currently actionable state can stand out; generic importance should not create new color roles.
 
@@ -50,9 +50,9 @@ Default to left-aligned content and titles. Center alignment should be an explic
 ## Preview And Verification
 
 - Preview location: `src/design_system_preview.rs`, exposed through `--verify-design-system` in debug builds.
-- Command: `cargo run -- --verify-design-system --screenshot /tmp/reference-design-system.png`
-- Sidebar board-row probes: `cargo run -- --verify-sidebar-boards --screenshot /tmp/reference-sidebar-boards.png` and `cargo run -- --verify-sidebar-boards-hover --screenshot /tmp/reference-sidebar-boards-hover.png`
-- Destructive confirmation probes: `cargo run -- --verify-board-delete-confirmation --screenshot /tmp/reference-board-delete-confirmation.png` and `cargo run -- --verify-library-remove-confirmation --screenshot /tmp/reference-library-remove-confirmation.png`
+- Command: `cargo run -- --verify-design-system --screenshot /tmp/snappyref-design-system.png`
+- Sidebar board-row probes: `cargo run -- --verify-sidebar-boards --screenshot /tmp/snappyref-sidebar-boards.png` and `cargo run -- --verify-sidebar-boards-hover --screenshot /tmp/snappyref-sidebar-boards-hover.png`
+- Destructive confirmation probes: `cargo run -- --verify-board-delete-confirmation --screenshot /tmp/snappyref-board-delete-confirmation.png` and `cargo run -- --verify-library-remove-confirmation --screenshot /tmp/snappyref-library-remove-confirmation.png`
 - Required checks before publishing design-system changes: `cargo fmt`, `cargo check`, then capture and inspect the preview screenshot.
 - When sharing screenshots in chat, use a unique filename or copy the verified screenshot to a timestamped `/tmp` path before embedding it. Reusing the same `/tmp/*.png` path can show stale cached images in the chat even when the file on disk is current.
 - Supported mode: dark theme only.
@@ -72,7 +72,7 @@ Update implementation, the debug preview, and this document together when shared
 
 - Should the design-system preview eventually show real sidebar and palette compositions by calling shared paint helpers, or stay focused on token and primitive semantics?
 - Should annotation colors become documented semantic tokens, or remain canvas-domain values owned by annotation behavior?
-- Temporary comparison: compact control consolidation is available with `cargo run -- --compare-compact-controls --screenshot /tmp/reference-compact-controls.png`. Option C is selected for sidebar settings; palette pills and canvas toolbar controls still need focused follow-up before migration.
-- Temporary comparison: radius semantics are available with `cargo run -- --compare-radii --screenshot /tmp/reference-radii.png`. The selected merge collapses previous row/chip/group values into `RADIUS_COMPACT`.
-- Temporary comparison: spacing scale consolidation is available with `cargo run -- --compare-spacing --screenshot /tmp/reference-spacing.png`. Option B is selected: keep `4/8/12/16/24/32`, retire `20` as a named token, and allow documented 1-3px optical corrections.
-- Temporary comparison: sidebar board-row component variants are available with `cargo run -- --compare-board-rows --screenshot /tmp/reference-board-rows.png`; option B is selected. Use `--compare-board-rows-bottom` for a deterministic scrolled lower capture.
+- Temporary comparison: compact control consolidation is available with `cargo run -- --compare-compact-controls --screenshot /tmp/snappyref-compact-controls.png`. Option C is selected for sidebar settings; palette pills and canvas toolbar controls still need focused follow-up before migration.
+- Temporary comparison: radius semantics are available with `cargo run -- --compare-radii --screenshot /tmp/snappyref-radii.png`. The selected merge collapses previous row/chip/group values into `RADIUS_COMPACT`.
+- Temporary comparison: spacing scale consolidation is available with `cargo run -- --compare-spacing --screenshot /tmp/snappyref-spacing.png`. Option B is selected: keep `4/8/12/16/24/32`, retire `20` as a named token, and allow documented 1-3px optical corrections.
+- Temporary comparison: sidebar board-row component variants are available with `cargo run -- --compare-board-rows --screenshot /tmp/snappyref-board-rows.png`; option B is selected. Use `--compare-board-rows-bottom` for a deterministic scrolled lower capture.

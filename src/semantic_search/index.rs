@@ -64,7 +64,7 @@ mod tests {
 
     #[test]
     fn library_scope_search_includes_assets_without_active_placements() {
-        let root = temp_root("reference-library-scope-index-test");
+        let root = temp_root("snappyref-library-scope-index-test");
         let library = Library::initialize(root.clone()).unwrap();
         let active_path = library
             .store_rgba_image("active", &[255, 0, 0, 255], 1, 1)

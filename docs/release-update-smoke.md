@@ -9,8 +9,8 @@ This drill is mandatory before the first release. It must use an actual generate
 not a local debug build, copied binary, or hand-assembled folder.
 
 1. Generate the release artifact using the release packaging workflow.
-2. Create a fake portable install directory named `Reference/` in a temporary location.
-3. Extract the current release zip into that fake portable `Reference/` install.
+2. Create a fake portable install directory named `SnappyRef/` in a temporary location.
+3. Extract the current release zip into that fake portable `SnappyRef/` install.
 4. Launch the app from that install before update.
 5. In the launched app, create representative user state:
    - a populated `library/` with at least one board and imported image data
@@ -18,7 +18,7 @@ not a local debug build, copied binary, or hand-assembled folder.
    - session state such as the active board, viewport, selection, search, or sidebar state
 6. Quit the app and confirm the fake portable install now contains `library/`.
 7. Generate or obtain the new release zip that is being tested.
-8. Extract the new zip over the existing fake portable `Reference/` install.
+8. Extract the new zip over the existing fake portable `SnappyRef/` install.
 9. Verify `library/` remains present after extraction and was not replaced, removed, or moved.
 10. Launch the app after update from the same fake portable install.
 11. Confirm the same library data, active board, board layout, and session state are still present.
@@ -29,7 +29,7 @@ not a local debug build, copied binary, or hand-assembled folder.
 ## Downgrade Policy
 
 Downgrade is unsupported after forward migration. Once an updated app has opened and migrated a
-portable `Reference/` install, do not use older app versions against that same install unless a
+portable `SnappyRef/` install, do not use older app versions against that same install unless a
 specific rollback path has been designed and tested for that migration.
 
 ## Pass Criteria

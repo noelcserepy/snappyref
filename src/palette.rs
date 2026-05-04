@@ -321,7 +321,7 @@ fn search_asset_preview(
     let worker_path = path.to_path_buf();
     std::thread::spawn(move || {
         let decoded = decode_search_asset_preview(&worker_path);
-        if cfg!(debug_assertions) && std::env::var_os("REFERENCE_SEARCH_LATENCY_LOG").is_some() {
+        if cfg!(debug_assertions) && std::env::var_os("SNAPPYREF_SEARCH_LATENCY_LOG").is_some() {
             let elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
             let loaded = decoded.is_some();
             eprintln!(
