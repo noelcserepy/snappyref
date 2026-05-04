@@ -1,4 +1,4 @@
-# reference
+# SnappyRef
 
 ## Principles
 
@@ -24,8 +24,8 @@ This repo uses GitHub Actions for verification and packaging.
 - Open the `Build Artifacts` workflow in GitHub Actions
 - Trigger it manually with the branch or tag you want to test
 - It produces two zip files:
-  - `reference-windows-<sha>.zip`
-  - `reference-macos-<sha>.zip`
+  - `snappyref-windows-<sha>.zip`
+  - `snappyref-macos-<sha>.zip`
 
 ### Tagged releases
 

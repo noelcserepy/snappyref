@@ -273,7 +273,7 @@ fn decode_image_file_with_native_fallback(
     }
 
     let temp_path = std::env::temp_dir().join(format!(
-        "reference-native-decode-{}-{}.png",
+        "snappyref-native-decode-{}-{}.png",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -322,7 +322,7 @@ fn decode_jpeg2000_quicklook_preview(
     metadata: &NativeFallbackMetadata,
 ) -> Result<DecodedImage, String> {
     let temp_dir = std::env::temp_dir().join(format!(
-        "reference-quicklook-decode-{}-{}",
+        "snappyref-quicklook-decode-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1189,7 +1189,7 @@ mod tests {
     #[test]
     fn decode_image_file_decodes_jpeg() {
         let root = std::env::temp_dir().join(format!(
-            "reference-decode-jpeg-test-{}",
+            "snappyref-decode-jpeg-test-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -1231,7 +1231,7 @@ mod tests {
 
     #[test]
     fn decode_image_file_decodes_generated_common_static_formats() {
-        let root = temp_test_dir("reference-decode-common-formats-test");
+        let root = temp_test_dir("snappyref-decode-common-formats-test");
         let rgba = sample_rgba_2x2();
         let rgb = sample_rgb_2x2();
         let mut cases = Vec::new();
@@ -1349,7 +1349,7 @@ mod tests {
 
     #[test]
     fn decode_image_file_decodes_jxl_with_dedicated_decoder_when_cjxl_is_available() {
-        let Some(cjxl) = std::env::var_os("REFERENCE_CJXL")
+        let Some(cjxl) = std::env::var_os("SNAPPYREF_CJXL")
             .map(std::path::PathBuf::from)
             .or_else(|| find_command_in_path("cjxl"))
         else {
@@ -1357,7 +1357,7 @@ mod tests {
             return;
         };
         let root = std::env::temp_dir().join(format!(
-            "reference-decode-jxl-test-{}",
+            "snappyref-decode-jxl-test-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -1527,7 +1527,7 @@ static unsigned char sample_bits[] = { 0x01 };
     #[test]
     fn decode_image_file_uses_extension_when_magic_is_ambiguous() {
         let root = std::env::temp_dir().join(format!(
-            "reference-decode-tga-test-{}",
+            "snappyref-decode-tga-test-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -1554,7 +1554,7 @@ static unsigned char sample_bits[] = { 0x01 };
     #[test]
     fn decode_image_file_perf_report_decodes_jpeg_to_rgba_and_reports_timing() {
         let root = std::env::temp_dir().join(format!(
-            "reference-decode-perf-jpeg-test-{}",
+            "snappyref-decode-perf-jpeg-test-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -1588,7 +1588,7 @@ static unsigned char sample_bits[] = { 0x01 };
     #[test]
     fn decode_image_file_detects_animated_gif_frames() {
         let root = std::env::temp_dir().join(format!(
-            "reference-decode-gif-test-{}",
+            "snappyref-decode-gif-test-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -1624,7 +1624,7 @@ static unsigned char sample_bits[] = { 0x01 };
     #[test]
     fn decode_image_file_detects_animated_webp_frames() {
         let root = std::env::temp_dir().join(format!(
-            "reference-decode-webp-test-{}",
+            "snappyref-decode-webp-test-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

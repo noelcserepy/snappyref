@@ -305,7 +305,7 @@ impl NativeTextureHandle {
         let view = self.view.as_ref()?;
         Some(
             device.create_bind_group(&eframe::wgpu::BindGroupDescriptor {
-                label: Some("reference_canvas_image_bind_group"),
+                label: Some("snappyref_canvas_image_bind_group"),
                 layout,
                 entries: &[
                     eframe::wgpu::BindGroupEntry {
@@ -2194,7 +2194,7 @@ fn temp_library_root(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("reference-{label}-{unique}"))
+    std::env::temp_dir().join(format!("snappyref-{label}-{unique}"))
 }
 
 fn write_png(root: &Path, filename: &str, width: u32, height: u32) -> Result<PathBuf, String> {
@@ -2372,7 +2372,7 @@ fn build_preview_texture(
     let texture = render_state
         .device
         .create_texture(&eframe::wgpu::TextureDescriptor {
-            label: Some("reference_import_preview"),
+            label: Some("snappyref_import_preview"),
             size,
             mip_level_count: 1,
             sample_count: 1,
@@ -4348,7 +4348,7 @@ static char * sample_xpm[] = {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("reference-{label}-{unique}"))
+        std::env::temp_dir().join(format!("snappyref-{label}-{unique}"))
     }
 
     fn write_png(root: &Path, filename: &str, width: u32, height: u32) -> PathBuf {

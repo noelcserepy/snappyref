@@ -30,7 +30,7 @@ pub(crate) fn show(ui: &mut egui::Ui, screen_rect: egui::Rect) {
                     ui.spacing_mut().item_spacing =
                         egui::vec2(crate::theme::SPACE_4, crate::theme::SPACE_3);
                     ui.label(
-                        egui::RichText::new("Reference design system")
+                        egui::RichText::new("SnappyRef design system")
                             .text_style(crate::theme::display_text_style())
                             .color(crate::theme::TEXT),
                     );

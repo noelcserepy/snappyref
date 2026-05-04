@@ -324,6 +324,6 @@ mod tests {
 
     fn temp_library_root(label: &str) -> PathBuf {
         let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("reference-{label}-{counter}"))
+        std::env::temp_dir().join(format!("snappyref-{label}-{counter}"))
     }
 }

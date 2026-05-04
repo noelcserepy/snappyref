@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 manifest=${1:-"$repo_root/tests/fixtures/external/manifest.json"}
-target_root=${REFERENCE_EXTERNAL_FIXTURE_DIR:-"$repo_root/tests/fixtures/external/files"}
+target_root=${SNAPPYREF_EXTERNAL_FIXTURE_DIR:-"$repo_root/tests/fixtures/external/files"}
 
 if [[ ! -f "$manifest" ]]; then
   cat >&2 <<EOF

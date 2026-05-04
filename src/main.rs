@@ -1,3 +1,3 @@
 fn main() -> eframe::Result<()> {
-    reference::run()
+    snappyref::run()
 }

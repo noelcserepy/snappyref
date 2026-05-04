@@ -1,6 +1,6 @@
 Manual portable update:
 
-1. Quit Reference.
-2. Extract this zip into your existing Reference folder.
+1. Quit SnappyRef.
+2. Extract this zip into your existing SnappyRef folder.
 3. Replace the old app binary and models/ with the new ones.
 4. Keep your library/, library.db, originals/, and thumbs/ untouched.

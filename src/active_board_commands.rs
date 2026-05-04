@@ -6,7 +6,7 @@ use crate::data::{CanvasAnnotationKind, CanvasStackItem, CanvasStrokeWidth, Canv
 use crate::document_persistence::DocumentPersistence;
 use crate::storage::Library;
 
-pub(crate) const COPY_PAYLOAD_KIND: &str = "reference-board-items";
+pub(crate) const COPY_PAYLOAD_KIND: &str = "snappyref-board-items";
 
 pub(crate) struct ActiveBoardCommandContext<'a> {
     pub(crate) canvas: &'a mut CanvasState,

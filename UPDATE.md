@@ -1,6 +1,6 @@
 # Update Path
 
-Reference should use a simple portable update model. User data lives next to the
+SnappyRef should use a simple portable update model. User data lives next to the
 app and updates replace only app-owned files.
 
 ## Install Folder Contract
@@ -8,8 +8,8 @@ app and updates replace only app-owned files.
 The app folder should look like this:
 
 ```text
-Reference/
-  reference.exe
+SnappyRef/
+  snappyref.exe
   models/
   library/
     library.db
@@ -20,17 +20,17 @@ Reference/
 `library/` is user-owned data. Release archives must not include it, delete it,
 or replace it.
 
-`reference.exe` and `models/` are app-owned release files. They may be replaced
+`snappyref.exe` and `models/` are app-owned release files. They may be replaced
 when updating.
 
 ## Update UX For V1
 
 Use a manual update flow:
 
-1. User quits Reference.
+1. User quits SnappyRef.
 2. User downloads the new release zip from the website or GitHub release page.
-3. User extracts the zip into the existing `Reference/` folder.
-4. User replaces `reference.exe` and `models/` when prompted.
+3. User extracts the zip into the existing `SnappyRef/` folder.
+4. User replaces `snappyref.exe` and `models/` when prompted.
 5. User keeps the existing `library/` folder in place.
 6. User launches the new app and continues from the same session state.
 
@@ -43,7 +43,7 @@ download, patch, replace, or restart the app automatically.
 - Resolve the install root from `std::env::current_exe().parent()`, not the
   process current working directory.
 - Resolve the library root as `install_root/library`.
-- Keep an environment override such as `REFERENCE_LIBRARY_ROOT` for tests,
+- Keep an environment override such as `SNAPPYREF_LIBRARY_ROOT` for tests,
   debug probes, and local development.
 - Create `library/` on first launch if it is missing.
 - On later launches, open the existing `library/` and run only forward schema
@@ -55,8 +55,8 @@ download, patch, replace, or restart the app automatically.
 Release zips should contain only app-owned files:
 
 ```text
-reference-windows-v0.2.0.zip
-  reference.exe
+snappyref-windows-v0.2.0.zip
+  snappyref.exe
   models/
   UPDATE.txt
 ```
@@ -67,9 +67,9 @@ The zip should not contain a top-level `library/` directory.
 
 ```text
 To update:
-1. Quit Reference.
-2. Extract this zip into your existing Reference folder.
-3. Replace reference.exe and models/ when prompted.
+1. Quit SnappyRef.
+2. Extract this zip into your existing SnappyRef folder.
+3. Replace snappyref.exe and models/ when prompted.
 4. Do not delete or replace the library/ folder.
 ```
 

@@ -3,21 +3,21 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 manifest=${1:-"$repo_root/tests/fixtures/external/manifest.json"}
-fixture_root=${REFERENCE_EXTERNAL_FIXTURE_DIR:-"$repo_root/tests/fixtures/external/files"}
-reference_bin=${REFERENCE_BIN:-"$repo_root/target/release/reference"}
+fixture_root=${SNAPPYREF_EXTERNAL_FIXTURE_DIR:-"$repo_root/tests/fixtures/external/files"}
+snappyref_bin=${SNAPPYREF_BIN:-"$repo_root/target/release/snappyref"}
 
 if [[ ! -f "$manifest" ]]; then
   echo "fixture manifest not found: $manifest" >&2
   exit 2
 fi
 
-if [[ ! -x "$reference_bin" ]]; then
-  echo "release binary not found: $reference_bin" >&2
+if [[ ! -x "$snappyref_bin" ]]; then
+  echo "release binary not found: $snappyref_bin" >&2
   echo "run: cargo build --release" >&2
   exit 2
 fi
 
-python3 - "$manifest" "$fixture_root" "$reference_bin" <<'PY'
+python3 - "$manifest" "$fixture_root" "$snappyref_bin" <<'PY'
 import json
 import pathlib
 import re
@@ -26,7 +26,7 @@ import sys
 
 manifest_path = pathlib.Path(sys.argv[1])
 fixture_root = pathlib.Path(sys.argv[2])
-reference_bin = pathlib.Path(sys.argv[3])
+snappyref_bin = pathlib.Path(sys.argv[3])
 fixtures = json.loads(manifest_path.read_text())
 
 failed = False
@@ -42,7 +42,7 @@ for fixture in fixtures:
         continue
 
     result = subprocess.run(
-        [str(reference_bin), "--perf-decode", str(path)],
+        [str(snappyref_bin), "--perf-decode", str(path)],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
