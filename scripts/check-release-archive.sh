@@ -47,6 +47,7 @@ require_entry "UPDATE.txt"
 case "$binary_name" in
   *.app/Contents/MacOS/*)
     app_root="${binary_name%%.app/*}.app"
+    model_prefix="$app_root/Contents/Resources/models"
     require_entry "$app_root/Contents/Info.plist"
     require_entry "$app_root/Contents/Resources/snappyref.icns"
     ;;

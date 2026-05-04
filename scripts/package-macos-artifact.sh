@@ -58,10 +58,13 @@ cat > "$contents_root/Info.plist" <<PLIST
 </plist>
 PLIST
 
-python3 scripts/fetch-semantic-model.py --target "$macos_root/models"
-model_root="$macos_root/models/siglip2_base_patch16_224_int8"
+python3 scripts/fetch-semantic-model.py --target "$resources_root/models"
+model_root="$resources_root/models/siglip2_base_patch16_224_int8"
 test -s "$model_root/tokenizer.json"
 test -s "$model_root/onnx/text_model_int8.onnx"
 test -s "$model_root/onnx/vision_model_int8.onnx"
+
+codesign --force --deep --sign - "$app_root"
+codesign --verify --deep --strict "$app_root"
 
 (cd "$package_root" && zip -9 -r "$zip_path" SnappyRef.app UPDATE.txt)
