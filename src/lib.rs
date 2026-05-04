@@ -67,6 +67,7 @@ pub fn run() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([viewport_size.x, viewport_size.y])
+            .with_icon(app_icon())
             .with_fullsize_content_view(true)
             .with_title_shown(false)
             .with_titlebar_shown(false)
@@ -84,4 +85,9 @@ pub fn run() -> eframe::Result<()> {
             Ok(Box::new(app::SnappyRefApp::new(cc, config.clone())))
         }),
     )
+}
+
+fn app_icon() -> eframe::egui::IconData {
+    eframe::icon_data::from_png_bytes(include_bytes!("../assets/app-icon/snappyref-128.png"))
+        .expect("embedded SnappyRef app icon should be valid PNG")
 }

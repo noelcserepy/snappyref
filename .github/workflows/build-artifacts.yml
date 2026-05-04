@@ -108,21 +108,11 @@ jobs:
 
       - name: Package artifact
         run: |
-          package_root="${RUNNER_TEMP}/snappyref-macos-package"
-          rm -rf "$package_root"
-          mkdir -p "$package_root"
-          cp target/release/snappyref "$package_root/"
-          cp UPDATE.txt "$package_root/"
-          python3 scripts/fetch-semantic-model.py --target "$package_root/models"
-          model_root="$package_root/models/siglip2_base_patch16_224_int8"
-          test -s "$model_root/tokenizer.json"
-          test -s "$model_root/onnx/text_model_int8.onnx"
-          test -s "$model_root/onnx/vision_model_int8.onnx"
           zip_path="${RUNNER_TEMP}/snappyref-macos-${{ github.sha }}.zip"
-          (cd "$package_root" && zip -9 -r "$zip_path" snappyref models UPDATE.txt)
+          scripts/package-macos-artifact.sh "$zip_path"
 
       - name: Check archive contract
-        run: scripts/check-release-archive.sh "${RUNNER_TEMP}/snappyref-macos-${{ github.sha }}.zip" snappyref
+        run: scripts/check-release-archive.sh "${RUNNER_TEMP}/snappyref-macos-${{ github.sha }}.zip" SnappyRef.app/Contents/MacOS/snappyref
 
       - uses: actions/upload-artifact@v4
         with:
