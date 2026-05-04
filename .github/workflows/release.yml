@@ -28,6 +28,7 @@ jobs:
           & "$vcpkgRoot\bootstrap-vcpkg.bat"
           & "$vcpkgRoot\vcpkg.exe" install libjpeg-turbo:x64-windows-static
           "TURBOJPEG_SOURCE=explicit" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TURBOJPEG_STATIC=1" | Out-File -FilePath $env:GITHUB_ENV -Append
           "TURBOJPEG_LIB_DIR=$vcpkgRoot\installed\x64-windows-static\lib" | Out-File -FilePath $env:GITHUB_ENV -Append
           "TURBOJPEG_INCLUDE_DIR=$vcpkgRoot\installed\x64-windows-static\include" | Out-File -FilePath $env:GITHUB_ENV -Append
 
@@ -83,11 +84,19 @@ jobs:
       - name: Configure turbojpeg
         run: |
           echo "TURBOJPEG_SOURCE=explicit" >> "$GITHUB_ENV"
+          echo "TURBOJPEG_STATIC=1" >> "$GITHUB_ENV"
           echo "TURBOJPEG_LIB_DIR=$(brew --prefix jpeg-turbo)/lib" >> "$GITHUB_ENV"
           echo "TURBOJPEG_INCLUDE_DIR=$(brew --prefix jpeg-turbo)/include" >> "$GITHUB_ENV"
 
       - name: Build release binary
         run: cargo build --release --locked
+
+      - name: Verify turbojpeg is statically linked
+        run: |
+          if otool -L target/release/snappyref | tail -n +2 | grep -i turbojpeg; then
+            echo "snappyref has a dynamic libturbojpeg dependency" >&2
+            exit 1
+          fi
 
       - name: Package artifact
         run: |
