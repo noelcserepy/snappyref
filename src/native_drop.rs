@@ -497,7 +497,9 @@ mod platform {
         ReleaseStgMedium, RevokeDragDrop,
     };
     use windows_sys::Win32::UI::Shell::{DragQueryFileW, HDROP};
-    use windows_sys::core::{GUID, HRESULT, IUnknown};
+    use windows_sys::core::{GUID, HRESULT};
+
+    type IUnknown = c_void;
 
     static STATE: OnceLock<Mutex<super::NativeDropState>> = OnceLock::new();
     static REGISTRATION: OnceLock<Mutex<Option<DropTargetRegistration>>> = OnceLock::new();
@@ -677,7 +679,9 @@ mod platform {
                 return E_NOINTERFACE;
             }
             unsafe {
-                if !riid.is_null() && (*riid == IID_IUNKNOWN || *riid == IID_IDROPTARGET) {
+                if !riid.is_null()
+                    && (guid_eq(&*riid, &IID_IUNKNOWN) || guid_eq(&*riid, &IID_IDROPTARGET))
+                {
                     *ppv_object = this.cast();
                     Self::add_ref(this);
                     S_OK
@@ -874,7 +878,7 @@ mod platform {
             ptd: ptr::null_mut(),
             dwAspect: DVASPECT_CONTENT,
             lindex: -1,
-            tymed: TYMED_HGLOBAL,
+            tymed: TYMED_HGLOBAL as u32,
         };
         let mut medium: STGMEDIUM = unsafe { std::mem::zeroed() };
         let get_data = unsafe { (*(data_object as *mut *mut IDataObjectVtbl)).as_ref()? }.GetData;
@@ -903,6 +907,13 @@ mod platform {
             .chain(std::iter::once(0))
             .collect::<Vec<_>>();
         unsafe { RegisterClipboardFormatW(wide.as_ptr()) as u16 }
+    }
+
+    fn guid_eq(left: &GUID, right: &GUID) -> bool {
+        left.data1 == right.data1
+            && left.data2 == right.data2
+            && left.data3 == right.data3
+            && left.data4 == right.data4
     }
 
     fn utf16_hglobal_text(pointer: *const u8, size: usize) -> Option<String> {

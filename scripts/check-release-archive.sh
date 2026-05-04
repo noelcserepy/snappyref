@@ -8,6 +8,12 @@ fi
 
 archive=$1
 binary_name=$2
+binary_dir=$(dirname "$binary_name")
+if [[ "$binary_dir" == "." ]]; then
+  model_prefix="models"
+else
+  model_prefix="$binary_dir/models"
+fi
 
 if [[ ! -f "$archive" ]]; then
   echo "missing archive: $archive" >&2
@@ -38,9 +44,14 @@ forbid_path() {
 
 require_entry "$binary_name"
 require_entry "UPDATE.txt"
-require_entry "models/siglip2_base_patch16_224_int8/tokenizer.json"
-require_entry "models/siglip2_base_patch16_224_int8/onnx/text_model_int8.onnx"
-require_entry "models/siglip2_base_patch16_224_int8/onnx/vision_model_int8.onnx"
+case "$binary_name" in
+  *.app/Contents/MacOS/*)
+    require_entry "${binary_name%%.app/*}.app/Contents/Info.plist"
+    ;;
+esac
+require_entry "$model_prefix/siglip2_base_patch16_224_int8/tokenizer.json"
+require_entry "$model_prefix/siglip2_base_patch16_224_int8/onnx/text_model_int8.onnx"
+require_entry "$model_prefix/siglip2_base_patch16_224_int8/onnx/vision_model_int8.onnx"
 
 forbid_path "library"
 forbid_path "library.db"
