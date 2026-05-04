@@ -46,7 +46,9 @@ require_entry "$binary_name"
 require_entry "UPDATE.txt"
 case "$binary_name" in
   *.app/Contents/MacOS/*)
-    require_entry "${binary_name%%.app/*}.app/Contents/Info.plist"
+    app_root="${binary_name%%.app/*}.app"
+    require_entry "$app_root/Contents/Info.plist"
+    require_entry "$app_root/Contents/Resources/snappyref.icns"
     ;;
 esac
 require_entry "$model_prefix/siglip2_base_patch16_224_int8/tokenizer.json"

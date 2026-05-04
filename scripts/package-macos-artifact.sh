@@ -11,6 +11,7 @@ package_root=$(mktemp -d "${RUNNER_TEMP:-/tmp}/snappyref-macos-package.XXXXXX")
 app_root="$package_root/SnappyRef.app"
 contents_root="$app_root/Contents"
 macos_root="$contents_root/MacOS"
+resources_root="$contents_root/Resources"
 app_version=$(python3 - <<'PY'
 import pathlib
 import tomllib
@@ -20,9 +21,10 @@ print(manifest["package"]["version"])
 PY
 )
 
-mkdir -p "$macos_root"
+mkdir -p "$macos_root" "$resources_root"
 cp target/release/snappyref "$macos_root/"
 chmod +x "$macos_root/snappyref"
+cp assets/app-icon/snappyref.icns "$resources_root/"
 cp UPDATE.txt "$package_root/"
 
 cat > "$contents_root/Info.plist" <<PLIST
@@ -36,6 +38,8 @@ cat > "$contents_root/Info.plist" <<PLIST
   <string>snappyref</string>
   <key>CFBundleIdentifier</key>
   <string>dev.snappyref.SnappyRef</string>
+  <key>CFBundleIconFile</key>
+  <string>snappyref</string>
   <key>CFBundleName</key>
   <string>SnappyRef</string>
   <key>CFBundleDisplayName</key>
