@@ -12,6 +12,10 @@ Use this repo-local guide when inspecting the app, verifying a UI state, or addi
 
 ## Inspecting The App
 
+- For Computer Use/manual UI testing, launch the app through the dev bundle wrapper so macOS exposes a bundle identifier:
+  - `REFERENCE_LIBRARY_ROOT=/Users/noelcserepy/dev/reference/library scripts/run-dev-app.sh`
+  - Target Computer Use at `dev.noelcserepy.snappyref.dev`.
+  - Use `REFERENCE_LIBRARY_ROOT` when the test needs the existing repo-local image library; otherwise the wrapper starts with its own empty `target/SnappyRefDev.app` library.
 - Prefer the existing debug probes before adding anything new.
 - Current probes live in `src/app.rs`:
   - `--verify-search=<query>`

@@ -4340,38 +4340,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reference"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "bytemuck",
- "eframe",
- "egui_extras",
- "egui_kittest",
- "exr",
- "hf-hub",
- "image",
- "jxl-oxide",
- "ndarray",
- "objc2 0.5.2",
- "objc2-app-kit 0.2.2",
- "objc2-foundation 0.2.2",
- "ort",
- "pollster",
- "raw-window-handle",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "time",
- "tokenizers",
- "turbojpeg",
- "url",
- "usvg",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "regex"
 version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4933,6 +4901,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd538fb6910ac1099850255cf94a94df6551fbdd602454387d0adb2d1ca6dead"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "snappyref"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "bytemuck",
+ "eframe",
+ "egui_extras",
+ "egui_kittest",
+ "exr",
+ "hf-hub",
+ "image",
+ "jxl-oxide",
+ "ndarray",
+ "objc2 0.5.2",
+ "objc2-app-kit 0.2.2",
+ "objc2-foundation 0.2.2",
+ "ort",
+ "pollster",
+ "raw-window-handle",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "time",
+ "tokenizers",
+ "turbojpeg",
+ "url",
+ "usvg",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -13,7 +13,7 @@ if [[ ! -f "$source_image" ]]; then
 fi
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-reference_bin=${REFERENCE_BIN:-"$repo_root/target/release/reference"}
+reference_bin=${REFERENCE_BIN:-"$repo_root/target/release/snappyref"}
 
 if [[ ! -x "$reference_bin" ]]; then
   echo "release binary not found: $reference_bin" >&2

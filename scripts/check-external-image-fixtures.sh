@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 manifest=${1:-"$repo_root/tests/fixtures/external/manifest.json"}
 fixture_root=${REFERENCE_EXTERNAL_FIXTURE_DIR:-"$repo_root/tests/fixtures/external/files"}
-reference_bin=${REFERENCE_BIN:-"$repo_root/target/release/reference"}
+reference_bin=${REFERENCE_BIN:-"$repo_root/target/release/snappyref"}
 
 if [[ ! -f "$manifest" ]]; then
   echo "fixture manifest not found: $manifest" >&2
