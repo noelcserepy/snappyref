@@ -118,11 +118,12 @@ fn resolve_model_assets<F>(
 where
     F: FnMut(&str),
 {
-    let app_root = std::env::current_exe()
+    let app_roots = std::env::current_exe()
         .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf));
+        .and_then(|path| path.parent().map(packaged_model_roots_from_executable_dir))
+        .unwrap_or_default();
 
-    if let Some(app_root) = app_root {
+    for app_root in app_roots {
         if let ModelAssetResolution::Packaged(assets) =
             resolve_model_assets_from_app_root(spec, &app_root)
         {
@@ -132,6 +133,30 @@ where
     }
 
     download_model_assets(spec, on_progress)
+}
+
+fn packaged_model_roots_from_executable_dir(executable_dir: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![executable_dir.to_path_buf()];
+
+    if let Some(resources_root) = macos_app_resources_root(executable_dir) {
+        roots.insert(0, resources_root);
+    }
+
+    roots
+}
+
+fn macos_app_resources_root(executable_dir: &Path) -> Option<PathBuf> {
+    let contents_dir = executable_dir.parent()?;
+    if executable_dir.file_name()? != "MacOS" || contents_dir.file_name()? != "Contents" {
+        return None;
+    }
+
+    let app_dir = contents_dir.parent()?;
+    if app_dir.extension()? != "app" {
+        return None;
+    }
+
+    Some(contents_dir.join("Resources"))
 }
 
 fn download_model_assets<F>(
@@ -330,7 +355,8 @@ fn normalize(mut values: Vec<f32>) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_SEMANTIC_SEARCH_MODEL, ModelAssetResolution, resolve_model_assets_from_app_root,
+        DEFAULT_SEMANTIC_SEARCH_MODEL, ModelAssetResolution,
+        packaged_model_roots_from_executable_dir, resolve_model_assets_from_app_root,
         resolve_packaged_model_assets,
     };
 
@@ -397,5 +423,20 @@ mod tests {
         assert!(matches!(resolution, ModelAssetResolution::HuggingFace));
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn app_bundle_model_roots_prefer_resources() {
+        let executable_dir = std::path::Path::new("/fake/SnappyRef/SnappyRef.app/Contents/MacOS");
+
+        let roots = packaged_model_roots_from_executable_dir(executable_dir);
+
+        assert_eq!(
+            roots,
+            vec![
+                std::path::PathBuf::from("/fake/SnappyRef/SnappyRef.app/Contents/Resources"),
+                std::path::PathBuf::from("/fake/SnappyRef/SnappyRef.app/Contents/MacOS"),
+            ]
+        );
     }
 }
