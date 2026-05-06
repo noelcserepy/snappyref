@@ -1,0 +1,127 @@
+name: Package Release Assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_run_id:
+        description: Workflow run id from Build Apps
+        required: true
+        type: string
+      model_release_tag:
+        description: Release tag that contains the reusable model bundle
+        required: false
+        default: models-siglip2-base-patch16-224-int8
+        type: string
+      include_models:
+        description: Include model bundle in packaged assets
+        required: false
+        default: true
+        type: boolean
+      publish_release:
+        description: Publish packaged zips to a draft prerelease
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        description: Release tag to create/update when publish_release is true
+        required: false
+        default: test-packaged-release
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  package:
+    name: Package release assets
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.app_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/app-artifacts
+
+      - name: Download model bundle
+        if: ${{ inputs.include_models }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/model-bundle"
+          gh release download "${{ inputs.model_release_tag }}" \
+            --pattern 'snappyref-models-*.zip' \
+            --dir "${RUNNER_TEMP}/model-bundle"
+
+      - name: Package assets
+        run: |
+          set -euo pipefail
+          release_assets="${RUNNER_TEMP}/release-assets"
+          mkdir -p "$release_assets"
+
+          windows_app=$(find "${RUNNER_TEMP}/app-artifacts" -type d -path '*/SnappyRef' | head -n 1)
+          if [[ -z "$windows_app" ]]; then
+            echo "missing Windows app artifact" >&2
+            exit 1
+          fi
+          windows_app_zip="${RUNNER_TEMP}/windows-app.zip"
+          (cd "$(dirname "$windows_app")" && zip -9 -r "$windows_app_zip" SnappyRef)
+
+          macos_app_zip=$(find "${RUNNER_TEMP}/app-artifacts" -type f -name 'snappyref-macos-app-*.zip' | head -n 1)
+          if [[ -z "$macos_app_zip" ]]; then
+            echo "missing macOS app artifact" >&2
+            exit 1
+          fi
+
+          package_args=()
+          suffix="update"
+          if [[ "${{ inputs.include_models }}" == "true" ]]; then
+            model_bundle=$(find "${RUNNER_TEMP}/model-bundle" -type f -name 'snappyref-models-*.zip' | head -n 1)
+            if [[ -z "$model_bundle" ]]; then
+              echo "missing model bundle" >&2
+              exit 1
+            fi
+            package_args=(--include-models --models-bundle "$model_bundle")
+            suffix="full"
+          fi
+
+          scripts/package-release-assets.sh \
+            --platform windows \
+            --app-archive "$windows_app_zip" \
+            "${package_args[@]}" \
+            --output "$release_assets/snappyref-windows-${suffix}.zip"
+
+          if [[ "${{ inputs.include_models }}" == "true" ]]; then
+            scripts/package-release-assets.sh \
+              --platform macos \
+              --app-archive "$macos_app_zip" \
+              "${package_args[@]}" \
+              --output "$release_assets/snappyref-macos-full.zip"
+          else
+            echo "Skipping macOS update-only zip because models live inside SnappyRef.app."
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snappyref-packaged-release-assets
+          path: ${{ runner.temp }}/release-assets/*.zip
+          retention-days: 7
+
+      - name: Publish draft prerelease
+        if: ${{ inputs.publish_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --title "SnappyRef packaged release" \
+              --notes "Packaged SnappyRef release assets." \
+              --draft \
+              --prerelease
+          fi
+          gh release upload "$tag" "${RUNNER_TEMP}"/release-assets/*.zip --clobber

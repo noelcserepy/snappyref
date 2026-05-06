@@ -1,8 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+model_mode=fetch
+models_dir=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skip-models)
+      model_mode=skip
+      shift
+      ;;
+    --models-dir)
+      if [[ $# -lt 2 ]]; then
+        echo "missing value for --models-dir" >&2
+        exit 2
+      fi
+      model_mode=copy
+      models_dir=$2
+      shift 2
+      ;;
+    --*)
+      echo "unknown option: $1" >&2
+      exit 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
 if [[ $# -ne 1 ]]; then
-  echo "usage: $0 <output.zip>" >&2
+  echo "usage: $0 [--skip-models|--models-dir <models-dir>] <output.zip>" >&2
   exit 2
 fi
 
@@ -58,11 +86,28 @@ cat > "$contents_root/Info.plist" <<PLIST
 </plist>
 PLIST
 
-python3 scripts/fetch-semantic-model.py --target "$resources_root/models"
-model_root="$resources_root/models/siglip2_base_patch16_224_int8"
-test -s "$model_root/tokenizer.json"
-test -s "$model_root/onnx/text_model_int8.onnx"
-test -s "$model_root/onnx/vision_model_int8.onnx"
+case "$model_mode" in
+  fetch)
+    python3 scripts/fetch-semantic-model.py --target "$resources_root/models"
+    ;;
+  copy)
+    if [[ ! -d "$models_dir" ]]; then
+      echo "missing models directory: $models_dir" >&2
+      exit 1
+    fi
+    mkdir -p "$resources_root"
+    cp -R "$models_dir" "$resources_root/models"
+    ;;
+  skip)
+    ;;
+esac
+
+if [[ "$model_mode" != "skip" ]]; then
+  model_root="$resources_root/models/siglip2_base_patch16_224_int8"
+  test -s "$model_root/tokenizer.json"
+  test -s "$model_root/onnx/text_model_int8.onnx"
+  test -s "$model_root/onnx/vision_model_int8.onnx"
+fi
 
 codesign --force --deep --sign - "$app_root"
 codesign --verify --deep --strict "$app_root"
