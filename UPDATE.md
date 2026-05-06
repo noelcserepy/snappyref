@@ -93,10 +93,14 @@ tagged release workflow:
 7. Download the release zips and run the real-zip update smoke checklist before
    broadly publishing the release.
 
-For a test zip that should not create a GitHub release, run the manual
-`Build Artifacts` workflow from GitHub Actions and set `ref` to `main`, a
-branch, or a commit SHA. Download the generated workflow artifacts and treat
-them as update-shaped test zips only.
+For a fast test build, run the manual `Build Artifacts` workflow from GitHub
+Actions and set `ref` to `main`, a branch, or a commit SHA. The default
+`release-fast` profile skips native turbojpeg and full release optimization so
+Windows test artifacts do not pay the full release build cost.
+
+GitHub Actions artifacts are always downloaded as a GitHub-generated zip. For a
+direct one-zip test download, enable `publish_test_release` on the manual
+workflow. It creates a draft prerelease with normal release zip assets.
 
 ## Verification
 

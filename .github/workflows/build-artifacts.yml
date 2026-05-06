@@ -8,9 +8,22 @@ on:
         required: false
         default: main
         type: string
+      artifact_profile:
+        description: Build profile for manual artifacts
+        required: false
+        default: release-fast
+        type: choice
+        options:
+          - release-fast
+          - release
+      publish_test_release:
+        description: Publish a draft prerelease with direct zip downloads
+        required: false
+        default: false
+        type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   windows:
@@ -27,6 +40,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install libjpeg-turbo
+        if: ${{ inputs.artifact_profile == 'release' }}
         shell: pwsh
         run: |
           $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
@@ -40,15 +54,34 @@ jobs:
           "TURBOJPEG_INCLUDE_DIR=$vcpkgRoot\installed\$vcpkgTriplet\include" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build release binary
-        run: cargo build --release --locked
+        shell: pwsh
+        run: |
+          if ("${{ inputs.artifact_profile }}" -eq "release") {
+            cargo build --release --locked
+          } else {
+            cargo build --profile release-fast --locked --no-default-features --features semantic-search
+          }
+
+      - name: Verify Windows GUI subsystem
+        shell: pwsh
+        run: |
+          $targetDir = if ("${{ inputs.artifact_profile }}" -eq "release") { "target\release" } else { "target\release-fast" }
+          $exe = Join-Path $targetDir "snappyref.exe"
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $subsystem = [BitConverter]::ToUInt16($bytes, $peOffset + 24 + 68)
+          if ($subsystem -ne 2) {
+            throw "expected Windows GUI subsystem 2, got $subsystem"
+          }
 
       - name: Package artifact
         shell: pwsh
         run: |
+          $targetDir = if ("${{ inputs.artifact_profile }}" -eq "release") { "target\release" } else { "target\release-fast" }
           $artifactRoot = Join-Path $env:RUNNER_TEMP "snappyref-windows-artifact"
           $packageRoot = Join-Path $artifactRoot "SnappyRef"
           New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
-          Copy-Item target\release\snappyref.exe $packageRoot
+          Copy-Item (Join-Path $targetDir "snappyref.exe") $packageRoot
           Copy-Item UPDATE.txt $packageRoot
           python scripts\fetch-semantic-model.py --target (Join-Path $packageRoot "models")
           $modelRoot = Join-Path $packageRoot "models\siglip2_base_patch16_224_int8"
@@ -89,9 +122,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install libjpeg-turbo
+        if: ${{ inputs.artifact_profile == 'release' }}
         run: brew install jpeg-turbo
 
       - name: Configure turbojpeg
+        if: ${{ inputs.artifact_profile == 'release' }}
         run: |
           echo "TURBOJPEG_SOURCE=explicit" >> "$GITHUB_ENV"
           echo "TURBOJPEG_STATIC=1" >> "$GITHUB_ENV"
@@ -99,9 +134,15 @@ jobs:
           echo "TURBOJPEG_INCLUDE_DIR=$(brew --prefix jpeg-turbo)/include" >> "$GITHUB_ENV"
 
       - name: Build release binary
-        run: cargo build --release --locked
+        run: |
+          if [[ "${{ inputs.artifact_profile }}" == "release" ]]; then
+            cargo build --release --locked
+          else
+            cargo build --profile release-fast --locked --no-default-features --features semantic-search
+          fi
 
       - name: Verify turbojpeg is statically linked
+        if: ${{ inputs.artifact_profile == 'release' }}
         run: |
           if otool -L target/release/snappyref | tail -n +2 | grep -i turbojpeg; then
             echo "snappyref has a dynamic libturbojpeg dependency" >&2
@@ -110,6 +151,13 @@ jobs:
 
       - name: Package artifact
         run: |
+          if [[ "${{ inputs.artifact_profile }}" == "release" ]]; then
+            binary_path="target/release/snappyref"
+          else
+            binary_path="target/release-fast/snappyref"
+          fi
+          mkdir -p target/release
+          cp "$binary_path" target/release/snappyref
           zip_path="${RUNNER_TEMP}/snappyref-macos-${{ github.sha }}.zip"
           scripts/package-macos-artifact.sh "$zip_path"
 
@@ -121,3 +169,45 @@ jobs:
           name: snappyref-macos-${{ github.sha }}
           path: ${{ runner.temp }}/snappyref-macos-${{ github.sha }}.zip
           retention-days: 7
+
+  test-release:
+    name: Publish test release
+    runs-on: ubuntu-latest
+    needs:
+      - windows
+      - macos
+    if: ${{ inputs.publish_test_release }}
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/artifacts
+
+      - name: Prepare release assets
+        run: |
+          set -euo pipefail
+          release_assets="${RUNNER_TEMP}/release-assets"
+          mkdir -p "$release_assets"
+
+          windows_root=$(find "${RUNNER_TEMP}/artifacts" -type d -name SnappyRef | head -n 1)
+          if [[ -z "$windows_root" ]]; then
+            echo "missing downloaded Windows SnappyRef folder" >&2
+            exit 1
+          fi
+          (cd "$(dirname "$windows_root")" && zip -9 -r "$release_assets/snappyref-windows-${{ github.sha }}.zip" SnappyRef)
+
+          macos_zip=$(find "${RUNNER_TEMP}/artifacts" -type f -name 'snappyref-macos-${{ github.sha }}.zip' | head -n 1)
+          if [[ -z "$macos_zip" ]]; then
+            echo "missing downloaded macOS release zip" >&2
+            exit 1
+          fi
+          cp "$macos_zip" "$release_assets/"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: test-build-${{ github.run_number }}
+          target_commitish: ${{ inputs.ref }}
+          name: Test build ${{ github.run_number }}
+          draft: true
+          prerelease: true
+          files: ${{ runner.temp }}/release-assets/*.zip
