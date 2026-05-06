@@ -545,9 +545,10 @@ fn image_count_label(count: usize) -> String {
 }
 
 fn board_shortcut_hint(index: usize) -> Option<String> {
+    let modifier = platform_command_modifier_name();
     match index {
-        0..=8 => Some(format!("Cmd+{}", index + 1)),
-        9 => Some("Cmd+0".to_owned()),
+        0..=8 => Some(format!("{modifier}+{}", index + 1)),
+        9 => Some(format!("{modifier}+0")),
         _ => None,
     }
 }
@@ -1006,15 +1007,29 @@ fn truncate_board_name(name: &str, max_chars: usize) -> String {
 }
 
 fn sidebar_shortcut_label() -> &'static str {
+    platform_shortcut_label("⌘B", "Ctrl+B")
+}
+
+fn platform_command_modifier_name() -> &'static str {
     #[cfg(target_os = "macos")]
     {
-        "⌘B"
+        "Cmd"
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        "Ctrl+B"
+        "Ctrl"
     }
+}
+
+#[cfg(target_os = "macos")]
+fn platform_shortcut_label(mac: &'static str, _windows: &'static str) -> &'static str {
+    mac
+}
+
+#[cfg(not(target_os = "macos"))]
+fn platform_shortcut_label(_mac: &'static str, windows: &'static str) -> &'static str {
+    windows
 }
 
 fn display_shortcut_label(keys: &str) -> String {

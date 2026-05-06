@@ -1,7 +1,7 @@
 Manual portable update:
 
 1. Quit SnappyRef.
-2. Extract this zip into your existing SnappyRef folder.
+2. Extract this zip.
 3. On macOS, replace the old SnappyRef.app with the new one.
-4. On Windows, replace the old app binary and models/ with the new ones.
+4. On Windows, open the extracted SnappyRef folder and replace the old snappyref.exe with the new one.
 5. Keep your library/, library.db, originals/, and thumbs/ untouched.

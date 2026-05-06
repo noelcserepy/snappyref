@@ -11,8 +11,10 @@ binary_name=$2
 binary_dir=$(dirname "$binary_name")
 if [[ "$binary_dir" == "." ]]; then
   model_prefix="models"
+  update_entry="UPDATE.txt"
 else
   model_prefix="$binary_dir/models"
+  update_entry="$binary_dir/UPDATE.txt"
 fi
 
 if [[ ! -f "$archive" ]]; then
@@ -43,15 +45,16 @@ forbid_path() {
 }
 
 require_entry "$binary_name"
-require_entry "UPDATE.txt"
 case "$binary_name" in
   *.app/Contents/MacOS/*)
     app_root="${binary_name%%.app/*}.app"
     model_prefix="$app_root/Contents/Resources/models"
+    update_entry="UPDATE.txt"
     require_entry "$app_root/Contents/Info.plist"
     require_entry "$app_root/Contents/Resources/snappyref.icns"
     ;;
 esac
+require_entry "$update_entry"
 require_entry "$model_prefix/siglip2_base_patch16_224_int8/tokenizer.json"
 require_entry "$model_prefix/siglip2_base_patch16_224_int8/onnx/text_model_int8.onnx"
 require_entry "$model_prefix/siglip2_base_patch16_224_int8/onnx/vision_model_int8.onnx"
@@ -60,3 +63,9 @@ forbid_path "library"
 forbid_path "library.db"
 forbid_path "originals"
 forbid_path "thumbs"
+if [[ "$binary_dir" != "." && "$binary_name" != *.app/Contents/MacOS/* ]]; then
+  forbid_path "$binary_dir/library"
+  forbid_path "$binary_dir/library.db"
+  forbid_path "$binary_dir/originals"
+  forbid_path "$binary_dir/thumbs"
+fi
