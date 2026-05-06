@@ -1,0 +1,88 @@
+name: Build macOS App
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build
+        required: false
+        default: main
+        type: string
+      build_profile:
+        description: Build profile
+        required: false
+        default: release-fast
+        type: choice
+        options:
+          - release-fast
+          - release
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        default: main
+        type: string
+      build_profile:
+        required: false
+        default: release
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: Build macOS app
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install libjpeg-turbo
+        if: ${{ inputs.build_profile == 'release' }}
+        run: brew install jpeg-turbo
+
+      - name: Configure turbojpeg
+        if: ${{ inputs.build_profile == 'release' }}
+        run: |
+          echo "TURBOJPEG_SOURCE=explicit" >> "$GITHUB_ENV"
+          echo "TURBOJPEG_STATIC=1" >> "$GITHUB_ENV"
+          echo "TURBOJPEG_LIB_DIR=$(brew --prefix jpeg-turbo)/lib" >> "$GITHUB_ENV"
+          echo "TURBOJPEG_INCLUDE_DIR=$(brew --prefix jpeg-turbo)/include" >> "$GITHUB_ENV"
+
+      - name: Build app binary
+        run: |
+          if [[ "${{ inputs.build_profile }}" == "release" ]]; then
+            cargo build --release --locked
+            echo "SNAPPYREF_TARGET_DIR=target/release" >> "$GITHUB_ENV"
+          else
+            cargo build --profile release-fast --locked --no-default-features --features semantic-search
+            echo "SNAPPYREF_TARGET_DIR=target/release-fast" >> "$GITHUB_ENV"
+          fi
+
+      - name: Verify turbojpeg is statically linked
+        if: ${{ inputs.build_profile == 'release' }}
+        run: |
+          if otool -L "$SNAPPYREF_TARGET_DIR/snappyref" | tail -n +2 | grep -i turbojpeg; then
+            echo "snappyref has a dynamic libturbojpeg dependency" >&2
+            exit 1
+          fi
+
+      - name: Package app artifact
+        run: |
+          mkdir -p target/release
+          cp "$SNAPPYREF_TARGET_DIR/snappyref" target/release/snappyref
+          zip_path="${RUNNER_TEMP}/snappyref-macos-app.zip"
+          scripts/package-macos-artifact.sh --skip-models "$zip_path"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snappyref-macos-app
+          path: ${{ runner.temp }}/snappyref-macos-app.zip
+          retention-days: 7

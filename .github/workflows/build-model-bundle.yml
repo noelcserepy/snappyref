@@ -13,8 +13,8 @@ on:
         required: false
         default: models-siglip2-base-patch16-224-int8
         type: string
-      publish_release:
-        description: Publish or update the model-bundle release asset
+      save_as_reusable_model_bundle:
+        description: Save bundle to a durable GitHub Release for future packages
         required: false
         default: true
         type: boolean
@@ -43,8 +43,8 @@ jobs:
           path: ${{ runner.temp }}/snappyref-models-siglip2_base_patch16_224_int8.zip
           retention-days: 7
 
-      - name: Publish model bundle release asset
-        if: ${{ inputs.publish_release }}
+      - name: Save reusable model bundle
+        if: ${{ inputs.save_as_reusable_model_bundle }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

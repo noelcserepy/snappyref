@@ -82,16 +82,16 @@ To update:
 Use the split workflows when app builds and model packaging should be decoupled:
 
 1. Run `Build Model Bundle` when the semantic-search model changes or when the
-   reusable model release asset is missing. This publishes
-   `snappyref-models-siglip2_base_patch16_224_int8.zip` to the configured model
-   release tag.
-2. Run `Build Apps` for the app commit you want to test or ship. This builds
-   app-only artifacts:
+   reusable model bundle is missing. Leave `save_as_reusable_model_bundle`
+   enabled so future packaging runs can reuse it.
+2. Run `Build Windows App` or `Build macOS App` for the app commit you want to
+   test or ship. These build app-only artifacts:
    - Windows: `SnappyRef/snappyref.exe` and `SnappyRef/UPDATE.txt`
    - macOS: `SnappyRef.app` and `UPDATE.txt`, without bundled models
-3. Run `Package Release Assets` with the `Build Apps` run id. Set
-   `include_models=true` for full install zips or `include_models=false` for a
-   smaller Windows update zip.
+3. Run `Package Release Zips`. Choose Windows, macOS, or both. Leave app run
+   ids blank to use the latest successful app builds, or paste explicit run ids
+   when you need exact inputs. Set `include_models=true` for full install zips
+   or `include_models=false` for a smaller Windows update zip.
 
 The packaged Windows full zip has this shape:
 
@@ -122,10 +122,10 @@ assets. GitHub Actions artifacts are always downloaded as GitHub-generated zip
 wrappers and should be treated as temporary handoff artifacts between
 workflows.
 
-### Tagged Release Workflow
+### Full Release Workflow
 
-When `main` is ready for the next version, publish update zips through the
-tagged release workflow:
+When `main` is ready for the next version, publish update zips through
+`Publish Full Release`:
 
 1. Switch to `main` and pull the latest changes.
 2. Run the release gate locally:
@@ -134,20 +134,20 @@ tagged release workflow:
    - `cargo test --locked --no-default-features update_preservation_smoke`
 3. Bump the package version if this is a real release.
 4. Commit and push the version bump.
-5. Create and push a version tag, for example `v0.2.0`.
-6. Let the GitHub Actions release workflow build and upload the Windows and
-   macOS zips.
-7. Download the release zips and run the real-zip update smoke checklist before
+5. Run `Publish Full Release` with `release_tag`, for example `v0.1.0`.
+6. Keep `build_profile=release` for public builds.
+7. Leave `create_draft_release=true` so the final zips attach to a draft
+   GitHub Release that can be inspected before publishing.
+8. Download the release zips and run the real-zip update smoke checklist before
    broadly publishing the release.
 
-For a fast test build, run the manual `Build Artifacts` workflow from GitHub
-Actions and set `ref` to `main`, a branch, or a commit SHA. The default
-`release-fast` profile skips native turbojpeg and full release optimization so
-Windows test artifacts do not pay the full release build cost.
+For a fast test app build, run `Build Windows App` or `Build macOS App` with
+`build_profile=release-fast`. That profile skips native turbojpeg and full
+release optimization, so it should not be used for public releases.
 
-GitHub Actions artifacts are always downloaded as a GitHub-generated zip. For a
-direct one-zip test download, enable `publish_test_release` on the manual
-workflow. It creates a draft prerelease with normal release zip assets.
+GitHub Actions artifacts are always downloaded as GitHub-generated zip wrappers.
+For direct one-zip downloads, use zips attached to a GitHub Release by
+`Package Release Zips` or `Publish Full Release`.
 
 ## Verification
 
