@@ -14,5 +14,5 @@ pub use board_item::{
 pub use session::{
     CanvasImageCacheTier, DEFAULT_CANVAS_IMAGE_MAX_SIDE, DEFAULT_IMPORT_GAP,
     DEFAULT_IMPORT_TARGET_CANVAS_AREA, DEFAULT_ROTATION_SNAP_DEGREES, UserSession, ViewportState,
-    WorkspaceSettings,
+    WindowState, WorkspaceSettings,
 };

@@ -1980,6 +1980,30 @@ impl CanvasState {
         true
     }
 
+    pub(super) fn set_image_center_and_scale(
+        &mut self,
+        item_id: i64,
+        center: egui::Pos2,
+        scale: f32,
+    ) -> bool {
+        let Some(image) = self.image_by_item_id_mut(item_id) else {
+            return false;
+        };
+        let min_scale = min_image_scale(&image.record.asset);
+        let normalized_scale = scale.max(min_scale);
+        let position_changed = (image.record.item.x - center.x).abs() > f32::EPSILON
+            || (image.record.item.y - center.y).abs() > f32::EPSILON;
+        let scale_changed = (image.record.item.scale - normalized_scale).abs() > f32::EPSILON;
+        if !position_changed && !scale_changed {
+            return false;
+        }
+
+        image.record.item.x = center.x;
+        image.record.item.y = center.y;
+        image.record.item.scale = normalized_scale;
+        true
+    }
+
     pub fn set_image_rotation(&mut self, item_id: i64, rotation: f32) -> bool {
         let Some(image) = self.image_by_item_id_mut(item_id) else {
             return false;
@@ -1987,6 +2011,28 @@ impl CanvasState {
         if (image.record.item.rotation - rotation).abs() <= f32::EPSILON {
             return false;
         }
+        image.record.item.rotation = rotation;
+        true
+    }
+
+    pub(super) fn set_image_center_and_rotation(
+        &mut self,
+        item_id: i64,
+        center: egui::Pos2,
+        rotation: f32,
+    ) -> bool {
+        let Some(image) = self.image_by_item_id_mut(item_id) else {
+            return false;
+        };
+        let position_changed = (image.record.item.x - center.x).abs() > f32::EPSILON
+            || (image.record.item.y - center.y).abs() > f32::EPSILON;
+        let rotation_changed = (image.record.item.rotation - rotation).abs() > f32::EPSILON;
+        if !position_changed && !rotation_changed {
+            return false;
+        }
+
+        image.record.item.x = center.x;
+        image.record.item.y = center.y;
         image.record.item.rotation = rotation;
         true
     }
