@@ -77,6 +77,53 @@ To update:
 
 ## Publishing A Manual Update Zip
 
+### Modular Packaging Workflow
+
+Use the split workflows when app builds and model packaging should be decoupled:
+
+1. Run `Build Model Bundle` when the semantic-search model changes or when the
+   reusable model release asset is missing. This publishes
+   `snappyref-models-siglip2_base_patch16_224_int8.zip` to the configured model
+   release tag.
+2. Run `Build Apps` for the app commit you want to test or ship. This builds
+   app-only artifacts:
+   - Windows: `SnappyRef/snappyref.exe` and `SnappyRef/UPDATE.txt`
+   - macOS: `SnappyRef.app` and `UPDATE.txt`, without bundled models
+3. Run `Package Release Assets` with the `Build Apps` run id. Set
+   `include_models=true` for full install zips or `include_models=false` for a
+   smaller Windows update zip.
+
+The packaged Windows full zip has this shape:
+
+```text
+snappyref-windows-full.zip
+  SnappyRef/
+    snappyref.exe
+    UPDATE.txt
+    models/
+```
+
+The packaged Windows update zip omits `models/`:
+
+```text
+snappyref-windows-update.zip
+  SnappyRef/
+    snappyref.exe
+    UPDATE.txt
+```
+
+macOS keeps models inside `SnappyRef.app/Contents/Resources/models`. Because of
+that, the modular packaging workflow only creates a macOS zip when
+`include_models=true`; replacing a model-less `.app` would remove the bundled
+models.
+
+For a direct one-zip download, publish the packaged assets as GitHub Release
+assets. GitHub Actions artifacts are always downloaded as GitHub-generated zip
+wrappers and should be treated as temporary handoff artifacts between
+workflows.
+
+### Tagged Release Workflow
+
 When `main` is ready for the next version, publish update zips through the
 tagged release workflow:
 
