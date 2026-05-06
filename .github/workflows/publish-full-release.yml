@@ -1,0 +1,168 @@
+name: Publish Full Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag, for example v0.1.0
+        required: true
+        default: v0.1.0
+        type: string
+      ref:
+        description: Git ref to build
+        required: false
+        default: main
+        type: string
+      build_profile:
+        description: Build profile
+        required: false
+        default: release
+        type: choice
+        options:
+          - release
+          - release-fast
+      include_windows:
+        description: Build and package Windows
+        required: false
+        default: true
+        type: boolean
+      include_macos:
+        description: Build and package macOS
+        required: false
+        default: true
+        type: boolean
+      create_draft_release:
+        description: Attach final zips to a draft GitHub Release
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  windows:
+    name: Build Windows app
+    if: ${{ inputs.include_windows }}
+    uses: ./.github/workflows/build-windows-app.yml
+    with:
+      ref: ${{ inputs.ref }}
+      build_profile: ${{ inputs.build_profile }}
+
+  macos:
+    name: Build macOS app
+    if: ${{ inputs.include_macos }}
+    uses: ./.github/workflows/build-macos-app.yml
+    with:
+      ref: ${{ inputs.ref }}
+      build_profile: ${{ inputs.build_profile }}
+
+  models:
+    name: Build model bundle
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Create model bundle
+        run: |
+          zip_path="${RUNNER_TEMP}/snappyref-models-siglip2_base_patch16_224_int8.zip"
+          scripts/create-model-bundle.sh "$zip_path"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snappyref-model-bundle
+          path: ${{ runner.temp }}/snappyref-models-siglip2_base_patch16_224_int8.zip
+          retention-days: 7
+
+  package:
+    name: Package full release zips
+    runs-on: ubuntu-latest
+    needs:
+      - windows
+      - macos
+      - models
+    if: ${{ always() && needs.models.result == 'success' && (!inputs.include_windows || needs.windows.result == 'success') && (!inputs.include_macos || needs.macos.result == 'success') }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.include_windows }}
+        with:
+          name: snappyref-windows-app
+          path: ${{ runner.temp }}/app-artifacts/windows
+
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.include_macos }}
+        with:
+          name: snappyref-macos-app
+          path: ${{ runner.temp }}/app-artifacts/macos
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: snappyref-model-bundle
+          path: ${{ runner.temp }}/model-bundle
+
+      - name: Package selected full zips
+        run: |
+          set -euo pipefail
+          release_assets="${RUNNER_TEMP}/release-assets"
+          mkdir -p "$release_assets"
+
+          model_bundle=$(find "${RUNNER_TEMP}/model-bundle" -type f -name 'snappyref-models-*.zip' | head -n 1)
+          if [[ -z "$model_bundle" ]]; then
+            echo "missing model bundle" >&2
+            exit 1
+          fi
+          package_args=(--include-models --models-bundle "$model_bundle")
+
+          if [[ "${{ inputs.include_windows }}" == "true" ]]; then
+            windows_app="${RUNNER_TEMP}/windows-app.zip"
+            (cd "${RUNNER_TEMP}/app-artifacts/windows" && zip -9 -r "$windows_app" SnappyRef)
+            scripts/package-release-assets.sh \
+              --platform windows \
+              --app-archive "$windows_app" \
+              "${package_args[@]}" \
+              --output "$release_assets/snappyref-windows-${{ inputs.release_tag }}-full.zip"
+          fi
+
+          if [[ "${{ inputs.include_macos }}" == "true" ]]; then
+            macos_app_zip=$(find "${RUNNER_TEMP}/app-artifacts/macos" -type f -name 'snappyref-macos-app.zip' | head -n 1)
+            if [[ -z "$macos_app_zip" ]]; then
+              echo "missing macOS app artifact" >&2
+              exit 1
+            fi
+            scripts/package-release-assets.sh \
+              --platform macos \
+              --app-archive "$macos_app_zip" \
+              "${package_args[@]}" \
+              --output "$release_assets/snappyref-macos-${{ inputs.release_tag }}-full.zip"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snappyref-full-release-zips
+          path: ${{ runner.temp }}/release-assets/*.zip
+          retention-days: 7
+
+      - name: Create draft release
+        if: ${{ inputs.create_draft_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --target "${{ inputs.ref }}" \
+              --title "SnappyRef $tag" \
+              --notes "Draft SnappyRef release." \
+              --draft
+          fi
+          gh release upload "$tag" "${RUNNER_TEMP}"/release-assets/*.zip --clobber

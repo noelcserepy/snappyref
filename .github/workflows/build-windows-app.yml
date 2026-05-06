@@ -1,4 +1,4 @@
-name: Build Apps
+name: Build Windows App
 
 on:
   workflow_dispatch:
@@ -8,14 +8,24 @@ on:
         required: false
         default: main
         type: string
-      artifact_profile:
-        description: Build profile for app artifacts
+      build_profile:
+        description: Build profile
         required: false
         default: release-fast
         type: choice
         options:
           - release-fast
           - release
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        default: main
+        type: string
+      build_profile:
+        required: false
+        default: release
+        type: string
 
 permissions:
   contents: read
@@ -35,7 +45,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install libjpeg-turbo
-        if: ${{ inputs.artifact_profile == 'release' }}
+        if: ${{ inputs.build_profile == 'release' }}
         shell: pwsh
         run: |
           $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
@@ -51,7 +61,7 @@ jobs:
       - name: Build app binary
         shell: pwsh
         run: |
-          if ("${{ inputs.artifact_profile }}" -eq "release") {
+          if ("${{ inputs.build_profile }}" -eq "release") {
             cargo build --release --locked
             "SNAPPYREF_TARGET_DIR=target\release" | Out-File -FilePath $env:GITHUB_ENV -Append
           } else {
@@ -80,62 +90,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: snappyref-windows-app-${{ github.sha }}
+          name: snappyref-windows-app
           path: ${{ runner.temp }}/snappyref-windows-app
-          retention-days: 7
-
-  macos:
-    name: Build macOS app
-    runs-on: macos-latest
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install libjpeg-turbo
-        if: ${{ inputs.artifact_profile == 'release' }}
-        run: brew install jpeg-turbo
-
-      - name: Configure turbojpeg
-        if: ${{ inputs.artifact_profile == 'release' }}
-        run: |
-          echo "TURBOJPEG_SOURCE=explicit" >> "$GITHUB_ENV"
-          echo "TURBOJPEG_STATIC=1" >> "$GITHUB_ENV"
-          echo "TURBOJPEG_LIB_DIR=$(brew --prefix jpeg-turbo)/lib" >> "$GITHUB_ENV"
-          echo "TURBOJPEG_INCLUDE_DIR=$(brew --prefix jpeg-turbo)/include" >> "$GITHUB_ENV"
-
-      - name: Build app binary
-        run: |
-          if [[ "${{ inputs.artifact_profile }}" == "release" ]]; then
-            cargo build --release --locked
-            echo "SNAPPYREF_TARGET_DIR=target/release" >> "$GITHUB_ENV"
-          else
-            cargo build --profile release-fast --locked --no-default-features --features semantic-search
-            echo "SNAPPYREF_TARGET_DIR=target/release-fast" >> "$GITHUB_ENV"
-          fi
-
-      - name: Verify turbojpeg is statically linked
-        if: ${{ inputs.artifact_profile == 'release' }}
-        run: |
-          if otool -L "$SNAPPYREF_TARGET_DIR/snappyref" | tail -n +2 | grep -i turbojpeg; then
-            echo "snappyref has a dynamic libturbojpeg dependency" >&2
-            exit 1
-          fi
-
-      - name: Package app artifact
-        run: |
-          mkdir -p target/release
-          cp "$SNAPPYREF_TARGET_DIR/snappyref" target/release/snappyref
-          zip_path="${RUNNER_TEMP}/snappyref-macos-app-${{ github.sha }}.zip"
-          scripts/package-macos-artifact.sh --skip-models "$zip_path"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: snappyref-macos-app-${{ github.sha }}
-          path: ${{ runner.temp }}/snappyref-macos-app-${{ github.sha }}.zip
           retention-days: 7

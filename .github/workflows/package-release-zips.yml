@@ -1,0 +1,224 @@
+name: Package Release Zips
+
+on:
+  workflow_dispatch:
+    inputs:
+      include_windows:
+        description: Package Windows zip
+        required: false
+        default: true
+        type: boolean
+      include_macos:
+        description: Package macOS zip
+        required: false
+        default: true
+        type: boolean
+      windows_app_run_id:
+        description: Windows app workflow run id; blank uses latest successful build
+        required: false
+        default: ""
+        type: string
+      macos_app_run_id:
+        description: macOS app workflow run id; blank uses latest successful build
+        required: false
+        default: ""
+        type: string
+      include_models:
+        description: Include reusable model bundle
+        required: false
+        default: true
+        type: boolean
+      model_bundle_tag:
+        description: Release tag that stores the reusable model bundle
+        required: false
+        default: models-siglip2-base-patch16-224-int8
+        type: string
+      create_draft_release:
+        description: Attach final zips to a draft GitHub Release
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        description: Release tag used when create_draft_release is true
+        required: false
+        default: v0.1.0
+        type: string
+  workflow_call:
+    inputs:
+      include_windows:
+        required: false
+        default: true
+        type: boolean
+      include_macos:
+        required: false
+        default: true
+        type: boolean
+      windows_app_run_id:
+        required: false
+        default: ""
+        type: string
+      macos_app_run_id:
+        required: false
+        default: ""
+        type: string
+      include_models:
+        required: false
+        default: true
+        type: boolean
+      model_bundle_tag:
+        required: false
+        default: models-siglip2-base-patch16-224-int8
+        type: string
+      create_draft_release:
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        required: false
+        default: v0.1.0
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  package:
+    name: Package release zips
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve app run ids
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          windows_run_id="${{ inputs.windows_app_run_id }}"
+          macos_run_id="${{ inputs.macos_app_run_id }}"
+
+          if [[ "${{ inputs.include_windows }}" == "true" && -z "$windows_run_id" ]]; then
+            windows_run_id=$(gh run list \
+              --workflow build-windows-app.yml \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId')
+          fi
+
+          if [[ "${{ inputs.include_macos }}" == "true" && -z "$macos_run_id" ]]; then
+            macos_run_id=$(gh run list \
+              --workflow build-macos-app.yml \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId')
+          fi
+
+          if [[ "${{ inputs.include_windows }}" == "true" && -z "$windows_run_id" ]]; then
+            echo "No successful Build Windows App run found." >&2
+            exit 1
+          fi
+
+          if [[ "${{ inputs.include_macos }}" == "true" && -z "$macos_run_id" ]]; then
+            echo "No successful Build macOS App run found." >&2
+            exit 1
+          fi
+
+          echo "windows_app_run_id=$windows_run_id" >> "$GITHUB_OUTPUT"
+          echo "macos_app_run_id=$macos_run_id" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.include_windows }}
+        with:
+          run-id: ${{ steps.resolve.outputs.windows_app_run_id }}
+          github-token: ${{ github.token }}
+          name: snappyref-windows-app
+          path: ${{ runner.temp }}/app-artifacts/windows
+
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.include_macos }}
+        with:
+          run-id: ${{ steps.resolve.outputs.macos_app_run_id }}
+          github-token: ${{ github.token }}
+          name: snappyref-macos-app
+          path: ${{ runner.temp }}/app-artifacts/macos
+
+      - name: Download reusable model bundle
+        if: ${{ inputs.include_models }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/model-bundle"
+          gh release download "${{ inputs.model_bundle_tag }}" \
+            --pattern 'snappyref-models-*.zip' \
+            --dir "${RUNNER_TEMP}/model-bundle"
+
+      - name: Package selected zips
+        run: |
+          set -euo pipefail
+          release_assets="${RUNNER_TEMP}/release-assets"
+          mkdir -p "$release_assets"
+
+          package_args=()
+          suffix="update"
+          if [[ "${{ inputs.include_models }}" == "true" ]]; then
+            model_bundle=$(find "${RUNNER_TEMP}/model-bundle" -type f -name 'snappyref-models-*.zip' | head -n 1)
+            if [[ -z "$model_bundle" ]]; then
+              echo "missing reusable model bundle" >&2
+              exit 1
+            fi
+            package_args=(--include-models --models-bundle "$model_bundle")
+            suffix="full"
+          fi
+
+          if [[ "${{ inputs.include_windows }}" == "true" ]]; then
+            windows_app="${RUNNER_TEMP}/windows-app.zip"
+            (cd "${RUNNER_TEMP}/app-artifacts/windows" && zip -9 -r "$windows_app" SnappyRef)
+            scripts/package-release-assets.sh \
+              --platform windows \
+              --app-archive "$windows_app" \
+              "${package_args[@]}" \
+              --output "$release_assets/snappyref-windows-${{ inputs.release_tag }}-${suffix}.zip"
+          fi
+
+          if [[ "${{ inputs.include_macos }}" == "true" ]]; then
+            if [[ "${{ inputs.include_models }}" != "true" ]]; then
+              echo "Skipping macOS update-only zip because models live inside SnappyRef.app."
+            else
+              macos_app_zip=$(find "${RUNNER_TEMP}/app-artifacts/macos" -type f -name 'snappyref-macos-app.zip' | head -n 1)
+              if [[ -z "$macos_app_zip" ]]; then
+                echo "missing macOS app artifact" >&2
+                exit 1
+              fi
+              scripts/package-release-assets.sh \
+                --platform macos \
+                --app-archive "$macos_app_zip" \
+                "${package_args[@]}" \
+                --output "$release_assets/snappyref-macos-${{ inputs.release_tag }}-full.zip"
+            fi
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snappyref-release-zips
+          path: ${{ runner.temp }}/release-assets/*.zip
+          retention-days: 7
+
+      - name: Create draft release
+        if: ${{ inputs.create_draft_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --title "SnappyRef $tag" \
+              --notes "Draft SnappyRef release." \
+              --draft
+          fi
+          gh release upload "$tag" "${RUNNER_TEMP}"/release-assets/*.zip --clobber
