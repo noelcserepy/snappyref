@@ -20,8 +20,9 @@ SnappyRef/
 `library/` is user-owned data. Release archives must not include it, delete it,
 or replace it.
 
-`snappyref.exe` and `models/` are app-owned release files. They may be replaced
-when updating.
+`snappyref.exe` and `models/` are app-owned release files. Windows updates
+normally replace only `snappyref.exe`; `models/` ships with releases for fresh
+installs and only needs replacement when the model bundle changes.
 
 ## Update UX For V1
 
@@ -29,8 +30,8 @@ Use a manual update flow:
 
 1. User quits SnappyRef.
 2. User downloads the new release zip from the website or GitHub release page.
-3. User extracts the zip into the existing `SnappyRef/` folder.
-4. User replaces `snappyref.exe` and `models/` when prompted.
+3. User extracts the zip.
+4. On Windows, user copies the new `SnappyRef/snappyref.exe` over the old `snappyref.exe`.
 5. User keeps the existing `library/` folder in place.
 6. User launches the new app and continues from the same session state.
 
@@ -56,20 +57,21 @@ Release zips should contain only app-owned files:
 
 ```text
 snappyref-windows-v0.2.0.zip
-  snappyref.exe
-  models/
-  UPDATE.txt
+  SnappyRef/
+    snappyref.exe
+    models/
+    UPDATE.txt
 ```
 
-The zip should not contain a top-level `library/` directory.
+The zip should not contain `library/` user data.
 
 `UPDATE.txt` should include short user-facing instructions:
 
 ```text
 To update:
 1. Quit SnappyRef.
-2. Extract this zip into your existing SnappyRef folder.
-3. Replace snappyref.exe and models/ when prompted.
+2. Extract this zip.
+3. On Windows, open the extracted SnappyRef folder and replace snappyref.exe.
 4. Do not delete or replace the library/ folder.
 ```
 

@@ -2048,19 +2048,19 @@ impl SnappyRefApp {
             ContextMenuItem {
                 action: ContextMenuAction::Copy,
                 label: "Copy",
-                shortcut: Some("⌘ C"),
+                shortcut: Some(platform_shortcut_label("⌘ C", "Ctrl C")),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::Paste,
                 label: "Paste",
-                shortcut: Some("⌘ V"),
+                shortcut: Some(platform_shortcut_label("⌘ V", "Ctrl V")),
                 enabled: true,
             },
             ContextMenuItem {
                 action: ContextMenuAction::Duplicate,
                 label: "Duplicate",
-                shortcut: Some("⌘ D"),
+                shortcut: Some(platform_shortcut_label("⌘ D", "Ctrl D")),
                 enabled: has_selection,
             },
             ContextMenuItem {
@@ -2072,19 +2072,19 @@ impl SnappyRefApp {
             ContextMenuItem {
                 action: ContextMenuAction::MoveToFront,
                 label: "Move to Front",
-                shortcut: Some("⌘ ."),
+                shortcut: Some(platform_shortcut_label("⌘ .", "Ctrl .")),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::MoveToBack,
                 label: "Move to Back",
-                shortcut: Some("⌘ ,"),
+                shortcut: Some(platform_shortcut_label("⌘ ,", "Ctrl ,")),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::SearchUsingImage,
                 label: "Search using image",
-                shortcut: Some("⌘ F"),
+                shortcut: Some(platform_shortcut_label("⌘ F", "Ctrl F")),
                 enabled: exactly_one_image_only,
             },
             ContextMenuItem {
@@ -4209,6 +4209,16 @@ fn delete_shortcut_pressed(ctx: &egui::Context) -> bool {
     {
         ctx.input(|input| input.key_pressed(egui::Key::Delete))
     }
+}
+
+#[cfg(target_os = "macos")]
+fn platform_shortcut_label(mac: &'static str, _windows: &'static str) -> &'static str {
+    mac
+}
+
+#[cfg(not(target_os = "macos"))]
+fn platform_shortcut_label(_mac: &'static str, windows: &'static str) -> &'static str {
+    windows
 }
 
 fn destructive_confirmation_frame(ctx: &egui::Context) -> egui::Frame {

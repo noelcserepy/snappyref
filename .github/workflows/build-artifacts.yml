@@ -45,7 +45,8 @@ jobs:
       - name: Package artifact
         shell: pwsh
         run: |
-          $packageRoot = Join-Path $env:RUNNER_TEMP "snappyref-windows-package"
+          $artifactRoot = Join-Path $env:RUNNER_TEMP "snappyref-windows-artifact"
+          $packageRoot = Join-Path $artifactRoot "SnappyRef"
           New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
           Copy-Item target\release\snappyref.exe $packageRoot
           Copy-Item UPDATE.txt $packageRoot
@@ -62,16 +63,16 @@ jobs:
             }
           }
           $zipPath = Join-Path $env:RUNNER_TEMP "snappyref-windows-${{ github.sha }}.zip"
-          Compress-Archive -Path "$packageRoot\*" -DestinationPath $zipPath -Force
+          Compress-Archive -Path $packageRoot -DestinationPath $zipPath -Force
 
       - name: Check archive contract
         shell: bash
-        run: scripts/check-release-archive.sh "${RUNNER_TEMP}/snappyref-windows-${{ github.sha }}.zip" snappyref.exe
+        run: scripts/check-release-archive.sh "${RUNNER_TEMP}/snappyref-windows-${{ github.sha }}.zip" SnappyRef/snappyref.exe
 
       - uses: actions/upload-artifact@v4
         with:
           name: snappyref-windows-${{ github.sha }}
-          path: ${{ runner.temp }}/snappyref-windows-${{ github.sha }}.zip
+          path: ${{ runner.temp }}/snappyref-windows-artifact
           retention-days: 7
 
   macos:

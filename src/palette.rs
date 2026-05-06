@@ -644,6 +644,18 @@ fn kbd_label_uses_small_symbol_glyphs(label: &str) -> bool {
         .any(|ch| matches!(ch, '⇧' | '↵' | '↓' | '↑' | '⌘'))
 }
 
+fn command_modifier_key_label() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "⌘"
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        "Ctrl"
+    }
+}
+
 fn footer_hint_label(ui: &mut egui::Ui, label: &str) {
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
@@ -859,7 +871,7 @@ pub(crate) fn paint_palette_footer(
                     } else {
                         footer_hint_label(ui, "place all");
                         paint_kbd_pill(ui, "↵");
-                        paint_kbd_pill(ui, "⌘");
+                        paint_kbd_pill(ui, command_modifier_key_label());
                         ui.add_space(8.0);
                         footer_hint_label(ui, "place");
                         paint_kbd_pill(ui, "↵");
