@@ -221,22 +221,22 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Compact arrange",
-        windows: "Ctrl+P",
-        mac: "⌘P",
+        windows: "Q",
+        mac: "Q",
         binding: Some(ShortcutBinding {
-            key: egui::Key::P,
-            command: true,
+            key: egui::Key::Q,
+            command: false,
             shift: false,
         }),
         shortcut_action: Some(SupportedShortcutAction::Arrange(ArrangementAction::Compact)),
     },
     SupportedShortcut {
         action: "Row arrange",
-        windows: "Ctrl+H",
-        mac: "⌘H",
+        windows: "W",
+        mac: "W",
         binding: Some(ShortcutBinding {
-            key: egui::Key::H,
-            command: true,
+            key: egui::Key::W,
+            command: false,
             shift: false,
         }),
         shortcut_action: Some(SupportedShortcutAction::Arrange(
@@ -245,11 +245,11 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Column arrange",
-        windows: "Ctrl+J",
-        mac: "⌘J",
+        windows: "E",
+        mac: "E",
         binding: Some(ShortcutBinding {
-            key: egui::Key::J,
-            command: true,
+            key: egui::Key::E,
+            command: false,
             shift: false,
         }),
         shortcut_action: Some(SupportedShortcutAction::Arrange(
@@ -5201,6 +5201,43 @@ mod tests {
 
         assert_eq!(app.canvas.selected_item_ids(), vec![1, 2]);
         assert_eq!(app.canvas.selected_annotation_ids(), vec![10, 11]);
+    }
+
+    #[test]
+    fn qwe_arrange_shortcuts_apply_selected_image_layouts() {
+        let ctx = egui::Context::default();
+        for (key, expected_status) in [
+            (egui::Key::Q, "Compacted 2 images"),
+            (egui::Key::W, "Arranged 2 images in a row"),
+            (egui::Key::E, "Arranged 2 images in a column"),
+        ] {
+            let mut app = test_app(None);
+            for id in [1_i64, 2] {
+                app.canvas.add_loaded_item(&ctx, test_loaded_item(id, 1));
+            }
+            app.canvas.select_items(&[1, 2]);
+
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key,
+                        physical_key: Some(key),
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::default(),
+                    }],
+                    ..Default::default()
+                },
+                |ui| {
+                    app.handle_selection_shortcuts(
+                        ui.ctx(),
+                        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),
+                    )
+                },
+            );
+
+            assert_eq!(app.status, expected_status);
+        }
     }
 
     #[test]
