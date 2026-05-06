@@ -2,17 +2,17 @@ use eframe::egui;
 use std::time::Duration;
 
 use super::geometry::{
-    image_contains_screen_point, image_screen_center_for_record, image_screen_corners_for_record,
-    image_screen_rect_for_record, min_image_scale,
+    image_contains_screen_point, image_rotation_handle_screen_pos, image_screen_rect_for_record,
+    min_image_scale,
 };
 use super::render::textbox_pointer_region;
 use super::{
     ANNOTATION_HIT_RADIUS, AnnotationDraftState, AnnotationDragState, CanvasHit, CanvasImage,
     CanvasState, CropState, DragState, IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN,
-    IMAGE_RESIZE_HIT_RADIUS, ImageResizeHandle, ImageTransformState, MAX_CANVAS_ZOOM,
-    MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation, SelectedLayoutItem,
-    TEXTBOX_DRAG_THRESHOLD_SCREEN, TEXTBOX_RESIZE_HIT_RADIUS, TextboxPointerRegion,
-    TextboxResizeHandle, TextboxTransformState,
+    IMAGE_RESIZE_HIT_RADIUS, IMAGE_ROTATE_HANDLE_HIT_RADIUS_SCREEN, ImageResizeHandle,
+    ImageTransformState, MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE,
+    PendingAnnotation, SelectedLayoutItem, TEXTBOX_DRAG_THRESHOLD_SCREEN,
+    TEXTBOX_RESIZE_HIT_RADIUS, TextboxPointerRegion, TextboxResizeHandle, TextboxTransformState,
 };
 use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasStackItem, CanvasTextSize};
 
@@ -36,6 +36,7 @@ pub(super) fn handle_input(
     });
     let primary_down = ui.input(|i| i.pointer.primary_down());
     let crop_key_held = ui.input(|i| i.key_down(egui::Key::C));
+    let rotation_handle_key_held = super::rotation_handle_key_held(ui.ctx());
     let draw_kind = drawing_annotation_kind(ui);
     let shift_held = ui.input(|i| i.modifiers.shift);
     let alt_held = ui.input(|i| i.modifiers.alt);
@@ -63,7 +64,7 @@ pub(super) fn handle_input(
     }
 
     if matches!(
-        state.interaction.image_transform_state,
+        state.interaction.image_transform_state.as_ref(),
         Some(ImageTransformState::Rotating { .. })
     ) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -86,14 +87,14 @@ pub(super) fn handle_input(
 
     if let Some(pointer_pos) = pointer_pos
         && let Some(image) = state.selected_single_image()
-        && hit_test_image_rotation_corner(state, rect, image, pointer_pos)
-    {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-    } else if let Some(pointer_pos) = pointer_pos
-        && let Some(image) = state.selected_single_image()
         && let Some(handle) = hit_test_image_resize_handle(state, rect, image, pointer_pos)
     {
         ui.ctx().set_cursor_icon(image_resize_cursor_icon(handle));
+    } else if let Some(pointer_pos) = pointer_pos
+        && rotation_handle_key_held
+        && hit_test_selected_image_rotation_handle(state, rect, pointer_pos)
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
 
     if pointer_in_canvas_rect
@@ -129,11 +130,6 @@ pub(super) fn handle_input(
                 current_screen: pointer_pos,
             });
             state.clear_move_preview_placeholders();
-        } else if let Some(image) = state.selected_single_image()
-            && hit_test_image_rotation_corner(state, rect, image, pointer_pos)
-        {
-            begin_image_rotation(state, rect, image.record.item.id);
-            return;
         } else if let Some(image) = state.selected_single_image().map(|image| {
             (
                 image.record.item.id,
@@ -142,6 +138,11 @@ pub(super) fn handle_input(
         }) && let (item_id, Some(handle)) = image
         {
             begin_image_resize(state, rect, item_id, handle);
+            return;
+        } else if rotation_handle_key_held
+            && hit_test_selected_image_rotation_handle(state, rect, pointer_pos)
+        {
+            begin_image_rotation(state, rect, pointer_pos);
             return;
         } else if let Some(annotation_id) = state.single_selected_annotation_id()
             && let Some(annotation) = state.annotation_by_id(annotation_id).cloned()
@@ -324,39 +325,50 @@ pub(super) fn handle_input(
         && state.interaction.annotation_draft_state.is_none()
         && primary_down
         && let Some(pointer_pos) = pointer_pos
-        && let Some(transform_state) = state.interaction.image_transform_state
+        && let Some(transform_state) = state.interaction.image_transform_state.clone()
     {
         match transform_state {
             ImageTransformState::Resizing {
                 item_id,
-                center_screen,
+                anchor_screen,
+                start_handle_screen,
                 start_scale,
-                start_radius_screen,
             } => {
                 if let Some(image) = state.image_by_item_id(item_id) {
-                    let scale = resized_image_scale(
+                    let (center_screen, scale) = resized_image_transform(
                         &image.record.asset,
                         start_scale,
-                        start_radius_screen,
-                        center_screen,
+                        anchor_screen,
+                        start_handle_screen,
                         pointer_pos,
                     );
-                    state.set_image_scale(item_id, scale);
+                    let center_world = state.screen_to_world(center_screen, rect);
+                    state.set_image_center_and_scale(item_id, center_world, scale);
                 }
             }
             ImageTransformState::Rotating {
-                item_id,
+                item_ids: _,
                 center_screen,
-                start_rotation,
+                center_world,
+                start_pointer_angle,
+                starting_items,
             } => {
-                let rotation = rotated_image_angle(
+                let rotation_delta = rotated_image_delta(
                     center_screen,
                     pointer_pos,
-                    start_rotation,
+                    start_pointer_angle,
                     state.rotation_snap_degrees,
                     alt_held,
                 );
-                state.set_image_rotation(item_id, rotation);
+                for (item_id, start_center_world, start_rotation) in starting_items {
+                    let offset = start_center_world - center_world;
+                    let rotated_offset = rotate_vec2(offset, rotation_delta);
+                    state.set_image_center_and_rotation(
+                        item_id,
+                        center_world + rotated_offset,
+                        start_rotation + rotation_delta,
+                    );
+                }
             }
         }
     }
@@ -396,8 +408,12 @@ pub(super) fn handle_input(
             state.interaction.pending_annotation = pending_annotation_from_draft(draft_state);
         } else if let Some(transform_state) = state.interaction.image_transform_state.take() {
             match transform_state {
-                ImageTransformState::Resizing { item_id, .. }
-                | ImageTransformState::Rotating { item_id, .. } => state.mark_dirty(item_id),
+                ImageTransformState::Resizing { item_id, .. } => state.mark_dirty(item_id),
+                ImageTransformState::Rotating { item_ids, .. } => {
+                    for item_id in item_ids {
+                        state.mark_dirty(item_id);
+                    }
+                }
             }
         } else if let Some(transform_state) = state.interaction.textbox_transform_state.take() {
             match transform_state {
@@ -625,10 +641,14 @@ fn begin_image_resize(
     let Some(image) = state.image_by_item_id(item_id) else {
         return;
     };
-    let image_rect = image_screen_rect(state, rect, image);
-    let center_screen = image_rect.center();
-    let start_radius_screen =
-        center_screen.distance(image_resize_handle_screen_pos(image_rect, handle));
+    let corners = super::geometry::image_screen_corners_for_record(
+        &image.record,
+        state.pan,
+        state.zoom,
+        rect.center(),
+    );
+    let start_handle_screen = image_resize_handle_screen_pos(corners, handle);
+    let anchor_screen = image_resize_anchor_screen_pos(corners, handle);
     let start_scale = image.record.item.scale;
 
     state.finish_textbox_edit();
@@ -644,24 +664,42 @@ fn begin_image_resize(
     state.clear_move_preview_placeholders();
     state.interaction.image_transform_state = Some(ImageTransformState::Resizing {
         item_id,
-        center_screen,
+        anchor_screen,
+        start_handle_screen,
         start_scale,
-        start_radius_screen,
     });
 }
 
-fn begin_image_rotation(state: &mut CanvasState, rect: egui::Rect, item_id: i64) {
-    let Some(image) = state.image_by_item_id(item_id) else {
+fn begin_image_rotation(state: &mut CanvasState, rect: egui::Rect, pointer_pos: egui::Pos2) {
+    let item_ids = selected_existing_image_ids(state);
+    if item_ids.is_empty() {
+        return;
+    }
+    let Some(selection_rect) = selected_image_rotation_screen_rect(state, rect) else {
         return;
     };
-    let center_screen =
-        image_screen_center_for_record(&image.record, state.pan, state.zoom, rect.center());
-    let start_rotation = image.record.item.rotation;
+    let center_screen = selection_rect.center();
+    let center_world = state.screen_to_world(center_screen, rect);
+    let start_pointer_delta = pointer_pos - center_screen;
+    let start_pointer_angle = if start_pointer_delta.length_sq() <= f32::EPSILON {
+        0.0
+    } else {
+        start_pointer_delta.angle()
+    };
+    let starting_items = item_ids
+        .iter()
+        .filter_map(|item_id| {
+            state.image_by_item_id(*item_id).map(|image| {
+                (
+                    *item_id,
+                    egui::pos2(image.record.item.x, image.record.item.y),
+                    image.record.item.rotation,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
 
     state.finish_textbox_edit();
-    state.document.selected_item_ids.clear();
-    state.document.selected_item_ids.push(item_id);
-    state.document.selected_annotation_ids.clear();
     state.interaction.drag_state = None;
     state.interaction.annotation_drag_state = None;
     state.interaction.marquee_state = None;
@@ -670,9 +708,11 @@ fn begin_image_rotation(state: &mut CanvasState, rect: egui::Rect, item_id: i64)
     state.interaction.textbox_transform_state = None;
     state.clear_move_preview_placeholders();
     state.interaction.image_transform_state = Some(ImageTransformState::Rotating {
-        item_id,
+        item_ids,
         center_screen,
-        start_rotation,
+        center_world,
+        start_pointer_angle,
+        starting_items,
     });
 }
 
@@ -841,24 +881,120 @@ pub(super) fn image_screen_rect(
     image_screen_rect_for_record(&image.record, rect, state.pan, state.zoom, rect.center())
 }
 
-fn image_resize_handle_screen_pos(image_rect: egui::Rect, handle: ImageResizeHandle) -> egui::Pos2 {
+fn image_resize_handle_screen_pos(
+    corners: [egui::Pos2; 4],
+    handle: ImageResizeHandle,
+) -> egui::Pos2 {
     match handle {
-        ImageResizeHandle::TopLeft => image_rect.left_top(),
-        ImageResizeHandle::TopRight => image_rect.right_top(),
-        ImageResizeHandle::BottomLeft => image_rect.left_bottom(),
-        ImageResizeHandle::BottomRight => image_rect.right_bottom(),
+        ImageResizeHandle::TopLeft => corners[0],
+        ImageResizeHandle::TopRight => corners[1],
+        ImageResizeHandle::BottomRight => corners[2],
+        ImageResizeHandle::BottomLeft => corners[3],
     }
 }
 
-fn hit_test_image_rotation_corner(
+fn image_resize_anchor_screen_pos(
+    corners: [egui::Pos2; 4],
+    handle: ImageResizeHandle,
+) -> egui::Pos2 {
+    match handle {
+        ImageResizeHandle::TopLeft => corners[2],
+        ImageResizeHandle::TopRight => corners[3],
+        ImageResizeHandle::BottomRight => corners[0],
+        ImageResizeHandle::BottomLeft => corners[1],
+    }
+}
+
+fn hit_test_selected_image_rotation_handle(
     state: &CanvasState,
     rect: egui::Rect,
-    image: &CanvasImage,
     pointer_pos: egui::Pos2,
 ) -> bool {
-    image_screen_corners_for_record(&image.record, state.pan, state.zoom, rect.center())
-        .into_iter()
-        .any(|corner| corner.distance(pointer_pos) <= IMAGE_RESIZE_HIT_RADIUS)
+    let Some((_, handle_pos)) = selected_image_rotation_handle_screen_pos(state, rect) else {
+        return false;
+    };
+    handle_pos.distance(pointer_pos) <= IMAGE_ROTATE_HANDLE_HIT_RADIUS_SCREEN
+}
+
+pub(super) fn selected_image_rotation_handle_screen_pos(
+    state: &CanvasState,
+    rect: egui::Rect,
+) -> Option<(egui::Pos2, egui::Pos2)> {
+    if !state.document.selected_annotation_ids.is_empty() {
+        return None;
+    }
+
+    if let Some(image) = state.selected_single_image() {
+        return Some(image_rotation_handle_screen_pos(
+            &image.record,
+            state.pan,
+            state.zoom,
+            rect.center(),
+        ));
+    }
+
+    let rotation = selected_group_rotation_angle(state)?;
+    selected_image_rotation_screen_rect(state, rect).map(|selection_rect| {
+        group_rotation_handle_screen_pos(selection_rect.expand(6.0), rotation)
+    })
+}
+
+fn selected_image_rotation_screen_rect(
+    state: &CanvasState,
+    rect: egui::Rect,
+) -> Option<egui::Rect> {
+    if selected_existing_image_ids(state).is_empty() {
+        return None;
+    }
+    state.selection_screen_rect(rect)
+}
+
+fn selected_existing_image_ids(state: &CanvasState) -> Vec<i64> {
+    state
+        .document
+        .selected_item_ids
+        .iter()
+        .copied()
+        .filter(|item_id| state.image_by_item_id(*item_id).is_some())
+        .collect()
+}
+
+fn selected_group_rotation_angle(state: &CanvasState) -> Option<f32> {
+    let mut sin_sum = 0.0_f32;
+    let mut cos_sum = 0.0_f32;
+    let mut count = 0_usize;
+    for item_id in &state.document.selected_item_ids {
+        let Some(image) = state.image_by_item_id(*item_id) else {
+            continue;
+        };
+        sin_sum += image.record.item.rotation.sin();
+        cos_sum += image.record.item.rotation.cos();
+        count += 1;
+    }
+    (count > 0).then(|| sin_sum.atan2(cos_sum))
+}
+
+pub(super) fn group_rotation_handle_screen_pos(
+    selection_rect: egui::Rect,
+    rotation: f32,
+) -> (egui::Pos2, egui::Pos2) {
+    let center = selection_rect.center();
+    let outward = egui::vec2(rotation.sin(), -rotation.cos());
+    let mut distance = f32::INFINITY;
+    if outward.x > f32::EPSILON {
+        distance = distance.min((selection_rect.right() - center.x) / outward.x);
+    } else if outward.x < -f32::EPSILON {
+        distance = distance.min((selection_rect.left() - center.x) / outward.x);
+    }
+    if outward.y > f32::EPSILON {
+        distance = distance.min((selection_rect.bottom() - center.y) / outward.y);
+    } else if outward.y < -f32::EPSILON {
+        distance = distance.min((selection_rect.top() - center.y) / outward.y);
+    }
+
+    let line_start = center + outward * distance.max(0.0);
+    let handle_pos = line_start + outward * super::IMAGE_ROTATE_HANDLE_OFFSET_SCREEN;
+    (line_start, handle_pos)
 }
 
 fn image_resize_cursor_icon(handle: ImageResizeHandle) -> egui::CursorIcon {
@@ -874,7 +1010,12 @@ pub(super) fn hit_test_image_resize_handle(
     image: &CanvasImage,
     pointer_pos: egui::Pos2,
 ) -> Option<ImageResizeHandle> {
-    let image_rect = image_screen_rect(state, rect, image);
+    let corners = super::geometry::image_screen_corners_for_record(
+        &image.record,
+        state.pan,
+        state.zoom,
+        rect.center(),
+    );
     [
         ImageResizeHandle::TopLeft,
         ImageResizeHandle::TopRight,
@@ -883,46 +1024,60 @@ pub(super) fn hit_test_image_resize_handle(
     ]
     .into_iter()
     .find(|handle| {
-        image_resize_handle_screen_pos(image_rect, *handle).distance(pointer_pos)
+        image_resize_handle_screen_pos(corners, *handle).distance(pointer_pos)
             <= IMAGE_RESIZE_HIT_RADIUS
     })
 }
 
-pub(super) fn resized_image_scale(
+pub(super) fn resized_image_transform(
     asset: &crate::data::ImageAsset,
     start_scale: f32,
-    start_radius_screen: f32,
-    center_screen: egui::Pos2,
+    anchor_screen: egui::Pos2,
+    start_handle_screen: egui::Pos2,
     pointer_pos: egui::Pos2,
-) -> f32 {
-    let current_radius_screen = center_screen.distance(pointer_pos);
-    let scale_ratio = if start_radius_screen <= f32::EPSILON {
+) -> (egui::Pos2, f32) {
+    let start_delta = start_handle_screen - anchor_screen;
+    let pointer_delta = pointer_pos - anchor_screen;
+    let start_len_sq = start_delta.length_sq();
+    let ratio = if start_len_sq <= f32::EPSILON {
         1.0
     } else {
-        current_radius_screen / start_radius_screen
+        pointer_delta.dot(start_delta) / start_len_sq
     };
-    (start_scale * scale_ratio).max(min_image_scale(asset))
+    let scale = (start_scale * ratio).max(min_image_scale(asset));
+    let normalized_ratio = scale / start_scale.max(f32::EPSILON);
+    let handle_screen = anchor_screen + start_delta * normalized_ratio;
+    (anchor_screen.lerp(handle_screen, 0.5), scale)
 }
 
-fn rotated_image_angle(
+fn rotated_image_delta(
     center_screen: egui::Pos2,
     pointer_pos: egui::Pos2,
-    start_rotation: f32,
+    start_pointer_angle: f32,
     snap_degrees: f32,
     unsnapped: bool,
 ) -> f32 {
     let pointer_delta = pointer_pos - center_screen;
     if pointer_delta.length_sq() <= f32::EPSILON {
-        return start_rotation;
+        return 0.0;
     }
 
-    let rotation = pointer_delta.angle() + std::f32::consts::FRAC_PI_2;
+    let rotation = pointer_delta.angle() - start_pointer_angle;
     if unsnapped || snap_degrees <= f32::EPSILON {
         rotation
     } else {
         let snap_radians = snap_degrees.to_radians();
         (rotation / snap_radians).round() * snap_radians
     }
+}
+
+fn rotate_vec2(offset: egui::Vec2, angle: f32) -> egui::Vec2 {
+    let sin = angle.sin();
+    let cos = angle.cos();
+    egui::vec2(
+        offset.x * cos - offset.y * sin,
+        offset.x * sin + offset.y * cos,
+    )
 }
 
 pub(super) fn compute_drag_snap_preview(
@@ -1336,7 +1491,10 @@ pub(super) fn pending_annotation_from_draft(
 
 #[cfg(test)]
 mod tests {
-    use super::{DragState, compute_drag_snap_preview, offset_layout_bounds};
+    use super::{
+        DragState, ImageTransformState, begin_image_rotation, compute_drag_snap_preview,
+        offset_layout_bounds, selected_image_rotation_handle_screen_pos,
+    };
     use crate::canvas::CanvasState;
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
@@ -1345,6 +1503,81 @@ mod tests {
     use crate::jobs::{ImportOrigin, ImportedPreviewTexture, LoadedCanvasItem};
     use eframe::egui;
     use std::path::PathBuf;
+
+    #[test]
+    fn multi_image_selection_uses_group_rotation_handle() {
+        let ctx = egui::Context::default();
+        let mut canvas = CanvasState::default();
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 80);
+        add_test_image(&mut canvas, &ctx, 2, egui::pos2(120.0, 0.0), 100, 80);
+        canvas.select_items(&[1, 2]);
+        let screen_rect = test_screen_rect();
+        let selection_rect = canvas
+            .selection_screen_rect(screen_rect)
+            .unwrap()
+            .expand(6.0);
+
+        let (line_start, handle_pos) =
+            selected_image_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
+
+        assert_eq!(
+            line_start,
+            egui::pos2(selection_rect.center().x, selection_rect.top())
+        );
+        assert_eq!(
+            handle_pos,
+            line_start - egui::vec2(0.0, super::super::IMAGE_ROTATE_HANDLE_OFFSET_SCREEN)
+        );
+    }
+
+    #[test]
+    fn group_rotation_handle_follows_selected_image_rotation() {
+        let ctx = egui::Context::default();
+        let mut canvas = CanvasState::default();
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 80);
+        add_test_image(&mut canvas, &ctx, 2, egui::pos2(120.0, 0.0), 100, 80);
+        canvas.select_items(&[1, 2]);
+        let _ = canvas.set_image_rotation(1, std::f32::consts::FRAC_PI_2);
+        let _ = canvas.set_image_rotation(2, std::f32::consts::FRAC_PI_2);
+        let screen_rect = test_screen_rect();
+        let selection_rect = canvas
+            .selection_screen_rect(screen_rect)
+            .unwrap()
+            .expand(6.0);
+
+        let (line_start, handle_pos) =
+            selected_image_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
+
+        assert!((line_start.x - selection_rect.right()).abs() < 0.01);
+        assert!((line_start.y - selection_rect.center().y).abs() < 0.01);
+        assert_eq!(
+            handle_pos,
+            line_start + egui::vec2(super::super::IMAGE_ROTATE_HANDLE_OFFSET_SCREEN, 0.0)
+        );
+    }
+
+    #[test]
+    fn image_rotation_state_captures_selected_group() {
+        let ctx = egui::Context::default();
+        let mut canvas = CanvasState::default();
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 80);
+        add_test_image(&mut canvas, &ctx, 2, egui::pos2(120.0, 0.0), 100, 80);
+        canvas.select_items(&[1, 2]);
+        let screen_rect = test_screen_rect();
+        let (_, handle_pos) =
+            selected_image_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
+
+        begin_image_rotation(&mut canvas, screen_rect, handle_pos);
+
+        assert!(matches!(
+            canvas.interaction.image_transform_state,
+            Some(ImageTransformState::Rotating {
+                ref item_ids,
+                ref starting_items,
+                ..
+            }) if item_ids == &vec![1, 2] && starting_items.len() == 2
+        ));
+    }
 
     #[test]
     fn drag_snap_preview_appears_for_nearby_image_targets() {

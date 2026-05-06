@@ -64,14 +64,24 @@ pub fn run() -> eframe::Result<()> {
         return Ok(());
     }
     let viewport_size = config.startup_viewport_size();
+    let restored_window = config.restored_window_state();
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_inner_size([viewport_size.x, viewport_size.y])
+        .with_icon(app_icon())
+        .with_fullsize_content_view(true)
+        .with_title_shown(false)
+        .with_titlebar_shown(false)
+        .with_titlebar_buttons_shown(true);
+    if let Some(window) = &restored_window {
+        if let (Some(width), Some(height)) = (window.inner_width, window.inner_height) {
+            viewport = viewport.with_inner_size([width, height]);
+        }
+        if let (Some(x), Some(y)) = (window.outer_x, window.outer_y) {
+            viewport = viewport.with_position([x, y]);
+        }
+    }
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([viewport_size.x, viewport_size.y])
-            .with_icon(app_icon())
-            .with_fullsize_content_view(true)
-            .with_title_shown(false)
-            .with_titlebar_shown(false)
-            .with_titlebar_buttons_shown(true),
+        viewport,
         ..Default::default()
     };
 

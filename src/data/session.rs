@@ -43,6 +43,31 @@ impl Default for ViewportState {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct WindowState {
+    #[serde(default)]
+    pub outer_x: Option<f32>,
+    #[serde(default)]
+    pub outer_y: Option<f32>,
+    #[serde(default)]
+    pub inner_width: Option<f32>,
+    #[serde(default)]
+    pub inner_height: Option<f32>,
+}
+
+impl WindowState {
+    pub fn is_restorable(&self) -> bool {
+        self.outer_x.is_some()
+            && self.outer_y.is_some()
+            && self
+                .inner_width
+                .is_some_and(|width| width.is_finite() && width >= 320.0)
+            && self
+                .inner_height
+                .is_some_and(|height| height.is_finite() && height >= 240.0)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceSettings {
     #[serde(default = "default_auto_image_scaling")]
@@ -126,6 +151,7 @@ mod tests {
 pub struct UserSession {
     pub active_board_id: i64,
     pub viewport: ViewportState,
+    pub window: WindowState,
     pub settings: WorkspaceSettings,
     pub sidebar_open: bool,
     pub sidebar_tab: String,
@@ -137,6 +163,7 @@ impl Default for UserSession {
         Self {
             active_board_id: 1,
             viewport: ViewportState::default(),
+            window: WindowState::default(),
             settings: WorkspaceSettings::default(),
             sidebar_open: false,
             sidebar_tab: "settings".to_owned(),

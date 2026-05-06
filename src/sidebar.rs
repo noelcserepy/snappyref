@@ -305,14 +305,6 @@ fn paint_sidebar_boards(
                         if paint_create_board_button(ui) {
                             board_action = Some(SidebarBoardAction::CreateBoard);
                         }
-                        ui.add_space(crate::theme::SPACE_4);
-                        ui.label(
-                            egui::RichText::new(
-                                "Boards help you split your canvas into focused collections.",
-                            )
-                            .text_style(egui::TextStyle::Small)
-                            .color(crate::theme::TEXT_SUBTLE),
-                        );
                     },
                 );
             });
@@ -843,7 +835,7 @@ fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
         );
         ui.add_space(crate::theme::SPACE_3);
 
-        let (core_shortcuts, layout_shortcuts) = SUPPORTED_SHORTCUTS.split_at(8);
+        let (core_shortcuts, layout_shortcuts) = SUPPORTED_SHORTCUTS.split_at(9);
         paint_shortcut_group(ui, "Core actions", core_shortcuts);
         ui.add_space(crate::theme::SPACE_3);
         paint_shortcut_group(ui, "Layout + history", layout_shortcuts);
@@ -1076,6 +1068,7 @@ mod tests {
         assert_eq!(display_shortcut_label("Ctrl+B"), "Ctrl B");
         assert_eq!(display_shortcut_label("Ctrl+Shift+L"), "Ctrl Shift L");
         assert_eq!(display_shortcut_label("C + Drag"), "C + Drag");
+        assert_eq!(display_shortcut_label("R + Drag"), "R + Drag");
     }
 
     #[test]

@@ -9,18 +9,19 @@ use super::geometry::{
 };
 use super::interaction::{
     annotation_screen_points, annotation_screen_rect, hit_test_textbox_resize_handle,
-    image_screen_rect, normalized_textbox_rect, pending_annotation_from_draft, textbox_screen_rect,
+    image_screen_rect, normalized_textbox_rect, pending_annotation_from_draft,
+    selected_image_rotation_handle_screen_pos, textbox_screen_rect,
 };
 use super::{
     ANNOTATION_CULL_MARGIN_SCREEN, BACKGROUND_BASE_WORLD_STEP, BACKGROUND_MAX_LOD_LEVEL,
     BACKGROUND_MAX_SCREEN_STEP, BACKGROUND_MIN_LOD_LEVEL, BACKGROUND_MIN_SCREEN_STEP, CanvasImage,
     CanvasImageCacheTier, CanvasState, CanvasTexture, IMAGE_CULL_MARGIN_SCREEN,
-    IMAGE_DETAIL_PROMOTION_THRESHOLD, ImagePassBatch, ImagePassCallback, ImagePassInstance,
-    ImagePassMetrics, MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation,
-    TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP, TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
-    TEXTBOX_EDITOR_TOOLBAR_CLEARANCE, TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN,
-    TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH, TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH, TextboxLayoutCacheKey,
-    TextboxPointerRegion,
+    IMAGE_DETAIL_PROMOTION_THRESHOLD, IMAGE_ROTATE_HANDLE_RADIUS_SCREEN, ImagePassBatch,
+    ImagePassCallback, ImagePassInstance, ImagePassMetrics, MIN_CANVAS_ZOOM,
+    MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation, TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP,
+    TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
+    TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH,
+    TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH, TextboxLayoutCacheKey, TextboxPointerRegion,
 };
 use crate::data::{
     CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
@@ -1516,6 +1517,7 @@ pub(super) fn paint_selection_bounds(
     if state.document.selected_annotation_ids.is_empty()
         && state.document.selected_item_ids.len() <= 1
     {
+        paint_rotation_handle(painter, rect, state);
         return;
     }
 
@@ -1536,6 +1538,42 @@ pub(super) fn paint_selection_bounds(
         crate::theme::stroke_strong(),
         egui::StrokeKind::Outside,
     );
+    paint_rotation_handle(painter, rect, state);
+}
+
+fn paint_rotation_handle(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) {
+    if !rotation_handle_visible(painter.ctx(), state) {
+        return;
+    }
+    let Some((line_start, handle_pos)) = selected_rotation_handle_screen_pos(state, rect) else {
+        return;
+    };
+    painter.line_segment([line_start, handle_pos], crate::theme::stroke_strong());
+    painter.circle_filled(
+        handle_pos,
+        IMAGE_ROTATE_HANDLE_RADIUS_SCREEN,
+        crate::theme::SURFACE,
+    );
+    painter.circle_stroke(
+        handle_pos,
+        IMAGE_ROTATE_HANDLE_RADIUS_SCREEN,
+        crate::theme::stroke_strong(),
+    );
+}
+
+fn selected_rotation_handle_screen_pos(
+    state: &CanvasState,
+    rect: egui::Rect,
+) -> Option<(egui::Pos2, egui::Pos2)> {
+    selected_image_rotation_handle_screen_pos(state, rect)
+}
+
+fn rotation_handle_visible(ctx: &egui::Context, state: &CanvasState) -> bool {
+    super::rotation_handle_key_held(ctx)
+        || matches!(
+            state.interaction.image_transform_state,
+            Some(super::ImageTransformState::Rotating { .. })
+        )
 }
 
 pub(super) fn paint_import_placeholders(

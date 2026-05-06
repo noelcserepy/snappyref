@@ -31,6 +31,8 @@ struct StoredUserSessionPayload {
     #[serde(default = "current_user_session_payload_version")]
     version: u32,
     #[serde(default)]
+    window: crate::data::WindowState,
+    #[serde(default)]
     workspace_settings: WorkspaceSettings,
     #[serde(default)]
     sidebar: StoredSidebarState,
@@ -42,6 +44,7 @@ impl StoredUserSessionPayload {
     fn from_session(session: &UserSession) -> Self {
         Self {
             version: USER_SESSION_PAYLOAD_VERSION,
+            window: session.window.clone(),
             workspace_settings: session.settings.clone(),
             sidebar: StoredSidebarState {
                 open: session.sidebar_open,
@@ -56,6 +59,7 @@ impl Default for StoredUserSessionPayload {
     fn default() -> Self {
         Self {
             version: USER_SESSION_PAYLOAD_VERSION,
+            window: crate::data::WindowState::default(),
             workspace_settings: WorkspaceSettings::default(),
             sidebar: StoredSidebarState::default(),
             recent_searches: Vec::new(),
@@ -2792,6 +2796,7 @@ fn legacy_user_session_from_row(
     Ok(UserSession {
         active_board_id,
         viewport,
+        window: crate::data::WindowState::default(),
         settings: WorkspaceSettings {
             auto_image_scaling: row.get::<_, i64>(0)? != 0,
             import_gap: row.get(1)?,
@@ -2834,6 +2839,7 @@ fn apply_user_session_payload(mut session: UserSession, payload: Option<String>)
     };
 
     session.settings = stored.workspace_settings;
+    session.window = stored.window;
     session.sidebar_open = stored.sidebar.open;
     session.sidebar_tab = stored.sidebar.tab;
     session.recent_searches = stored.recent_searches;

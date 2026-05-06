@@ -25,6 +25,9 @@ const MIN_IMAGE_WORLD_SIZE: f32 = 24.0;
 const IMAGE_CULL_MARGIN_SCREEN: f32 = 128.0;
 const ANNOTATION_CULL_MARGIN_SCREEN: f32 = 128.0;
 const IMAGE_RESIZE_HIT_RADIUS: f32 = 14.0;
+const IMAGE_ROTATE_HANDLE_OFFSET_SCREEN: f32 = 18.0;
+const IMAGE_ROTATE_HANDLE_RADIUS_SCREEN: f32 = 7.0;
+const IMAGE_ROTATE_HANDLE_HIT_RADIUS_SCREEN: f32 = 13.0;
 const IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN: f32 = 32.0;
 const MIN_TEXTBOX_WORLD_SIZE: egui::Vec2 = egui::vec2(240.0, 56.0);
 const TEXTBOX_RESIZE_HIT_RADIUS: f32 = 14.0;
@@ -266,18 +269,20 @@ struct AnnotationDragState {
     starting_points: Vec<(i64, egui::Pos2, egui::Pos2)>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum ImageTransformState {
     Resizing {
         item_id: i64,
-        center_screen: egui::Pos2,
+        anchor_screen: egui::Pos2,
+        start_handle_screen: egui::Pos2,
         start_scale: f32,
-        start_radius_screen: f32,
     },
     Rotating {
-        item_id: i64,
+        item_ids: Vec<i64>,
         center_screen: egui::Pos2,
-        start_rotation: f32,
+        center_world: egui::Pos2,
+        start_pointer_angle: f32,
+        starting_items: Vec<(i64, egui::Pos2, f32)>,
     },
 }
 
@@ -1404,6 +1409,10 @@ pub fn show(
     CanvasFrameMetrics { image_pass }
 }
 
+fn rotation_handle_key_held(ctx: &egui::Context) -> bool {
+    !ctx.egui_wants_keyboard_input() && ctx.input(|input| input.key_down(egui::Key::R))
+}
+
 pub fn paint_perf_report() -> PaintPerfReport {
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(960.0, 640.0));
     let pan = egui::Vec2::ZERO;
@@ -1475,7 +1484,7 @@ mod tests {
     use super::interaction::{
         handle_textbox_primary_press, hit_test_image_resize_handle, hit_test_textbox_resize_handle,
         image_screen_rect, moved_textbox_rect, normalized_textbox_rect,
-        open_context_menu_at_pointer, pending_annotation_from_draft, resized_image_scale,
+        open_context_menu_at_pointer, pending_annotation_from_draft, resized_image_transform,
         resized_textbox_rect, textbox_screen_rect,
     };
     use super::render::{
@@ -2476,7 +2485,7 @@ mod tests {
     }
 
     #[test]
-    fn image_resize_scales_proportionally_from_center() {
+    fn image_resize_scales_proportionally_from_opposite_corner() {
         let asset = ImageAsset {
             id: 22,
             original_path: PathBuf::from("image-22.png"),
@@ -2487,13 +2496,15 @@ mod tests {
             file_size: 0,
             imported_at: 0,
         };
-        let center = eframe::egui::pos2(300.0, 240.0);
-        let start_radius = 111.8034;
-        let pointer_pos = center + eframe::egui::vec2(200.0, 100.0);
+        let anchor = eframe::egui::pos2(200.0, 190.0);
+        let start_handle = eframe::egui::pos2(400.0, 290.0);
+        let pointer_pos = eframe::egui::pos2(600.0, 390.0);
 
-        let scale = resized_image_scale(&asset, 1.0, start_radius, center, pointer_pos);
+        let (center, scale) =
+            resized_image_transform(&asset, 1.0, anchor, start_handle, pointer_pos);
 
         assert!((scale - 2.0).abs() < 0.01);
+        assert_eq!(center, eframe::egui::pos2(400.0, 290.0));
     }
 
     #[test]
@@ -2509,12 +2520,12 @@ mod tests {
             imported_at: 0,
         };
 
-        let scale = resized_image_scale(
+        let (_, scale) = resized_image_transform(
             &asset,
             1.0,
-            223.6068,
-            eframe::egui::pos2(300.0, 240.0),
-            eframe::egui::pos2(300.5, 240.5),
+            eframe::egui::pos2(100.0, 100.0),
+            eframe::egui::pos2(500.0, 300.0),
+            eframe::egui::pos2(100.5, 100.5),
         );
 
         assert_eq!(scale, min_image_scale(&asset));

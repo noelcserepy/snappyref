@@ -61,6 +61,20 @@ pub(super) fn image_screen_rect_for_record(
         })
 }
 
+pub(super) fn image_rotation_handle_screen_pos(
+    record: &crate::data::BoardItemWithAsset,
+    pan: egui::Vec2,
+    zoom: f32,
+    screen_center: egui::Pos2,
+) -> (egui::Pos2, egui::Pos2) {
+    let corners = image_screen_corners_for_record(record, pan, zoom, screen_center);
+    let top_mid = corners[0].lerp(corners[1], 0.5);
+    let bottom_mid = corners[3].lerp(corners[2], 0.5);
+    let outward = (top_mid - bottom_mid).normalized();
+    let handle = top_mid + outward * super::IMAGE_ROTATE_HANDLE_OFFSET_SCREEN;
+    (top_mid, handle)
+}
+
 pub(super) fn min_image_scale(asset: &crate::data::ImageAsset) -> f32 {
     let width_scale = super::MIN_IMAGE_WORLD_SIZE / asset.width.max(1) as f32;
     let height_scale = super::MIN_IMAGE_WORLD_SIZE / asset.height.max(1) as f32;

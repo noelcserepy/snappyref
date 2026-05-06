@@ -151,6 +151,13 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: None,
     },
     SupportedShortcut {
+        action: "Rotate selection",
+        windows: "R + Drag",
+        mac: "R + Drag",
+        binding: None,
+        shortcut_action: None,
+    },
+    SupportedShortcut {
         action: "Focus selection",
         windows: "Space",
         mac: "Space",
@@ -214,22 +221,22 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Compact arrange",
-        windows: "Ctrl+P",
-        mac: "⌘P",
+        windows: "Q",
+        mac: "Q",
         binding: Some(ShortcutBinding {
-            key: egui::Key::P,
-            command: true,
+            key: egui::Key::Q,
+            command: false,
             shift: false,
         }),
         shortcut_action: Some(SupportedShortcutAction::Arrange(ArrangementAction::Compact)),
     },
     SupportedShortcut {
         action: "Row arrange",
-        windows: "Ctrl+H",
-        mac: "⌘H",
+        windows: "W",
+        mac: "W",
         binding: Some(ShortcutBinding {
-            key: egui::Key::H,
-            command: true,
+            key: egui::Key::W,
+            command: false,
             shift: false,
         }),
         shortcut_action: Some(SupportedShortcutAction::Arrange(
@@ -238,11 +245,11 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Column arrange",
-        windows: "Ctrl+J",
-        mac: "⌘J",
+        windows: "E",
+        mac: "E",
         binding: Some(ShortcutBinding {
-            key: egui::Key::J,
-            command: true,
+            key: egui::Key::E,
+            command: false,
             shift: false,
         }),
         shortcut_action: Some(SupportedShortcutAction::Arrange(
@@ -878,6 +885,33 @@ impl AppConfig {
         self.perf_import_path.as_deref()
     }
 
+    pub(crate) fn restored_window_state(&self) -> Option<crate::data::WindowState> {
+        if !self.persist_window_state_enabled() {
+            return None;
+        }
+        let library = self
+            .library_root()
+            .map(std::path::Path::to_path_buf)
+            .and_then(crate::storage::Library::initialize)
+            .ok()?;
+        let window = library.load_user_session().ok()?.window;
+        window.is_restorable().then_some(window)
+    }
+
+    fn persist_window_state_enabled(&self) -> bool {
+        self.screenshot_path.is_none() && !self.verification_mode_active()
+    }
+
+    #[cfg(debug_assertions)]
+    fn verification_mode_active(&self) -> bool {
+        self.verification_mode.is_some() || self.verification_search_query.is_some()
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn verification_mode_active(&self) -> bool {
+        false
+    }
+
     pub fn startup_trace_requested(&self) -> bool {
         self.startup_trace
     }
@@ -897,6 +931,8 @@ pub struct SnappyRefApp {
     library: Option<crate::storage::Library>,
     import_worker: Option<crate::jobs::ImportWorker>,
     active_board_id: i64,
+    window_state: crate::data::WindowState,
+    persist_window_state: bool,
     crop_flow: CropFlow,
     max_texture_side: usize,
     settings: crate::data::WorkspaceSettings,
@@ -960,6 +996,8 @@ impl SnappyRefApp {
                     library: Some(library.clone()),
                     import_worker: Some(import_worker),
                     active_board_id: 1,
+                    window_state: crate::data::WindowState::default(),
+                    persist_window_state: config.persist_window_state_enabled(),
                     crop_flow: CropFlow::default(),
                     max_texture_side,
                     settings: crate::data::WorkspaceSettings::default(),
@@ -1161,6 +1199,8 @@ impl SnappyRefApp {
                 library: None,
                 import_worker: None,
                 active_board_id: 1,
+                window_state: crate::data::WindowState::default(),
+                persist_window_state: config.persist_window_state_enabled(),
                 crop_flow: CropFlow::default(),
                 max_texture_side,
                 settings: crate::data::WorkspaceSettings::default(),
@@ -1429,6 +1469,7 @@ impl SnappyRefApp {
             Ok(session) => {
                 self.canvas.apply_viewport_state(&session.viewport);
                 self.active_board_id = session.active_board_id;
+                self.window_state = session.window;
                 self.settings = session.settings;
                 self.settings.normalize_core_features();
                 self.sidebar_open = session.sidebar_open;
@@ -2820,10 +2861,31 @@ impl SnappyRefApp {
         }
     }
 
+    fn update_window_state(&mut self, ctx: &egui::Context) {
+        if !self.persist_window_state {
+            return;
+        }
+        let viewport = ctx.input(|input| input.viewport().clone());
+        let Some(inner_rect) = viewport.inner_rect else {
+            return;
+        };
+
+        self.window_state.inner_width = Some(inner_rect.width());
+        self.window_state.inner_height = Some(inner_rect.height());
+        if let Some(outer_rect) = viewport.outer_rect {
+            self.window_state.outer_x = Some(outer_rect.min.x);
+            self.window_state.outer_y = Some(outer_rect.min.y);
+        } else {
+            self.window_state.outer_x = Some(inner_rect.min.x);
+            self.window_state.outer_y = Some(inner_rect.min.y);
+        }
+    }
+
     fn current_user_session(&self) -> crate::data::UserSession {
         crate::data::UserSession {
             active_board_id: self.active_board_id,
             viewport: self.canvas.viewport_state(),
+            window: self.window_state.clone(),
             settings: self.settings.clone(),
             sidebar_open: self.sidebar_open,
             sidebar_tab: sidebar_tab_session_value(self.sidebar_tab).to_owned(),
@@ -3934,6 +3996,7 @@ fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egui::Response
 impl eframe::App for SnappyRefApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let screen_rect = ui.ctx().viewport_rect();
+        self.update_window_state(ui.ctx());
         ui.set_clip_rect(screen_rect);
         ui.expand_to_include_rect(screen_rect);
         self.frame_perf.import_results_drained = 0;
@@ -5138,6 +5201,43 @@ mod tests {
 
         assert_eq!(app.canvas.selected_item_ids(), vec![1, 2]);
         assert_eq!(app.canvas.selected_annotation_ids(), vec![10, 11]);
+    }
+
+    #[test]
+    fn qwe_arrange_shortcuts_apply_selected_image_layouts() {
+        let ctx = egui::Context::default();
+        for (key, expected_status) in [
+            (egui::Key::Q, "Compacted 2 images"),
+            (egui::Key::W, "Arranged 2 images in a row"),
+            (egui::Key::E, "Arranged 2 images in a column"),
+        ] {
+            let mut app = test_app(None);
+            for id in [1_i64, 2] {
+                app.canvas.add_loaded_item(&ctx, test_loaded_item(id, 1));
+            }
+            app.canvas.select_items(&[1, 2]);
+
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key,
+                        physical_key: Some(key),
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::default(),
+                    }],
+                    ..Default::default()
+                },
+                |ui| {
+                    app.handle_selection_shortcuts(
+                        ui.ctx(),
+                        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),
+                    )
+                },
+            );
+
+            assert_eq!(app.status, expected_status);
+        }
     }
 
     #[test]
@@ -7507,6 +7607,8 @@ mod tests {
             library,
             import_worker: None,
             active_board_id: 1,
+            window_state: crate::data::WindowState::default(),
+            persist_window_state: true,
             crop_flow: super::CropFlow::default(),
             max_texture_side: 8192,
             settings: crate::data::WorkspaceSettings::default(),
