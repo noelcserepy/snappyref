@@ -36,6 +36,17 @@ jobs:
       - name: Build release binary
         run: cargo build --release --locked
 
+      - name: Verify Windows GUI subsystem
+        shell: pwsh
+        run: |
+          $exe = "target\release\snappyref.exe"
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $subsystem = [BitConverter]::ToUInt16($bytes, $peOffset + 24 + 68)
+          if ($subsystem -ne 2) {
+            throw "expected Windows GUI subsystem 2, got $subsystem"
+          }
+
       - name: Package artifact
         shell: pwsh
         run: |
