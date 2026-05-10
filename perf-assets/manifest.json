@@ -1,0 +1,209 @@
+[
+  {
+    "file": "jpg/sample-photo.jpg",
+    "format": "jpg",
+    "animated": false,
+    "role": "default-1-image; medium portrait photo",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Sample_photo.jpg",
+    "download_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Sample_photo.jpg",
+    "license": "CC BY-SA, Wikimedia Commons"
+  },
+  {
+    "file": "jpg/gathering-a-sample.jpg",
+    "format": "jpg",
+    "animated": false,
+    "role": "large high-resolution photo",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Gathering_a_Sample_(6324543).jpg",
+    "download_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Gathering_a_Sample_(6324543).jpg",
+    "license": "Public domain, U.S. Army / U.S. federal government work"
+  },
+  {
+    "file": "jpg/sample-75075-nasa.jpg",
+    "format": "jpg",
+    "animated": false,
+    "role": "medium NASA object photo",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Sample_75075_S73-15342.jpg",
+    "download_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Sample_75075_S73-15342.jpg",
+    "license": "Public domain, NASA"
+  },
+  {
+    "file": "jpg/components-total-us-debt.jpg",
+    "format": "jpg",
+    "animated": false,
+    "role": "small chart/graphic JPEG",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Components-of-total-US-debt.jpg",
+    "download_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Components-of-total-US-debt.jpg",
+    "license": "Public domain, Wikimedia Commons uploader"
+  },
+  {
+    "file": "jpg/net-worth-us.jpg",
+    "format": "jpg",
+    "animated": false,
+    "role": "small chart/graphic JPEG",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Net-worth-of-the-United-States.jpg",
+    "download_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Net-worth-of-the-United-States.jpg",
+    "license": "Public domain, Wikimedia Commons uploader"
+  },
+  {
+    "file": "png/screenshot-new-wikipedia.png",
+    "format": "png",
+    "animated": false,
+    "role": "desktop screenshot PNG",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Screenshot_new_wikipedia.png",
+    "download_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Screenshot_new_wikipedia.png",
+    "license": "Free screenshot per Wikimedia Commons file page"
+  },
+  {
+    "file": "png/simple-wikipedia-screenshot-2008.png",
+    "format": "png",
+    "animated": false,
+    "role": "desktop screenshot PNG",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Simple_wikipedia_screenshot_2008.png",
+    "download_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Simple_wikipedia_screenshot_2008.png",
+    "license": "Public domain, Wikimedia Commons uploader"
+  },
+  {
+    "file": "png/commons-screenshot-cropped.png",
+    "format": "png",
+    "animated": false,
+    "role": "large screenshot PNG",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Commons_screenshot_(cropped).png",
+    "download_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Commons_screenshot_(cropped).png",
+    "license": "Free screenshot, Wikimedia Commons file page lists free licenses"
+  },
+  {
+    "file": "png/happy-prince-plate-2.png",
+    "format": "png",
+    "animated": false,
+    "role": "scanned illustration PNG",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Plate_2_of_The_Happy_Prince_and_Other_Tales_(1888).png",
+    "download_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Plate_2_of_The_Happy_Prince_and_Other_Tales_(1888).png",
+    "license": "Public domain source scan, Wikimedia Commons"
+  },
+  {
+    "file": "png/apng-ball.png",
+    "format": "png",
+    "animated": false,
+    "role": "APNG decoder fixture; currently static in app",
+    "source_url": "https://github.com/image-rs/image/blob/e0d3c74ae4496c728afcd8aca28e8f9fbe3b2a28/tests/images/png/apng/ball.png",
+    "download_url": "https://raw.githubusercontent.com/image-rs/image/e0d3c74ae4496c728afcd8aca28e8f9fbe3b2a28/tests/images/png/apng/ball.png",
+    "license": "MIT project; test image from image-rs/image repository"
+  },
+  {
+    "file": "webp/webp-1-machine.webp",
+    "format": "webp",
+    "animated": false,
+    "role": "CC0 photo/scan WebP",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Webp_(1).webp",
+    "download_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Webp_(1).webp",
+    "license": "CC0, Wikimedia Commons"
+  },
+  {
+    "file": "webp/knuft.webp",
+    "format": "webp",
+    "animated": false,
+    "role": "locally encoded photographic WebP",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Sample_75075_S73-15342.jpg",
+    "download_url": null,
+    "derive": {
+      "from": "jpg/sample-75075-nasa.jpg",
+      "operation": "webp-lossy",
+      "quality": 82
+    },
+    "license": "Derived from public domain NASA image"
+  },
+  {
+    "file": "webp/basic-html-document.webp",
+    "format": "webp",
+    "animated": false,
+    "role": "locally encoded screenshot/text WebP",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Screenshot_new_wikipedia.png",
+    "download_url": null,
+    "derive": {
+      "from": "png/screenshot-new-wikipedia.png",
+      "operation": "webp-lossless"
+    },
+    "license": "Derived from free screenshot on Wikimedia Commons"
+  },
+  {
+    "file": "webp/gthumb-uploading-commons.webp",
+    "format": "webp",
+    "animated": false,
+    "role": "locally encoded large screenshot WebP",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Commons_screenshot_(cropped).png",
+    "download_url": null,
+    "derive": {
+      "from": "png/commons-screenshot-cropped.png",
+      "operation": "webp-lossy",
+      "quality": 78,
+      "max_side": 2400
+    },
+    "license": "Derived from free screenshot on Wikimedia Commons"
+  },
+  {
+    "file": "gif/pffffft.gif",
+    "format": "gif",
+    "animated": true,
+    "role": "locally converted animated GIF",
+    "source_url": "https://github.com/image-rs/image/blob/e0d3c74ae4496c728afcd8aca28e8f9fbe3b2a28/tests/images/png/apng/ball.png",
+    "download_url": null,
+    "derive": {
+      "from": "png/apng-ball.png",
+      "operation": "gif-animated"
+    },
+    "license": "Derived from MIT project test image from image-rs/image repository"
+  },
+  {
+    "file": "svg/svg-logo.svg",
+    "format": "svg",
+    "animated": false,
+    "role": "local simple vector SVG",
+    "source_url": "local-generated",
+    "download_url": null,
+    "derive": {
+      "operation": "svg-basic"
+    },
+    "license": "CC0/local generated test asset"
+  },
+  {
+    "file": "tiff/palisades-rift.tiff",
+    "format": "tiff",
+    "animated": false,
+    "role": "locally encoded scanned TIFF",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Plate_2_of_The_Happy_Prince_and_Other_Tales_(1888).png",
+    "download_url": null,
+    "derive": {
+      "from": "png/happy-prince-plate-2.png",
+      "operation": "tiff-lzw"
+    },
+    "license": "Derived from public domain source scan on Wikimedia Commons"
+  },
+  {
+    "file": "bmp/rgb24.bmp",
+    "format": "bmp",
+    "animated": false,
+    "animation_control": true,
+    "role": "24-bit BMP decoder fixture",
+    "source_url": "https://github.com/image-rs/image/blob/e0d3c74ae4496c728afcd8aca28e8f9fbe3b2a28/tests/images/bmp/images/rgb24.bmp",
+    "download_url": "https://raw.githubusercontent.com/image-rs/image/e0d3c74ae4496c728afcd8aca28e8f9fbe3b2a28/tests/images/bmp/images/rgb24.bmp",
+    "license": "MIT project; test image from image-rs/image repository"
+  },
+  {
+    "file": "avif/libheif-example.avif",
+    "format": "avif",
+    "animated": false,
+    "role": "AVIF decoder fixture",
+    "source_url": "https://github.com/strukturag/libheif/blob/46521618983c795fdb09a412ebb29e917086896a/examples/example.avif",
+    "download_url": "https://raw.githubusercontent.com/strukturag/libheif/46521618983c795fdb09a412ebb29e917086896a/examples/example.avif",
+    "license": "LGPL-3.0-or-later project; example file from libheif repository"
+  },
+  {
+    "file": "jp2/file6.jp2",
+    "format": "jp2",
+    "animated": false,
+    "role": "JPEG 2000 decoder fixture",
+    "source_url": "https://github.com/Neopallium/jpeg2k/blob/74aaa2f8c733270ca90403064be81d93e2d81a8a/samples/file6.jp2",
+    "download_url": "https://raw.githubusercontent.com/Neopallium/jpeg2k/74aaa2f8c733270ca90403064be81d93e2d81a8a/samples/file6.jp2",
+    "license": "MIT/Apache-2.0 project; sample file from jpeg2k repository"
+  }
+]

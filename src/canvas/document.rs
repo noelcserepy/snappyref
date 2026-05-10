@@ -2136,6 +2136,37 @@ impl CanvasState {
         let frame = &animation.frames[frame_index];
         Some((frame.rgba.clone(), animation.width, animation.height))
     }
+
+    pub(super) fn animated_image_repaint_delay(
+        &self,
+        item_id: i64,
+        time_seconds: f32,
+    ) -> Option<std::time::Duration> {
+        let image = self.image_by_item_id(item_id)?;
+        let animation = image.animation.as_ref()?;
+        if animation.frames.is_empty() {
+            return None;
+        }
+
+        let total_duration = animation
+            .frames
+            .iter()
+            .map(|frame| frame.delay_seconds.max(0.01))
+            .sum::<f32>()
+            .max(0.01);
+        let mut remaining = time_seconds.rem_euclid(total_duration);
+        for frame in &animation.frames {
+            let delay = frame.delay_seconds.max(0.01);
+            if remaining <= delay {
+                return Some(std::time::Duration::from_secs_f32(
+                    (delay - remaining).max(0.01),
+                ));
+            }
+            remaining -= delay;
+        }
+
+        Some(std::time::Duration::from_secs_f32(0.01))
+    }
 }
 
 fn asset_mime_type_is_svg(mime_type: &str) -> bool {

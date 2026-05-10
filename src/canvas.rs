@@ -80,6 +80,8 @@ pub struct PaintPerfReport {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ImagePassMetrics {
     pub visible_images: usize,
+    pub visible_animated_images: usize,
+    pub active_animated_images: usize,
     pub fallback_images: usize,
     pub texture_groups: usize,
     pub draw_calls: usize,

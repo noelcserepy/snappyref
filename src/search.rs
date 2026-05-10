@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -46,6 +47,8 @@ pub(crate) struct SearchController {
     prefetch_searches: HashMap<u64, SearchCacheKey>,
     pending_result_selection: Option<PendingResultSelection>,
     embedding_backfill: EmbeddingBackfillScheduler,
+    pending_demand_embeddings: HashSet<i64>,
+    completed_demand_embeddings: usize,
     next_search_request_id: u64,
     recent_searches: Vec<String>,
     recent_searches_dirty: bool,
@@ -380,7 +383,10 @@ impl SearchController {
                 }
                 should_refresh
             }
-            SearchIndexResult::Indexed => {
+            SearchIndexResult::Indexed { asset_id } => {
+                if self.pending_demand_embeddings.remove(&asset_id) {
+                    self.completed_demand_embeddings += 1;
+                }
                 let should_refresh = self.overlay.open
                     && (!self.overlay.query.trim().is_empty()
                         || self.overlay.image_pivot.is_some())
@@ -523,9 +529,27 @@ impl SearchController {
             );
         };
         service.enqueue_asset_index(asset_id, original_path)?;
+        self.pending_demand_embeddings.insert(asset_id);
         self.embedding_backfill.exhausted = false;
         self.overlay.status = SearchOverlayStatus::Indexing;
         Ok(())
+    }
+
+    pub(crate) fn demand_embedding_pending_count(&self) -> usize {
+        self.pending_demand_embeddings.len()
+    }
+
+    pub(crate) fn completed_demand_embedding_count(&self) -> usize {
+        self.completed_demand_embeddings
+    }
+
+    pub(crate) fn embedding_backfill_is_idle(&self) -> bool {
+        !self.embedding_backfill.in_flight
+            && self.embedding_backfill.exhausted
+            && !self
+                .service
+                .as_ref()
+                .is_some_and(|service| service.search_embedding_cache_warming())
     }
 
     pub(crate) fn drive_verification_search(
@@ -1945,7 +1969,8 @@ mod tests {
             instance_count: 1,
         }];
 
-        let should_refresh = search.process_index_result(SearchIndexResult::Indexed);
+        let should_refresh =
+            search.process_index_result(SearchIndexResult::Indexed { asset_id: 10 });
 
         assert!(!should_refresh);
         assert_eq!(search.overlay.last_submitted_query, "boat");

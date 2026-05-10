@@ -58,7 +58,7 @@ enum SearchRequest {
 }
 
 pub enum IndexResult {
-    Indexed,
+    Indexed { asset_id: i64 },
     Failed { error: String },
     Progress { message: String },
     ModelReady,
@@ -159,7 +159,7 @@ impl SemanticSearchService {
                                 model_spec.model_key,
                                 worker_search_embedding_cache.clone(),
                             );
-                            let _ = result_tx.send(IndexResult::Indexed);
+                            let _ = result_tx.send(IndexResult::Indexed { asset_id });
                         }
                     }
                     IndexRequest::BackfillOne => {
@@ -436,6 +436,13 @@ impl SemanticSearchService {
         self.model_state
             .lock()
             .map(|state| matches!(&*state, ModelState::Ready(_)))
+            .unwrap_or(false)
+    }
+
+    pub fn search_embedding_cache_warming(&self) -> bool {
+        self.search_embedding_cache
+            .lock()
+            .map(|cache| cache.warming)
             .unwrap_or(false)
     }
 }
@@ -1312,7 +1319,7 @@ mod tests {
         while Instant::now() < deadline {
             for result in service.try_recv_all() {
                 match result {
-                    IndexResult::Indexed => indexed = true,
+                    IndexResult::Indexed { .. } => indexed = true,
                     IndexResult::Failed { error } => panic!("{error}"),
                     IndexResult::Progress { .. } => {}
                     IndexResult::ModelReady => {}

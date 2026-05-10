@@ -102,6 +102,23 @@ pub struct FileImportPerfReport {
     pub total_ms: f64,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ImportWorkerStats {
+    pub queued_startup: usize,
+    pub queued_interactive: usize,
+    pub queued_background: usize,
+    pub in_flight: usize,
+}
+
+impl ImportWorkerStats {
+    pub fn has_work(self) -> bool {
+        self.queued_startup > 0
+            || self.queued_interactive > 0
+            || self.queued_background > 0
+            || self.in_flight > 0
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CanvasImageSettings {
     pub max_side: u32,
@@ -400,6 +417,7 @@ struct RequestQueueState {
     startup: VecDeque<ImportRequest>,
     interactive: VecDeque<ImportRequest>,
     background: VecDeque<ImportRequest>,
+    in_flight: usize,
     shutting_down: bool,
 }
 
@@ -587,6 +605,7 @@ impl ImportWorker {
                         ),
                     };
 
+                    worker_queue.finish_one();
                     if worker_result_tx.send(result).is_ok() {
                         worker_ctx.request_repaint();
                     }
@@ -608,6 +627,10 @@ impl ImportWorker {
 
     pub fn try_recv_up_to(&self, limit: usize) -> Vec<ImportResult> {
         self.receiver.try_iter().take(limit).collect()
+    }
+
+    pub fn stats(&self) -> ImportWorkerStats {
+        self.queue.stats()
     }
 }
 
@@ -644,28 +667,35 @@ impl RequestQueue {
             match kind {
                 WorkerKind::General => {
                     if let Some(request) = state.interactive.pop_front() {
+                        state.in_flight += 1;
                         return Some(request);
                     }
                     if let Some(request) = state.startup.pop_front() {
+                        state.in_flight += 1;
                         return Some(request);
                     }
                     if let Some(request) = state.background.pop_front() {
+                        state.in_flight += 1;
                         return Some(request);
                     }
                 }
                 WorkerKind::Interactive => {
                     if let Some(request) = state.interactive.pop_front() {
+                        state.in_flight += 1;
                         return Some(request);
                     }
                     if let Some(request) = state.startup.pop_front() {
+                        state.in_flight += 1;
                         return Some(request);
                     }
                 }
                 WorkerKind::Background => {
                     if let Some(request) = state.startup.pop_front() {
+                        state.in_flight += 1;
                         return Some(request);
                     }
                     if let Some(request) = state.background.pop_front() {
+                        state.in_flight += 1;
                         return Some(request);
                     }
                 }
@@ -678,6 +708,21 @@ impl RequestQueue {
         let mut state = self.state.lock().expect("request queue poisoned");
         state.shutting_down = true;
         self.ready.notify_all();
+    }
+
+    fn finish_one(&self) {
+        let mut state = self.state.lock().expect("request queue poisoned");
+        state.in_flight = state.in_flight.saturating_sub(1);
+    }
+
+    fn stats(&self) -> ImportWorkerStats {
+        let state = self.state.lock().expect("request queue poisoned");
+        ImportWorkerStats {
+            queued_startup: state.startup.len(),
+            queued_interactive: state.interactive.len(),
+            queued_background: state.background.len(),
+            in_flight: state.in_flight,
+        }
     }
 }
 

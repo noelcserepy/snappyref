@@ -1,4 +1,8 @@
 use eframe::egui;
+use std::fs::File;
+use std::io::Write;
+use std::path::PathBuf;
+use std::time::Duration;
 use std::time::Instant;
 
 use crate::active_board_commands::{
@@ -301,6 +305,9 @@ pub struct AppConfig {
     perf_import_path: Option<std::path::PathBuf>,
     perf_embedding_lod: bool,
     perf_embedding_lod_limit: usize,
+    perf_scenario: Option<String>,
+    perf_corpus: Option<std::path::PathBuf>,
+    perf_run_dir: Option<std::path::PathBuf>,
     startup_trace: bool,
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
     search_latency_log: bool,
@@ -323,6 +330,194 @@ struct FramePerfState {
     import_results_drained: usize,
     import_result_drain_ms: f64,
     canvas: crate::canvas::CanvasFrameMetrics,
+}
+
+#[derive(Debug)]
+struct PerfScenarioState {
+    name: String,
+    corpus_root: PathBuf,
+    run_dir: PathBuf,
+    events: File,
+    started_at: Instant,
+    queued: bool,
+    expected_imports: usize,
+    visible_imports: usize,
+    demand_embeddings_queued: usize,
+    demand_embeddings_done: usize,
+    first_visible_logged: bool,
+    all_visible_logged: bool,
+    first_embedding_queued_logged: bool,
+    first_embedding_done_logged: bool,
+    all_embeddings_done_logged: bool,
+    idle_since: Option<Instant>,
+    settled_idle_logged: bool,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+struct PerfCorpusEntry {
+    file: String,
+    format: String,
+    role: String,
+    #[serde(default)]
+    animated: bool,
+    #[serde(default)]
+    animation_control: bool,
+}
+
+impl PerfScenarioState {
+    fn from_config(config: &AppConfig) -> Result<Option<Self>, String> {
+        let Some(name) = config.perf_scenario.clone() else {
+            return Ok(None);
+        };
+        let corpus_root = config
+            .perf_corpus
+            .clone()
+            .ok_or_else(|| "--perf-corpus is required with --perf-scenario".to_owned())?;
+        let run_dir = config
+            .perf_run_dir
+            .clone()
+            .ok_or_else(|| "--perf-run-dir is required with --perf-scenario".to_owned())?;
+        std::fs::create_dir_all(&run_dir).map_err(|error| {
+            format!(
+                "failed to create perf run dir {}: {error}",
+                run_dir.display()
+            )
+        })?;
+        let events_path = run_dir.join("events.ndjson");
+        let events = File::create(&events_path)
+            .map_err(|error| format!("failed to create {}: {error}", events_path.display()))?;
+        Ok(Some(Self {
+            name,
+            corpus_root,
+            run_dir,
+            events,
+            started_at: Instant::now(),
+            queued: false,
+            expected_imports: 0,
+            visible_imports: 0,
+            demand_embeddings_queued: 0,
+            demand_embeddings_done: 0,
+            first_visible_logged: false,
+            all_visible_logged: false,
+            first_embedding_queued_logged: false,
+            first_embedding_done_logged: false,
+            all_embeddings_done_logged: false,
+            idle_since: None,
+            settled_idle_logged: false,
+        }))
+    }
+
+    fn elapsed_ms(&self) -> f64 {
+        self.started_at.elapsed().as_secs_f64() * 1000.0
+    }
+
+    fn emit(&mut self, event: &str, mut extra: serde_json::Value) {
+        if let Some(object) = extra.as_object_mut() {
+            object.insert("event".to_owned(), serde_json::json!(event));
+            object.insert(
+                "elapsed_ms".to_owned(),
+                serde_json::json!(self.elapsed_ms()),
+            );
+            object.insert("scenario".to_owned(), serde_json::json!(self.name));
+        }
+        let _ = writeln!(self.events, "{extra}");
+        let _ = self.events.flush();
+    }
+
+    fn manifest_path(&self) -> PathBuf {
+        self.corpus_root
+            .parent()
+            .map(|root| root.join("manifest.json"))
+            .unwrap_or_else(|| PathBuf::from("perf-assets/manifest.json"))
+    }
+
+    fn selected_entries(&self) -> Result<Vec<PerfCorpusEntry>, String> {
+        let manifest_path = self.manifest_path();
+        let manifest = std::fs::read_to_string(&manifest_path)
+            .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
+        let entries: Vec<PerfCorpusEntry> = serde_json::from_str(&manifest)
+            .map_err(|error| format!("failed to parse {}: {error}", manifest_path.display()))?;
+        let mut selected = match self.name.as_str() {
+            "import-1" => entries
+                .into_iter()
+                .filter(|entry| entry.role.contains("default-1-image"))
+                .take(1)
+                .collect::<Vec<_>>(),
+            "import-20" | "mixed-corpus" => entries,
+            "animated" => entries
+                .into_iter()
+                .filter(|entry| entry.animated)
+                .collect::<Vec<_>>(),
+            "animated-control" => entries
+                .into_iter()
+                .filter(|entry| entry.animation_control)
+                .collect::<Vec<_>>(),
+            "static" => entries
+                .into_iter()
+                .filter(|entry| !entry.animated)
+                .collect::<Vec<_>>(),
+            "static-20" => {
+                let static_entries = entries
+                    .into_iter()
+                    .filter(|entry| !entry.animated)
+                    .collect::<Vec<_>>();
+                static_entries
+                    .iter()
+                    .cycle()
+                    .take(20)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            }
+            name if name.starts_with("format:") => {
+                let format = name.trim_start_matches("format:");
+                entries
+                    .into_iter()
+                    .filter(|entry| entry.format == format)
+                    .collect::<Vec<_>>()
+            }
+            other => return Err(format!("unknown perf scenario: {other}")),
+        };
+        selected.sort_by(|left, right| left.file.cmp(&right.file));
+        if selected.is_empty() {
+            return Err(format!("perf scenario selected no files: {}", self.name));
+        }
+        Ok(selected)
+    }
+
+    fn write_summary(
+        &mut self,
+        worker_stats: crate::jobs::ImportWorkerStats,
+        image_pass: crate::canvas::ImagePassMetrics,
+    ) {
+        let summary = serde_json::json!({
+            "scenario": self.name,
+            "time_to_idle_ms": self.elapsed_ms(),
+            "expected_imports": self.expected_imports,
+            "visible_imports": self.visible_imports,
+            "demand_embeddings_queued": self.demand_embeddings_queued,
+            "demand_embeddings_done": self.demand_embeddings_done,
+            "import_worker": {
+                "queued_startup": worker_stats.queued_startup,
+                "queued_interactive": worker_stats.queued_interactive,
+                "queued_background": worker_stats.queued_background,
+                "in_flight": worker_stats.in_flight,
+            },
+            "last_canvas_frame": {
+                "visible_images": image_pass.visible_images,
+                "visible_animated_images": image_pass.visible_animated_images,
+                "active_animated_images": image_pass.active_animated_images,
+                "fallback_images": image_pass.fallback_images,
+                "draw_calls": image_pass.draw_calls,
+                "texture_groups": image_pass.texture_groups,
+                "build_time_ms": image_pass.build_time_ms,
+            },
+        });
+        let path = self.run_dir.join("summary.json");
+        let _ = std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&summary).unwrap_or_default(),
+        );
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -395,6 +590,9 @@ impl AppConfig {
         let mut perf_import_path = None;
         let mut perf_embedding_lod = false;
         let mut perf_embedding_lod_limit = 30;
+        let mut perf_scenario = None;
+        let mut perf_corpus = None;
+        let mut perf_run_dir = None;
         let mut startup_trace = false;
         #[cfg(all(debug_assertions, feature = "semantic-search"))]
         let mut search_latency_log = std::env::var_os("SNAPPYREF_SEARCH_LATENCY_LOG").is_some();
@@ -434,6 +632,18 @@ impl AppConfig {
                 if let Ok(limit) = limit.parse() {
                     perf_embedding_lod_limit = limit;
                 }
+            } else if argument == "--perf-scenario" {
+                perf_scenario = arguments.next();
+            } else if let Some(scenario) = argument.strip_prefix("--perf-scenario=") {
+                perf_scenario = Some(scenario.to_owned());
+            } else if argument == "--perf-corpus" {
+                perf_corpus = arguments.next().map(std::path::PathBuf::from);
+            } else if let Some(path) = argument.strip_prefix("--perf-corpus=") {
+                perf_corpus = Some(std::path::PathBuf::from(path));
+            } else if argument == "--perf-run-dir" {
+                perf_run_dir = arguments.next().map(std::path::PathBuf::from);
+            } else if let Some(path) = argument.strip_prefix("--perf-run-dir=") {
+                perf_run_dir = Some(std::path::PathBuf::from(path));
             } else if argument == "--startup-trace" {
                 startup_trace = true;
             } else if cfg!(all(debug_assertions, feature = "semantic-search"))
@@ -626,6 +836,9 @@ impl AppConfig {
             perf_import_path,
             perf_embedding_lod,
             perf_embedding_lod_limit,
+            perf_scenario,
+            perf_corpus,
+            perf_run_dir,
             startup_trace,
             #[cfg(all(debug_assertions, feature = "semantic-search"))]
             search_latency_log,
@@ -774,32 +987,33 @@ impl AppConfig {
 
     #[cfg(debug_assertions)]
     fn skip_existing_items_on_start(&self) -> bool {
-        matches!(
-            self.verification_mode,
-            Some(
-                VerificationMode::DrawArrow
-                    | VerificationMode::EditTextbox
-                    | VerificationMode::RotateImage
-                    | VerificationMode::AnimatedGif
-                    | VerificationMode::SvgImage
-                    | VerificationMode::MoveSnapPreview
-                    | VerificationMode::ContextMenu
-                    | VerificationMode::ImportPlaceholders
-                    | VerificationMode::ImportLoaded
-                    | VerificationMode::BackgroundGrid
-                    | VerificationMode::BackgroundDots
-                    | VerificationMode::BackgroundTransition
-                    | VerificationMode::BoardDeleteConfirmation
-                    | VerificationMode::LibraryRemoveConfirmation
-                    | VerificationMode::DesignSystemPreview
-                    | VerificationMode::CompactControlsComparison
-                    | VerificationMode::RadiusComparison
-                    | VerificationMode::DestructiveActionsComparison
-                    | VerificationMode::SpacingComparison
-                    | VerificationMode::BoardRowsComparison
-                    | VerificationMode::BoardRowsComparisonBottom
+        self.perf_scenario_requested()
+            || matches!(
+                self.verification_mode,
+                Some(
+                    VerificationMode::DrawArrow
+                        | VerificationMode::EditTextbox
+                        | VerificationMode::RotateImage
+                        | VerificationMode::AnimatedGif
+                        | VerificationMode::SvgImage
+                        | VerificationMode::MoveSnapPreview
+                        | VerificationMode::ContextMenu
+                        | VerificationMode::ImportPlaceholders
+                        | VerificationMode::ImportLoaded
+                        | VerificationMode::BackgroundGrid
+                        | VerificationMode::BackgroundDots
+                        | VerificationMode::BackgroundTransition
+                        | VerificationMode::BoardDeleteConfirmation
+                        | VerificationMode::LibraryRemoveConfirmation
+                        | VerificationMode::DesignSystemPreview
+                        | VerificationMode::CompactControlsComparison
+                        | VerificationMode::RadiusComparison
+                        | VerificationMode::DestructiveActionsComparison
+                        | VerificationMode::SpacingComparison
+                        | VerificationMode::BoardRowsComparison
+                        | VerificationMode::BoardRowsComparisonBottom
+                )
             )
-        )
     }
 
     #[cfg(debug_assertions)]
@@ -809,7 +1023,7 @@ impl AppConfig {
 
     #[cfg(not(debug_assertions))]
     fn skip_existing_items_on_start(&self) -> bool {
-        false
+        self.perf_scenario_requested()
     }
 
     #[cfg(debug_assertions)]
@@ -909,6 +1123,10 @@ impl AppConfig {
         self.perf_embedding_lod_limit
     }
 
+    fn perf_scenario_requested(&self) -> bool {
+        self.perf_scenario.is_some()
+    }
+
     pub(crate) fn restored_window_state(&self) -> Option<crate::data::WindowState> {
         if !self.persist_window_state_enabled() {
             return None;
@@ -923,7 +1141,9 @@ impl AppConfig {
     }
 
     fn persist_window_state_enabled(&self) -> bool {
-        self.screenshot_path.is_none() && !self.verification_mode_active()
+        self.screenshot_path.is_none()
+            && !self.verification_mode_active()
+            && !self.perf_scenario_requested()
     }
 
     #[cfg(debug_assertions)]
@@ -970,6 +1190,7 @@ pub struct SnappyRefApp {
     status: String,
     perf_log: Option<PerfLogState>,
     frame_perf: FramePerfState,
+    perf_scenario: Option<PerfScenarioState>,
     import_intake: ImportIntake,
     residency: ImageResidencyCoordinator,
     hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
@@ -1042,6 +1263,7 @@ impl SnappyRefApp {
                         startup_logged: false,
                     }),
                     frame_perf: FramePerfState::default(),
+                    perf_scenario: PerfScenarioState::from_config(&config).unwrap_or(None),
                     import_intake: ImportIntake::new(),
                     residency: ImageResidencyCoordinator::default(),
                     hover_preview_dimensions: std::collections::HashMap::new(),
@@ -1245,6 +1467,7 @@ impl SnappyRefApp {
                     startup_logged: false,
                 }),
                 frame_perf: FramePerfState::default(),
+                perf_scenario: PerfScenarioState::from_config(&config).unwrap_or(None),
                 import_intake: ImportIntake::new(),
                 residency: ImageResidencyCoordinator::default(),
                 hover_preview_dimensions: std::collections::HashMap::new(),
@@ -1300,6 +1523,204 @@ impl SnappyRefApp {
             Ok(annotations) => self.canvas.add_annotations(annotations),
             Err(error) => self.status = error,
         }
+    }
+
+    fn drive_perf_scenario(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) -> bool {
+        if self.perf_scenario.is_none() {
+            return false;
+        }
+        if self
+            .perf_scenario
+            .as_ref()
+            .is_some_and(|scenario| !scenario.queued)
+        {
+            self.enqueue_perf_scenario_imports(ctx, screen_rect);
+        }
+        self.update_perf_scenario_embedding_progress();
+        self.finish_perf_scenario_if_idle(ctx)
+    }
+
+    fn enqueue_perf_scenario_imports(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
+        let Some(mut scenario) = self.perf_scenario.take() else {
+            return;
+        };
+        scenario.queued = true;
+        let entries = match scenario.selected_entries() {
+            Ok(entries) => entries,
+            Err(error) => {
+                scenario.emit("error", serde_json::json!({ "message": error }));
+                self.perf_scenario = Some(scenario);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+        };
+        scenario.expected_imports = entries.len();
+        scenario.emit(
+            "scenario_started",
+            serde_json::json!({ "expected_imports": entries.len() }),
+        );
+        self.perf_scenario = Some(scenario);
+
+        let desired_world = self.preferred_import_world(ctx, screen_rect);
+        let viewport_world = self.import_viewport_world_rect(screen_rect);
+        let mut layout = match self.import_layout_snapshot() {
+            Ok(layout) => layout,
+            Err(error) => {
+                self.emit_perf_error_and_close(ctx, error);
+                return;
+            }
+        };
+
+        let entries = match self
+            .perf_scenario
+            .as_ref()
+            .and_then(|scenario| scenario.selected_entries().ok())
+        {
+            Some(entries) => entries,
+            None => return,
+        };
+
+        for entry in entries {
+            let path = self
+                .perf_scenario
+                .as_ref()
+                .map(|scenario| scenario.corpus_root.join(&entry.file))
+                .unwrap_or_else(|| PathBuf::from(&entry.file));
+            let dimensions = image::image_dimensions(&path).ok();
+            let reservation = self.reserve_import(
+                &mut layout,
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("perf-image")
+                    .to_owned(),
+                dimensions,
+                desired_world,
+                viewport_world,
+            );
+            let request = crate::import_intake::import_path_request(
+                path.clone(),
+                reservation,
+                desired_world,
+                viewport_world,
+                self.import_request_config(),
+                self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
+                    queued_at: Instant::now(),
+                    timings: crate::jobs::ImportTimings::default(),
+                }),
+            );
+            if let Err(error) = self
+                .import_worker
+                .as_ref()
+                .expect("perf scenario requires import worker")
+                .enqueue(request)
+            {
+                self.remove_import_reservation(reservation);
+                self.emit_perf_error_and_close(ctx, error);
+                return;
+            }
+            if let Some(scenario) = &mut self.perf_scenario {
+                scenario.emit(
+                    "import_queued",
+                    serde_json::json!({
+                        "file": entry.file,
+                        "format": entry.format,
+                        "animated": entry.animated,
+                        "role": entry.role,
+                        "width": dimensions.map(|value| value.0),
+                        "height": dimensions.map(|value| value.1),
+                    }),
+                );
+            }
+        }
+        ctx.request_repaint_after(Duration::from_millis(16));
+    }
+
+    fn emit_perf_error_and_close(&mut self, ctx: &egui::Context, error: String) {
+        if let Some(scenario) = &mut self.perf_scenario {
+            scenario.emit("error", serde_json::json!({ "message": error }));
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    fn update_perf_scenario_embedding_progress(&mut self) {
+        let Some(scenario) = &mut self.perf_scenario else {
+            return;
+        };
+        #[cfg(feature = "semantic-search")]
+        {
+            let done = self.search.completed_demand_embedding_count();
+            while scenario.demand_embeddings_done < done {
+                scenario.demand_embeddings_done += 1;
+                if !scenario.first_embedding_done_logged {
+                    scenario.first_embedding_done_logged = true;
+                    scenario.emit("first_import_embedding_done", serde_json::json!({}));
+                }
+                scenario.emit(
+                    "import_embedding_done",
+                    serde_json::json!({ "done": scenario.demand_embeddings_done }),
+                );
+            }
+            if scenario.demand_embeddings_queued > 0
+                && scenario.demand_embeddings_done >= scenario.demand_embeddings_queued
+                && !scenario.all_embeddings_done_logged
+            {
+                scenario.all_embeddings_done_logged = true;
+                scenario.emit("all_import_embeddings_done", serde_json::json!({}));
+            }
+        }
+    }
+
+    fn finish_perf_scenario_if_idle(&mut self, ctx: &egui::Context) -> bool {
+        let Some(scenario) = &mut self.perf_scenario else {
+            return false;
+        };
+        let worker_stats = self
+            .import_worker
+            .as_ref()
+            .map(crate::jobs::ImportWorker::stats)
+            .unwrap_or_default();
+        let embedding_idle = {
+            #[cfg(feature = "semantic-search")]
+            {
+                self.search.demand_embedding_pending_count() == 0
+                    && self.search.embedding_backfill_is_idle()
+            }
+            #[cfg(not(feature = "semantic-search"))]
+            {
+                true
+            }
+        };
+        let idle = scenario.queued
+            && scenario.visible_imports >= scenario.expected_imports
+            && !worker_stats.has_work()
+            && self.canvas.import_placeholder_count() == 0
+            && !self.canvas.has_pending_crop_work()
+            && !self.residency.has_pending_image_work()
+            && embedding_idle;
+
+        if idle {
+            let idle_since = *scenario.idle_since.get_or_insert_with(Instant::now);
+            if idle_since.elapsed() >= Duration::from_millis(500) && !scenario.settled_idle_logged {
+                scenario.emit("settled_idle", serde_json::json!({}));
+                scenario.write_summary(worker_stats, self.frame_perf.canvas.image_pass);
+                scenario.settled_idle_logged = true;
+            }
+            if scenario.settled_idle_logged && idle_since.elapsed() >= Duration::from_secs(5) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return true;
+            }
+            if scenario.settled_idle_logged {
+                let remaining = Duration::from_secs(5)
+                    .saturating_sub(idle_since.elapsed())
+                    .max(Duration::from_millis(250));
+                ctx.request_repaint_after(remaining);
+                return false;
+            }
+        } else {
+            scenario.idle_since = None;
+        }
+        ctx.request_repaint_after(Duration::from_millis(16));
+        false
     }
 
     fn board_summaries(&mut self) -> Vec<crate::data::BoardSummary> {
@@ -2602,11 +3023,31 @@ impl SnappyRefApp {
                 placeholder.queue_id,
             );
         }
+        let perf_import_origin = outcome.log.as_ref().map(|log| log.origin);
+        let perf_counts_as_import = perf_import_origin.is_some_and(|origin| {
+            matches!(
+                origin,
+                crate::jobs::ImportOrigin::Path
+                    | crate::jobs::ImportOrigin::Clipboard
+                    | crate::jobs::ImportOrigin::Url
+            )
+        });
         let status = outcome.status;
         #[cfg(feature = "semantic-search")]
         let mut status = status;
         #[cfg(feature = "semantic-search")]
         if let Some((asset_id, original_path)) = outcome.indexed_asset {
+            if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
+                scenario.demand_embeddings_queued += 1;
+                if !scenario.first_embedding_queued_logged {
+                    scenario.first_embedding_queued_logged = true;
+                    scenario.emit("first_import_embedding_queued", serde_json::json!({}));
+                }
+                scenario.emit(
+                    "import_embedding_queued",
+                    serde_json::json!({ "asset_id": asset_id }),
+                );
+            }
             if let Err(error) = self.search.queue_asset_index(asset_id, original_path)
                 && status.is_none()
             {
@@ -2614,6 +3055,29 @@ impl SnappyRefApp {
             }
         }
         if let Some(log) = outcome.log {
+            if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
+                scenario.visible_imports += 1;
+                if !scenario.first_visible_logged {
+                    scenario.first_visible_logged = true;
+                    scenario.emit("first_placement_visible", serde_json::json!({}));
+                }
+                scenario.emit(
+                    "placement_visible",
+                    serde_json::json!({
+                        "visible": scenario.visible_imports,
+                        "asset_id": log.record.asset.id,
+                        "item_id": log.record.item.id,
+                        "mime_type": log.record.asset.mime_type,
+                        "filename": log.record.asset.filename,
+                    }),
+                );
+                if scenario.visible_imports >= scenario.expected_imports
+                    && !scenario.all_visible_logged
+                {
+                    scenario.all_visible_logged = true;
+                    scenario.emit("all_placements_visible", serde_json::json!({}));
+                }
+            }
             self.log_loaded_timing(
                 log.origin,
                 Some(&log.record),
@@ -4056,6 +4520,9 @@ impl eframe::App for SnappyRefApp {
         self.handle_crop_undo(ui.ctx());
         self.drive_search_latency_probe(ui.ctx());
         self.drive_verification_search();
+        if self.drive_perf_scenario(ui.ctx(), screen_rect) {
+            return;
+        }
 
         #[cfg(debug_assertions)]
         if matches!(

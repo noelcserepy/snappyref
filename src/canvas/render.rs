@@ -1,5 +1,6 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
+use std::time::Duration;
 use std::time::Instant;
 
 use eframe::egui;
@@ -64,13 +65,18 @@ pub(super) fn paint_images(
         .render
         .animation_time_override_seconds
         .unwrap_or_else(|| painter.ctx().input(|input| input.time as f32));
+    let pointer_hover_pos = painter.ctx().input(|input| input.pointer.hover_pos());
     let mut native_images = Vec::new();
     let mut svg_images = Vec::new();
     let mut fallback_images = Vec::new();
-    let mut any_visible_animated = false;
+    let mut next_animation_repaint = None;
 
     for (item_id, image_rect) in &visible_images {
-        if let Some((rgba, width, height)) = state.advance_animated_image(*item_id, animation_time)
+        let animation_active = state.is_selected(*item_id)
+            || pointer_hover_pos.is_some_and(|pos| image_rect.contains(pos));
+        if animation_active
+            && let Some((rgba, width, height)) =
+                state.advance_animated_image(*item_id, animation_time)
             && let Some(image) = state.image_by_item_id_mut(*item_id)
             && let CanvasTexture::Managed(texture) = &mut image.texture
         {
@@ -84,7 +90,14 @@ pub(super) fn paint_images(
             continue;
         };
         if image.animation.is_some() {
-            any_visible_animated = true;
+            metrics.visible_animated_images += 1;
+            if animation_active {
+                metrics.active_animated_images += 1;
+                next_animation_repaint = min_repaint_delay(
+                    next_animation_repaint,
+                    state.animated_image_repaint_delay(*item_id, animation_time),
+                );
+            }
         }
         if matches!(image.texture, CanvasTexture::Svg { .. }) {
             svg_images.push((*item_id, *image_rect));
@@ -204,8 +217,8 @@ pub(super) fn paint_images(
         }
     }
 
-    if any_visible_animated {
-        painter.ctx().request_repaint();
+    if let Some(delay) = next_animation_repaint {
+        painter.ctx().request_repaint_after(delay);
     }
 
     metrics
@@ -277,7 +290,8 @@ fn paint_canvas_items_interleaved(
         .render
         .animation_time_override_seconds
         .unwrap_or_else(|| painter.ctx().input(|input| input.time as f32));
-    let mut any_visible_animated = false;
+    let pointer_hover_pos = painter.ctx().input(|input| input.pointer.hover_pos());
+    let mut next_animation_repaint = None;
     let mut visible_item_ids = Vec::new();
 
     for item in state.ordered_canvas_items_back_to_front() {
@@ -294,8 +308,11 @@ fn paint_canvas_items_interleaved(
                 metrics.fallback_images += 1;
                 visible_item_ids.push(item_id);
 
-                if let Some((rgba, width, height)) =
-                    state.advance_animated_image(item_id, animation_time)
+                let animation_active = state.is_selected(item_id)
+                    || pointer_hover_pos.is_some_and(|pos| image_rect.contains(pos));
+                if animation_active
+                    && let Some((rgba, width, height)) =
+                        state.advance_animated_image(item_id, animation_time)
                     && let Some(image) = state.image_by_item_id_mut(item_id)
                     && let CanvasTexture::Managed(texture) = &mut image.texture
                 {
@@ -312,7 +329,14 @@ fn paint_canvas_items_interleaved(
                     continue;
                 };
                 if image.animation.is_some() {
-                    any_visible_animated = true;
+                    metrics.visible_animated_images += 1;
+                    if animation_active {
+                        metrics.active_animated_images += 1;
+                        next_animation_repaint = min_repaint_delay(
+                            next_animation_repaint,
+                            state.animated_image_repaint_delay(item_id, animation_time),
+                        );
+                    }
                 }
                 if matches!(image.texture, CanvasTexture::Svg { .. }) {
                     paint_svg_image(ui, image, image_rect);
@@ -360,12 +384,21 @@ fn paint_canvas_items_interleaved(
         }
     }
 
-    if any_visible_animated {
-        painter.ctx().request_repaint();
+    if let Some(delay) = next_animation_repaint {
+        painter.ctx().request_repaint_after(delay);
     }
 
     metrics.build_time_ms = build_started_at.elapsed().as_secs_f64() * 1000.0;
     metrics
+}
+
+fn min_repaint_delay(current: Option<Duration>, candidate: Option<Duration>) -> Option<Duration> {
+    match (current, candidate) {
+        (Some(current), Some(candidate)) => Some(current.min(candidate)),
+        (None, Some(candidate)) => Some(candidate),
+        (Some(current), None) => Some(current),
+        (None, None) => None,
+    }
 }
 
 fn paint_svg_image(ui: &egui::Ui, image: &CanvasImage, image_rect: egui::Rect) {

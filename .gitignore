@@ -3,3 +3,5 @@ library/
 .claude/
 .agents/
 tests/fixtures/external/files/
+perf-assets/images/
+perf-assets/runs/

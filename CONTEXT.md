@@ -206,6 +206,26 @@ _Avoid_: Startup import, reload
 Creating a missing canvas image LOD in the background after another LOD has already made the image usable.
 _Avoid_: Preload, recache
 
+**Active Animated Image**:
+An animated placement whose animation is currently allowed to advance because the placement is selected or hovered.
+_Avoid_: Visible animated image, loaded GIF
+
+**Settled Idle**:
+The runtime state where visible import work, image residency work, crop work, demand embedding, embedding backfill, and canvas image backfill have no queued or in-flight work.
+_Avoid_: Low CPU, quiet process
+
+**Placement Visible**:
+The moment an imported or loaded placement first appears on the active board.
+_Avoid_: Import done, asset ready
+
+**Import Settled**:
+The moment all work directly queued by an import batch has completed, including placement integration, canvas image cache work, demand embedding, and immediate promotion or backfill work for those assets.
+_Avoid_: Placement visible, idle
+
+**Time to Idle**:
+The headline elapsed time from the beginning of a measured user flow until the app reaches **Settled Idle**.
+_Avoid_: CPU idle, import duration
+
 **Promotion**:
 Requesting a higher canvas image LOD for a visible image when the current LOD is insufficient.
 _Avoid_: Upgrade, reload
@@ -331,10 +351,22 @@ _Avoid_: Remove from library, archive
 - **Library Scope** search returns **Asset Results** from the **Library**.
 - An **Existing Image Load** may start at **Overview LOD** and later receive **Promotion** to **Working LOD** or **Detail LOD**.
 - **Backfill** creates missing **Canvas Image LODs** without blocking board interaction.
+- An animated placement can be visible without being an **Active Animated Image**; visible-but-inactive animated placements draw their current frame without advancing animation.
+- **Placement Visible** can happen before **Import Settled** because embeddings and cache work may still be running after a placement is usable.
+- **Time to Idle** is the overall perf profile duration; import and embedding timings explain its phases.
+- **Settled Idle** is a work-queue state; low CPU and stable memory are performance targets measured after the app reaches **Settled Idle**.
 - A **Canvas Pixel Snapshot** is warmed on demand for selected placements and should not exist for every loaded placement.
 - A **Crop Preview** may use a **Canvas Pixel Snapshot** before the final cropped **Asset** exists.
 - **Delete (from board)** removes **Placements** and **Annotations** from the **Active Board** but does not remove **Assets** from the **Library**.
 - **Remove from Library** archives **Assets** and removes their **Placements** across all **Boards**.
+
+## Perf Corpus
+
+The first representative perf corpus should contain 20 files: 5 JPEG, 5 PNG, 4 WebP, 1 GIF, 1 SVG, 1 TIFF, 1 BMP, 1 AVIF, and 1 JPEG 2000 / JP2. Use the same corpus for the 20-image batch baseline. Use a medium JPEG from that corpus as the first 1-image baseline until per-format single-image runs exist.
+
+Perf runs should preserve image format in timing output so the import, cache, and embedding phases can be grouped by format. The headline baseline remains **Time to Idle** for the full 1-image and 20-image flows, with per-format results used to explain slow phases.
+
+Perf corpus files should be cached locally under the private gitignored perf asset area so repeat runs do not depend on network access. Each cached file should have manifest provenance with source URL, license/status, role, dimensions, byte size, and format. Prefer ethically sourced, permissive/public, stable, low-risk sources such as Wikimedia Commons/public-domain or CC media and official format sample repositories; avoid sketchy downloads and blind scraping.
 
 ## Example dialogue
 
