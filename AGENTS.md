@@ -8,6 +8,7 @@ Read these before normal work:
 2. `docs/adr/*.md`, if any exist.
 3. `docs/skills/app-inspection/SKILL.md`, if it exists.
 4. `docs/skills/capture-ui-state/SKILL.md`, if it exists.
+5. `docs/skills/perf-profiling/SKILL.md`, if it exists.
 
 ## Project Memory Maintenance
 
@@ -24,6 +25,8 @@ Use `grill-with-docs` when language, boundaries, lifecycle, storage, release/upd
 Use [app-inspection](docs/skills/app-inspection/SKILL.md) when inspecting the app, verifying a UI state, capturing a screenshot, or adding a temporary debug probe.
 
 Use [capture-ui-state](docs/skills/capture-ui-state/SKILL.md) when a screenshot needs a temporary debug-only probe or deterministic in-app UI state setup.
+
+Use [perf-profiling](docs/skills/perf-profiling/SKILL.md) when measuring or improving startup, import, embedding, idle CPU, or memory performance.
 
 ## Repo Principles
 

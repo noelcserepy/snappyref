@@ -10,6 +10,7 @@ Before normal planning or issue drafting, read:
 - relevant ADRs in `docs/adr/`
 - `docs/skills/app-inspection/SKILL.md` when the work involves app inspection, UI state verification, screenshots, or temporary debug probes
 - `docs/skills/capture-ui-state/SKILL.md` when a screenshot needs a temporary debug-only probe or deterministic in-app UI state setup
+- `docs/skills/perf-profiling/SKILL.md` when the work involves startup, import, embedding, idle CPU, or memory performance
 - `DESIGN_SYSTEM.md` when the work involves shared UI semantics
 
 If a file does not exist, proceed silently. Do not create new domain docs upfront. `grill-with-docs` creates or updates domain docs lazily when terms or durable decisions are resolved.
