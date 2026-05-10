@@ -1,7 +1,7 @@
 target/
 library/
 .claude/
-.agents/
+.scratch/
 tests/fixtures/external/files/
 perf-assets/images/
 perf-assets/runs/

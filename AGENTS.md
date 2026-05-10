@@ -4,13 +4,10 @@
 
 Read these before normal work:
 
-1. `.agents/start-context.md`, if it exists.
-2. `CONTEXT.md`, if it exists.
-3. `docs/adr/*.md`, if any exist.
-4. `/Users/noelcserepy/.agents/skills/grill-with-docs/SKILL.md`.
-5. `docs/skills/app-inspection/SKILL.md`, if it exists.
-
-Repo-local `.agents` must be gitignored and treated as private local context.
+1. `CONTEXT.md`, if it exists.
+2. `docs/adr/*.md`, if any exist.
+3. `docs/skills/app-inspection/SKILL.md`, if it exists.
+4. `docs/skills/capture-ui-state/SKILL.md`, if it exists.
 
 ## Project Memory Maintenance
 
@@ -25,6 +22,8 @@ Use `grill-with-docs` when language, boundaries, lifecycle, storage, release/upd
 ## Repo-Local Skills
 
 Use [app-inspection](docs/skills/app-inspection/SKILL.md) when inspecting the app, verifying a UI state, capturing a screenshot, or adding a temporary debug probe.
+
+Use [capture-ui-state](docs/skills/capture-ui-state/SKILL.md) when a screenshot needs a temporary debug-only probe or deterministic in-app UI state setup.
 
 ## Repo Principles
 
@@ -42,3 +41,17 @@ Use [app-inspection](docs/skills/app-inspection/SKILL.md) when inspecting the ap
 
 - CI runs `cargo fmt --check` and will fail on unformatted code. Always run `cargo fmt` before pushing.
 - Run `cargo check` (and any tests you touched) locally before pushing so CI does not catch basic regressions.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues are the canonical implementation backlog. Private draft backlog notes can live in `.scratch/backlog/` until they are ready to become GitHub issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the standard Matt Pocock triage state labels plus `bug` / `enhancement` category labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repo: use root `CONTEXT.md` plus `docs/adr/`. See `docs/agents/domain.md`.
