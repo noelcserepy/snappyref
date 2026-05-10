@@ -1674,6 +1674,11 @@ impl SnappyRefApp {
         let Some(scenario) = &mut self.perf_scenario else {
             return false;
         };
+        let idle_hold = std::env::var("SNAPPYREF_PERF_IDLE_HOLD_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(Duration::from_secs)
+            .unwrap_or_else(|| Duration::from_secs(5));
         let worker_stats = self
             .import_worker
             .as_ref()
@@ -1705,12 +1710,12 @@ impl SnappyRefApp {
                 scenario.write_summary(worker_stats, self.frame_perf.canvas.image_pass);
                 scenario.settled_idle_logged = true;
             }
-            if scenario.settled_idle_logged && idle_since.elapsed() >= Duration::from_secs(5) {
+            if scenario.settled_idle_logged && idle_since.elapsed() >= idle_hold {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 return true;
             }
             if scenario.settled_idle_logged {
-                let remaining = Duration::from_secs(5)
+                let remaining = idle_hold
                     .saturating_sub(idle_since.elapsed())
                     .max(Duration::from_millis(250));
                 ctx.request_repaint_after(remaining);

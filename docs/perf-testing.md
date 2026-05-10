@@ -25,6 +25,11 @@ crop work, demand embedding, embedding backfill, or canvas image backfill.
 CPU and memory are outcome metrics, not part of the Settled Idle definition.
 The idle CPU target is under 1% after Settled Idle.
 
+Quiescent CPU is the post-tail idle target. It excludes the first few seconds
+after Settled Idle and excludes app shutdown. The first few seconds after
+Settled Idle are still measured separately as idle tail so late cleanup, CPU
+accounting decay, and OS/window events remain visible in the profile.
+
 ## Phase Metrics
 
 Runs should emit structured events that allow Time to Idle to be broken down
@@ -40,6 +45,8 @@ into:
 - import settled
 - embedding backfill done
 - settled idle
+- idle tail
+- quiescent idle
 
 Each asset event should include format, byte size, dimensions, and source role
 so mixed-corpus runs can be grouped by image format.
@@ -78,7 +85,7 @@ Expected run outputs:
 - `samples.csv`: external CPU/RSS samples
 - `summary.json`: scenario summary and phase breakdown
 - `samples-summary.json`: CPU/RSS aggregate summary, including steady idle
-  samples after the first post-idle second
+  samples split into idle tail and quiescent idle windows
 
 Run examples:
 
@@ -93,3 +100,15 @@ scripts/run-perf-scenario.sh static-20
 
 The wrapper keeps the app alive briefly after Settled Idle so the sampler can
 measure real idle CPU and memory after app work has drained.
+
+`scripts/run-perf-scenario.sh` writes:
+
+- `idle_tail_0_to_3s`: first three seconds after Settled Idle.
+- `quiescent_5_to_15s`: steady post-tail idle window.
+- `time_to_quiescent_ms`: time from Settled Idle until CPU stays below 1% for
+  a sustained 3-second window.
+
+`scripts/run-idle-board-size.sh` creates libraries with `0`, `1`, `20`, `100`,
+and `1000` placements of the same asset, launches the app without import work,
+waits for startup/load to settle, and samples idle CPU. This isolates whether
+idle CPU grows with board population.

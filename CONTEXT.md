@@ -226,6 +226,18 @@ _Avoid_: Placement visible, idle
 The headline elapsed time from the beginning of a measured user flow until the app reaches **Settled Idle**.
 _Avoid_: CPU idle, import duration
 
+**Idle Tail**:
+The first measured period after **Settled Idle**, before CPU and memory readings have necessarily stabilized.
+_Avoid_: Quiescent idle, settled idle
+
+**Quiescent Idle**:
+The later post-tail measurement window where the app should remain near-zero CPU until user input or new work arrives.
+_Avoid_: Settled idle, idle tail
+
+**Time to Quiescent**:
+The elapsed time from **Settled Idle** until CPU remains below the idle target for a sustained window.
+_Avoid_: Time to idle, import duration
+
 **Promotion**:
 Requesting a higher canvas image LOD for a visible image when the current LOD is insufficient.
 _Avoid_: Upgrade, reload
@@ -355,6 +367,7 @@ _Avoid_: Remove from library, archive
 - **Placement Visible** can happen before **Import Settled** because embeddings and cache work may still be running after a placement is usable.
 - **Time to Idle** is the overall perf profile duration; import and embedding timings explain its phases.
 - **Settled Idle** is a work-queue state; low CPU and stable memory are performance targets measured after the app reaches **Settled Idle**.
+- **Idle Tail** explains short post-idle cleanup or CPU accounting decay; **Quiescent Idle** is the steady-state CPU target window.
 - A **Canvas Pixel Snapshot** is warmed on demand for selected placements and should not exist for every loaded placement.
 - A **Crop Preview** may use a **Canvas Pixel Snapshot** before the final cropped **Asset** exists.
 - **Delete (from board)** removes **Placements** and **Annotations** from the **Active Board** but does not remove **Assets** from the **Library**.
