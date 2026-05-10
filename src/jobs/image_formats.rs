@@ -622,6 +622,9 @@ pub struct AnimatedPreview {
     pub height: u32,
 }
 
+const MIN_ANIMATION_FRAME_DELAY_SECONDS: f32 = 0.02;
+const DEFAULT_TINY_ANIMATION_FRAME_DELAY_SECONDS: f32 = 0.1;
+
 pub fn preview_image_from_rgba(
     width: u32,
     height: u32,
@@ -681,7 +684,7 @@ pub fn preview_animation_from_frames(
         };
         preview_frames.push(AnimatedPreviewFrame {
             rgba,
-            delay_seconds: frame.delay_seconds.max(0.01),
+            delay_seconds: normalized_animation_frame_delay(frame.delay_seconds),
         });
     }
 
@@ -690,6 +693,14 @@ pub fn preview_animation_from_frames(
         width: preview_width as u32,
         height: preview_height as u32,
     })
+}
+
+fn normalized_animation_frame_delay(delay_seconds: f32) -> f32 {
+    if delay_seconds <= 0.01 {
+        DEFAULT_TINY_ANIMATION_FRAME_DELAY_SECONDS
+    } else {
+        delay_seconds.max(MIN_ANIMATION_FRAME_DELAY_SECONDS)
+    }
 }
 
 pub fn fitted_texture_size(width: usize, height: usize, max_side: usize) -> (usize, usize) {

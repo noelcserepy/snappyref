@@ -1,6 +1,32 @@
 # Repo Inspection Guide
 
-Use this repo-local guide when inspecting the app, verifying a UI state, or adding a temporary probe to capture a screenshot.
+## Startup
+
+Read these before normal work:
+
+1. `CONTEXT.md`, if it exists.
+2. `docs/adr/*.md`, if any exist.
+3. `docs/skills/app-inspection/SKILL.md`, if it exists.
+4. `docs/skills/capture-ui-state/SKILL.md`, if it exists.
+5. `docs/skills/perf-profiling/SKILL.md`, if it exists.
+
+## Project Memory Maintenance
+
+Keep `CONTEXT.md` and `docs/adr/` current as part of normal work.
+
+Use `CONTEXT.md` for domain language: terms, relationships, examples, and resolved ambiguities. If a task introduces or changes project language, update `CONTEXT.md` in the same change.
+
+Use `docs/adr/` for durable decisions only. Create an ADR when a decision is hard to reverse, surprising without context, and the result of a real trade-off.
+
+Use `grill-with-docs` when language, boundaries, lifecycle, storage, release/update behavior, or architecture decisions are unclear. Ask one question at a time; if the repo answers the question, inspect the repo instead of asking.
+
+## Repo-Local Skills
+
+Use [app-inspection](docs/skills/app-inspection/SKILL.md) when inspecting the app, verifying a UI state, capturing a screenshot, or adding a temporary debug probe.
+
+Use [capture-ui-state](docs/skills/capture-ui-state/SKILL.md) when a screenshot needs a temporary debug-only probe or deterministic in-app UI state setup.
+
+Use [perf-profiling](docs/skills/perf-profiling/SKILL.md) when measuring or improving startup, import, embedding, idle CPU, or memory performance.
 
 ## Repo Principles
 
@@ -10,52 +36,25 @@ Use this repo-local guide when inspecting the app, verifying a UI state, or addi
 - Use sensible defaults so repeated flows happen automatically.
 - Keep the code and UI simple. If a solution feels complex, look for a smaller one first.
 
-## Inspecting The App
-
-- Prefer the existing debug probes before adding anything new.
-- Current probes live in `src/app.rs`:
-  - `--verify-search=<query>`
-  - `--verify-arrow`
-  - `--verify-textbox`
-- Use the built-in screenshot path with a file target, for example:
-  - `cargo run -- --verify-search=boat --screenshot /tmp/snappyref-search.png`
-  - `cargo run -- --verify-arrow --screenshot /tmp/snappyref-arrow.png`
-  - `cargo run -- --verify-textbox --screenshot /tmp/snappyref-textbox.png`
-- Inspect the resulting PNG directly before changing anything else.
-- If a state depends on persisted viewport or session data, reset it inside the probe so the screenshot is deterministic.
-
-## Creating New Probes
-
-- Add probes only when the existing ones cannot expose the state you need.
-- Keep probes debug-only with `#[cfg(debug_assertions)]` or an off-by-default feature flag.
-- Prefer a startup probe in `src/app.rs` over synthetic mouse input.
-- Set the target state directly through app methods or state fields.
-- If the UI is spatially sensitive, reset camera, selection, or session state before capture.
-- If the target is a floating overlay, text editor, or toolbar, request focus explicitly and wait one repaint if needed.
-- Reuse the app’s existing screenshot flow instead of inventing a second capture system.
-- Remove the probe when you are done unless it is broadly useful.
-
-## Implementation Pattern
-
-- Extend the existing verification enum or command parsing in `src/app.rs`.
-- Seed the app state in `SnappyRefApp::new(...)`.
-- Let the current `ScreenshotCapture` path write the PNG and close the app.
-- Run `cargo check` after changes.
-- Capture a screenshot and confirm the intended state is visible.
-
-## Guardrails
-
-- Do not change release behavior for inspection work.
-- Do not rely on pixel coordinates if a direct state mutation exists.
-- Do not leave probe logic spread across unrelated files.
-- Keep probe names narrow and descriptive so they are easy to reuse later.
-
 ## Testing Notes
 
-- The semantic-search model is downloaded on first use; treat the first run as potentially slow.
 - Use `cargo check` after probe or UI changes before trusting a screenshot.
 
 ## Pre-push Checks
 
 - CI runs `cargo fmt --check` and will fail on unformatted code. Always run `cargo fmt` before pushing.
 - Run `cargo check` (and any tests you touched) locally before pushing so CI does not catch basic regressions.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues are the canonical implementation backlog. Private draft backlog notes can live in `.scratch/backlog/` until they are ready to become GitHub issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the standard Matt Pocock triage state labels plus `bug` / `enhancement` category labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repo: use root `CONTEXT.md` plus `docs/adr/`. See `docs/agents/domain.md`.

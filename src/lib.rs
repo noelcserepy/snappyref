@@ -30,6 +30,44 @@ mod theme;
 mod ui_layout;
 
 pub fn run() -> eframe::Result<()> {
+    if std::env::args()
+        .skip(1)
+        .any(|argument| argument == "--image-import-prepare")
+    {
+        if let Err(error) = jobs::print_image_import_prepare_output_from_args() {
+            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
+                error,
+            ))));
+        }
+        return Ok(());
+    }
+
+    #[cfg(feature = "semantic-search")]
+    if let Some(path) = std::env::args().skip(1).find_map(|argument| {
+        argument
+            .strip_prefix("--semantic-embed-image=")
+            .map(str::to_owned)
+    }) {
+        if let Err(error) = semantic_search::print_embed_image_output(std::path::Path::new(&path)) {
+            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
+                error,
+            ))));
+        }
+        return Ok(());
+    }
+    #[cfg(feature = "semantic-search")]
+    if std::env::args()
+        .skip(1)
+        .any(|argument| argument == "--semantic-embed-server")
+    {
+        if let Err(error) = semantic_search::run_embed_image_server() {
+            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
+                error,
+            ))));
+        }
+        return Ok(());
+    }
+
     let config = app::AppConfig::from_env();
     if config.startup_trace_requested() {
         if let Err(error) = config.library_root().and_then(perf::print_startup_trace) {
@@ -57,6 +95,16 @@ pub fn run() -> eframe::Result<()> {
     }
     if let Some(path) = config.perf_import_path() {
         if let Err(error) = perf::print_file_import_report(path) {
+            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
+                error,
+            ))));
+        }
+        return Ok(());
+    }
+    if config.perf_embedding_lod_requested() {
+        if let Err(error) = config.library_root().and_then(|library_root| {
+            perf::print_embedding_lod_report(library_root, config.perf_embedding_lod_limit())
+        }) {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -29,6 +30,7 @@ const SEARCH_RESULT_SCROLL_MARGIN: f32 = 12.0;
 const MAX_RECENT_SEARCHES: usize = 8;
 const FALLBACK_ASSET_PREVIEW_WIDTH: u32 = 360;
 const FALLBACK_ASSET_PREVIEW_HEIGHT: u32 = 240;
+const EMBEDDING_BACKFILL_IDLE_QUIET_MS: u64 = 750;
 
 #[derive(Clone, Copy)]
 pub(crate) struct SearchPlacementPreviewConfig {
@@ -44,11 +46,28 @@ pub(crate) struct SearchController {
     active_search: Option<ActiveSearchRequest>,
     prefetch_searches: HashMap<u64, SearchCacheKey>,
     pending_result_selection: Option<PendingResultSelection>,
+    embedding_backfill: EmbeddingBackfillScheduler,
+    pending_demand_embeddings: HashSet<i64>,
+    completed_demand_embeddings: usize,
     next_search_request_id: u64,
     recent_searches: Vec<String>,
     recent_searches_dirty: bool,
+    perf_events: Vec<SemanticPerfEvent>,
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
     latency_log: SearchLatencyLog,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SemanticPerfEvent {
+    ModelLoadStarted,
+    ModelLoadTiming {
+        assets_resolved_ms: f64,
+        tokenizer_loaded_ms: f64,
+        text_session_loaded_ms: f64,
+        vision_session_loaded_ms: f64,
+        total_ms: f64,
+    },
+    ModelReady,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -76,6 +95,18 @@ struct ActiveSearchRequest {
 struct PendingResultSelection {
     index: usize,
     mode: SearchSelectionMode,
+}
+
+#[derive(Default)]
+struct EmbeddingBackfillScheduler {
+    quiet_since: Option<Instant>,
+    in_flight: bool,
+    exhausted: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EmbeddingBackfillIdleState {
+    pub(crate) app_idle: bool,
 }
 
 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -122,6 +153,17 @@ impl SearchController {
 
     pub(crate) fn take_recent_searches_dirty(&mut self) -> bool {
         std::mem::take(&mut self.recent_searches_dirty)
+    }
+
+    pub(crate) fn drain_perf_events(&mut self) -> Vec<SemanticPerfEvent> {
+        std::mem::take(&mut self.perf_events)
+    }
+
+    pub(crate) fn unload_model_for_perf(&mut self) -> bool {
+        let Some(service) = &self.service else {
+            return false;
+        };
+        service.unload_model()
     }
 
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -215,6 +257,7 @@ impl SearchController {
         library: Option<&Library>,
         status: &mut String,
         canvas: Option<&mut CanvasState>,
+        canvas_image_max_side: u32,
     ) {
         if !enabled {
             self.service = None;
@@ -234,14 +277,14 @@ impl SearchController {
         match SemanticSearchService::new(
             library.clone(),
             SemanticSearchConfig {
-                enabled: true,
+                enabled: false,
                 model: DEFAULT_SEMANTIC_SEARCH_MODEL,
+                canvas_image_max_side,
             },
         ) {
             Ok(service) => {
                 self.overlay.status =
                     SearchOverlayStatus::Loading("Preparing semantic search…".to_owned());
-                let _ = service.enqueue_startup_backfill();
                 self.service = Some(service);
             }
             Err(error) => {
@@ -260,6 +303,20 @@ impl SearchController {
 
         let mut refresh_active_query = false;
         for result in index_results {
+            if matches!(
+                result,
+                SearchIndexResult::BackfillIndexed
+                    | SearchIndexResult::BackfillIdle
+                    | SearchIndexResult::BackfillFailed { .. }
+            ) {
+                self.embedding_backfill.in_flight = false;
+            }
+            if matches!(
+                result,
+                SearchIndexResult::BackfillIdle | SearchIndexResult::BackfillFailed { .. }
+            ) {
+                self.embedding_backfill.exhausted = true;
+            }
             refresh_active_query |= self.process_index_result(result);
         }
 
@@ -272,8 +329,80 @@ impl SearchController {
         }
     }
 
+    pub(crate) fn can_start_embedding_backfill(
+        &mut self,
+        now: Instant,
+        idle: EmbeddingBackfillIdleState,
+    ) -> bool {
+        if self.embedding_backfill.exhausted
+            || self.embedding_backfill.in_flight
+            || !idle.app_idle
+            || self.search_work_in_flight(now)
+        {
+            self.embedding_backfill.quiet_since = None;
+            return false;
+        }
+
+        let quiet_since = *self.embedding_backfill.quiet_since.get_or_insert(now);
+        now.duration_since(quiet_since) >= Duration::from_millis(EMBEDDING_BACKFILL_IDLE_QUIET_MS)
+    }
+
+    pub(crate) fn drive_embedding_backfill(
+        &mut self,
+        now: Instant,
+        idle: EmbeddingBackfillIdleState,
+    ) -> Result<bool, String> {
+        if !self.can_start_embedding_backfill(now, idle) {
+            return Ok(false);
+        }
+        let Some(service) = &self.service else {
+            return Ok(false);
+        };
+        service.enqueue_idle_backfill_step()?;
+        self.embedding_backfill.in_flight = true;
+        self.embedding_backfill.quiet_since = None;
+        Ok(true)
+    }
+
+    pub(crate) fn embedding_backfill_may_need_repaint(&self) -> bool {
+        self.service.is_some()
+            && !self.embedding_backfill.exhausted
+            && !self.embedding_backfill.in_flight
+    }
+
+    pub(crate) fn reset_embedding_backfill(&mut self) {
+        self.embedding_backfill = EmbeddingBackfillScheduler::default();
+    }
+
+    fn search_work_in_flight(&self, now: Instant) -> bool {
+        self.active_search.is_some()
+            || !self.prefetch_searches.is_empty()
+            || self.search_debounce_pending(now)
+    }
+
+    fn search_debounce_pending(&self, now: Instant) -> bool {
+        self.overlay.last_query_edit_at.is_some_and(|changed_at| {
+            self.overlay.query.trim() != self.overlay.last_submitted_query
+                && now.duration_since(changed_at) < Duration::from_millis(SEARCH_DEBOUNCE_MS as u64)
+        })
+    }
+
     fn process_index_result(&mut self, result: SearchIndexResult) -> bool {
         match result {
+            SearchIndexResult::ModelLoadStarted => {
+                self.perf_events.push(SemanticPerfEvent::ModelLoadStarted);
+                false
+            }
+            SearchIndexResult::ModelLoadTiming { timing } => {
+                self.perf_events.push(SemanticPerfEvent::ModelLoadTiming {
+                    assets_resolved_ms: timing.assets_resolved.as_secs_f64() * 1000.0,
+                    tokenizer_loaded_ms: timing.tokenizer_loaded.as_secs_f64() * 1000.0,
+                    text_session_loaded_ms: timing.text_session_loaded.as_secs_f64() * 1000.0,
+                    vision_session_loaded_ms: timing.vision_session_loaded.as_secs_f64() * 1000.0,
+                    total_ms: timing.total.as_secs_f64() * 1000.0,
+                });
+                false
+            }
             SearchIndexResult::Progress { message } => {
                 if !matches!(self.overlay.status, SearchOverlayStatus::Error(_)) {
                     self.overlay.status = SearchOverlayStatus::Loading(message);
@@ -281,6 +410,7 @@ impl SearchController {
                 false
             }
             SearchIndexResult::ModelReady => {
+                self.perf_events.push(SemanticPerfEvent::ModelReady);
                 let should_refresh = !self.overlay.query.trim().is_empty()
                     || (self.overlay.image_pivot.is_some() && self.overlay.results.is_empty());
                 if should_refresh {
@@ -293,7 +423,10 @@ impl SearchController {
                 }
                 should_refresh
             }
-            SearchIndexResult::Indexed => {
+            SearchIndexResult::Indexed { asset_id } => {
+                if self.pending_demand_embeddings.remove(&asset_id) {
+                    self.completed_demand_embeddings += 1;
+                }
                 let should_refresh = self.overlay.open
                     && (!self.overlay.query.trim().is_empty()
                         || self.overlay.image_pivot.is_some())
@@ -303,7 +436,27 @@ impl SearchController {
                 }
                 should_refresh
             }
-            SearchIndexResult::Failed { error } => {
+            SearchIndexResult::BackfillIndexed => {
+                let should_refresh = self.overlay.open
+                    && (!self.overlay.query.trim().is_empty()
+                        || self.overlay.image_pivot.is_some())
+                    && self.overlay.results.is_empty();
+                if should_refresh {
+                    self.overlay.last_submitted_query.clear();
+                }
+                should_refresh
+            }
+            SearchIndexResult::BackfillIdle => false,
+            SearchIndexResult::BackfillFailed { error } => {
+                let _ = error;
+                false
+            }
+            SearchIndexResult::Failed { asset_id, error } => {
+                if let Some(asset_id) = asset_id
+                    && self.pending_demand_embeddings.remove(&asset_id)
+                {
+                    self.completed_demand_embeddings += 1;
+                }
                 self.overlay.status = SearchOverlayStatus::Error(error);
                 false
             }
@@ -421,8 +574,27 @@ impl SearchController {
             );
         };
         service.enqueue_asset_index(asset_id, original_path)?;
+        self.pending_demand_embeddings.insert(asset_id);
+        self.embedding_backfill.exhausted = false;
         self.overlay.status = SearchOverlayStatus::Indexing;
         Ok(())
+    }
+
+    pub(crate) fn demand_embedding_pending_count(&self) -> usize {
+        self.pending_demand_embeddings.len()
+    }
+
+    pub(crate) fn completed_demand_embedding_count(&self) -> usize {
+        self.completed_demand_embeddings
+    }
+
+    pub(crate) fn embedding_backfill_is_idle(&self) -> bool {
+        !self.embedding_backfill.in_flight
+            && self.embedding_backfill.exhausted
+            && !self
+                .service
+                .as_ref()
+                .is_some_and(|service| service.search_embedding_cache_warming())
     }
 
     pub(crate) fn drive_verification_search(
@@ -433,10 +605,17 @@ impl SearchController {
         library: Option<&Library>,
         canvas: &mut CanvasState,
         status: &mut String,
+        canvas_image_max_side: u32,
     ) {
         if !*enabled {
             *enabled = true;
-            self.sync_service(*enabled, library, status, Some(canvas));
+            self.sync_service(
+                *enabled,
+                library,
+                status,
+                Some(canvas),
+                canvas_image_max_side,
+            );
         }
 
         self.overlay.open = true;
@@ -491,12 +670,19 @@ impl SearchController {
         library: Option<&Library>,
         canvas: &mut CanvasState,
         status: &mut String,
+        canvas_image_max_side: u32,
     ) -> bool {
         let Some(pivot) = selected_image_pivot(canvas) else {
             return false;
         };
 
-        self.sync_service(enabled, library, status, Some(canvas));
+        self.sync_service(
+            enabled,
+            library,
+            status,
+            Some(canvas),
+            canvas_image_max_side,
+        );
         self.open_image_pivot_search(pivot, "selected_image_search", canvas);
         self.overlay.open = true;
         self.overlay.focus_requested = true;
@@ -511,6 +697,7 @@ impl SearchController {
         library: Option<&Library>,
         canvas: &mut CanvasState,
         status: &mut String,
+        canvas_image_max_side: u32,
     ) {
         if !enabled {
             return;
@@ -522,7 +709,13 @@ impl SearchController {
             return;
         }
 
-        self.sync_service(enabled, library, status, Some(canvas));
+        self.sync_service(
+            enabled,
+            library,
+            status,
+            Some(canvas),
+            canvas_image_max_side,
+        );
 
         let pivot = selected_image_pivot(canvas);
 
@@ -1669,13 +1862,14 @@ fn update_search_placement_preview(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActiveSearchRequest, PendingResultSelection, SEARCH_RESULT_PAGE_SIZE, SearchCacheEntry,
-        SearchCacheKey, SearchController, SearchIndexResult, SearchSelectionMode,
-        result_is_on_bottom_row,
+        ActiveSearchRequest, EmbeddingBackfillIdleState, PendingResultSelection,
+        SEARCH_RESULT_PAGE_SIZE, SearchCacheEntry, SearchCacheKey, SearchController,
+        SearchIndexResult, SearchSelectionMode, result_is_on_bottom_row,
     };
     use crate::canvas::CanvasState;
     use crate::semantic_search::{SearchQueryResult, SearchResultGroup, SearchScope};
     use eframe::egui;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn search_scope_defaults_to_this_board_and_survives_close() {
@@ -1700,6 +1894,26 @@ mod tests {
             error,
             "Semantic search service unavailable; cropped image was not queued for indexing"
         );
+    }
+
+    #[test]
+    fn embedding_backfill_waits_for_quiet_idle_search_window() {
+        let mut search = SearchController::default();
+        let now = Instant::now();
+        let idle = EmbeddingBackfillIdleState { app_idle: true };
+
+        assert!(!search.can_start_embedding_backfill(now, idle));
+        assert!(!search.can_start_embedding_backfill(now + Duration::from_millis(749), idle));
+        assert!(search.can_start_embedding_backfill(now + Duration::from_millis(750), idle));
+
+        search.overlay.query = "boat".to_owned();
+        search.overlay.last_submitted_query.clear();
+        search.overlay.last_query_edit_at = Some(now + Duration::from_millis(760));
+
+        assert!(!search.can_start_embedding_backfill(now + Duration::from_millis(800), idle));
+        assert!(!search.can_start_embedding_backfill(now + Duration::from_millis(880), idle));
+        assert!(!search.can_start_embedding_backfill(now + Duration::from_millis(1000), idle));
+        assert!(search.can_start_embedding_backfill(now + Duration::from_millis(1630), idle));
     }
 
     #[test]
@@ -1800,7 +2014,8 @@ mod tests {
             instance_count: 1,
         }];
 
-        let should_refresh = search.process_index_result(SearchIndexResult::Indexed);
+        let should_refresh =
+            search.process_index_result(SearchIndexResult::Indexed { asset_id: 10 });
 
         assert!(!should_refresh);
         assert_eq!(search.overlay.last_submitted_query, "boat");

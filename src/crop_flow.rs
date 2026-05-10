@@ -3,7 +3,7 @@ const MAX_CROP_UNDO_ENTRIES: usize = 32;
 #[derive(Clone, Debug)]
 pub(crate) struct CropUndoEntry {
     pub(crate) previous_record: crate::data::BoardItemWithAsset,
-    pub(crate) previous_rgba: Vec<u8>,
+    pub(crate) previous_rgba: crate::canvas::SharedRgba,
     pub(crate) previous_preview_width: u32,
     pub(crate) previous_preview_height: u32,
     pub(crate) removed_asset_id: i64,
@@ -34,6 +34,7 @@ impl CropFlow {
         &self,
         ctx: &eframe::egui::Context,
         canvas: &mut crate::canvas::CanvasState,
+        library: Option<&crate::storage::Library>,
         import_worker: Option<&crate::jobs::ImportWorker>,
         max_texture_side: usize,
         canvas_image_max_side: u32,
@@ -41,11 +42,18 @@ impl CropFlow {
         let Some(import_worker) = import_worker else {
             return Ok(false);
         };
+        let Some(library) = library else {
+            return Err("Storage unavailable".to_owned());
+        };
 
         let mut enqueued = false;
         while let Some(request) = canvas.take_pending_crop() {
             let item_id = request.item_id;
             canvas.mark_crop_pending(item_id);
+            if let Err(error) = canvas.warm_cached_pixels_for_item(library, item_id) {
+                canvas.clear_crop_pending(item_id);
+                return Err(error);
+            }
             if let Err(error) = canvas.apply_pending_crop_preview(ctx, &request) {
                 canvas.clear_crop_pending(item_id);
                 return Err(error);
@@ -192,7 +200,7 @@ impl CropFlow {
                 preview_width: entry.previous_preview_width,
                 preview_height: entry.previous_preview_height,
                 record: entry.previous_record,
-                preview_rgba: entry.previous_rgba,
+                preview_rgba: entry.previous_rgba.to_vec(),
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
                 loaded_tier: crate::data::CanvasImageCacheTier::Working,
@@ -279,10 +287,10 @@ mod tests {
             },
             crop_offset_local: egui::vec2(2.0, 2.0),
         });
-        let worker = ImportWorker::new(library, ctx.clone(), None);
+        let worker = ImportWorker::new(library.clone(), ctx.clone(), None);
 
         let enqueued = CropFlow::default()
-            .enqueue_pending_requests(&ctx, &mut canvas, Some(&worker), 4096, 2000)
+            .enqueue_pending_requests(&ctx, &mut canvas, Some(&library), Some(&worker), 4096, 2000)
             .unwrap();
 
         assert!(enqueued);

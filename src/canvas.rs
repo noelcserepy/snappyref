@@ -19,6 +19,8 @@ use render::{
 };
 use state::{CanvasDocumentState, CanvasInteractionState, CanvasRenderState};
 
+pub(crate) type SharedRgba = Arc<[u8]>;
+
 const MIN_CANVAS_ZOOM: f32 = 0.01;
 const MAX_CANVAS_ZOOM: f32 = 64.0;
 const MIN_IMAGE_WORLD_SIZE: f32 = 24.0;
@@ -78,6 +80,8 @@ pub struct PaintPerfReport {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ImagePassMetrics {
     pub visible_images: usize,
+    pub visible_animated_images: usize,
+    pub active_animated_images: usize,
     pub fallback_images: usize,
     pub texture_groups: usize,
     pub draw_calls: usize,
@@ -132,7 +136,7 @@ struct CanvasImage {
 #[derive(Clone)]
 struct PendingCropPreview {
     image: CanvasImage,
-    rgba: Vec<u8>,
+    rgba: SharedRgba,
 }
 
 #[derive(Clone)]
@@ -371,7 +375,7 @@ struct CropState {
 
 #[derive(Clone, Debug)]
 struct AnimatedCanvasFrame {
-    rgba: Vec<u8>,
+    rgba: SharedRgba,
     delay_seconds: f32,
 }
 
@@ -1385,6 +1389,7 @@ pub fn show(
     } else {
         handle_input(ui, rect, input_rect, toolbar_rect, state, &response);
     }
+    state.prune_cached_pixels_to_selected_items();
 
     let painter = ui.painter_at(rect);
 
@@ -1776,15 +1781,15 @@ mod tests {
 
         assert!(state.document.images[1].animation.is_some());
         assert_eq!(
-            state.advance_animated_image(2, 0.15).unwrap().0,
-            vec![0, 255, 0, 255]
+            state.advance_animated_image(2, 0.15).unwrap().0.as_ref(),
+            &[0, 255, 0, 255]
         );
 
         state.delete_items(&[1]);
 
         assert_eq!(
-            state.advance_animated_image(2, 0.25).unwrap().0,
-            vec![0, 0, 255, 255]
+            state.advance_animated_image(2, 0.25).unwrap().0.as_ref(),
+            &[0, 0, 255, 255]
         );
         assert!(
             state
@@ -3430,6 +3435,10 @@ mod tests {
                 trace: None,
             },
         );
+        state
+            .render
+            .asset_rgba_cache
+            .insert(42, source_rgba.clone().into());
 
         let request = CanvasCropRequest {
             item_id: 42,
@@ -3453,7 +3462,115 @@ mod tests {
 
         let original = state.snapshot_item_image(42).unwrap();
         assert_eq!(original.0.asset.width, 8);
-        assert_eq!(original.1, source_rgba);
+        assert_eq!(original.1.as_ref(), source_rgba);
+    }
+
+    #[test]
+    fn pending_crop_restore_snapshot_shares_warmed_pixels() {
+        let ctx = eframe::egui::Context::default();
+        let mut state = super::CanvasState::default();
+        let record = test_record(42, 42, 8, 8);
+        let source_rgba = vec![255; 4 * 4 * 4];
+        let shared_rgba = super::SharedRgba::from(source_rgba.clone());
+        state.add_loaded_item(
+            &ctx,
+            crate::jobs::LoadedCanvasItem {
+                target_board_id: 1,
+                queue_id: None,
+                record,
+                preview_rgba: source_rgba,
+                preview_width: 4,
+                preview_height: 4,
+                animated_preview: None,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+        state
+            .render
+            .asset_rgba_cache
+            .insert(42, shared_rgba.clone());
+
+        let request = CanvasCropRequest {
+            item_id: 42,
+            source_asset: test_record(42, 42, 8, 8).asset,
+            crop_rect: PixelCropRect {
+                x: 2,
+                y: 2,
+                width: 4,
+                height: 4,
+            },
+            crop_offset_local: eframe::egui::vec2(2.0, 2.0),
+        };
+
+        state.apply_pending_crop_preview(&ctx, &request).unwrap();
+
+        let pending = state.render.pending_crop_previews.get(&42).unwrap();
+        assert!(Arc::ptr_eq(&pending.rgba, &shared_rgba));
+        let original = state.snapshot_item_image(42).unwrap();
+        assert!(Arc::ptr_eq(&original.1, &shared_rgba));
+    }
+
+    #[test]
+    fn loaded_raster_does_not_eagerly_cache_cpu_pixels() {
+        let ctx = eframe::egui::Context::default();
+        let mut state = super::CanvasState::default();
+
+        state.add_loaded_item(
+            &ctx,
+            crate::jobs::LoadedCanvasItem {
+                target_board_id: 1,
+                queue_id: None,
+                record: test_record(42, 42, 8, 8),
+                preview_rgba: vec![255; 4 * 4 * 4],
+                preview_width: 4,
+                preview_height: 4,
+                animated_preview: None,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+
+        assert!(state.render.asset_rgba_cache.is_empty());
+    }
+
+    #[test]
+    fn deselection_prunes_warmed_cpu_pixels() {
+        let ctx = eframe::egui::Context::default();
+        let mut state = super::CanvasState::default();
+
+        state.add_loaded_item(
+            &ctx,
+            crate::jobs::LoadedCanvasItem {
+                target_board_id: 1,
+                queue_id: None,
+                record: test_record(42, 42, 8, 8),
+                preview_rgba: vec![255; 4 * 4 * 4],
+                preview_width: 4,
+                preview_height: 4,
+                animated_preview: None,
+                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                loaded_tier: CanvasImageCacheTier::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+        state.select_content(&[42], &[]);
+        state
+            .render
+            .asset_rgba_cache
+            .insert(42, vec![255; 4 * 4 * 4].into());
+
+        state.select_content(&[], &[]);
+
+        assert!(state.render.asset_rgba_cache.is_empty());
     }
 
     #[test]
@@ -3478,6 +3595,10 @@ mod tests {
                 trace: None,
             },
         );
+        state
+            .render
+            .asset_rgba_cache
+            .insert(42, vec![255; 4 * 4 * 4].into());
         let request = CanvasCropRequest {
             item_id: 42,
             source_asset: test_record(42, 42, 8, 8).asset,

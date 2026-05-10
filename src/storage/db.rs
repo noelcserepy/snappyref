@@ -91,6 +91,7 @@ static DESTINATION_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub enum EmbeddingStatus {
     Pending,
     Ready,
+    #[allow(dead_code)]
     Failed,
 }
 
@@ -341,6 +342,25 @@ impl Library {
             "asset-{asset_id}-canvas-v2-downscale-{}-{max_side}.png",
             tier.as_str()
         ))
+    }
+
+    pub fn canvas_image_cache_destination_for_extension(
+        &self,
+        asset_id: i64,
+        max_side: u32,
+        tier: CanvasImageCacheTier,
+        extension: &str,
+    ) -> Result<PathBuf, String> {
+        let encoding = match extension {
+            "jpg" => CanvasImageCacheEncoding::Jpeg,
+            "webp" => CanvasImageCacheEncoding::WebpLossless,
+            _ => {
+                return Err(format!(
+                    "unsupported canvas image cache extension {extension:?}"
+                ));
+            }
+        };
+        Ok(self.canvas_image_cache_destination_for_tier(asset_id, max_side, tier, encoding))
     }
 
     pub fn store_canvas_image_cache(
@@ -1320,6 +1340,115 @@ impl Library {
     }
 
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn record_retryable_asset_embedding_failure(
+        &self,
+        asset_id: i64,
+        model_key: &str,
+        dimension: usize,
+        last_error: &str,
+        now: i64,
+    ) -> Result<(), String> {
+        let connection = self.connection()?;
+        let previous_count = connection
+            .query_row(
+                "SELECT failure_count
+                 FROM asset_embeddings
+                 WHERE asset_id = ?1
+                   AND model_key = ?2",
+                params![asset_id, model_key],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0);
+        let failure_count = previous_count + 1;
+        let (failure_kind, next_retry_at) = match failure_count {
+            1 => ("retryable", Some(now)),
+            2 => ("retryable", Some(now + 5 * 60)),
+            _ => ("terminal", None),
+        };
+
+        connection
+            .execute(
+                "INSERT INTO asset_embeddings (
+                    asset_id,
+                    model_key,
+                    dimension,
+                    status,
+                    last_error,
+                    failure_kind,
+                    failure_count,
+                    next_retry_at,
+                    updated_at
+                 ) VALUES (?1, ?2, ?3, 'failed', ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT(asset_id, model_key) DO UPDATE SET
+                    dimension = excluded.dimension,
+                    status = excluded.status,
+                    last_error = excluded.last_error,
+                    failure_kind = excluded.failure_kind,
+                    failure_count = excluded.failure_count,
+                    next_retry_at = excluded.next_retry_at,
+                    updated_at = excluded.updated_at",
+                params![
+                    asset_id,
+                    model_key,
+                    dimension as i64,
+                    last_error,
+                    failure_kind,
+                    failure_count,
+                    next_retry_at,
+                    now,
+                ],
+            )
+            .map_err(|error| {
+                format!("failed to record embedding failure for asset {asset_id}: {error}")
+            })?;
+        Ok(())
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn record_terminal_asset_embedding_failure(
+        &self,
+        asset_id: i64,
+        model_key: &str,
+        dimension: usize,
+        last_error: &str,
+    ) -> Result<(), String> {
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "INSERT INTO asset_embeddings (
+                    asset_id,
+                    model_key,
+                    dimension,
+                    status,
+                    last_error,
+                    failure_kind,
+                    failure_count,
+                    next_retry_at,
+                    updated_at
+                 ) VALUES (?1, ?2, ?3, 'failed', ?4, 'terminal', 1, NULL, ?5)
+                 ON CONFLICT(asset_id, model_key) DO UPDATE SET
+                    dimension = excluded.dimension,
+                    status = excluded.status,
+                    last_error = excluded.last_error,
+                    failure_kind = excluded.failure_kind,
+                    failure_count = excluded.failure_count,
+                    next_retry_at = excluded.next_retry_at,
+                    updated_at = excluded.updated_at",
+                params![
+                    asset_id,
+                    model_key,
+                    dimension as i64,
+                    last_error,
+                    unix_timestamp_seconds(),
+                ],
+            )
+            .map_err(|error| {
+                format!("failed to record terminal embedding failure for asset {asset_id}: {error}")
+            })?;
+        Ok(())
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn upsert_asset_embedding_blob(
         &self,
         asset_id: i64,
@@ -1335,13 +1464,19 @@ impl Library {
                     dimension,
                     status,
                     last_error,
+                    failure_kind,
+                    failure_count,
+                    next_retry_at,
                     embedding_blob,
                     updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)
+                 ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, 0, NULL, ?5, ?6)
                  ON CONFLICT(asset_id, model_key) DO UPDATE SET
                     dimension = excluded.dimension,
                     status = excluded.status,
                     last_error = NULL,
+                    failure_kind = NULL,
+                    failure_count = 0,
+                    next_retry_at = NULL,
                     embedding_blob = excluded.embedding_blob,
                     updated_at = excluded.updated_at",
                 params![
@@ -1374,7 +1509,6 @@ impl Library {
                  LEFT JOIN asset_embeddings e
                     ON e.asset_id = a.id
                     AND e.model_key = ?1
-                    AND e.status = 'ready'
                  WHERE e.asset_id IS NULL
                    AND a.archived = 0
                  GROUP BY a.id, a.original_path
@@ -1393,6 +1527,172 @@ impl Library {
 
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("failed to collect embedding backfill jobs: {error}"))
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn retryable_live_canvas_asset_jobs_for_model(
+        &self,
+        model_key: &str,
+        now: i64,
+    ) -> Result<Vec<ImageEmbeddingJob>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT
+                    a.id,
+                    a.original_path
+                 FROM assets a
+                 JOIN asset_embeddings e
+                    ON e.asset_id = a.id
+                    AND e.model_key = ?1
+                 WHERE a.archived = 0
+                   AND e.status = 'failed'
+                   AND e.failure_kind = 'retryable'
+                   AND e.next_retry_at IS NOT NULL
+                   AND e.next_retry_at <= ?2
+                 GROUP BY a.id, a.original_path
+                 ORDER BY e.next_retry_at ASC, a.id ASC",
+            )
+            .map_err(|error| {
+                format!("failed to prepare embedding-retry backfill query: {error}")
+            })?;
+
+        let rows = statement
+            .query_map(params![model_key, now], |row| {
+                Ok(ImageEmbeddingJob {
+                    asset_id: row.get(0)?,
+                    original_path: PathBuf::from(row.get::<_, String>(1)?),
+                })
+            })
+            .map_err(|error| format!("failed to read embedding-retry backfill query: {error}"))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect embedding retry backfill jobs: {error}"))
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn missing_active_board_asset_jobs_for_model(
+        &self,
+        model_key: &str,
+    ) -> Result<Vec<ImageEmbeddingJob>, String> {
+        let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        let mut statement = connection
+            .prepare(
+                "SELECT
+                    a.id,
+                    a.original_path
+                 FROM assets a
+                 JOIN board_items b
+                    ON b.asset_id = a.id
+                 LEFT JOIN asset_embeddings e
+                    ON e.asset_id = a.id
+                    AND e.model_key = ?1
+                 WHERE e.asset_id IS NULL
+                   AND a.archived = 0
+                   AND b.archived = 0
+                   AND b.board_id = ?2
+                 GROUP BY a.id, a.original_path
+                 ORDER BY MIN(b.z_index) ASC, a.id ASC",
+            )
+            .map_err(|error| {
+                format!("failed to prepare active-board embedding-backfill query: {error}")
+            })?;
+
+        let rows = statement
+            .query_map(params![model_key, active_board_id], |row| {
+                Ok(ImageEmbeddingJob {
+                    asset_id: row.get(0)?,
+                    original_path: PathBuf::from(row.get::<_, String>(1)?),
+                })
+            })
+            .map_err(|error| {
+                format!("failed to read active-board embedding-backfill query: {error}")
+            })?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
+            format!("failed to collect active-board embedding backfill jobs: {error}")
+        })
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn retryable_active_board_asset_jobs_for_model(
+        &self,
+        model_key: &str,
+        now: i64,
+    ) -> Result<Vec<ImageEmbeddingJob>, String> {
+        let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        let mut statement = connection
+            .prepare(
+                "SELECT
+                    a.id,
+                    a.original_path
+                 FROM assets a
+                 JOIN board_items b
+                    ON b.asset_id = a.id
+                 JOIN asset_embeddings e
+                    ON e.asset_id = a.id
+                    AND e.model_key = ?1
+                 WHERE a.archived = 0
+                   AND b.archived = 0
+                   AND b.board_id = ?2
+                   AND e.status = 'failed'
+                   AND e.failure_kind = 'retryable'
+                   AND e.next_retry_at IS NOT NULL
+                   AND e.next_retry_at <= ?3
+                 GROUP BY a.id, a.original_path
+                 ORDER BY e.next_retry_at ASC, MIN(b.z_index) ASC, a.id ASC",
+            )
+            .map_err(|error| {
+                format!("failed to prepare active-board embedding-retry query: {error}")
+            })?;
+
+        let rows = statement
+            .query_map(params![model_key, active_board_id, now], |row| {
+                Ok(ImageEmbeddingJob {
+                    asset_id: row.get(0)?,
+                    original_path: PathBuf::from(row.get::<_, String>(1)?),
+                })
+            })
+            .map_err(|error| {
+                format!("failed to read active-board embedding-retry query: {error}")
+            })?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
+            format!("failed to collect active-board embedding retry jobs: {error}")
+        })
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn next_embedding_backfill_job_for_model(
+        &self,
+        model_key: &str,
+        now: i64,
+    ) -> Result<Option<ImageEmbeddingJob>, String> {
+        if let Some(job) = self
+            .missing_active_board_asset_jobs_for_model(model_key)?
+            .into_iter()
+            .next()
+        {
+            return Ok(Some(job));
+        }
+        if let Some(job) = self
+            .missing_live_canvas_asset_jobs_for_model(model_key)?
+            .into_iter()
+            .next()
+        {
+            return Ok(Some(job));
+        }
+        if let Some(job) = self
+            .retryable_active_board_asset_jobs_for_model(model_key, now)?
+            .into_iter()
+            .next()
+        {
+            return Ok(Some(job));
+        }
+        self.retryable_live_canvas_asset_jobs_for_model(model_key, now)
+            .map(|jobs| jobs.into_iter().next())
     }
 
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
@@ -2159,10 +2459,14 @@ impl Library {
                     dimension       INTEGER NOT NULL,
                     status          TEXT NOT NULL,
                     last_error      TEXT,
+                    failure_kind    TEXT,
+                    failure_count   INTEGER NOT NULL DEFAULT 0,
+                    next_retry_at   INTEGER,
                     embedding_blob  BLOB,
                     updated_at      INTEGER NOT NULL,
                     PRIMARY KEY (asset_id, model_key),
-                    CHECK (status IN ('pending', 'ready', 'failed'))
+                    CHECK (status IN ('pending', 'ready', 'failed')),
+                    CHECK (failure_kind IS NULL OR failure_kind IN ('retryable', 'terminal'))
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_asset_embeddings_model_status
@@ -2184,6 +2488,7 @@ impl Library {
         ensure_user_session_canvas_image_max_side_column(&connection)?;
         ensure_user_session_rotation_snap_degrees_column(&connection)?;
         ensure_user_session_default_textbox_background_column(&connection)?;
+        ensure_asset_embeddings_failure_columns(&connection)?;
         ensure_user_session_sidebar_open_column(&connection)?;
         ensure_user_session_sidebar_tab_column(&connection)?;
         ensure_user_session_active_board_id_column(&connection)?;
@@ -2696,6 +3001,35 @@ fn table_has_column(connection: &Connection, table: &str, column: &str) -> Resul
         .map_err(|error| format!("failed to collect {table} schema: {error}"))?;
 
     Ok(columns.iter().any(|existing| existing == column))
+}
+
+fn ensure_asset_embeddings_failure_columns(connection: &Connection) -> Result<(), String> {
+    if !table_has_column(connection, "asset_embeddings", "failure_kind")? {
+        connection
+            .execute(
+                "ALTER TABLE asset_embeddings ADD COLUMN failure_kind TEXT",
+                [],
+            )
+            .map_err(|error| format!("failed to add embedding failure_kind column: {error}"))?;
+    }
+    if !table_has_column(connection, "asset_embeddings", "failure_count")? {
+        connection
+            .execute(
+                "ALTER TABLE asset_embeddings
+                 ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| format!("failed to add embedding failure_count column: {error}"))?;
+    }
+    if !table_has_column(connection, "asset_embeddings", "next_retry_at")? {
+        connection
+            .execute(
+                "ALTER TABLE asset_embeddings ADD COLUMN next_retry_at INTEGER",
+                [],
+            )
+            .map_err(|error| format!("failed to add embedding next_retry_at column: {error}"))?;
+    }
+    Ok(())
 }
 
 fn table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
@@ -3324,7 +3658,7 @@ fn encode_f32_slice(values: &[f32]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::Library;
+    use super::{EmbeddingStatus, Library};
     use crate::data::{
         CanvasAnnotationKind, CanvasBackground, CanvasStackItem, CanvasTextSize, UserSession,
     };
@@ -4426,6 +4760,335 @@ mod tests {
 
         let job_asset_ids = jobs.iter().map(|job| job.asset_id).collect::<Vec<_>>();
         assert_eq!(job_asset_ids, vec![pending.asset.id, unplaced.asset.id]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn active_board_embedding_backfill_jobs_include_active_placements_only() {
+        let root = temp_root("snappyref-active-board-embedding-backfill-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let second = library.create_board("Second").unwrap();
+        let active_path = library
+            .store_rgba_image("active", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let ready_path = library
+            .store_rgba_image("ready", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+        let inactive_path = library
+            .store_rgba_image("inactive", &[0, 0, 255, 255], 1, 1)
+            .unwrap();
+
+        let active = library
+            .persist_imported_image(
+                &active_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let ready = library
+            .persist_imported_image(&ready_path, "image/png", 1, 1, 4, egui::pos2(1.0, 0.0), 1.0)
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(ready.asset.id, "mobileclip_s0", &[1.0, 0.0])
+            .unwrap();
+
+        library.set_active_board(second.id).unwrap();
+        let inactive = library
+            .persist_imported_image(
+                &inactive_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(2.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library.set_active_board(1).unwrap();
+
+        let jobs = library
+            .missing_active_board_asset_jobs_for_model("mobileclip_s0")
+            .unwrap();
+
+        let job_asset_ids = jobs.iter().map(|job| job.asset_id).collect::<Vec<_>>();
+        assert_eq!(job_asset_ids, vec![active.asset.id]);
+        assert!(!job_asset_ids.contains(&ready.asset.id));
+        assert!(!job_asset_ids.contains(&inactive.asset.id));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn embedding_backfill_retries_failed_assets_after_never_tried_assets() {
+        let root = temp_root("snappyref-embedding-retry-order-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let retry_path = library
+            .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let fresh_path = library
+            .store_rgba_image("fresh", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+
+        let retry = library
+            .persist_imported_image(&retry_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let fresh = library
+            .persist_imported_image(&fresh_path, "image/png", 1, 1, 4, egui::pos2(1.0, 0.0), 1.0)
+            .unwrap();
+
+        library
+            .record_retryable_asset_embedding_failure(
+                retry.asset.id,
+                "mobileclip_s0",
+                768,
+                "temporary failure",
+                1_000,
+            )
+            .unwrap();
+
+        let fresh_jobs = library
+            .missing_live_canvas_asset_jobs_for_model("mobileclip_s0")
+            .unwrap();
+        assert_eq!(
+            fresh_jobs
+                .iter()
+                .map(|job| job.asset_id)
+                .collect::<Vec<_>>(),
+            vec![fresh.asset.id]
+        );
+
+        let retry_jobs = library
+            .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 1_000)
+            .unwrap();
+        assert_eq!(
+            retry_jobs
+                .iter()
+                .map(|job| job.asset_id)
+                .collect::<Vec<_>>(),
+            vec![retry.asset.id]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
+        let root = temp_root("snappyref-embedding-retry-schedule-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let path = library
+            .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let record = library
+            .persist_imported_image(&path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+
+        library
+            .record_retryable_asset_embedding_failure(
+                record.asset.id,
+                "mobileclip_s0",
+                768,
+                "temporary failure",
+                1_000,
+            )
+            .unwrap();
+        assert_eq!(
+            library
+                .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 1_000)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        library
+            .record_retryable_asset_embedding_failure(
+                record.asset.id,
+                "mobileclip_s0",
+                768,
+                "temporary failure again",
+                1_010,
+            )
+            .unwrap();
+        assert!(
+            library
+                .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 1_309)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            library
+                .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 1_310)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        library
+            .record_retryable_asset_embedding_failure(
+                record.asset.id,
+                "mobileclip_s0",
+                768,
+                "temporary failure exhausted",
+                1_310,
+            )
+            .unwrap();
+        assert!(
+            library
+                .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 2_000)
+                .unwrap()
+                .is_empty()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pending_retry_preserves_embedding_failure_count_until_success() {
+        let root = temp_root("snappyref-pending-retry-count-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let path = library
+            .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let record = library
+            .persist_imported_image(&path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+
+        library
+            .record_retryable_asset_embedding_failure(
+                record.asset.id,
+                "mobileclip_s0",
+                768,
+                "temporary failure",
+                1_000,
+            )
+            .unwrap();
+        library
+            .upsert_asset_embedding_status(
+                record.asset.id,
+                "mobileclip_s0",
+                768,
+                EmbeddingStatus::Pending,
+                None,
+            )
+            .unwrap();
+        library
+            .record_retryable_asset_embedding_failure(
+                record.asset.id,
+                "mobileclip_s0",
+                768,
+                "temporary failure again",
+                1_010,
+            )
+            .unwrap();
+
+        assert!(
+            library
+                .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 1_309)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            library
+                .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 1_310)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        library
+            .upsert_asset_embedding_blob(record.asset.id, "mobileclip_s0", &[1.0, 0.0])
+            .unwrap();
+        assert!(
+            library
+                .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 2_000)
+                .unwrap()
+                .is_empty()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn terminal_embedding_failures_are_not_automatic_retry_jobs() {
+        let root = temp_root("snappyref-terminal-embedding-failure-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let path = library
+            .store_rgba_image("terminal", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let record = library
+            .persist_imported_image(&path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+
+        library
+            .record_terminal_asset_embedding_failure(
+                record.asset.id,
+                "mobileclip_s0",
+                768,
+                "failed to open image",
+            )
+            .unwrap();
+
+        assert!(
+            library
+                .missing_live_canvas_asset_jobs_for_model("mobileclip_s0")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            library
+                .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 10_000)
+                .unwrap()
+                .is_empty()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn next_embedding_backfill_job_prefers_never_tried_assets_before_retries() {
+        let root = temp_root("snappyref-next-embedding-backfill-job-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let retry_path = library
+            .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let fresh_path = library
+            .store_rgba_image("fresh", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+
+        let retry = library
+            .persist_imported_image(&retry_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+            .unwrap();
+        let fresh = library
+            .persist_imported_image(&fresh_path, "image/png", 1, 1, 4, egui::pos2(1.0, 0.0), 1.0)
+            .unwrap();
+        library
+            .record_retryable_asset_embedding_failure(
+                retry.asset.id,
+                "mobileclip_s0",
+                768,
+                "temporary failure",
+                1_000,
+            )
+            .unwrap();
+
+        let job = library
+            .next_embedding_backfill_job_for_model("mobileclip_s0", 1_000)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.asset_id, fresh.asset.id);
+
+        library
+            .upsert_asset_embedding_blob(fresh.asset.id, "mobileclip_s0", &[1.0, 0.0])
+            .unwrap();
+        let retry_job = library
+            .next_embedding_backfill_job_for_model("mobileclip_s0", 1_000)
+            .unwrap()
+            .unwrap();
+        assert_eq!(retry_job.asset_id, retry.asset.id);
 
         let _ = fs::remove_dir_all(root);
     }

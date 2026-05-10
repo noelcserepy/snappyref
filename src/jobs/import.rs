@@ -2,6 +2,8 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+#[cfg(not(test))]
+use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -10,6 +12,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
 use image::RgbaImage;
+use image::codecs::jpeg::JpegEncoder;
+use image::codecs::webp::WebPEncoder;
+use image::{ExtendedColorType, ImageEncoder};
 
 use crate::data::{BoardItemWithAsset, BoardLayoutItem, CanvasImageCacheTier};
 use crate::jobs::image_formats::{
@@ -22,6 +27,8 @@ pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = crate::data::DEFAULT_IMPORT_T
 const URL_IMPORT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const URL_IMPORT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const URL_IMPORT_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
+#[cfg(not(test))]
+const IMAGE_IMPORT_HELPER_DISABLED_ENV: &str = "SNAPPYREF_DISABLE_IMAGE_IMPORT_HELPER";
 
 pub fn default_import_reference_span() -> f32 {
     DEFAULT_IMPORT_TARGET_CANVAS_AREA.sqrt()
@@ -100,6 +107,50 @@ pub struct FileImportPerfReport {
     pub canvas_cache_file_size: Option<u64>,
     pub timings: ImportTimings,
     pub total_ms: f64,
+}
+
+#[derive(Clone, Debug)]
+struct PreparedImportImage {
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    source_width: u32,
+    source_height: u32,
+    mime_type: String,
+    file_size: u64,
+    cache_path: Option<PathBuf>,
+    cache_extension: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct ImageImportPrepareOutput {
+    animated: bool,
+    rgba_path: Option<PathBuf>,
+    width: u32,
+    height: u32,
+    source_width: u32,
+    source_height: u32,
+    mime_type: String,
+    file_size: u64,
+    cache_path: Option<PathBuf>,
+    cache_extension: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ImportWorkerStats {
+    pub queued_startup: usize,
+    pub queued_interactive: usize,
+    pub queued_background: usize,
+    pub in_flight: usize,
+}
+
+impl ImportWorkerStats {
+    pub fn has_work(self) -> bool {
+        self.queued_startup > 0
+            || self.queued_interactive > 0
+            || self.queued_background > 0
+            || self.in_flight > 0
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -400,6 +451,7 @@ struct RequestQueueState {
     startup: VecDeque<ImportRequest>,
     interactive: VecDeque<ImportRequest>,
     background: VecDeque<ImportRequest>,
+    in_flight: usize,
     shutting_down: bool,
 }
 
@@ -587,6 +639,7 @@ impl ImportWorker {
                         ),
                     };
 
+                    worker_queue.finish_one();
                     if worker_result_tx.send(result).is_ok() {
                         worker_ctx.request_repaint();
                     }
@@ -608,6 +661,10 @@ impl ImportWorker {
 
     pub fn try_recv_up_to(&self, limit: usize) -> Vec<ImportResult> {
         self.receiver.try_iter().take(limit).collect()
+    }
+
+    pub fn stats(&self) -> ImportWorkerStats {
+        self.queue.stats()
     }
 }
 
@@ -644,28 +701,35 @@ impl RequestQueue {
             match kind {
                 WorkerKind::General => {
                     if let Some(request) = state.interactive.pop_front() {
+                        state.in_flight += 1;
                         return Some(request);
                     }
                     if let Some(request) = state.startup.pop_front() {
+                        state.in_flight += 1;
                         return Some(request);
                     }
                     if let Some(request) = state.background.pop_front() {
+                        state.in_flight += 1;
                         return Some(request);
                     }
                 }
                 WorkerKind::Interactive => {
                     if let Some(request) = state.interactive.pop_front() {
+                        state.in_flight += 1;
                         return Some(request);
                     }
                     if let Some(request) = state.startup.pop_front() {
+                        state.in_flight += 1;
                         return Some(request);
                     }
                 }
                 WorkerKind::Background => {
                     if let Some(request) = state.startup.pop_front() {
+                        state.in_flight += 1;
                         return Some(request);
                     }
                     if let Some(request) = state.background.pop_front() {
+                        state.in_flight += 1;
                         return Some(request);
                     }
                 }
@@ -678,6 +742,21 @@ impl RequestQueue {
         let mut state = self.state.lock().expect("request queue poisoned");
         state.shutting_down = true;
         self.ready.notify_all();
+    }
+
+    fn finish_one(&self) {
+        let mut state = self.state.lock().expect("request queue poisoned");
+        state.in_flight = state.in_flight.saturating_sub(1);
+    }
+
+    fn stats(&self) -> ImportWorkerStats {
+        let state = self.state.lock().expect("request queue poisoned");
+        ImportWorkerStats {
+            queued_startup: state.startup.len(),
+            queued_interactive: state.interactive.len(),
+            queued_background: state.background.len(),
+            in_flight: state.in_flight,
+        }
     }
 }
 
@@ -1182,6 +1261,85 @@ fn import_path_sync_traced(
             worker_started_at,
             trace,
         );
+    }
+
+    let decode_started_at = Instant::now();
+    if let Some(prepared) =
+        prepare_import_image_with_helper(&source_path, canvas_image_settings).unwrap_or(None)
+    {
+        if let Some(trace) = &mut trace {
+            trace.timings.decode_or_load = decode_started_at.elapsed();
+        }
+        let initial_scale = initial_import_scale(
+            prepared.source_width,
+            prepared.source_height,
+            auto_scale,
+            target_canvas_area,
+        );
+        let arranged_world = resolve_import_world(
+            library,
+            target_board_id,
+            desired_world,
+            reserved_world,
+            viewport_world,
+            prepared.source_width as f32 * initial_scale.max(0.01),
+            prepared.source_height as f32 * initial_scale.max(0.01),
+            import_gap,
+        )?;
+
+        let store_started_at = Instant::now();
+        let stored_path = library
+            .store_original(&source_path)
+            .map_err(|error| format!("{}: {error}", source_path.display()))?;
+
+        let record = library
+            .persist_imported_image_to_board(
+                target_board_id,
+                &stored_path,
+                &prepared.mime_type,
+                prepared.source_width,
+                prepared.source_height,
+                prepared.file_size,
+                arranged_world,
+                initial_scale,
+            )
+            .map_err(|error| format!("{}: {error}", stored_path.display()))?;
+        let store_and_persist = store_started_at.elapsed();
+        let preview_started_at = Instant::now();
+        install_prepared_canvas_cache(
+            library,
+            record.asset.id,
+            canvas_image_settings.max_side,
+            CanvasImageCacheTier::Working,
+            &prepared,
+        );
+        let preview = preview_image_from_rgba(
+            prepared.width,
+            prepared.height,
+            &prepared.rgba,
+            max_texture_side,
+        )?;
+        let preview_texture = build_preview_texture(wgpu_render_state, &preview)?;
+        if let Some(trace) = &mut trace {
+            trace.timings.store_and_persist = store_and_persist;
+            trace.timings.preview_prepare = preview_started_at.elapsed();
+            trace.timings.worker_total = worker_started_at.elapsed();
+        }
+
+        return Ok(LoadedCanvasItem {
+            target_board_id,
+            queue_id,
+            record,
+            preview_rgba: preview.rgba,
+            preview_width: preview.width,
+            preview_height: preview.height,
+            animated_preview: None,
+            preview_texture,
+            loaded_tier: CanvasImageCacheTier::Working,
+            existing_load_diagnostics: None,
+            origin: ImportOrigin::Path,
+            trace,
+        });
     }
 
     let decode_started_at = Instant::now();
@@ -1730,6 +1888,260 @@ fn import_downloaded_svg_sync_traced(
         origin: ImportOrigin::Url,
         trace,
     })
+}
+
+fn prepare_import_image_with_helper(
+    source_path: &Path,
+    canvas_image_settings: CanvasImageSettings,
+) -> Result<Option<PreparedImportImage>, String> {
+    #[cfg(test)]
+    {
+        let _ = (source_path, canvas_image_settings);
+        return Ok(None);
+    }
+
+    #[cfg(not(test))]
+    {
+        if std::env::var_os(IMAGE_IMPORT_HELPER_DISABLED_ENV).is_some() {
+            return Ok(None);
+        }
+
+        let rgba_path = unique_image_import_helper_rgba_path();
+        let output = Command::new(std::env::current_exe().map_err(|error| {
+            format!("failed to locate image import helper executable: {error}")
+        })?)
+        .arg("--image-import-prepare")
+        .arg(format!("--source={}", source_path.display()))
+        .arg(format!("--rgba-output={}", rgba_path.display()))
+        .arg(format!(
+            "--canvas-max-side={}",
+            canvas_image_settings.max_side
+        ))
+        .output()
+        .map_err(|error| format!("failed to run image import helper: {error}"))?;
+
+        if !output.status.success() {
+            let _ = std::fs::remove_file(&rgba_path);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!(
+                "image import helper failed for {}: {}",
+                source_path.display(),
+                stderr.trim()
+            ));
+        }
+
+        let prepared: ImageImportPrepareOutput = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("failed to decode image import helper output: {error}"))?;
+        if prepared.animated {
+            let _ = std::fs::remove_file(&rgba_path);
+            return Ok(None);
+        }
+
+        let output_path = prepared.rgba_path.as_ref().unwrap_or(&rgba_path);
+        let rgba = std::fs::read(output_path)
+            .map_err(|error| format!("failed to read image import helper pixels: {error}"))?;
+        let _ = std::fs::remove_file(output_path);
+        let expected_len = prepared.width as usize * prepared.height as usize * 4;
+        if rgba.len() != expected_len {
+            return Err(format!(
+                "image import helper returned {} bytes for {}x{} RGBA image; expected {}",
+                rgba.len(),
+                prepared.width,
+                prepared.height,
+                expected_len
+            ));
+        }
+
+        Ok(Some(PreparedImportImage {
+            rgba,
+            width: prepared.width,
+            height: prepared.height,
+            source_width: prepared.source_width,
+            source_height: prepared.source_height,
+            mime_type: prepared.mime_type,
+            file_size: prepared.file_size,
+            cache_path: prepared.cache_path,
+            cache_extension: prepared.cache_extension,
+        }))
+    }
+}
+
+fn install_prepared_canvas_cache(
+    library: &Library,
+    asset_id: i64,
+    max_side: u32,
+    tier: CanvasImageCacheTier,
+    prepared: &PreparedImportImage,
+) -> Option<PathBuf> {
+    let (Some(cache_path), Some(cache_extension)) = (
+        prepared.cache_path.as_ref(),
+        prepared.cache_extension.as_deref(),
+    ) else {
+        return None;
+    };
+    let destination = match library.canvas_image_cache_destination_for_extension(
+        asset_id,
+        max_side,
+        tier,
+        cache_extension,
+    ) {
+        Ok(destination) => destination,
+        Err(_) => {
+            let _ = std::fs::remove_file(cache_path);
+            return None;
+        }
+    };
+    match std::fs::rename(cache_path, &destination) {
+        Ok(()) => Some(destination),
+        Err(_) => {
+            let _ = std::fs::remove_file(cache_path);
+            None
+        }
+    }
+}
+
+#[cfg(not(test))]
+fn unique_image_import_helper_rgba_path() -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!(
+        "snappyref-import-prepare-{}-{nanos}.rgba",
+        std::process::id()
+    ))
+}
+
+pub(crate) fn print_image_import_prepare_output_from_args() -> Result<(), String> {
+    let mut source_path = None;
+    let mut rgba_output_path = None;
+    let mut canvas_max_side = None;
+    for argument in std::env::args().skip(1) {
+        if let Some(value) = argument.strip_prefix("--source=") {
+            source_path = Some(PathBuf::from(value));
+        } else if let Some(value) = argument.strip_prefix("--rgba-output=") {
+            rgba_output_path = Some(PathBuf::from(value));
+        } else if let Some(value) = argument.strip_prefix("--canvas-max-side=") {
+            canvas_max_side = Some(
+                value
+                    .parse::<u32>()
+                    .map_err(|error| format!("invalid --canvas-max-side value: {error}"))?,
+            );
+        }
+    }
+    let source_path = source_path.ok_or_else(|| "missing --source".to_owned())?;
+    let rgba_output_path = rgba_output_path.ok_or_else(|| "missing --rgba-output".to_owned())?;
+    let canvas_max_side = canvas_max_side.ok_or_else(|| "missing --canvas-max-side".to_owned())?;
+    print_image_import_prepare_output(
+        &source_path,
+        &rgba_output_path,
+        CanvasImageSettings {
+            max_side: canvas_max_side,
+        },
+    )
+}
+
+fn print_image_import_prepare_output(
+    source_path: &Path,
+    rgba_output_path: &Path,
+    canvas_image_settings: CanvasImageSettings,
+) -> Result<(), String> {
+    let decoded = decode_image_file(source_path)
+        .map_err(|error| format!("{}: {error}", source_path.display()))?;
+    if decoded.animation.is_some() {
+        serde_json::to_writer(
+            std::io::stdout(),
+            &ImageImportPrepareOutput {
+                animated: true,
+                rgba_path: None,
+                width: 0,
+                height: 0,
+                source_width: decoded.source_width,
+                source_height: decoded.source_height,
+                mime_type: decoded.mime_type,
+                file_size: decoded.file_size,
+                cache_path: None,
+                cache_extension: None,
+            },
+        )
+        .map_err(|error| format!("failed to write image import helper output: {error}"))?;
+        return Ok(());
+    }
+
+    let canvas_source = canvas_source_image_from_rgba(
+        decoded.width,
+        decoded.height,
+        &decoded.rgba,
+        canvas_image_settings,
+    )?;
+    std::fs::write(rgba_output_path, &canvas_source.rgba)
+        .map_err(|error| format!("failed to write image import helper pixels: {error}"))?;
+    let (cache_path, cache_extension) = write_prepared_canvas_cache(
+        rgba_output_path,
+        &canvas_source.rgba,
+        canvas_source.width,
+        canvas_source.height,
+    )?;
+    serde_json::to_writer(
+        std::io::stdout(),
+        &ImageImportPrepareOutput {
+            animated: false,
+            rgba_path: Some(rgba_output_path.to_path_buf()),
+            width: canvas_source.width,
+            height: canvas_source.height,
+            source_width: decoded.source_width,
+            source_height: decoded.source_height,
+            mime_type: decoded.mime_type,
+            file_size: decoded.file_size,
+            cache_path: Some(cache_path),
+            cache_extension: Some(cache_extension.to_owned()),
+        },
+    )
+    .map_err(|error| format!("failed to write image import helper output: {error}"))?;
+    Ok(())
+}
+
+fn write_prepared_canvas_cache(
+    rgba_output_path: &Path,
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<(PathBuf, &'static str), String> {
+    let (cache_path, extension) = if rgba.chunks_exact(4).all(|pixel| pixel[3] == u8::MAX) {
+        (rgba_output_path.with_extension("jpg"), "jpg")
+    } else {
+        (rgba_output_path.with_extension("webp"), "webp")
+    };
+    let file = std::fs::File::create(&cache_path)
+        .map_err(|error| format!("failed to create image import helper cache: {error}"))?;
+    let writer = std::io::BufWriter::new(file);
+    match extension {
+        "jpg" => {
+            let rgb = rgba_to_rgb_for_import_cache(rgba);
+            JpegEncoder::new_with_quality(writer, 82)
+                .write_image(&rgb, width, height, ExtendedColorType::Rgb8)
+                .map_err(|error| {
+                    format!("failed to write image import helper JPEG cache: {error}")
+                })?;
+        }
+        "webp" => {
+            WebPEncoder::new_lossless(writer)
+                .write_image(rgba, width, height, ExtendedColorType::Rgba8)
+                .map_err(|error| {
+                    format!("failed to write image import helper WebP cache: {error}")
+                })?;
+        }
+        _ => unreachable!("cache extension is selected locally"),
+    }
+    Ok((cache_path, extension))
+}
+
+fn rgba_to_rgb_for_import_cache(rgba: &[u8]) -> Vec<u8> {
+    let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
+    for pixel in rgba.chunks_exact(4) {
+        rgb.extend_from_slice(&pixel[..3]);
+    }
+    rgb
 }
 
 fn import_clipboard_sync_traced(
@@ -2560,6 +2972,94 @@ fn load_existing_preview(
     Ok((preview, animated_preview, diagnostics))
 }
 
+pub fn load_canvas_snapshot_pixels(
+    library: &Library,
+    record: &BoardItemWithAsset,
+    target_width: u32,
+    target_height: u32,
+) -> Result<(Vec<u8>, u32, u32), String> {
+    if target_width == 0 || target_height == 0 {
+        return Err("cannot cache zero-sized canvas pixels".to_owned());
+    }
+    if original_mime_type_is_svg(&record.asset.mime_type) {
+        return Err("cannot cache SVG canvas pixels".to_owned());
+    }
+
+    for path in
+        canvas_snapshot_cache_candidates(library, record.asset.id, target_width, target_height)
+    {
+        if !path.is_file() {
+            continue;
+        }
+        match decode_image_file(&path) {
+            Ok(decoded) => {
+                return resize_rgba_exact(
+                    decoded.rgba,
+                    decoded.width,
+                    decoded.height,
+                    target_width,
+                    target_height,
+                );
+            }
+            Err(_) => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+
+    let decoded = decode_image_file(&record.asset.original_path)?;
+    resize_rgba_exact(
+        decoded.rgba,
+        decoded.width,
+        decoded.height,
+        target_width,
+        target_height,
+    )
+}
+
+fn canvas_snapshot_cache_candidates(
+    library: &Library,
+    asset_id: i64,
+    target_width: u32,
+    target_height: u32,
+) -> Vec<PathBuf> {
+    let max_side = target_width.max(target_height);
+    let mut paths = Vec::new();
+    for tier in [
+        CanvasImageCacheTier::Working,
+        CanvasImageCacheTier::Overview,
+        CanvasImageCacheTier::Detail,
+    ] {
+        if let Some(path) = library.canvas_image_cache_path_for_tier(asset_id, max_side, tier) {
+            paths.push(path);
+        }
+        paths.push(library.legacy_canvas_image_cache_path_for_tier(asset_id, max_side, tier));
+    }
+    paths
+}
+
+fn resize_rgba_exact(
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    target_width: u32,
+    target_height: u32,
+) -> Result<(Vec<u8>, u32, u32), String> {
+    if width == target_width && height == target_height {
+        return Ok((rgba, width, height));
+    }
+
+    let image = RgbaImage::from_raw(width, height, rgba)
+        .ok_or_else(|| "failed to rebuild RGBA image for canvas pixel cache".to_owned())?;
+    let resized = image::imageops::resize(
+        &image,
+        target_width,
+        target_height,
+        image::imageops::FilterType::Triangle,
+    );
+    Ok((resized.into_raw(), target_width, target_height))
+}
+
 fn original_mime_type_supports_animation(mime_type: &str) -> bool {
     mime_type == image::ImageFormat::Gif.to_mime_type()
         || mime_type == image::ImageFormat::WebP.to_mime_type()
@@ -2686,13 +3186,40 @@ fn backfill_canvas_image_cache(
     canvas_image_settings: CanvasImageSettings,
     tier: CanvasImageCacheTier,
 ) -> Result<(PreviewImage, ExistingLoadDiagnostics), String> {
-    let decoded = if let Some(path) =
-        preferred_backfill_source_path(library, record, canvas_image_settings, tier)
+    let decode_path = preferred_backfill_source_path(library, record, canvas_image_settings, tier)
+        .unwrap_or_else(|| record.asset.original_path.clone());
+    if let Some(prepared) =
+        prepare_import_image_with_helper(&decode_path, canvas_image_settings).unwrap_or(None)
     {
-        decode_image_file(&path)?
-    } else {
-        decode_image_file(&record.asset.original_path)?
-    };
+        let source_path = install_prepared_canvas_cache(
+            library,
+            record.asset.id,
+            canvas_image_settings.max_side,
+            tier,
+            &prepared,
+        )
+        .unwrap_or_else(|| decode_path.clone());
+        let source_file_size = std::fs::metadata(&source_path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        return Ok((
+            PreviewImage {
+                rgba: prepared.rgba,
+                width: prepared.width,
+                height: prepared.height,
+            },
+            ExistingLoadDiagnostics {
+                source_kind: ExistingLoadSourceKind::Cache,
+                source_path,
+                source_file_size,
+                source_width: prepared.width,
+                source_height: prepared.height,
+                backfilled_cache: true,
+            },
+        ));
+    }
+
+    let decoded = decode_image_file(&decode_path)?;
     let canvas_source = canvas_source_image_from_rgba(
         decoded.width,
         decoded.height,

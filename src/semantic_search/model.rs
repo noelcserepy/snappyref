@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
+use std::time::Instant;
 
 use hf_hub::api::sync::Api;
 use image::imageops::FilterType;
 use ndarray::{Array2, Array4};
-use ort::{session::Session, value::TensorRef};
+use ort::{ep, session::Session, value::TensorRef};
 use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
 
 pub trait EmbeddingModel: Send + Sync {
@@ -195,13 +197,53 @@ pub struct OrtDualEncoderModel {
     vision_session: Mutex<Session>,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ImageEmbeddingTiming {
+    pub decode_rgb: Duration,
+    pub resize_crop: Duration,
+    pub tensor_prepare: Duration,
+    pub bind_input: Duration,
+    pub model_run: Duration,
+    pub extract_output: Duration,
+    pub normalize_output: Duration,
+    pub total: Duration,
+    pub source_width: u32,
+    pub source_height: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ModelLoadTiming {
+    pub assets_resolved: Duration,
+    pub tokenizer_loaded: Duration,
+    pub text_session_loaded: Duration,
+    pub vision_session_loaded: Duration,
+    pub total: Duration,
+}
+
 impl OrtDualEncoderModel {
     pub fn load_with_progress<F>(spec: ModelSpec, mut on_progress: F) -> Result<Self, String>
     where
         F: FnMut(&str),
     {
-        let assets = resolve_model_assets(&spec, &mut on_progress)?;
+        Self::load_with_progress_timed(spec, &mut on_progress).map(|(model, _timing)| model)
+    }
 
+    pub(crate) fn load_with_progress_timed<F>(
+        spec: ModelSpec,
+        mut on_progress: F,
+    ) -> Result<(Self, ModelLoadTiming), String>
+    where
+        F: FnMut(&str),
+    {
+        let total_start = Instant::now();
+        let assets_start = Instant::now();
+        let assets = resolve_model_assets(&spec, &mut on_progress)?;
+        let mut timing = ModelLoadTiming {
+            assets_resolved: assets_start.elapsed(),
+            ..ModelLoadTiming::default()
+        };
+
+        let tokenizer_start = Instant::now();
         let mut tokenizer = Tokenizer::from_file(&assets.tokenizer_path)
             .map_err(|error| format!("failed to load tokenizer: {error}"))?;
         tokenizer
@@ -216,23 +258,89 @@ impl OrtDualEncoderModel {
             pad_token: spec.pad_token.to_owned(),
             ..PaddingParams::default()
         }));
+        timing.tokenizer_loaded = tokenizer_start.elapsed();
 
         on_progress("Initializing model…");
+        let text_start = Instant::now();
         let text_session = Session::builder()
             .map_err(|error| format!("failed to create text session builder: {error}"))?
+            .with_memory_pattern(false)
+            .map_err(|error| format!("failed to disable text memory pattern: {error}"))?
+            .with_execution_providers([ep::CPU::default().with_arena_allocator(false).build()])
+            .map_err(|error| format!("failed to configure text CPU provider: {error}"))?
+            .with_intra_threads(1)
+            .map_err(|error| format!("failed to configure text intra-op threads: {error}"))?
+            .with_inter_threads(1)
+            .map_err(|error| format!("failed to configure text inter-op threads: {error}"))?
             .commit_from_file(&assets.text_model_path)
             .map_err(|error| format!("failed to load text model: {error}"))?;
+        timing.text_session_loaded = text_start.elapsed();
+        let vision_start = Instant::now();
         let vision_session = Session::builder()
             .map_err(|error| format!("failed to create vision session builder: {error}"))?
+            .with_memory_pattern(false)
+            .map_err(|error| format!("failed to disable vision memory pattern: {error}"))?
+            .with_execution_providers([ep::CPU::default().with_arena_allocator(false).build()])
+            .map_err(|error| format!("failed to configure vision CPU provider: {error}"))?
+            .with_intra_threads(1)
+            .map_err(|error| format!("failed to configure vision intra-op threads: {error}"))?
+            .with_inter_threads(1)
+            .map_err(|error| format!("failed to configure vision inter-op threads: {error}"))?
             .commit_from_file(&assets.vision_model_path)
             .map_err(|error| format!("failed to load vision model: {error}"))?;
+        timing.vision_session_loaded = vision_start.elapsed();
+        timing.total = total_start.elapsed();
 
-        Ok(Self {
-            spec,
-            tokenizer,
-            text_session: Mutex::new(text_session),
-            vision_session: Mutex::new(vision_session),
-        })
+        Ok((
+            Self {
+                spec,
+                tokenizer,
+                text_session: Mutex::new(text_session),
+                vision_session: Mutex::new(vision_session),
+            },
+            timing,
+        ))
+    }
+
+    #[cfg(feature = "semantic-search")]
+    pub(crate) fn embed_image_path_timed(
+        &self,
+        path: &Path,
+    ) -> Result<(Vec<f32>, ImageEmbeddingTiming), String> {
+        let total_start = Instant::now();
+        let (input, mut timing) = preprocess_image_timed(path, &self.spec)?;
+
+        let mut vision_session = self
+            .vision_session
+            .lock()
+            .map_err(|_| "vision session lock poisoned".to_owned())?;
+
+        let bind_start = Instant::now();
+        let pixel_values = TensorRef::from_array_view(&input)
+            .map_err(|error| format!("failed to bind image input: {error}"))?;
+        timing.bind_input = bind_start.elapsed();
+
+        let run_start = Instant::now();
+        let outputs = vision_session
+            .run(ort::inputs! {
+                "pixel_values" => pixel_values
+            })
+            .map_err(|error| format!("failed to run vision model: {error}"))?;
+        timing.model_run = run_start.elapsed();
+
+        let extract_start = Instant::now();
+        let array = outputs[self.spec.vision_output_name]
+            .try_extract_array::<f32>()
+            .map_err(|error| format!("failed to extract image embedding: {error}"))?;
+        let embedding = array.iter().copied().collect::<Vec<_>>();
+        timing.extract_output = extract_start.elapsed();
+
+        let normalize_start = Instant::now();
+        let embedding = normalize(embedding);
+        timing.normalize_output = normalize_start.elapsed();
+        timing.total = total_start.elapsed();
+
+        Ok((embedding, timing))
     }
 }
 
@@ -290,10 +398,22 @@ impl EmbeddingModel for OrtDualEncoderModel {
 }
 
 fn preprocess_image(path: &Path, spec: &ModelSpec) -> Result<Array4<f32>, String> {
+    preprocess_image_timed(path, spec).map(|(array, _timing)| array)
+}
+
+fn preprocess_image_timed(
+    path: &Path,
+    spec: &ModelSpec,
+) -> Result<(Array4<f32>, ImageEmbeddingTiming), String> {
+    let mut timing = ImageEmbeddingTiming::default();
+    let decode_start = Instant::now();
     let image = image::open(path)
         .map_err(|error| format!("failed to open image {}: {error}", path.display()))?
         .to_rgb8();
+    timing.decode_rgb = decode_start.elapsed();
     let (width, height) = image.dimensions();
+    timing.source_width = width;
+    timing.source_height = height;
     let shortest_edge = width.min(height);
     if shortest_edge == 0 {
         return Err(format!(
@@ -302,6 +422,7 @@ fn preprocess_image(path: &Path, spec: &ModelSpec) -> Result<Array4<f32>, String
         ));
     }
 
+    let resize_start = Instant::now();
     let cropped = match spec.resize_strategy {
         ResizeStrategy::ShortestEdgeCenterCrop => {
             let scale = spec.input_size as f32 / shortest_edge as f32;
@@ -318,7 +439,9 @@ fn preprocess_image(path: &Path, spec: &ModelSpec) -> Result<Array4<f32>, String
             image::imageops::resize(&image, spec.input_size, spec.input_size, spec.resize_filter)
         }
     };
+    timing.resize_crop = resize_start.elapsed();
 
+    let tensor_start = Instant::now();
     let size = spec.input_size as usize;
     let mut array = Array4::<f32>::zeros((1, 3, size, size));
     for (x, y, pixel) in cropped.enumerate_pixels() {
@@ -338,8 +461,9 @@ fn preprocess_image(path: &Path, spec: &ModelSpec) -> Result<Array4<f32>, String
         array[[0, 1, y as usize, x as usize]] = channels[1];
         array[[0, 2, y as usize, x as usize]] = channels[2];
     }
+    timing.tensor_prepare = tensor_start.elapsed();
 
-    Ok(array)
+    Ok((array, timing))
 }
 
 fn normalize(mut values: Vec<f32>) -> Vec<f32> {
