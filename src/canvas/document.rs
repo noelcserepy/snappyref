@@ -18,7 +18,7 @@ use super::{
     AnimatedCanvasFrame, AnimatedCanvasImage, CanvasCropRequest, CanvasDocumentChanges,
     CanvasImage, CanvasImagePreview, CanvasState, CropState, FOCUS_SELECTION_PADDING_SCREEN,
     ImportPlaceholder, MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, PendingAnnotation, SelectedLayoutItem,
-    TextboxLayoutCacheEntry, merge_ids,
+    SharedRgba, TextboxLayoutCacheEntry, merge_ids,
 };
 use crate::data::{
     BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
@@ -97,31 +97,19 @@ fn scale_ceil(value: u32, target: u32, source: u32) -> u32 {
 
 impl CanvasState {
     pub fn add_loaded_item(&mut self, ctx: &egui::Context, loaded: LoadedCanvasItem) {
-        let is_vector_preview = matches!(
-            loaded.preview_texture,
-            crate::jobs::ImportedPreviewTexture::Svg { .. }
-        );
-        let animation = loaded
-            .animated_preview
-            .as_ref()
-            .map(|animated| AnimatedCanvasImage {
-                frames: animated
-                    .frames
-                    .iter()
-                    .map(|frame| AnimatedCanvasFrame {
-                        rgba: frame.rgba.clone(),
-                        delay_seconds: frame.delay_seconds,
-                    })
-                    .collect(),
-                width: animated.width,
-                height: animated.height,
-                current_frame: 0,
-            });
-        if !is_vector_preview {
-            self.render
-                .asset_rgba_cache
-                .insert(loaded.record.asset.id, loaded.preview_rgba.clone());
-        }
+        let animation = loaded.animated_preview.map(|animated| AnimatedCanvasImage {
+            frames: animated
+                .frames
+                .into_iter()
+                .map(|frame| AnimatedCanvasFrame {
+                    rgba: SharedRgba::from(frame.rgba),
+                    delay_seconds: frame.delay_seconds,
+                })
+                .collect(),
+            width: animated.width,
+            height: animated.height,
+            current_frame: 0,
+        });
         let texture = canvas_texture_from_preview(
             ctx,
             format!(
@@ -179,10 +167,48 @@ impl CanvasState {
         Ok(())
     }
 
+    pub fn warm_cached_pixels_for_item(
+        &mut self,
+        library: &crate::storage::Library,
+        item_id: i64,
+    ) -> Result<(), String> {
+        let image = self
+            .image_by_item_id(item_id)
+            .ok_or_else(|| format!("missing canvas item {item_id}"))?;
+        let [width, height] = image.texture.size();
+        let expected_len = width
+            .checked_mul(height)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| "canvas pixel cache dimensions overflowed".to_owned())?;
+        if self
+            .render
+            .asset_rgba_cache
+            .get(&image.record.asset.id)
+            .is_some_and(|rgba| rgba.len() == expected_len)
+        {
+            return Ok(());
+        }
+
+        let record = image.record.clone();
+        let (rgba, loaded_width, loaded_height) = crate::jobs::load_canvas_snapshot_pixels(
+            library,
+            &record,
+            width as u32,
+            height as u32,
+        )?;
+        if loaded_width as usize != width || loaded_height as usize != height {
+            return Err("cached canvas pixels did not match texture size".to_owned());
+        }
+        self.render
+            .asset_rgba_cache
+            .insert(record.asset.id, SharedRgba::from(rgba));
+        Ok(())
+    }
+
     pub fn snapshot_item_image(
         &self,
         item_id: i64,
-    ) -> Result<(BoardItemWithAsset, Vec<u8>, u32, u32), String> {
+    ) -> Result<(BoardItemWithAsset, SharedRgba, u32, u32), String> {
         if let Some(preview) = self.render.pending_crop_previews.get(&item_id) {
             let [width, height] = preview.image.texture.size();
             return Ok((
@@ -305,36 +331,39 @@ impl CanvasState {
         asset: crate::data::ImageAsset,
         updated_item: crate::data::BoardItem,
     ) -> Result<(), String> {
-        self.render
-            .asset_rgba_cache
-            .insert(asset.id, cropped.preview_rgba.clone());
+        let item_id = cropped.item_id;
+        let loaded_tier = cropped.loaded_tier;
+        let should_cache_pixels = self.document.selected_item_ids.contains(&item_id);
         let texture = canvas_texture_from_preview(
             ctx,
-            format!("asset-{}-item-{}", asset.id, cropped.item_id),
+            format!("asset-{}-item-{}", asset.id, item_id),
             &cropped.preview_rgba,
             cropped.preview_width,
             cropped.preview_height,
             cropped.preview_texture,
         );
+        if should_cache_pixels {
+            self.render
+                .asset_rgba_cache
+                .insert(asset.id, SharedRgba::from(cropped.preview_rgba));
+        }
 
         let Some(image) = self
             .document
             .images
             .iter_mut()
-            .find(|image| image.record.item.id == cropped.item_id)
+            .find(|image| image.record.item.id == item_id)
         else {
-            return Err(format!("missing canvas item {}", cropped.item_id));
+            return Err(format!("missing canvas item {}", item_id));
         };
 
         image.record.item = updated_item;
         image.record.asset = asset;
         image.texture = texture;
-        image.loaded_tier = cropped.loaded_tier;
+        image.loaded_tier = loaded_tier;
         image.animation = None;
-        self.render
-            .pending_image_tier_loads
-            .remove(&cropped.item_id);
-        self.render.pending_crop_previews.remove(&cropped.item_id);
+        self.render.pending_image_tier_loads.remove(&item_id);
+        self.render.pending_crop_previews.remove(&item_id);
         Ok(())
     }
 
@@ -559,6 +588,12 @@ impl CanvasState {
         self.interaction.import_placeholders.len()
     }
 
+    pub fn has_pending_crop_work(&self) -> bool {
+        self.interaction.pending_crop.is_some()
+            || !self.interaction.crop_pending_item_ids.is_empty()
+            || !self.render.pending_crop_previews.is_empty()
+    }
+
     pub fn set_hover_preview_placeholders(&mut self, placeholders: Vec<(egui::Pos2, egui::Vec2)>) {
         self.interaction.hover_preview_placeholders.clear();
         self.interaction
@@ -777,6 +812,23 @@ impl CanvasState {
         self.render.asset_rgba_cache.remove(&asset_id);
     }
 
+    pub fn prune_cached_pixels_to_selected_items(&mut self) {
+        let selected_asset_ids = self
+            .document
+            .images
+            .iter()
+            .filter(|image| {
+                self.document
+                    .selected_item_ids
+                    .contains(&image.record.item.id)
+            })
+            .map(|image| image.record.asset.id)
+            .collect::<Vec<_>>();
+        self.render
+            .asset_rgba_cache
+            .retain(|asset_id, _| selected_asset_ids.contains(asset_id));
+    }
+
     pub fn add_annotation(&mut self, annotation: CanvasAnnotation) {
         self.invalidate_textbox_layout_cache(annotation.id);
         self.document
@@ -841,6 +893,7 @@ impl CanvasState {
         self.document.pending_archived_annotation_ids.clear();
         self.document.stack_order_dirty = false;
         self.interaction = Default::default();
+        self.render.asset_rgba_cache.clear();
         self.render.textbox_layout_cache.clear();
         self.render.pending_image_tier_loads.clear();
     }
@@ -1085,6 +1138,7 @@ impl CanvasState {
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
+        self.prune_cached_pixels_to_selected_items();
     }
 
     pub fn select_content(&mut self, item_ids: &[i64], annotation_ids: &[i64]) {
@@ -1113,6 +1167,7 @@ impl CanvasState {
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
+        self.prune_cached_pixels_to_selected_items();
     }
 
     pub fn select_all_content(&mut self) {
@@ -1130,6 +1185,7 @@ impl CanvasState {
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
+        self.prune_cached_pixels_to_selected_items();
     }
 
     pub fn arrange_selected_horizontal(&mut self, gap: f32) -> usize {
@@ -1258,6 +1314,7 @@ impl CanvasState {
             .pending_image_tier_loads
             .retain(|item_id, _| !removed_ids.contains(item_id));
         self.interaction.pending_crop = None;
+        self.prune_cached_pixels_to_selected_items();
         removed_ids
     }
 
@@ -1304,6 +1361,7 @@ impl CanvasState {
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
+        self.prune_cached_pixels_to_selected_items();
     }
 
     pub(super) fn add_to_selection(&mut self, item_id: i64) {
@@ -1314,6 +1372,7 @@ impl CanvasState {
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
+        self.prune_cached_pixels_to_selected_items();
     }
 
     pub(super) fn add_annotation_to_selection(&mut self, annotation_id: i64) {
@@ -1328,6 +1387,7 @@ impl CanvasState {
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
+        self.prune_cached_pixels_to_selected_items();
     }
 
     pub(super) fn clear_selection(&mut self) {
@@ -1338,6 +1398,7 @@ impl CanvasState {
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
+        self.prune_cached_pixels_to_selected_items();
     }
 
     pub(super) fn set_marquee_selection(
@@ -1361,6 +1422,7 @@ impl CanvasState {
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
+        self.prune_cached_pixels_to_selected_items();
     }
 
     pub(super) fn mark_dirty(&mut self, item_id: i64) {
@@ -2041,7 +2103,7 @@ impl CanvasState {
         &mut self,
         item_id: i64,
         time_seconds: f32,
-    ) -> Option<(Vec<u8>, u32, u32)> {
+    ) -> Option<(SharedRgba, u32, u32)> {
         let image = self.image_by_item_id_mut(item_id)?;
         let animation = image.animation.as_mut()?;
         if animation.frames.is_empty() {

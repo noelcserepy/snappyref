@@ -63,6 +63,16 @@ pub fn run() -> eframe::Result<()> {
         }
         return Ok(());
     }
+    if config.perf_embedding_lod_requested() {
+        if let Err(error) = config.library_root().and_then(|library_root| {
+            perf::print_embedding_lod_report(library_root, config.perf_embedding_lod_limit())
+        }) {
+            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
+                error,
+            ))));
+        }
+        return Ok(());
+    }
     let viewport_size = config.startup_viewport_size();
     let restored_window = config.restored_window_state();
     let mut viewport = eframe::egui::ViewportBuilder::default()

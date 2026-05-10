@@ -56,7 +56,7 @@ pub(crate) enum ImportResultResidencyOutcome {
 
 impl ImageResidencyCoordinator {
     pub(crate) fn queue_startup_existing_loads(
-        &self,
+        &mut self,
         import_worker: &ImportWorker,
         mut records: Vec<BoardItemWithAsset>,
         viewport_world: eframe::egui::Rect,
@@ -68,6 +68,7 @@ impl ImageResidencyCoordinator {
         crate::jobs::sort_records_by_viewport_proximity(&mut records, viewport_world);
         let (canvas_image_settings, target_tier) = startup_existing_image_load_settings(settings);
         for record in records {
+            let item_id = record.item.id;
             import_worker.enqueue(ImportRequest::LoadExisting {
                 target_board_id: active_board_id,
                 queue_id: None,
@@ -81,12 +82,17 @@ impl ImageResidencyCoordinator {
                     timings: ImportTimings::default(),
                 }),
             })?;
+            self.inflight_image_tier_loads.insert(item_id, target_tier);
         }
         Ok(())
     }
 
     pub(crate) fn note_loaded_item(&mut self, item_id: i64) {
         self.inflight_image_tier_loads.remove(&item_id);
+    }
+
+    pub(crate) fn has_pending_image_work(&self) -> bool {
+        !self.pending_cache_backfills.is_empty() || !self.inflight_image_tier_loads.is_empty()
     }
 
     pub(crate) fn process_import_result(

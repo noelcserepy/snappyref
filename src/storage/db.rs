@@ -1396,6 +1396,52 @@ impl Library {
     }
 
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    pub fn missing_active_board_asset_jobs_for_model(
+        &self,
+        model_key: &str,
+    ) -> Result<Vec<ImageEmbeddingJob>, String> {
+        let connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        let mut statement = connection
+            .prepare(
+                "SELECT
+                    a.id,
+                    a.original_path
+                 FROM assets a
+                 JOIN board_items b
+                    ON b.asset_id = a.id
+                 LEFT JOIN asset_embeddings e
+                    ON e.asset_id = a.id
+                    AND e.model_key = ?1
+                    AND e.status = 'ready'
+                 WHERE e.asset_id IS NULL
+                   AND a.archived = 0
+                   AND b.archived = 0
+                   AND b.board_id = ?2
+                 GROUP BY a.id, a.original_path
+                 ORDER BY MIN(b.z_index) ASC, a.id ASC",
+            )
+            .map_err(|error| {
+                format!("failed to prepare active-board embedding-backfill query: {error}")
+            })?;
+
+        let rows = statement
+            .query_map(params![model_key, active_board_id], |row| {
+                Ok(ImageEmbeddingJob {
+                    asset_id: row.get(0)?,
+                    original_path: PathBuf::from(row.get::<_, String>(1)?),
+                })
+            })
+            .map_err(|error| {
+                format!("failed to read active-board embedding-backfill query: {error}")
+            })?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
+            format!("failed to collect active-board embedding backfill jobs: {error}")
+        })
+    }
+
+    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn load_active_canvas_embeddings(
         &self,
         model_key: &str,
@@ -4426,6 +4472,65 @@ mod tests {
 
         let job_asset_ids = jobs.iter().map(|job| job.asset_id).collect::<Vec<_>>();
         assert_eq!(job_asset_ids, vec![pending.asset.id, unplaced.asset.id]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn active_board_embedding_backfill_jobs_include_active_placements_only() {
+        let root = temp_root("snappyref-active-board-embedding-backfill-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let second = library.create_board("Second").unwrap();
+        let active_path = library
+            .store_rgba_image("active", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let ready_path = library
+            .store_rgba_image("ready", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+        let inactive_path = library
+            .store_rgba_image("inactive", &[0, 0, 255, 255], 1, 1)
+            .unwrap();
+
+        let active = library
+            .persist_imported_image(
+                &active_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let ready = library
+            .persist_imported_image(&ready_path, "image/png", 1, 1, 4, egui::pos2(1.0, 0.0), 1.0)
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(ready.asset.id, "mobileclip_s0", &[1.0, 0.0])
+            .unwrap();
+
+        library.set_active_board(second.id).unwrap();
+        let inactive = library
+            .persist_imported_image(
+                &inactive_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(2.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library.set_active_board(1).unwrap();
+
+        let jobs = library
+            .missing_active_board_asset_jobs_for_model("mobileclip_s0")
+            .unwrap();
+
+        let job_asset_ids = jobs.iter().map(|job| job.asset_id).collect::<Vec<_>>();
+        assert_eq!(job_asset_ids, vec![active.asset.id]);
+        assert!(!job_asset_ids.contains(&ready.asset.id));
+        assert!(!job_asset_ids.contains(&inactive.asset.id));
 
         let _ = fs::remove_dir_all(root);
     }

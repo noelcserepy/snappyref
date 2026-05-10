@@ -29,6 +29,7 @@ const SEARCH_RESULT_SCROLL_MARGIN: f32 = 12.0;
 const MAX_RECENT_SEARCHES: usize = 8;
 const FALLBACK_ASSET_PREVIEW_WIDTH: u32 = 360;
 const FALLBACK_ASSET_PREVIEW_HEIGHT: u32 = 240;
+const EMBEDDING_BACKFILL_IDLE_QUIET_MS: u64 = 750;
 
 #[derive(Clone, Copy)]
 pub(crate) struct SearchPlacementPreviewConfig {
@@ -44,6 +45,7 @@ pub(crate) struct SearchController {
     active_search: Option<ActiveSearchRequest>,
     prefetch_searches: HashMap<u64, SearchCacheKey>,
     pending_result_selection: Option<PendingResultSelection>,
+    embedding_backfill: EmbeddingBackfillScheduler,
     next_search_request_id: u64,
     recent_searches: Vec<String>,
     recent_searches_dirty: bool,
@@ -76,6 +78,18 @@ struct ActiveSearchRequest {
 struct PendingResultSelection {
     index: usize,
     mode: SearchSelectionMode,
+}
+
+#[derive(Default)]
+struct EmbeddingBackfillScheduler {
+    quiet_since: Option<Instant>,
+    in_flight: bool,
+    exhausted: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EmbeddingBackfillIdleState {
+    pub(crate) app_idle: bool,
 }
 
 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -215,6 +229,7 @@ impl SearchController {
         library: Option<&Library>,
         status: &mut String,
         canvas: Option<&mut CanvasState>,
+        canvas_image_max_side: u32,
     ) {
         if !enabled {
             self.service = None;
@@ -234,14 +249,14 @@ impl SearchController {
         match SemanticSearchService::new(
             library.clone(),
             SemanticSearchConfig {
-                enabled: true,
+                enabled: false,
                 model: DEFAULT_SEMANTIC_SEARCH_MODEL,
+                canvas_image_max_side,
             },
         ) {
             Ok(service) => {
                 self.overlay.status =
                     SearchOverlayStatus::Loading("Preparing semantic search…".to_owned());
-                let _ = service.enqueue_startup_backfill();
                 self.service = Some(service);
             }
             Err(error) => {
@@ -260,6 +275,20 @@ impl SearchController {
 
         let mut refresh_active_query = false;
         for result in index_results {
+            if matches!(
+                result,
+                SearchIndexResult::BackfillIndexed
+                    | SearchIndexResult::BackfillIdle
+                    | SearchIndexResult::BackfillFailed { .. }
+            ) {
+                self.embedding_backfill.in_flight = false;
+            }
+            if matches!(
+                result,
+                SearchIndexResult::BackfillIdle | SearchIndexResult::BackfillFailed { .. }
+            ) {
+                self.embedding_backfill.exhausted = true;
+            }
             refresh_active_query |= self.process_index_result(result);
         }
 
@@ -270,6 +299,64 @@ impl SearchController {
         if refresh_active_query {
             self.submit_query(canvas);
         }
+    }
+
+    pub(crate) fn can_start_embedding_backfill(
+        &mut self,
+        now: Instant,
+        idle: EmbeddingBackfillIdleState,
+    ) -> bool {
+        if self.embedding_backfill.exhausted
+            || self.embedding_backfill.in_flight
+            || !idle.app_idle
+            || self.search_work_in_flight(now)
+        {
+            self.embedding_backfill.quiet_since = None;
+            return false;
+        }
+
+        let quiet_since = *self.embedding_backfill.quiet_since.get_or_insert(now);
+        now.duration_since(quiet_since) >= Duration::from_millis(EMBEDDING_BACKFILL_IDLE_QUIET_MS)
+    }
+
+    pub(crate) fn drive_embedding_backfill(
+        &mut self,
+        now: Instant,
+        idle: EmbeddingBackfillIdleState,
+    ) -> Result<bool, String> {
+        if !self.can_start_embedding_backfill(now, idle) {
+            return Ok(false);
+        }
+        let Some(service) = &self.service else {
+            return Ok(false);
+        };
+        service.enqueue_idle_backfill_step()?;
+        self.embedding_backfill.in_flight = true;
+        self.embedding_backfill.quiet_since = None;
+        Ok(true)
+    }
+
+    pub(crate) fn embedding_backfill_may_need_repaint(&self) -> bool {
+        self.service.is_some()
+            && !self.embedding_backfill.exhausted
+            && !self.embedding_backfill.in_flight
+    }
+
+    pub(crate) fn reset_embedding_backfill(&mut self) {
+        self.embedding_backfill = EmbeddingBackfillScheduler::default();
+    }
+
+    fn search_work_in_flight(&self, now: Instant) -> bool {
+        self.active_search.is_some()
+            || !self.prefetch_searches.is_empty()
+            || self.search_debounce_pending(now)
+    }
+
+    fn search_debounce_pending(&self, now: Instant) -> bool {
+        self.overlay.last_query_edit_at.is_some_and(|changed_at| {
+            self.overlay.query.trim() != self.overlay.last_submitted_query
+                && now.duration_since(changed_at) < Duration::from_millis(SEARCH_DEBOUNCE_MS as u64)
+        })
     }
 
     fn process_index_result(&mut self, result: SearchIndexResult) -> bool {
@@ -302,6 +389,21 @@ impl SearchController {
                     self.overlay.last_submitted_query.clear();
                 }
                 should_refresh
+            }
+            SearchIndexResult::BackfillIndexed => {
+                let should_refresh = self.overlay.open
+                    && (!self.overlay.query.trim().is_empty()
+                        || self.overlay.image_pivot.is_some())
+                    && self.overlay.results.is_empty();
+                if should_refresh {
+                    self.overlay.last_submitted_query.clear();
+                }
+                should_refresh
+            }
+            SearchIndexResult::BackfillIdle => false,
+            SearchIndexResult::BackfillFailed { error } => {
+                let _ = error;
+                false
             }
             SearchIndexResult::Failed { error } => {
                 self.overlay.status = SearchOverlayStatus::Error(error);
@@ -421,6 +523,7 @@ impl SearchController {
             );
         };
         service.enqueue_asset_index(asset_id, original_path)?;
+        self.embedding_backfill.exhausted = false;
         self.overlay.status = SearchOverlayStatus::Indexing;
         Ok(())
     }
@@ -433,10 +536,17 @@ impl SearchController {
         library: Option<&Library>,
         canvas: &mut CanvasState,
         status: &mut String,
+        canvas_image_max_side: u32,
     ) {
         if !*enabled {
             *enabled = true;
-            self.sync_service(*enabled, library, status, Some(canvas));
+            self.sync_service(
+                *enabled,
+                library,
+                status,
+                Some(canvas),
+                canvas_image_max_side,
+            );
         }
 
         self.overlay.open = true;
@@ -491,12 +601,19 @@ impl SearchController {
         library: Option<&Library>,
         canvas: &mut CanvasState,
         status: &mut String,
+        canvas_image_max_side: u32,
     ) -> bool {
         let Some(pivot) = selected_image_pivot(canvas) else {
             return false;
         };
 
-        self.sync_service(enabled, library, status, Some(canvas));
+        self.sync_service(
+            enabled,
+            library,
+            status,
+            Some(canvas),
+            canvas_image_max_side,
+        );
         self.open_image_pivot_search(pivot, "selected_image_search", canvas);
         self.overlay.open = true;
         self.overlay.focus_requested = true;
@@ -511,6 +628,7 @@ impl SearchController {
         library: Option<&Library>,
         canvas: &mut CanvasState,
         status: &mut String,
+        canvas_image_max_side: u32,
     ) {
         if !enabled {
             return;
@@ -522,7 +640,13 @@ impl SearchController {
             return;
         }
 
-        self.sync_service(enabled, library, status, Some(canvas));
+        self.sync_service(
+            enabled,
+            library,
+            status,
+            Some(canvas),
+            canvas_image_max_side,
+        );
 
         let pivot = selected_image_pivot(canvas);
 
@@ -1669,13 +1793,14 @@ fn update_search_placement_preview(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActiveSearchRequest, PendingResultSelection, SEARCH_RESULT_PAGE_SIZE, SearchCacheEntry,
-        SearchCacheKey, SearchController, SearchIndexResult, SearchSelectionMode,
-        result_is_on_bottom_row,
+        ActiveSearchRequest, EmbeddingBackfillIdleState, PendingResultSelection,
+        SEARCH_RESULT_PAGE_SIZE, SearchCacheEntry, SearchCacheKey, SearchController,
+        SearchIndexResult, SearchSelectionMode, result_is_on_bottom_row,
     };
     use crate::canvas::CanvasState;
     use crate::semantic_search::{SearchQueryResult, SearchResultGroup, SearchScope};
     use eframe::egui;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn search_scope_defaults_to_this_board_and_survives_close() {
@@ -1700,6 +1825,26 @@ mod tests {
             error,
             "Semantic search service unavailable; cropped image was not queued for indexing"
         );
+    }
+
+    #[test]
+    fn embedding_backfill_waits_for_quiet_idle_search_window() {
+        let mut search = SearchController::default();
+        let now = Instant::now();
+        let idle = EmbeddingBackfillIdleState { app_idle: true };
+
+        assert!(!search.can_start_embedding_backfill(now, idle));
+        assert!(!search.can_start_embedding_backfill(now + Duration::from_millis(749), idle));
+        assert!(search.can_start_embedding_backfill(now + Duration::from_millis(750), idle));
+
+        search.overlay.query = "boat".to_owned();
+        search.overlay.last_submitted_query.clear();
+        search.overlay.last_query_edit_at = Some(now + Duration::from_millis(760));
+
+        assert!(!search.can_start_embedding_backfill(now + Duration::from_millis(800), idle));
+        assert!(!search.can_start_embedding_backfill(now + Duration::from_millis(880), idle));
+        assert!(!search.can_start_embedding_backfill(now + Duration::from_millis(1000), idle));
+        assert!(search.can_start_embedding_backfill(now + Duration::from_millis(1630), idle));
     }
 
     #[test]

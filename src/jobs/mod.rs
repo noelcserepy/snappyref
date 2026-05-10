@@ -9,6 +9,6 @@ pub use import::{
     ImportTimings, ImportTrace, ImportWorker, ImportedPreviewTexture, LoadedCanvasItem,
     NativeTextureHandle, arrange_rect_world, default_import_reference_span,
     file_import_perf_report, initial_import_scale, interactive_import_perf_report,
-    sort_records_by_viewport_proximity, startup_perf_report, startup_trace,
-    worker_interactive_import_perf_report,
+    load_canvas_snapshot_pixels, sort_records_by_viewport_proximity, startup_perf_report,
+    startup_trace, worker_interactive_import_perf_report,
 };

@@ -299,6 +299,8 @@ pub struct AppConfig {
     perf_report: bool,
     perf_decode_path: Option<std::path::PathBuf>,
     perf_import_path: Option<std::path::PathBuf>,
+    perf_embedding_lod: bool,
+    perf_embedding_lod_limit: usize,
     startup_trace: bool,
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
     search_latency_log: bool,
@@ -391,6 +393,8 @@ impl AppConfig {
         let mut perf_report = false;
         let mut perf_decode_path = None;
         let mut perf_import_path = None;
+        let mut perf_embedding_lod = false;
+        let mut perf_embedding_lod_limit = 30;
         let mut startup_trace = false;
         #[cfg(all(debug_assertions, feature = "semantic-search"))]
         let mut search_latency_log = std::env::var_os("SNAPPYREF_SEARCH_LATENCY_LOG").is_some();
@@ -420,6 +424,16 @@ impl AppConfig {
                 perf_import_path = arguments.next().map(std::path::PathBuf::from);
             } else if let Some(path) = argument.strip_prefix("--perf-import=") {
                 perf_import_path = Some(std::path::PathBuf::from(path));
+            } else if argument == "--perf-embedding-lod" {
+                perf_embedding_lod = true;
+            } else if argument == "--perf-embedding-limit" {
+                if let Some(limit) = arguments.next().and_then(|value| value.parse().ok()) {
+                    perf_embedding_lod_limit = limit;
+                }
+            } else if let Some(limit) = argument.strip_prefix("--perf-embedding-limit=") {
+                if let Ok(limit) = limit.parse() {
+                    perf_embedding_lod_limit = limit;
+                }
             } else if argument == "--startup-trace" {
                 startup_trace = true;
             } else if cfg!(all(debug_assertions, feature = "semantic-search"))
@@ -610,6 +624,8 @@ impl AppConfig {
             perf_report,
             perf_decode_path,
             perf_import_path,
+            perf_embedding_lod,
+            perf_embedding_lod_limit,
             startup_trace,
             #[cfg(all(debug_assertions, feature = "semantic-search"))]
             search_latency_log,
@@ -883,6 +899,14 @@ impl AppConfig {
 
     pub fn perf_import_path(&self) -> Option<&std::path::Path> {
         self.perf_import_path.as_deref()
+    }
+
+    pub fn perf_embedding_lod_requested(&self) -> bool {
+        self.perf_embedding_lod
+    }
+
+    pub fn perf_embedding_lod_limit(&self) -> usize {
+        self.perf_embedding_lod_limit
     }
 
     pub(crate) fn restored_window_state(&self) -> Option<crate::data::WindowState> {
@@ -1400,7 +1424,10 @@ impl SnappyRefApp {
 
     fn clear_active_board_transients(&mut self) {
         #[cfg(feature = "semantic-search")]
-        self.search.close_overlay(Some(&mut self.canvas));
+        {
+            self.search.close_overlay(Some(&mut self.canvas));
+            self.search.reset_embedding_backfill();
+        }
         #[cfg(not(feature = "semantic-search"))]
         {
             self.canvas.clear_search_matches();
@@ -2383,6 +2410,7 @@ impl SnappyRefApp {
             self.library.as_ref(),
             &mut self.canvas,
             &mut self.status,
+            self.settings.canvas_image_max_side,
         );
     }
 
@@ -2801,6 +2829,7 @@ impl SnappyRefApp {
         match self.crop_flow.enqueue_pending_requests(
             ctx,
             &mut self.canvas,
+            self.library.as_ref(),
             self.import_worker.as_ref(),
             self.max_texture_side,
             self.settings.canvas_image_max_side,
@@ -3385,6 +3414,7 @@ impl SnappyRefApp {
             self.library.as_ref(),
             &mut self.canvas,
             &mut self.status,
+            self.settings.canvas_image_max_side,
         );
     }
 
@@ -3536,12 +3566,29 @@ impl SnappyRefApp {
             self.library.as_ref(),
             &mut self.status,
             Some(&mut self.canvas),
+            self.settings.canvas_image_max_side,
         );
     }
 
     #[cfg(feature = "semantic-search")]
     fn handle_search_results(&mut self) {
         self.search.handle_results(&mut self.canvas);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn drive_embedding_backfill(&mut self, ctx: &egui::Context) {
+        let idle = crate::search::EmbeddingBackfillIdleState {
+            app_idle: self.frame_perf.import_results_drained == 0
+                && self.canvas.import_placeholder_count() == 0
+                && !self.canvas.has_pending_crop_work()
+                && !self.residency.has_pending_image_work(),
+        };
+        if let Err(error) = self.search.drive_embedding_backfill(Instant::now(), idle) {
+            self.status = error;
+        }
+        if self.search.embedding_backfill_may_need_repaint() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(750));
+        }
     }
 
     #[cfg(feature = "semantic-search")]
@@ -3552,6 +3599,7 @@ impl SnappyRefApp {
             self.library.as_ref(),
             &mut self.canvas,
             &mut self.status,
+            self.settings.canvas_image_max_side,
         );
     }
 
@@ -4134,6 +4182,8 @@ impl eframe::App for SnappyRefApp {
             self.status = error;
         }
         self.handle_pending_crop_requests(ui.ctx());
+        #[cfg(feature = "semantic-search")]
+        self.drive_embedding_backfill(ui.ctx());
         self.handle_pending_annotation_requests();
         self.persist_canvas_changes();
         let board_summaries = self.board_summaries();
@@ -6428,7 +6478,7 @@ mod tests {
         app.canvas.set_search_matches(vec![1], Some(1));
         app.crop_flow.push_test_undo_entry(CropUndoEntry {
             previous_record: record,
-            previous_rgba: vec![255, 255, 255, 255],
+            previous_rgba: vec![255, 255, 255, 255].into(),
             previous_preview_width: 1,
             previous_preview_height: 1,
             removed_asset_id: 2,

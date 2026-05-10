@@ -2560,6 +2560,94 @@ fn load_existing_preview(
     Ok((preview, animated_preview, diagnostics))
 }
 
+pub fn load_canvas_snapshot_pixels(
+    library: &Library,
+    record: &BoardItemWithAsset,
+    target_width: u32,
+    target_height: u32,
+) -> Result<(Vec<u8>, u32, u32), String> {
+    if target_width == 0 || target_height == 0 {
+        return Err("cannot cache zero-sized canvas pixels".to_owned());
+    }
+    if original_mime_type_is_svg(&record.asset.mime_type) {
+        return Err("cannot cache SVG canvas pixels".to_owned());
+    }
+
+    for path in
+        canvas_snapshot_cache_candidates(library, record.asset.id, target_width, target_height)
+    {
+        if !path.is_file() {
+            continue;
+        }
+        match decode_image_file(&path) {
+            Ok(decoded) => {
+                return resize_rgba_exact(
+                    decoded.rgba,
+                    decoded.width,
+                    decoded.height,
+                    target_width,
+                    target_height,
+                );
+            }
+            Err(_) => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+
+    let decoded = decode_image_file(&record.asset.original_path)?;
+    resize_rgba_exact(
+        decoded.rgba,
+        decoded.width,
+        decoded.height,
+        target_width,
+        target_height,
+    )
+}
+
+fn canvas_snapshot_cache_candidates(
+    library: &Library,
+    asset_id: i64,
+    target_width: u32,
+    target_height: u32,
+) -> Vec<PathBuf> {
+    let max_side = target_width.max(target_height);
+    let mut paths = Vec::new();
+    for tier in [
+        CanvasImageCacheTier::Working,
+        CanvasImageCacheTier::Overview,
+        CanvasImageCacheTier::Detail,
+    ] {
+        if let Some(path) = library.canvas_image_cache_path_for_tier(asset_id, max_side, tier) {
+            paths.push(path);
+        }
+        paths.push(library.legacy_canvas_image_cache_path_for_tier(asset_id, max_side, tier));
+    }
+    paths
+}
+
+fn resize_rgba_exact(
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    target_width: u32,
+    target_height: u32,
+) -> Result<(Vec<u8>, u32, u32), String> {
+    if width == target_width && height == target_height {
+        return Ok((rgba, width, height));
+    }
+
+    let image = RgbaImage::from_raw(width, height, rgba)
+        .ok_or_else(|| "failed to rebuild RGBA image for canvas pixel cache".to_owned())?;
+    let resized = image::imageops::resize(
+        &image,
+        target_width,
+        target_height,
+        image::imageops::FilterType::Triangle,
+    );
+    Ok((resized.into_raw(), target_width, target_height))
+}
+
 fn original_mime_type_supports_animation(mime_type: &str) -> bool {
     mime_type == image::ImageFormat::Gif.to_mime_type()
         || mime_type == image::ImageFormat::WebP.to_mime_type()

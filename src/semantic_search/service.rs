@@ -14,6 +14,7 @@ const IMAGE_PIVOT_CANDIDATE_LIMIT: usize = 50;
 pub struct SemanticSearchConfig {
     pub enabled: bool,
     pub model: ModelSpec,
+    pub canvas_image_max_side: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -36,7 +37,7 @@ enum IndexRequest {
         asset_id: i64,
         original_path: PathBuf,
     },
-    Backfill,
+    BackfillOne,
 }
 
 enum SearchRequest {
@@ -60,6 +61,9 @@ pub enum IndexResult {
     Failed { error: String },
     Progress { message: String },
     ModelReady,
+    BackfillIndexed,
+    BackfillIdle,
+    BackfillFailed { error: String },
 }
 
 pub enum SearchQueryResult {
@@ -118,6 +122,8 @@ impl SemanticSearchService {
         let worker_state = model_state.clone();
         let worker_search_embedding_cache = search_embedding_cache.clone();
         let model_spec = config.model.clone();
+        let canvas_image_max_side = config.canvas_image_max_side;
+        let model_key = config.model.model_key;
 
         thread::spawn(move || {
             while let Ok(request) = index_rx.recv() {
@@ -134,6 +140,7 @@ impl SemanticSearchService {
                             &worker_state,
                             &model_spec,
                             &result_tx,
+                            canvas_image_max_side,
                             asset_id,
                             &original_path,
                         ) {
@@ -155,68 +162,81 @@ impl SemanticSearchService {
                             let _ = result_tx.send(IndexResult::Indexed);
                         }
                     }
-                    IndexRequest::Backfill => {
+                    IndexRequest::BackfillOne => {
                         if let Err(error) = ensure_model(&worker_state, &model_spec, &result_tx) {
-                            let _ = result_tx.send(IndexResult::Failed { error });
+                            let _ = result_tx.send(IndexResult::BackfillFailed { error });
                             continue;
                         }
 
-                        let jobs = match worker_library
-                            .missing_live_canvas_asset_jobs_for_model(model_spec.model_key)
+                        let job = match worker_library
+                            .missing_active_board_asset_jobs_for_model(model_spec.model_key)
                         {
-                            Ok(jobs) => jobs,
+                            Ok(mut jobs) => {
+                                if jobs.is_empty() {
+                                    match worker_library.missing_live_canvas_asset_jobs_for_model(
+                                        model_spec.model_key,
+                                    ) {
+                                        Ok(jobs) => jobs.into_iter().next(),
+                                        Err(error) => {
+                                            let _ = result_tx
+                                                .send(IndexResult::BackfillFailed { error });
+                                            continue;
+                                        }
+                                    }
+                                } else {
+                                    Some(jobs.remove(0))
+                                }
+                            }
                             Err(error) => {
-                                let _ = result_tx.send(IndexResult::Failed { error });
+                                let _ = result_tx.send(IndexResult::BackfillFailed { error });
                                 continue;
                             }
                         };
 
-                        for job in jobs {
-                            match index_asset(
-                                &worker_library,
-                                &worker_state,
-                                &model_spec,
-                                &result_tx,
-                                job.asset_id,
-                                &job.original_path,
-                            ) {
-                                Ok(()) => {
-                                    clear_search_embedding_cache(&worker_search_embedding_cache);
-                                    warm_search_embedding_cache(
-                                        worker_library.clone(),
-                                        model_spec.model_key,
-                                        worker_search_embedding_cache.clone(),
-                                    );
-                                    let _ = result_tx.send(IndexResult::Indexed);
-                                }
-                                Err(error) => {
-                                    let _ = worker_library.upsert_asset_embedding_status(
-                                        job.asset_id,
-                                        model_spec.model_key,
-                                        model_spec.dimension,
-                                        EmbeddingStatus::Failed,
-                                        Some(&error),
-                                    );
-                                    let _ = result_tx.send(IndexResult::Failed { error });
-                                }
+                        let Some(job) = job else {
+                            let _ = result_tx.send(IndexResult::BackfillIdle);
+                            continue;
+                        };
+
+                        match index_asset(
+                            &worker_library,
+                            &worker_state,
+                            &model_spec,
+                            &result_tx,
+                            canvas_image_max_side,
+                            job.asset_id,
+                            &job.original_path,
+                        ) {
+                            Ok(()) => {
+                                clear_search_embedding_cache(&worker_search_embedding_cache);
+                                warm_search_embedding_cache(
+                                    worker_library.clone(),
+                                    model_spec.model_key,
+                                    worker_search_embedding_cache.clone(),
+                                );
+                                let _ = result_tx.send(IndexResult::BackfillIndexed);
+                            }
+                            Err(error) => {
+                                let _ = worker_library.upsert_asset_embedding_status(
+                                    job.asset_id,
+                                    model_spec.model_key,
+                                    model_spec.dimension,
+                                    EmbeddingStatus::Failed,
+                                    Some(&error),
+                                );
+                                let _ = result_tx.send(IndexResult::BackfillFailed { error });
                             }
                         }
                     }
                 }
             }
         });
-        warm_search_embedding_cache(
-            library.clone(),
-            config.model.model_key,
-            search_embedding_cache.clone(),
-        );
-
         let search_library = library.clone();
         let search_state = model_state.clone();
         let search_index_tx = index_tx.clone();
         let search_text_embedding_cache = text_embedding_cache.clone();
         let worker_search_embedding_cache = search_embedding_cache.clone();
-        let search_model_key = config.model.model_key;
+        let search_model_key = model_key;
         thread::spawn(move || {
             while let Ok(request) = search_rx.recv() {
                 let (request_id, result) = match request {
@@ -276,7 +296,7 @@ impl SemanticSearchService {
 
         let service = Self {
             library,
-            model_key: config.model.model_key,
+            model_key,
             model_state,
             text_embedding_cache,
             search_embedding_cache,
@@ -308,9 +328,9 @@ impl SemanticSearchService {
             .map_err(|error| format!("failed to queue asset indexing: {error}"))
     }
 
-    pub fn enqueue_startup_backfill(&self) -> Result<(), String> {
+    pub fn enqueue_idle_backfill_step(&self) -> Result<(), String> {
         self.index_tx
-            .send(IndexRequest::Backfill)
+            .send(IndexRequest::BackfillOne)
             .map_err(|error| format!("failed to queue embedding backfill: {error}"))
     }
 
@@ -788,6 +808,7 @@ fn index_asset(
     model_state: &Arc<Mutex<ModelState>>,
     model_spec: &ModelSpec,
     result_tx: &mpsc::Sender<IndexResult>,
+    canvas_image_max_side: u32,
     asset_id: i64,
     original_path: &PathBuf,
 ) -> Result<(), String> {
@@ -799,9 +820,27 @@ fn index_asset(
         None,
     )?;
     let model = ensure_model(model_state, model_spec, result_tx)?;
-    let embedding = model.embed_image_path(original_path)?;
+    let source_path =
+        embedding_source_path(library, asset_id, original_path, canvas_image_max_side);
+    let embedding = model.embed_image_path(&source_path)?;
     library.upsert_asset_embedding_blob(asset_id, model_spec.model_key, &embedding)?;
     Ok(())
+}
+
+fn embedding_source_path(
+    library: &Library,
+    asset_id: i64,
+    original_path: &PathBuf,
+    canvas_image_max_side: u32,
+) -> PathBuf {
+    library
+        .canvas_image_cache_path_for_tier(
+            asset_id,
+            canvas_image_max_side,
+            crate::data::CanvasImageCacheTier::Working,
+        )
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| original_path.clone())
 }
 
 fn ensure_model(
@@ -858,7 +897,7 @@ fn ensure_model(
 
 #[cfg(test)]
 mod tests {
-    use super::{IndexResult, SemanticSearchConfig, SemanticSearchService};
+    use super::{IndexResult, SemanticSearchConfig, SemanticSearchService, embedding_source_path};
     use crate::semantic_search::DEFAULT_SEMANTIC_SEARCH_MODEL;
     use crate::semantic_search::index::SearchScope;
     use crate::semantic_search::model::{ModelSpec, ResizeStrategy};
@@ -925,6 +964,7 @@ mod tests {
             SemanticSearchConfig {
                 enabled: false,
                 model: test_model_spec(),
+                canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             },
         )
         .unwrap();
@@ -1019,6 +1059,7 @@ mod tests {
             SemanticSearchConfig {
                 enabled: false,
                 model: test_model_spec(),
+                canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             },
         )
         .unwrap();
@@ -1067,6 +1108,7 @@ mod tests {
             SemanticSearchConfig {
                 enabled: false,
                 model: test_model_spec(),
+                canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             },
         )
         .unwrap();
@@ -1084,6 +1126,55 @@ mod tests {
             crate::semantic_search::index::decode_f32_blob(&embedding).unwrap(),
             vec![1.0, 0.0]
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn embedding_source_prefers_working_lod_when_present() {
+        let root = temp_root("snappyref-embedding-source-lod-test");
+        let library = Library::initialize(root.join("library")).unwrap();
+        let original_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let record = library
+            .persist_imported_image(
+                &original_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+
+        let without_lod = embedding_source_path(
+            &library,
+            record.asset.id,
+            &record.asset.original_path,
+            crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+        );
+        assert_eq!(without_lod, record.asset.original_path);
+
+        let working_lod = library
+            .store_canvas_image_cache(
+                record.asset.id,
+                crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+                &[0, 255, 0, 255],
+                1,
+                1,
+            )
+            .unwrap()
+            .unwrap();
+
+        let with_lod = embedding_source_path(
+            &library,
+            record.asset.id,
+            &record.asset.original_path,
+            crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+        );
+        assert_eq!(with_lod, working_lod);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1166,6 +1257,7 @@ mod tests {
             SemanticSearchConfig {
                 enabled: true,
                 model: DEFAULT_SEMANTIC_SEARCH_MODEL,
+                canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             },
         )
         .unwrap();
@@ -1182,6 +1274,9 @@ mod tests {
                     IndexResult::Failed { error } => panic!("{error}"),
                     IndexResult::Progress { .. } => {}
                     IndexResult::ModelReady => {}
+                    IndexResult::BackfillIndexed
+                    | IndexResult::BackfillIdle
+                    | IndexResult::BackfillFailed { .. } => {}
                 }
             }
 
