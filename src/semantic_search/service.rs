@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Instant;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::storage::{AssetSearchHit, EmbeddingStatus, Library};
 
@@ -144,12 +145,11 @@ impl SemanticSearchService {
                             asset_id,
                             &original_path,
                         ) {
-                            let _ = worker_library.upsert_asset_embedding_status(
+                            let _ = record_embedding_failure(
+                                &worker_library,
                                 asset_id,
-                                model_spec.model_key,
-                                model_spec.dimension,
-                                EmbeddingStatus::Failed,
-                                Some(&error),
+                                &model_spec,
+                                &error,
                             );
                             let _ = result_tx.send(IndexResult::Failed { error });
                         } else {
@@ -168,25 +168,11 @@ impl SemanticSearchService {
                             continue;
                         }
 
-                        let job = match worker_library
-                            .missing_active_board_asset_jobs_for_model(model_spec.model_key)
-                        {
-                            Ok(mut jobs) => {
-                                if jobs.is_empty() {
-                                    match worker_library.missing_live_canvas_asset_jobs_for_model(
-                                        model_spec.model_key,
-                                    ) {
-                                        Ok(jobs) => jobs.into_iter().next(),
-                                        Err(error) => {
-                                            let _ = result_tx
-                                                .send(IndexResult::BackfillFailed { error });
-                                            continue;
-                                        }
-                                    }
-                                } else {
-                                    Some(jobs.remove(0))
-                                }
-                            }
+                        let job = match worker_library.next_embedding_backfill_job_for_model(
+                            model_spec.model_key,
+                            unix_timestamp_seconds(),
+                        ) {
+                            Ok(job) => job,
                             Err(error) => {
                                 let _ = result_tx.send(IndexResult::BackfillFailed { error });
                                 continue;
@@ -217,12 +203,11 @@ impl SemanticSearchService {
                                 let _ = result_tx.send(IndexResult::BackfillIndexed);
                             }
                             Err(error) => {
-                                let _ = worker_library.upsert_asset_embedding_status(
+                                let _ = record_embedding_failure(
+                                    &worker_library,
                                     job.asset_id,
-                                    model_spec.model_key,
-                                    model_spec.dimension,
-                                    EmbeddingStatus::Failed,
-                                    Some(&error),
+                                    &model_spec,
+                                    &error,
                                 );
                                 let _ = result_tx.send(IndexResult::BackfillFailed { error });
                             }
@@ -827,6 +812,44 @@ fn index_asset(
     Ok(())
 }
 
+fn record_embedding_failure(
+    library: &Library,
+    asset_id: i64,
+    model_spec: &ModelSpec,
+    error: &str,
+) -> Result<(), String> {
+    if is_terminal_embedding_failure(error) {
+        library.record_terminal_asset_embedding_failure(
+            asset_id,
+            model_spec.model_key,
+            model_spec.dimension,
+            error,
+        )
+    } else {
+        library.record_retryable_asset_embedding_failure(
+            asset_id,
+            model_spec.model_key,
+            model_spec.dimension,
+            error,
+            unix_timestamp_seconds(),
+        )
+    }
+}
+
+fn is_terminal_embedding_failure(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("failed to open image")
+        || error.contains("zero-sized dimensions")
+        || error.contains("unsupported svg")
+}
+
+fn unix_timestamp_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 fn embedding_source_path(
     library: &Library,
     asset_id: i64,
@@ -897,7 +920,10 @@ fn ensure_model(
 
 #[cfg(test)]
 mod tests {
-    use super::{IndexResult, SemanticSearchConfig, SemanticSearchService, embedding_source_path};
+    use super::{
+        IndexResult, SemanticSearchConfig, SemanticSearchService, embedding_source_path,
+        is_terminal_embedding_failure,
+    };
     use crate::semantic_search::DEFAULT_SEMANTIC_SEARCH_MODEL;
     use crate::semantic_search::index::SearchScope;
     use crate::semantic_search::model::{ModelSpec, ResizeStrategy};
@@ -1177,6 +1203,22 @@ mod tests {
         assert_eq!(with_lod, working_lod);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn embedding_failure_classification_keeps_corrupt_images_terminal() {
+        assert!(is_terminal_embedding_failure(
+            "failed to open image /tmp/bad.jpg: Format error decoding Jpeg"
+        ));
+        assert!(is_terminal_embedding_failure(
+            "image /tmp/empty.png has zero-sized dimensions"
+        ));
+        assert!(!is_terminal_embedding_failure(
+            "failed to run vision model: session unavailable"
+        ));
+        assert!(!is_terminal_embedding_failure(
+            "failed to write embedding row: database is locked"
+        ));
     }
 
     fn test_model_spec() -> ModelSpec {
