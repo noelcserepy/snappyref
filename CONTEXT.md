@@ -144,6 +144,14 @@ _Avoid_: Open search overlay, visible results
 The raster image data used to create a semantic-search embedding; prefer the **Working LOD** when available, with the original asset as fallback.
 _Avoid_: Search thumbnail, model image
 
+**Embedding Helper Process**:
+A short-lived child process that owns semantic model loading and image embedding for currently queued embedding work, then exits so native model and allocator memory return to the OS.
+_Avoid_: Background model cache, permanent model worker
+
+**Image Preparation Helper Process**:
+A short-lived child process that decodes managed originals or canvas cache sources, generates **Canvas Image Cache** derivatives, and exits so large decoder/encoder allocator pages do not remain resident in the main app process.
+_Avoid_: Permanent image worker, renderer process
+
 **Search Scope**:
 The selected boundary that controls which search results are eligible.
 _Avoid_: Filter mode, search mode
@@ -233,6 +241,10 @@ _Avoid_: Quiescent idle, settled idle
 **Quiescent Idle**:
 The later post-tail measurement window where the app should remain near-zero CPU until user input or new work arrives.
 _Avoid_: Settled idle, idle tail
+
+**Quiescent Memory**:
+The retained memory footprint measured during **Quiescent Idle**, after import, embedding, backfill, and the immediate post-idle tail have drained.
+_Avoid_: Peak memory, import memory
 
 **Time to Quiescent**:
 The elapsed time from **Settled Idle** until CPU remains below the idle target for a sustained window.
@@ -363,11 +375,14 @@ _Avoid_: Remove from library, archive
 - **Library Scope** search returns **Asset Results** from the **Library**.
 - An **Existing Image Load** may start at **Overview LOD** and later receive **Promotion** to **Working LOD** or **Detail LOD**.
 - **Backfill** creates missing **Canvas Image LODs** without blocking board interaction.
+- **Import**, **Promotion**, and **Backfill** may use an **Image Preparation Helper Process** so full-resolution decoder and cache-encoder memory is released when helper work exits.
 - An animated placement can be visible without being an **Active Animated Image**; visible-but-inactive animated placements draw their current frame without advancing animation.
 - **Placement Visible** can happen before **Import Settled** because embeddings and cache work may still be running after a placement is usable.
+- **Demand Embedding** may use an **Embedding Helper Process** so the main app process does not retain semantic model RSS after embedding work drains.
 - **Time to Idle** is the overall perf profile duration; import and embedding timings explain its phases.
 - **Settled Idle** is a work-queue state; low CPU and stable memory are performance targets measured after the app reaches **Settled Idle**.
 - **Idle Tail** explains short post-idle cleanup or CPU accounting decay; **Quiescent Idle** is the steady-state CPU target window.
+- **Quiescent Memory** is the steady retained-memory target; optimize it before optimizing **Time to Idle** so faster pipelines do not hide retained memory growth.
 - A **Canvas Pixel Snapshot** is warmed on demand for selected placements and should not exist for every loaded placement.
 - A **Crop Preview** may use a **Canvas Pixel Snapshot** before the final cropped **Asset** exists.
 - **Delete (from board)** removes **Placements** and **Annotations** from the **Active Board** but does not remove **Assets** from the **Library**.

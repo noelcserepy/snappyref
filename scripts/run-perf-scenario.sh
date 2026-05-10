@@ -28,6 +28,9 @@ samples_path = run_dir / "samples.csv"
 env = os.environ.copy()
 env["SNAPPYREF_LIBRARY_ROOT"] = library_root
 env["SNAPPYREF_PERF_IDLE_HOLD_SECS"] = os.environ.get("SNAPPYREF_PERF_IDLE_HOLD_SECS", "20")
+env["SNAPPYREF_PERF_MODEL_UNLOAD_AFTER_IDLE_MS"] = os.environ.get(
+    "SNAPPYREF_PERF_MODEL_UNLOAD_AFTER_IDLE_MS", "0"
+)
 
 cmd = [
     binary,
@@ -173,11 +176,38 @@ if summary_path.exists():
                 return start - idle_start
         return None
 
+    def rss_stats(selected):
+        values = [int(row["rss_bytes"]) for row in selected]
+        if not values:
+            return {
+                "samples": 0,
+                "first_rss_bytes": None,
+                "last_rss_bytes": None,
+                "min_rss_bytes": None,
+                "max_rss_bytes": None,
+                "delta_rss_bytes": None,
+            }
+        return {
+            "samples": len(values),
+            "first_rss_bytes": values[0],
+            "last_rss_bytes": values[-1],
+            "min_rss_bytes": min(values),
+            "max_rss_bytes": max(values),
+            "delta_rss_bytes": values[-1] - values[0],
+        }
+
     sample_summary = {
         "scenario": scenario,
         "time_to_idle_ms": idle_start,
         "all_samples": cpu_stats(rows),
         "idle_samples": cpu_stats(idle_rows),
+        "memory": {
+            "all_samples": rss_stats(rows),
+            "idle_samples": rss_stats(idle_rows),
+            "idle_tail_0_to_3s": rss_stats(idle_tail_rows),
+            "quiescent_5_to_15s": rss_stats(quiescent_rows),
+            "post_idle_0_to_15s_shutdown_excluded": rss_stats(shutdown_excluded_rows),
+        },
         "idle_tail_0_to_3s": {
             "ps_cpu": cpu_stats(idle_tail_rows),
             "cpu_time": cpu_time_stats(idle_tail_rows),

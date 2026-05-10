@@ -52,8 +52,22 @@ pub(crate) struct SearchController {
     next_search_request_id: u64,
     recent_searches: Vec<String>,
     recent_searches_dirty: bool,
+    perf_events: Vec<SemanticPerfEvent>,
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
     latency_log: SearchLatencyLog,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SemanticPerfEvent {
+    ModelLoadStarted,
+    ModelLoadTiming {
+        assets_resolved_ms: f64,
+        tokenizer_loaded_ms: f64,
+        text_session_loaded_ms: f64,
+        vision_session_loaded_ms: f64,
+        total_ms: f64,
+    },
+    ModelReady,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -139,6 +153,17 @@ impl SearchController {
 
     pub(crate) fn take_recent_searches_dirty(&mut self) -> bool {
         std::mem::take(&mut self.recent_searches_dirty)
+    }
+
+    pub(crate) fn drain_perf_events(&mut self) -> Vec<SemanticPerfEvent> {
+        std::mem::take(&mut self.perf_events)
+    }
+
+    pub(crate) fn unload_model_for_perf(&mut self) -> bool {
+        let Some(service) = &self.service else {
+            return false;
+        };
+        service.unload_model()
     }
 
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -364,6 +389,20 @@ impl SearchController {
 
     fn process_index_result(&mut self, result: SearchIndexResult) -> bool {
         match result {
+            SearchIndexResult::ModelLoadStarted => {
+                self.perf_events.push(SemanticPerfEvent::ModelLoadStarted);
+                false
+            }
+            SearchIndexResult::ModelLoadTiming { timing } => {
+                self.perf_events.push(SemanticPerfEvent::ModelLoadTiming {
+                    assets_resolved_ms: timing.assets_resolved.as_secs_f64() * 1000.0,
+                    tokenizer_loaded_ms: timing.tokenizer_loaded.as_secs_f64() * 1000.0,
+                    text_session_loaded_ms: timing.text_session_loaded.as_secs_f64() * 1000.0,
+                    vision_session_loaded_ms: timing.vision_session_loaded.as_secs_f64() * 1000.0,
+                    total_ms: timing.total.as_secs_f64() * 1000.0,
+                });
+                false
+            }
             SearchIndexResult::Progress { message } => {
                 if !matches!(self.overlay.status, SearchOverlayStatus::Error(_)) {
                     self.overlay.status = SearchOverlayStatus::Loading(message);
@@ -371,6 +410,7 @@ impl SearchController {
                 false
             }
             SearchIndexResult::ModelReady => {
+                self.perf_events.push(SemanticPerfEvent::ModelReady);
                 let should_refresh = !self.overlay.query.trim().is_empty()
                     || (self.overlay.image_pivot.is_some() && self.overlay.results.is_empty());
                 if should_refresh {
@@ -411,7 +451,12 @@ impl SearchController {
                 let _ = error;
                 false
             }
-            SearchIndexResult::Failed { error } => {
+            SearchIndexResult::Failed { asset_id, error } => {
+                if let Some(asset_id) = asset_id
+                    && self.pending_demand_embeddings.remove(&asset_id)
+                {
+                    self.completed_demand_embeddings += 1;
+                }
                 self.overlay.status = SearchOverlayStatus::Error(error);
                 false
             }

@@ -344,6 +344,25 @@ impl Library {
         ))
     }
 
+    pub fn canvas_image_cache_destination_for_extension(
+        &self,
+        asset_id: i64,
+        max_side: u32,
+        tier: CanvasImageCacheTier,
+        extension: &str,
+    ) -> Result<PathBuf, String> {
+        let encoding = match extension {
+            "jpg" => CanvasImageCacheEncoding::Jpeg,
+            "webp" => CanvasImageCacheEncoding::WebpLossless,
+            _ => {
+                return Err(format!(
+                    "unsupported canvas image cache extension {extension:?}"
+                ));
+            }
+        };
+        Ok(self.canvas_image_cache_destination_for_tier(asset_id, max_side, tier, encoding))
+    }
+
     pub fn store_canvas_image_cache(
         &self,
         asset_id: i64,

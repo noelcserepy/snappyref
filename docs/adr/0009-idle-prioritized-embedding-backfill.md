@@ -13,6 +13,8 @@ Startup, **Active Board Load**, board switching, import, crop, and canvas intera
 - **Embedding Retry** work runs only after never-tried embedding work has drained.
 - Backfill remains off the main thread.
 - An open search overlay is not itself active search; active search means a query, prefetch, or typing debounce window is still in flight.
+- **Embedding Backfill** checks whether a backfill job exists before initializing the semantic model.
+- Image **Demand Embedding** runs through a short-lived **Embedding Helper Process** for queued import/backfill embedding work so the main app process does not retain ONNX Runtime/native allocator RSS after the queue drains.
 
 ## Consequences
 
@@ -20,3 +22,5 @@ Startup, **Active Board Load**, board switching, import, crop, and canvas intera
 - Search remains available, but missing embeddings may produce incomplete results until background work catches up.
 - The scheduler must distinguish opportunistic backfill from user-demanded embedding work.
 - Working LOD cache availability now matters for semantic indexing performance as well as canvas rendering.
+- Empty or fully indexed libraries must not load the semantic model just to discover there is no background embedding work.
+- The helper process amortizes model startup across currently queued work, then exits when that queue burst drains. This preserves batch throughput while returning semantic model memory to the OS.

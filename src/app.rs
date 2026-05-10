@@ -351,6 +351,7 @@ struct PerfScenarioState {
     all_embeddings_done_logged: bool,
     idle_since: Option<Instant>,
     settled_idle_logged: bool,
+    model_unload_logged: bool,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -404,6 +405,7 @@ impl PerfScenarioState {
             all_embeddings_done_logged: false,
             idle_since: None,
             settled_idle_logged: false,
+            model_unload_logged: false,
         }))
     }
 
@@ -1648,6 +1650,32 @@ impl SnappyRefApp {
         };
         #[cfg(feature = "semantic-search")]
         {
+            for event in self.search.drain_perf_events() {
+                match event {
+                    crate::search::SemanticPerfEvent::ModelLoadStarted => {
+                        scenario.emit("semantic_model_load_started", serde_json::json!({}));
+                    }
+                    crate::search::SemanticPerfEvent::ModelLoadTiming {
+                        assets_resolved_ms,
+                        tokenizer_loaded_ms,
+                        text_session_loaded_ms,
+                        vision_session_loaded_ms,
+                        total_ms,
+                    } => scenario.emit(
+                        "semantic_model_load_timing",
+                        serde_json::json!({
+                            "assets_resolved_ms": assets_resolved_ms,
+                            "tokenizer_loaded_ms": tokenizer_loaded_ms,
+                            "text_session_loaded_ms": text_session_loaded_ms,
+                            "vision_session_loaded_ms": vision_session_loaded_ms,
+                            "total_ms": total_ms,
+                        }),
+                    ),
+                    crate::search::SemanticPerfEvent::ModelReady => {
+                        scenario.emit("semantic_model_ready", serde_json::json!({}));
+                    }
+                }
+            }
             let done = self.search.completed_demand_embedding_count();
             while scenario.demand_embeddings_done < done {
                 scenario.demand_embeddings_done += 1;
@@ -1715,10 +1743,29 @@ impl SnappyRefApp {
                 return true;
             }
             if scenario.settled_idle_logged {
-                let remaining = idle_hold
-                    .saturating_sub(idle_since.elapsed())
-                    .max(Duration::from_millis(250));
-                ctx.request_repaint_after(remaining);
+                let mut next_repaint_after = idle_hold.saturating_sub(idle_since.elapsed());
+                #[cfg(feature = "semantic-search")]
+                if let Some(unload_after) =
+                    std::env::var("SNAPPYREF_PERF_MODEL_UNLOAD_AFTER_IDLE_MS")
+                        .ok()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .map(Duration::from_millis)
+                {
+                    if !scenario.model_unload_logged {
+                        if idle_since.elapsed() >= unload_after {
+                            if self.search.unload_model_for_perf() {
+                                scenario.model_unload_logged = true;
+                                scenario
+                                    .emit("semantic_model_unload_requested", serde_json::json!({}));
+                                scenario.emit("semantic_model_unloaded", serde_json::json!({}));
+                            }
+                        } else {
+                            next_repaint_after =
+                                next_repaint_after.min(unload_after - idle_since.elapsed());
+                        }
+                    }
+                }
+                ctx.request_repaint_after(next_repaint_after.max(Duration::from_millis(250)));
                 return false;
             }
         } else {
@@ -8146,6 +8193,7 @@ mod tests {
             context_menu_pos: None,
             status: String::new(),
             perf_log: None,
+            perf_scenario: None,
             hover_preview_dimensions: std::collections::HashMap::new(),
             document_persistence: super::DocumentPersistence::default(),
             #[cfg(debug_assertions)]

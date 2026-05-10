@@ -38,10 +38,14 @@ into:
 - import queued
 - first placement visible
 - all placements visible
+- embedding model load started
+- embedding model load timing
 - embedding model ready
 - first import embedding started
 - first import embedding done
 - all import embeddings done
+- embedding model unload requested
+- embedding model unloaded
 - import settled
 - embedding backfill done
 - settled idle
@@ -101,12 +105,21 @@ scripts/run-perf-scenario.sh static-20
 The wrapper keeps the app alive briefly after Settled Idle so the sampler can
 measure real idle CPU and memory after app work has drained.
 
+Set `SNAPPYREF_PERF_MODEL_UNLOAD_AFTER_IDLE_MS` to unload the semantic model
+during that post-idle hold window. Model load timing events report asset
+resolution, tokenizer load, text session load, vision session load, and total
+cold-mount time. This lets a run compare cold model mount cost, embedding run
+time after the model is ready, memory while the model is warm, and memory after
+model unload.
+
 `scripts/run-perf-scenario.sh` writes:
 
 - `idle_tail_0_to_3s`: first three seconds after Settled Idle.
 - `quiescent_5_to_15s`: steady post-tail idle window.
 - `time_to_quiescent_ms`: time from Settled Idle until CPU stays below 1% for
   a sustained 3-second window.
+- `memory`: RSS summaries for all samples, idle samples, idle tail, quiescent
+  idle, and post-idle-without-shutdown windows.
 
 `scripts/run-idle-board-size.sh` creates libraries with `0`, `1`, `20`, `100`,
 and `1000` placements of the same asset, launches the app without import work,

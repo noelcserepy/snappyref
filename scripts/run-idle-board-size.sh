@@ -65,6 +65,7 @@ def process_sample(pid):
 
 def stats(rows):
     cpu_values = [row["cpu_percent"] for row in rows]
+    rss_values = [row["rss_bytes"] for row in rows]
     if len(rows) >= 2:
         elapsed_seconds = (rows[-1]["elapsed_ms"] - rows[0]["elapsed_ms"]) / 1000.0
         cpu_seconds = rows[-1]["cpu_time_seconds"] - rows[0]["cpu_time_seconds"]
@@ -82,7 +83,11 @@ def stats(rows):
         "cpu_time_seconds": cpu_seconds,
         "cpu_percent_by_time": cpu_percent_by_time,
         "elapsed_ms": elapsed_seconds * 1000.0 if elapsed_seconds is not None else None,
-        "max_rss_bytes": max((row["rss_bytes"] for row in rows), default=None),
+        "first_rss_bytes": rss_values[0] if rss_values else None,
+        "last_rss_bytes": rss_values[-1] if rss_values else None,
+        "min_rss_bytes": min(rss_values) if rss_values else None,
+        "max_rss_bytes": max(rss_values) if rss_values else None,
+        "delta_rss_bytes": rss_values[-1] - rss_values[0] if rss_values else None,
         "final_rss_bytes": rows[-1]["rss_bytes"] if rows else None,
     }
 
@@ -187,7 +192,7 @@ for size in sizes:
         writer.writerows(rows)
     summary = {
         "placements": size,
-            "startup_wait_seconds": float(
+        "startup_wait_seconds": float(
             os.environ.get("SNAPPYREF_IDLE_BOARD_STARTUP_WAIT_SECS", "15")
         ),
         "sample_seconds": float(os.environ.get("SNAPPYREF_IDLE_BOARD_SAMPLE_SECS", "12")),

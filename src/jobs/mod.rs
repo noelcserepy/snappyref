@@ -3,6 +3,7 @@ mod import;
 
 pub use image_formats::{AnimatedPreview, AnimatedPreviewFrame, decode_image_file_perf_report};
 pub(crate) use import::load_existing;
+pub(crate) use import::print_image_import_prepare_output_from_args;
 pub use import::{
     CanvasImageSettings, CroppedCanvasItem, DEFAULT_IMPORT_TARGET_CANVAS_AREA,
     ExistingLoadDiagnostics, ExistingLoadPriority, ImportOrigin, ImportRequest, ImportResult,
