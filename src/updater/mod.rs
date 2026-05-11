@@ -268,6 +268,11 @@ impl UpdateService {
     /// Check whether a verified staged bundle for `manifest.version` is
     /// already on disk and, if so, mark the pill Ready directly. Called
     /// from the discovery hook so it runs once per verified manifest.
+    ///
+    /// Also sweeps stale `staging-{other-version}/` directories left
+    /// behind by prior sessions whose manifest version no longer matches.
+    /// An in-flight download's staging dir is preserved so its install
+    /// worker is not interrupted.
     fn detect_existing_staging(&mut self, manifest: &Manifest) {
         let Some(install_root) = self.resolved_install_root() else {
             return;
@@ -275,6 +280,7 @@ impl UpdateService {
         let Some(platform) = TargetPlatform::current() else {
             return;
         };
+        self.sweep_stale_staging(&install_root, &manifest.version);
         let staging = install_paths::staging_dir(&install_root, &manifest.version);
         if !staging.is_dir() {
             return;
@@ -282,12 +288,63 @@ impl UpdateService {
         // Validate the staged layout matches what slice 6 will swap into
         // place. We only accept a structurally-valid bundle as Ready;
         // otherwise leave the pill alone.
-        if validate_existing_staging(&staging, platform).is_ok() {
-            self.state.mark_ready(manifest.version.clone());
-        } else {
+        if validate_existing_staging(&staging, platform).is_err() {
             // Stale or corrupt staging directory — clean it up so the
             // next download has a clean target.
             let _ = std::fs::remove_dir_all(&staging);
+            return;
+        }
+        // Re-verify the source-zip sha recorded at stage time matches the
+        // manifest's per-platform sha. A mismatch means the manifest was
+        // re-published with a different binary for this version, or the
+        // staging predates the sidecar; either way we must not promote.
+        let expected_sha = manifest.entry_for(platform).sha256.trim().to_lowercase();
+        let staged_sha = stager::read_source_sha(&staging);
+        if staged_sha.as_deref() != Some(expected_sha.as_str()) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return;
+        }
+        self.state.mark_ready(manifest.version.clone());
+    }
+
+    /// Remove `staging-{version}/` directories inside `<install_root>/updates/`
+    /// whose version is neither the manifest's current version nor an
+    /// in-flight download's version. Prevents indefinite accumulation of
+    /// staged bundles from prior versions.
+    fn sweep_stale_staging(&self, install_root: &std::path::Path, manifest_version: &str) {
+        let updates_dir = install_paths::updates_dir(install_root);
+        let Ok(entries) = std::fs::read_dir(&updates_dir) else {
+            return;
+        };
+        let keep_for_manifest = format!("staging-{manifest_version}");
+        let keep_for_download = match &self.state {
+            UpdateState::Downloading { version, .. } if version != manifest_version => {
+                Some(format!("staging-{version}"))
+            }
+            _ => None,
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if !name_str.starts_with("staging-") {
+                continue;
+            }
+            if name_str == keep_for_manifest {
+                continue;
+            }
+            if keep_for_download
+                .as_deref()
+                .is_some_and(|keep| keep == name_str)
+            {
+                continue;
+            }
+            let _ = std::fs::remove_dir_all(entry.path());
         }
     }
 
@@ -601,6 +658,10 @@ fn run_install(context: InstallContext, tx: Sender<InstallProgress>) {
             // Verified zip is no longer needed; remove it so the only
             // on-disk artifact for this version is the staging tree.
             let _ = std::fs::remove_file(&zip_path);
+            // Record the source-zip sha so a future session can re-verify
+            // the staging directory still matches the manifest before
+            // promoting it to Ready.
+            stager::record_source_sha(&staging_root, &context.sha256);
             let _ = tx.send(InstallProgress::Staged {
                 version: context.version,
             });
@@ -1016,6 +1077,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
+    /// Create a structurally-valid staged bundle on disk and write the
+    /// sha sidecar so detect_existing_staging accepts it. Returns the
+    /// staging directory path so the caller can manipulate it further.
+    fn write_valid_staging(install_root: &std::path::Path, version: &str, sha: &str) -> PathBuf {
+        let staging = install_paths::staging_dir(install_root, version);
+        match TargetPlatform::current().expect("test runs on macOS or Windows") {
+            TargetPlatform::Macos => {
+                let macos = staging
+                    .join(stager::EXPECTED_TOP_LEVEL)
+                    .join("SnappyRef.app")
+                    .join("Contents")
+                    .join("MacOS");
+                std::fs::create_dir_all(&macos).unwrap();
+                std::fs::write(macos.join("snappyref"), b"binary").unwrap();
+            }
+            TargetPlatform::Windows => {
+                let bundle = staging.join(stager::EXPECTED_TOP_LEVEL);
+                std::fs::create_dir_all(&bundle).unwrap();
+                std::fs::write(bundle.join("snappyref.exe"), b"binary").unwrap();
+            }
+        }
+        stager::record_source_sha(&staging, sha);
+        staging
+    }
+
     #[test]
     fn detect_existing_staging_promotes_to_ready_when_manifest_matches() {
         // Set up an install root with a valid staged bundle for the
@@ -1033,23 +1119,8 @@ mod tests {
                 .unwrap()
                 .as_nanos(),
         ));
-        let staging = install_paths::staging_dir(&scratch, "1.0.0");
-        match TargetPlatform::current().unwrap() {
-            TargetPlatform::Macos => {
-                let macos = staging
-                    .join(stager::EXPECTED_TOP_LEVEL)
-                    .join("SnappyRef.app")
-                    .join("Contents")
-                    .join("MacOS");
-                std::fs::create_dir_all(&macos).unwrap();
-                std::fs::write(macos.join("snappyref"), b"binary").unwrap();
-            }
-            TargetPlatform::Windows => {
-                let bundle = staging.join(stager::EXPECTED_TOP_LEVEL);
-                std::fs::create_dir_all(&bundle).unwrap();
-                std::fs::write(bundle.join("snappyref.exe"), b"binary").unwrap();
-            }
-        }
+        // Manifest builder pins both platforms' sha to "0" repeated.
+        write_valid_staging(&scratch, "1.0.0", &"0".repeat(64));
 
         let mut service = UpdateService::new(UpdateConfig {
             current_version: "0.1.0".to_owned(),
@@ -1073,6 +1144,149 @@ mod tests {
             service.state().is_ready(),
             "service should be Ready when a verified staged bundle is on disk for the manifest's version, got {:?}",
             service.state(),
+        );
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn detect_existing_staging_rejects_a_bundle_without_a_sha_sidecar() {
+        // A staging dir produced by a pre-sidecar build (or one whose
+        // sidecar was lost) must not be promoted: we can't prove it
+        // matches the current manifest.
+        if TargetPlatform::current().is_none() {
+            return;
+        }
+        let scratch = std::env::temp_dir().join(format!(
+            "snappyref-updater-no-sidecar-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        let staging = write_valid_staging(&scratch, "1.0.0", &"0".repeat(64));
+        // Strip the sidecar to simulate the pre-sidecar case.
+        let _ = std::fs::remove_file(staging.join(stager::STAGED_SHA_FILE));
+
+        let mut service = UpdateService::new(UpdateConfig {
+            current_version: "0.1.0".to_owned(),
+            install_root: Some(scratch.clone()),
+            ..UpdateConfig::default()
+        });
+        let key = signing_key();
+        let bytes = build_manifest_bytes("1.0.0", &key);
+        let public = key.verifying_key();
+        let bytes_clone = bytes.clone();
+        service.test_fetch = Some(Box::new(move || {
+            let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
+            let outcome = classify(&manifest, "0.1.0", "https://example/release");
+            DiscoveryResult {
+                outcome,
+                manifest: Some(manifest),
+            }
+        }));
+        drive_until_quiescent(&mut service);
+        assert!(
+            service.state().is_available(),
+            "service must stay Available when staging has no sidecar, got {:?}",
+            service.state(),
+        );
+        assert!(!staging.exists(), "stale staging must be cleaned up");
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn detect_existing_staging_rejects_a_bundle_whose_sidecar_sha_mismatches() {
+        // Manifest republished with a different binary for the same
+        // version: the staged bundle is now stale and must be rejected.
+        if TargetPlatform::current().is_none() {
+            return;
+        }
+        let scratch = std::env::temp_dir().join(format!(
+            "snappyref-updater-stale-sha-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        // Manifest sha is "0".repeat(64); record a different one.
+        let staging = write_valid_staging(&scratch, "1.0.0", &"f".repeat(64));
+
+        let mut service = UpdateService::new(UpdateConfig {
+            current_version: "0.1.0".to_owned(),
+            install_root: Some(scratch.clone()),
+            ..UpdateConfig::default()
+        });
+        let key = signing_key();
+        let bytes = build_manifest_bytes("1.0.0", &key);
+        let public = key.verifying_key();
+        let bytes_clone = bytes.clone();
+        service.test_fetch = Some(Box::new(move || {
+            let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
+            let outcome = classify(&manifest, "0.1.0", "https://example/release");
+            DiscoveryResult {
+                outcome,
+                manifest: Some(manifest),
+            }
+        }));
+        drive_until_quiescent(&mut service);
+        assert!(
+            service.state().is_available(),
+            "service must stay Available when staging sha disagrees with manifest, got {:?}",
+            service.state(),
+        );
+        assert!(!staging.exists(), "stale staging must be cleaned up");
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn detect_existing_staging_sweeps_stale_versions_after_manifest_fetch() {
+        // A staging-{older-version}/ from a prior session must not
+        // accumulate forever. After we verify a manifest for the new
+        // version, any non-matching staging dir is removed.
+        if TargetPlatform::current().is_none() {
+            return;
+        }
+        let scratch = std::env::temp_dir().join(format!(
+            "snappyref-updater-sweep-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        let stale = install_paths::staging_dir(&scratch, "0.9.0");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("debris"), b"old").unwrap();
+        // The matching-version staging that should be kept.
+        write_valid_staging(&scratch, "1.0.0", &"0".repeat(64));
+
+        let mut service = UpdateService::new(UpdateConfig {
+            current_version: "0.1.0".to_owned(),
+            install_root: Some(scratch.clone()),
+            ..UpdateConfig::default()
+        });
+        let key = signing_key();
+        let bytes = build_manifest_bytes("1.0.0", &key);
+        let public = key.verifying_key();
+        let bytes_clone = bytes.clone();
+        service.test_fetch = Some(Box::new(move || {
+            let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
+            let outcome = classify(&manifest, "0.1.0", "https://example/release");
+            DiscoveryResult {
+                outcome,
+                manifest: Some(manifest),
+            }
+        }));
+        drive_until_quiescent(&mut service);
+        assert!(!stale.exists(), "stale staging-0.9.0/ must be removed");
+        assert!(
+            install_paths::staging_dir(&scratch, "1.0.0").exists(),
+            "current-version staging must survive sweep",
         );
 
         let _ = std::fs::remove_dir_all(&scratch);

@@ -163,7 +163,21 @@ impl UpdateState {
     /// Promote to Ready directly. Used at startup when a verified staged
     /// bundle is already on disk and the manifest still points at that
     /// version, per the slice-5 spec.
+    ///
+    /// Refuses to clobber an in-flight `Downloading` whose version is the
+    /// same or newer than what is being marked: the install worker owns
+    /// the staging directory for that download and will emit `Staged`
+    /// when extraction completes. Promoting mid-write would orphan the
+    /// worker and could expose a partially-extracted bundle as Ready.
     pub(crate) fn mark_ready(&mut self, version: String) {
+        if let UpdateState::Downloading {
+            version: in_flight, ..
+        } = self
+        {
+            if !crate::updater::version::is_newer(in_flight, &version) {
+                return;
+            }
+        }
         *self = UpdateState::Ready { version };
     }
 
@@ -421,5 +435,31 @@ mod tests {
                 version: "1.2.3".to_owned()
             }
         );
+    }
+
+    #[test]
+    fn mark_ready_does_not_clobber_in_flight_download_for_same_version() {
+        // A discovery cycle landing mid-download could see a structurally
+        // valid (but in-flight) staging dir and try to promote it. The
+        // install worker still owns transitions for this download.
+        let mut state = UpdateState::Downloading {
+            version: "1.0.0".to_owned(),
+            percent: 30,
+        };
+        state.mark_ready("1.0.0".to_owned());
+        assert!(state.is_downloading());
+    }
+
+    #[test]
+    fn mark_ready_promotes_when_a_newer_version_is_already_staged() {
+        // A newer manifest replaced an older Downloading via apply(); on
+        // the next pass we may discover that the newer version is already
+        // staged on disk. That promotion is legitimate.
+        let mut state = UpdateState::Downloading {
+            version: "1.0.0".to_owned(),
+            percent: 30,
+        };
+        state.mark_ready("1.1.0".to_owned());
+        assert!(state.is_ready());
     }
 }

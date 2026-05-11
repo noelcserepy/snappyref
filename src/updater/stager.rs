@@ -26,6 +26,12 @@ use crate::updater::platform::TargetPlatform;
 /// and Windows."
 pub(crate) const EXPECTED_TOP_LEVEL: &str = "SnappyRef";
 
+/// Sidecar file written next to a staged bundle recording the sha256 of
+/// the source zip that produced it. Used at startup to verify a staging
+/// directory left behind by a previous session still matches the
+/// manifest's expected hash before promoting the pill to `Ready`.
+pub(crate) const STAGED_SHA_FILE: &str = ".staged-sha256";
+
 /// Failure modes for [`extract_and_validate`].
 #[derive(Debug)]
 pub(crate) enum StageError {
@@ -67,6 +73,25 @@ pub(crate) struct StageOutcome {
     pub staging_root: PathBuf,
     /// `<staging_root>/SnappyRef/`, the top-level extracted folder.
     pub bundle_root: PathBuf,
+}
+
+/// Write the source-zip sha256 sidecar inside a successfully-staged
+/// directory. Best-effort: a failure is non-fatal because the staging
+/// itself is structurally valid; we just lose the freshness check the
+/// next session would perform.
+pub(crate) fn record_source_sha(staging_root: &Path, sha: &str) {
+    let _ = fs::write(
+        staging_root.join(STAGED_SHA_FILE),
+        sha.trim().to_lowercase(),
+    );
+}
+
+/// Read the source-zip sha256 sidecar from a staging directory. Returns
+/// `None` if the sidecar is missing or unreadable.
+pub(crate) fn read_source_sha(staging_root: &Path) -> Option<String> {
+    fs::read_to_string(staging_root.join(STAGED_SHA_FILE))
+        .ok()
+        .map(|raw| raw.trim().to_lowercase())
 }
 
 /// Extract `zip_path` into `staging_root`, rejecting any entry that
