@@ -166,6 +166,15 @@ impl SearchController {
         service.unload_model()
     }
 
+    /// Drop the semantic-search service so its worker thread closes the
+    /// channel to the embedding helper child process. The child's
+    /// `EmbeddingHelperClient::drop` impl kills the child as the worker
+    /// thread unwinds. Called from the auto-update restart path before
+    /// the app exits and the updater helper swaps the bundle.
+    pub(crate) fn shutdown_helper_processes(&mut self) {
+        self.service = None;
+    }
+
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
     pub(crate) fn set_latency_logging_enabled(&mut self, enabled: bool) {
         self.latency_log.enabled = enabled;

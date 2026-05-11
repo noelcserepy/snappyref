@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
+pub mod descriptor;
 pub(crate) mod discovery;
 pub(crate) mod download;
 pub(crate) mod install_paths;
@@ -139,6 +140,37 @@ impl UpdateService {
         // verified update. Tests inject install_root via config.
         service.cleanup_partial_downloads();
         service
+    }
+
+    /// Build the pending-update descriptor for the currently-staged
+    /// version, if the pill is in `Ready` state. Returns `None` if there
+    /// is nothing to restart into, the host platform has no release
+    /// shape, or the install root cannot be resolved.
+    ///
+    /// `launch_args` should be the argv tail (everything after argv[0])
+    /// that the helper will replay on the new binary.
+    pub(crate) fn pending_restart_descriptor(
+        &self,
+        launch_args: Vec<String>,
+    ) -> Option<descriptor::PendingUpdateDescriptor> {
+        let version = match self.state() {
+            UpdateState::Ready { version } => version.clone(),
+            _ => return None,
+        };
+        let install_root = self.resolved_install_root()?;
+        let platform = StagePlatform::current()?;
+        let staging_dir = install_paths::staging_dir(&install_root, &version);
+        let staged_bundle = staged_swap_unit(&staging_dir, platform);
+        let current_bundle = current_swap_unit(&install_root, platform);
+        Some(descriptor::PendingUpdateDescriptor {
+            parent_pid: std::process::id(),
+            expected_new_version: version,
+            install_root,
+            current_bundle,
+            staged_bundle,
+            staging_dir,
+            launch_args,
+        })
     }
 
     /// Drop any in-flight zip file inside `<install_root>/updates/` that
@@ -401,6 +433,30 @@ fn entry_for_target(manifest: &Manifest) -> Option<&PlatformEntry> {
         Some(&manifest.windows)
     } else {
         None
+    }
+}
+
+/// Resolve the swap unit inside a staging tree:
+/// `<staging>/SnappyRef/SnappyRef.app` on macOS,
+/// `<staging>/SnappyRef/snappyref.exe` on Windows.
+pub(crate) fn staged_swap_unit(staging_dir: &std::path::Path, platform: StagePlatform) -> PathBuf {
+    let bundle_root = staging_dir.join(stager::EXPECTED_TOP_LEVEL);
+    match platform {
+        StagePlatform::Macos => bundle_root.join("SnappyRef.app"),
+        StagePlatform::Windows => bundle_root.join("snappyref.exe"),
+    }
+}
+
+/// Resolve the swap unit inside the live install root:
+/// `<install_root>/SnappyRef.app` on macOS,
+/// `<install_root>/snappyref.exe` on Windows.
+pub(crate) fn current_swap_unit(
+    install_root: &std::path::Path,
+    platform: StagePlatform,
+) -> PathBuf {
+    match platform {
+        StagePlatform::Macos => install_root.join("SnappyRef.app"),
+        StagePlatform::Windows => install_root.join("snappyref.exe"),
     }
 }
 

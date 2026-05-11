@@ -375,12 +375,24 @@ A published app version newer than the running one, discovered by the app's back
 _Avoid_: Pending update, downloaded update, new release
 
 **Update Pill**:
-The sidebar widget that surfaces an **Available Update**. Visible only in the **Available** or **Failed** state; the rest of the time it is **Hidden**. Clicking an Available pill opens the **Update Popover**.
+The sidebar widget that surfaces an **Available Update**. Visible only in the **Available**, **Downloading**, **Ready**, or **Failed** state; the rest of the time it is **Hidden**. Clicking an Available pill opens the **Update Popover**; clicking a Ready pill triggers the **Restart Into Update** flow.
 _Avoid_: Update badge, update banner, update toast
 
 **Update Popover**:
-The small panel anchored to the **Update Pill** that shows the new version, a release-notes link, an Install button, and a Later button. In slice 4 Install is a stopgap that opens the release page in the user's default browser.
+The small panel anchored to the **Update Pill** that shows the new version, a release-notes link, an Install button, and a Later button. Install starts the in-app download/verify/stage flow.
 _Avoid_: Update modal, update dialog
+
+**Pending Update Descriptor**:
+The JSON record the running app writes into `<install_root>/updates/pending-update.json` right before exiting for a **Restart Into Update**. It hands the **Updater Helper** the parent PID, the current and staged bundle paths, the staging directory, the expected new version, and the original launch args.
+_Avoid_: Update manifest (that is the signed `latest.json`), restart token
+
+**Updater Helper**:
+The `snappyref-updater` binary that ships next to the main `snappyref` executable. The app launches it during a **Restart Into Update**; the helper waits for the app's PID to exit, swaps the staged bundle into place (renaming the prior bundle to `.previous`/`.old`), relaunches the new app with the original launch args, and removes the staging directory.
+_Avoid_: Update agent, install agent
+
+**Restart Into Update**:
+The flow that runs when the user clicks Restart on a **Ready** **Update Pill**: save the **User Session**, stop worker child processes, write the **Pending Update Descriptor**, launch the **Updater Helper**, and exit the app.
+_Avoid_: Update install, apply update
 
 ## Relationships
 

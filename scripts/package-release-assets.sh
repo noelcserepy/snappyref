@@ -102,6 +102,7 @@ case "$platform" in
       scripts/check-release-archive.sh "$output" SnappyRef/snappyref.exe
     else
       zipinfo -1 "$output" | grep -Fxq "SnappyRef/snappyref.exe"
+      zipinfo -1 "$output" | grep -Fxq "SnappyRef/snappyref-updater.exe"
       if zipinfo -1 "$output" | grep -Fxq "SnappyRef/UPDATE.txt"; then
         echo "release archive must not contain SnappyRef/UPDATE.txt" >&2
         exit 1
@@ -133,6 +134,7 @@ case "$platform" in
       scripts/check-release-archive.sh "$output" SnappyRef/SnappyRef.app/Contents/MacOS/snappyref
     else
       zipinfo -1 "$output" | grep -Fxq "SnappyRef/SnappyRef.app/Contents/MacOS/snappyref"
+      zipinfo -1 "$output" | grep -Fxq "SnappyRef/SnappyRef.app/Contents/MacOS/snappyref-updater"
       if zipinfo -1 "$output" | grep -Fxq "SnappyRef/UPDATE.txt"; then
         echo "release archive must not contain SnappyRef/UPDATE.txt" >&2
         exit 1

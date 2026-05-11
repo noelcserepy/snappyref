@@ -2020,6 +2020,14 @@ impl SnappyRefApp {
         pill_clicked: bool,
         pill_rect: Option<egui::Rect>,
     ) {
+        // Clicking the pill while in Ready short-circuits the popover and
+        // kicks off the full swap-and-relaunch flow. Slice 6 (ADR-0015):
+        // save the user session, stop worker child processes, write the
+        // pending-update descriptor, launch `snappyref-updater`, exit.
+        if pill_clicked && matches!(self.update_service.state(), UpdateState::Ready { .. }) {
+            self.trigger_restart_into_update(ctx);
+            return;
+        }
         if pill_clicked {
             self.update_popover_open = !self.update_popover_open;
         }
@@ -2123,6 +2131,66 @@ impl SnappyRefApp {
                 self.update_popover_open = false;
             }
         }
+    }
+
+    /// Drive the swap-and-relaunch flow when the user clicks the Ready
+    /// pill. Sequence (ADR-0015):
+    ///
+    /// 1. close any open popover.
+    /// 2. save the User Session — the new app's first launch reads it back.
+    /// 3. drop worker child processes (embedding helper, import worker)
+    ///    so the swap is not racing live filesystem writers.
+    /// 4. write the pending-update descriptor into `<install_root>/updates/`.
+    /// 5. spawn `snappyref-updater` with the descriptor path.
+    /// 6. ask egui to close the viewport — the helper waits for our PID
+    ///    to exit before it touches the bundle.
+    fn trigger_restart_into_update(&mut self, ctx: &egui::Context) {
+        self.update_popover_open = false;
+
+        // 2. Save the User Session so the new app can restore it.
+        self.save_user_session();
+
+        // 3. Stop worker child processes. ImportWorker's queue + thread
+        // shutdown runs in its Drop impl; the embedding helper's stdin
+        // child process is killed by EmbeddingHelperClient::drop, which
+        // fires when the SearchController is dropped or rebuilt.
+        self.import_worker = None;
+        #[cfg(feature = "semantic-search")]
+        {
+            self.search.shutdown_helper_processes();
+        }
+
+        // 4. Build + write the descriptor.
+        let launch_args: Vec<String> = std::env::args().skip(1).collect();
+        let Some(descriptor) = self.update_service.pending_restart_descriptor(launch_args) else {
+            self.status = "No staged update is ready to restart into".to_owned();
+            return;
+        };
+        let descriptor_path = crate::updater::descriptor::default_path(&descriptor.install_root);
+        if let Err(error) = crate::updater::descriptor::write(&descriptor_path, &descriptor) {
+            self.status = format!("Failed to write update descriptor: {error}");
+            return;
+        }
+
+        // 5. Spawn the helper detached. argv[1] is the descriptor path.
+        let helper_path = match snappyref_updater_path() {
+            Ok(path) => path,
+            Err(error) => {
+                self.status = format!("Failed to locate updater helper: {error}");
+                return;
+            }
+        };
+        if let Err(error) = std::process::Command::new(&helper_path)
+            .arg(&descriptor_path)
+            .spawn()
+        {
+            self.status = format!("Failed to launch updater helper: {error}");
+            return;
+        }
+
+        // 6. Tell egui to close — the helper polls our PID and starts the
+        // swap as soon as we exit.
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     fn load_user_session(&mut self) {
@@ -5002,6 +5070,23 @@ impl crate::active_board_load::ActiveBoardLoadHost for SnappyRefApp {
     fn enqueue_active_board_existing_items(&mut self) {
         SnappyRefApp::enqueue_existing_items(self);
     }
+}
+
+/// Locate `snappyref-updater` next to the running executable. The helper
+/// ships inside the same `MacOS/` (macOS) or folder root (Windows) as the
+/// main `snappyref` binary, so the only stable lookup is by sibling path
+/// from `current_exe`. The `.exe` suffix is appended on Windows.
+fn snappyref_updater_path() -> Result<std::path::PathBuf, String> {
+    let current_exe = std::env::current_exe().map_err(|error| format!("current_exe: {error}"))?;
+    let parent = current_exe
+        .parent()
+        .ok_or_else(|| "current_exe has no parent directory".to_owned())?;
+    let name = if cfg!(target_os = "windows") {
+        "snappyref-updater.exe"
+    } else {
+        "snappyref-updater"
+    };
+    Ok(parent.join(name))
 }
 
 fn shortcut_pressed(ctx: &egui::Context, binding: ShortcutBinding) -> bool {
