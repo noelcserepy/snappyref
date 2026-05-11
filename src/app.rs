@@ -375,6 +375,7 @@ struct EmbeddingPhaseMarkers {
     first_embedding_queued_ms: Option<f64>,
     semantic_model_load_started_ms: Option<f64>,
     semantic_model_ready_ms: Option<f64>,
+    first_embedding_started_ms: Option<f64>,
     first_embedding_done_ms: Option<f64>,
     all_embeddings_done_ms: Option<f64>,
     semantic_model_unload_requested_ms: Option<f64>,
@@ -386,7 +387,9 @@ struct EmbeddingPhaseMarkers {
 struct EmbeddingPhaseSummary {
     queue_to_model_load_started_ms: Option<f64>,
     model_cold_mount_ms: Option<f64>,
+    first_embedding_start_after_model_ready_ms: Option<f64>,
     first_embedding_after_model_ready_ms: Option<f64>,
+    first_embedding_run_ms: Option<f64>,
     total_import_embedding_drain_ms: Option<f64>,
     model_unload_ms: Option<f64>,
     model_load_timing: Option<ModelLoadTimingSummary>,
@@ -590,6 +593,9 @@ impl EmbeddingPhaseMarkers {
             "semantic_model_ready" => {
                 self.semantic_model_ready_ms.get_or_insert(elapsed_ms);
             }
+            "first_import_embedding_started" => {
+                self.first_embedding_started_ms.get_or_insert(elapsed_ms);
+            }
             "first_import_embedding_done" => {
                 self.first_embedding_done_ms.get_or_insert(elapsed_ms);
             }
@@ -611,6 +617,7 @@ impl EmbeddingPhaseMarkers {
         let has_embedding_phase = self.first_embedding_queued_ms.is_some()
             || self.semantic_model_load_started_ms.is_some()
             || self.semantic_model_ready_ms.is_some()
+            || self.first_embedding_started_ms.is_some()
             || self.first_embedding_done_ms.is_some()
             || self.all_embeddings_done_ms.is_some()
             || self.model_load_timing.is_some();
@@ -628,8 +635,16 @@ impl EmbeddingPhaseMarkers {
                         self.semantic_model_ready_ms,
                     )
                 }),
+            first_embedding_start_after_model_ready_ms: duration_between(
+                self.semantic_model_ready_ms,
+                self.first_embedding_started_ms,
+            ),
             first_embedding_after_model_ready_ms: duration_between(
                 self.semantic_model_ready_ms,
+                self.first_embedding_done_ms,
+            ),
+            first_embedding_run_ms: duration_between(
+                self.first_embedding_started_ms,
                 self.first_embedding_done_ms,
             ),
             total_import_embedding_drain_ms: duration_between(
@@ -1823,6 +1838,22 @@ impl SnappyRefApp {
                     }),
                     crate::search::SemanticPerfEvent::ModelReady => {
                         scenario.emit("semantic_model_ready", serde_json::json!({}));
+                    }
+                    crate::search::SemanticPerfEvent::ImportEmbeddingStarted { asset_id } => {
+                        scenario.emit(
+                            "import_embedding_started",
+                            serde_json::json!({ "asset_id": asset_id }),
+                        );
+                        if scenario
+                            .embedding_phases
+                            .first_embedding_started_ms
+                            .is_none()
+                        {
+                            scenario.emit(
+                                "first_import_embedding_started",
+                                serde_json::json!({ "asset_id": asset_id }),
+                            );
+                        }
                     }
                 }
             }
@@ -3533,24 +3564,7 @@ impl SnappyRefApp {
         #[cfg(feature = "semantic-search")]
         let mut status = status;
         #[cfg(feature = "semantic-search")]
-        if let Some((asset_id, original_path)) = outcome.indexed_asset {
-            if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
-                scenario.demand_embeddings_queued += 1;
-                if !scenario.first_embedding_queued_logged {
-                    scenario.first_embedding_queued_logged = true;
-                    scenario.emit("first_import_embedding_queued", serde_json::json!({}));
-                }
-                scenario.emit(
-                    "import_embedding_queued",
-                    serde_json::json!({ "asset_id": asset_id }),
-                );
-            }
-            if let Err(error) = self.search.queue_asset_index(asset_id, original_path)
-                && status.is_none()
-            {
-                status = Some(error);
-            }
-        }
+        let indexed_asset = outcome.indexed_asset;
         if let Some(log) = outcome.log {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
                 scenario.visible_imports += 1;
@@ -3581,6 +3595,25 @@ impl SnappyRefApp {
                 log.diagnostics.as_ref(),
                 log.trace,
             );
+        }
+        #[cfg(feature = "semantic-search")]
+        if let Some((asset_id, original_path)) = indexed_asset {
+            if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
+                scenario.demand_embeddings_queued += 1;
+                if !scenario.first_embedding_queued_logged {
+                    scenario.first_embedding_queued_logged = true;
+                    scenario.emit("first_import_embedding_queued", serde_json::json!({}));
+                }
+                scenario.emit(
+                    "import_embedding_queued",
+                    serde_json::json!({ "asset_id": asset_id }),
+                );
+            }
+            if let Err(error) = self.search.queue_asset_index(asset_id, original_path)
+                && status.is_none()
+            {
+                status = Some(error);
+            }
         }
         if let Some(status) = status {
             self.status = status;
@@ -5497,6 +5530,7 @@ mod tests {
             first_embedding_queued_ms: Some(100.0),
             semantic_model_load_started_ms: Some(125.0),
             semantic_model_ready_ms: Some(425.0),
+            first_embedding_started_ms: Some(450.0),
             first_embedding_done_ms: Some(475.0),
             all_embeddings_done_ms: Some(825.0),
             semantic_model_unload_requested_ms: Some(900.0),
@@ -5514,7 +5548,12 @@ mod tests {
 
         assert_eq!(summary.queue_to_model_load_started_ms, Some(25.0));
         assert_eq!(summary.model_cold_mount_ms, Some(300.0));
+        assert_eq!(
+            summary.first_embedding_start_after_model_ready_ms,
+            Some(25.0)
+        );
         assert_eq!(summary.first_embedding_after_model_ready_ms, Some(50.0));
+        assert_eq!(summary.first_embedding_run_ms, Some(25.0));
         assert_eq!(summary.total_import_embedding_drain_ms, Some(725.0));
         assert_eq!(summary.model_unload_ms, Some(40.0));
         assert_eq!(

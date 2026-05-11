@@ -76,6 +76,9 @@ pub enum IndexResult {
         timing: ModelLoadTiming,
     },
     ModelReady,
+    ImportEmbeddingStarted {
+        asset_id: i64,
+    },
     BackfillIndexed,
     BackfillIdle,
     BackfillFailed {
@@ -560,6 +563,7 @@ fn process_index_request(
                 asset_id,
                 &original_path,
                 helper,
+                true,
             ) {
                 let _ = record_embedding_failure(worker_library, asset_id, model_spec, &error);
                 let _ = result_tx.send(IndexResult::Failed {
@@ -602,6 +606,7 @@ fn process_index_request(
                 job.asset_id,
                 &job.original_path,
                 helper,
+                false,
             ) {
                 Ok(()) => {
                     clear_search_embedding_cache(worker_search_embedding_cache);
@@ -884,6 +889,7 @@ fn index_asset(
     asset_id: i64,
     original_path: &PathBuf,
     helper: &mut Option<EmbeddingHelperClient>,
+    report_import_embedding_start: bool,
 ) -> Result<(), String> {
     library.upsert_asset_embedding_status(
         asset_id,
@@ -905,6 +911,9 @@ fn index_asset(
         let _ = result_tx.send(IndexResult::ModelReady);
     } else {
         let _ = ensure_embedding_helper(helper)?;
+    }
+    if report_import_embedding_start {
+        let _ = result_tx.send(IndexResult::ImportEmbeddingStarted { asset_id });
     }
     let embedding = embed_image_in_helper(&source_path, helper)?;
     library.upsert_asset_embedding_blob(asset_id, model_spec.model_key, &embedding)?;
@@ -1589,6 +1598,7 @@ mod tests {
                     IndexResult::Progress { .. } => {}
                     IndexResult::ModelLoadStarted | IndexResult::ModelLoadTiming { .. } => {}
                     IndexResult::ModelReady => {}
+                    IndexResult::ImportEmbeddingStarted { .. } => {}
                     IndexResult::BackfillIndexed
                     | IndexResult::BackfillIdle
                     | IndexResult::BackfillFailed { .. } => {}

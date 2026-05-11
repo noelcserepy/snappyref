@@ -68,6 +68,9 @@ pub(crate) enum SemanticPerfEvent {
         total_ms: f64,
     },
     ModelReady,
+    ImportEmbeddingStarted {
+        asset_id: i64,
+    },
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -432,9 +435,17 @@ impl SearchController {
                 }
                 should_refresh
             }
+            SearchIndexResult::ImportEmbeddingStarted { asset_id } => {
+                self.perf_events
+                    .push(SemanticPerfEvent::ImportEmbeddingStarted { asset_id });
+                false
+            }
             SearchIndexResult::Indexed { asset_id } => {
                 if self.pending_demand_embeddings.remove(&asset_id) {
                     self.completed_demand_embeddings += 1;
+                    if self.pending_demand_embeddings.is_empty() {
+                        self.note_demand_embedding_drained_at(Instant::now());
+                    }
                 }
                 let should_refresh = self.overlay.open
                     && (!self.overlay.query.trim().is_empty()
@@ -465,11 +476,20 @@ impl SearchController {
                     && self.pending_demand_embeddings.remove(&asset_id)
                 {
                     self.completed_demand_embeddings += 1;
+                    if self.pending_demand_embeddings.is_empty() {
+                        self.note_demand_embedding_drained_at(Instant::now());
+                    }
                 }
                 self.overlay.status = SearchOverlayStatus::Error(error);
                 false
             }
         }
+    }
+
+    fn note_demand_embedding_drained_at(&mut self, now: Instant) {
+        self.embedding_backfill.quiet_since = now
+            .checked_sub(Duration::from_millis(EMBEDDING_BACKFILL_IDLE_QUIET_MS))
+            .or(Some(now));
     }
 
     fn process_search_result(&mut self, result: SearchQueryResult, canvas: &mut CanvasState) {
@@ -1923,6 +1943,18 @@ mod tests {
         assert!(!search.can_start_embedding_backfill(now + Duration::from_millis(880), idle));
         assert!(!search.can_start_embedding_backfill(now + Duration::from_millis(1000), idle));
         assert!(search.can_start_embedding_backfill(now + Duration::from_millis(1630), idle));
+    }
+
+    #[test]
+    fn embedding_backfill_can_check_immediately_after_demand_embeddings_drain() {
+        let mut search = SearchController::default();
+        let now = Instant::now();
+
+        search.note_demand_embedding_drained_at(now);
+
+        assert!(
+            search.can_start_embedding_backfill(now, EmbeddingBackfillIdleState { app_idle: true })
+        );
     }
 
     #[test]
