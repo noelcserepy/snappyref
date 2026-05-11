@@ -8,13 +8,13 @@ pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
 pub const DEFAULT_ROTATION_SNAP_DEGREES: f32 = 15.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum CanvasImageCacheTier {
+pub enum CanvasImageLod {
     Overview,
     Working,
     Detail,
 }
 
-impl CanvasImageCacheTier {
+impl CanvasImageLod {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Overview => "overview",
@@ -22,6 +22,14 @@ impl CanvasImageCacheTier {
             Self::Detail => "detail",
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PointerMode {
+    #[default]
+    Mouse,
+    Trackpad,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -84,6 +92,8 @@ pub struct WorkspaceSettings {
     pub rotation_snap_degrees: f32,
     #[serde(default)]
     pub default_textbox_background: bool,
+    #[serde(default)]
+    pub pointer_mode: PointerMode,
 }
 
 fn default_auto_image_scaling() -> bool {
@@ -120,6 +130,7 @@ impl Default for WorkspaceSettings {
             semantic_search_enabled: true,
             rotation_snap_degrees: DEFAULT_ROTATION_SNAP_DEGREES,
             default_textbox_background: false,
+            pointer_mode: PointerMode::default(),
         }
     }
 }

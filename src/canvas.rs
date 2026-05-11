@@ -8,7 +8,7 @@ mod state;
 
 use crate::data::{
     BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind,
-    CanvasBackground, CanvasImageCacheTier, CanvasTextSize,
+    CanvasBackground, CanvasImageLod, CanvasTextSize,
 };
 use eframe::egui;
 use interaction::handle_input;
@@ -55,6 +55,7 @@ pub struct CanvasState {
     background: CanvasBackground,
     layout_gap: f32,
     rotation_snap_degrees: f32,
+    pointer_mode: crate::data::PointerMode,
     document: CanvasDocumentState,
     interaction: CanvasInteractionState,
     render: CanvasRenderState,
@@ -129,7 +130,7 @@ struct AnnotationPaintStats {
 struct CanvasImage {
     record: BoardItemWithAsset,
     texture: CanvasTexture,
-    loaded_tier: CanvasImageCacheTier,
+    loaded_lod: CanvasImageLod,
     animation: Option<AnimatedCanvasImage>,
 }
 
@@ -427,6 +428,7 @@ impl Default for CanvasState {
             background: CanvasBackground::default(),
             layout_gap: crate::data::DEFAULT_IMPORT_GAP,
             rotation_snap_degrees: crate::data::DEFAULT_ROTATION_SNAP_DEGREES,
+            pointer_mode: crate::data::PointerMode::default(),
             document: CanvasDocumentState::default(),
             interaction: CanvasInteractionState::default(),
             render: CanvasRenderState::default(),
@@ -1374,7 +1376,7 @@ pub fn show(
     input_rect: egui::Rect,
     state: &mut CanvasState,
     render_state: Option<&eframe::egui_wgpu::RenderState>,
-    allow_tier_promotion: bool,
+    allow_lod_promotion: bool,
     suppress_input: bool,
     debug_labels: bool,
 ) -> CanvasFrameMetrics {
@@ -1402,7 +1404,7 @@ pub fn show(
         rect,
         state,
         render_state,
-        allow_tier_promotion,
+        allow_lod_promotion,
         debug_labels,
     );
     paint_selection_bounds(&painter, rect, state);
@@ -1509,8 +1511,8 @@ mod tests {
     };
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
-        CanvasAnnotationKind, CanvasImageCacheTier, CanvasStackItem, CanvasStrokeWidth,
-        CanvasTextSize, ImageAsset,
+        CanvasAnnotationKind, CanvasImageLod, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize,
+        ImageAsset,
     };
     use std::{
         path::PathBuf,
@@ -1558,7 +1560,7 @@ mod tests {
                 },
             },
             texture: CanvasTexture::Managed(texture),
-            loaded_tier: CanvasImageCacheTier::Working,
+            loaded_lod: CanvasImageLod::Working,
             animation: None,
         });
     }
@@ -1612,7 +1614,7 @@ mod tests {
             preview_height: record.asset.height,
             animated_preview: None,
             preview_texture: crate::jobs::ImportedPreviewTexture::Native(texture),
-            loaded_tier: CanvasImageCacheTier::Working,
+            loaded_lod: CanvasImageLod::Working,
             existing_load_diagnostics: None,
             record,
             origin: crate::jobs::ImportOrigin::Existing,
@@ -1647,7 +1649,7 @@ mod tests {
                 height: 1,
             }),
             preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-            loaded_tier: CanvasImageCacheTier::Working,
+            loaded_lod: CanvasImageLod::Working,
             existing_load_diagnostics: None,
             record,
             origin: crate::jobs::ImportOrigin::Existing,
@@ -1732,7 +1734,7 @@ mod tests {
                     preview_texture: crate::jobs::ImportedPreviewTexture::Native(
                         new_texture.clone(),
                     ),
-                    loaded_tier: CanvasImageCacheTier::Working,
+                    loaded_lod: CanvasImageLod::Working,
                     crop_offset_local: eframe::egui::Vec2::ZERO,
                 },
                 ImageAsset {
@@ -3380,7 +3382,7 @@ mod tests {
         state.document.images.push(CanvasImage {
             record: test_record(42, 42, 4, 4),
             texture: CanvasTexture::Native(handle),
-            loaded_tier: CanvasImageCacheTier::Working,
+            loaded_lod: CanvasImageLod::Working,
             animation: None,
         });
 
@@ -3403,7 +3405,7 @@ mod tests {
                 bytes: Arc::<[u8]>::from(b"<svg viewBox='0 0 4 4'/>".as_slice()),
                 size: [4, 4],
             },
-            loaded_tier: CanvasImageCacheTier::Working,
+            loaded_lod: CanvasImageLod::Working,
             animation: None,
         });
 
@@ -3429,7 +3431,7 @@ mod tests {
                 preview_height: 4,
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: CanvasImageCacheTier::Working,
+                loaded_lod: CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
@@ -3483,7 +3485,7 @@ mod tests {
                 preview_height: 4,
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: CanvasImageCacheTier::Working,
+                loaded_lod: CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
@@ -3530,7 +3532,7 @@ mod tests {
                 preview_height: 4,
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: CanvasImageCacheTier::Working,
+                loaded_lod: CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
@@ -3556,7 +3558,7 @@ mod tests {
                 preview_height: 4,
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: CanvasImageCacheTier::Working,
+                loaded_lod: CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
@@ -3589,7 +3591,7 @@ mod tests {
                 preview_height: 4,
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: CanvasImageCacheTier::Working,
+                loaded_lod: CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
@@ -3621,7 +3623,7 @@ mod tests {
             preview_width: 2,
             preview_height: 2,
             preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-            loaded_tier: CanvasImageCacheTier::Overview,
+            loaded_lod: CanvasImageLod::Overview,
             crop_offset_local: eframe::egui::vec2(2.0, 2.0),
         };
         let mut updated_item = state.projected_cropped_item(&cropped).unwrap();

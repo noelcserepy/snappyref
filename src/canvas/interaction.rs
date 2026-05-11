@@ -16,7 +16,10 @@ use super::{
 };
 use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasStackItem, CanvasTextSize};
 
-const IMAGE_MOVE_DEBOUNCE_SECONDS: f64 = 0.150;
+// Suppresses drag movement (and layout snapping) for the first 90ms after
+// primary-press on a placement so click-to-select doesn't jerk the image via
+// snap.
+const IMAGE_MOVE_DEBOUNCE_SECONDS: f64 = 0.090;
 
 pub(super) fn handle_input(
     ui: &egui::Ui,
@@ -49,6 +52,31 @@ pub(super) fn handle_input(
 
     if pointer_in_canvas_rect && response.dragged_by(egui::PointerButton::Middle) {
         state.pan += response.drag_delta();
+    }
+
+    // Alt+LMB pan: starts a canvas pan even over a placement, mirroring PureRef.
+    if state.interaction.alt_pan_active {
+        if primary_released {
+            state.interaction.alt_pan_active = false;
+        } else if primary_down {
+            state.pan += response.drag_delta();
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            return;
+        }
+    } else if pointer_in_canvas_rect && primary_pressed && alt_held {
+        state.interaction.alt_pan_active = true;
+        state.interaction.drag_state = None;
+        state.interaction.image_transform_state = None;
+        state.interaction.textbox_transform_state = None;
+        state.interaction.annotation_drag_state = None;
+        state.interaction.marquee_state = None;
+        state.interaction.crop_state = None;
+        state.interaction.annotation_draft_state = None;
+        state.clear_move_preview_placeholders();
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        return;
+    } else if pointer_in_canvas_rect && alt_held && !primary_down {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
 
     if pointer_in_canvas_rect {
@@ -511,27 +539,72 @@ pub(super) fn handle_input(
     }
 
     if state.interaction.editing_text_annotation_id.is_some() {
-        let zoom_delta = ui.input(|i| i.zoom_delta());
-        if (zoom_delta - 1.0).abs() > f32::EPSILON {
-            zoom_around_pointer(state, rect, pointer_pos, zoom_delta);
-        }
-
-        let pan_delta = ui.input(|i| i.translation_delta());
-        if pan_delta != egui::Vec2::ZERO {
-            state.pan += pan_delta;
-        }
+        apply_canvas_navigation(ui, state, rect, pointer_pos);
         return;
     }
 
-    let zoom_delta = ui.input(|i| i.zoom_delta());
-    if (zoom_delta - 1.0).abs() > f32::EPSILON {
-        zoom_around_pointer(state, rect, pointer_pos, zoom_delta);
-    }
+    apply_canvas_navigation(ui, state, rect, pointer_pos);
+}
 
-    let pan_delta = ui.input(|i| i.translation_delta());
-    if pan_delta != egui::Vec2::ZERO {
-        state.pan += pan_delta;
+fn apply_canvas_navigation(
+    ui: &egui::Ui,
+    state: &mut CanvasState,
+    rect: egui::Rect,
+    pointer_pos: egui::Pos2,
+) {
+    match state.pointer_mode() {
+        crate::data::PointerMode::Trackpad => {
+            let zoom_delta = ui.input(|i| i.zoom_delta());
+            if (zoom_delta - 1.0).abs() > f32::EPSILON {
+                zoom_around_pointer(state, rect, pointer_pos, zoom_delta);
+            }
+            let pan_delta = ui.input(|i| i.translation_delta());
+            if pan_delta != egui::Vec2::ZERO {
+                state.pan += pan_delta;
+            }
+        }
+        crate::data::PointerMode::Mouse => {
+            let (zoom_factor, pan_delta) = ui.input(|i| map_mouse_mode_scroll_events(&i.events));
+            if (zoom_factor - 1.0).abs() > f32::EPSILON {
+                zoom_around_pointer(state, rect, pointer_pos, zoom_factor);
+            }
+            if pan_delta != egui::Vec2::ZERO {
+                state.pan += pan_delta;
+            }
+        }
     }
+}
+
+/// In Mouse mode, route mouse-wheel notches (Line/Page units) to zoom around
+/// the pointer; leave true trackpad pan (Point units) and pinch (`Event::Zoom`)
+/// alone so they still work for users with mixed input devices.
+///
+/// Scroll-wheel up (negative y per egui convention) -> zoom in. Each line tick
+/// scales by 1.1; sub-line deltas scale smoothly via `1.1^(-y)`.
+pub(super) fn map_mouse_mode_scroll_events(events: &[egui::Event]) -> (f32, egui::Vec2) {
+    let mut zoom_factor: f32 = 1.0;
+    let mut pan_delta = egui::Vec2::ZERO;
+    let mut wheel_zoom_y: f32 = 0.0;
+    for event in events {
+        match event {
+            egui::Event::MouseWheel { unit, delta, .. } => match unit {
+                egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => {
+                    wheel_zoom_y += delta.y;
+                }
+                egui::MouseWheelUnit::Point => {
+                    pan_delta += *delta;
+                }
+            },
+            egui::Event::Zoom(factor) => {
+                zoom_factor *= factor;
+            }
+            _ => {}
+        }
+    }
+    if wheel_zoom_y.abs() > f32::EPSILON {
+        zoom_factor *= 1.1_f32.powf(-wheel_zoom_y);
+    }
+    (zoom_factor, pan_delta)
 }
 
 pub(super) fn open_context_menu_at_pointer(
@@ -1493,12 +1566,13 @@ pub(super) fn pending_annotation_from_draft(
 mod tests {
     use super::{
         DragState, ImageTransformState, begin_image_rotation, compute_drag_snap_preview,
-        offset_layout_bounds, selected_image_rotation_handle_screen_pos,
+        map_mouse_mode_scroll_events, offset_layout_bounds,
+        selected_image_rotation_handle_screen_pos,
     };
     use crate::canvas::CanvasState;
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
-        CanvasAnnotationKind, CanvasImageCacheTier, CanvasStrokeWidth, CanvasTextSize, ImageAsset,
+        CanvasAnnotationKind, CanvasImageLod, CanvasStrokeWidth, CanvasTextSize, ImageAsset,
     };
     use crate::jobs::{ImportOrigin, ImportedPreviewTexture, LoadedCanvasItem};
     use eframe::egui;
@@ -1756,7 +1830,7 @@ mod tests {
                 preview_height: height,
                 animated_preview: None,
                 preview_texture: ImportedPreviewTexture::Cpu,
-                loaded_tier: CanvasImageCacheTier::Working,
+                loaded_lod: CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: ImportOrigin::Existing,
                 trace: None,
@@ -1766,5 +1840,83 @@ mod tests {
 
     fn test_screen_rect() -> egui::Rect {
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 720.0))
+    }
+
+    fn wheel_event(unit: egui::MouseWheelUnit, delta: egui::Vec2) -> egui::Event {
+        egui::Event::MouseWheel {
+            unit,
+            delta,
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn mouse_mode_wheel_up_zooms_in() {
+        let events = vec![wheel_event(
+            egui::MouseWheelUnit::Line,
+            egui::vec2(0.0, -1.0),
+        )];
+        let (zoom_factor, pan_delta) = map_mouse_mode_scroll_events(&events);
+        assert!(
+            zoom_factor > 1.0,
+            "wheel up should zoom in, got {zoom_factor}"
+        );
+        assert!((zoom_factor - 1.1).abs() < 1e-5);
+        assert_eq!(pan_delta, egui::Vec2::ZERO);
+    }
+
+    #[test]
+    fn mouse_mode_wheel_down_zooms_out() {
+        let events = vec![wheel_event(
+            egui::MouseWheelUnit::Line,
+            egui::vec2(0.0, 1.0),
+        )];
+        let (zoom_factor, _) = map_mouse_mode_scroll_events(&events);
+        assert!(
+            zoom_factor < 1.0,
+            "wheel down should zoom out, got {zoom_factor}"
+        );
+        assert!((zoom_factor - (1.0 / 1.1)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn mouse_mode_does_not_pan_from_wheel_notches() {
+        let events = vec![wheel_event(
+            egui::MouseWheelUnit::Line,
+            egui::vec2(0.0, 3.0),
+        )];
+        let (_, pan_delta) = map_mouse_mode_scroll_events(&events);
+        assert_eq!(pan_delta, egui::Vec2::ZERO);
+    }
+
+    #[test]
+    fn mouse_mode_passes_trackpad_pan_through() {
+        let events = vec![wheel_event(
+            egui::MouseWheelUnit::Point,
+            egui::vec2(8.0, -4.0),
+        )];
+        let (zoom_factor, pan_delta) = map_mouse_mode_scroll_events(&events);
+        assert_eq!(zoom_factor, 1.0);
+        assert_eq!(pan_delta, egui::vec2(8.0, -4.0));
+    }
+
+    #[test]
+    fn mouse_mode_passes_pinch_zoom_through() {
+        let events = vec![egui::Event::Zoom(1.25)];
+        let (zoom_factor, pan_delta) = map_mouse_mode_scroll_events(&events);
+        assert!((zoom_factor - 1.25).abs() < 1e-6);
+        assert_eq!(pan_delta, egui::Vec2::ZERO);
+    }
+
+    #[test]
+    fn mouse_mode_ignores_horizontal_wheel() {
+        let events = vec![wheel_event(
+            egui::MouseWheelUnit::Line,
+            egui::vec2(2.0, 0.0),
+        )];
+        let (zoom_factor, pan_delta) = map_mouse_mode_scroll_events(&events);
+        assert_eq!(zoom_factor, 1.0);
+        assert_eq!(pan_delta, egui::Vec2::ZERO);
     }
 }

@@ -1991,6 +1991,7 @@ impl SnappyRefApp {
                 self.canvas
                     .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
                 self.canvas.set_layout_gap(self.settings.import_gap);
+                self.canvas.set_pointer_mode(self.settings.pointer_mode);
                 self.document_persistence
                     .record_saved_user_session(self.current_user_session());
             }
@@ -3052,7 +3053,7 @@ impl SnappyRefApp {
                     self.import_worker.as_ref(),
                     &integration.updated_record,
                     &self.settings,
-                    crate::data::CanvasImageCacheTier::Working,
+                    crate::data::CanvasImageLod::Working,
                 ) {
                     status = error;
                 }
@@ -3562,7 +3563,7 @@ impl SnappyRefApp {
                 preview_height: height,
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
@@ -3640,7 +3641,7 @@ impl SnappyRefApp {
                     height,
                 }),
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
@@ -3700,7 +3701,7 @@ impl SnappyRefApp {
                     bytes: std::sync::Arc::<[u8]>::from(svg),
                     size: [width as usize, height as usize],
                 },
-                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
@@ -4248,7 +4249,7 @@ impl SnappyRefApp {
                         canvas_image_settings: crate::jobs::CanvasImageSettings {
                             max_side: self.settings.canvas_image_max_side,
                         },
-                        target_tier: crate::data::CanvasImageCacheTier::Working,
+                        target_lod: crate::data::CanvasImageLod::Working,
                         priority: crate::jobs::ExistingLoadPriority::Background,
                         trace: None,
                     })
@@ -4267,7 +4268,7 @@ impl SnappyRefApp {
                     crate::jobs::CanvasImageSettings {
                         max_side: self.settings.canvas_image_max_side,
                     },
-                    crate::data::CanvasImageCacheTier::Working,
+                    crate::data::CanvasImageLod::Working,
                     None,
                     self.wgpu_render_state.as_ref(),
                 ) {
@@ -4684,6 +4685,7 @@ impl eframe::App for SnappyRefApp {
         self.canvas
             .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
         self.canvas.set_layout_gap(self.settings.import_gap);
+        self.canvas.set_pointer_mode(self.settings.pointer_mode);
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         let suppress_canvas_input = self.blocks_canvas_input(ui.ctx());
         self.frame_perf.canvas = crate::canvas::show(
@@ -4703,7 +4705,7 @@ impl eframe::App for SnappyRefApp {
             } else {
                 false
             };
-        if let Some(error) = self.residency.dispatch_pending_tier_requests(
+        if let Some(error) = self.residency.dispatch_pending_lod_requests(
             self.import_worker.as_ref(),
             &mut self.canvas,
             self.active_board_id,
@@ -5152,7 +5154,7 @@ mod tests {
                     preview_height: *height,
                     animated_preview: None,
                     preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                    loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                    loaded_lod: crate::data::CanvasImageLod::Working,
                     existing_load_diagnostics: None,
                     origin: crate::jobs::ImportOrigin::Existing,
                     trace: None,
@@ -5247,7 +5249,7 @@ mod tests {
                 preview_height: 1,
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
@@ -5359,7 +5361,7 @@ mod tests {
                     preview_height: 1,
                     animated_preview: None,
                     preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                    loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                    loaded_lod: crate::data::CanvasImageLod::Working,
                     existing_load_diagnostics: None,
                     origin: crate::jobs::ImportOrigin::Existing,
                     trace: None,
@@ -5558,7 +5560,7 @@ mod tests {
                 preview_height: 1,
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
@@ -6098,7 +6100,7 @@ mod tests {
                 preview_height: 1,
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
@@ -6251,7 +6253,7 @@ mod tests {
                 preview_height: 1,
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
@@ -6998,7 +7000,7 @@ mod tests {
                 preview_height: 1,
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
@@ -7981,7 +7983,7 @@ mod tests {
                     preview_height: 100,
                     animated_preview: None,
                     preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                    loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                    loaded_lod: crate::data::CanvasImageLod::Working,
                     existing_load_diagnostics: None,
                     origin: crate::jobs::ImportOrigin::Existing,
                     trace: None,
@@ -8334,7 +8336,7 @@ mod tests {
             preview_height: 1,
             animated_preview: None,
             preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-            loaded_tier: crate::data::CanvasImageCacheTier::Working,
+            loaded_lod: crate::data::CanvasImageLod::Working,
             existing_load_diagnostics: None,
             origin: crate::jobs::ImportOrigin::Clipboard,
             trace: None,
@@ -8353,7 +8355,7 @@ mod tests {
                 preview_height: 1,
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,

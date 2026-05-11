@@ -16,7 +16,7 @@ use super::interaction::{
 use super::{
     ANNOTATION_CULL_MARGIN_SCREEN, BACKGROUND_BASE_WORLD_STEP, BACKGROUND_MAX_LOD_LEVEL,
     BACKGROUND_MAX_SCREEN_STEP, BACKGROUND_MIN_LOD_LEVEL, BACKGROUND_MIN_SCREEN_STEP, CanvasImage,
-    CanvasImageCacheTier, CanvasState, CanvasTexture, IMAGE_CULL_MARGIN_SCREEN,
+    CanvasImageLod, CanvasState, CanvasTexture, IMAGE_CULL_MARGIN_SCREEN,
     IMAGE_DETAIL_PROMOTION_THRESHOLD, IMAGE_ROTATE_HANDLE_RADIUS_SCREEN, ImagePassBatch,
     ImagePassCallback, ImagePassInstance, ImagePassMetrics, MIN_CANVAS_ZOOM,
     MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation, TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP,
@@ -42,7 +42,7 @@ pub(super) fn paint_images(
     rect: egui::Rect,
     state: &mut CanvasState,
     render_state: Option<&eframe::egui_wgpu::RenderState>,
-    allow_tier_promotion: bool,
+    allow_lod_promotion: bool,
     debug_labels: bool,
 ) -> ImagePassMetrics {
     let build_started_at = Instant::now();
@@ -181,15 +181,15 @@ pub(super) fn paint_images(
 
     metrics.build_time_ms = build_started_at.elapsed().as_secs_f64() * 1000.0;
 
-    if allow_tier_promotion {
+    if allow_lod_promotion {
         let promotion_requests = visible_images
             .iter()
             .filter_map(|(item_id, _)| {
-                desired_image_tier(state, rect, *item_id).map(|tier| (*item_id, tier))
+                desired_image_lod(state, rect, *item_id).map(|lod| (*item_id, lod))
             })
             .collect::<Vec<_>>();
-        for (item_id, tier) in promotion_requests {
-            state.request_image_tier_load(item_id, tier);
+        for (item_id, lod) in promotion_requests {
+            state.request_image_lod_load(item_id, lod);
         }
     }
 
@@ -230,7 +230,7 @@ pub(super) fn paint_canvas_items(
     rect: egui::Rect,
     state: &mut CanvasState,
     render_state: Option<&eframe::egui_wgpu::RenderState>,
-    allow_tier_promotion: bool,
+    allow_lod_promotion: bool,
     debug_labels: bool,
 ) -> ImagePassMetrics {
     if canvas_stack_matches_existing_layering(state) {
@@ -240,14 +240,14 @@ pub(super) fn paint_canvas_items(
             rect,
             state,
             render_state,
-            allow_tier_promotion,
+            allow_lod_promotion,
             debug_labels,
         );
         paint_annotations(painter, ui, rect, state);
         return image_pass;
     }
 
-    paint_canvas_items_interleaved(painter, ui, rect, state, allow_tier_promotion, debug_labels)
+    paint_canvas_items_interleaved(painter, ui, rect, state, allow_lod_promotion, debug_labels)
 }
 
 #[cfg(test)]
@@ -278,7 +278,7 @@ fn paint_canvas_items_interleaved(
     ui: &egui::Ui,
     rect: egui::Rect,
     state: &mut CanvasState,
-    allow_tier_promotion: bool,
+    allow_lod_promotion: bool,
     debug_labels: bool,
 ) -> ImagePassMetrics {
     let build_started_at = Instant::now();
@@ -356,15 +356,15 @@ fn paint_canvas_items_interleaved(
         }
     }
 
-    if allow_tier_promotion {
+    if allow_lod_promotion {
         let promotion_requests = visible_item_ids
             .iter()
             .filter_map(|item_id| {
-                desired_image_tier(state, rect, *item_id).map(|tier| (*item_id, tier))
+                desired_image_lod(state, rect, *item_id).map(|lod| (*item_id, lod))
             })
             .collect::<Vec<_>>();
-        for (item_id, tier) in promotion_requests {
-            state.request_image_tier_load(item_id, tier);
+        for (item_id, lod) in promotion_requests {
+            state.request_image_lod_load(item_id, lod);
         }
     }
 
@@ -429,16 +429,16 @@ fn image_pass_instance(rect: egui::Rect, image_rect: egui::Rect) -> ImagePassIns
     }
 }
 
-fn desired_image_tier(
+fn desired_image_lod(
     state: &CanvasState,
     rect: egui::Rect,
     item_id: i64,
-) -> Option<CanvasImageCacheTier> {
+) -> Option<CanvasImageLod> {
     let image = state.image_by_item_id(item_id)?;
-    if image.loaded_tier < CanvasImageCacheTier::Working {
-        return Some(CanvasImageCacheTier::Working);
+    if image.loaded_lod < CanvasImageLod::Working {
+        return Some(CanvasImageLod::Working);
     }
-    if image.loaded_tier >= CanvasImageCacheTier::Detail {
+    if image.loaded_lod >= CanvasImageLod::Detail {
         return None;
     }
     let image_rect = image_screen_rect(state, rect, image);
@@ -446,7 +446,7 @@ fn desired_image_tier(
     let texture_max_side = image.texture.size()[0].max(image.texture.size()[1]) as f32;
     (texture_max_side > 0.0
         && on_screen_max_side >= texture_max_side * IMAGE_DETAIL_PROMOTION_THRESHOLD)
-        .then_some(CanvasImageCacheTier::Detail)
+        .then_some(CanvasImageLod::Detail)
 }
 
 fn paint_image_overlay(
@@ -1791,24 +1791,24 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn visible_overview_image_promotes_to_working_tier() {
+    fn visible_overview_image_promotes_to_working_lod() {
         let mut state = CanvasState {
             document: CanvasDocumentState {
-                images: vec![test_image(7, CanvasImageCacheTier::Overview, [256, 256])],
+                images: vec![test_image(7, CanvasImageLod::Overview, [256, 256])],
                 ..Default::default()
             },
             ..Default::default()
         };
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
 
-        state.request_image_tier_load(
+        state.request_image_lod_load(
             7,
-            desired_image_tier(&state, rect, 7).expect("overview should promote"),
+            desired_image_lod(&state, rect, 7).expect("overview should promote"),
         );
 
         assert_eq!(
-            state.render.pending_image_tier_loads.get(&7).copied(),
-            Some(CanvasImageCacheTier::Working)
+            state.render.pending_image_lod_loads.get(&7).copied(),
+            Some(CanvasImageLod::Working)
         );
     }
 
@@ -1817,7 +1817,7 @@ mod tests {
         let state = CanvasState {
             zoom: 2.0,
             document: CanvasDocumentState {
-                images: vec![test_image(9, CanvasImageCacheTier::Working, [256, 256])],
+                images: vec![test_image(9, CanvasImageLod::Working, [256, 256])],
                 ..Default::default()
             },
             render: CanvasRenderState::default(),
@@ -1826,14 +1826,14 @@ mod tests {
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
 
         assert_eq!(
-            desired_image_tier(&state, rect, 9),
-            Some(CanvasImageCacheTier::Detail)
+            desired_image_lod(&state, rect, 9),
+            Some(CanvasImageLod::Detail)
         );
     }
 
     fn test_image(
         item_id: i64,
-        loaded_tier: CanvasImageCacheTier,
+        loaded_lod: CanvasImageLod,
         texture_size: [usize; 2],
     ) -> CanvasImage {
         CanvasImage {
@@ -1864,7 +1864,7 @@ mod tests {
                 bytes: std::sync::Arc::<[u8]>::from([]),
                 size: texture_size,
             },
-            loaded_tier,
+            loaded_lod,
             animation: None,
         }
     }

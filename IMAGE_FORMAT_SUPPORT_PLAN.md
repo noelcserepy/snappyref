@@ -83,7 +83,7 @@ Current implementation status:
 - SVG imports and existing SVG loads skip the app's JPEG/WebP canvas cache.
 - URL SVG imports use the same vector path when the content type or URL extension identifies SVG.
 - Canvas rendering uses egui's SVG loader from the original bytes, so display-size rasterization is owned by the renderer cache rather than persisted as the asset representation.
-- Semantic-search indexing and cache-tier backfills are skipped for SVG until explicit raster derivatives are added.
+- Semantic-search indexing and canvas image LOD backfills are skipped for SVG until explicit raster derivatives are added.
 - Cropping SVG is explicitly rejected for now, rather than silently rasterizing or failing through the raster decoder.
 - Debug verification is available with `cargo run -- --verify-svg --screenshot /tmp/snappyref-svg.png`.
 

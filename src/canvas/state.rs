@@ -8,7 +8,7 @@ use super::{
     PendingAnnotation, PendingCropPreview, SearchDragPreview, SharedRgba, TextboxLayoutCacheEntry,
     TextboxTransformState,
 };
-use crate::data::{CanvasAnnotation, CanvasImageCacheTier, CanvasStackItem};
+use crate::data::{CanvasAnnotation, CanvasImageLod, CanvasStackItem};
 
 #[derive(Default)]
 pub(super) struct CanvasDocumentState {
@@ -45,6 +45,7 @@ pub(super) struct CanvasInteractionState {
     pub move_preview_placeholders: Vec<ImportPlaceholder>,
     pub search_drag_preview: Option<SearchDragPreview>,
     pub last_pointer_screen_pos: Option<egui::Pos2>,
+    pub alt_pan_active: bool,
 }
 
 #[derive(Default)]
@@ -52,7 +53,7 @@ pub(super) struct CanvasRenderState {
     pub background_lod_level: i32,
     pub asset_rgba_cache: HashMap<i64, SharedRgba>,
     pub textbox_layout_cache: HashMap<i64, TextboxLayoutCacheEntry>,
-    pub pending_image_tier_loads: HashMap<i64, CanvasImageCacheTier>,
+    pub pending_image_lod_loads: HashMap<i64, CanvasImageLod>,
     pub pending_crop_previews: HashMap<i64, PendingCropPreview>,
     pub animation_time_override_seconds: Option<f32>,
 }
