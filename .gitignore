@@ -2,6 +2,7 @@ target/
 library/
 .claude/
 .scratch/
+.ralph/
 tests/fixtures/external/files/
 perf-assets/images/
 perf-assets/runs/
