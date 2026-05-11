@@ -29,6 +29,10 @@ use crate::updater::{UpdateConfig, UpdateService, UpdateState};
 
 const STARTUP_VIEWPORT_SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
 const MAX_IMPORT_RESULTS_PER_FRAME: usize = 4;
+/// Minimum wall time between Settings Tab "Check for updates now" clicks.
+/// ADR-0015: discovery is opportunistic and the manual button is a
+/// convenience, not a way to hammer the manifest endpoint.
+const MANUAL_UPDATE_CHECK_THROTTLE: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArrangementAction {
@@ -1222,6 +1226,10 @@ pub struct SnappyRefApp {
     sidebar_hot_preview: bool,
     update_service: UpdateService,
     update_popover_open: bool,
+    /// Monotonic instant of the last "Check for updates now" click. Used
+    /// to throttle the Settings Tab button to one invocation per minute
+    /// independent of wall-clock noise. `None` until the first click.
+    last_manual_update_check: Option<Instant>,
 }
 
 impl SnappyRefApp {
@@ -1297,6 +1305,7 @@ impl SnappyRefApp {
                     sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                     update_service: UpdateService::new(UpdateConfig::default()),
                     update_popover_open: false,
+                    last_manual_update_check: None,
                 };
                 #[cfg(all(debug_assertions, feature = "semantic-search"))]
                 app.search
@@ -1503,6 +1512,7 @@ impl SnappyRefApp {
                 sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                 update_service: UpdateService::new(UpdateConfig::default()),
                 update_popover_open: false,
+                last_manual_update_check: None,
             },
         }
     }
@@ -2014,6 +2024,84 @@ impl SnappyRefApp {
         self.sidebar_open && !self.modal_open()
     }
 
+    /// Build the Settings Tab "About / Updates" view payload. Recomputed
+    /// every frame because backup presence is a filesystem fact that may
+    /// change while the app is running (e.g. an updater helper just ran).
+    fn about_updates_view(&self) -> crate::sidebar::AboutUpdatesView<'static> {
+        let backup_present = self
+            .update_service
+            .install_root()
+            .map(|root| crate::updater::rollback::backup_exists(&root))
+            .unwrap_or(false);
+        let check_now_enabled = match self.last_manual_update_check {
+            None => true,
+            Some(instant) => instant.elapsed() >= MANUAL_UPDATE_CHECK_THROTTLE,
+        };
+        crate::sidebar::AboutUpdatesView {
+            current_version: env!("CARGO_PKG_VERSION"),
+            last_checked_unix_millis: self.update_service.last_check_completed_at(),
+            backup_present,
+            check_now_enabled,
+        }
+    }
+
+    /// Mirror the update service's most recent check timestamp into the
+    /// persisted Workspace Settings so it survives across launches.
+    /// Returns true when the value changed and the caller should persist.
+    fn sync_last_update_check_timestamp(&mut self) -> bool {
+        let current = self.update_service.last_check_completed_at();
+        if current != self.settings.last_update_check_at {
+            self.settings.last_update_check_at = current;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Process a Settings Tab "Check for updates now" click. Throttled to
+    /// one invocation per [`MANUAL_UPDATE_CHECK_THROTTLE`].
+    fn handle_update_check_now_click(&mut self) {
+        let now = Instant::now();
+        if let Some(last) = self.last_manual_update_check {
+            if now.duration_since(last) < MANUAL_UPDATE_CHECK_THROTTLE {
+                return;
+            }
+        }
+        self.last_manual_update_check = Some(now);
+        self.update_service.request_check_now();
+    }
+
+    /// Process a Settings Tab "Rollback to previous version" click.
+    /// Performs the rollback through `updater::rollback`; on success the
+    /// status line invites the user to relaunch. The next launch's
+    /// discovery cycle will mark the manifest version Available again,
+    /// which is the intended behavior (the user can re-attempt the
+    /// update or keep the rollback indefinitely).
+    fn handle_rollback_click(&mut self) {
+        let Some(install_root) = self.update_service.install_root() else {
+            self.status = "Rollback unavailable: install root could not be resolved.".to_owned();
+            return;
+        };
+        match crate::updater::rollback::perform(&install_root) {
+            Ok(outcome) => {
+                self.status = format!(
+                    "Rolled back to previous version. Relaunch SnappyRef to use {}.",
+                    outcome
+                        .restored_to
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("the restored binary"),
+                );
+            }
+            Err(crate::updater::rollback::RollbackError::NoBackup) => {
+                self.status = "No previous version is available to roll back to.".to_owned();
+            }
+            Err(error) => {
+                self.status = format!("Rollback failed: {error}");
+            }
+        }
+    }
+
     fn handle_update_pill_interaction(
         &mut self,
         ctx: &egui::Context,
@@ -2213,6 +2301,8 @@ impl SnappyRefApp {
                     .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
                 self.canvas.set_layout_gap(self.settings.import_gap);
                 self.canvas.set_pointer_mode(self.settings.pointer_mode);
+                self.update_service
+                    .seed_last_check_completed_at(self.settings.last_update_check_at);
                 self.document_persistence
                     .record_saved_user_session(self.current_user_session());
             }
@@ -4954,6 +5044,7 @@ impl eframe::App for SnappyRefApp {
             .find(|summary| summary.board.id == self.active_board_id)
             .map(|summary| summary.board.name.clone())
             .unwrap_or_else(|| "My Board".to_owned());
+        let about_updates = self.about_updates_view();
         let sidebar_result = show_sidebar(
             ui.ctx(),
             screen_rect,
@@ -4973,6 +5064,7 @@ impl eframe::App for SnappyRefApp {
             #[cfg(not(debug_assertions))]
             None,
             self.update_service.state(),
+            about_updates,
         );
         let board_action = if self.modal_open() {
             None
@@ -5001,7 +5093,17 @@ impl eframe::App for SnappyRefApp {
             sidebar_result.update_pill_clicked,
             sidebar_result.update_pill_rect,
         );
-        self.persist_settings_if_changed(sidebar_result.settings_changed);
+        if sidebar_result.update_check_now_clicked {
+            self.handle_update_check_now_click();
+        }
+        if sidebar_result.rollback_clicked {
+            self.handle_rollback_click();
+        }
+        let mut settings_changed = sidebar_result.settings_changed;
+        if self.sync_last_update_check_timestamp() {
+            settings_changed = true;
+        }
+        self.persist_settings_if_changed(settings_changed);
         self.show_board_delete_confirmation(ui.ctx());
         self.show_library_remove_confirmation(ui.ctx());
         if !modal_open {
@@ -8474,6 +8576,7 @@ mod tests {
             sidebar_hot_preview: false,
             update_service: super::UpdateService::new(super::UpdateConfig::default()),
             update_popover_open: false,
+            last_manual_update_check: None,
         }
     }
 
@@ -8487,6 +8590,7 @@ mod tests {
             block_sidebar_input(ctx, sidebar_rect(screen_rect));
         }
         let board_summaries = app.board_summaries();
+        let about_updates = app.about_updates_view();
         let sidebar_result = show_sidebar(
             ctx,
             screen_rect,
@@ -8499,6 +8603,7 @@ mod tests {
             app.active_board_id,
             None,
             app.update_service.state(),
+            about_updates,
         );
         let board_action = if app.modal_open() {
             None

@@ -18,13 +18,14 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub mod descriptor;
 pub(crate) mod discovery;
 pub(crate) mod download;
 pub(crate) mod install_paths;
 pub(crate) mod manifest;
+pub mod rollback;
 pub(crate) mod stager;
 pub(crate) mod state;
 pub(crate) mod version;
@@ -63,6 +64,13 @@ pub(crate) struct UpdateService {
     /// Latest verified manifest, kept so a click on Install knows the URL
     /// and sha256 without re-fetching.
     last_manifest: Option<Manifest>,
+    /// Wall-clock unix millis at which the most recent discovery check
+    /// completed (success or failure). Settings Tab renders this; `None`
+    /// before the first check returns.
+    last_check_completed_at: Option<u64>,
+    /// Set to true when [`request_check_now`] fires; consumed by the next
+    /// tick to force a discovery cycle outside the steady-state schedule.
+    manual_check_requested: bool,
     /// Install-worker progress receiver. `None` while no install is in
     /// flight. A finished install drops the channel via `Failed` or `Staged`.
     install_rx: Option<Receiver<InstallProgress>>,
@@ -129,6 +137,8 @@ impl UpdateService {
             next_check_after: None,
             config,
             last_manifest: None,
+            last_check_completed_at: None,
+            manual_check_requested: false,
             install_rx: None,
             #[cfg(test)]
             test_fetch: None,
@@ -298,6 +308,7 @@ impl UpdateService {
                 Ok(result) => {
                     self.in_flight = None;
                     self.last_check = Some(self.started_at.elapsed());
+                    self.last_check_completed_at = current_unix_millis();
                     match &result.outcome {
                         CheckOutcome::Failed => self.consecutive_failures += 1,
                         CheckOutcome::NewerAvailable { .. } | CheckOutcome::UpToDate => {
@@ -322,6 +333,7 @@ impl UpdateService {
                 Err(TryRecvError::Disconnected) => {
                     self.in_flight = None;
                     self.last_check = Some(self.started_at.elapsed());
+                    self.last_check_completed_at = current_unix_millis();
                     self.consecutive_failures += 1;
                     self.state.apply(CheckOutcome::Failed);
                 }
@@ -329,6 +341,16 @@ impl UpdateService {
         }
 
         self.drain_install_progress();
+
+        // Manual check (Settings Tab "Check for updates now") jumps the
+        // queue regardless of the schedule. Throttling is the caller's
+        // responsibility — the UI gates the button to one click per
+        // minute so a wedged network does not get pinged repeatedly.
+        if self.manual_check_requested && self.settled_idle_at.is_some() {
+            self.manual_check_requested = false;
+            self.start_check();
+            return;
+        }
 
         let input = ScheduleInput {
             settled_idle: self.settled_idle_at.is_some(),
@@ -341,6 +363,36 @@ impl UpdateService {
             NextAction::WaitFor(d) => self.next_check_after = Some(d),
             NextAction::WaitForSettledIdle => self.next_check_after = None,
         }
+    }
+
+    /// Schedule an immediate discovery cycle the next time [`tick`] runs,
+    /// bypassing the steady-state poll interval. Used by the Settings
+    /// Tab "Check for updates now" button.
+    pub(crate) fn request_check_now(&mut self) {
+        self.manual_check_requested = true;
+    }
+
+    /// Unix-epoch milliseconds the most recent check completed. `None`
+    /// before any check has resolved.
+    pub(crate) fn last_check_completed_at(&self) -> Option<u64> {
+        self.last_check_completed_at
+    }
+
+    /// Restore the persisted last-check timestamp on app launch. Called
+    /// by [`crate::app::SnappyRefApp`] right after the User Session
+    /// loads so the Settings Tab can render the timestamp before the
+    /// first discovery cycle of this session completes.
+    pub(crate) fn seed_last_check_completed_at(&mut self, unix_millis: Option<u64>) {
+        if self.last_check_completed_at.is_none() {
+            self.last_check_completed_at = unix_millis;
+        }
+    }
+
+    /// Resolve `<install_root>` for the running process, honoring the
+    /// same env override the discovery service uses. Returns `None` if
+    /// resolution fails so callers can hide the Rollback button.
+    pub(crate) fn install_root(&self) -> Option<PathBuf> {
+        self.resolved_install_root()
     }
 
     /// Suggested wait until the next scheduled check, used by callers to
@@ -620,6 +672,13 @@ fn fetch_manifest(url: &str) -> Result<Vec<u8>, String> {
         .bytes()
         .map(|b| b.to_vec())
         .map_err(|error| format!("body: {error}"))
+}
+
+fn current_unix_millis() -> Option<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis() as u64)
 }
 
 fn log_failure(stage: &str, error: &dyn std::fmt::Display) {
@@ -1030,5 +1089,59 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn last_check_completed_at_records_a_timestamp_after_a_check_returns() {
+        let mut service = UpdateService::new(UpdateConfig::default());
+        service.test_fetch = Some(Box::new(|| DiscoveryResult {
+            outcome: CheckOutcome::UpToDate,
+            manifest: None,
+        }));
+        assert_eq!(service.last_check_completed_at(), None);
+        drive_until_quiescent(&mut service);
+        assert!(
+            service.last_check_completed_at().is_some(),
+            "last_check_completed_at must be set once a check resolves",
+        );
+    }
+
+    #[test]
+    fn seed_last_check_completed_at_only_fills_an_empty_slot() {
+        let mut service = UpdateService::new(UpdateConfig::default());
+        service.seed_last_check_completed_at(Some(1_700_000_000_000));
+        assert_eq!(service.last_check_completed_at(), Some(1_700_000_000_000));
+        // Seeding again with a different value must not clobber a value
+        // that was already restored.
+        service.seed_last_check_completed_at(Some(1));
+        assert_eq!(service.last_check_completed_at(), Some(1_700_000_000_000));
+    }
+
+    #[test]
+    fn request_check_now_forces_an_immediate_check_after_settled_idle() {
+        let mut service = UpdateService::new(UpdateConfig::default());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = calls.clone();
+        service.test_fetch = Some(Box::new(move || {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            DiscoveryResult {
+                outcome: CheckOutcome::UpToDate,
+                manifest: None,
+            }
+        }));
+        // Drive the initial steady-state check to completion so the
+        // schedule has settled into the long-poll wait.
+        drive_until_quiescent(&mut service);
+        let baseline = calls.load(Ordering::SeqCst);
+        // Manual request must force another check on the next tick even
+        // though POLL_INTERVAL has not elapsed.
+        service.request_check_now();
+        service.tick(true);
+        service.tick(true);
+        assert!(
+            calls.load(Ordering::SeqCst) > baseline,
+            "manual request must trigger an extra fetch (baseline {baseline}, observed {})",
+            calls.load(Ordering::SeqCst),
+        );
     }
 }
