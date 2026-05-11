@@ -29,6 +29,32 @@ pub(crate) struct SidebarRenderResult {
     /// True when the Update Pill was clicked this frame; the app
     /// toggles the popover in response.
     pub update_pill_clicked: bool,
+    /// True when the Settings Tab "Check for updates now" button was
+    /// activated this frame. The app forwards the request to the
+    /// update service; throttling is the responsibility of the sidebar.
+    pub update_check_now_clicked: bool,
+    /// True when the Settings Tab "Rollback to previous version" button
+    /// was activated this frame. The app performs the rollback through
+    /// the `updater::rollback` module.
+    pub rollback_clicked: bool,
+}
+
+/// Snapshot of the About / Updates section state. The sidebar reads but
+/// does not mutate any of these; the app owns the data.
+#[derive(Clone, Debug)]
+pub(crate) struct AboutUpdatesView<'a> {
+    /// Running app version, normally `env!("CARGO_PKG_VERSION")`.
+    pub current_version: &'a str,
+    /// Unix-epoch milliseconds of the last completed check. `None`
+    /// renders as "never".
+    pub last_checked_unix_millis: Option<u64>,
+    /// True when a `.previous` / `.old` backup exists at the install
+    /// root. Drives the visibility of the Rollback button.
+    pub backup_present: bool,
+    /// True when the "Check for updates now" button is currently
+    /// allowed (i.e. last manual click was more than one minute ago).
+    /// The button still paints but is disabled when this is false.
+    pub check_now_enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,6 +127,7 @@ pub(crate) fn show_sidebar(
     active_board_id: i64,
     forced_board_hover_index: Option<usize>,
     update_state: &UpdateState,
+    about_updates: AboutUpdatesView<'_>,
 ) -> SidebarRenderResult {
     if !sidebar_open {
         return SidebarRenderResult {
@@ -109,6 +136,8 @@ pub(crate) fn show_sidebar(
             board_action: None,
             update_pill_rect: None,
             update_pill_clicked: false,
+            update_check_now_clicked: false,
+            rollback_clicked: false,
         };
     }
 
@@ -116,6 +145,8 @@ pub(crate) fn show_sidebar(
     let mut board_action = None;
     let mut update_pill_rect = None;
     let mut update_pill_clicked = false;
+    let mut update_check_now_clicked = false;
+    let mut rollback_clicked = false;
 
     let top = screen_rect.top() + SIDEBAR_TOP_MARGIN;
     let bottom = (screen_rect.bottom() - SIDEBAR_BOTTOM_MARGIN).max(top);
@@ -168,7 +199,11 @@ pub(crate) fn show_sidebar(
                             )
                         }
                         SidebarTab::Options => {
-                            settings_changed |= paint_sidebar_options(ui, settings, canvas);
+                            let options_outcome =
+                                paint_sidebar_options(ui, settings, canvas, &about_updates);
+                            settings_changed |= options_outcome.settings_changed;
+                            update_check_now_clicked |= options_outcome.check_now_clicked;
+                            rollback_clicked |= options_outcome.rollback_clicked;
                         }
                     }
                 };
@@ -197,7 +232,15 @@ pub(crate) fn show_sidebar(
         board_action,
         update_pill_rect,
         update_pill_clicked,
+        update_check_now_clicked,
+        rollback_clicked,
     }
+}
+
+struct SidebarOptionsOutcome {
+    settings_changed: bool,
+    check_now_clicked: bool,
+    rollback_clicked: bool,
 }
 
 struct UpdatePillOutcome {
@@ -382,8 +425,11 @@ fn paint_sidebar_options(
     ui: &mut egui::Ui,
     settings: &mut crate::data::WorkspaceSettings,
     canvas: &mut crate::canvas::CanvasState,
-) -> bool {
+    about_updates: &AboutUpdatesView<'_>,
+) -> SidebarOptionsOutcome {
     let mut changed = false;
+    let mut check_now_clicked = false;
+    let mut rollback_clicked = false;
     let content_rect = ui.available_rect_before_wrap();
     ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
@@ -394,6 +440,12 @@ fn paint_sidebar_options(
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 ui.add_space(crate::theme::SPACE_3);
                 paint_sidebar_subcard(ui, |ui| {
+                    let about_outcome = paint_about_updates_section(ui, about_updates);
+                    check_now_clicked |= about_outcome.check_now_clicked;
+                    rollback_clicked |= about_outcome.rollback_clicked;
+                });
+                ui.add_space(crate::theme::SPACE_4);
+                paint_sidebar_subcard(ui, |ui| {
                     changed |= paint_settings_section(ui, settings, canvas);
                 });
                 ui.add_space(crate::theme::SPACE_6);
@@ -402,7 +454,114 @@ fn paint_sidebar_options(
                 ui.add_space(crate::theme::SPACE_4);
             });
     });
-    changed
+    SidebarOptionsOutcome {
+        settings_changed: changed,
+        check_now_clicked,
+        rollback_clicked,
+    }
+}
+
+struct AboutUpdatesOutcome {
+    check_now_clicked: bool,
+    rollback_clicked: bool,
+}
+
+fn paint_about_updates_section(
+    ui: &mut egui::Ui,
+    about: &AboutUpdatesView<'_>,
+) -> AboutUpdatesOutcome {
+    let mut check_now_clicked = false;
+    let mut rollback_clicked = false;
+
+    ui.add_space(crate::theme::SPACE_2 + 2.0);
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
+        ui.label(
+            egui::RichText::new("About / Updates")
+                .text_style(egui::TextStyle::Body)
+                .color(crate::theme::TEXT),
+        );
+        ui.label(
+            egui::RichText::new(format!("Version {}", about.current_version))
+                .text_style(egui::TextStyle::Small)
+                .color(crate::theme::TEXT_SUBTLE),
+        );
+        ui.label(
+            egui::RichText::new(format!(
+                "Last checked: {}",
+                format_last_checked(about.last_checked_unix_millis),
+            ))
+            .text_style(egui::TextStyle::Small)
+            .color(crate::theme::TEXT_SUBTLE),
+        );
+        ui.add_space(crate::theme::SPACE_2);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+            let check_button = egui::Button::new(
+                egui::RichText::new("Check for updates now")
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT),
+            );
+            if ui
+                .add_enabled(about.check_now_enabled, check_button)
+                .clicked()
+            {
+                check_now_clicked = true;
+            }
+            if about.backup_present {
+                let rollback_button = egui::Button::new(
+                    egui::RichText::new("Rollback to previous version")
+                        .text_style(egui::TextStyle::Small)
+                        .color(crate::theme::TEXT),
+                );
+                if ui.add(rollback_button).clicked() {
+                    rollback_clicked = true;
+                }
+            }
+        });
+    });
+    ui.add_space(crate::theme::SPACE_2 + 2.0);
+
+    AboutUpdatesOutcome {
+        check_now_clicked,
+        rollback_clicked,
+    }
+}
+
+fn format_last_checked(unix_millis: Option<u64>) -> String {
+    let Some(millis) = unix_millis else {
+        return "never".to_owned();
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(millis);
+    let elapsed_millis = now.saturating_sub(millis);
+    let elapsed_seconds = elapsed_millis / 1_000;
+    if elapsed_seconds < 60 {
+        "just now".to_owned()
+    } else if elapsed_seconds < 60 * 60 {
+        let minutes = elapsed_seconds / 60;
+        if minutes == 1 {
+            "1 minute ago".to_owned()
+        } else {
+            format!("{minutes} minutes ago")
+        }
+    } else if elapsed_seconds < 60 * 60 * 24 {
+        let hours = elapsed_seconds / 3_600;
+        if hours == 1 {
+            "1 hour ago".to_owned()
+        } else {
+            format!("{hours} hours ago")
+        }
+    } else {
+        let days = elapsed_seconds / 86_400;
+        if days == 1 {
+            "1 day ago".to_owned()
+        } else {
+            format!("{days} days ago")
+        }
+    }
 }
 
 fn paint_sidebar_boards(

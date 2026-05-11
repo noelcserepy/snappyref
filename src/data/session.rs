@@ -94,6 +94,11 @@ pub struct WorkspaceSettings {
     pub default_textbox_background: bool,
     #[serde(default)]
     pub pointer_mode: PointerMode,
+    /// Unix-epoch milliseconds of the most recent successful update
+    /// discovery check. `None` means the app has not yet performed a
+    /// check on this machine; the Settings Tab renders that as "never".
+    #[serde(default)]
+    pub last_update_check_at: Option<u64>,
 }
 
 fn default_auto_image_scaling() -> bool {
@@ -131,6 +136,7 @@ impl Default for WorkspaceSettings {
             rotation_snap_degrees: DEFAULT_ROTATION_SNAP_DEGREES,
             default_textbox_background: false,
             pointer_mode: PointerMode::default(),
+            last_update_check_at: None,
         }
     }
 }
