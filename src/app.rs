@@ -25,6 +25,7 @@ use crate::sidebar::{
     SidebarBoardAction, SidebarTab, block_sidebar_input, close_sidebar_on_outside_click,
     show_sidebar, show_sidebar_hint, sidebar_rect,
 };
+use crate::updater::{UpdateConfig, UpdateService, UpdateState};
 
 const STARTUP_VIEWPORT_SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
 const MAX_IMPORT_RESULTS_PER_FRAME: usize = 4;
@@ -1219,6 +1220,8 @@ pub struct SnappyRefApp {
     verification_search_scope: crate::semantic_search::SearchScope,
     #[cfg(debug_assertions)]
     sidebar_hot_preview: bool,
+    update_service: UpdateService,
+    update_popover_open: bool,
 }
 
 impl SnappyRefApp {
@@ -1292,6 +1295,8 @@ impl SnappyRefApp {
                     verification_search_scope: config.verification_search_scope,
                     #[cfg(debug_assertions)]
                     sidebar_hot_preview: config.open_sidebar_hot_on_start(),
+                    update_service: UpdateService::new(UpdateConfig::default()),
+                    update_popover_open: false,
                 };
                 #[cfg(all(debug_assertions, feature = "semantic-search"))]
                 app.search
@@ -1496,6 +1501,8 @@ impl SnappyRefApp {
                 verification_search_scope: config.verification_search_scope,
                 #[cfg(debug_assertions)]
                 sidebar_hot_preview: config.open_sidebar_hot_on_start(),
+                update_service: UpdateService::new(UpdateConfig::default()),
+                update_popover_open: false,
             },
         }
     }
@@ -1787,6 +1794,41 @@ impl SnappyRefApp {
         false
     }
 
+    /// True once all visible startup work queues have drained at least
+    /// once — the same work-queue notion of Settled Idle that perf
+    /// scenarios use, computed independently of the perf scenario.
+    /// The update-discovery scheduler latches its own
+    /// `settled_idle_at` on the first true return so subsequent dips
+    /// back into busy state never re-block discovery.
+    fn app_settled_idle(&self) -> bool {
+        if self.library.is_none() {
+            // Storage failed at startup; treat as settled so the user
+            // still gets an Available Update pill if one exists.
+            return true;
+        }
+        let worker_stats = self
+            .import_worker
+            .as_ref()
+            .map(crate::jobs::ImportWorker::stats)
+            .unwrap_or_default();
+        let embedding_idle = {
+            #[cfg(feature = "semantic-search")]
+            {
+                self.search.demand_embedding_pending_count() == 0
+                    && self.search.embedding_backfill_is_idle()
+            }
+            #[cfg(not(feature = "semantic-search"))]
+            {
+                true
+            }
+        };
+        !worker_stats.has_work()
+            && self.canvas.import_placeholder_count() == 0
+            && !self.canvas.has_pending_crop_work()
+            && !self.residency.has_pending_image_work()
+            && embedding_idle
+    }
+
     fn board_summaries(&mut self) -> Vec<crate::data::BoardSummary> {
         let Some(library) = &self.library else {
             return Vec::new();
@@ -1970,6 +2012,114 @@ impl SnappyRefApp {
 
     fn should_block_sidebar_input(&self) -> bool {
         self.sidebar_open && !self.modal_open()
+    }
+
+    fn handle_update_pill_interaction(
+        &mut self,
+        ctx: &egui::Context,
+        pill_clicked: bool,
+        pill_rect: Option<egui::Rect>,
+    ) {
+        if pill_clicked {
+            self.update_popover_open = !self.update_popover_open;
+        }
+        if !self.update_popover_open {
+            return;
+        }
+        let (version, notes_url) = match self.update_service.state() {
+            UpdateState::Available {
+                version, notes_url, ..
+            } => (version.clone(), notes_url.clone()),
+            // Popover is only meaningful for Available; close it
+            // otherwise so a state transition (e.g. Failed) can never
+            // leave a stale popover anchored to a missing pill.
+            _ => {
+                self.update_popover_open = false;
+                return;
+            }
+        };
+        let release_page_url = self.update_service.release_page_url().to_owned();
+        let Some(pill_rect) = pill_rect else {
+            return;
+        };
+
+        // Anchor the popover above the pill so it doesn't fall off the
+        // bottom of the screen. Same x as the pill, bottom edge a few
+        // pixels above the pill's top edge.
+        let popover_width = 240.0;
+        let popover_pos = egui::pos2(pill_rect.left(), pill_rect.top() - crate::theme::SPACE_2);
+
+        let mut install_clicked = false;
+        let mut later_clicked = false;
+        let mut notes_clicked = false;
+
+        let area_response = egui::Area::new(egui::Id::new("update_popover"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::pos2(popover_pos.x, popover_pos.y - 1.0))
+            .pivot(egui::Align2::LEFT_BOTTOM)
+            .show(ctx, |ui| {
+                ui.set_max_width(popover_width);
+                egui::Frame::new()
+                    .fill(crate::theme::SURFACE_ELEVATED)
+                    .stroke(crate::theme::stroke_subtle())
+                    .corner_radius(crate::theme::RADIUS_PANEL)
+                    .inner_margin(crate::theme::PANEL_PADDING)
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_2);
+                        ui.label(
+                            egui::RichText::new(format!("Version {version}"))
+                                .color(crate::theme::TEXT)
+                                .strong(),
+                        );
+                        let release_notes = ui.add(
+                            egui::Label::new(
+                                egui::RichText::new("Release notes")
+                                    .color(crate::theme::ACCENT)
+                                    .underline(),
+                            )
+                            .sense(egui::Sense::click()),
+                        );
+                        if release_notes.clicked() {
+                            notes_clicked = true;
+                        }
+                        ui.add_space(crate::theme::SPACE_2);
+                        ui.horizontal(|ui| {
+                            if ui.button("Install").clicked() {
+                                install_clicked = true;
+                            }
+                            if ui.button("Later").clicked() {
+                                later_clicked = true;
+                            }
+                        });
+                    });
+            });
+
+        if notes_clicked {
+            ctx.open_url(egui::OpenUrl::new_tab(notes_url));
+        }
+        if install_clicked {
+            // Slice-4 stopgap per issue #81: open the release page in the
+            // user's default browser. Slice 5 will replace this with an
+            // in-app download + verify + swap flow.
+            ctx.open_url(egui::OpenUrl::new_tab(release_page_url));
+            self.update_popover_open = false;
+        }
+        if later_clicked {
+            self.update_popover_open = false;
+        }
+
+        // Click outside the popover (and outside the pill itself) closes
+        // it. This matches the existing sidebar dismissal pattern.
+        let popover_rect = area_response.response.rect;
+        let pointer_clicked = ctx.input(|input| input.pointer.any_click());
+        if pointer_clicked {
+            let click_pos = ctx.input(|input| input.pointer.interact_pos());
+            let inside_popover = click_pos.is_some_and(|p| popover_rect.contains(p));
+            let inside_pill = click_pos.is_some_and(|p| pill_rect.contains(p));
+            if !inside_popover && !inside_pill {
+                self.update_popover_open = false;
+            }
+        }
     }
 
     fn load_user_session(&mut self) {
@@ -4719,6 +4869,14 @@ impl eframe::App for SnappyRefApp {
         self.drive_embedding_backfill(ui.ctx());
         self.handle_pending_annotation_requests();
         self.persist_canvas_changes();
+        let settled_idle = self.app_settled_idle();
+        self.update_service.tick(settled_idle);
+        if let Some(wait) = self.update_service.time_until_next_check() {
+            // Make sure we wake up at the next scheduled check; clamp to
+            // a reasonable lower bound so we never hot-loop.
+            ui.ctx()
+                .request_repaint_after(wait.max(Duration::from_millis(250)));
+        }
         let board_summaries = self.board_summaries();
         let active_board_name = board_summaries
             .iter()
@@ -4743,6 +4901,7 @@ impl eframe::App for SnappyRefApp {
             .then_some(1),
             #[cfg(not(debug_assertions))]
             None,
+            self.update_service.state(),
         );
         let board_action = if self.modal_open() {
             None
@@ -4766,6 +4925,11 @@ impl eframe::App for SnappyRefApp {
             #[cfg(feature = "semantic-search")]
             self.sync_semantic_search_service();
         }
+        self.handle_update_pill_interaction(
+            ui.ctx(),
+            sidebar_result.update_pill_clicked,
+            sidebar_result.update_pill_rect,
+        );
         self.persist_settings_if_changed(sidebar_result.settings_changed);
         self.show_board_delete_confirmation(ui.ctx());
         self.show_library_remove_confirmation(ui.ctx());
@@ -8220,6 +8384,8 @@ mod tests {
             verification_search_scope: crate::semantic_search::SearchScope::ThisBoard,
             #[cfg(debug_assertions)]
             sidebar_hot_preview: false,
+            update_service: super::UpdateService::new(super::UpdateConfig::default()),
+            update_popover_open: false,
         }
     }
 
@@ -8244,6 +8410,7 @@ mod tests {
             &board_summaries,
             app.active_board_id,
             None,
+            app.update_service.state(),
         );
         let board_action = if app.modal_open() {
             None

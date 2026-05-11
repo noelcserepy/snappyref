@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use crate::app::{SUPPORTED_SHORTCUTS, SupportedShortcut};
+use crate::updater::UpdateState;
 
 pub(crate) const SIDEBAR_WIDTH: f32 = 268.0;
 pub(crate) const SIDEBAR_TOP_MARGIN: f32 = 40.0;
@@ -22,6 +23,12 @@ pub(crate) struct SidebarRenderResult {
     pub settings_changed: bool,
     pub interactive_rect: Option<egui::Rect>,
     pub board_action: Option<SidebarBoardAction>,
+    /// Screen-space rect of the Update Pill if it was painted this
+    /// frame, used to anchor the popover.
+    pub update_pill_rect: Option<egui::Rect>,
+    /// True when the Update Pill was clicked this frame; the app
+    /// toggles the popover in response.
+    pub update_pill_clicked: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,17 +100,22 @@ pub(crate) fn show_sidebar(
     boards: &[crate::data::BoardSummary],
     active_board_id: i64,
     forced_board_hover_index: Option<usize>,
+    update_state: &UpdateState,
 ) -> SidebarRenderResult {
     if !sidebar_open {
         return SidebarRenderResult {
             settings_changed: false,
             interactive_rect: None,
             board_action: None,
+            update_pill_rect: None,
+            update_pill_clicked: false,
         };
     }
 
     let mut settings_changed = false;
     let mut board_action = None;
+    let mut update_pill_rect = None;
+    let mut update_pill_clicked = false;
 
     let top = screen_rect.top() + SIDEBAR_TOP_MARGIN;
     let bottom = (screen_rect.bottom() - SIDEBAR_BOTTOM_MARGIN).max(top);
@@ -132,7 +144,14 @@ pub(crate) fn show_sidebar(
                 egui::StrokeKind::Inside,
             );
 
-            let inner_rect = shape_rect.shrink2(egui::vec2(0.0, 0.0));
+            // Reserve a bottom strip for the Update Pill so its presence
+            // never collides with tab content height.
+            let pill_strip_height = update_pill_strip_height(update_state);
+            let content_bottom = shape_rect.bottom() - pill_strip_height;
+            let inner_rect = egui::Rect::from_min_max(
+                shape_rect.min,
+                egui::pos2(shape_rect.right(), content_bottom),
+            );
             let ui_builder = egui::UiBuilder::new().max_rect(inner_rect);
             ui.scope_builder(ui_builder, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
@@ -159,12 +178,114 @@ pub(crate) fn show_sidebar(
                     ui.add_enabled_ui(false, |ui| paint_contents(ui));
                 }
             });
+
+            if pill_strip_height > 0.0 {
+                let pill_strip_rect = egui::Rect::from_min_max(
+                    egui::pos2(shape_rect.left(), content_bottom),
+                    egui::pos2(shape_rect.right(), shape_rect.bottom()),
+                );
+                let pill_outcome =
+                    paint_update_pill(ui, pill_strip_rect, update_state, input_enabled);
+                update_pill_rect = pill_outcome.rect;
+                update_pill_clicked = pill_outcome.clicked;
+            }
         });
 
     SidebarRenderResult {
         settings_changed,
         interactive_rect: Some(area_response.response.rect),
         board_action,
+        update_pill_rect,
+        update_pill_clicked,
+    }
+}
+
+struct UpdatePillOutcome {
+    rect: Option<egui::Rect>,
+    clicked: bool,
+}
+
+fn update_pill_strip_height(state: &UpdateState) -> f32 {
+    if matches!(state, UpdateState::Hidden) {
+        0.0
+    } else {
+        // Pill height + above/below padding.
+        crate::theme::CONTROL_HEIGHT + crate::theme::SPACE_3 * 2.0
+    }
+}
+
+fn paint_update_pill(
+    ui: &mut egui::Ui,
+    strip_rect: egui::Rect,
+    state: &UpdateState,
+    input_enabled: bool,
+) -> UpdatePillOutcome {
+    let (label, is_available) = match state {
+        UpdateState::Hidden => {
+            return UpdatePillOutcome {
+                rect: None,
+                clicked: false,
+            };
+        }
+        UpdateState::Available { version, .. } => (format!("Update {version}"), true),
+        UpdateState::Failed => ("Update check failed".to_owned(), false),
+    };
+    let pad_x = crate::theme::SPACE_3;
+    let pill_rect = egui::Rect::from_min_max(
+        egui::pos2(
+            strip_rect.left() + pad_x,
+            strip_rect.top() + crate::theme::SPACE_3,
+        ),
+        egui::pos2(
+            strip_rect.right() - pad_x,
+            strip_rect.bottom() - crate::theme::SPACE_3,
+        ),
+    );
+    let id = egui::Id::new("sidebar_update_pill");
+    let sense = if is_available {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let response = ui.interact(pill_rect, id, sense);
+    let interactive = input_enabled && is_available;
+    let fill = if !interactive {
+        crate::theme::SURFACE_ELEVATED
+    } else if response.hovered() {
+        crate::theme::SURFACE_ELEVATED
+    } else {
+        crate::theme::SURFACE_ELEVATED
+    };
+    let stroke = if is_available {
+        egui::Stroke::new(1.0, crate::theme::ACCENT)
+    } else {
+        crate::theme::stroke_subtle()
+    };
+    ui.painter().rect(
+        pill_rect,
+        crate::theme::RADIUS_COMPACT,
+        fill,
+        stroke,
+        egui::StrokeKind::Inside,
+    );
+    let text_color = if is_available {
+        crate::theme::TEXT
+    } else {
+        crate::theme::TEXT_MUTED
+    };
+    let font = ui.style().text_styles[&egui::TextStyle::Body].clone();
+    let galley = ui.painter().layout_no_wrap(label, font, text_color);
+    let label_pos = egui::pos2(
+        pill_rect.center().x - galley.size().x * 0.5,
+        pill_rect.center().y - galley.size().y * 0.5 - 1.0,
+    );
+    ui.painter().galley(label_pos, galley, text_color);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Update")
+    });
+    UpdatePillOutcome {
+        rect: Some(pill_rect),
+        clicked: interactive && response.clicked(),
     }
 }
 
