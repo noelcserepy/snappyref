@@ -104,16 +104,17 @@ seed_run_dir = run_dir / "seed-import-1"
 seed_library = seed_run_dir / "library"
 
 
-def _load_seed_module():
-    module_path = repo_root / "scripts" / "_perf_library_seed.py"
-    spec = importlib.util.spec_from_file_location("_perf_library_seed", module_path)
+def _load_module(name):
+    module_path = repo_root / "scripts" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, module_path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
 
 
-seed_module = _load_seed_module()
+seed_module = _load_module("_perf_library_seed")
+sampling = _load_module("_perf_sampling")
 
 
 def parse_cpu_time(value):
@@ -309,20 +310,56 @@ def build_case_library(case_name):
     return case_dir, library, assets, placements
 
 
+def tree_sample(root_pid, elapsed_ms):
+    """Sample the main process and its descendants.
+
+    Mirrors the tree sampler in `run-perf-scenario.sh` so the existing
+    library baseline can also report **Embedding Helper Process** /
+    **Image Preparation Helper Process** peak RSS during the
+    library-load and **Embedding Backfill** windows.
+    """
+
+    probe = subprocess.run(
+        ["ps", "-axwwo", "pid=,ppid=,rss=,%cpu=,command="],
+        capture_output=True,
+        text=True,
+    )
+    parsed = sampling.parse_ps_axwo_output(probe.stdout)
+    out = []
+    for row in sampling.select_descendants(parsed, root_pid):
+        out.append(
+            {
+                "elapsed_ms": elapsed_ms,
+                "pid": row["pid"],
+                "ppid": row["ppid"],
+                "role": sampling.classify_helper(
+                    row.get("command", ""), root_pid, row["pid"]
+                ),
+                "rss_bytes": row["rss_bytes"],
+                "cpu_percent": row["cpu_percent"],
+                "command": row.get("command", ""),
+            }
+        )
+    return out
+
+
 def measure_case(library):
     env = os.environ.copy()
     env["SNAPPYREF_LIBRARY_ROOT"] = str(library)
     process = subprocess.Popen([binary], env=env)
     started = time.monotonic()
+    rows = []
+    tree_rows = []
     try:
         time.sleep(startup_wait_secs)
-        rows = []
         end_at = time.monotonic() + sample_secs
         while time.monotonic() < end_at and process.poll() is None:
+            elapsed_ms = (time.monotonic() - started) * 1000.0
             sample = process_sample(process.pid)
             if sample:
-                sample["elapsed_ms"] = (time.monotonic() - started) * 1000.0
+                sample["elapsed_ms"] = elapsed_ms
                 rows.append(sample)
+            tree_rows.extend(tree_sample(process.pid, elapsed_ms))
             time.sleep(sample_interval_secs)
     finally:
         if process.poll() is None:
@@ -332,10 +369,10 @@ def measure_case(library):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-    return rows
+    return rows, tree_rows, process.pid
 
 
-def write_samples(case_dir, rows):
+def write_samples(case_dir, rows, tree_rows):
     csv_path = case_dir / "idle-samples.csv"
     with csv_path.open("w", newline="") as handle:
         writer = csv.DictWriter(
@@ -359,9 +396,37 @@ def write_samples(case_dir, rows):
                     "rss_bytes": row["rss_bytes"],
                 }
             )
+    if tree_rows:
+        tree_path = case_dir / "idle-samples-tree.csv"
+        with tree_path.open("w", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=[
+                    "elapsed_ms",
+                    "pid",
+                    "ppid",
+                    "role",
+                    "cpu_percent",
+                    "rss_bytes",
+                    "command",
+                ],
+            )
+            writer.writeheader()
+            for row in tree_rows:
+                writer.writerow(
+                    {
+                        "elapsed_ms": f"{row['elapsed_ms']:.2f}",
+                        "pid": row["pid"],
+                        "ppid": row["ppid"],
+                        "role": row["role"],
+                        "cpu_percent": row["cpu_percent"],
+                        "rss_bytes": row["rss_bytes"],
+                        "command": row["command"],
+                    }
+                )
 
 
-def build_summary(case_name, library, rows, assets, placements):
+def build_summary(case_name, library, rows, tree_rows, main_pid, assets, placements):
     sample_start_ms = rows[0]["elapsed_ms"] if rows else None
     idle_tail_rows = (
         select_window(rows, sample_start_ms, sample_start_ms + 3000.0)
@@ -376,6 +441,27 @@ def build_summary(case_name, library, rows, assets, placements):
 
     settle_ms = settling_marker(rows)
     background = seed_module.background_state(library)
+
+    # Tree-level peak captures the working set of any
+    # **Embedding Helper Process** that wakes for **Embedding Backfill**
+    # plus any **Image Preparation Helper Process** triggered by the
+    # cold library load. Quiescent main-process RSS stays reported
+    # separately above so a faster headline number cannot quietly hide
+    # a helper-side regression.
+    quiescent_tree_rows = (
+        [
+            row
+            for row in tree_rows
+            if sample_start_ms + 5000.0 <= row["elapsed_ms"] < sample_start_ms + 15000.0
+        ]
+        if sample_start_ms is not None
+        else []
+    )
+    process_tree = {
+        "all_samples": sampling.tree_rss_stats(tree_rows),
+        "quiescent_5_to_15s": sampling.tree_rss_stats(quiescent_tree_rows),
+        "per_helper_overall": sampling.per_helper_peaks(tree_rows, main_pid=main_pid),
+    }
 
     return {
         "scenario": "existing-library-baseline",
@@ -407,6 +493,7 @@ def build_summary(case_name, library, rows, assets, placements):
                 "cpu_by_time": cpu_time_stats(quiescent_rows),
                 "rss": rss_stats(quiescent_rows),
             },
+            "process_tree": process_tree,
         },
     }
 
@@ -417,9 +504,11 @@ def run():
     for case_name in cases:
         print(f"== case {case_name} ==")
         case_dir, library, assets, placements = build_case_library(case_name)
-        rows = measure_case(library)
-        write_samples(case_dir, rows)
-        summary = build_summary(case_name, library, rows, assets, placements)
+        rows, tree_rows, main_pid = measure_case(library)
+        write_samples(case_dir, rows, tree_rows)
+        summary = build_summary(
+            case_name, library, rows, tree_rows, main_pid, assets, placements
+        )
         (case_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
         (case_dir / "samples-summary.json").write_text(
             json.dumps(summary["samples"], indent=2) + "\n"
