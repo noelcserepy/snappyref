@@ -1,4 +1,4 @@
-# Tiered canvas image LOD
+# Canvas image LOD
 
 SnappyRef uses canvas image levels of detail instead of loading every existing placement at full detail during startup or board switches. Existing image load can make the board usable with **Overview LOD** first, then promote visible images to **Working LOD** or **Detail LOD** when screen size justifies it, while **Backfill** creates missing LOD cache files in the background.
 

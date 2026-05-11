@@ -8,13 +8,13 @@ pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
 pub const DEFAULT_ROTATION_SNAP_DEGREES: f32 = 15.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum CanvasImageCacheTier {
+pub enum CanvasImageLod {
     Overview,
     Working,
     Detail,
 }
 
-impl CanvasImageCacheTier {
+impl CanvasImageLod {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Overview => "overview",

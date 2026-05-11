@@ -13,8 +13,8 @@ use rusqlite::{Connection, Transaction, params, params_from_iter};
 
 use crate::data::{
     Board, BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
-    CanvasAnnotationKind, CanvasBackground, CanvasImageCacheTier, CanvasStackItem,
-    CanvasStrokeWidth, CanvasTextSize, ImageAsset, UserSession, ViewportState, WorkspaceSettings,
+    CanvasAnnotationKind, CanvasBackground, CanvasImageLod, CanvasStackItem, CanvasStrokeWidth,
+    CanvasTextSize, ImageAsset, UserSession, ViewportState, WorkspaceSettings,
 };
 
 #[derive(Clone, Debug)]
@@ -157,11 +157,11 @@ fn choose_canvas_image_cache_encoding(rgba: &[u8]) -> CanvasImageCacheEncoding {
     }
 }
 
-fn canvas_image_cache_quality(tier: CanvasImageCacheTier) -> u8 {
-    match tier {
-        CanvasImageCacheTier::Overview => 72,
-        CanvasImageCacheTier::Working => 82,
-        CanvasImageCacheTier::Detail => 88,
+fn canvas_image_cache_quality(lod: CanvasImageLod) -> u8 {
+    match lod {
+        CanvasImageLod::Overview => 72,
+        CanvasImageLod::Working => 82,
+        CanvasImageLod::Detail => 88,
     }
 }
 
@@ -266,16 +266,16 @@ impl Library {
         Ok(destination)
     }
 
-    fn canvas_image_cache_destination_for_tier(
+    fn canvas_image_cache_destination_for_lod(
         &self,
         asset_id: i64,
         max_side: u32,
-        tier: CanvasImageCacheTier,
+        lod: CanvasImageLod,
         encoding: CanvasImageCacheEncoding,
     ) -> PathBuf {
         self.thumbs_dir.join(format!(
             "asset-{asset_id}-canvas-v3-downscale-{}-{max_side}.{}",
-            tier.as_str(),
+            lod.as_str(),
             encoding.extension()
         ))
     }
@@ -287,14 +287,14 @@ impl Library {
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn canvas_image_cache_path(&self, asset_id: i64, max_side: u32) -> Option<PathBuf> {
-        self.canvas_image_cache_path_for_tier(asset_id, max_side, CanvasImageCacheTier::Working)
+        self.canvas_image_cache_path_for_lod(asset_id, max_side, CanvasImageLod::Working)
     }
 
-    pub fn canvas_image_cache_path_for_tier(
+    pub fn canvas_image_cache_path_for_lod(
         &self,
         asset_id: i64,
         max_side: u32,
-        tier: CanvasImageCacheTier,
+        lod: CanvasImageLod,
     ) -> Option<PathBuf> {
         [
             CanvasImageCacheEncoding::Jpeg,
@@ -302,7 +302,7 @@ impl Library {
         ]
         .into_iter()
         .map(|encoding| {
-            self.canvas_image_cache_destination_for_tier(asset_id, max_side, tier, encoding)
+            self.canvas_image_cache_destination_for_lod(asset_id, max_side, lod, encoding)
         })
         .find(|path| path.is_file())
     }
@@ -315,16 +315,16 @@ impl Library {
         asset_ids
             .iter()
             .filter_map(|asset_id| {
-                self.canvas_image_cache_path_for_tier(
+                self.canvas_image_cache_path_for_lod(
                     *asset_id,
                     crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
-                    CanvasImageCacheTier::Overview,
+                    CanvasImageLod::Overview,
                 )
                 .or_else(|| {
-                    self.canvas_image_cache_path_for_tier(
+                    self.canvas_image_cache_path_for_lod(
                         *asset_id,
                         crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
-                        CanvasImageCacheTier::Working,
+                        CanvasImageLod::Working,
                     )
                 })
                 .map(|path| (*asset_id, path))
@@ -332,15 +332,15 @@ impl Library {
             .collect()
     }
 
-    pub fn legacy_canvas_image_cache_path_for_tier(
+    pub fn legacy_canvas_image_cache_path_for_lod(
         &self,
         asset_id: i64,
         max_side: u32,
-        tier: CanvasImageCacheTier,
+        lod: CanvasImageLod,
     ) -> PathBuf {
         self.thumbs_dir.join(format!(
             "asset-{asset_id}-canvas-v2-downscale-{}-{max_side}.png",
-            tier.as_str()
+            lod.as_str()
         ))
     }
 
@@ -348,7 +348,7 @@ impl Library {
         &self,
         asset_id: i64,
         max_side: u32,
-        tier: CanvasImageCacheTier,
+        lod: CanvasImageLod,
         extension: &str,
     ) -> Result<PathBuf, String> {
         let encoding = match extension {
@@ -360,7 +360,7 @@ impl Library {
                 ));
             }
         };
-        Ok(self.canvas_image_cache_destination_for_tier(asset_id, max_side, tier, encoding))
+        Ok(self.canvas_image_cache_destination_for_lod(asset_id, max_side, lod, encoding))
     }
 
     pub fn store_canvas_image_cache(
@@ -371,28 +371,28 @@ impl Library {
         width: u32,
         height: u32,
     ) -> Result<Option<PathBuf>, String> {
-        self.store_canvas_image_cache_for_tier(
+        self.store_canvas_image_cache_for_lod(
             asset_id,
             max_side,
-            CanvasImageCacheTier::Working,
+            CanvasImageLod::Working,
             rgba,
             width,
             height,
         )
     }
 
-    pub fn store_canvas_image_cache_for_tier(
+    pub fn store_canvas_image_cache_for_lod(
         &self,
         asset_id: i64,
         max_side: u32,
-        tier: CanvasImageCacheTier,
+        lod: CanvasImageLod,
         rgba: &[u8],
         width: u32,
         height: u32,
     ) -> Result<Option<PathBuf>, String> {
         let encoding = choose_canvas_image_cache_encoding(rgba);
         let destination =
-            self.canvas_image_cache_destination_for_tier(asset_id, max_side, tier, encoding);
+            self.canvas_image_cache_destination_for_lod(asset_id, max_side, lod, encoding);
         let file = File::create(&destination)
             .map_err(|error| format!("failed to create asset preview: {error}"))?;
         let writer = BufWriter::new(file);
@@ -400,7 +400,7 @@ impl Library {
             CanvasImageCacheEncoding::Jpeg => {
                 let rgb = rgba_to_rgb(rgba);
                 let encoder =
-                    JpegEncoder::new_with_quality(writer, canvas_image_cache_quality(tier));
+                    JpegEncoder::new_with_quality(writer, canvas_image_cache_quality(lod));
                 encoder
                     .write_image(&rgb, width, height, ExtendedColorType::Rgb8)
                     .map_err(|error| format!("failed to write asset preview: {error}"))?;

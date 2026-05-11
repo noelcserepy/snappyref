@@ -203,7 +203,7 @@ impl CropFlow {
                 preview_rgba: entry.previous_rgba.to_vec(),
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
-                loaded_tier: crate::data::CanvasImageCacheTier::Working,
+                loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
                 trace: None,
@@ -239,7 +239,7 @@ mod tests {
 
     use super::CropFlow;
     use crate::canvas::{CanvasCropRequest, CanvasState, PixelCropRect};
-    use crate::data::{BoardItem, BoardItemWithAsset, CanvasImageCacheTier, ImageAsset};
+    use crate::data::{BoardItem, BoardItemWithAsset, CanvasImageLod, ImageAsset};
     use crate::jobs::{ImportOrigin, ImportWorker, ImportedPreviewTexture, LoadedCanvasItem};
     use crate::storage::Library;
 
@@ -270,7 +270,7 @@ mod tests {
                 preview_height: 4,
                 animated_preview: None,
                 preview_texture: ImportedPreviewTexture::Cpu,
-                loaded_tier: CanvasImageCacheTier::Working,
+                loaded_lod: CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: ImportOrigin::Existing,
                 trace: None,

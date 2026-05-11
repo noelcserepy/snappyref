@@ -5,7 +5,7 @@ use std::time::Instant;
 use eframe::egui;
 
 use crate::canvas::CanvasState;
-use crate::data::{BoardItemWithAsset, CanvasImageCacheTier, WorkspaceSettings};
+use crate::data::{BoardItemWithAsset, CanvasImageLod, WorkspaceSettings};
 use crate::jobs::{
     CanvasImageSettings, CroppedCanvasItem, ExistingLoadDiagnostics, ExistingLoadPriority,
     ImportOrigin, ImportRequest, ImportResult, ImportTimings, ImportTrace, ImportWorker,
@@ -14,8 +14,8 @@ use crate::jobs::{
 
 #[derive(Default)]
 pub(crate) struct ImageResidencyCoordinator {
-    pending_cache_backfills: HashSet<(i64, CanvasImageCacheTier)>,
-    inflight_image_tier_loads: HashMap<i64, CanvasImageCacheTier>,
+    pending_cache_backfills: HashSet<(i64, CanvasImageLod)>,
+    inflight_image_lod_loads: HashMap<i64, CanvasImageLod>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,7 +66,7 @@ impl ImageResidencyCoordinator {
         trace_enabled: bool,
     ) -> Result<(), String> {
         crate::jobs::sort_records_by_viewport_proximity(&mut records, viewport_world);
-        let (canvas_image_settings, target_tier) = startup_existing_image_load_settings(settings);
+        let (canvas_image_settings, target_lod) = startup_existing_image_load_settings(settings);
         for record in records {
             let item_id = record.item.id;
             import_worker.enqueue(ImportRequest::LoadExisting {
@@ -75,24 +75,24 @@ impl ImageResidencyCoordinator {
                 record,
                 max_texture_side,
                 canvas_image_settings,
-                target_tier,
+                target_lod,
                 priority: ExistingLoadPriority::Startup,
                 trace: trace_enabled.then(|| ImportTrace {
                     queued_at: Instant::now(),
                     timings: ImportTimings::default(),
                 }),
             })?;
-            self.inflight_image_tier_loads.insert(item_id, target_tier);
+            self.inflight_image_lod_loads.insert(item_id, target_lod);
         }
         Ok(())
     }
 
     pub(crate) fn note_loaded_item(&mut self, item_id: i64) {
-        self.inflight_image_tier_loads.remove(&item_id);
+        self.inflight_image_lod_loads.remove(&item_id);
     }
 
     pub(crate) fn has_pending_image_work(&self) -> bool {
-        !self.pending_cache_backfills.is_empty() || !self.inflight_image_tier_loads.is_empty()
+        !self.pending_cache_backfills.is_empty() || !self.inflight_image_lod_loads.is_empty()
     }
 
     pub(crate) fn process_import_result(
@@ -116,16 +116,16 @@ impl ImageResidencyCoordinator {
                 ))
             }
             ImportResult::Cropped(cropped) => ImportResultResidencyOutcome::Cropped(cropped),
-            ImportResult::CacheTierBackfilled { asset_id, tier } => {
-                let status = self.note_backfill_completed(asset_id, tier, None);
+            ImportResult::CacheLodBackfilled { asset_id, lod } => {
+                let status = self.note_backfill_completed(asset_id, lod, None);
                 ImportResultResidencyOutcome::Status(status)
             }
-            ImportResult::CacheTierBackfillFailed {
+            ImportResult::CacheLodBackfillFailed {
                 asset_id,
-                tier,
+                lod,
                 error,
             } => {
-                let status = self.note_backfill_completed(asset_id, tier, Some(error));
+                let status = self.note_backfill_completed(asset_id, lod, Some(error));
                 ImportResultResidencyOutcome::Status(status)
             }
             ImportResult::Failed {
@@ -160,7 +160,7 @@ impl ImageResidencyCoordinator {
             queue_id,
         });
         let origin = loaded.origin;
-        let loaded_tier = loaded.loaded_tier;
+        let loaded_lod = loaded.loaded_lod;
         let loaded_record = loaded.record.clone();
         let existing_load_diagnostics = loaded.existing_load_diagnostics.clone();
         self.note_loaded_item(loaded.record.item.id);
@@ -205,7 +205,7 @@ impl ImageResidencyCoordinator {
             import_worker,
             &loaded_record,
             settings,
-            loaded_tier,
+            loaded_lod,
         );
 
         LoadedImportOutcome {
@@ -223,8 +223,8 @@ impl ImageResidencyCoordinator {
 
     pub(crate) fn note_failed_item(&mut self, canvas: &mut CanvasState, item_id: Option<i64>) {
         if let Some(item_id) = item_id {
-            self.inflight_image_tier_loads.remove(&item_id);
-            canvas.clear_pending_image_tier_load(item_id);
+            self.inflight_image_lod_loads.remove(&item_id);
+            canvas.clear_pending_image_lod_load(item_id);
         }
     }
 
@@ -255,10 +255,10 @@ impl ImageResidencyCoordinator {
     pub(crate) fn note_backfill_completed(
         &mut self,
         asset_id: i64,
-        tier: CanvasImageCacheTier,
+        lod: CanvasImageLod,
         error: Option<String>,
     ) -> Option<String> {
-        self.pending_cache_backfills.remove(&(asset_id, tier));
+        self.pending_cache_backfills.remove(&(asset_id, lod));
         error
     }
 
@@ -267,21 +267,20 @@ impl ImageResidencyCoordinator {
         import_worker: Option<&ImportWorker>,
         record: &BoardItemWithAsset,
         settings: &WorkspaceSettings,
-        tier: CanvasImageCacheTier,
+        lod: CanvasImageLod,
     ) -> Option<String> {
         let Some(import_worker) = import_worker else {
             return None;
         };
-        if !self.pending_cache_backfills.insert((record.asset.id, tier)) {
+        if !self.pending_cache_backfills.insert((record.asset.id, lod)) {
             return None;
         }
-        if let Err(error) = import_worker.enqueue(ImportRequest::BackfillTier {
+        if let Err(error) = import_worker.enqueue(ImportRequest::BackfillLod {
             record: record.clone(),
             canvas_image_settings: canvas_image_settings(settings),
-            tier,
+            lod,
         }) {
-            self.pending_cache_backfills
-                .remove(&(record.asset.id, tier));
+            self.pending_cache_backfills.remove(&(record.asset.id, lod));
             return Some(error);
         }
         None
@@ -292,22 +291,17 @@ impl ImageResidencyCoordinator {
         import_worker: Option<&ImportWorker>,
         record: &BoardItemWithAsset,
         settings: &WorkspaceSettings,
-        loaded_tier: CanvasImageCacheTier,
+        loaded_lod: CanvasImageLod,
     ) -> Option<String> {
-        if loaded_tier != CanvasImageCacheTier::Working
+        if loaded_lod != CanvasImageLod::Working
             || !asset_mime_type_supports_raster_derivatives(&record.asset.mime_type)
         {
             return None;
         }
-        self.queue_backfill(
-            import_worker,
-            record,
-            settings,
-            CanvasImageCacheTier::Overview,
-        )
+        self.queue_backfill(import_worker, record, settings, CanvasImageLod::Overview)
     }
 
-    pub(crate) fn dispatch_pending_tier_requests(
+    pub(crate) fn dispatch_pending_lod_requests(
         &mut self,
         import_worker: Option<&ImportWorker>,
         canvas: &mut CanvasState,
@@ -320,30 +314,30 @@ impl ImageResidencyCoordinator {
         };
 
         let mut last_error = None;
-        for (item_id, target_tier) in canvas.take_pending_image_tier_loads() {
+        for (item_id, target_lod) in canvas.take_pending_image_lod_loads() {
             if self
-                .inflight_image_tier_loads
+                .inflight_image_lod_loads
                 .get(&item_id)
-                .is_some_and(|existing| *existing >= target_tier)
+                .is_some_and(|existing| *existing >= target_lod)
             {
                 continue;
             }
             let Some(record) = canvas.record_for_item_id(item_id) else {
                 continue;
             };
-            self.inflight_image_tier_loads.insert(item_id, target_tier);
+            self.inflight_image_lod_loads.insert(item_id, target_lod);
             if let Err(error) = import_worker.enqueue(ImportRequest::LoadExisting {
                 target_board_id: active_board_id,
                 queue_id: None,
                 record,
                 max_texture_side,
                 canvas_image_settings: canvas_image_settings(settings),
-                target_tier,
+                target_lod,
                 priority: ExistingLoadPriority::Background,
                 trace: None,
             }) {
-                self.inflight_image_tier_loads.remove(&item_id);
-                canvas.clear_pending_image_tier_load(item_id);
+                self.inflight_image_lod_loads.remove(&item_id);
+                canvas.clear_pending_image_lod_load(item_id);
                 last_error = Some(error);
             }
         }
@@ -352,13 +346,13 @@ impl ImageResidencyCoordinator {
     }
 
     #[cfg(test)]
-    fn inflight_tier_for(&self, item_id: i64) -> Option<CanvasImageCacheTier> {
-        self.inflight_image_tier_loads.get(&item_id).copied()
+    fn inflight_lod_for(&self, item_id: i64) -> Option<CanvasImageLod> {
+        self.inflight_image_lod_loads.get(&item_id).copied()
     }
 
     #[cfg(test)]
-    fn has_pending_backfill(&self, asset_id: i64, tier: CanvasImageCacheTier) -> bool {
-        self.pending_cache_backfills.contains(&(asset_id, tier))
+    fn has_pending_backfill(&self, asset_id: i64, lod: CanvasImageLod) -> bool {
+        self.pending_cache_backfills.contains(&(asset_id, lod))
     }
 }
 
@@ -370,11 +364,8 @@ fn canvas_image_settings(settings: &WorkspaceSettings) -> CanvasImageSettings {
 
 pub(crate) fn startup_existing_image_load_settings(
     settings: &WorkspaceSettings,
-) -> (CanvasImageSettings, CanvasImageCacheTier) {
-    (
-        canvas_image_settings(settings),
-        CanvasImageCacheTier::Overview,
-    )
+) -> (CanvasImageSettings, CanvasImageLod) {
+    (canvas_image_settings(settings), CanvasImageLod::Overview)
 }
 
 pub(crate) fn asset_mime_type_supports_raster_derivatives(mime_type: &str) -> bool {
@@ -390,20 +381,20 @@ pub(crate) fn asset_mime_type_supports_raster_derivatives(mime_type: &str) -> bo
 mod tests {
     use super::{ImageResidencyCoordinator, startup_existing_image_load_settings};
     use crate::canvas::CanvasState;
-    use crate::data::CanvasImageCacheTier;
+    use crate::data::CanvasImageLod;
 
     #[test]
     fn failed_item_clears_inflight_and_pending_request() {
         let mut residency = ImageResidencyCoordinator::default();
         let mut canvas = CanvasState::default();
-        canvas.clear_pending_image_tier_load(7);
+        canvas.clear_pending_image_lod_load(7);
         residency
-            .inflight_image_tier_loads
-            .insert(7, CanvasImageCacheTier::Detail);
+            .inflight_image_lod_loads
+            .insert(7, CanvasImageLod::Detail);
 
         residency.note_failed_item(&mut canvas, Some(7));
 
-        assert_eq!(residency.inflight_tier_for(7), None);
+        assert_eq!(residency.inflight_lod_for(7), None);
     }
 
     #[test]
@@ -411,24 +402,24 @@ mod tests {
         let mut residency = ImageResidencyCoordinator::default();
         residency
             .pending_cache_backfills
-            .insert((42, CanvasImageCacheTier::Overview));
+            .insert((42, CanvasImageLod::Overview));
 
-        let error = residency.note_backfill_completed(42, CanvasImageCacheTier::Overview, None);
+        let error = residency.note_backfill_completed(42, CanvasImageLod::Overview, None);
 
         assert_eq!(error, None);
-        assert!(!residency.has_pending_backfill(42, CanvasImageCacheTier::Overview));
+        assert!(!residency.has_pending_backfill(42, CanvasImageLod::Overview));
     }
 
     #[test]
-    fn startup_existing_image_load_uses_overview_cache_tier() {
+    fn startup_existing_image_load_uses_overview_cache_lod() {
         let settings = crate::data::WorkspaceSettings {
             canvas_image_max_side: 4096,
             ..Default::default()
         };
 
-        let (image_settings, tier) = startup_existing_image_load_settings(&settings);
+        let (image_settings, lod) = startup_existing_image_load_settings(&settings);
 
         assert_eq!(image_settings.max_side, 4096);
-        assert_eq!(tier, CanvasImageCacheTier::Overview);
+        assert_eq!(lod, CanvasImageLod::Overview);
     }
 }

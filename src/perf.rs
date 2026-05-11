@@ -91,10 +91,10 @@ pub fn print_embedding_lod_report(
     let pairs = jobs
         .into_iter()
         .filter_map(|job| {
-            let working_lod = library.canvas_image_cache_path_for_tier(
+            let working_lod = library.canvas_image_cache_path_for_lod(
                 job.asset_id,
                 settings.canvas_image_max_side,
-                crate::data::CanvasImageCacheTier::Working,
+                crate::data::CanvasImageLod::Working,
             )?;
             job.original_path
                 .is_file()
@@ -379,7 +379,7 @@ pub fn print_startup_trace(library_root: &std::path::Path) -> Result<(), String>
 
     let entries = crate::jobs::startup_trace(&library, viewport_world, settings)?;
     println!(
-        "startup_trace items={} max_side={} tier=overview",
+        "startup_trace items={} max_side={} lod=overview",
         entries.len(),
         settings.max_side
     );

@@ -1043,10 +1043,10 @@ fn embedding_source_path(
     canvas_image_max_side: u32,
 ) -> PathBuf {
     library
-        .canvas_image_cache_path_for_tier(
+        .canvas_image_cache_path_for_lod(
             asset_id,
             canvas_image_max_side,
-            crate::data::CanvasImageCacheTier::Working,
+            crate::data::CanvasImageLod::Working,
         )
         .filter(|path| path.is_file())
         .unwrap_or_else(|| original_path.clone())

@@ -16,7 +16,10 @@ use super::{
 };
 use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasStackItem, CanvasTextSize};
 
-const IMAGE_MOVE_DEBOUNCE_SECONDS: f64 = 0.150;
+// Suppresses drag movement (and layout snapping) for the first 90ms after
+// primary-press on a placement so click-to-select doesn't jerk the image via
+// snap.
+const IMAGE_MOVE_DEBOUNCE_SECONDS: f64 = 0.090;
 
 pub(super) fn handle_input(
     ui: &egui::Ui,
@@ -1498,7 +1501,7 @@ mod tests {
     use crate::canvas::CanvasState;
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
-        CanvasAnnotationKind, CanvasImageCacheTier, CanvasStrokeWidth, CanvasTextSize, ImageAsset,
+        CanvasAnnotationKind, CanvasImageLod, CanvasStrokeWidth, CanvasTextSize, ImageAsset,
     };
     use crate::jobs::{ImportOrigin, ImportedPreviewTexture, LoadedCanvasItem};
     use eframe::egui;
@@ -1756,7 +1759,7 @@ mod tests {
                 preview_height: height,
                 animated_preview: None,
                 preview_texture: ImportedPreviewTexture::Cpu,
-                loaded_tier: CanvasImageCacheTier::Working,
+                loaded_lod: CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: ImportOrigin::Existing,
                 trace: None,

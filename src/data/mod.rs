@@ -12,7 +12,7 @@ pub use board_item::{
     Board, BoardItem, BoardItemWithAsset, BoardLayoutItem, BoardSummary, CanvasStackItem,
 };
 pub use session::{
-    CanvasImageCacheTier, DEFAULT_CANVAS_IMAGE_MAX_SIDE, DEFAULT_IMPORT_GAP,
+    CanvasImageLod, DEFAULT_CANVAS_IMAGE_MAX_SIDE, DEFAULT_IMPORT_GAP,
     DEFAULT_IMPORT_TARGET_CANVAS_AREA, DEFAULT_ROTATION_SNAP_DEGREES, UserSession, ViewportState,
     WindowState, WorkspaceSettings,
 };

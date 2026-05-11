@@ -22,8 +22,8 @@ use super::{
 };
 use crate::data::{
     BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
-    CanvasAnnotationKind, CanvasBackground, CanvasImageCacheTier, CanvasStackItem,
-    CanvasStrokeWidth, CanvasTextSize, ViewportState,
+    CanvasAnnotationKind, CanvasBackground, CanvasImageLod, CanvasStackItem, CanvasStrokeWidth,
+    CanvasTextSize, ViewportState,
 };
 use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
 
@@ -126,12 +126,12 @@ impl CanvasState {
             .images
             .retain(|image| image.record.item.id != loaded.record.item.id);
         self.render
-            .pending_image_tier_loads
+            .pending_image_lod_loads
             .remove(&loaded.record.item.id);
         self.document.images.push(CanvasImage {
             record: loaded.record,
             texture,
-            loaded_tier: loaded.loaded_tier,
+            loaded_lod: loaded.loaded_lod,
             animation,
         });
         self.append_missing_stack_item(CanvasStackItem::Placement(
@@ -155,7 +155,7 @@ impl CanvasState {
         self.document.images.push(CanvasImage {
             record,
             texture,
-            loaded_tier: CanvasImageCacheTier::Working,
+            loaded_lod: CanvasImageLod::Working,
             animation,
         });
         self.append_missing_stack_item(CanvasStackItem::Placement(
@@ -318,7 +318,7 @@ impl CanvasState {
         image.record.item = item;
         image.record.asset = asset;
         image.texture = texture;
-        image.loaded_tier = CanvasImageCacheTier::Working;
+        image.loaded_lod = CanvasImageLod::Working;
         image.animation = None;
 
         Ok(())
@@ -332,7 +332,7 @@ impl CanvasState {
         updated_item: crate::data::BoardItem,
     ) -> Result<(), String> {
         let item_id = cropped.item_id;
-        let loaded_tier = cropped.loaded_tier;
+        let loaded_lod = cropped.loaded_lod;
         let should_cache_pixels = self.document.selected_item_ids.contains(&item_id);
         let texture = canvas_texture_from_preview(
             ctx,
@@ -360,9 +360,9 @@ impl CanvasState {
         image.record.item = updated_item;
         image.record.asset = asset;
         image.texture = texture;
-        image.loaded_tier = loaded_tier;
+        image.loaded_lod = loaded_lod;
         image.animation = None;
-        self.render.pending_image_tier_loads.remove(&item_id);
+        self.render.pending_image_lod_loads.remove(&item_id);
         self.render.pending_crop_previews.remove(&item_id);
         Ok(())
     }
@@ -467,7 +467,7 @@ impl CanvasState {
         self.interaction = super::state::CanvasInteractionState::default();
         self.render.asset_rgba_cache.clear();
         self.render.textbox_layout_cache.clear();
-        self.render.pending_image_tier_loads.clear();
+        self.render.pending_image_lod_loads.clear();
         self.render.animation_time_override_seconds = None;
     }
 
@@ -779,8 +779,8 @@ impl CanvasState {
         Some((desired_anchor_world + snap_offset, Some(candidate.rect)))
     }
 
-    pub fn take_pending_image_tier_loads(&mut self) -> Vec<(i64, CanvasImageCacheTier)> {
-        self.render.pending_image_tier_loads.drain().collect()
+    pub fn take_pending_image_lod_loads(&mut self) -> Vec<(i64, CanvasImageLod)> {
+        self.render.pending_image_lod_loads.drain().collect()
     }
 
     pub fn mark_crop_pending(&mut self, item_id: i64) {
@@ -804,8 +804,8 @@ impl CanvasState {
             .retain(|pending_id| *pending_id != item_id);
     }
 
-    pub fn clear_pending_image_tier_load(&mut self, item_id: i64) {
-        self.render.pending_image_tier_loads.remove(&item_id);
+    pub fn clear_pending_image_lod_load(&mut self, item_id: i64) {
+        self.render.pending_image_lod_loads.remove(&item_id);
     }
 
     pub fn evict_cached_asset(&mut self, asset_id: i64) {
@@ -895,7 +895,7 @@ impl CanvasState {
         self.interaction = Default::default();
         self.render.asset_rgba_cache.clear();
         self.render.textbox_layout_cache.clear();
-        self.render.pending_image_tier_loads.clear();
+        self.render.pending_image_lod_loads.clear();
     }
 
     pub fn take_document_changes(&mut self) -> CanvasDocumentChanges {
@@ -1311,7 +1311,7 @@ impl CanvasState {
             .crop_pending_item_ids
             .retain(|item_id| !removed_ids.contains(item_id));
         self.render
-            .pending_image_tier_loads
+            .pending_image_lod_loads
             .retain(|item_id, _| !removed_ids.contains(item_id));
         self.interaction.pending_crop = None;
         self.prune_cached_pixels_to_selected_items();
@@ -1337,17 +1337,17 @@ impl CanvasState {
         self.document.selected_item_ids.contains(&item_id)
     }
 
-    pub(super) fn request_image_tier_load(&mut self, item_id: i64, tier: CanvasImageCacheTier) {
+    pub(super) fn request_image_lod_load(&mut self, item_id: i64, lod: CanvasImageLod) {
         let Some(image) = self.image_by_item_id(item_id) else {
             return;
         };
-        if tier <= image.loaded_tier {
+        if lod <= image.loaded_lod {
             return;
         }
-        match self.render.pending_image_tier_loads.get(&item_id).copied() {
-            Some(pending) if pending >= tier => {}
+        match self.render.pending_image_lod_loads.get(&item_id).copied() {
+            Some(pending) if pending >= lod => {}
             _ => {
-                self.render.pending_image_tier_loads.insert(item_id, tier);
+                self.render.pending_image_lod_loads.insert(item_id, lod);
             }
         }
     }
