@@ -11,11 +11,18 @@ pub(crate) fn resolve_library_root() -> Result<PathBuf, String> {
     Ok(library_root_from_parts(&install_root, override_root))
 }
 
+#[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+pub(crate) fn resolve_install_root() -> Result<PathBuf, String> {
+    let current_exe = std::env::current_exe()
+        .map_err(|error| format!("Failed to resolve current executable path: {error}"))?;
+    install_root_from_exe_path(&current_exe)
+}
+
 fn library_root_from_parts(install_root: &Path, override_root: Option<PathBuf>) -> PathBuf {
     override_root.unwrap_or_else(|| install_root.join("library"))
 }
 
-fn install_root_from_exe_path(current_exe: &Path) -> Result<PathBuf, String> {
+pub(crate) fn install_root_from_exe_path(current_exe: &Path) -> Result<PathBuf, String> {
     let executable_dir = current_exe
         .parent()
         .ok_or_else(|| format!("Executable path has no parent: {}", current_exe.display()))?;

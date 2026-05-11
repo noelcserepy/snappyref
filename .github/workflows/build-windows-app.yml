@@ -86,7 +86,6 @@ jobs:
           $packageRoot = Join-Path $env:RUNNER_TEMP "snappyref-windows-app\SnappyRef"
           New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
           Copy-Item (Join-Path $env:SNAPPYREF_TARGET_DIR "snappyref.exe") $packageRoot
-          Copy-Item UPDATE.txt $packageRoot
 
       - uses: actions/upload-artifact@v4
         with:
