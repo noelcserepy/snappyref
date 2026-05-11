@@ -46,6 +46,7 @@ objc2 = "0.5.2"
 objc2-app-kit = { version = "0.2.2", features = ["NSResponder", "NSView", "NSWindow", "NSBitmapImageRep", "NSImageRep", "NSPasteboard", "NSPasteboardItem"] }
 objc2-foundation = { version = "0.2.2", features = ["NSDictionary", "NSData", "NSString"] }
 raw-window-handle = "0.6.2"
+winit = "0.30.13"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 raw-window-handle = "0.6.2"

@@ -19,6 +19,7 @@ Use this skill when improving SnappyRef performance. Treat perf work as a measur
 - Optimize idle CPU and quiescent RSS before optimizing **Time to Idle**.
 - Preserve phase breakdowns so a faster headline number does not hide a worse import, embedding, backfill, or memory profile.
 - Prefer helper-process isolation when native libraries or large allocators do not return memory to the OS after work drains.
+- Perf scenario launches are non-activating by default so agent-run measurements do not steal focus. This keeps the app visible and running normally; avoid hiding/minimizing the app during measurements unless that is the condition being tested.
 
 ## Baseline Scenarios
 

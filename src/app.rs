@@ -299,6 +299,7 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
 pub struct AppConfig {
     pub screenshot_path: Option<std::path::PathBuf>,
     library_root: Result<std::path::PathBuf, String>,
+    no_startup_focus: bool,
     perf_log: bool,
     perf_report: bool,
     perf_decode_path: Option<std::path::PathBuf>,
@@ -586,6 +587,7 @@ enum SearchLatencyProbePhase {
 impl AppConfig {
     pub fn from_env() -> Self {
         let mut screenshot_path = None;
+        let mut no_startup_focus = false;
         let mut perf_log = false;
         let mut perf_report = false;
         let mut perf_decode_path = None;
@@ -612,6 +614,8 @@ impl AppConfig {
                 screenshot_path = arguments.next().map(std::path::PathBuf::from);
             } else if let Some(path) = argument.strip_prefix("--screenshot=") {
                 screenshot_path = Some(std::path::PathBuf::from(path));
+            } else if argument == "--no-startup-focus" || argument == "--agent-background" {
+                no_startup_focus = true;
             } else if argument == "--perf-log" {
                 perf_log = true;
             } else if argument == "--perf-report" {
@@ -832,6 +836,7 @@ impl AppConfig {
 
         Self {
             screenshot_path,
+            no_startup_focus,
             perf_log,
             perf_report,
             perf_decode_path,
@@ -1127,6 +1132,13 @@ impl AppConfig {
 
     fn perf_scenario_requested(&self) -> bool {
         self.perf_scenario.is_some()
+    }
+
+    pub(crate) fn startup_focus_enabled(&self) -> bool {
+        !(self.no_startup_focus
+            || self.screenshot_path.is_some()
+            || self.verification_mode_active()
+            || self.perf_scenario_requested())
     }
 
     pub(crate) fn restored_window_state(&self) -> Option<crate::data::WindowState> {

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Capture UI State"
-  short_description: "Add debug probes and screenshot UI states"
-  default_prompt: "Use $capture-ui-state to add a temporary debug-only probe and capture the requested UI state as a screenshot."
