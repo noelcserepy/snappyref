@@ -126,10 +126,9 @@ When `main` is ready for the next version, publish update zips through
 `Publish Full Release`:
 
 1. Switch to `main` and pull the latest changes.
-2. Run the release gate locally:
-   - `cargo fmt --check`
-   - `cargo check --locked --no-default-features --features semantic-search`
-   - `cargo test --locked --no-default-features update_preservation_smoke`
+2. Run the release gate locally by invoking the pre-push hook directly:
+   `./.githooks/pre-push`. Same three checks (fmt + `cargo check` under shipping
+   features + the `update_preservation_smoke` test) that fire on every push.
 3. Bump the package version if this is a real release.
 4. Commit and push the version bump.
 5. Run `Publish Full Release` with `release_tag`, for example `v0.1.0`.

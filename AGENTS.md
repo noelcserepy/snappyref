@@ -42,8 +42,18 @@ Read `DESIGN_SYSTEM.md` before planning or editing any UI.
 
 ## Pre-push Checks
 
-- CI runs `cargo fmt --check` and will fail on unformatted code. Always run `cargo fmt` before pushing.
-- Run `cargo check` (and any tests you touched) locally before pushing so CI does not catch basic regressions.
+The pre-push gate (fmt + `cargo check` under shipping features + the
+`update_preservation_smoke` test) lives in `.githooks/pre-push` and runs
+automatically on `git push` once the hook path is configured. One-time setup on
+a fresh clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+CI only checks formatting. The hook is the local backstop for the other checks.
+Bypass with `git push --no-verify` when you genuinely need to (e.g. debugging
+branches that you know will not merge).
 
 ## Agent skills
 
