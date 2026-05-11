@@ -8,6 +8,11 @@ on:
         required: true
         default: v0.1.0
         type: string
+      notes_url:
+        description: Public URL the auto-updater shows for these release notes
+        required: true
+        default: https://github.com/noelcserepy/snappyref-dist/releases
+        type: string
       ref:
         description: Git ref to build
         required: false
@@ -32,7 +37,12 @@ on:
         default: true
         type: boolean
       create_draft_release:
-        description: Attach final zips to a draft GitHub Release
+        description: Attach final zips to the source-repo draft GitHub Release
+        required: false
+        default: true
+        type: boolean
+      publish_to_dist:
+        description: Create draft release on snappyref-dist with signed latest.json
         required: false
         default: true
         type: boolean
@@ -40,6 +50,9 @@ on:
 permissions:
   actions: read
   contents: write
+
+env:
+  DIST_REPO: noelcserepy/snappyref-dist
 
 jobs:
   windows:
@@ -109,7 +122,8 @@ jobs:
           name: snappyref-model-bundle
           path: ${{ runner.temp }}/model-bundle
 
-      - name: Package selected full zips
+      - name: Package app-only and full zips
+        id: package
         run: |
           set -euo pipefail
           release_assets="${RUNNER_TEMP}/release-assets"
@@ -120,16 +134,23 @@ jobs:
             echo "missing model bundle" >&2
             exit 1
           fi
-          package_args=(--include-models --models-bundle "$model_bundle")
+
+          tag="${{ inputs.release_tag }}"
 
           if [[ "${{ inputs.include_windows }}" == "true" ]]; then
             windows_app="${RUNNER_TEMP}/windows-app.zip"
             (cd "${RUNNER_TEMP}/app-artifacts/windows" && zip -9 -r "$windows_app" SnappyRef)
+
             scripts/package-release-assets.sh \
               --platform windows \
               --app-archive "$windows_app" \
-              "${package_args[@]}" \
-              --output "$release_assets/snappyref-windows-${{ inputs.release_tag }}-full.zip"
+              --output "$release_assets/snappyref-windows-${tag}.zip"
+
+            scripts/package-release-assets.sh \
+              --platform windows \
+              --app-archive "$windows_app" \
+              --include-models --models-bundle "$model_bundle" \
+              --output "$release_assets/snappyref-windows-${tag}-full.zip"
           fi
 
           if [[ "${{ inputs.include_macos }}" == "true" ]]; then
@@ -138,20 +159,81 @@ jobs:
               echo "missing macOS app artifact" >&2
               exit 1
             fi
+
             scripts/package-release-assets.sh \
               --platform macos \
               --app-archive "$macos_app_zip" \
-              "${package_args[@]}" \
-              --output "$release_assets/snappyref-macos-${{ inputs.release_tag }}-full.zip"
+              --output "$release_assets/snappyref-mac-${tag}.zip"
+
+            scripts/package-release-assets.sh \
+              --platform macos \
+              --app-archive "$macos_app_zip" \
+              --include-models --models-bundle "$model_bundle" \
+              --output "$release_assets/snappyref-mac-${tag}-full.zip"
           fi
+
+          # Derive a deterministic version (strip leading "v") and timestamp
+          # for the auto-update manifest.
+          version="${tag#v}"
+          released_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "released_at=$released_at" >> "$GITHUB_OUTPUT"
+
+      - name: Write signing private key
+        if: ${{ inputs.publish_to_dist }}
+        env:
+          MANIFEST_SIGNING_KEY: ${{ secrets.MANIFEST_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${MANIFEST_SIGNING_KEY:-}" ]]; then
+            echo "MANIFEST_SIGNING_KEY secret is not configured" >&2
+            exit 1
+          fi
+          mkdir -p "${RUNNER_TEMP}/signing"
+          chmod 700 "${RUNNER_TEMP}/signing"
+          printf '%s\n' "$MANIFEST_SIGNING_KEY" > "${RUNNER_TEMP}/signing/private.pem"
+          chmod 600 "${RUNNER_TEMP}/signing/private.pem"
+
+      - name: Build and sign latest.json
+        if: ${{ inputs.publish_to_dist && inputs.include_macos && inputs.include_windows }}
+        env:
+          GH_TOKEN: ${{ secrets.DIST_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+          version="${{ steps.package.outputs.version }}"
+          released_at="${{ steps.package.outputs.released_at }}"
+
+          base_url="https://github.com/${DIST_REPO}/releases/download/${tag}"
+          macos_url="${base_url}/snappyref-mac-${tag}.zip"
+          windows_url="${base_url}/snappyref-windows-${tag}.zip"
+
+          scripts/build-signed-manifest.sh \
+            --version "$version" \
+            --released-at "$released_at" \
+            --notes-url "${{ inputs.notes_url }}" \
+            --macos-zip "${RUNNER_TEMP}/release-assets/snappyref-mac-${tag}.zip" \
+            --macos-url "$macos_url" \
+            --windows-zip "${RUNNER_TEMP}/release-assets/snappyref-windows-${tag}.zip" \
+            --windows-url "$windows_url" \
+            --private-key "${RUNNER_TEMP}/signing/private.pem" \
+            --public-key docs/keys/signing-key.pub.pem \
+            --output "${RUNNER_TEMP}/release-assets/latest.json"
+
+      - name: Clean up signing key material
+        if: ${{ always() && inputs.publish_to_dist }}
+        run: |
+          rm -rf "${RUNNER_TEMP}/signing"
 
       - uses: actions/upload-artifact@v4
         with:
           name: snappyref-full-release-zips
-          path: ${{ runner.temp }}/release-assets/*.zip
+          path: |
+            ${{ runner.temp }}/release-assets/*.zip
+            ${{ runner.temp }}/release-assets/latest.json
           retention-days: 7
 
-      - name: Create draft release
+      - name: Create source-repo draft release
         if: ${{ inputs.create_draft_release }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -165,4 +247,41 @@ jobs:
               --notes "Draft SnappyRef release." \
               --draft
           fi
-          gh release upload "$tag" "${RUNNER_TEMP}"/release-assets/*.zip --clobber
+          # Preserve existing behavior: the source-repo draft receives the
+          # full-install zips. App-only zips and latest.json live on the dist
+          # repo (see the publish-to-dist step below).
+          gh release upload "$tag" \
+            "${RUNNER_TEMP}/release-assets/"*-full.zip \
+            --clobber
+
+      - name: Publish to snappyref-dist
+        if: ${{ inputs.publish_to_dist && inputs.include_macos && inputs.include_windows }}
+        env:
+          GH_TOKEN: ${{ secrets.DIST_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "DIST_REPO_TOKEN secret is not configured" >&2
+            exit 1
+          fi
+
+          if ! gh release view "$tag" --repo "$DIST_REPO" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --repo "$DIST_REPO" \
+              --title "SnappyRef $tag" \
+              --notes "SnappyRef $tag. See https://github.com/noelcserepy/snappyref-dist for details." \
+              --draft
+          fi
+
+          # All four zips and the signed manifest are required for an
+          # auto-update-eligible release.
+          gh release upload "$tag" \
+            --repo "$DIST_REPO" \
+            "${RUNNER_TEMP}/release-assets/snappyref-mac-${tag}.zip" \
+            "${RUNNER_TEMP}/release-assets/snappyref-mac-${tag}-full.zip" \
+            "${RUNNER_TEMP}/release-assets/snappyref-windows-${tag}.zip" \
+            "${RUNNER_TEMP}/release-assets/snappyref-windows-${tag}-full.zip" \
+            "${RUNNER_TEMP}/release-assets/latest.json" \
+            --clobber
