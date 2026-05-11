@@ -113,13 +113,15 @@ pub fn run() -> eframe::Result<()> {
     }
     let viewport_size = config.startup_viewport_size();
     let restored_window = config.restored_window_state();
+    let startup_focus_enabled = config.startup_focus_enabled();
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size([viewport_size.x, viewport_size.y])
         .with_icon(app_icon())
         .with_fullsize_content_view(true)
         .with_title_shown(false)
         .with_titlebar_shown(false)
-        .with_titlebar_buttons_shown(true);
+        .with_titlebar_buttons_shown(true)
+        .with_active(startup_focus_enabled);
     if let Some(window) = &restored_window {
         if let (Some(width), Some(height)) = (window.inner_width, window.inner_height) {
             viewport = viewport.with_inner_size([width, height]);
@@ -128,10 +130,11 @@ pub fn run() -> eframe::Result<()> {
             viewport = viewport.with_position([x, y]);
         }
     }
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport,
         ..Default::default()
     };
+    configure_startup_activation(&mut options, startup_focus_enabled);
 
     eframe::run_native(
         "SnappyRef",
@@ -143,6 +146,24 @@ pub fn run() -> eframe::Result<()> {
             Ok(Box::new(app::SnappyRefApp::new(cc, config.clone())))
         }),
     )
+}
+
+#[cfg(target_os = "macos")]
+fn configure_startup_activation(options: &mut eframe::NativeOptions, startup_focus_enabled: bool) {
+    if startup_focus_enabled {
+        return;
+    }
+    options.event_loop_builder = Some(Box::new(|builder| {
+        use winit::platform::macos::EventLoopBuilderExtMacOS as _;
+        builder.with_activate_ignoring_other_apps(false);
+    }));
+}
+
+#[cfg(not(target_os = "macos"))]
+fn configure_startup_activation(
+    _options: &mut eframe::NativeOptions,
+    _startup_focus_enabled: bool,
+) {
 }
 
 fn app_icon() -> eframe::egui::IconData {

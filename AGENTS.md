@@ -7,8 +7,7 @@ Read these before normal work:
 1. `CONTEXT.md`, if it exists.
 2. `docs/adr/*.md`, if any exist.
 3. `docs/skills/app-inspection/SKILL.md`, if it exists.
-4. `docs/skills/capture-ui-state/SKILL.md`, if it exists.
-5. `docs/skills/perf-profiling/SKILL.md`, if it exists.
+4. `docs/skills/perf-profiling/SKILL.md`, if it exists.
 
 ## Project Memory Maintenance
 
@@ -22,19 +21,20 @@ Use `grill-with-docs` when language, boundaries, lifecycle, storage, release/upd
 
 ## Repo-Local Skills
 
-Use [app-inspection](docs/skills/app-inspection/SKILL.md) when inspecting the app, verifying a UI state, capturing a screenshot, or adding a temporary debug probe.
-
-Use [capture-ui-state](docs/skills/capture-ui-state/SKILL.md) when a screenshot needs a temporary debug-only probe or deterministic in-app UI state setup.
+Use [app-inspection](docs/skills/app-inspection/SKILL.md) when inspecting the app, verifying a UI state, capturing a screenshot, adding a temporary debug probe, or setting deterministic in-app UI state for capture.
 
 Use [perf-profiling](docs/skills/perf-profiling/SKILL.md) when measuring or improving startup, import, embedding, idle CPU, or memory performance.
 
 ## Repo Principles
 
 - Optimize for speed first. Prefer changes that keep startup and core interactions fast.
-- Favor layout over decoration. Use spacing, alignment, and positioning before borders or fills.
 - Keep interactions shortcut-driven and low-friction.
 - Use sensible defaults so repeated flows happen automatically.
-- Keep the code and UI simple. If a solution feels complex, look for a smaller one first.
+- Keep the code and UI simple. If a solution feels complex, look for a smaller one first. If it still looks too complicated, review it with the `simplify` skill before implementing.
+
+## UI Work
+
+Read `DESIGN_SYSTEM.md` before planning or editing any UI.
 
 ## Testing Notes
 

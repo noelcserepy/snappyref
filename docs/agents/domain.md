@@ -8,8 +8,7 @@ Before normal planning or issue drafting, read:
 
 - `CONTEXT.md`
 - relevant ADRs in `docs/adr/`
-- `docs/skills/app-inspection/SKILL.md` when the work involves app inspection, UI state verification, screenshots, or temporary debug probes
-- `docs/skills/capture-ui-state/SKILL.md` when a screenshot needs a temporary debug-only probe or deterministic in-app UI state setup
+- `docs/skills/app-inspection/SKILL.md` when the work involves app inspection, UI state verification, screenshots, temporary debug probes, or deterministic in-app UI state setup
 - `docs/skills/perf-profiling/SKILL.md` when the work involves startup, import, embedding, idle CPU, or memory performance
 - `DESIGN_SYSTEM.md` when the work involves shared UI semantics
 
