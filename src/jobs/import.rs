@@ -682,11 +682,35 @@ impl RequestQueue {
         }
         match request.priority() {
             ImportPriority::Startup => state.startup.push_back(request),
-            ImportPriority::Interactive => state.interactive.push_back(request),
+            ImportPriority::Interactive => {
+                insert_interactive_sorted_by_bytes(&mut state.interactive, request);
+            }
             ImportPriority::Background => state.background.push_back(request),
         }
         self.ready.notify_all();
         Ok(())
+    }
+
+    #[cfg(test)]
+    fn try_pop_one(&self, kind: WorkerKind) -> Option<ImportRequest> {
+        let mut state = self.state.lock().expect("request queue poisoned");
+        match kind {
+            WorkerKind::General | WorkerKind::Interactive => state
+                .interactive
+                .pop_front()
+                .or_else(|| state.startup.pop_front())
+                .or_else(|| {
+                    if matches!(kind, WorkerKind::General) {
+                        state.background.pop_front()
+                    } else {
+                        None
+                    }
+                }),
+            WorkerKind::Background => state
+                .startup
+                .pop_front()
+                .or_else(|| state.background.pop_front()),
+        }
     }
 
     fn pop(&self, kind: WorkerKind) -> Option<ImportRequest> {
@@ -823,6 +847,53 @@ impl ImportRequest {
             | ImportRequest::Crop { .. } => ImportPriority::Interactive,
         }
     }
+
+    /// File-size hint used to prioritize **smaller imports first** in a mixed
+    /// batch so a single large asset cannot block many small assets from
+    /// reaching **Placement Visible**. Returns `None` for variants whose size
+    /// is unknown at enqueue time (URL downloads) or which do not participate
+    /// in mixed-batch import ordering (`Crop`, `LoadExisting`, `BackfillLod`).
+    fn priority_bytes(&self) -> Option<u64> {
+        match self {
+            ImportRequest::ImportPath { source_path, .. } => std::fs::metadata(source_path)
+                .ok()
+                .map(|metadata| metadata.len()),
+            ImportRequest::ImportClipboard { rgba, .. } => Some(rgba.len() as u64),
+            ImportRequest::ImportUrl { .. }
+            | ImportRequest::Crop { .. }
+            | ImportRequest::LoadExisting { .. }
+            | ImportRequest::BackfillLod { .. } => None,
+        }
+    }
+}
+
+/// Insert `request` into the **Interactive** queue so requests with smaller
+/// `priority_bytes` pop first, falling back to FIFO arrival order when sizes
+/// tie or are unknown. Stable across equal keys: ties keep their relative
+/// arrival order, so canvas-placement reservations made at enqueue time stay
+/// laid out as the user dropped them.
+fn insert_interactive_sorted_by_bytes(
+    interactive: &mut VecDeque<ImportRequest>,
+    request: ImportRequest,
+) {
+    // `None` sorts to the back so we never starve known-small assets when a
+    // size cannot be measured (e.g. a URL import whose payload size is not
+    // known until the download completes).
+    let incoming = request.priority_bytes().unwrap_or(u64::MAX);
+    // Linear scan from the back is appropriate: a typical mixed-batch
+    // import is well under 100 items so a stable in-place insert is faster
+    // and simpler than a binary heap, and it preserves FIFO on ties.
+    let mut insert_at = interactive.len();
+    while insert_at > 0 {
+        let existing = interactive[insert_at - 1]
+            .priority_bytes()
+            .unwrap_or(u64::MAX);
+        if existing <= incoming {
+            break;
+        }
+        insert_at -= 1;
+    }
+    interactive.insert(insert_at, request);
 }
 
 #[allow(dead_code)]
@@ -4406,6 +4477,109 @@ static char * sample_xpm[] = {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn interactive_import_queue_pops_smallest_bytes_first() {
+        let root = temp_library_root("interactive-queue-by-bytes");
+        fs::create_dir_all(&root).unwrap();
+        // Write three real PNGs of different byte sizes so metadata-based
+        // priority can be derived from the filesystem at enqueue time.
+        let small_path = write_png(&root, "small.png", 32, 32);
+        let medium_path = write_png(&root, "medium.png", 128, 128);
+        let large_path = write_png(&root, "large.png", 512, 512);
+        let small_bytes = fs::metadata(&small_path).unwrap().len();
+        let medium_bytes = fs::metadata(&medium_path).unwrap().len();
+        let large_bytes = fs::metadata(&large_path).unwrap().len();
+        assert!(
+            small_bytes < medium_bytes && medium_bytes < large_bytes,
+            "expected strictly ascending file sizes, got {small_bytes}/{medium_bytes}/{large_bytes}"
+        );
+
+        let queue = super::RequestQueue::default();
+        // Enqueue in worst-case "large first" order so a FIFO would return the
+        // large file first; the priority queue must invert this.
+        for path in [&large_path, &medium_path, &small_path] {
+            queue
+                .push(make_import_path_request(path.clone()))
+                .expect("queue push");
+        }
+
+        let first = queue
+            .try_pop_one(super::WorkerKind::Interactive)
+            .expect("first pop");
+        let second = queue
+            .try_pop_one(super::WorkerKind::Interactive)
+            .expect("second pop");
+        let third = queue
+            .try_pop_one(super::WorkerKind::Interactive)
+            .expect("third pop");
+
+        assert_eq!(import_path_source(&first), small_path);
+        assert_eq!(import_path_source(&second), medium_path);
+        assert_eq!(import_path_source(&third), large_path);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn interactive_import_queue_breaks_ties_by_arrival_order() {
+        let root = temp_library_root("interactive-queue-tie-break");
+        fs::create_dir_all(&root).unwrap();
+        // Two identical 64x64 PNGs produce identical byte counts; FIFO order
+        // must be preserved when the sort key ties.
+        let first_path = write_png(&root, "first.png", 64, 64);
+        let second_path = write_png(&root, "second.png", 64, 64);
+        let third_path = write_png(&root, "third.png", 64, 64);
+        let a = fs::metadata(&first_path).unwrap().len();
+        let b = fs::metadata(&second_path).unwrap().len();
+        let c = fs::metadata(&third_path).unwrap().len();
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+
+        let queue = super::RequestQueue::default();
+        for path in [&first_path, &second_path, &third_path] {
+            queue
+                .push(make_import_path_request(path.clone()))
+                .expect("queue push");
+        }
+
+        let popped: Vec<PathBuf> = (0..3)
+            .map(|_| {
+                import_path_source(
+                    &queue
+                        .try_pop_one(super::WorkerKind::Interactive)
+                        .expect("pop"),
+                )
+            })
+            .collect();
+        assert_eq!(popped, vec![first_path, second_path, third_path]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn make_import_path_request(source_path: PathBuf) -> super::ImportRequest {
+        super::ImportRequest::ImportPath {
+            target_board_id: 1,
+            queue_id: 0,
+            source_path,
+            desired_world: eframe::egui::Pos2::ZERO,
+            reserved_world: None,
+            viewport_world: test_viewport_world(),
+            max_texture_side: usize::MAX,
+            canvas_image_settings: CanvasImageSettings::default(),
+            auto_scale: true,
+            target_canvas_area: DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+            import_gap: crate::data::DEFAULT_IMPORT_GAP,
+            trace: None,
+        }
+    }
+
+    fn import_path_source(request: &super::ImportRequest) -> PathBuf {
+        match request {
+            super::ImportRequest::ImportPath { source_path, .. } => source_path.clone(),
+            other => panic!("expected ImportPath, got {other:?}"),
+        }
     }
 
     #[test]
