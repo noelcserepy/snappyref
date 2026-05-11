@@ -220,16 +220,38 @@ fn paint_update_pill(
     state: &UpdateState,
     input_enabled: bool,
 ) -> UpdatePillOutcome {
-    let (label, is_available) = match state {
+    // Four observable shapes: clickable opener (Available), clickable
+    // restarter (Ready), in-place progress bar (Downloading), quiet
+    // failure indicator (Failed). Hidden returns early above.
+    enum PillShape {
+        Opens { label: String },
+        Restart { label: String },
+        Progress { label: String, percent: u8 },
+        Quiet { label: String },
+    }
+
+    let shape = match state {
         UpdateState::Hidden => {
             return UpdatePillOutcome {
                 rect: None,
                 clicked: false,
             };
         }
-        UpdateState::Available { version, .. } => (format!("Update {version}"), true),
-        UpdateState::Failed => ("Update check failed".to_owned(), false),
+        UpdateState::Available { version, .. } => PillShape::Opens {
+            label: format!("Update {version}"),
+        },
+        UpdateState::Downloading { percent, .. } => PillShape::Progress {
+            label: format!("Downloading {percent}%"),
+            percent: (*percent).min(100),
+        },
+        UpdateState::Ready { .. } => PillShape::Restart {
+            label: "Restart".to_owned(),
+        },
+        UpdateState::Failed => PillShape::Quiet {
+            label: "Update check failed".to_owned(),
+        },
     };
+
     let pad_x = crate::theme::SPACE_3;
     let pill_rect = egui::Rect::from_min_max(
         egui::pos2(
@@ -242,21 +264,16 @@ fn paint_update_pill(
         ),
     );
     let id = egui::Id::new("sidebar_update_pill");
-    let sense = if is_available {
+    let is_clickable = matches!(shape, PillShape::Opens { .. } | PillShape::Restart { .. });
+    let sense = if is_clickable {
         egui::Sense::click()
     } else {
         egui::Sense::hover()
     };
     let response = ui.interact(pill_rect, id, sense);
-    let interactive = input_enabled && is_available;
-    let fill = if !interactive {
-        crate::theme::SURFACE_ELEVATED
-    } else if response.hovered() {
-        crate::theme::SURFACE_ELEVATED
-    } else {
-        crate::theme::SURFACE_ELEVATED
-    };
-    let stroke = if is_available {
+    let interactive = input_enabled && is_clickable;
+    let fill = crate::theme::SURFACE_ELEVATED;
+    let stroke = if is_clickable {
         egui::Stroke::new(1.0, crate::theme::ACCENT)
     } else {
         crate::theme::stroke_subtle()
@@ -268,10 +285,30 @@ fn paint_update_pill(
         stroke,
         egui::StrokeKind::Inside,
     );
-    let text_color = if is_available {
-        crate::theme::TEXT
-    } else {
-        crate::theme::TEXT_MUTED
+
+    // Progress bar fill — painted before the label so the text sits on top.
+    if let PillShape::Progress { percent, .. } = &shape {
+        let fraction = (*percent as f32 / 100.0).clamp(0.0, 1.0);
+        if fraction > 0.0 {
+            let bar_width = (pill_rect.width() * fraction).max(1.0);
+            let bar_rect = egui::Rect::from_min_max(
+                pill_rect.min,
+                egui::pos2(pill_rect.min.x + bar_width, pill_rect.max.y),
+            );
+            ui.painter().rect_filled(
+                bar_rect,
+                crate::theme::RADIUS_COMPACT,
+                crate::theme::ACCENT.gamma_multiply(0.25),
+            );
+        }
+    }
+
+    let (label, text_color) = match &shape {
+        PillShape::Opens { label } | PillShape::Restart { label } => {
+            (label.clone(), crate::theme::TEXT)
+        }
+        PillShape::Progress { label, .. } => (label.clone(), crate::theme::TEXT),
+        PillShape::Quiet { label } => (label.clone(), crate::theme::TEXT_MUTED),
     };
     let font = ui.style().text_styles[&egui::TextStyle::Body].clone();
     let galley = ui.painter().layout_no_wrap(label, font, text_color);
