@@ -30,7 +30,7 @@ mod sidebar;
 mod storage;
 mod theme;
 mod ui_layout;
-mod updater;
+pub mod updater;
 
 pub fn run() -> eframe::Result<()> {
     if std::env::args()
