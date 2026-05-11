@@ -13,6 +13,8 @@ mod import_placement;
 mod jobs;
 mod layout_snap;
 mod library_location;
+#[cfg(feature = "semantic-search")]
+mod model_store;
 mod native_capture;
 mod native_drop;
 #[cfg(feature = "semantic-search")]

@@ -3,11 +3,15 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
 
-use hf_hub::api::sync::Api;
 use image::imageops::FilterType;
 use ndarray::{Array2, Array4};
 use ort::{ep, session::Session, value::TensorRef};
 use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
+
+use crate::model_store::{
+    MISSING_MODEL_USER_MESSAGE, ModelAvailability, classify_availability, migrate_bundled_model,
+    model_store_root,
+};
 
 pub trait EmbeddingModel: Send + Sync {
     fn embed_text(&self, query: &str) -> Result<Vec<f32>, String>;
@@ -26,6 +30,9 @@ pub struct ModelSpec {
     pub model_key: &'static str,
     pub dimension: usize,
     pub input_size: u32,
+    // Retained for parity with ADR-0014's hosted fetch story; current builds
+    // resolve assets from the Local Model Store only.
+    #[allow(dead_code)]
     pub repo_id: &'static str,
     pub text_model_file: &'static str,
     pub vision_model_file: &'static str,
@@ -71,46 +78,48 @@ pub(crate) struct ResolvedModelAssets {
     vision_model_path: PathBuf,
 }
 
-pub(crate) enum ModelAssetResolution {
-    Packaged(ResolvedModelAssets),
-    HuggingFace,
-}
-
-pub(crate) fn resolve_packaged_model_assets(
+/// Resolve a [`ModelSpec`] inside a Local Model Store rooted at `store_root`.
+///
+/// Returns `Ok(assets)` when every required file exists and is non-empty,
+/// otherwise returns `Err` with a developer-facing description of the first
+/// missing piece. Callers that want to surface a user-facing message should
+/// inspect [`crate::model_store::classify_availability`] before calling this.
+pub(crate) fn resolve_assets_in_store(
     spec: &ModelSpec,
-    app_root: &Path,
-) -> Option<ResolvedModelAssets> {
-    let model_root = app_root.join("models").join(spec.model_key);
+    store_root: &Path,
+) -> Result<ResolvedModelAssets, String> {
+    let model_root = store_root.join(spec.model_key);
     let assets = ResolvedModelAssets {
         tokenizer_path: model_root.join(spec.tokenizer_file),
         text_model_path: model_root.join(spec.text_model_file),
         vision_model_path: model_root.join(spec.vision_model_file),
     };
 
-    if model_asset_exists(&assets.tokenizer_path)
-        && model_asset_exists(&assets.text_model_path)
-        && model_asset_exists(&assets.vision_model_path)
-    {
-        Some(assets)
-    } else {
-        None
+    if !model_asset_exists(&assets.tokenizer_path) {
+        return Err(format!(
+            "missing model file in Local Model Store: {}",
+            assets.tokenizer_path.display()
+        ));
     }
+    if !model_asset_exists(&assets.text_model_path) {
+        return Err(format!(
+            "missing model file in Local Model Store: {}",
+            assets.text_model_path.display()
+        ));
+    }
+    if !model_asset_exists(&assets.vision_model_path) {
+        return Err(format!(
+            "missing model file in Local Model Store: {}",
+            assets.vision_model_path.display()
+        ));
+    }
+    Ok(assets)
 }
 
 fn model_asset_exists(path: &Path) -> bool {
     path.metadata()
         .map(|metadata| metadata.is_file() && metadata.len() > 0)
         .unwrap_or(false)
-}
-
-pub(crate) fn resolve_model_assets_from_app_root(
-    spec: &ModelSpec,
-    app_root: &Path,
-) -> ModelAssetResolution {
-    match resolve_packaged_model_assets(spec, app_root) {
-        Some(assets) => ModelAssetResolution::Packaged(assets),
-        None => ModelAssetResolution::HuggingFace,
-    }
 }
 
 fn resolve_model_assets<F>(
@@ -120,74 +129,42 @@ fn resolve_model_assets<F>(
 where
     F: FnMut(&str),
 {
-    let app_roots = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(packaged_model_roots_from_executable_dir))
-        .unwrap_or_default();
+    let install_root = crate::library_location::resolve_install_root()?;
+    let executable_dir = std::env::current_exe()
+        .map_err(|error| format!("Failed to resolve current executable path: {error}"))?
+        .parent()
+        .ok_or_else(|| "executable has no parent directory".to_owned())?
+        .to_path_buf();
 
-    for app_root in app_roots {
-        if let ModelAssetResolution::Packaged(assets) =
-            resolve_model_assets_from_app_root(spec, &app_root)
-        {
-            on_progress("Loading packaged model assets…");
-            return Ok(assets);
+    // One-shot migration: move any in-bundle model files into the Local Model
+    // Store before resolving assets. The function is idempotent: subsequent
+    // launches see no bundled directory and return NoBundledModel.
+    match migrate_bundled_model(&install_root, &executable_dir) {
+        Ok(crate::model_store::MigrationOutcome::Migrated) => {
+            on_progress("Migrated bundled model to Local Model Store…");
+        }
+        Ok(_) => {}
+        Err(error) => {
+            // A migration error is non-fatal if the Local Model Store already
+            // exists; only fail when there is also no usable store.
+            if !matches!(
+                classify_availability(&install_root, &executable_dir),
+                ModelAvailability::LocalStore
+            ) {
+                return Err(error);
+            }
         }
     }
 
-    download_model_assets(spec, on_progress)
-}
-
-fn packaged_model_roots_from_executable_dir(executable_dir: &Path) -> Vec<PathBuf> {
-    let mut roots = vec![executable_dir.to_path_buf()];
-
-    if let Some(resources_root) = macos_app_resources_root(executable_dir) {
-        roots.insert(0, resources_root);
+    match classify_availability(&install_root, &executable_dir) {
+        ModelAvailability::LocalStore | ModelAvailability::BundledOnly => {}
+        ModelAvailability::Missing => {
+            return Err(MISSING_MODEL_USER_MESSAGE.to_owned());
+        }
     }
 
-    roots
-}
-
-fn macos_app_resources_root(executable_dir: &Path) -> Option<PathBuf> {
-    let contents_dir = executable_dir.parent()?;
-    if executable_dir.file_name()? != "MacOS" || contents_dir.file_name()? != "Contents" {
-        return None;
-    }
-
-    let app_dir = contents_dir.parent()?;
-    if app_dir.extension()? != "app" {
-        return None;
-    }
-
-    Some(contents_dir.join("Resources"))
-}
-
-fn download_model_assets<F>(
-    spec: &ModelSpec,
-    on_progress: &mut F,
-) -> Result<ResolvedModelAssets, String>
-where
-    F: FnMut(&str),
-{
-    on_progress("Downloading model assets…");
-    let repo = Api::new()
-        .map_err(|error| format!("failed to initialize Hugging Face API: {error}"))?
-        .model(spec.repo_id.to_owned());
-
-    let tokenizer_path = repo
-        .get(spec.tokenizer_file)
-        .map_err(|error| format!("failed to fetch tokenizer: {error}"))?;
-    let text_model_path = repo
-        .get(spec.text_model_file)
-        .map_err(|error| format!("failed to fetch text model: {error}"))?;
-    let vision_model_path = repo
-        .get(spec.vision_model_file)
-        .map_err(|error| format!("failed to fetch vision model: {error}"))?;
-
-    Ok(ResolvedModelAssets {
-        tokenizer_path,
-        text_model_path,
-        vision_model_path,
-    })
+    on_progress("Loading model assets…");
+    resolve_assets_in_store(spec, &model_store_root(&install_root))
 }
 
 pub struct OrtDualEncoderModel {
@@ -478,19 +455,19 @@ fn normalize(mut values: Vec<f32>) -> Vec<f32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        DEFAULT_SEMANTIC_SEARCH_MODEL, ModelAssetResolution,
-        packaged_model_roots_from_executable_dir, resolve_model_assets_from_app_root,
-        resolve_packaged_model_assets,
-    };
+    use super::{DEFAULT_SEMANTIC_SEARCH_MODEL, resolve_assets_in_store};
 
     #[test]
-    fn resolves_packaged_model_assets_when_all_files_exist() {
-        let root =
-            std::env::temp_dir().join(format!("snappyref-model-assets-{}", std::process::id()));
-        let model_root = root
-            .join("models")
-            .join(DEFAULT_SEMANTIC_SEARCH_MODEL.model_key);
+    fn resolves_assets_when_all_files_exist_in_local_model_store() {
+        let store_root = std::env::temp_dir().join(format!(
+            "snappyref-model-store-resolve-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let model_root = store_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.model_key);
         std::fs::create_dir_all(model_root.join("onnx")).unwrap();
         std::fs::write(
             model_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.tokenizer_file),
@@ -508,7 +485,7 @@ mod tests {
         )
         .unwrap();
 
-        let assets = resolve_packaged_model_assets(&DEFAULT_SEMANTIC_SEARCH_MODEL, &root).unwrap();
+        let assets = resolve_assets_in_store(&DEFAULT_SEMANTIC_SEARCH_MODEL, &store_root).unwrap();
 
         assert_eq!(
             assets.tokenizer_path,
@@ -523,18 +500,20 @@ mod tests {
             model_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.vision_model_file)
         );
 
-        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(store_root);
     }
 
     #[test]
-    fn falls_back_to_hugging_face_when_packaged_assets_are_incomplete() {
-        let root = std::env::temp_dir().join(format!(
-            "snappyref-model-assets-missing-{}",
-            std::process::id()
+    fn errors_when_local_model_store_is_incomplete() {
+        let store_root = std::env::temp_dir().join(format!(
+            "snappyref-model-store-missing-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
-        let model_root = root
-            .join("models")
-            .join(DEFAULT_SEMANTIC_SEARCH_MODEL.model_key);
+        let model_root = store_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.model_key);
         std::fs::create_dir_all(model_root.join("onnx")).unwrap();
         std::fs::write(
             model_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.tokenizer_file),
@@ -542,25 +521,10 @@ mod tests {
         )
         .unwrap();
 
-        let resolution = resolve_model_assets_from_app_root(&DEFAULT_SEMANTIC_SEARCH_MODEL, &root);
+        let result = resolve_assets_in_store(&DEFAULT_SEMANTIC_SEARCH_MODEL, &store_root);
 
-        assert!(matches!(resolution, ModelAssetResolution::HuggingFace));
+        assert!(result.is_err());
 
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn app_bundle_model_roots_prefer_resources() {
-        let executable_dir = std::path::Path::new("/fake/SnappyRef/SnappyRef.app/Contents/MacOS");
-
-        let roots = packaged_model_roots_from_executable_dir(executable_dir);
-
-        assert_eq!(
-            roots,
-            vec![
-                std::path::PathBuf::from("/fake/SnappyRef/SnappyRef.app/Contents/Resources"),
-                std::path::PathBuf::from("/fake/SnappyRef/SnappyRef.app/Contents/MacOS"),
-            ]
-        );
+        let _ = std::fs::remove_dir_all(store_root);
     }
 }

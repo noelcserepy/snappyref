@@ -7,7 +7,7 @@ Use this checklist when cutting the first release that supports the manual porta
 1. Choose the release version.
 2. Bump the package version to the chosen release version.
 3. Confirm release artifact names include the tag or version expected by the release workflow.
-4. Draft release notes with the manual update instructions from `UPDATE.txt`.
+4. Draft release notes with the manual update instructions for the auto-update transition (point users at the full-install zip when they have no existing Local Model Store).
 5. Confirm downgrade remains documented as unsupported after forward migration.
 
 ## Tag And Artifact Verification
@@ -15,7 +15,7 @@ Use this checklist when cutting the first release that supports the manual porta
 1. Create the release tag in a dry-run branch or rehearsal tag before the final tag.
 2. Let the tag-triggered release workflow build Windows and macOS artifacts.
 3. Confirm both uploaded zips pass the release archive contract check.
-4. Confirm both uploaded zips contain `UPDATE.txt`, the app binary, and packaged models.
+4. Confirm both uploaded full-install zips contain the app binary at `SnappyRef/` and the Local Model Store at `SnappyRef/models/`. Confirm no zip contains `UPDATE.txt`.
 5. Confirm neither uploaded zip contains `library/`, `library.db`, `originals/`, or `thumbs/`.
 6. Run the mandatory real-zip update smoke checklist before publishing the release broadly.
 
