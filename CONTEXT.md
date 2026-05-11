@@ -160,6 +160,10 @@ _Avoid_: Search thumbnail, model image
 A short-lived child process that owns image-side semantic model loading and image embedding for currently queued embedding work, then exits so native model and allocator memory return to the OS. Text semantic-search model loading stays on the demand search path, not the import/backfill image helper path.
 _Avoid_: Background model cache, permanent model worker
 
+**Embedding Helper Grace Period**:
+The short window during which the embedding worker keeps an idle **Embedding Helper Process** alive after its queue drains, so trickled imports (one drag every couple of seconds) reuse one model load instead of cold-mounting per asset. Default 3s, overridable via `SNAPPYREF_EMBEDDING_HELPER_GRACE_MS`. The helper still exits after the grace window so **Quiescent Memory** returns to baseline.
+_Avoid_: Helper keep-alive forever, model cache TTL
+
 **Local Model Store**:
 The on-disk directory at `<install_root>/models/` that holds the semantic search model files, kept outside the app bundle and as a sibling of `library/` so it survives app updates and reinstalls.
 _Avoid_: Bundled model, model cache, model resources

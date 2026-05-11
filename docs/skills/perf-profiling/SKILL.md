@@ -28,6 +28,7 @@ Run the established scenarios before and after substantial changes:
 ```sh
 scripts/run-perf-scenario.sh import-1
 scripts/run-perf-scenario.sh import-20
+scripts/run-perf-scenario.sh trickle-import
 scripts/run-perf-scenario.sh format:png
 scripts/run-perf-scenario.sh animated
 scripts/run-perf-scenario.sh animated-control
@@ -40,6 +41,7 @@ Scenario meanings:
 
 - `import-1`: import one medium JPEG from the perf corpus.
 - `import-20`: import the full mixed 20-file perf corpus.
+- `trickle-import`: import the same medium JPEG three times with a 2s gap between each. Reproduces **Embedding Helper Process** churn — pre-fix every import paid a fresh model cold-mount; post-fix the **Embedding Helper Grace Period** keeps one helper alive across all three.
 - `format:<format>`: import all corpus files for one format; singleton formats become one-image cases.
 - `animated`: import animated corpus assets.
 - `animated-control`: import the same number of small static control assets.
@@ -215,6 +217,24 @@ For embedding changes, measure:
 - memory after model unload.
 
 `SNAPPYREF_PERF_MODEL_UNLOAD_AFTER_IDLE_MS=0` keeps the current baseline focused on immediate unload after embedding queues drain.
+
+### Embedding Helper Grace Period
+
+The embedding worker keeps the **Embedding Helper Process** alive for a
+short grace window after its queue drains so trickled imports reuse a
+single model load instead of cold-mounting per asset.
+
+- Default grace: **3000ms** (3s).
+- Override: `SNAPPYREF_EMBEDDING_HELPER_GRACE_MS=<ms>`. Setting `0`
+  reproduces the previous behavior (helper exits as soon as the queue
+  empties), which is occasionally useful when isolating
+  **Quiescent Memory** measurements from the helper-alive window.
+- The `trickle-import` scenario is the canonical reproduction: pre-fix
+  it shows three separate `semantic_model_load_timing` events in
+  `events.ndjson`; post-fix it shows one.
+- The helper still exits after the grace window, so existing
+  `import-1`, `import-20`, and library-baseline **Quiescent Memory**
+  numbers must remain stable.
 
 ## Reporting
 
