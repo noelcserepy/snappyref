@@ -18,8 +18,8 @@ use image::{ExtendedColorType, ImageEncoder};
 
 use crate::data::{BoardItemWithAsset, BoardLayoutItem, CanvasImageLod};
 use crate::jobs::image_formats::{
-    AnimatedPreview, PreviewImage, decode_image_bytes, decode_image_file,
-    preview_animation_from_frames, preview_image_from_rgba,
+    AnimatedPreview, PreviewImage, decode_image_bytes_with_max_side, decode_image_file,
+    decode_image_file_with_max_side, preview_animation_from_frames, preview_image_from_rgba,
 };
 use crate::storage::Library;
 
@@ -1411,8 +1411,9 @@ fn import_path_sync_traced(
     }
 
     let decode_started_at = Instant::now();
-    let decoded = decode_image_file(&source_path)
-        .map_err(|error| format!("{}: {error}", source_path.display()))?;
+    let decoded =
+        decode_image_file_with_max_side(&source_path, Some(canvas_image_settings.max_side))
+            .map_err(|error| format!("{}: {error}", source_path.display()))?;
     if let Some(trace) = &mut trace {
         trace.timings.decode_or_load = decode_started_at.elapsed();
     }
@@ -1774,10 +1775,11 @@ fn import_url_sync_traced(
 
     let source_label = downloaded.url.as_str().to_owned();
     let decode_started_at = Instant::now();
-    let decoded = decode_image_bytes(
+    let decoded = decode_image_bytes_with_max_side(
         &downloaded.bytes,
         Some(source_label.clone()),
         downloaded.mime_type.as_deref(),
+        Some(canvas_image_settings.max_side),
     )?;
     if let Some(trace) = &mut trace {
         trace.timings.decode_or_load += decode_started_at.elapsed();
@@ -2114,8 +2116,9 @@ fn print_image_import_prepare_output(
     rgba_output_path: &Path,
     canvas_image_settings: CanvasImageSettings,
 ) -> Result<(), String> {
-    let decoded = decode_image_file(source_path)
-        .map_err(|error| format!("{}: {error}", source_path.display()))?;
+    let decoded =
+        decode_image_file_with_max_side(source_path, Some(canvas_image_settings.max_side))
+            .map_err(|error| format!("{}: {error}", source_path.display()))?;
     if decoded.animation.is_some() {
         serde_json::to_writer(
             std::io::stdout(),
@@ -3073,7 +3076,10 @@ pub fn load_canvas_snapshot_pixels(
         }
     }
 
-    let decoded = decode_image_file(&record.asset.original_path)?;
+    let decoded = decode_image_file_with_max_side(
+        &record.asset.original_path,
+        Some(target_width.max(target_height)),
+    )?;
     resize_rgba_exact(
         decoded.rgba,
         decoded.width,
@@ -3285,7 +3291,8 @@ fn backfill_canvas_image_cache(
         ));
     }
 
-    let decoded = decode_image_file(&decode_path)?;
+    let decoded =
+        decode_image_file_with_max_side(&decode_path, Some(canvas_image_settings.max_side))?;
     let canvas_source = canvas_source_image_from_rgba(
         decoded.width,
         decoded.height,

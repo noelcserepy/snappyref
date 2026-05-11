@@ -70,6 +70,16 @@ pub struct DecodePerfReport {
 }
 
 pub fn decode_image_file(path: &Path) -> Result<DecodedImage, String> {
+    decode_image_file_with_max_side(path, None)
+}
+
+/// Decode an image file, optionally hinting the target maximum side length so
+/// JPEG decoding can scale during IDCT to save time and memory. `None` means
+/// "decode at full resolution"; other formats currently ignore the hint.
+pub fn decode_image_file_with_max_side(
+    path: &Path,
+    target_max_side: Option<u32>,
+) -> Result<DecodedImage, String> {
     let bytes = std::fs::read(path).map_err(|error| format!("failed to open image: {error}"))?;
     if path_has_raw_like_extension(path) {
         return decode_image_file_with_native_fallback(path, &bytes);
@@ -79,6 +89,7 @@ pub fn decode_image_file(path: &Path) -> Result<DecodedImage, String> {
         Some(path.display().to_string()),
         None,
         Some(path),
+        target_max_side,
     ) {
         Ok(decoded) => Ok(decoded),
         Err(error) => decode_image_file_with_native_fallback(path, &bytes)
@@ -114,12 +125,24 @@ pub fn decode_image_file_perf_report(path: &Path) -> Result<DecodePerfReport, St
     })
 }
 
+#[allow(dead_code)]
 pub fn decode_image_bytes(
     bytes: &[u8],
     source_label: Option<String>,
     mime_hint: Option<&str>,
 ) -> Result<DecodedImage, String> {
-    decode_image_bytes_with_path_hint(bytes, source_label, mime_hint, None)
+    decode_image_bytes_with_path_hint(bytes, source_label, mime_hint, None, None)
+}
+
+/// Decode in-memory image bytes, optionally hinting the target maximum side
+/// length so JPEG decoding can scale during IDCT. `None` means full resolution.
+pub fn decode_image_bytes_with_max_side(
+    bytes: &[u8],
+    source_label: Option<String>,
+    mime_hint: Option<&str>,
+    target_max_side: Option<u32>,
+) -> Result<DecodedImage, String> {
+    decode_image_bytes_with_path_hint(bytes, source_label, mime_hint, None, target_max_side)
 }
 
 fn decode_image_bytes_with_path_hint(
@@ -127,6 +150,7 @@ fn decode_image_bytes_with_path_hint(
     source_label: Option<String>,
     mime_hint: Option<&str>,
     path_hint: Option<&Path>,
+    target_max_side: Option<u32>,
 ) -> Result<DecodedImage, String> {
     let file_size = bytes.len() as u64;
     let source_label_path_hint = source_label.as_deref().map(Path::new);
@@ -166,22 +190,25 @@ fn decode_image_bytes_with_path_hint(
     } else if format == ImageFormat::OpenExr {
         decode_exr(&bytes, file_size)
     } else if format == ImageFormat::Jpeg {
-        decode_jpeg_with_turbojpeg(&bytes, file_size)
+        decode_jpeg_with_turbojpeg(&bytes, file_size, target_max_side)
             .or_else(|_| decode_with_image_crate(&bytes, file_size, format))
     } else {
         decode_with_image_crate(&bytes, file_size, format)
     }?;
 
     #[cfg(not(feature = "turbojpeg-native"))]
-    let decoded = if format == ImageFormat::Gif {
-        decode_gif(&bytes, file_size)
-    } else if format == ImageFormat::WebP {
-        decode_webp(&bytes, file_size)
-    } else if format == ImageFormat::OpenExr {
-        decode_exr(&bytes, file_size)
-    } else {
-        decode_with_image_crate(&bytes, file_size, format)
-    }?;
+    let decoded = {
+        let _ = target_max_side;
+        if format == ImageFormat::Gif {
+            decode_gif(&bytes, file_size)
+        } else if format == ImageFormat::WebP {
+            decode_webp(&bytes, file_size)
+        } else if format == ImageFormat::OpenExr {
+            decode_exr(&bytes, file_size)
+        } else {
+            decode_with_image_crate(&bytes, file_size, format)
+        }?
+    };
 
     Ok(decoded)
 }
@@ -1142,18 +1169,72 @@ fn parse_xpm_color(definition: &str) -> Result<[u8; 4], String> {
     Err(format!("unsupported XPM color definition {definition:?}"))
 }
 
+/// Pick the smallest TurboJPEG 1/8 scaling factor whose scaled longest side
+/// still meets or exceeds `target_max_side`. Returns `(num, denom)` over the
+/// fixed 1/8 grid; the caller converts to [`turbojpeg::ScalingFactor`].
+///
+/// Defensive defaults:
+/// * `target_max_side == 0` or `source_long_side == 0` -> `(8, 8)` (no scaling).
+/// * If even 8/8 does not satisfy the target (target larger than source),
+///   return `(8, 8)` so we hand back the original size.
+#[cfg_attr(not(feature = "turbojpeg-native"), allow(dead_code))]
+fn select_jpeg_scaling_factor(source_long_side: u32, target_max_side: u32) -> (u32, u32) {
+    if target_max_side == 0 || source_long_side == 0 {
+        return (8, 8);
+    }
+    // Smallest numerator over 8 that keeps the longest side >= target.
+    for numerator in 1u32..=8 {
+        let scaled_long = ((source_long_side as u64) * numerator as u64).div_ceil(8) as u32;
+        if scaled_long >= target_max_side {
+            return (numerator, 8);
+        }
+    }
+    (8, 8)
+}
+
 #[cfg(feature = "turbojpeg-native")]
-fn decode_jpeg_with_turbojpeg(bytes: &[u8], file_size: u64) -> Result<DecodedImage, String> {
+fn decode_jpeg_with_turbojpeg(
+    bytes: &[u8],
+    file_size: u64,
+    target_max_side: Option<u32>,
+) -> Result<DecodedImage, String> {
     let mut decompressor = turbojpeg::Decompressor::new()
         .map_err(|error| format!("failed to initialize TurboJPEG: {error}"))?;
     let header = decompressor
         .read_header(bytes)
         .map_err(|error| format!("failed to read JPEG header with TurboJPEG: {error}"))?;
+
+    let source_width = header.width as u32;
+    let source_height = header.height as u32;
+    let source_long_side = source_width.max(source_height);
+
+    // Lossless JPEG cannot be scaled; turbojpeg rejects non-1/1 scaling for it.
+    // Fall back to a full decode and let downstream resize handle the size.
+    let target = if header.is_lossless {
+        None
+    } else {
+        target_max_side.filter(|max_side| *max_side > 0 && *max_side < source_long_side)
+    };
+
+    let (scaled_width, scaled_height) = if let Some(target) = target {
+        let (num, denom) = select_jpeg_scaling_factor(source_long_side, target);
+        let factor = turbojpeg::ScalingFactor::new(num as usize, denom as usize);
+        if factor != turbojpeg::ScalingFactor::ONE {
+            decompressor
+                .set_scaling_factor(factor)
+                .map_err(|error| format!("failed to set TurboJPEG scaling factor: {error}"))?;
+        }
+        let scaled = header.scaled(factor);
+        (scaled.width, scaled.height)
+    } else {
+        (header.width, header.height)
+    };
+
     let mut image = turbojpeg::Image {
-        pixels: vec![0; 4 * header.width * header.height],
-        width: header.width,
-        pitch: 4 * header.width,
-        height: header.height,
+        pixels: vec![0; 4 * scaled_width * scaled_height],
+        width: scaled_width,
+        pitch: 4 * scaled_width,
+        height: scaled_height,
         format: turbojpeg::PixelFormat::RGBA,
     };
     decompressor
@@ -1162,12 +1243,13 @@ fn decode_jpeg_with_turbojpeg(bytes: &[u8], file_size: u64) -> Result<DecodedIma
 
     Ok(decoded_image_from_rgba(
         image.pixels,
-        header.width as u32,
-        header.height as u32,
+        scaled_width as u32,
+        scaled_height as u32,
         file_size,
         ImageFormat::Jpeg,
         None,
-    ))
+    )
+    .with_source_dimensions(source_width, source_height))
 }
 
 #[cfg(test)]
@@ -1592,6 +1674,101 @@ static unsigned char sample_bits[] = { 0x01 };
         assert!(report.megapixels > 0.0);
         assert!(report.decode_ms >= 0.0);
         assert!(report.ms_per_megapixel >= 0.0);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn select_jpeg_scaling_factor_picks_smallest_factor_that_meets_target() {
+        use super::select_jpeg_scaling_factor;
+
+        // 8000-wide source, target 1000 -> 1/8 = 1000 keeps the longest side
+        // exactly at the target.
+        assert_eq!(select_jpeg_scaling_factor(8000, 1000), (1, 8));
+        // 8000 -> need >= 1200; 1/8 yields 1000 (too small), so 2/8 yields
+        // 2000 which is the smallest factor meeting the target.
+        assert_eq!(select_jpeg_scaling_factor(8000, 1200), (2, 8));
+        assert_eq!(select_jpeg_scaling_factor(8000, 2001), (3, 8));
+        assert_eq!(select_jpeg_scaling_factor(8000, 4001), (5, 8));
+        // Target larger than source: stay at 8/8.
+        assert_eq!(select_jpeg_scaling_factor(1024, 2048), (8, 8));
+        // Defensive zero handling.
+        assert_eq!(select_jpeg_scaling_factor(0, 1024), (8, 8));
+        assert_eq!(select_jpeg_scaling_factor(1024, 0), (8, 8));
+    }
+
+    #[cfg(feature = "turbojpeg-native")]
+    #[test]
+    fn decode_jpeg_with_max_side_returns_scaled_dimensions_close_to_full_resize() {
+        use super::decode_image_file_with_max_side;
+
+        let root = temp_test_dir("snappyref-jpeg-scaled-decode");
+        let source_side: u32 = 256;
+        // Build a deterministic gradient RGB image so JPEG quantization is
+        // stable and the pixel-distance assertion is meaningful.
+        let mut rgb = Vec::with_capacity((source_side * source_side * 3) as usize);
+        for y in 0..source_side {
+            for x in 0..source_side {
+                rgb.push((x % 256) as u8);
+                rgb.push((y % 256) as u8);
+                rgb.push(((x + y) % 256) as u8);
+            }
+        }
+        let path = root.join("gradient.jpg");
+        JpegEncoder::new_with_quality(std::fs::File::create(&path).unwrap(), 92)
+            .write_image(&rgb, source_side, source_side, ExtendedColorType::Rgb8)
+            .unwrap();
+
+        // Full decode at native resolution.
+        let full = decode_image_file_with_max_side(&path, None).unwrap();
+        assert_eq!(full.width, source_side);
+        assert_eq!(full.height, source_side);
+        assert_eq!(full.source_width, source_side);
+        assert_eq!(full.source_height, source_side);
+
+        // Tiny target should select 1/8 scaling (32 = 256/8).
+        let tiny = decode_image_file_with_max_side(&path, Some(32)).unwrap();
+        assert_eq!((tiny.width, tiny.height), (32, 32));
+        // Source dimensions stay truthful even when scaled.
+        assert_eq!(tiny.source_width, source_side);
+        assert_eq!(tiny.source_height, source_side);
+
+        // A larger target preserves higher resolution (Detail LOD case).
+        let detail = decode_image_file_with_max_side(&path, Some(200)).unwrap();
+        // 200 falls between 1/2 (128) and 5/8 (160) and 6/8 (192) and 7/8 (224)
+        // so the smallest factor meeting the target is 7/8 -> 224.
+        assert_eq!((detail.width, detail.height), (224, 224));
+
+        // Pixel-distance check: scaled-decode at 1/8 should be visually close
+        // to a full decode then resized to the same 32x32 box.
+        let resized_from_full =
+            super::preview_image_from_rgba(full.width, full.height, &full.rgba, 32).unwrap();
+        assert_eq!(
+            (resized_from_full.width, resized_from_full.height),
+            (32, 32)
+        );
+        assert_eq!(tiny.rgba.len(), resized_from_full.rgba.len());
+
+        let mut max_delta: u32 = 0;
+        let mut sum_delta: u64 = 0;
+        for (a, b) in tiny.rgba.iter().zip(resized_from_full.rgba.iter()) {
+            let delta = (*a as i32 - *b as i32).unsigned_abs();
+            if delta > max_delta {
+                max_delta = delta;
+            }
+            sum_delta += delta as u64;
+        }
+        let mean_delta = sum_delta as f64 / tiny.rgba.len() as f64;
+        // TurboJPEG IDCT-domain scaling is not identical to spatial resize,
+        // but the two should still produce visually close pixels.
+        assert!(
+            max_delta <= 64,
+            "scaled-decode vs full-resize max per-channel delta too large: {max_delta}",
+        );
+        assert!(
+            mean_delta <= 12.0,
+            "scaled-decode vs full-resize mean per-channel delta too large: {mean_delta}",
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }
