@@ -160,6 +160,10 @@ _Avoid_: Search thumbnail, model image
 A short-lived child process that owns semantic model loading and image embedding for currently queued embedding work, then exits so native model and allocator memory return to the OS.
 _Avoid_: Background model cache, permanent model worker
 
+**Local Model Store**:
+The on-disk directory at `<install_root>/models/` that holds the semantic search model files, kept outside the app bundle and as a sibling of `library/` so it survives app updates and reinstalls.
+_Avoid_: Bundled model, model cache, model resources
+
 **Image Preparation Helper Process**:
 A short-lived child process that decodes managed originals or canvas cache sources, generates **Canvas Image Cache** derivatives, and exits so large decoder/encoder allocator pages do not remain resident in the main app process.
 _Avoid_: Permanent image worker, renderer process
@@ -364,6 +368,12 @@ _Avoid_: Source file, cached image
 The future operation that permanently deletes stored files for removed assets.
 _Avoid_: Remove from library, archive
 
+### App lifecycle and updates
+
+**Available Update**:
+A published app version newer than the running one, discovered by the app's background update check.
+_Avoid_: Pending update, downloaded update, new release
+
 ## Relationships
 
 - A **Library** has one or more non-archived **Boards**.
@@ -391,6 +401,8 @@ _Avoid_: Remove from library, archive
 - An animated placement can be visible without being an **Active Animated Image**; visible-but-inactive animated placements draw their current frame without advancing animation.
 - **Placement Visible** can happen before **Import Settled** because embeddings and cache work may still be running after a placement is usable.
 - **Demand Embedding** may use an **Embedding Helper Process** so the main app process does not retain semantic model RSS after embedding work drains.
+- **Embedding Helper Process** and any in-process embedding work load the semantic model from the **Local Model Store**, which is independent of the app bundle.
+- An **Available Update** does not affect the **Local Model Store** or the user-owned `library/`; both are outside the app bundle and untouched by the swap.
 - **Time to Idle** is the overall perf profile duration; import and embedding timings explain its phases.
 - **Settled Idle** is a work-queue state; low CPU and stable memory are performance targets measured after the app reaches **Settled Idle**.
 - **Idle Tail** explains short post-idle cleanup or CPU accounting decay; **Quiescent Idle** is the steady-state CPU target window.
