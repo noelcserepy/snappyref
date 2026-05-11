@@ -338,6 +338,14 @@ struct FramePerfState {
     canvas: crate::canvas::CanvasFrameMetrics,
 }
 
+#[derive(Clone, Debug)]
+struct PerfCorpusAsset {
+    file: String,
+    format: String,
+    animated: bool,
+    bytes: Option<u64>,
+}
+
 #[derive(Debug)]
 struct PerfScenarioState {
     name: String,
@@ -359,6 +367,12 @@ struct PerfScenarioState {
     idle_since: Option<Instant>,
     settled_idle_logged: bool,
     model_unload_logged: bool,
+    /// Per-asset corpus metadata indexed by import queue id, so events
+    /// emitted after `import_queued` can still report `format`.
+    asset_by_queue_id: std::collections::HashMap<u64, PerfCorpusAsset>,
+    /// Per-asset corpus metadata indexed by stored asset id, used to
+    /// stamp `format` onto embedding events once an asset id is known.
+    asset_by_asset_id: std::collections::HashMap<i64, PerfCorpusAsset>,
 }
 
 #[derive(Clone, Copy, Debug, Default, serde::Serialize)]
@@ -448,6 +462,8 @@ impl PerfScenarioState {
             idle_since: None,
             settled_idle_logged: false,
             model_unload_logged: false,
+            asset_by_queue_id: std::collections::HashMap::new(),
+            asset_by_asset_id: std::collections::HashMap::new(),
         }))
     }
 
@@ -1789,6 +1805,16 @@ impl SnappyRefApp {
                 return;
             }
             if let Some(scenario) = &mut self.perf_scenario {
+                let bytes = std::fs::metadata(&path).ok().map(|metadata| metadata.len());
+                scenario.asset_by_queue_id.insert(
+                    reservation.queue_id,
+                    PerfCorpusAsset {
+                        file: entry.file.clone(),
+                        format: entry.format.clone(),
+                        animated: entry.animated,
+                        bytes,
+                    },
+                );
                 scenario.emit(
                     "import_queued",
                     serde_json::json!({
@@ -1798,6 +1824,8 @@ impl SnappyRefApp {
                         "role": entry.role,
                         "width": dimensions.map(|value| value.0),
                         "height": dimensions.map(|value| value.1),
+                        "bytes": bytes,
+                        "queue_id": reservation.queue_id,
                     }),
                 );
             }
@@ -1840,9 +1868,18 @@ impl SnappyRefApp {
                         scenario.emit("semantic_model_ready", serde_json::json!({}));
                     }
                     crate::search::SemanticPerfEvent::ImportEmbeddingStarted { asset_id } => {
+                        let metadata = scenario.asset_by_asset_id.get(&asset_id).cloned();
+                        let (format_value, source_file) = match &metadata {
+                            Some(meta) => (Some(meta.format.clone()), Some(meta.file.clone())),
+                            None => (None, None),
+                        };
                         scenario.emit(
                             "import_embedding_started",
-                            serde_json::json!({ "asset_id": asset_id }),
+                            serde_json::json!({
+                                "asset_id": asset_id,
+                                "format": format_value,
+                                "file": source_file,
+                            }),
                         );
                         if scenario
                             .embedding_phases
@@ -1851,23 +1888,43 @@ impl SnappyRefApp {
                         {
                             scenario.emit(
                                 "first_import_embedding_started",
-                                serde_json::json!({ "asset_id": asset_id }),
+                                serde_json::json!({
+                                    "asset_id": asset_id,
+                                    "format": format_value,
+                                    "file": source_file,
+                                }),
                             );
                         }
                     }
+                    crate::search::SemanticPerfEvent::ImportEmbeddingFinished { asset_id } => {
+                        scenario.demand_embeddings_done += 1;
+                        let metadata = scenario.asset_by_asset_id.get(&asset_id).cloned();
+                        let (format_value, source_file) = match &metadata {
+                            Some(meta) => (Some(meta.format.clone()), Some(meta.file.clone())),
+                            None => (None, None),
+                        };
+                        if !scenario.first_embedding_done_logged {
+                            scenario.first_embedding_done_logged = true;
+                            scenario.emit(
+                                "first_import_embedding_done",
+                                serde_json::json!({
+                                    "asset_id": asset_id,
+                                    "format": format_value,
+                                    "file": source_file,
+                                }),
+                            );
+                        }
+                        scenario.emit(
+                            "import_embedding_done",
+                            serde_json::json!({
+                                "done": scenario.demand_embeddings_done,
+                                "asset_id": asset_id,
+                                "format": format_value,
+                                "file": source_file,
+                            }),
+                        );
+                    }
                 }
-            }
-            let done = self.search.completed_demand_embedding_count();
-            while scenario.demand_embeddings_done < done {
-                scenario.demand_embeddings_done += 1;
-                if !scenario.first_embedding_done_logged {
-                    scenario.first_embedding_done_logged = true;
-                    scenario.emit("first_import_embedding_done", serde_json::json!({}));
-                }
-                scenario.emit(
-                    "import_embedding_done",
-                    serde_json::json!({ "done": scenario.demand_embeddings_done }),
-                );
             }
             if scenario.demand_embeddings_queued > 0
                 && scenario.demand_embeddings_done >= scenario.demand_embeddings_queued
@@ -3545,12 +3602,13 @@ impl SnappyRefApp {
     }
 
     fn apply_loaded_import_outcome(&mut self, outcome: LoadedImportOutcome) {
-        if let Some(placeholder) = outcome.placeholder_removal {
+        let placeholder_queue_id = outcome.placeholder_removal.map(|placeholder| {
             self.remove_import_placeholder_for_board(
                 placeholder.target_board_id,
                 placeholder.queue_id,
             );
-        }
+            placeholder.queue_id
+        });
         let perf_import_origin = outcome.log.as_ref().map(|log| log.origin);
         let perf_counts_as_import = perf_import_origin.is_some_and(|origin| {
             matches!(
@@ -3568,9 +3626,31 @@ impl SnappyRefApp {
         if let Some(log) = outcome.log {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
                 scenario.visible_imports += 1;
+                let metadata = placeholder_queue_id
+                    .and_then(|queue_id| scenario.asset_by_queue_id.get(&queue_id).cloned());
+                if let Some(metadata) = &metadata {
+                    scenario
+                        .asset_by_asset_id
+                        .insert(log.record.asset.id, metadata.clone());
+                }
+                let (format_value, source_file, animated, bytes) = match &metadata {
+                    Some(meta) => (
+                        Some(meta.format.clone()),
+                        Some(meta.file.clone()),
+                        Some(meta.animated),
+                        meta.bytes,
+                    ),
+                    None => (None, None, None, None),
+                };
                 if !scenario.first_visible_logged {
                     scenario.first_visible_logged = true;
-                    scenario.emit("first_placement_visible", serde_json::json!({}));
+                    scenario.emit(
+                        "first_placement_visible",
+                        serde_json::json!({
+                            "format": format_value,
+                            "file": source_file,
+                        }),
+                    );
                 }
                 scenario.emit(
                     "placement_visible",
@@ -3580,6 +3660,11 @@ impl SnappyRefApp {
                         "item_id": log.record.item.id,
                         "mime_type": log.record.asset.mime_type,
                         "filename": log.record.asset.filename,
+                        "format": format_value,
+                        "file": source_file,
+                        "animated": animated,
+                        "bytes": bytes,
+                        "queue_id": placeholder_queue_id,
                     }),
                 );
                 if scenario.visible_imports >= scenario.expected_imports
@@ -3600,13 +3685,28 @@ impl SnappyRefApp {
         if let Some((asset_id, original_path)) = indexed_asset {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
                 scenario.demand_embeddings_queued += 1;
+                let metadata = scenario.asset_by_asset_id.get(&asset_id).cloned();
+                let (format_value, source_file) = match &metadata {
+                    Some(meta) => (Some(meta.format.clone()), Some(meta.file.clone())),
+                    None => (None, None),
+                };
                 if !scenario.first_embedding_queued_logged {
                     scenario.first_embedding_queued_logged = true;
-                    scenario.emit("first_import_embedding_queued", serde_json::json!({}));
+                    scenario.emit(
+                        "first_import_embedding_queued",
+                        serde_json::json!({
+                            "format": format_value,
+                            "file": source_file,
+                        }),
+                    );
                 }
                 scenario.emit(
                     "import_embedding_queued",
-                    serde_json::json!({ "asset_id": asset_id }),
+                    serde_json::json!({
+                        "asset_id": asset_id,
+                        "format": format_value,
+                        "file": source_file,
+                    }),
                 );
             }
             if let Err(error) = self.search.queue_asset_index(asset_id, original_path)

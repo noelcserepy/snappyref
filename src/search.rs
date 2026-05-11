@@ -71,6 +71,9 @@ pub(crate) enum SemanticPerfEvent {
     ImportEmbeddingStarted {
         asset_id: i64,
     },
+    ImportEmbeddingFinished {
+        asset_id: i64,
+    },
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -443,6 +446,8 @@ impl SearchController {
             SearchIndexResult::Indexed { asset_id } => {
                 if self.pending_demand_embeddings.remove(&asset_id) {
                     self.completed_demand_embeddings += 1;
+                    self.perf_events
+                        .push(SemanticPerfEvent::ImportEmbeddingFinished { asset_id });
                     if self.pending_demand_embeddings.is_empty() {
                         self.note_demand_embedding_drained_at(Instant::now());
                     }
@@ -476,6 +481,8 @@ impl SearchController {
                     && self.pending_demand_embeddings.remove(&asset_id)
                 {
                     self.completed_demand_embeddings += 1;
+                    self.perf_events
+                        .push(SemanticPerfEvent::ImportEmbeddingFinished { asset_id });
                     if self.pending_demand_embeddings.is_empty() {
                         self.note_demand_embedding_drained_at(Instant::now());
                     }
@@ -613,6 +620,7 @@ impl SearchController {
         self.pending_demand_embeddings.len()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn completed_demand_embedding_count(&self) -> usize {
         self.completed_demand_embeddings
     }
