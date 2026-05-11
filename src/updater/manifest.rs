@@ -10,11 +10,23 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::Deserialize;
 use serde_json::Value;
 
-/// Ed25519 public key for the auto-update signing keypair, embedded at
-/// compile time. PEM-decoded SubjectPublicKeyInfo bytes are 44 bytes; the
-/// last 32 are the raw public key. Provisioned by issue #79; lives in the
-/// repo at `docs/keys/signing-key.pub.pem`.
-const SIGNING_PUBLIC_KEY_PEM: &str = include_str!("../../docs/keys/signing-key.pub.pem");
+use crate::updater::platform::TargetPlatform;
+
+/// Raw ed25519 public key for the auto-update signing keypair, embedded
+/// at compile time. Must stay in sync with `docs/keys/signing-key.pub.pem`
+/// (the PEM the CI workflow uses with openssl). To regenerate after a
+/// keypair rotation:
+///
+/// ```sh
+/// openssl pkey -in docs/keys/signing-key.pub.pem -pubin -outform DER \
+///   | tail -c 32 | xxd -i
+/// ```
+///
+/// Provisioned by issue #79.
+const SIGNING_PUBLIC_KEY: [u8; 32] = [
+    0xad, 0xfd, 0x89, 0xd7, 0xb3, 0x3b, 0xb0, 0x75, 0x24, 0x01, 0x7f, 0x72, 0xbe, 0xe2, 0x8d, 0x16,
+    0xa5, 0x2b, 0x83, 0xf9, 0xf7, 0xf5, 0xc4, 0x6f, 0x46, 0x9a, 0xb3, 0x27, 0x0f, 0x89, 0xa5, 0xb5,
+];
 
 /// "stable" is the only channel that exists at runtime. The field is
 /// reserved for future beta/insider channels (ADR-0015).
@@ -38,17 +50,12 @@ pub(crate) struct Manifest {
 }
 
 impl Manifest {
-    /// Returns the per-platform entry for the running target OS, if the
-    /// manifest contains one. Slice 4 only consults the URL field, slice 5
-    /// will use sha256 + size for download verification.
-    #[allow(dead_code)]
-    pub(crate) fn entry_for_current_platform(&self) -> Option<&PlatformEntry> {
-        if cfg!(target_os = "macos") {
-            Some(&self.macos)
-        } else if cfg!(target_os = "windows") {
-            Some(&self.windows)
-        } else {
-            None
+    /// Returns the per-platform entry for the supplied target. Both fields
+    /// are required by the schema, so the lookup is infallible.
+    pub(crate) fn entry_for(&self, platform: TargetPlatform) -> &PlatformEntry {
+        match platform {
+            TargetPlatform::Macos => &self.macos,
+            TargetPlatform::Windows => &self.windows,
         }
     }
 }
@@ -62,7 +69,6 @@ pub(crate) enum ParseError {
     UnknownChannel,
     MissingField(&'static str),
     InvalidFieldType(&'static str),
-    InvalidEmbeddedPublicKey,
 }
 
 impl std::fmt::Display for ParseError {
@@ -80,9 +86,6 @@ impl std::fmt::Display for ParseError {
             ParseError::MissingField(name) => write!(f, "manifest is missing field `{name}`"),
             ParseError::InvalidFieldType(name) => {
                 write!(f, "manifest field `{name}` has the wrong type")
-            }
-            ParseError::InvalidEmbeddedPublicKey => {
-                write!(f, "embedded public key is not a valid ed25519 PEM")
             }
         }
     }
@@ -105,8 +108,12 @@ struct PlatformRaw {
 
 /// Parse + verify the manifest using the compiled-in public key.
 pub(crate) fn parse_and_verify(bytes: &[u8]) -> Result<Manifest, ParseError> {
-    let key = decode_pem_public_key(SIGNING_PUBLIC_KEY_PEM)
-        .ok_or(ParseError::InvalidEmbeddedPublicKey)?;
+    // `from_bytes` only fails on invalid ed25519 curve encoding. The
+    // embedded key is constant and asserted by a unit test, so any
+    // failure here would indicate a build-time corruption — `expect` is
+    // the right shape.
+    let key = VerifyingKey::from_bytes(&SIGNING_PUBLIC_KEY)
+        .expect("embedded ed25519 public key must be valid");
     parse_and_verify_with_key(bytes, &key)
 }
 
@@ -200,80 +207,9 @@ pub(crate) fn parse_and_verify_with_key(
     })
 }
 
-/// Decode a PEM SubjectPublicKeyInfo blob containing an ed25519 key. The
-/// raw 32-byte public key sits at the end of the DER body; the SPKI
-/// AlgorithmIdentifier prefix is `30 2a 30 05 06 03 2b 65 70 03 21 00`
-/// (12 bytes) for ed25519. Returning `None` on any mismatch keeps the
-/// embedded-key validation simple and makes a bad key trigger
-/// `InvalidEmbeddedPublicKey` rather than misverify.
-fn decode_pem_public_key(pem: &str) -> Option<VerifyingKey> {
-    let mut der_b64 = String::new();
-    for line in pem.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with("-----") {
-            continue;
-        }
-        der_b64.push_str(line);
-    }
-    let der = base64_decode(&der_b64)?;
-    // ed25519 SPKI is 44 bytes total: 12 byte header + 32 byte key.
-    if der.len() != 44 {
-        return None;
-    }
-    const SPKI_PREFIX: [u8; 12] = [
-        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
-    ];
-    if der[..12] != SPKI_PREFIX {
-        return None;
-    }
-    let raw: [u8; 32] = der[12..].try_into().ok()?;
-    VerifyingKey::from_bytes(&raw).ok()
-}
-
-/// Minimal base64 decoder — only used at startup against a known-good blob
-/// (`docs/keys/signing-key.pub.pem`) so a dedicated base64 dep is overkill.
-fn base64_decode(input: &str) -> Option<Vec<u8>> {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut lut = [u8::MAX; 256];
-    for (i, byte) in ALPHABET.iter().enumerate() {
-        lut[*byte as usize] = i as u8;
-    }
-    let mut bytes = Vec::with_capacity(input.len() / 4 * 3);
-    let mut buf = [0u8; 4];
-    let mut buf_len = 0;
-    let mut pad = 0;
-    for ch in input.bytes() {
-        if ch == b'=' {
-            pad += 1;
-            buf[buf_len] = 0;
-            buf_len += 1;
-        } else if ch.is_ascii_whitespace() {
-            continue;
-        } else {
-            let value = lut[ch as usize];
-            if value == u8::MAX {
-                return None;
-            }
-            buf[buf_len] = value;
-            buf_len += 1;
-        }
-        if buf_len == 4 {
-            bytes.push((buf[0] << 2) | (buf[1] >> 4));
-            bytes.push((buf[1] << 4) | (buf[2] >> 2));
-            bytes.push((buf[2] << 6) | buf[3]);
-            buf_len = 0;
-        }
-    }
-    if buf_len != 0 {
-        return None;
-    }
-    bytes.truncate(bytes.len().saturating_sub(pad));
-    Some(bytes)
-}
-
 #[cfg(test)]
 pub(crate) fn embedded_public_key_for_tests() -> Option<VerifyingKey> {
-    decode_pem_public_key(SIGNING_PUBLIC_KEY_PEM)
+    VerifyingKey::from_bytes(&SIGNING_PUBLIC_KEY).ok()
 }
 
 #[cfg(test)]

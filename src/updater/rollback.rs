@@ -13,62 +13,16 @@
 //! slot, the backup slot, or the temporary swap slot — so a crash mid-swap
 //! always leaves something recoverable on disk.
 //!
-//! The module is intentionally small and platform-aware via
-//! [`RollbackPlatform`]. Tests instantiate `RollbackPaths` directly so the
-//! filesystem behavior is exercised on any host without depending on
-//! `current_exe`.
+//! The module is intentionally small. The macOS/Windows split lives in
+//! [`crate::updater::platform::TargetPlatform`]. Tests instantiate
+//! `RollbackPaths` directly so the filesystem behavior is exercised on
+//! any host without depending on `current_exe`.
 
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Platform shape for rollback file names. We share the macOS/Windows
-/// split with [`crate::updater::stager::StagePlatform`] but keep the
-/// rollback names as a local concern since this module doesn't know about
-/// zip layout.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RollbackPlatform {
-    Macos,
-    Windows,
-}
-
-impl RollbackPlatform {
-    /// Resolve the platform for the running target. `None` on hosts that
-    /// have no defined release shape (e.g. Linux dev hosts) — rollback is
-    /// a no-op there because the swap step never wrote a backup.
-    pub(crate) fn current() -> Option<RollbackPlatform> {
-        if cfg!(target_os = "macos") {
-            Some(RollbackPlatform::Macos)
-        } else if cfg!(target_os = "windows") {
-            Some(RollbackPlatform::Windows)
-        } else {
-            None
-        }
-    }
-
-    fn current_name(self) -> &'static str {
-        match self {
-            RollbackPlatform::Macos => "SnappyRef.app",
-            RollbackPlatform::Windows => "snappyref.exe",
-        }
-    }
-
-    fn backup_name(self) -> &'static str {
-        match self {
-            RollbackPlatform::Macos => "SnappyRef.app.previous",
-            RollbackPlatform::Windows => "snappyref.exe.old",
-        }
-    }
-
-    /// Name of the temporary slot used during the swap. Sits next to the
-    /// current/backup pair so the rename is on the same filesystem.
-    fn temp_name(self) -> &'static str {
-        match self {
-            RollbackPlatform::Macos => "SnappyRef.app.rolling",
-            RollbackPlatform::Windows => "snappyref.exe.rolling",
-        }
-    }
-}
+use crate::updater::platform::TargetPlatform;
 
 /// Three install-root–relative slots the rollback flow operates on. Kept
 /// as data so tests can drive the swap against a temp directory without
@@ -88,9 +42,9 @@ pub(crate) struct RollbackPaths {
 }
 
 impl RollbackPaths {
-    pub(crate) fn new(install_root: &Path, platform: RollbackPlatform) -> Self {
+    pub(crate) fn new(install_root: &Path, platform: TargetPlatform) -> Self {
         Self {
-            current: install_root.join(platform.current_name()),
+            current: install_root.join(platform.swap_unit_name()),
             backup: install_root.join(platform.backup_name()),
             temp: install_root.join(platform.temp_name()),
         }
@@ -184,7 +138,7 @@ pub fn run_cli() -> i32 {
 /// whether the "Rollback to previous version" button is visible. Returns
 /// `false` for unsupported platforms so callers do not have to special-case.
 pub(crate) fn backup_exists(install_root: &Path) -> bool {
-    let Some(platform) = RollbackPlatform::current() else {
+    let Some(platform) = TargetPlatform::current() else {
         return false;
     };
     backup_exists_at(install_root, platform)
@@ -192,7 +146,7 @@ pub(crate) fn backup_exists(install_root: &Path) -> bool {
 
 /// Variant of [`backup_exists`] that takes an explicit platform; used by
 /// unit tests so the helper is exercised on any host.
-pub(crate) fn backup_exists_at(install_root: &Path, platform: RollbackPlatform) -> bool {
+pub(crate) fn backup_exists_at(install_root: &Path, platform: TargetPlatform) -> bool {
     let paths = RollbackPaths::new(install_root, platform);
     backup_present(&paths.backup)
 }
@@ -208,7 +162,7 @@ fn backup_present(path: &Path) -> bool {
 /// when the backup is absent so callers can render the "nothing to roll
 /// back to" message; the CLI exits non-zero in that case.
 pub(crate) fn perform(install_root: &Path) -> Result<RollbackOutcome, RollbackError> {
-    let platform = RollbackPlatform::current().ok_or(RollbackError::UnsupportedPlatform)?;
+    let platform = TargetPlatform::current().ok_or(RollbackError::UnsupportedPlatform)?;
     perform_with_platform(install_root, platform)
 }
 
@@ -216,7 +170,7 @@ pub(crate) fn perform(install_root: &Path) -> Result<RollbackOutcome, RollbackEr
 /// Settings button both call [`perform`], tests call this directly.
 pub(crate) fn perform_with_platform(
     install_root: &Path,
-    platform: RollbackPlatform,
+    platform: TargetPlatform,
 ) -> Result<RollbackOutcome, RollbackError> {
     if !install_root.exists() {
         return Err(RollbackError::MissingInstallRoot);
@@ -315,19 +269,19 @@ mod tests {
 
     /// Build a current/backup pair for a platform inside `root`. Returns
     /// the resolved [`RollbackPaths`] for assertions.
-    fn seed(root: &Path, platform: RollbackPlatform) -> RollbackPaths {
+    fn seed(root: &Path, platform: TargetPlatform) -> RollbackPaths {
         let paths = RollbackPaths::new(root, platform);
         // For macOS the live and backup slots are directories; for
         // Windows they are files. The rename step works the same for
         // both as long as the seed mirrors the production shape.
         match platform {
-            RollbackPlatform::Macos => {
+            TargetPlatform::Macos => {
                 fs::create_dir_all(&paths.current).unwrap();
                 fs::write(paths.current.join("marker"), b"current").unwrap();
                 fs::create_dir_all(&paths.backup).unwrap();
                 fs::write(paths.backup.join("marker"), b"backup").unwrap();
             }
-            RollbackPlatform::Windows => {
+            TargetPlatform::Windows => {
                 fs::write(&paths.current, b"current-bin").unwrap();
                 fs::write(&paths.backup, b"backup-bin").unwrap();
             }
@@ -335,26 +289,26 @@ mod tests {
         paths
     }
 
-    fn read_marker(path: &Path, platform: RollbackPlatform) -> Vec<u8> {
+    fn read_marker(path: &Path, platform: TargetPlatform) -> Vec<u8> {
         match platform {
-            RollbackPlatform::Macos => fs::read(path.join("marker")).unwrap(),
-            RollbackPlatform::Windows => fs::read(path).unwrap(),
+            TargetPlatform::Macos => fs::read(path.join("marker")).unwrap(),
+            TargetPlatform::Windows => fs::read(path).unwrap(),
         }
     }
 
     #[test]
     fn backup_exists_at_returns_true_when_macos_backup_is_present() {
         let dir = unique_temp_dir("macos-detect");
-        let _paths = seed(&dir, RollbackPlatform::Macos);
-        assert!(backup_exists_at(&dir, RollbackPlatform::Macos));
+        let _paths = seed(&dir, TargetPlatform::Macos);
+        assert!(backup_exists_at(&dir, TargetPlatform::Macos));
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn backup_exists_at_returns_true_when_windows_backup_is_present() {
         let dir = unique_temp_dir("windows-detect");
-        let _paths = seed(&dir, RollbackPlatform::Windows);
-        assert!(backup_exists_at(&dir, RollbackPlatform::Windows));
+        let _paths = seed(&dir, TargetPlatform::Windows);
+        assert!(backup_exists_at(&dir, TargetPlatform::Windows));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -364,25 +318,25 @@ mod tests {
         // Live binary but no `.previous` sibling. Same shape as a fresh
         // install that has never had an update applied.
         fs::write(dir.join("snappyref.exe"), b"only-current").unwrap();
-        assert!(!backup_exists_at(&dir, RollbackPlatform::Windows));
+        assert!(!backup_exists_at(&dir, TargetPlatform::Windows));
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn perform_with_platform_swaps_current_and_backup_on_macos() {
         let dir = unique_temp_dir("macos-swap");
-        let paths = seed(&dir, RollbackPlatform::Macos);
+        let paths = seed(&dir, TargetPlatform::Macos);
 
-        let outcome = perform_with_platform(&dir, RollbackPlatform::Macos).unwrap();
+        let outcome = perform_with_platform(&dir, TargetPlatform::Macos).unwrap();
 
         assert_eq!(outcome.restored_to, paths.current);
         assert_eq!(outcome.new_backup, paths.backup);
         assert_eq!(
-            read_marker(&paths.current, RollbackPlatform::Macos),
+            read_marker(&paths.current, TargetPlatform::Macos),
             b"backup"
         );
         assert_eq!(
-            read_marker(&paths.backup, RollbackPlatform::Macos),
+            read_marker(&paths.backup, TargetPlatform::Macos),
             b"current"
         );
         assert!(!paths.temp.exists(), "temp slot must be cleaned up");
@@ -393,9 +347,9 @@ mod tests {
     #[test]
     fn perform_with_platform_swaps_current_and_backup_on_windows() {
         let dir = unique_temp_dir("windows-swap");
-        let paths = seed(&dir, RollbackPlatform::Windows);
+        let paths = seed(&dir, TargetPlatform::Windows);
 
-        perform_with_platform(&dir, RollbackPlatform::Windows).unwrap();
+        perform_with_platform(&dir, TargetPlatform::Windows).unwrap();
 
         assert_eq!(fs::read(&paths.current).unwrap(), b"backup-bin");
         assert_eq!(fs::read(&paths.backup).unwrap(), b"current-bin");
@@ -410,7 +364,7 @@ mod tests {
         // Only the live binary is present.
         fs::write(dir.join("snappyref.exe"), b"only-current").unwrap();
 
-        let error = perform_with_platform(&dir, RollbackPlatform::Windows).unwrap_err();
+        let error = perform_with_platform(&dir, TargetPlatform::Windows).unwrap_err();
         assert!(matches!(error, RollbackError::NoBackup), "got {error:?}");
         // The original current binary must be untouched.
         assert_eq!(
@@ -427,10 +381,10 @@ mod tests {
         // populated again, just with the roles swapped. A second call
         // should swap them back rather than fail.
         let dir = unique_temp_dir("twice");
-        let paths = seed(&dir, RollbackPlatform::Windows);
+        let paths = seed(&dir, TargetPlatform::Windows);
 
-        perform_with_platform(&dir, RollbackPlatform::Windows).unwrap();
-        perform_with_platform(&dir, RollbackPlatform::Windows).unwrap();
+        perform_with_platform(&dir, TargetPlatform::Windows).unwrap();
+        perform_with_platform(&dir, TargetPlatform::Windows).unwrap();
 
         assert_eq!(fs::read(&paths.current).unwrap(), b"current-bin");
         assert_eq!(fs::read(&paths.backup).unwrap(), b"backup-bin");
@@ -446,7 +400,7 @@ mod tests {
             COUNTER.fetch_add(1, Ordering::Relaxed),
         ));
         // Deliberately do not create `dir`.
-        let error = perform_with_platform(&dir, RollbackPlatform::Windows).unwrap_err();
+        let error = perform_with_platform(&dir, TargetPlatform::Windows).unwrap_err();
         assert!(
             matches!(error, RollbackError::MissingInstallRoot),
             "got {error:?}"
@@ -460,10 +414,10 @@ mod tests {
         // current/backup pair. The next rollback must clean it up and
         // still swap successfully so the user is never stuck.
         let dir = unique_temp_dir("stale-temp");
-        let paths = seed(&dir, RollbackPlatform::Windows);
+        let paths = seed(&dir, TargetPlatform::Windows);
         fs::write(&paths.temp, b"crash-residue").unwrap();
 
-        perform_with_platform(&dir, RollbackPlatform::Windows).unwrap();
+        perform_with_platform(&dir, TargetPlatform::Windows).unwrap();
 
         assert_eq!(fs::read(&paths.current).unwrap(), b"backup-bin");
         assert_eq!(fs::read(&paths.backup).unwrap(), b"current-bin");
@@ -491,10 +445,10 @@ mod tests {
         // Seed only a backup; no current. perform must still succeed
         // (restoring the prior version) without leaving the install
         // root binary-less even though there was nothing to demote.
-        let paths = RollbackPaths::new(&dir, RollbackPlatform::Windows);
+        let paths = RollbackPaths::new(&dir, TargetPlatform::Windows);
         fs::write(&paths.backup, b"sole-backup").unwrap();
 
-        perform_with_platform(&dir, RollbackPlatform::Windows).unwrap();
+        perform_with_platform(&dir, TargetPlatform::Windows).unwrap();
 
         assert!(paths.current.exists(), "current must exist after rollback");
         assert_eq!(fs::read(&paths.current).unwrap(), b"sole-backup");
@@ -511,10 +465,10 @@ mod tests {
         // verifying the recovery branch is wired without relying on OS
         // permission errors that vary by host.
         let dir = unique_temp_dir("recover");
-        let paths = seed(&dir, RollbackPlatform::Windows);
+        let paths = seed(&dir, TargetPlatform::Windows);
 
         // Normal case still leaves both slots populated.
-        perform_with_platform(&dir, RollbackPlatform::Windows).unwrap();
+        perform_with_platform(&dir, TargetPlatform::Windows).unwrap();
 
         // Both slots must be present after the swap.
         assert!(paths.current.exists());

@@ -195,7 +195,7 @@ jobs:
               --platform macos \
               --app-archive "$macos_app_zip" \
               "${package_args[@]}" \
-              --output "$release_assets/snappyref-macos-${{ inputs.release_tag }}-${suffix}.zip"
+              --output "$release_assets/snappyref-mac-${{ inputs.release_tag }}-${suffix}.zip"
           fi
 
       - uses: actions/upload-artifact@v4

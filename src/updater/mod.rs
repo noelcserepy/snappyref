@@ -25,6 +25,7 @@ pub(crate) mod discovery;
 pub(crate) mod download;
 pub(crate) mod install_paths;
 pub(crate) mod manifest;
+pub(crate) mod platform;
 pub mod rollback;
 pub(crate) mod stager;
 pub(crate) mod state;
@@ -33,8 +34,10 @@ pub(crate) mod version;
 pub(crate) use state::UpdateState;
 
 use discovery::{NextAction, ScheduleInput, decide};
-use manifest::{Manifest, PlatformEntry};
-use stager::StagePlatform;
+use manifest::Manifest;
+#[cfg(test)]
+use manifest::PlatformEntry;
+use platform::TargetPlatform;
 use state::{CheckOutcome, InstallProgress};
 
 /// URL of the signed manifest published by CI to the `snappyref-dist`
@@ -113,7 +116,7 @@ pub(crate) struct InstallContext {
     pub sha256: String,
     pub size: u64,
     pub install_root: PathBuf,
-    pub platform: Option<StagePlatform>,
+    pub platform: Option<TargetPlatform>,
 }
 
 /// Internal channel payload from the discovery worker. Carries both the
@@ -168,7 +171,7 @@ impl UpdateService {
             _ => return None,
         };
         let install_root = self.resolved_install_root()?;
-        let platform = StagePlatform::current()?;
+        let platform = TargetPlatform::current()?;
         let staging_dir = install_paths::staging_dir(&install_root, &version);
         let staged_bundle = staged_swap_unit(&staging_dir, platform);
         let current_bundle = current_swap_unit(&install_root, platform);
@@ -221,12 +224,13 @@ impl UpdateService {
             (Some(manifest), UpdateState::Available { .. }) => manifest.clone(),
             _ => return,
         };
-        let Some(entry) = entry_for_target(&manifest) else {
+        let Some(platform) = TargetPlatform::current() else {
             // No platform entry for the running OS; the pill stays
             // Available so the user can still open the release page
             // manually via the popover's release-notes link.
             return;
         };
+        let entry = manifest.entry_for(platform);
         let Some(install_root) = self.resolved_install_root() else {
             self.state = UpdateState::Failed;
             return;
@@ -237,7 +241,7 @@ impl UpdateService {
             sha256: entry.sha256.clone(),
             size: entry.size,
             install_root,
-            platform: StagePlatform::current(),
+            platform: Some(platform),
         };
         self.state.begin_install(context.version.clone());
         let (tx, rx) = channel();
@@ -268,7 +272,7 @@ impl UpdateService {
         let Some(install_root) = self.resolved_install_root() else {
             return;
         };
-        let Some(platform) = StagePlatform::current() else {
+        let Some(platform) = TargetPlatform::current() else {
             return;
         };
         let staging = install_paths::staging_dir(&install_root, &manifest.version);
@@ -476,27 +480,13 @@ impl UpdateService {
     }
 }
 
-/// Pick the manifest's entry for the running target OS. Returns `None` on
-/// hosts the release shape does not cover (e.g. Linux dev builds).
-fn entry_for_target(manifest: &Manifest) -> Option<&PlatformEntry> {
-    if cfg!(target_os = "macos") {
-        Some(&manifest.macos)
-    } else if cfg!(target_os = "windows") {
-        Some(&manifest.windows)
-    } else {
-        None
-    }
-}
-
 /// Resolve the swap unit inside a staging tree:
 /// `<staging>/SnappyRef/SnappyRef.app` on macOS,
 /// `<staging>/SnappyRef/snappyref.exe` on Windows.
-pub(crate) fn staged_swap_unit(staging_dir: &std::path::Path, platform: StagePlatform) -> PathBuf {
-    let bundle_root = staging_dir.join(stager::EXPECTED_TOP_LEVEL);
-    match platform {
-        StagePlatform::Macos => bundle_root.join("SnappyRef.app"),
-        StagePlatform::Windows => bundle_root.join("snappyref.exe"),
-    }
+pub(crate) fn staged_swap_unit(staging_dir: &std::path::Path, platform: TargetPlatform) -> PathBuf {
+    staging_dir
+        .join(stager::EXPECTED_TOP_LEVEL)
+        .join(platform.swap_unit_name())
 }
 
 /// Resolve the swap unit inside the live install root:
@@ -504,12 +494,9 @@ pub(crate) fn staged_swap_unit(staging_dir: &std::path::Path, platform: StagePla
 /// `<install_root>/snappyref.exe` on Windows.
 pub(crate) fn current_swap_unit(
     install_root: &std::path::Path,
-    platform: StagePlatform,
+    platform: TargetPlatform,
 ) -> PathBuf {
-    match platform {
-        StagePlatform::Macos => install_root.join("SnappyRef.app"),
-        StagePlatform::Windows => install_root.join("snappyref.exe"),
-    }
+    install_root.join(platform.swap_unit_name())
 }
 
 /// Re-validate a staged bundle on disk using the same rules
@@ -517,14 +504,14 @@ pub(crate) fn current_swap_unit(
 /// `Ok(())` only when the layout is still structurally valid.
 fn validate_existing_staging(
     staging_root: &std::path::Path,
-    platform: StagePlatform,
+    platform: TargetPlatform,
 ) -> Result<(), String> {
     let bundle_root = staging_root.join(stager::EXPECTED_TOP_LEVEL);
     if !bundle_root.is_dir() {
         return Err("missing top-level SnappyRef/".to_owned());
     }
     match platform {
-        StagePlatform::Macos => {
+        TargetPlatform::Macos => {
             let macos_dir = bundle_root
                 .join("SnappyRef.app")
                 .join("Contents")
@@ -540,7 +527,7 @@ fn validate_existing_staging(
                 return Err("Contents/MacOS is empty".to_owned());
             }
         }
-        StagePlatform::Windows => {
+        TargetPlatform::Windows => {
             if !bundle_root.join("snappyref.exe").is_file() {
                 return Err("missing snappyref.exe".to_owned());
             }
@@ -1035,7 +1022,7 @@ mod tests {
         // version the manifest will advertise. The platform-current()
         // function only resolves on macOS/Windows; on other hosts the
         // detect path early-returns, so we skip the assertion there.
-        if StagePlatform::current().is_none() {
+        if TargetPlatform::current().is_none() {
             return;
         }
         let scratch = std::env::temp_dir().join(format!(
@@ -1047,8 +1034,8 @@ mod tests {
                 .as_nanos(),
         ));
         let staging = install_paths::staging_dir(&scratch, "1.0.0");
-        match StagePlatform::current().unwrap() {
-            StagePlatform::Macos => {
+        match TargetPlatform::current().unwrap() {
+            TargetPlatform::Macos => {
                 let macos = staging
                     .join(stager::EXPECTED_TOP_LEVEL)
                     .join("SnappyRef.app")
@@ -1057,7 +1044,7 @@ mod tests {
                 std::fs::create_dir_all(&macos).unwrap();
                 std::fs::write(macos.join("snappyref"), b"binary").unwrap();
             }
-            StagePlatform::Windows => {
+            TargetPlatform::Windows => {
                 let bundle = staging.join(stager::EXPECTED_TOP_LEVEL);
                 std::fs::create_dir_all(&bundle).unwrap();
                 std::fs::write(bundle.join("snappyref.exe"), b"binary").unwrap();

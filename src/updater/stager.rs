@@ -18,6 +18,8 @@ use std::path::{Component, Path, PathBuf};
 
 use zip::ZipArchive;
 
+use crate::updater::platform::TargetPlatform;
+
 /// Top-level folder name expected inside every release zip. ADR-0015:
 /// "Each platform zip contains a single top-level `SnappyRef/` folder so
 /// the user's 'drag the folder anywhere' model is uniform across macOS
@@ -58,33 +60,6 @@ impl From<io::Error> for StageError {
     }
 }
 
-/// Platform-shape distinction. The two production cases are macOS (the
-/// bundle path `SnappyRef.app/Contents/MacOS/snappyref` must exist) and
-/// Windows (`snappyref.exe` must exist next to a `SnappyRef` folder).
-/// Passing the platform explicitly keeps the function unit-testable on
-/// any host.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StagePlatform {
-    Macos,
-    Windows,
-}
-
-impl StagePlatform {
-    /// Resolve the staging platform for the running target. Returns
-    /// `None` on hosts that do not have a defined release shape (Linux,
-    /// CI sandboxes); the caller treats that as "skip staging".
-    #[allow(dead_code)]
-    pub(crate) fn current() -> Option<StagePlatform> {
-        if cfg!(target_os = "macos") {
-            Some(StagePlatform::Macos)
-        } else if cfg!(target_os = "windows") {
-            Some(StagePlatform::Windows)
-        } else {
-            None
-        }
-    }
-}
-
 /// Outcome of a successful staging.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct StageOutcome {
@@ -100,7 +75,7 @@ pub(crate) struct StageOutcome {
 pub(crate) fn extract_and_validate(
     zip_path: &Path,
     staging_root: &Path,
-    platform: StagePlatform,
+    platform: TargetPlatform,
 ) -> Result<StageOutcome, StageError> {
     // Start clean. A previous failed attempt may have left files behind;
     // the verified-then-staged invariant requires this directory either
@@ -215,7 +190,7 @@ fn sanitize_entry_path(name: &str) -> Result<PathBuf, StageError> {
 }
 
 /// Verify the extracted tree matches the platform's expected layout.
-fn validate_layout(bundle_root: &Path, platform: StagePlatform) -> Result<(), StageError> {
+fn validate_layout(bundle_root: &Path, platform: TargetPlatform) -> Result<(), StageError> {
     if !bundle_root.is_dir() {
         return Err(StageError::InvalidLayout(format!(
             "expected top-level `{}/` folder inside the zip",
@@ -223,7 +198,7 @@ fn validate_layout(bundle_root: &Path, platform: StagePlatform) -> Result<(), St
         )));
     }
     match platform {
-        StagePlatform::Macos => {
+        TargetPlatform::Macos => {
             // Match the macOS install layout used by library_location:
             //   SnappyRef/SnappyRef.app/Contents/MacOS/{executable}
             // We don't pin the executable filename — slices that build
@@ -251,7 +226,7 @@ fn validate_layout(bundle_root: &Path, platform: StagePlatform) -> Result<(), St
                 ));
             }
         }
-        StagePlatform::Windows => {
+        TargetPlatform::Windows => {
             // Windows layout: SnappyRef/snappyref.exe at the folder root.
             let exe = bundle_root.join("snappyref.exe");
             if !exe.is_file() {
@@ -337,7 +312,7 @@ mod tests {
         write_zip(&zip_path, &macos_zip_entries());
         let staging = dir.join("staging-1.0.0");
 
-        let outcome = extract_and_validate(&zip_path, &staging, StagePlatform::Macos).unwrap();
+        let outcome = extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap();
 
         assert_eq!(outcome.staging_root, staging);
         assert_eq!(outcome.bundle_root, staging.join("SnappyRef"));
@@ -357,7 +332,7 @@ mod tests {
         write_zip(&zip_path, &windows_zip_entries());
         let staging = dir.join("staging-1.0.0");
 
-        let outcome = extract_and_validate(&zip_path, &staging, StagePlatform::Windows).unwrap();
+        let outcome = extract_and_validate(&zip_path, &staging, TargetPlatform::Windows).unwrap();
 
         assert_eq!(outcome.bundle_root, staging.join("SnappyRef"));
         assert!(staging.join("SnappyRef/snappyref.exe").is_file());
@@ -376,7 +351,7 @@ mod tests {
         );
         let staging = dir.join("staging-evil");
 
-        let err = extract_and_validate(&zip_path, &staging, StagePlatform::Macos).unwrap_err();
+        let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap_err();
         match err {
             StageError::PathTraversal { entry } => {
                 assert!(entry.contains(".."), "entry was {entry}");
@@ -400,7 +375,7 @@ mod tests {
         write_zip(&zip_path, &[("/etc/passwd", b"nope")]);
         let staging = dir.join("staging-abs");
 
-        let err = extract_and_validate(&zip_path, &staging, StagePlatform::Macos).unwrap_err();
+        let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap_err();
         assert!(matches!(err, StageError::PathTraversal { .. }), "{err:?}");
         assert!(!staging.exists());
 
@@ -414,7 +389,7 @@ mod tests {
         write_zip(&zip_path, &[("C:/SnappyRef/snappyref.exe", b"nope")]);
         let staging = dir.join("staging-drive");
 
-        let err = extract_and_validate(&zip_path, &staging, StagePlatform::Windows).unwrap_err();
+        let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Windows).unwrap_err();
         assert!(matches!(err, StageError::PathTraversal { .. }), "{err:?}");
 
         let _ = fs::remove_dir_all(&dir);
@@ -429,7 +404,7 @@ mod tests {
         write_zip(&zip_path, &[("SnappyRef\\..\\escape.txt", b"nope")]);
         let staging = dir.join("staging-bs");
 
-        let err = extract_and_validate(&zip_path, &staging, StagePlatform::Macos).unwrap_err();
+        let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap_err();
         assert!(matches!(err, StageError::PathTraversal { .. }), "{err:?}");
 
         let _ = fs::remove_dir_all(&dir);
@@ -442,7 +417,7 @@ mod tests {
         fs::write(&zip_path, b"this is not a zip file").unwrap();
         let staging = dir.join("staging-malformed");
 
-        let err = extract_and_validate(&zip_path, &staging, StagePlatform::Macos).unwrap_err();
+        let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap_err();
         assert!(matches!(err, StageError::InvalidZip(_)), "{err:?}");
         assert!(!staging.exists());
 
@@ -457,7 +432,7 @@ mod tests {
         write_zip(&zip_path, &[("snappyref.exe", b"fake")]);
         let staging = dir.join("staging-flat");
 
-        let err = extract_and_validate(&zip_path, &staging, StagePlatform::Windows).unwrap_err();
+        let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Windows).unwrap_err();
         match err {
             StageError::InvalidLayout(_) => {}
             other => panic!("expected InvalidLayout, got {other:?}"),
@@ -480,7 +455,7 @@ mod tests {
         );
         let staging = dir.join("staging-no-app");
 
-        let err = extract_and_validate(&zip_path, &staging, StagePlatform::Macos).unwrap_err();
+        let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap_err();
         match err {
             StageError::InvalidLayout(msg) => {
                 assert!(msg.contains("SnappyRef.app"), "msg was {msg}");
@@ -502,7 +477,7 @@ mod tests {
         );
         let staging = dir.join("staging-no-exe");
 
-        let err = extract_and_validate(&zip_path, &staging, StagePlatform::Windows).unwrap_err();
+        let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Windows).unwrap_err();
         match err {
             StageError::InvalidLayout(msg) => {
                 assert!(msg.contains("snappyref.exe"), "msg was {msg}");
@@ -524,7 +499,7 @@ mod tests {
         fs::create_dir_all(&staging).unwrap();
         fs::write(staging.join("stale-file.txt"), b"old").unwrap();
 
-        extract_and_validate(&zip_path, &staging, StagePlatform::Macos).unwrap();
+        extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap();
 
         assert!(
             !staging.join("stale-file.txt").exists(),

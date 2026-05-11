@@ -164,15 +164,18 @@ pub fn apply_swap(descriptor: &PendingUpdateDescriptor) -> Result<(), String> {
     strip_quarantine_xattr(&descriptor.staged_bundle);
 
     let backup_path = backup_path_for(&descriptor.current_bundle);
-    if backup_path.exists() {
-        std::fs::remove_dir_all(&backup_path)
-            .or_else(|_| std::fs::remove_file(&backup_path))
-            .map_err(|error| {
-                format!(
-                    "failed to remove prior backup `{}`: {error}",
-                    backup_path.display()
-                )
-            })?;
+    if let Ok(metadata) = std::fs::symlink_metadata(&backup_path) {
+        let result = if metadata.is_dir() {
+            std::fs::remove_dir_all(&backup_path)
+        } else {
+            std::fs::remove_file(&backup_path)
+        };
+        result.map_err(|error| {
+            format!(
+                "failed to remove prior backup `{}`: {error}",
+                backup_path.display()
+            )
+        })?;
     }
 
     if descriptor.current_bundle.exists() {
@@ -198,15 +201,16 @@ pub fn apply_swap(descriptor: &PendingUpdateDescriptor) -> Result<(), String> {
 /// `<install_root>/SnappyRef.app` → `<install_root>/SnappyRef.app.previous`.
 /// `<install_root>/snappyref.exe` → `<install_root>/snappyref.exe.old`.
 fn backup_path_for(current: &Path) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    const SUFFIX: &str = ".old";
+    #[cfg(not(target_os = "windows"))]
+    const SUFFIX: &str = ".previous";
+
     let mut name: OsString = current
         .file_name()
         .map(|n| n.to_os_string())
         .unwrap_or_default();
-    if cfg!(target_os = "windows") {
-        name.push(".old");
-    } else {
-        name.push(".previous");
-    }
+    name.push(SUFFIX);
     current
         .parent()
         .map(|parent| parent.join(&name))
@@ -235,15 +239,10 @@ fn relaunch(descriptor: &PendingUpdateDescriptor) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        // `open <app>` with `--args` forwards extra args to the app's
-        // launched process. Spawning detached keeps the helper from
-        // blocking on the new app's lifetime.
-        let mut command = Command::new("/usr/bin/open");
-        command.arg("-a").arg(&descriptor.current_bundle);
-        if !descriptor.launch_args.is_empty() {
-            command.arg("--args");
-            command.args(&descriptor.launch_args);
-        }
+        let (program, args) =
+            macos_relaunch_argv(&descriptor.current_bundle, &descriptor.launch_args);
+        let mut command = Command::new(program);
+        command.args(&args);
         command
             .spawn()
             .map_err(|error| format!("failed to relaunch app: {error}"))?;
@@ -264,6 +263,22 @@ fn relaunch(descriptor: &PendingUpdateDescriptor) -> Result<(), String> {
     }
 }
 
+/// Build the `open(1)` argv used to relaunch the app on macOS. Extracted from
+/// [`relaunch`] for unit testing — `open -a <bundle> [--args <forwarded...>]`
+/// forwards extra args to the app's launched process and detaches the helper
+/// from its lifetime.
+#[cfg(any(target_os = "macos", test))]
+pub fn macos_relaunch_argv(bundle: &Path, launch_args: &[String]) -> (&'static str, Vec<OsString>) {
+    let mut args: Vec<OsString> = Vec::with_capacity(3 + launch_args.len());
+    args.push(OsString::from("-a"));
+    args.push(bundle.as_os_str().to_os_string());
+    if !launch_args.is_empty() {
+        args.push(OsString::from("--args"));
+        args.extend(launch_args.iter().map(OsString::from));
+    }
+    ("/usr/bin/open", args)
+}
+
 fn spawn_relaunch_override(
     program: &str,
     descriptor: &PendingUpdateDescriptor,
@@ -280,5 +295,58 @@ fn spawn_relaunch_override(
 fn cleanup_staging(staging_dir: &Path) {
     if staging_dir.exists() {
         let _ = std::fs::remove_dir_all(staging_dir);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn macos_relaunch_argv_without_launch_args() {
+        let bundle = PathBuf::from("/Applications/SnappyRef.app");
+        let (program, args) = macos_relaunch_argv(&bundle, &[]);
+        assert_eq!(program, "/usr/bin/open");
+        assert_eq!(args, vec![OsString::from("-a"), OsString::from(&bundle)]);
+    }
+
+    #[test]
+    fn macos_relaunch_argv_with_launch_args_inserts_args_separator() {
+        let bundle = PathBuf::from("/Applications/SnappyRef.app");
+        let launch_args = vec!["--profile".to_owned(), "default".to_owned()];
+        let (program, args) = macos_relaunch_argv(&bundle, &launch_args);
+        assert_eq!(program, "/usr/bin/open");
+        assert_eq!(
+            args,
+            vec![
+                OsString::from("-a"),
+                OsString::from(&bundle),
+                OsString::from("--args"),
+                OsString::from("--profile"),
+                OsString::from("default"),
+            ]
+        );
+    }
+
+    #[test]
+    fn backup_path_for_appends_platform_suffix() {
+        let current = if cfg!(target_os = "windows") {
+            PathBuf::from("C:/SnappyRef/snappyref.exe")
+        } else {
+            PathBuf::from("/Applications/SnappyRef.app")
+        };
+        let backup = backup_path_for(&current);
+        let suffix = if cfg!(target_os = "windows") {
+            ".old"
+        } else {
+            ".previous"
+        };
+        let expected_name = format!(
+            "{}{}",
+            current.file_name().unwrap().to_string_lossy(),
+            suffix
+        );
+        assert_eq!(backup.file_name().unwrap().to_string_lossy(), expected_name);
+        assert_eq!(backup.parent(), current.parent());
     }
 }
