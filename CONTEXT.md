@@ -374,6 +374,14 @@ _Avoid_: Remove from library, archive
 A published app version newer than the running one, discovered by the app's background update check.
 _Avoid_: Pending update, downloaded update, new release
 
+**Update Pill**:
+The sidebar widget that surfaces an **Available Update**. Visible only in the **Available** or **Failed** state; the rest of the time it is **Hidden**. Clicking an Available pill opens the **Update Popover**.
+_Avoid_: Update badge, update banner, update toast
+
+**Update Popover**:
+The small panel anchored to the **Update Pill** that shows the new version, a release-notes link, an Install button, and a Later button. In slice 4 Install is a stopgap that opens the release page in the user's default browser.
+_Avoid_: Update modal, update dialog
+
 ## Relationships
 
 - A **Library** has one or more non-archived **Boards**.
