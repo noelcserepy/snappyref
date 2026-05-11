@@ -157,7 +157,7 @@ The raster image data used to create a semantic-search embedding; prefer the **W
 _Avoid_: Search thumbnail, model image
 
 **Embedding Helper Process**:
-A short-lived child process that owns semantic model loading and image embedding for currently queued embedding work, then exits so native model and allocator memory return to the OS.
+A short-lived child process that owns image-side semantic model loading and image embedding for currently queued embedding work, then exits so native model and allocator memory return to the OS. Text semantic-search model loading stays on the demand search path, not the import/backfill image helper path.
 _Avoid_: Background model cache, permanent model worker
 
 **Local Model Store**:
@@ -259,8 +259,12 @@ The later post-tail measurement window where the app should remain near-zero CPU
 _Avoid_: Settled idle, idle tail
 
 **Quiescent Memory**:
-The retained memory footprint measured during **Quiescent Idle**, after import, embedding, backfill, and the immediate post-idle tail have drained.
+The retained memory footprint measured during **Quiescent Idle**, after import, embedding, backfill, and the immediate post-idle tail have drained. Refers to the main process only; **Embedding Helper Process** and **Image Preparation Helper Process** have exited by this window.
 _Avoid_: Peak memory, import memory
+
+**Process Tree Peak Memory**:
+The peak summed RSS, across one perf sampling tick, of the main app process plus every helper process descended from it (most importantly the **Embedding Helper Process** and **Image Preparation Helper Process**) during active work. Complements **Quiescent Memory**: a faster pipeline that simply shifts allocations into a helper improves **Quiescent Memory** while raising this number.
+_Avoid_: Peak RSS, idle peak
 
 **Time to Quiescent**:
 The elapsed time from **Settled Idle** until CPU remains below the idle target for a sustained window.
@@ -427,6 +431,7 @@ _Avoid_: Update install, apply update
 - **Settled Idle** is a work-queue state; low CPU and stable memory are performance targets measured after the app reaches **Settled Idle**.
 - **Idle Tail** explains short post-idle cleanup or CPU accounting decay; **Quiescent Idle** is the steady-state CPU target window.
 - **Quiescent Memory** is the steady retained-memory target; optimize it before optimizing **Time to Idle** so faster pipelines do not hide retained memory growth.
+- **Process Tree Peak Memory** must be reported alongside **Quiescent Memory** because optimizing **Quiescent Memory** by shifting allocations into an **Embedding Helper Process** or **Image Preparation Helper Process** can raise **Process Tree Peak Memory** without changing the main-process number.
 - A **Canvas Pixel Snapshot** is warmed on demand for selected placements and should not exist for every loaded placement.
 - A **Crop Preview** may use a **Canvas Pixel Snapshot** before the final cropped **Asset** exists.
 - **Delete (from board)** removes **Placements** and **Annotations** from the **Active Board** but does not remove **Assets** from the **Library**.

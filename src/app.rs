@@ -338,6 +338,14 @@ struct FramePerfState {
     canvas: crate::canvas::CanvasFrameMetrics,
 }
 
+#[derive(Clone, Debug)]
+struct PerfCorpusAsset {
+    file: String,
+    format: String,
+    animated: bool,
+    bytes: Option<u64>,
+}
+
 #[derive(Debug)]
 struct PerfScenarioState {
     name: String,
@@ -355,9 +363,50 @@ struct PerfScenarioState {
     first_embedding_queued_logged: bool,
     first_embedding_done_logged: bool,
     all_embeddings_done_logged: bool,
+    embedding_phases: EmbeddingPhaseMarkers,
     idle_since: Option<Instant>,
     settled_idle_logged: bool,
     model_unload_logged: bool,
+    /// Per-asset corpus metadata indexed by import queue id, so events
+    /// emitted after `import_queued` can still report `format`.
+    asset_by_queue_id: std::collections::HashMap<u64, PerfCorpusAsset>,
+    /// Per-asset corpus metadata indexed by stored asset id, used to
+    /// stamp `format` onto embedding events once an asset id is known.
+    asset_by_asset_id: std::collections::HashMap<i64, PerfCorpusAsset>,
+}
+
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+struct ModelLoadTimingSummary {
+    assets_resolved_ms: f64,
+    tokenizer_loaded_ms: f64,
+    text_session_loaded_ms: f64,
+    vision_session_loaded_ms: f64,
+    total_ms: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct EmbeddingPhaseMarkers {
+    first_embedding_queued_ms: Option<f64>,
+    semantic_model_load_started_ms: Option<f64>,
+    semantic_model_ready_ms: Option<f64>,
+    first_embedding_started_ms: Option<f64>,
+    first_embedding_done_ms: Option<f64>,
+    all_embeddings_done_ms: Option<f64>,
+    semantic_model_unload_requested_ms: Option<f64>,
+    semantic_model_unloaded_ms: Option<f64>,
+    model_load_timing: Option<ModelLoadTimingSummary>,
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+struct EmbeddingPhaseSummary {
+    queue_to_model_load_started_ms: Option<f64>,
+    model_cold_mount_ms: Option<f64>,
+    first_embedding_start_after_model_ready_ms: Option<f64>,
+    first_embedding_after_model_ready_ms: Option<f64>,
+    first_embedding_run_ms: Option<f64>,
+    total_import_embedding_drain_ms: Option<f64>,
+    model_unload_ms: Option<f64>,
+    model_load_timing: Option<ModelLoadTimingSummary>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -409,9 +458,12 @@ impl PerfScenarioState {
             first_embedding_queued_logged: false,
             first_embedding_done_logged: false,
             all_embeddings_done_logged: false,
+            embedding_phases: EmbeddingPhaseMarkers::default(),
             idle_since: None,
             settled_idle_logged: false,
             model_unload_logged: false,
+            asset_by_queue_id: std::collections::HashMap::new(),
+            asset_by_asset_id: std::collections::HashMap::new(),
         }))
     }
 
@@ -420,16 +472,31 @@ impl PerfScenarioState {
     }
 
     fn emit(&mut self, event: &str, mut extra: serde_json::Value) {
+        let elapsed_ms = self.elapsed_ms();
+        self.embedding_phases.record_event(event, elapsed_ms);
         if let Some(object) = extra.as_object_mut() {
             object.insert("event".to_owned(), serde_json::json!(event));
-            object.insert(
-                "elapsed_ms".to_owned(),
-                serde_json::json!(self.elapsed_ms()),
-            );
+            object.insert("elapsed_ms".to_owned(), serde_json::json!(elapsed_ms));
             object.insert("scenario".to_owned(), serde_json::json!(self.name));
         }
         let _ = writeln!(self.events, "{extra}");
         let _ = self.events.flush();
+    }
+
+    fn emit_model_load_timing(&mut self, timing: ModelLoadTimingSummary) {
+        self.embedding_phases
+            .model_load_timing
+            .get_or_insert(timing);
+        self.emit(
+            "semantic_model_load_timing",
+            serde_json::json!({
+                "assets_resolved_ms": timing.assets_resolved_ms,
+                "tokenizer_loaded_ms": timing.tokenizer_loaded_ms,
+                "text_session_loaded_ms": timing.text_session_loaded_ms,
+                "vision_session_loaded_ms": timing.vision_session_loaded_ms,
+                "total_ms": timing.total_ms,
+            }),
+        );
     }
 
     fn manifest_path(&self) -> PathBuf {
@@ -504,6 +571,7 @@ impl PerfScenarioState {
             "visible_imports": self.visible_imports,
             "demand_embeddings_queued": self.demand_embeddings_queued,
             "demand_embeddings_done": self.demand_embeddings_done,
+            "embedding_phases": self.embedding_phases.summary(),
             "import_worker": {
                 "queued_startup": worker_stats.queued_startup,
                 "queued_interactive": worker_stats.queued_interactive,
@@ -525,6 +593,93 @@ impl PerfScenarioState {
             &path,
             serde_json::to_string_pretty(&summary).unwrap_or_default(),
         );
+    }
+}
+
+impl EmbeddingPhaseMarkers {
+    fn record_event(&mut self, event: &str, elapsed_ms: f64) {
+        match event {
+            "first_import_embedding_queued" => {
+                self.first_embedding_queued_ms.get_or_insert(elapsed_ms);
+            }
+            "semantic_model_load_started" => {
+                self.semantic_model_load_started_ms
+                    .get_or_insert(elapsed_ms);
+            }
+            "semantic_model_ready" => {
+                self.semantic_model_ready_ms.get_or_insert(elapsed_ms);
+            }
+            "first_import_embedding_started" => {
+                self.first_embedding_started_ms.get_or_insert(elapsed_ms);
+            }
+            "first_import_embedding_done" => {
+                self.first_embedding_done_ms.get_or_insert(elapsed_ms);
+            }
+            "all_import_embeddings_done" => {
+                self.all_embeddings_done_ms.get_or_insert(elapsed_ms);
+            }
+            "semantic_model_unload_requested" => {
+                self.semantic_model_unload_requested_ms
+                    .get_or_insert(elapsed_ms);
+            }
+            "semantic_model_unloaded" => {
+                self.semantic_model_unloaded_ms.get_or_insert(elapsed_ms);
+            }
+            _ => {}
+        }
+    }
+
+    fn summary(&self) -> Option<EmbeddingPhaseSummary> {
+        let has_embedding_phase = self.first_embedding_queued_ms.is_some()
+            || self.semantic_model_load_started_ms.is_some()
+            || self.semantic_model_ready_ms.is_some()
+            || self.first_embedding_started_ms.is_some()
+            || self.first_embedding_done_ms.is_some()
+            || self.all_embeddings_done_ms.is_some()
+            || self.model_load_timing.is_some();
+        has_embedding_phase.then(|| EmbeddingPhaseSummary {
+            queue_to_model_load_started_ms: duration_between(
+                self.first_embedding_queued_ms,
+                self.semantic_model_load_started_ms,
+            ),
+            model_cold_mount_ms: self
+                .model_load_timing
+                .map(|timing| timing.total_ms)
+                .or_else(|| {
+                    duration_between(
+                        self.semantic_model_load_started_ms,
+                        self.semantic_model_ready_ms,
+                    )
+                }),
+            first_embedding_start_after_model_ready_ms: duration_between(
+                self.semantic_model_ready_ms,
+                self.first_embedding_started_ms,
+            ),
+            first_embedding_after_model_ready_ms: duration_between(
+                self.semantic_model_ready_ms,
+                self.first_embedding_done_ms,
+            ),
+            first_embedding_run_ms: duration_between(
+                self.first_embedding_started_ms,
+                self.first_embedding_done_ms,
+            ),
+            total_import_embedding_drain_ms: duration_between(
+                self.first_embedding_queued_ms,
+                self.all_embeddings_done_ms,
+            ),
+            model_unload_ms: duration_between(
+                self.semantic_model_unload_requested_ms,
+                self.semantic_model_unloaded_ms,
+            ),
+            model_load_timing: self.model_load_timing,
+        })
+    }
+}
+
+fn duration_between(start_ms: Option<f64>, end_ms: Option<f64>) -> Option<f64> {
+    match (start_ms, end_ms) {
+        (Some(start_ms), Some(end_ms)) => Some((end_ms - start_ms).max(0.0)),
+        _ => None,
     }
 }
 
@@ -1650,6 +1805,16 @@ impl SnappyRefApp {
                 return;
             }
             if let Some(scenario) = &mut self.perf_scenario {
+                let bytes = std::fs::metadata(&path).ok().map(|metadata| metadata.len());
+                scenario.asset_by_queue_id.insert(
+                    reservation.queue_id,
+                    PerfCorpusAsset {
+                        file: entry.file.clone(),
+                        format: entry.format.clone(),
+                        animated: entry.animated,
+                        bytes,
+                    },
+                );
                 scenario.emit(
                     "import_queued",
                     serde_json::json!({
@@ -1659,6 +1824,8 @@ impl SnappyRefApp {
                         "role": entry.role,
                         "width": dimensions.map(|value| value.0),
                         "height": dimensions.map(|value| value.1),
+                        "bytes": bytes,
+                        "queue_id": reservation.queue_id,
                     }),
                 );
             }
@@ -1690,32 +1857,74 @@ impl SnappyRefApp {
                         text_session_loaded_ms,
                         vision_session_loaded_ms,
                         total_ms,
-                    } => scenario.emit(
-                        "semantic_model_load_timing",
-                        serde_json::json!({
-                            "assets_resolved_ms": assets_resolved_ms,
-                            "tokenizer_loaded_ms": tokenizer_loaded_ms,
-                            "text_session_loaded_ms": text_session_loaded_ms,
-                            "vision_session_loaded_ms": vision_session_loaded_ms,
-                            "total_ms": total_ms,
-                        }),
-                    ),
+                    } => scenario.emit_model_load_timing(ModelLoadTimingSummary {
+                        assets_resolved_ms,
+                        tokenizer_loaded_ms,
+                        text_session_loaded_ms,
+                        vision_session_loaded_ms,
+                        total_ms,
+                    }),
                     crate::search::SemanticPerfEvent::ModelReady => {
                         scenario.emit("semantic_model_ready", serde_json::json!({}));
                     }
+                    crate::search::SemanticPerfEvent::ImportEmbeddingStarted { asset_id } => {
+                        let metadata = scenario.asset_by_asset_id.get(&asset_id).cloned();
+                        let (format_value, source_file) = match &metadata {
+                            Some(meta) => (Some(meta.format.clone()), Some(meta.file.clone())),
+                            None => (None, None),
+                        };
+                        scenario.emit(
+                            "import_embedding_started",
+                            serde_json::json!({
+                                "asset_id": asset_id,
+                                "format": format_value,
+                                "file": source_file,
+                            }),
+                        );
+                        if scenario
+                            .embedding_phases
+                            .first_embedding_started_ms
+                            .is_none()
+                        {
+                            scenario.emit(
+                                "first_import_embedding_started",
+                                serde_json::json!({
+                                    "asset_id": asset_id,
+                                    "format": format_value,
+                                    "file": source_file,
+                                }),
+                            );
+                        }
+                    }
+                    crate::search::SemanticPerfEvent::ImportEmbeddingFinished { asset_id } => {
+                        scenario.demand_embeddings_done += 1;
+                        let metadata = scenario.asset_by_asset_id.get(&asset_id).cloned();
+                        let (format_value, source_file) = match &metadata {
+                            Some(meta) => (Some(meta.format.clone()), Some(meta.file.clone())),
+                            None => (None, None),
+                        };
+                        if !scenario.first_embedding_done_logged {
+                            scenario.first_embedding_done_logged = true;
+                            scenario.emit(
+                                "first_import_embedding_done",
+                                serde_json::json!({
+                                    "asset_id": asset_id,
+                                    "format": format_value,
+                                    "file": source_file,
+                                }),
+                            );
+                        }
+                        scenario.emit(
+                            "import_embedding_done",
+                            serde_json::json!({
+                                "done": scenario.demand_embeddings_done,
+                                "asset_id": asset_id,
+                                "format": format_value,
+                                "file": source_file,
+                            }),
+                        );
+                    }
                 }
-            }
-            let done = self.search.completed_demand_embedding_count();
-            while scenario.demand_embeddings_done < done {
-                scenario.demand_embeddings_done += 1;
-                if !scenario.first_embedding_done_logged {
-                    scenario.first_embedding_done_logged = true;
-                    scenario.emit("first_import_embedding_done", serde_json::json!({}));
-                }
-                scenario.emit(
-                    "import_embedding_done",
-                    serde_json::json!({ "done": scenario.demand_embeddings_done }),
-                );
             }
             if scenario.demand_embeddings_queued > 0
                 && scenario.demand_embeddings_done >= scenario.demand_embeddings_queued
@@ -3393,12 +3602,13 @@ impl SnappyRefApp {
     }
 
     fn apply_loaded_import_outcome(&mut self, outcome: LoadedImportOutcome) {
-        if let Some(placeholder) = outcome.placeholder_removal {
+        let placeholder_queue_id = outcome.placeholder_removal.map(|placeholder| {
             self.remove_import_placeholder_for_board(
                 placeholder.target_board_id,
                 placeholder.queue_id,
             );
-        }
+            placeholder.queue_id
+        });
         let perf_import_origin = outcome.log.as_ref().map(|log| log.origin);
         let perf_counts_as_import = perf_import_origin.is_some_and(|origin| {
             matches!(
@@ -3412,30 +3622,35 @@ impl SnappyRefApp {
         #[cfg(feature = "semantic-search")]
         let mut status = status;
         #[cfg(feature = "semantic-search")]
-        if let Some((asset_id, original_path)) = outcome.indexed_asset {
-            if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
-                scenario.demand_embeddings_queued += 1;
-                if !scenario.first_embedding_queued_logged {
-                    scenario.first_embedding_queued_logged = true;
-                    scenario.emit("first_import_embedding_queued", serde_json::json!({}));
-                }
-                scenario.emit(
-                    "import_embedding_queued",
-                    serde_json::json!({ "asset_id": asset_id }),
-                );
-            }
-            if let Err(error) = self.search.queue_asset_index(asset_id, original_path)
-                && status.is_none()
-            {
-                status = Some(error);
-            }
-        }
+        let indexed_asset = outcome.indexed_asset;
         if let Some(log) = outcome.log {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
                 scenario.visible_imports += 1;
+                let metadata = placeholder_queue_id
+                    .and_then(|queue_id| scenario.asset_by_queue_id.get(&queue_id).cloned());
+                if let Some(metadata) = &metadata {
+                    scenario
+                        .asset_by_asset_id
+                        .insert(log.record.asset.id, metadata.clone());
+                }
+                let (format_value, source_file, animated, bytes) = match &metadata {
+                    Some(meta) => (
+                        Some(meta.format.clone()),
+                        Some(meta.file.clone()),
+                        Some(meta.animated),
+                        meta.bytes,
+                    ),
+                    None => (None, None, None, None),
+                };
                 if !scenario.first_visible_logged {
                     scenario.first_visible_logged = true;
-                    scenario.emit("first_placement_visible", serde_json::json!({}));
+                    scenario.emit(
+                        "first_placement_visible",
+                        serde_json::json!({
+                            "format": format_value,
+                            "file": source_file,
+                        }),
+                    );
                 }
                 scenario.emit(
                     "placement_visible",
@@ -3445,6 +3660,11 @@ impl SnappyRefApp {
                         "item_id": log.record.item.id,
                         "mime_type": log.record.asset.mime_type,
                         "filename": log.record.asset.filename,
+                        "format": format_value,
+                        "file": source_file,
+                        "animated": animated,
+                        "bytes": bytes,
+                        "queue_id": placeholder_queue_id,
                     }),
                 );
                 if scenario.visible_imports >= scenario.expected_imports
@@ -3460,6 +3680,40 @@ impl SnappyRefApp {
                 log.diagnostics.as_ref(),
                 log.trace,
             );
+        }
+        #[cfg(feature = "semantic-search")]
+        if let Some((asset_id, original_path)) = indexed_asset {
+            if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
+                scenario.demand_embeddings_queued += 1;
+                let metadata = scenario.asset_by_asset_id.get(&asset_id).cloned();
+                let (format_value, source_file) = match &metadata {
+                    Some(meta) => (Some(meta.format.clone()), Some(meta.file.clone())),
+                    None => (None, None),
+                };
+                if !scenario.first_embedding_queued_logged {
+                    scenario.first_embedding_queued_logged = true;
+                    scenario.emit(
+                        "first_import_embedding_queued",
+                        serde_json::json!({
+                            "format": format_value,
+                            "file": source_file,
+                        }),
+                    );
+                }
+                scenario.emit(
+                    "import_embedding_queued",
+                    serde_json::json!({
+                        "asset_id": asset_id,
+                        "format": format_value,
+                        "file": source_file,
+                    }),
+                );
+            }
+            if let Err(error) = self.search.queue_asset_index(asset_id, original_path)
+                && status.is_none()
+            {
+                status = Some(error);
+            }
         }
         if let Some(status) = status {
             self.status = status;
@@ -5342,7 +5596,10 @@ fn generated_board_name(boards: &[crate::data::Board]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ArrangementAction, SnappyRefApp, apply_arrangement_action};
+    use super::{
+        ArrangementAction, EmbeddingPhaseMarkers, ModelLoadTimingSummary, SnappyRefApp,
+        apply_arrangement_action,
+    };
     #[cfg(feature = "semantic-search")]
     use crate::crop_flow::CropUndoEntry;
     use crate::data::{
@@ -5366,6 +5623,44 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn embedding_phase_markers_report_summary_durations() {
+        let markers = EmbeddingPhaseMarkers {
+            first_embedding_queued_ms: Some(100.0),
+            semantic_model_load_started_ms: Some(125.0),
+            semantic_model_ready_ms: Some(425.0),
+            first_embedding_started_ms: Some(450.0),
+            first_embedding_done_ms: Some(475.0),
+            all_embeddings_done_ms: Some(825.0),
+            semantic_model_unload_requested_ms: Some(900.0),
+            semantic_model_unloaded_ms: Some(940.0),
+            model_load_timing: Some(ModelLoadTimingSummary {
+                assets_resolved_ms: 5.0,
+                tokenizer_loaded_ms: 0.0,
+                text_session_loaded_ms: 0.0,
+                vision_session_loaded_ms: 290.0,
+                total_ms: 300.0,
+            }),
+        };
+
+        let summary = markers.summary().unwrap();
+
+        assert_eq!(summary.queue_to_model_load_started_ms, Some(25.0));
+        assert_eq!(summary.model_cold_mount_ms, Some(300.0));
+        assert_eq!(
+            summary.first_embedding_start_after_model_ready_ms,
+            Some(25.0)
+        );
+        assert_eq!(summary.first_embedding_after_model_ready_ms, Some(50.0));
+        assert_eq!(summary.first_embedding_run_ms, Some(25.0));
+        assert_eq!(summary.total_import_embedding_drain_ms, Some(725.0));
+        assert_eq!(summary.model_unload_ms, Some(40.0));
+        assert_eq!(
+            summary.model_load_timing.unwrap().vision_session_loaded_ms,
+            290.0
+        );
+    }
 
     #[test]
     fn persist_settings_if_changed_true_calls_save_once() {

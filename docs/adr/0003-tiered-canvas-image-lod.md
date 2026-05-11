@@ -10,6 +10,7 @@ This keeps startup and board switching fast for image-heavy boards without givin
 - Use an **Image Preparation Helper Process** for path import, promotion, and backfill cache generation that needs to decode or encode large raster images.
 - The helper returns only the downscaled LOD pixels needed by the main app plus a disposable cache file to install under the asset's cache path.
 - The helper is intentionally short-lived: when the import or LOD job completes, the process exits and releases decoder/encoder allocator memory and CPU activity back to the OS.
+- Keep the image preparation helper per-file instead of burst-scoped for now. A May 2026 burst-scoped prototype reused one helper per import worker until the import/LOD queue drained, then exited it. The measured latency win was too small to justify the extra protocol and lifecycle complexity.
 - Animated image imports may fall back to the in-process path when animation frames are needed for playback.
 
 ## Consequences
@@ -19,4 +20,6 @@ This keeps startup and board switching fast for image-heavy boards without givin
 - Promotion and backfill should stay separate from board activation so image availability does not block switching boards.
 - Runtime CPU pixel snapshots should be warmed only for selected editing operations; canvas image LODs are the durable cache, not an always-resident CPU copy of every placement.
 - Large decoder and cache-encoder allocations now die with the helper process, keeping **Quiescent Memory** close to the true live app footprint after import/backfill work drains.
-- Helper cold-start overhead is acceptable for the current interactive baseline: `import-1` remains about 1.5s time-to-idle and `import-20` remains about 2.9s while quiescent RSS drops by roughly an order of magnitude.
+- Helper cold-start overhead is acceptable for the current interactive baseline. In issue #70 measurements, the per-file helper baseline produced `import-1` first/all placement visible at 131 ms, **Time to Idle** at 860 ms, quiescent RSS at 123 MB, and quiescent CPU at 0.0%. The burst-scoped prototype produced 135 ms, 877 ms, 126 MB, and 0.0%.
+- For `import-20`, the same baseline produced first placement visible at 33 ms, all placements visible at 559 ms, **Time to Idle** at 2249 ms, quiescent RSS at 163 MB, and quiescent CPU at 0.0%. The burst-scoped prototype produced 27 ms, 548 ms, 2215 ms, 173 MB, and 0.0%. The 6 ms first-placement and 34 ms idle wins do not outweigh the `import-1` regression, higher quiescent RSS, and more complex helper lifetime protocol.
+- Issue #70 run directories: baseline `perf-assets/runs/20260511-120118-import-1` and `perf-assets/runs/20260511-120243-import-20`; prototype `perf-assets/runs/20260511-120920-import-1` and `perf-assets/runs/20260511-120958-import-20`.

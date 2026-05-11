@@ -4,5 +4,6 @@ library/
 .scratch/
 .ralph/
 tests/fixtures/external/files/
-perf-assets/images/
-perf-assets/runs/
+perf-assets/images
+perf-assets/runs
+**/__pycache__/

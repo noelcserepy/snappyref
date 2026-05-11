@@ -1511,6 +1511,7 @@ impl Library {
                     AND e.model_key = ?1
                  WHERE e.asset_id IS NULL
                    AND a.archived = 0
+                   AND lower(trim(a.mime_type)) <> 'image/svg+xml'
                  GROUP BY a.id, a.original_path
                  ORDER BY a.id ASC",
             )
@@ -1546,6 +1547,7 @@ impl Library {
                     ON e.asset_id = a.id
                     AND e.model_key = ?1
                  WHERE a.archived = 0
+                   AND lower(trim(a.mime_type)) <> 'image/svg+xml'
                    AND e.status = 'failed'
                    AND e.failure_kind = 'retryable'
                    AND e.next_retry_at IS NOT NULL
@@ -1590,6 +1592,7 @@ impl Library {
                     AND e.model_key = ?1
                  WHERE e.asset_id IS NULL
                    AND a.archived = 0
+                   AND lower(trim(a.mime_type)) <> 'image/svg+xml'
                    AND b.archived = 0
                    AND b.board_id = ?2
                  GROUP BY a.id, a.original_path
@@ -1635,6 +1638,7 @@ impl Library {
                     ON e.asset_id = a.id
                     AND e.model_key = ?1
                  WHERE a.archived = 0
+                   AND lower(trim(a.mime_type)) <> 'image/svg+xml'
                    AND b.archived = 0
                    AND b.board_id = ?2
                    AND e.status = 'failed'
@@ -4762,6 +4766,67 @@ mod tests {
 
         let job_asset_ids = jobs.iter().map(|job| job.asset_id).collect::<Vec<_>>();
         assert_eq!(job_asset_ids, vec![pending.asset.id, unplaced.asset.id]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn embedding_backfill_skips_svg_assets() {
+        let root = temp_root("snappyref-svg-embedding-backfill-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let raster_path = library
+            .store_rgba_image("raster", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let svg_path = root.join("icon.svg");
+        fs::write(
+            &svg_path,
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>"#,
+        )
+        .unwrap();
+
+        let raster = library
+            .persist_imported_image(
+                &raster_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let svg = library
+            .persist_imported_image(
+                &svg_path,
+                "image/svg+xml",
+                1,
+                1,
+                fs::metadata(&svg_path).unwrap().len(),
+                egui::pos2(1.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+
+        let active_jobs = library
+            .missing_active_board_asset_jobs_for_model("mobileclip_s0")
+            .unwrap();
+        let live_jobs = library
+            .missing_live_canvas_asset_jobs_for_model("mobileclip_s0")
+            .unwrap();
+
+        assert_eq!(
+            active_jobs
+                .iter()
+                .map(|job| job.asset_id)
+                .collect::<Vec<_>>(),
+            vec![raster.asset.id]
+        );
+        assert_eq!(
+            live_jobs.iter().map(|job| job.asset_id).collect::<Vec<_>>(),
+            vec![raster.asset.id]
+        );
+        assert!(!active_jobs.iter().any(|job| job.asset_id == svg.asset.id));
+        assert!(!live_jobs.iter().any(|job| job.asset_id == svg.asset.id));
 
         let _ = fs::remove_dir_all(root);
     }

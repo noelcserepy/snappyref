@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::storage::{AssetSearchHit, EmbeddingStatus, Library};
 
+use super::EmbedModelLoadTimingOutput;
 use super::index::{SearchScope, decode_f32_blob, search_embeddings_for_scope};
 use super::model::{EmbeddingModel, ModelLoadTiming, ModelSpec, OrtDualEncoderModel};
 
@@ -75,6 +76,9 @@ pub enum IndexResult {
         timing: ModelLoadTiming,
     },
     ModelReady,
+    ImportEmbeddingStarted {
+        asset_id: i64,
+    },
     BackfillIndexed,
     BackfillIdle,
     BackfillFailed {
@@ -559,6 +563,7 @@ fn process_index_request(
                 asset_id,
                 &original_path,
                 helper,
+                true,
             ) {
                 let _ = record_embedding_failure(worker_library, asset_id, model_spec, &error);
                 let _ = result_tx.send(IndexResult::Failed {
@@ -601,6 +606,7 @@ fn process_index_request(
                 job.asset_id,
                 &job.original_path,
                 helper,
+                false,
             ) {
                 Ok(()) => {
                     clear_search_embedding_cache(worker_search_embedding_cache);
@@ -883,6 +889,7 @@ fn index_asset(
     asset_id: i64,
     original_path: &PathBuf,
     helper: &mut Option<EmbeddingHelperClient>,
+    report_import_embedding_start: bool,
 ) -> Result<(), String> {
     library.upsert_asset_embedding_status(
         asset_id,
@@ -897,10 +904,18 @@ fn index_asset(
     if helper_will_start {
         let _ = result_tx.send(IndexResult::ModelLoadStarted);
     }
-    let embedding = embed_image_in_helper(&source_path, helper)?;
     if helper_will_start {
+        if let Some(timing) = ensure_embedding_helper(helper)? {
+            let _ = result_tx.send(IndexResult::ModelLoadTiming { timing });
+        }
         let _ = result_tx.send(IndexResult::ModelReady);
+    } else {
+        let _ = ensure_embedding_helper(helper)?;
     }
+    if report_import_embedding_start {
+        let _ = result_tx.send(IndexResult::ImportEmbeddingStarted { asset_id });
+    }
+    let embedding = embed_image_in_helper(&source_path, helper)?;
     library.upsert_asset_embedding_blob(asset_id, model_spec.model_key, &embedding)?;
     Ok(())
 }
@@ -909,6 +924,7 @@ fn index_asset(
 struct EmbedImageHelperOutput {
     embedding: Option<Vec<f32>>,
     error: Option<String>,
+    model_load_timing: Option<EmbedModelLoadTimingOutput>,
 }
 
 struct EmbeddingHelperClient {
@@ -918,7 +934,7 @@ struct EmbeddingHelperClient {
 }
 
 impl EmbeddingHelperClient {
-    fn new() -> Result<Self, String> {
+    fn new() -> Result<(Self, ModelLoadTiming), String> {
         let executable = std::env::current_exe()
             .map_err(|error| format!("failed to find app executable: {error}"))?;
         let mut child = Command::new(executable)
@@ -935,11 +951,39 @@ impl EmbeddingHelperClient {
             .stdout
             .take()
             .ok_or_else(|| "embedding helper stdout unavailable".to_owned())?;
-        Ok(Self {
+        let mut client = Self {
             child,
             stdin,
             stdout: BufReader::new(stdout),
-        })
+        };
+        let timing = client.read_ready_timing()?;
+        Ok((client, timing))
+    }
+
+    fn read_ready_timing(&mut self) -> Result<ModelLoadTiming, String> {
+        let mut line = String::new();
+        let bytes = self
+            .stdout
+            .read_line(&mut line)
+            .map_err(|error| format!("failed to read embedding helper ready output: {error}"))?;
+        if bytes == 0 {
+            let status = self.child.try_wait().ok().flatten();
+            return Err(match status {
+                Some(status) => {
+                    format!("embedding helper exited before ready output with {status}")
+                }
+                None => "embedding helper closed stdout before ready output".to_owned(),
+            });
+        }
+        let output: EmbedImageHelperOutput = serde_json::from_str(&line)
+            .map_err(|error| format!("failed to decode embedding helper ready output: {error}"))?;
+        if let Some(error) = output.error {
+            return Err(error);
+        }
+        output
+            .model_load_timing
+            .map(Into::into)
+            .ok_or_else(|| "embedding helper ready output missing model timing".to_owned())
     }
 
     fn embed_image(&mut self, source_path: &PathBuf) -> Result<Vec<f32>, String> {
@@ -990,12 +1034,25 @@ fn embed_image_in_helper(
     helper: &mut Option<EmbeddingHelperClient>,
 ) -> Result<Vec<f32>, String> {
     if helper.is_none() {
-        *helper = Some(EmbeddingHelperClient::new()?);
+        let (client, _) = EmbeddingHelperClient::new()?;
+        *helper = Some(client);
     }
     helper
         .as_mut()
         .ok_or_else(|| "embedding helper unavailable".to_owned())?
         .embed_image(source_path)
+}
+
+fn ensure_embedding_helper(
+    helper: &mut Option<EmbeddingHelperClient>,
+) -> Result<Option<ModelLoadTiming>, String> {
+    if helper.is_none() {
+        let (client, timing) = EmbeddingHelperClient::new()?;
+        *helper = Some(client);
+        Ok(Some(timing))
+    } else {
+        Ok(None)
+    }
 }
 
 fn record_embedding_failure(
@@ -1541,6 +1598,7 @@ mod tests {
                     IndexResult::Progress { .. } => {}
                     IndexResult::ModelLoadStarted | IndexResult::ModelLoadTiming { .. } => {}
                     IndexResult::ModelReady => {}
+                    IndexResult::ImportEmbeddingStarted { .. } => {}
                     IndexResult::BackfillIndexed
                     | IndexResult::BackfillIdle
                     | IndexResult::BackfillFailed { .. } => {}

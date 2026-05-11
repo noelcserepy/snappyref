@@ -14,17 +14,27 @@ rm -rf "$library_root"
 
 cargo build --release
 
-python3 - "$binary" "$scenario" "$asset_dir" "$run_dir" "$library_root" <<'PY'
+python3 - \
+  "$binary" \
+  "$scenario" \
+  "$asset_dir" \
+  "$run_dir" \
+  "$library_root" \
+  "$repo_root" <<'PY'
 import csv
+import importlib.util
+import json
 import os
 import pathlib
 import subprocess
 import sys
 import time
 
-binary, scenario, asset_dir, run_dir, library_root = sys.argv[1:]
+binary, scenario, asset_dir, run_dir, library_root, repo_root = sys.argv[1:]
 run_dir = pathlib.Path(run_dir)
+repo_root = pathlib.Path(repo_root)
 samples_path = run_dir / "samples.csv"
+samples_tree_path = run_dir / "samples-tree.csv"
 env = os.environ.copy()
 env["SNAPPYREF_LIBRARY_ROOT"] = library_root
 env["SNAPPYREF_PERF_IDLE_HOLD_SECS"] = os.environ.get("SNAPPYREF_PERF_IDLE_HOLD_SECS", "20")
@@ -39,6 +49,18 @@ cmd = [
     f"--perf-run-dir={run_dir}",
     "--perf-log",
 ]
+
+
+def _load_sampling_module():
+    module_path = repo_root / "scripts" / "_perf_sampling.py"
+    spec = importlib.util.spec_from_file_location("_perf_sampling", module_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+sampling = _load_sampling_module()
 
 
 def parse_cpu_time(value):
@@ -65,10 +87,71 @@ def select_window(rows, start_ms, end_ms):
     ]
 
 
+def sample_main(pid, elapsed_ms):
+    probe = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "pid=,%cpu=,time=,rss="],
+        capture_output=True,
+        text=True,
+    )
+    line = probe.stdout.strip()
+    if not line:
+        return None
+    parts = line.split()
+    if len(parts) < 4:
+        return None
+    return {
+        "elapsed_ms": f"{elapsed_ms:.2f}",
+        "pid": parts[0],
+        "cpu_percent": parts[1],
+        "cpu_time_seconds": str(parse_cpu_time(parts[2])),
+        "rss_bytes": str(int(parts[3]) * 1024),
+    }
+
+
+def sample_tree(root_pid, elapsed_ms):
+    """Sample the main process and its descendants.
+
+    Uses `ps -axwwo pid,ppid,rss,%cpu,command` so the embedding helper
+    and any future image preparation helper subprocess are captured at
+    the same tick as the main app. Returns a list of per-pid dicts that
+    the caller writes to ``samples-tree.csv`` and feeds back into the
+    sampling module for tree peak / per-helper-peak summaries.
+    """
+
+    probe = subprocess.run(
+        ["ps", "-axwwo", "pid=,ppid=,rss=,%cpu=,command="],
+        capture_output=True,
+        text=True,
+    )
+    rows = sampling.parse_ps_axwo_output(probe.stdout)
+    descendants = sampling.select_descendants(rows, root_pid)
+    out = []
+    for row in descendants:
+        out.append(
+            {
+                "elapsed_ms": elapsed_ms,
+                "pid": row["pid"],
+                "ppid": row["ppid"],
+                "role": sampling.classify_helper(
+                    row.get("command", ""), root_pid, row["pid"]
+                ),
+                "rss_bytes": row["rss_bytes"],
+                "cpu_percent": row["cpu_percent"],
+                "command": row.get("command", ""),
+            }
+        )
+    return out
+
+
 started = time.monotonic()
 process = subprocess.Popen(cmd, env=env)
+root_pid = process.pid
 
-with samples_path.open("w", newline="") as handle:
+tree_samples: list[dict] = []
+
+with samples_path.open("w", newline="") as handle, samples_tree_path.open(
+    "w", newline=""
+) as tree_handle:
     writer = csv.DictWriter(
         handle,
         fieldnames=[
@@ -80,34 +163,46 @@ with samples_path.open("w", newline="") as handle:
         ],
     )
     writer.writeheader()
+    tree_writer = csv.DictWriter(
+        tree_handle,
+        fieldnames=[
+            "elapsed_ms",
+            "pid",
+            "ppid",
+            "role",
+            "cpu_percent",
+            "rss_bytes",
+            "command",
+        ],
+    )
+    tree_writer.writeheader()
     while process.poll() is None:
         elapsed_ms = (time.monotonic() - started) * 1000.0
-        probe = subprocess.run(
-            ["ps", "-p", str(process.pid), "-o", "pid=,%cpu=,time=,rss="],
-            capture_output=True,
-            text=True,
-        )
-        line = probe.stdout.strip()
-        if line:
-            parts = line.split()
-            if len(parts) >= 4:
-                writer.writerow(
-                    {
-                        "elapsed_ms": f"{elapsed_ms:.2f}",
-                        "pid": parts[0],
-                        "cpu_percent": parts[1],
-                        "cpu_time_seconds": str(parse_cpu_time(parts[2])),
-                        "rss_bytes": str(int(parts[3]) * 1024),
-                    }
-                )
-                handle.flush()
+        main_sample = sample_main(root_pid, elapsed_ms)
+        if main_sample is not None:
+            writer.writerow(main_sample)
+            handle.flush()
+        # Tree sampling tracks the same tick so per-tick sums in
+        # `_perf_sampling.tree_rss_stats` line up across pids.
+        for tree_row in sample_tree(root_pid, elapsed_ms):
+            tree_samples.append(tree_row)
+            tree_writer.writerow(
+                {
+                    "elapsed_ms": f"{tree_row['elapsed_ms']:.2f}",
+                    "pid": tree_row["pid"],
+                    "ppid": tree_row["ppid"],
+                    "role": tree_row["role"],
+                    "cpu_percent": f"{tree_row['cpu_percent']}",
+                    "rss_bytes": tree_row["rss_bytes"],
+                    "command": tree_row["command"],
+                }
+            )
+        tree_handle.flush()
         time.sleep(0.2)
 
 returncode = process.wait()
 summary_path = run_dir / "summary.json"
 if summary_path.exists():
-    import json
-
     summary = json.loads(summary_path.read_text())
     rows = list(csv.DictReader(samples_path.open()))
     idle_start = float(summary.get("time_to_idle_ms", 0.0))
@@ -196,6 +291,30 @@ if summary_path.exists():
             "delta_rss_bytes": values[-1] - values[0],
         }
 
+    # Whole-process-tree peak captures embedding-helper and image-prep
+    # helper RSS so a faster main-process **Quiescent Memory** number
+    # cannot quietly hide a regression in helper-side allocations.
+    tree_during_active = [
+        row for row in tree_samples if row["elapsed_ms"] < idle_start
+    ] if idle_start > 0.0 else tree_samples
+    tree_during_quiescent = [
+        row
+        for row in tree_samples
+        if idle_start + 5000.0 <= row["elapsed_ms"] < idle_start + 15000.0
+    ]
+
+    process_tree = {
+        "active_work": sampling.tree_rss_stats(tree_during_active),
+        "quiescent_5_to_15s": sampling.tree_rss_stats(tree_during_quiescent),
+        "all_samples": sampling.tree_rss_stats(tree_samples),
+        "per_helper_active": sampling.per_helper_peaks(
+            tree_during_active, main_pid=root_pid
+        ),
+        "per_helper_overall": sampling.per_helper_peaks(
+            tree_samples, main_pid=root_pid
+        ),
+    }
+
     sample_summary = {
         "scenario": scenario,
         "time_to_idle_ms": idle_start,
@@ -223,9 +342,37 @@ if summary_path.exists():
         "time_to_quiescent_ms": quiescent_after_ms(),
         "max_rss_bytes": max((int(row["rss_bytes"]) for row in rows), default=None),
         "final_rss_bytes": int(rows[-1]["rss_bytes"]) if rows else None,
+        "process_tree": process_tree,
     }
     (run_dir / "samples-summary.json").write_text(
         json.dumps(sample_summary, indent=2) + "\n"
+    )
+
+    # `phase-summary.json` is the new before/after-friendly artifact
+    # that turns the raw `events.ndjson` into headline phase deltas and
+    # per-format groups. Existing artifacts above are unchanged so older
+    # tooling continues to work.
+    events_path = run_dir / "events.ndjson"
+    events = sampling.load_events_ndjson(events_path)
+    phase_summary = {
+        "scenario": scenario,
+        "time_to_idle_ms": idle_start,
+        "phase_summary": sampling.phase_summary_from_events(events),
+        "per_format": sampling.per_format_groups_from_events(events),
+        "process_tree_peak": {
+            "active_work_peak_rss_bytes": process_tree["active_work"][
+                "peak_tree_rss_bytes"
+            ],
+            "overall_peak_rss_bytes": process_tree["all_samples"][
+                "peak_tree_rss_bytes"
+            ],
+            "main_quiescent_max_rss_bytes": sample_summary["memory"][
+                "quiescent_5_to_15s"
+            ]["max_rss_bytes"],
+        },
+    }
+    (run_dir / "phase-summary.json").write_text(
+        json.dumps(phase_summary, indent=2) + "\n"
     )
 print(f"run_dir={run_dir}")
 print(f"returncode={returncode}")
