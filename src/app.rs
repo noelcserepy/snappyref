@@ -2098,10 +2098,13 @@ impl SnappyRefApp {
             ctx.open_url(egui::OpenUrl::new_tab(notes_url));
         }
         if install_clicked {
-            // Slice-4 stopgap per issue #81: open the release page in the
-            // user's default browser. Slice 5 will replace this with an
-            // in-app download + verify + swap flow.
-            ctx.open_url(egui::OpenUrl::new_tab(release_page_url));
+            // Slice 5: start the in-app download + verify + stage flow.
+            // The pill transitions to Downloading; the popover closes so
+            // the in-place progress is visible. Stopgap "open release
+            // page" is kept as a fallback if no platform entry exists
+            // for the current target OS.
+            let _ = release_page_url;
+            self.update_service.start_install();
             self.update_popover_open = false;
         }
         if later_clicked {
