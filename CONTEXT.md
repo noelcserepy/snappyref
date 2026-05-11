@@ -72,6 +72,18 @@ _Avoid_: Options tab, preferences tab
 The app's knowledge that current user session state differs from the last saved session.
 _Avoid_: Unsaved preferences, dirty app state
 
+**Pointer Mode**:
+The workspace setting that selects how the canvas interprets scroll and primary-drag input for navigation.
+_Avoid_: Input mode, scroll mode, mouse setting
+
+**Mouse Mode**:
+The pointer mode where the mouse wheel zooms around the pointer and `Alt`/`Option`+LMB pans the canvas. The default on all platforms.
+_Avoid_: Wheel zoom mode, PC mode
+
+**Trackpad Mode**:
+The pointer mode where pinch zooms and two-finger swipe pans, matching native trackpad gestures. `Alt`/`Option`+LMB pan is also available as a fallback.
+_Avoid_: Gesture mode, Mac mode
+
 ### Layering
 
 **Canvas Item**:

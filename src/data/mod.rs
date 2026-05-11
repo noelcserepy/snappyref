@@ -13,6 +13,6 @@ pub use board_item::{
 };
 pub use session::{
     CanvasImageLod, DEFAULT_CANVAS_IMAGE_MAX_SIDE, DEFAULT_IMPORT_GAP,
-    DEFAULT_IMPORT_TARGET_CANVAS_AREA, DEFAULT_ROTATION_SNAP_DEGREES, UserSession, ViewportState,
-    WindowState, WorkspaceSettings,
+    DEFAULT_IMPORT_TARGET_CANVAS_AREA, DEFAULT_ROTATION_SNAP_DEGREES, PointerMode, UserSession,
+    ViewportState, WindowState, WorkspaceSettings,
 };

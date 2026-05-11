@@ -45,6 +45,7 @@ pub(super) struct CanvasInteractionState {
     pub move_preview_placeholders: Vec<ImportPlaceholder>,
     pub search_drag_preview: Option<SearchDragPreview>,
     pub last_pointer_screen_pos: Option<egui::Pos2>,
+    pub alt_pan_active: bool,
 }
 
 #[derive(Default)]

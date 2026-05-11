@@ -1991,6 +1991,7 @@ impl SnappyRefApp {
                 self.canvas
                     .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
                 self.canvas.set_layout_gap(self.settings.import_gap);
+                self.canvas.set_pointer_mode(self.settings.pointer_mode);
                 self.document_persistence
                     .record_saved_user_session(self.current_user_session());
             }
@@ -4684,6 +4685,7 @@ impl eframe::App for SnappyRefApp {
         self.canvas
             .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
         self.canvas.set_layout_gap(self.settings.import_gap);
+        self.canvas.set_pointer_mode(self.settings.pointer_mode);
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         let suppress_canvas_input = self.blocks_canvas_input(ui.ctx());
         self.frame_perf.canvas = crate::canvas::show(

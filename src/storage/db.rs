@@ -3151,6 +3151,7 @@ fn legacy_user_session_from_row(
                 .map(|value| value.max(0.0))
                 .unwrap_or(crate::data::DEFAULT_ROTATION_SNAP_DEGREES),
             default_textbox_background: row.get::<_, i64>(6).unwrap_or(0) != 0,
+            pointer_mode: crate::data::PointerMode::default(),
         },
         sidebar_open: row.get::<_, i64>(7).unwrap_or(0) != 0,
         sidebar_tab: row

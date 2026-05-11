@@ -377,6 +377,14 @@ impl CanvasState {
         self.rotation_snap_degrees = degrees.max(0.0);
     }
 
+    pub fn set_pointer_mode(&mut self, mode: crate::data::PointerMode) {
+        self.pointer_mode = mode;
+    }
+
+    pub(super) fn pointer_mode(&self) -> crate::data::PointerMode {
+        self.pointer_mode
+    }
+
     pub fn set_layout_gap(&mut self, gap: f32) {
         self.layout_gap = gap.max(0.0);
     }

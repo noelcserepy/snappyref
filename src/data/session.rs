@@ -24,6 +24,14 @@ impl CanvasImageLod {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PointerMode {
+    #[default]
+    Mouse,
+    Trackpad,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ViewportState {
     pub camera_pan_x: f32,
@@ -84,6 +92,8 @@ pub struct WorkspaceSettings {
     pub rotation_snap_degrees: f32,
     #[serde(default)]
     pub default_textbox_background: bool,
+    #[serde(default)]
+    pub pointer_mode: PointerMode,
 }
 
 fn default_auto_image_scaling() -> bool {
@@ -120,6 +130,7 @@ impl Default for WorkspaceSettings {
             semantic_search_enabled: true,
             rotation_snap_degrees: DEFAULT_ROTATION_SNAP_DEGREES,
             default_textbox_background: false,
+            pointer_mode: PointerMode::default(),
         }
     }
 }

@@ -604,6 +604,13 @@ fn paint_settings_section(
 ) -> bool {
     let mut changed = false;
 
+    changed |= paint_setting_row(
+        ui,
+        "Pointer mode",
+        pointer_mode_detail(settings.pointer_mode),
+        |ui| paint_pointer_mode_control(ui, &mut settings.pointer_mode),
+    );
+    paint_setting_divider(ui);
     changed |= paint_setting_row(ui, "Canvas background", "Quiet board guide.", |ui| {
         paint_background_mode_control(ui, canvas)
     });
@@ -732,6 +739,33 @@ fn paint_setting_divider(ui: &mut egui::Ui) {
     let to = egui::pos2(rect.right() + pad, rect.center().y);
     ui.painter()
         .line_segment([from, to], crate::theme::stroke_subtle());
+}
+
+fn pointer_mode_detail(mode: crate::data::PointerMode) -> &'static str {
+    match mode {
+        crate::data::PointerMode::Mouse => "Scroll wheel zooms. Hold Alt to pan.",
+        crate::data::PointerMode::Trackpad => "Pinch to zoom, two-finger swipe to pan.",
+    }
+}
+
+fn paint_pointer_mode_control(ui: &mut egui::Ui, mode: &mut crate::data::PointerMode) -> bool {
+    let before = *mode;
+    let segments: [(&str, crate::data::PointerMode); 2] = [
+        ("Mouse", crate::data::PointerMode::Mouse),
+        ("Trackpad", crate::data::PointerMode::Trackpad),
+    ];
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+        for (label, value) in segments {
+            let selected = *mode == value;
+            if paint_inline_choice(ui, label, selected) {
+                *mode = value;
+            }
+        }
+    });
+
+    *mode != before
 }
 
 fn paint_background_mode_control(
