@@ -59,10 +59,10 @@ jobs:
       - name: Build app binary
         run: |
           if [[ "${{ inputs.build_profile }}" == "release" ]]; then
-            cargo build --release --locked
+            cargo build --release --locked --bins
             echo "SNAPPYREF_TARGET_DIR=target/release" >> "$GITHUB_ENV"
           else
-            cargo build --profile release-fast --locked --no-default-features --features semantic-search
+            cargo build --profile release-fast --locked --no-default-features --features semantic-search --bins
             echo "SNAPPYREF_TARGET_DIR=target/release-fast" >> "$GITHUB_ENV"
           fi
 
@@ -79,6 +79,7 @@ jobs:
           if [[ "$SNAPPYREF_TARGET_DIR" != "target/release" ]]; then
             mkdir -p target/release
             cp "$SNAPPYREF_TARGET_DIR/snappyref" target/release/snappyref
+            cp "$SNAPPYREF_TARGET_DIR/snappyref-updater" target/release/snappyref-updater
           fi
           zip_path="${RUNNER_TEMP}/snappyref-macos-app.zip"
           scripts/package-macos-artifact.sh --skip-models "$zip_path"

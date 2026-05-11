@@ -62,10 +62,10 @@ jobs:
         shell: pwsh
         run: |
           if ("${{ inputs.build_profile }}" -eq "release") {
-            cargo build --release --locked
+            cargo build --release --locked --bins
             "SNAPPYREF_TARGET_DIR=target\release" | Out-File -FilePath $env:GITHUB_ENV -Append
           } else {
-            cargo build --profile release-fast --locked --no-default-features --features semantic-search
+            cargo build --profile release-fast --locked --no-default-features --features semantic-search --bins
             "SNAPPYREF_TARGET_DIR=target\release-fast" | Out-File -FilePath $env:GITHUB_ENV -Append
           }
 
@@ -86,7 +86,9 @@ jobs:
           $packageRoot = Join-Path $env:RUNNER_TEMP "snappyref-windows-app\SnappyRef"
           New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
           Copy-Item (Join-Path $env:SNAPPYREF_TARGET_DIR "snappyref.exe") $packageRoot
-          Copy-Item UPDATE.txt $packageRoot
+          # Ship the auto-update helper alongside the main exe. ADR-0015:
+          # the helper lives at SnappyRef/snappyref-updater.exe.
+          Copy-Item (Join-Path $env:SNAPPYREF_TARGET_DIR "snappyref-updater.exe") $packageRoot
 
       - uses: actions/upload-artifact@v4
         with:

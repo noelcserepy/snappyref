@@ -24,20 +24,18 @@ or replace it.
 normally replace only `snappyref.exe`; `models/` ships with releases for fresh
 installs and only needs replacement when the model bundle changes.
 
-## Update UX For V1
+## Update UX
 
-Use a manual update flow:
+Since ADR-0015, SnappyRef performs **in-app automatic updates**. The app polls a
+signed manifest in the background, surfaces an Available Update through a
+sidebar pill, and on user confirmation downloads, verifies, swaps, and
+relaunches via the `snappyref-updater` helper binary. See
+`docs/adr/0015-automatic-app-updates.md` for the full flow.
 
-1. User quits SnappyRef.
-2. User downloads the new release zip from the website or GitHub release page.
-3. User extracts the zip.
-4. On Windows, user copies the new `SnappyRef/snappyref.exe` over the old `snappyref.exe`.
-5. User keeps the existing `library/` folder in place.
-6. User launches the new app and continues from the same session state.
-
-Do not build in-app self-update for v1. The app may later add a lightweight
-"Update available" button that opens the download page, but it should not
-download, patch, replace, or restart the app automatically.
+Manual zip-replace (the original v1 plan documented in ADR-0006) still works as
+a fallback for users who download a release zip directly from GitHub or the
+website — the install-folder contract below is the same either way. Auto-update
+only runs against installs sitting in a writable location.
 
 ## Required App Behavior
 
@@ -128,10 +126,9 @@ When `main` is ready for the next version, publish update zips through
 `Publish Full Release`:
 
 1. Switch to `main` and pull the latest changes.
-2. Run the release gate locally:
-   - `cargo fmt --check`
-   - `cargo check --locked --no-default-features --features semantic-search`
-   - `cargo test --locked --no-default-features update_preservation_smoke`
+2. Run the release gate locally by invoking the pre-push hook directly:
+   `./.githooks/pre-push`. Same three checks (fmt + `cargo check` under shipping
+   features + the `update_preservation_smoke` test) that fire on every push.
 3. Bump the package version if this is a real release.
 4. Commit and push the version bump.
 5. Run `Publish Full Release` with `release_tag`, for example `v0.1.0`.

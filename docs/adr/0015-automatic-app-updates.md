@@ -48,6 +48,10 @@ Manual updates impose meaningful friction (visit website, download zip, quit app
 - The helper explicitly strips the `com.apple.quarantine` xattr from the staged bundle before swap as defense-in-depth. In-process `reqwest` downloads do not set the xattr, so Gatekeeper does not engage on the swapped bundle. Real Developer ID signing remains a future, separate decision.
 - After a successful launch of the new version, the staging directory `<install_root>/updates/staging-{version}/` is removed; the `.previous` / `.old` backup is retained until the next update overwrites it.
 
+### Helper-binary updateability asymmetry
+
+The swap unit on macOS is `SnappyRef.app/` and on Windows is `snappyref.exe`. The helper ships inside the swap unit on macOS (`SnappyRef.app/Contents/MacOS/snappyref-updater`) so a normal update automatically refreshes it. On Windows the helper is a sibling file (`SnappyRef/snappyref-updater.exe`) outside the swap unit, so a routine update replaces only `snappyref.exe` and leaves the existing helper in place. We accept this asymmetry for v1: the helper's contract (read descriptor, wait on PID, perform rename swap, relaunch) is small and stable, and treating it as a frozen part of the install layout keeps the Windows swap atomic and dependency-free. A future helper-protocol change must either (a) extend the Windows swap to replace `snappyref-updater.exe` too, or (b) ship a one-time installer that overwrites the helper alongside.
+
 ### Rollback
 
 - Exactly one prior version is retained as `SnappyRef.app.previous` / `snappyref.exe.old`. Each update overwrites the prior backup.

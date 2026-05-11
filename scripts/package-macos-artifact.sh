@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
+# Build the macOS app-artifact zip used by downstream packaging.
+#
+# Output layout: a zip whose single top-level entry is `SnappyRef/SnappyRef.app/`.
+# Models are no longer bundled inside `SnappyRef.app`; the Local Model Store
+# (`SnappyRef/models/`) is added by `package-release-assets.sh` for the full-
+# install variant only.
 set -euo pipefail
-
-model_mode=fetch
-models_dir=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-models)
-      model_mode=skip
+      # Deprecated flag: models are never bundled. Accepted for compatibility
+      # with existing CI invocations until they are updated.
       shift
       ;;
     --models-dir)
-      if [[ $# -lt 2 ]]; then
-        echo "missing value for --models-dir" >&2
-        exit 2
-      fi
-      model_mode=copy
-      models_dir=$2
-      shift 2
+      echo "--models-dir is no longer supported: models ship outside the bundle in SnappyRef/models/" >&2
+      exit 2
       ;;
     --*)
       echo "unknown option: $1" >&2
@@ -30,13 +29,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ $# -ne 1 ]]; then
-  echo "usage: $0 [--skip-models|--models-dir <models-dir>] <output.zip>" >&2
+  echo "usage: $0 [--skip-models] <output.zip>" >&2
   exit 2
 fi
 
 zip_path=$1
 package_root=$(mktemp -d "${RUNNER_TEMP:-/tmp}/snappyref-macos-package.XXXXXX")
-app_root="$package_root/SnappyRef.app"
+install_root="$package_root/SnappyRef"
+app_root="$install_root/SnappyRef.app"
 contents_root="$app_root/Contents"
 macos_root="$contents_root/MacOS"
 resources_root="$contents_root/Resources"
@@ -52,8 +52,11 @@ PY
 mkdir -p "$macos_root" "$resources_root"
 cp target/release/snappyref "$macos_root/"
 chmod +x "$macos_root/snappyref"
+# Ship the auto-update helper alongside the main binary. ADR-0015: the
+# helper lives at SnappyRef.app/Contents/MacOS/snappyref-updater.
+cp target/release/snappyref-updater "$macos_root/"
+chmod +x "$macos_root/snappyref-updater"
 cp assets/app-icon/snappyref.icns "$resources_root/"
-cp UPDATE.txt "$package_root/"
 
 cat > "$contents_root/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -86,30 +89,14 @@ cat > "$contents_root/Info.plist" <<PLIST
 </plist>
 PLIST
 
-case "$model_mode" in
-  fetch)
-    python3 scripts/fetch-semantic-model.py --target "$resources_root/models"
-    ;;
-  copy)
-    if [[ ! -d "$models_dir" ]]; then
-      echo "missing models directory: $models_dir" >&2
-      exit 1
-    fi
-    mkdir -p "$resources_root"
-    cp -R "$models_dir" "$resources_root/models"
-    ;;
-  skip)
-    ;;
-esac
-
-if [[ "$model_mode" != "skip" ]]; then
-  model_root="$resources_root/models/siglip2_base_patch16_224_int8"
-  test -s "$model_root/tokenizer.json"
-  test -s "$model_root/onnx/text_model_int8.onnx"
-  test -s "$model_root/onnx/vision_model_int8.onnx"
-fi
-
 codesign --force --deep --sign - "$app_root"
 codesign --verify --deep --strict "$app_root"
 
-(cd "$package_root" && zip -9 -r "$zip_path" SnappyRef.app UPDATE.txt)
+# Guard against accidental bundled models: the bundle must never include a
+# Resources/models directory now that the Local Model Store lives outside.
+if [[ -e "$resources_root/models" ]]; then
+  echo "SnappyRef.app must not contain Contents/Resources/models" >&2
+  exit 1
+fi
+
+(cd "$package_root" && zip -9 -r "$zip_path" SnappyRef)

@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use crate::app::{SUPPORTED_SHORTCUTS, SupportedShortcut};
+use crate::updater::UpdateState;
 
 pub(crate) const SIDEBAR_WIDTH: f32 = 268.0;
 pub(crate) const SIDEBAR_TOP_MARGIN: f32 = 40.0;
@@ -22,6 +23,38 @@ pub(crate) struct SidebarRenderResult {
     pub settings_changed: bool,
     pub interactive_rect: Option<egui::Rect>,
     pub board_action: Option<SidebarBoardAction>,
+    /// Screen-space rect of the Update Pill if it was painted this
+    /// frame, used to anchor the popover.
+    pub update_pill_rect: Option<egui::Rect>,
+    /// True when the Update Pill was clicked this frame; the app
+    /// toggles the popover in response.
+    pub update_pill_clicked: bool,
+    /// True when the Settings Tab "Check for updates now" button was
+    /// activated this frame. The app forwards the request to the
+    /// update service; throttling is the responsibility of the sidebar.
+    pub update_check_now_clicked: bool,
+    /// True when the Settings Tab "Rollback to previous version" button
+    /// was activated this frame. The app performs the rollback through
+    /// the `updater::rollback` module.
+    pub rollback_clicked: bool,
+}
+
+/// Snapshot of the About / Updates section state. The sidebar reads but
+/// does not mutate any of these; the app owns the data.
+#[derive(Clone, Debug)]
+pub(crate) struct AboutUpdatesView<'a> {
+    /// Running app version, normally `env!("CARGO_PKG_VERSION")`.
+    pub current_version: &'a str,
+    /// Unix-epoch milliseconds of the last completed check. `None`
+    /// renders as "never".
+    pub last_checked_unix_millis: Option<u64>,
+    /// True when a `.previous` / `.old` backup exists at the install
+    /// root. Drives the visibility of the Rollback button.
+    pub backup_present: bool,
+    /// True when the "Check for updates now" button is currently
+    /// allowed (i.e. last manual click was more than one minute ago).
+    /// The button still paints but is disabled when this is false.
+    pub check_now_enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,17 +126,27 @@ pub(crate) fn show_sidebar(
     boards: &[crate::data::BoardSummary],
     active_board_id: i64,
     forced_board_hover_index: Option<usize>,
+    update_state: &UpdateState,
+    about_updates: AboutUpdatesView<'_>,
 ) -> SidebarRenderResult {
     if !sidebar_open {
         return SidebarRenderResult {
             settings_changed: false,
             interactive_rect: None,
             board_action: None,
+            update_pill_rect: None,
+            update_pill_clicked: false,
+            update_check_now_clicked: false,
+            rollback_clicked: false,
         };
     }
 
     let mut settings_changed = false;
     let mut board_action = None;
+    let mut update_pill_rect = None;
+    let mut update_pill_clicked = false;
+    let mut update_check_now_clicked = false;
+    let mut rollback_clicked = false;
 
     let top = screen_rect.top() + SIDEBAR_TOP_MARGIN;
     let bottom = (screen_rect.bottom() - SIDEBAR_BOTTOM_MARGIN).max(top);
@@ -132,7 +175,14 @@ pub(crate) fn show_sidebar(
                 egui::StrokeKind::Inside,
             );
 
-            let inner_rect = shape_rect.shrink2(egui::vec2(0.0, 0.0));
+            // Reserve a bottom strip for the Update Pill so its presence
+            // never collides with tab content height.
+            let pill_strip_height = update_pill_strip_height(update_state);
+            let content_bottom = shape_rect.bottom() - pill_strip_height;
+            let inner_rect = egui::Rect::from_min_max(
+                shape_rect.min,
+                egui::pos2(shape_rect.right(), content_bottom),
+            );
             let ui_builder = egui::UiBuilder::new().max_rect(inner_rect);
             ui.scope_builder(ui_builder, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
@@ -149,7 +199,11 @@ pub(crate) fn show_sidebar(
                             )
                         }
                         SidebarTab::Options => {
-                            settings_changed |= paint_sidebar_options(ui, settings, canvas);
+                            let options_outcome =
+                                paint_sidebar_options(ui, settings, canvas, &about_updates);
+                            settings_changed |= options_outcome.settings_changed;
+                            update_check_now_clicked |= options_outcome.check_now_clicked;
+                            rollback_clicked |= options_outcome.rollback_clicked;
                         }
                     }
                 };
@@ -159,12 +213,159 @@ pub(crate) fn show_sidebar(
                     ui.add_enabled_ui(false, |ui| paint_contents(ui));
                 }
             });
+
+            if pill_strip_height > 0.0 {
+                let pill_strip_rect = egui::Rect::from_min_max(
+                    egui::pos2(shape_rect.left(), content_bottom),
+                    egui::pos2(shape_rect.right(), shape_rect.bottom()),
+                );
+                let pill_outcome =
+                    paint_update_pill(ui, pill_strip_rect, update_state, input_enabled);
+                update_pill_rect = pill_outcome.rect;
+                update_pill_clicked = pill_outcome.clicked;
+            }
         });
 
     SidebarRenderResult {
         settings_changed,
         interactive_rect: Some(area_response.response.rect),
         board_action,
+        update_pill_rect,
+        update_pill_clicked,
+        update_check_now_clicked,
+        rollback_clicked,
+    }
+}
+
+struct SidebarOptionsOutcome {
+    settings_changed: bool,
+    check_now_clicked: bool,
+    rollback_clicked: bool,
+}
+
+struct UpdatePillOutcome {
+    rect: Option<egui::Rect>,
+    clicked: bool,
+}
+
+fn update_pill_strip_height(state: &UpdateState) -> f32 {
+    if matches!(state, UpdateState::Hidden) {
+        0.0
+    } else {
+        // Pill height + above/below padding.
+        crate::theme::CONTROL_HEIGHT + crate::theme::SPACE_3 * 2.0
+    }
+}
+
+fn paint_update_pill(
+    ui: &mut egui::Ui,
+    strip_rect: egui::Rect,
+    state: &UpdateState,
+    input_enabled: bool,
+) -> UpdatePillOutcome {
+    // Four observable shapes: clickable opener (Available), clickable
+    // restarter (Ready), in-place progress bar (Downloading), quiet
+    // failure indicator (Failed). Hidden returns early above.
+    enum PillShape {
+        Opens { label: String },
+        Restart { label: String },
+        Progress { label: String, percent: u8 },
+        Quiet { label: String },
+    }
+
+    let shape = match state {
+        UpdateState::Hidden => {
+            return UpdatePillOutcome {
+                rect: None,
+                clicked: false,
+            };
+        }
+        UpdateState::Available { version, .. } => PillShape::Opens {
+            label: format!("Update {version}"),
+        },
+        UpdateState::Downloading { percent, .. } => PillShape::Progress {
+            label: format!("Downloading {percent}%"),
+            percent: (*percent).min(100),
+        },
+        UpdateState::Ready { .. } => PillShape::Restart {
+            label: "Restart".to_owned(),
+        },
+        UpdateState::Failed => PillShape::Quiet {
+            label: "Update check failed".to_owned(),
+        },
+    };
+
+    let pad_x = crate::theme::SPACE_3;
+    let pill_rect = egui::Rect::from_min_max(
+        egui::pos2(
+            strip_rect.left() + pad_x,
+            strip_rect.top() + crate::theme::SPACE_3,
+        ),
+        egui::pos2(
+            strip_rect.right() - pad_x,
+            strip_rect.bottom() - crate::theme::SPACE_3,
+        ),
+    );
+    let id = egui::Id::new("sidebar_update_pill");
+    let is_clickable = matches!(shape, PillShape::Opens { .. } | PillShape::Restart { .. });
+    let sense = if is_clickable {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let response = ui.interact(pill_rect, id, sense);
+    let interactive = input_enabled && is_clickable;
+    let fill = crate::theme::SURFACE_ELEVATED;
+    let stroke = if is_clickable {
+        egui::Stroke::new(1.0, crate::theme::ACCENT)
+    } else {
+        crate::theme::stroke_subtle()
+    };
+    ui.painter().rect(
+        pill_rect,
+        crate::theme::RADIUS_COMPACT,
+        fill,
+        stroke,
+        egui::StrokeKind::Inside,
+    );
+
+    // Progress bar fill — painted before the label so the text sits on top.
+    if let PillShape::Progress { percent, .. } = &shape {
+        let fraction = (*percent as f32 / 100.0).clamp(0.0, 1.0);
+        if fraction > 0.0 {
+            let bar_width = (pill_rect.width() * fraction).max(1.0);
+            let bar_rect = egui::Rect::from_min_max(
+                pill_rect.min,
+                egui::pos2(pill_rect.min.x + bar_width, pill_rect.max.y),
+            );
+            ui.painter().rect_filled(
+                bar_rect,
+                crate::theme::RADIUS_COMPACT,
+                crate::theme::ACCENT.gamma_multiply(0.25),
+            );
+        }
+    }
+
+    let (label, text_color) = match &shape {
+        PillShape::Opens { label } | PillShape::Restart { label } => {
+            (label.clone(), crate::theme::TEXT)
+        }
+        PillShape::Progress { label, .. } => (label.clone(), crate::theme::TEXT),
+        PillShape::Quiet { label } => (label.clone(), crate::theme::TEXT_MUTED),
+    };
+    let font = ui.style().text_styles[&egui::TextStyle::Body].clone();
+    let galley = ui.painter().layout_no_wrap(label, font, text_color);
+    let label_pos = egui::pos2(
+        pill_rect.center().x - galley.size().x * 0.5,
+        pill_rect.center().y - galley.size().y * 0.5 - 1.0,
+    );
+    ui.painter().galley(label_pos, galley, text_color);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Update")
+    });
+    UpdatePillOutcome {
+        rect: Some(pill_rect),
+        clicked: interactive && response.clicked(),
     }
 }
 
@@ -224,8 +425,11 @@ fn paint_sidebar_options(
     ui: &mut egui::Ui,
     settings: &mut crate::data::WorkspaceSettings,
     canvas: &mut crate::canvas::CanvasState,
-) -> bool {
+    about_updates: &AboutUpdatesView<'_>,
+) -> SidebarOptionsOutcome {
     let mut changed = false;
+    let mut check_now_clicked = false;
+    let mut rollback_clicked = false;
     let content_rect = ui.available_rect_before_wrap();
     ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
@@ -236,6 +440,12 @@ fn paint_sidebar_options(
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 ui.add_space(crate::theme::SPACE_3);
                 paint_sidebar_subcard(ui, |ui| {
+                    let about_outcome = paint_about_updates_section(ui, about_updates);
+                    check_now_clicked |= about_outcome.check_now_clicked;
+                    rollback_clicked |= about_outcome.rollback_clicked;
+                });
+                ui.add_space(crate::theme::SPACE_4);
+                paint_sidebar_subcard(ui, |ui| {
                     changed |= paint_settings_section(ui, settings, canvas);
                 });
                 ui.add_space(crate::theme::SPACE_6);
@@ -244,7 +454,114 @@ fn paint_sidebar_options(
                 ui.add_space(crate::theme::SPACE_4);
             });
     });
-    changed
+    SidebarOptionsOutcome {
+        settings_changed: changed,
+        check_now_clicked,
+        rollback_clicked,
+    }
+}
+
+struct AboutUpdatesOutcome {
+    check_now_clicked: bool,
+    rollback_clicked: bool,
+}
+
+fn paint_about_updates_section(
+    ui: &mut egui::Ui,
+    about: &AboutUpdatesView<'_>,
+) -> AboutUpdatesOutcome {
+    let mut check_now_clicked = false;
+    let mut rollback_clicked = false;
+
+    ui.add_space(crate::theme::SPACE_2 + 2.0);
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
+        ui.label(
+            egui::RichText::new("About / Updates")
+                .text_style(egui::TextStyle::Body)
+                .color(crate::theme::TEXT),
+        );
+        ui.label(
+            egui::RichText::new(format!("Version {}", about.current_version))
+                .text_style(egui::TextStyle::Small)
+                .color(crate::theme::TEXT_SUBTLE),
+        );
+        ui.label(
+            egui::RichText::new(format!(
+                "Last checked: {}",
+                format_last_checked(about.last_checked_unix_millis),
+            ))
+            .text_style(egui::TextStyle::Small)
+            .color(crate::theme::TEXT_SUBTLE),
+        );
+        ui.add_space(crate::theme::SPACE_2);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+            let check_button = egui::Button::new(
+                egui::RichText::new("Check for updates now")
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT),
+            );
+            if ui
+                .add_enabled(about.check_now_enabled, check_button)
+                .clicked()
+            {
+                check_now_clicked = true;
+            }
+            if about.backup_present {
+                let rollback_button = egui::Button::new(
+                    egui::RichText::new("Rollback to previous version")
+                        .text_style(egui::TextStyle::Small)
+                        .color(crate::theme::TEXT),
+                );
+                if ui.add(rollback_button).clicked() {
+                    rollback_clicked = true;
+                }
+            }
+        });
+    });
+    ui.add_space(crate::theme::SPACE_2 + 2.0);
+
+    AboutUpdatesOutcome {
+        check_now_clicked,
+        rollback_clicked,
+    }
+}
+
+fn format_last_checked(unix_millis: Option<u64>) -> String {
+    let Some(millis) = unix_millis else {
+        return "never".to_owned();
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(millis);
+    let elapsed_millis = now.saturating_sub(millis);
+    let elapsed_seconds = elapsed_millis / 1_000;
+    if elapsed_seconds < 60 {
+        "just now".to_owned()
+    } else if elapsed_seconds < 60 * 60 {
+        let minutes = elapsed_seconds / 60;
+        if minutes == 1 {
+            "1 minute ago".to_owned()
+        } else {
+            format!("{minutes} minutes ago")
+        }
+    } else if elapsed_seconds < 60 * 60 * 24 {
+        let hours = elapsed_seconds / 3_600;
+        if hours == 1 {
+            "1 hour ago".to_owned()
+        } else {
+            format!("{hours} hours ago")
+        }
+    } else {
+        let days = elapsed_seconds / 86_400;
+        if days == 1 {
+            "1 day ago".to_owned()
+        } else {
+            format!("{days} days ago")
+        }
+    }
 }
 
 fn paint_sidebar_boards(

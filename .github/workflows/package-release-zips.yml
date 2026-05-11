@@ -186,20 +186,16 @@ jobs:
           fi
 
           if [[ "${{ inputs.include_macos }}" == "true" ]]; then
-            if [[ "${{ inputs.include_models }}" != "true" ]]; then
-              echo "Skipping macOS update-only zip because models live inside SnappyRef.app."
-            else
-              macos_app_zip=$(find "${RUNNER_TEMP}/app-artifacts/macos" -type f -name 'snappyref-macos-app.zip' | head -n 1)
-              if [[ -z "$macos_app_zip" ]]; then
-                echo "missing macOS app artifact" >&2
-                exit 1
-              fi
-              scripts/package-release-assets.sh \
-                --platform macos \
-                --app-archive "$macos_app_zip" \
-                "${package_args[@]}" \
-                --output "$release_assets/snappyref-macos-${{ inputs.release_tag }}-full.zip"
+            macos_app_zip=$(find "${RUNNER_TEMP}/app-artifacts/macos" -type f -name 'snappyref-macos-app.zip' | head -n 1)
+            if [[ -z "$macos_app_zip" ]]; then
+              echo "missing macOS app artifact" >&2
+              exit 1
             fi
+            scripts/package-release-assets.sh \
+              --platform macos \
+              --app-archive "$macos_app_zip" \
+              "${package_args[@]}" \
+              --output "$release_assets/snappyref-mac-${{ inputs.release_tag }}-${suffix}.zip"
           fi
 
       - uses: actions/upload-artifact@v4

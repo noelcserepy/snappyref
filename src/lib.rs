@@ -13,6 +13,8 @@ mod import_placement;
 mod jobs;
 mod layout_snap;
 mod library_location;
+#[cfg(feature = "semantic-search")]
+mod model_store;
 mod native_capture;
 mod native_drop;
 #[cfg(feature = "semantic-search")]
@@ -28,8 +30,17 @@ mod sidebar;
 mod storage;
 mod theme;
 mod ui_layout;
+pub mod updater;
 
 pub fn run() -> eframe::Result<()> {
+    if std::env::args()
+        .skip(1)
+        .any(|argument| argument == "--rollback")
+    {
+        let exit_code = updater::rollback::run_cli();
+        std::process::exit(exit_code);
+    }
+
     if std::env::args()
         .skip(1)
         .any(|argument| argument == "--image-import-prepare")

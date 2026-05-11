@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Validate a full-install release archive: binary in place, Local Model Store
+# present, no user-owned data leaked, no UPDATE.txt emitted by this pipeline.
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
@@ -8,14 +10,6 @@ fi
 
 archive=$1
 binary_name=$2
-binary_dir=$(dirname "$binary_name")
-if [[ "$binary_dir" == "." ]]; then
-  model_prefix="models"
-  update_entry="UPDATE.txt"
-else
-  model_prefix="$binary_dir/models"
-  update_entry="$binary_dir/UPDATE.txt"
-fi
 
 if [[ ! -f "$archive" ]]; then
   echo "missing archive: $archive" >&2
@@ -28,6 +22,14 @@ require_entry() {
   local entry=$1
   if ! grep -Fxq "$entry" <<<"$entries"; then
     echo "missing required app-owned path: $entry" >&2
+    exit 1
+  fi
+}
+
+forbid_entry() {
+  local entry=$1
+  if grep -Fxq "$entry" <<<"$entries"; then
+    echo "archive contains forbidden path: $entry" >&2
     exit 1
   fi
 }
@@ -45,27 +47,49 @@ forbid_path() {
 }
 
 require_entry "$binary_name"
+
+# Derive the install-root prefix (SnappyRef/) from the binary path.
 case "$binary_name" in
-  *.app/Contents/MacOS/*)
-    app_root="${binary_name%%.app/*}.app"
-    model_prefix="$app_root/Contents/Resources/models"
-    update_entry="UPDATE.txt"
-    require_entry "$app_root/Contents/Info.plist"
-    require_entry "$app_root/Contents/Resources/snappyref.icns"
+  SnappyRef/SnappyRef.app/Contents/MacOS/*)
+    install_prefix="SnappyRef"
+    require_entry "$install_prefix/SnappyRef.app/Contents/Info.plist"
+    require_entry "$install_prefix/SnappyRef.app/Contents/Resources/snappyref.icns"
+    # ADR-0015: the auto-update helper ships next to the main binary
+    # inside the bundle on macOS and inside the install folder on Windows.
+    require_entry "$install_prefix/SnappyRef.app/Contents/MacOS/snappyref-updater"
+    ;;
+  SnappyRef/*)
+    install_prefix="SnappyRef"
+    require_entry "$install_prefix/snappyref-updater.exe"
+    ;;
+  *)
+    echo "unexpected binary path: $binary_name" >&2
+    exit 1
     ;;
 esac
-require_entry "$update_entry"
+
+# The Local Model Store sits at <install_root>/models/<model_key>/.
+model_prefix="$install_prefix/models"
 require_entry "$model_prefix/siglip2_base_patch16_224_int8/tokenizer.json"
 require_entry "$model_prefix/siglip2_base_patch16_224_int8/onnx/text_model_int8.onnx"
 require_entry "$model_prefix/siglip2_base_patch16_224_int8/onnx/vision_model_int8.onnx"
 
-forbid_path "library"
-forbid_path "library.db"
-forbid_path "originals"
-forbid_path "thumbs"
-if [[ "$binary_dir" != "." && "$binary_name" != *.app/Contents/MacOS/* ]]; then
-  forbid_path "$binary_dir/library"
-  forbid_path "$binary_dir/library.db"
-  forbid_path "$binary_dir/originals"
-  forbid_path "$binary_dir/thumbs"
-fi
+# UPDATE.txt is no longer emitted by any packaging script.
+forbid_entry "$install_prefix/UPDATE.txt"
+forbid_entry "UPDATE.txt"
+
+# Models must not be left inside the macOS bundle.
+case "$binary_name" in
+  SnappyRef/SnappyRef.app/Contents/MacOS/*)
+    if grep -E "^$install_prefix/SnappyRef\\.app/Contents/Resources/models(/|$)" <<<"$entries" >/dev/null; then
+      echo "archive contains in-bundle models directory" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+# User-owned data must never appear inside a release zip.
+forbid_path "$install_prefix/library"
+forbid_path "$install_prefix/library.db"
+forbid_path "$install_prefix/originals"
+forbid_path "$install_prefix/thumbs"

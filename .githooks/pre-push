@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Pre-push gate. Mirrors what CI used to enforce per-PR; CI now only checks
+# format. Bypass with `git push --no-verify` if you really mean it.
+#
+# One-time setup on a fresh clone:
+#   git config core.hooksPath .githooks
+
+set -euo pipefail
+
+echo "[pre-push] cargo fmt --check"
+cargo fmt --check
+
+echo "[pre-push] cargo check --locked --no-default-features --features semantic-search"
+cargo check --locked --no-default-features --features semantic-search
+
+echo "[pre-push] cargo test update_preservation_smoke"
+cargo test --locked --no-default-features update_preservation_smoke
+
+echo "[pre-push] ok"
