@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
+use std::time::Duration;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -146,31 +147,19 @@ impl SemanticSearchService {
         let model_key = config.model.model_key;
 
         thread::spawn(move || {
-            while let Ok(first_request) = index_rx.recv() {
-                let mut helper = None;
+            let grace = embedding_helper_grace();
+            run_index_worker_loop(&index_rx, grace, |request, helper| {
                 process_index_request(
-                    first_request,
+                    request,
                     &worker_library,
                     &worker_state,
                     &model_spec,
                     &result_tx,
                     &worker_search_embedding_cache,
                     canvas_image_max_side,
-                    &mut helper,
+                    helper,
                 );
-                while let Ok(request) = index_rx.try_recv() {
-                    process_index_request(
-                        request,
-                        &worker_library,
-                        &worker_state,
-                        &model_spec,
-                        &result_tx,
-                        &worker_search_embedding_cache,
-                        canvas_image_max_side,
-                        &mut helper,
-                    );
-                }
-            }
+            });
         });
         let search_library = library.clone();
         let search_state = model_state.clone();
@@ -1093,6 +1082,53 @@ fn unix_timestamp_seconds() -> i64 {
         .unwrap_or(0)
 }
 
+/// Embedding Helper Grace Period: how long the embedding worker keeps the
+/// **Embedding Helper Process** alive after a session's last request before
+/// dropping it. Bridges trickled imports (e.g. one drag every couple of
+/// seconds) so the model does not cold-mount per asset, while still letting
+/// the helper exit after a quiet window so **Quiescent Memory** returns to
+/// baseline.
+///
+/// Default 3s; override with `SNAPPYREF_EMBEDDING_HELPER_GRACE_MS=<ms>`. A
+/// value of `0` reproduces the previous behavior (drop helper as soon as the
+/// queue drains).
+fn embedding_helper_grace() -> Duration {
+    const DEFAULT_GRACE_MS: u64 = 3000;
+    std::env::var("SNAPPYREF_EMBEDDING_HELPER_GRACE_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_millis(DEFAULT_GRACE_MS))
+}
+
+/// Drive the embedding index worker: per `recv()`, start a fresh helper-owning
+/// session, process the first request, then keep accepting requests within
+/// the grace window using `recv_timeout`. When grace expires the helper is
+/// dropped (returning model and allocator memory to the OS) and the loop
+/// blocks on `recv()` for the next session.
+///
+/// Generic over the request and helper types so the lifetime/loop logic can
+/// be tested without spawning a real **Embedding Helper Process**.
+fn run_index_worker_loop<T, H, F>(rx: &mpsc::Receiver<T>, grace: Duration, mut process: F)
+where
+    F: FnMut(T, &mut Option<H>),
+{
+    while let Ok(first_request) = rx.recv() {
+        let mut helper: Option<H> = None;
+        process(first_request, &mut helper);
+        loop {
+            match rx.recv_timeout(grace) {
+                Ok(request) => process(request, &mut helper),
+                Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+        }
+        // `helper` drops here at the end of each session, so the
+        // **Embedding Helper Process** exits and its native model and
+        // allocator memory return to the OS.
+    }
+}
+
 fn embedding_source_path(
     library: &Library,
     asset_id: i64,
@@ -1166,8 +1202,8 @@ fn ensure_model(
 #[cfg(test)]
 mod tests {
     use super::{
-        IndexResult, SemanticSearchConfig, SemanticSearchService, embedding_source_path,
-        is_terminal_embedding_failure,
+        IndexResult, SemanticSearchConfig, SemanticSearchService, embedding_helper_grace,
+        embedding_source_path, is_terminal_embedding_failure, run_index_worker_loop,
     };
     use crate::semantic_search::DEFAULT_SEMANTIC_SEARCH_MODEL;
     use crate::semantic_search::index::SearchScope;
@@ -1177,6 +1213,11 @@ mod tests {
     use image::imageops::FilterType;
     use std::fs;
     use std::process::Command;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    use std::thread;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -1618,5 +1659,162 @@ mod tests {
         assert_eq!(results[0].asset_id, record.asset.id);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// A test stand-in for the **Embedding Helper Process** child. The
+    /// production helper is an OS subprocess that owns the loaded image
+    /// semantic model; here we just need something whose Drop event the
+    /// test can observe so we can assert when the worker session ends.
+    struct TestHelper {
+        sessions_ended: Arc<AtomicUsize>,
+    }
+
+    impl Drop for TestHelper {
+        fn drop(&mut self) {
+            self.sessions_ended.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Run `run_index_worker_loop` on a background thread and collect, in
+    /// order, every helper-start, request, and helper-drop event. Used by
+    /// the grace-period tests below to assert when the worker keeps a
+    /// single session alive vs. starts fresh ones.
+    fn run_worker_collecting_events(
+        grace: Duration,
+    ) -> (
+        mpsc::Sender<u32>,
+        Arc<Mutex<Vec<String>>>,
+        Arc<AtomicUsize>,
+        Arc<AtomicUsize>,
+        thread::JoinHandle<()>,
+    ) {
+        let (tx, rx) = mpsc::channel::<u32>();
+        let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let helper_starts = Arc::new(AtomicUsize::new(0));
+        let helper_ends = Arc::new(AtomicUsize::new(0));
+
+        let events_thread = events.clone();
+        let starts_thread = helper_starts.clone();
+        let ends_thread = helper_ends.clone();
+        let handle = thread::spawn(move || {
+            run_index_worker_loop::<u32, TestHelper, _>(&rx, grace, |request, helper| {
+                if helper.is_none() {
+                    starts_thread.fetch_add(1, Ordering::SeqCst);
+                    *helper = Some(TestHelper {
+                        sessions_ended: ends_thread.clone(),
+                    });
+                    events_thread
+                        .lock()
+                        .unwrap()
+                        .push("helper_started".to_owned());
+                }
+                events_thread
+                    .lock()
+                    .unwrap()
+                    .push(format!("processed:{request}"));
+            });
+        });
+
+        (tx, events, helper_starts, helper_ends, handle)
+    }
+
+    /// Default and env-override behaviour live in one test because
+    /// `std::env::set_var` mutates process-global state, and Cargo runs
+    /// unit tests in parallel by default — splitting the two cases lets
+    /// them race against each other on the same env name.
+    #[test]
+    fn embedding_helper_grace_default_and_env_override() {
+        // We do not assume the absolute default value here in case the
+        // ambient test environment sets the variable; instead the env
+        // override path is the contract this test pins down.
+        unsafe { std::env::set_var("SNAPPYREF_EMBEDDING_HELPER_GRACE_MS", "750") };
+        let with_override = embedding_helper_grace();
+        unsafe { std::env::remove_var("SNAPPYREF_EMBEDDING_HELPER_GRACE_MS") };
+        let without_override = embedding_helper_grace();
+
+        assert_eq!(with_override, Duration::from_millis(750));
+        assert_eq!(
+            without_override,
+            Duration::from_millis(3000),
+            "default grace must be 3s when the override env var is unset"
+        );
+    }
+
+    /// The headline behavior the issue asks us to fix: trickled requests
+    /// arriving within the grace window must reuse a single helper
+    /// session instead of cold-mounting a fresh model per request.
+    ///
+    /// Pre-fix this test failed because the worker's inner `try_recv`
+    /// drain loop ended the session the instant the queue emptied — even
+    /// when the next request arrived only 100ms later.
+    #[test]
+    fn helper_survives_trickled_requests_within_grace() {
+        let grace = Duration::from_millis(500);
+        let (tx, events, starts, ends, handle) = run_worker_collecting_events(grace);
+
+        // Send three messages spaced well inside the grace window. With
+        // the fix the worker keeps one helper alive across all three.
+        tx.send(1).unwrap();
+        thread::sleep(Duration::from_millis(120));
+        tx.send(2).unwrap();
+        thread::sleep(Duration::from_millis(120));
+        tx.send(3).unwrap();
+
+        // Drop the sender so the worker thread observes Disconnected
+        // after the grace timeout elapses and the loop can finish.
+        drop(tx);
+        handle.join().unwrap();
+
+        assert_eq!(
+            starts.load(Ordering::SeqCst),
+            1,
+            "expected the helper to start exactly once across trickled requests"
+        );
+        assert_eq!(
+            ends.load(Ordering::SeqCst),
+            1,
+            "expected the helper to be dropped once after the channel disconnects"
+        );
+
+        let events = events.lock().unwrap().clone();
+        assert_eq!(
+            events,
+            vec![
+                "helper_started".to_owned(),
+                "processed:1".to_owned(),
+                "processed:2".to_owned(),
+                "processed:3".to_owned(),
+            ]
+        );
+    }
+
+    /// A request that arrives after the grace window expires must start
+    /// a fresh helper. This protects the **Quiescent Memory** target:
+    /// without it, an indefinitely-running helper would keep the
+    /// semantic model resident across long idle periods.
+    #[test]
+    fn helper_restarts_after_grace_expires() {
+        let grace = Duration::from_millis(150);
+        let (tx, _events, starts, ends, handle) = run_worker_collecting_events(grace);
+
+        tx.send(1).unwrap();
+        // Wait well past grace so the first session ends and the helper
+        // is dropped before the next request arrives.
+        thread::sleep(Duration::from_millis(450));
+        tx.send(2).unwrap();
+        thread::sleep(Duration::from_millis(50));
+        drop(tx);
+        handle.join().unwrap();
+
+        assert_eq!(
+            starts.load(Ordering::SeqCst),
+            2,
+            "expected a fresh helper for the second request after grace expired"
+        );
+        assert_eq!(
+            ends.load(Ordering::SeqCst),
+            2,
+            "expected both helpers to be dropped once their sessions ended"
+        );
     }
 }

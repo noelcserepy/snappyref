@@ -373,6 +373,18 @@ struct PerfScenarioState {
     /// Per-asset corpus metadata indexed by stored asset id, used to
     /// stamp `format` onto embedding events once an asset id is known.
     asset_by_asset_id: std::collections::HashMap<i64, PerfCorpusAsset>,
+    /// `trickle-import` only: entries still to enqueue, popped one per
+    /// `trickle_interval` to reproduce **Embedding Helper Process** churn.
+    pending_trickle_imports: Vec<PerfCorpusEntry>,
+    /// Spacing between successive trickle imports. The default value
+    /// keeps the bug-reproduction precise: longer than the previous
+    /// "drop helper immediately" behavior so the second import always
+    /// reloads, but shorter than the new 3s grace so post-fix the
+    /// helper stays alive.
+    trickle_interval: Duration,
+    /// Earliest instant at which the next trickle import should be
+    /// enqueued; `None` once the trickle queue is empty.
+    trickle_next_at: Option<Instant>,
 }
 
 #[derive(Clone, Copy, Debug, Default, serde::Serialize)]
@@ -464,6 +476,9 @@ impl PerfScenarioState {
             model_unload_logged: false,
             asset_by_queue_id: std::collections::HashMap::new(),
             asset_by_asset_id: std::collections::HashMap::new(),
+            pending_trickle_imports: Vec::new(),
+            trickle_interval: Duration::from_secs(2),
+            trickle_next_at: None,
         }))
     }
 
@@ -518,6 +533,19 @@ impl PerfScenarioState {
                 .filter(|entry| entry.role.contains("default-1-image"))
                 .take(1)
                 .collect::<Vec<_>>(),
+            "trickle-import" => {
+                // Three copies of the same medium-JPEG entry used by
+                // `import-1`, dripped out 2s apart by `drive_perf_scenario`
+                // to reproduce **Embedding Helper Process** churn.
+                let entry = entries
+                    .into_iter()
+                    .find(|entry| entry.role.contains("default-1-image"))
+                    .ok_or_else(|| {
+                        "trickle-import requires a default-1-image entry in the corpus manifest"
+                            .to_owned()
+                    })?;
+                vec![entry.clone(), entry.clone(), entry]
+            }
             "import-20" | "mixed-corpus" => entries,
             "animated" => entries
                 .into_iter()
@@ -1722,6 +1750,10 @@ impl SnappyRefApp {
         {
             self.enqueue_perf_scenario_imports(ctx, screen_rect);
         }
+        // trickle-import drips its remaining entries one per
+        // `trickle_interval` so the **Embedding Helper Process** sees
+        // gaps between successive imports.
+        self.dispatch_perf_trickle_imports(ctx, screen_rect);
         self.update_perf_scenario_embedding_progress();
         self.finish_perf_scenario_if_idle(ctx)
     }
@@ -1745,6 +1777,7 @@ impl SnappyRefApp {
             "scenario_started",
             serde_json::json!({ "expected_imports": entries.len() }),
         );
+        let is_trickle = scenario.name == "trickle-import";
         self.perf_scenario = Some(scenario);
 
         let desired_world = self.preferred_import_world(ctx, screen_rect);
@@ -1766,71 +1799,169 @@ impl SnappyRefApp {
             None => return,
         };
 
-        for entry in entries {
-            let path = self
-                .perf_scenario
-                .as_ref()
-                .map(|scenario| scenario.corpus_root.join(&entry.file))
-                .unwrap_or_else(|| PathBuf::from(&entry.file));
-            let dimensions = image::image_dimensions(&path).ok();
-            let reservation = self.reserve_import(
-                &mut layout,
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("perf-image")
-                    .to_owned(),
-                dimensions,
-                desired_world,
-                viewport_world,
-            );
-            let request = crate::import_intake::import_path_request(
-                path.clone(),
-                reservation,
-                desired_world,
-                viewport_world,
-                self.import_request_config(),
-                self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
-                    queued_at: Instant::now(),
-                    timings: crate::jobs::ImportTimings::default(),
-                }),
-            );
-            if let Err(error) = self
-                .import_worker
-                .as_ref()
-                .expect("perf scenario requires import worker")
-                .enqueue(request)
-            {
-                self.remove_import_reservation(reservation);
-                self.emit_perf_error_and_close(ctx, error);
-                return;
+        if is_trickle {
+            // Enqueue the first import immediately so the
+            // **Embedding Helper Process** spins up under the same
+            // conditions as `import-1`; the remaining entries trickle
+            // in via `dispatch_perf_trickle_imports`.
+            let mut iter = entries.into_iter();
+            if let Some(first) = iter.next() {
+                if let Err(error) =
+                    self.enqueue_perf_entry(&first, &mut layout, desired_world, viewport_world)
+                {
+                    self.emit_perf_error_and_close(ctx, error);
+                    return;
+                }
             }
+            let remaining: Vec<_> = iter.collect();
             if let Some(scenario) = &mut self.perf_scenario {
-                let bytes = std::fs::metadata(&path).ok().map(|metadata| metadata.len());
-                scenario.asset_by_queue_id.insert(
-                    reservation.queue_id,
-                    PerfCorpusAsset {
-                        file: entry.file.clone(),
-                        format: entry.format.clone(),
-                        animated: entry.animated,
-                        bytes,
-                    },
-                );
-                scenario.emit(
-                    "import_queued",
-                    serde_json::json!({
-                        "file": entry.file,
-                        "format": entry.format,
-                        "animated": entry.animated,
-                        "role": entry.role,
-                        "width": dimensions.map(|value| value.0),
-                        "height": dimensions.map(|value| value.1),
-                        "bytes": bytes,
-                        "queue_id": reservation.queue_id,
-                    }),
-                );
+                let now = Instant::now();
+                scenario.trickle_next_at =
+                    remaining.first().map(|_| now + scenario.trickle_interval);
+                scenario.pending_trickle_imports = remaining;
+            }
+        } else {
+            for entry in entries {
+                if let Err(error) =
+                    self.enqueue_perf_entry(&entry, &mut layout, desired_world, viewport_world)
+                {
+                    self.emit_perf_error_and_close(ctx, error);
+                    return;
+                }
             }
         }
         ctx.request_repaint_after(Duration::from_millis(16));
+    }
+
+    fn enqueue_perf_entry(
+        &mut self,
+        entry: &PerfCorpusEntry,
+        layout: &mut Vec<crate::data::BoardLayoutItem>,
+        desired_world: egui::Pos2,
+        viewport_world: egui::Rect,
+    ) -> Result<(), String> {
+        let path = self
+            .perf_scenario
+            .as_ref()
+            .map(|scenario| scenario.corpus_root.join(&entry.file))
+            .unwrap_or_else(|| PathBuf::from(&entry.file));
+        let dimensions = image::image_dimensions(&path).ok();
+        let reservation = self.reserve_import(
+            layout,
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("perf-image")
+                .to_owned(),
+            dimensions,
+            desired_world,
+            viewport_world,
+        );
+        let request = crate::import_intake::import_path_request(
+            path.clone(),
+            reservation,
+            desired_world,
+            viewport_world,
+            self.import_request_config(),
+            self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
+                queued_at: Instant::now(),
+                timings: crate::jobs::ImportTimings::default(),
+            }),
+        );
+        if let Err(error) = self
+            .import_worker
+            .as_ref()
+            .expect("perf scenario requires import worker")
+            .enqueue(request)
+        {
+            self.remove_import_reservation(reservation);
+            return Err(error);
+        }
+        if let Some(scenario) = &mut self.perf_scenario {
+            let bytes = std::fs::metadata(&path).ok().map(|metadata| metadata.len());
+            scenario.asset_by_queue_id.insert(
+                reservation.queue_id,
+                PerfCorpusAsset {
+                    file: entry.file.clone(),
+                    format: entry.format.clone(),
+                    animated: entry.animated,
+                    bytes,
+                },
+            );
+            scenario.emit(
+                "import_queued",
+                serde_json::json!({
+                    "file": entry.file,
+                    "format": entry.format,
+                    "animated": entry.animated,
+                    "role": entry.role,
+                    "width": dimensions.map(|value| value.0),
+                    "height": dimensions.map(|value| value.1),
+                    "bytes": bytes,
+                    "queue_id": reservation.queue_id,
+                }),
+            );
+        }
+        Ok(())
+    }
+
+    fn dispatch_perf_trickle_imports(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
+        let (next_at, interval) = match self.perf_scenario.as_ref() {
+            Some(scenario) if !scenario.pending_trickle_imports.is_empty() => {
+                (scenario.trickle_next_at, scenario.trickle_interval)
+            }
+            _ => return,
+        };
+
+        let Some(next_at) = next_at else {
+            return;
+        };
+        if Instant::now() < next_at {
+            // Make sure the egui main loop revisits us as soon as the
+            // trickle window opens, even when nothing else is changing.
+            ctx.request_repaint_after(next_at - Instant::now());
+            return;
+        }
+
+        let desired_world = self.preferred_import_world(ctx, screen_rect);
+        let viewport_world = self.import_viewport_world_rect(screen_rect);
+        let mut layout = match self.import_layout_snapshot() {
+            Ok(layout) => layout,
+            Err(error) => {
+                self.emit_perf_error_and_close(ctx, error);
+                return;
+            }
+        };
+
+        // Pop one entry now, schedule the next interval if more remain.
+        let entry = match self
+            .perf_scenario
+            .as_mut()
+            .and_then(|scenario| scenario.pending_trickle_imports.first().cloned())
+        {
+            Some(entry) => entry,
+            None => return,
+        };
+
+        if let Err(error) =
+            self.enqueue_perf_entry(&entry, &mut layout, desired_world, viewport_world)
+        {
+            self.emit_perf_error_and_close(ctx, error);
+            return;
+        }
+
+        if let Some(scenario) = &mut self.perf_scenario {
+            scenario.pending_trickle_imports.remove(0);
+            scenario.trickle_next_at = if scenario.pending_trickle_imports.is_empty() {
+                None
+            } else {
+                Some(Instant::now() + interval)
+            };
+            if let Some(next) = scenario.trickle_next_at {
+                ctx.request_repaint_after(next - Instant::now());
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(16));
+            }
+        }
     }
 
     fn emit_perf_error_and_close(&mut self, ctx: &egui::Context, error: String) {
