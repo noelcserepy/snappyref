@@ -157,7 +157,7 @@ The raster image data used to create a semantic-search embedding; prefer the **W
 _Avoid_: Search thumbnail, model image
 
 **Embedding Helper Process**:
-A short-lived child process that owns semantic model loading and image embedding for currently queued embedding work, then exits so native model and allocator memory return to the OS.
+A short-lived child process that owns image-side semantic model loading and image embedding for currently queued embedding work, then exits so native model and allocator memory return to the OS. Text semantic-search model loading stays on the demand search path, not the import/backfill image helper path.
 _Avoid_: Background model cache, permanent model worker
 
 **Local Model Store**:

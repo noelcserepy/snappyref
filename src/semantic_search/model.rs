@@ -15,6 +15,7 @@ use crate::model_store::{
 
 pub trait EmbeddingModel: Send + Sync {
     fn embed_text(&self, query: &str) -> Result<Vec<f32>, String>;
+    #[allow(dead_code)]
     fn embed_image_path(&self, path: &Path) -> Result<Vec<f32>, String>;
 }
 
@@ -174,6 +175,11 @@ pub struct OrtDualEncoderModel {
     vision_session: Mutex<Session>,
 }
 
+pub(crate) struct OrtImageEmbeddingModel {
+    spec: ModelSpec,
+    vision_session: Mutex<Session>,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ImageEmbeddingTiming {
     pub decode_rgb: Duration,
@@ -284,40 +290,58 @@ impl OrtDualEncoderModel {
         &self,
         path: &Path,
     ) -> Result<(Vec<f32>, ImageEmbeddingTiming), String> {
+        embed_image_path_with_session(&self.spec, &self.vision_session, path)
+    }
+}
+
+impl OrtImageEmbeddingModel {
+    pub(crate) fn load_with_progress_timed<F>(
+        spec: ModelSpec,
+        mut on_progress: F,
+    ) -> Result<(Self, ModelLoadTiming), String>
+    where
+        F: FnMut(&str),
+    {
         let total_start = Instant::now();
-        let (input, mut timing) = preprocess_image_timed(path, &self.spec)?;
+        let assets_start = Instant::now();
+        let assets = resolve_model_assets(&spec, &mut on_progress)?;
+        let mut timing = ModelLoadTiming {
+            assets_resolved: assets_start.elapsed(),
+            ..ModelLoadTiming::default()
+        };
 
-        let mut vision_session = self
-            .vision_session
-            .lock()
-            .map_err(|_| "vision session lock poisoned".to_owned())?;
-
-        let bind_start = Instant::now();
-        let pixel_values = TensorRef::from_array_view(&input)
-            .map_err(|error| format!("failed to bind image input: {error}"))?;
-        timing.bind_input = bind_start.elapsed();
-
-        let run_start = Instant::now();
-        let outputs = vision_session
-            .run(ort::inputs! {
-                "pixel_values" => pixel_values
-            })
-            .map_err(|error| format!("failed to run vision model: {error}"))?;
-        timing.model_run = run_start.elapsed();
-
-        let extract_start = Instant::now();
-        let array = outputs[self.spec.vision_output_name]
-            .try_extract_array::<f32>()
-            .map_err(|error| format!("failed to extract image embedding: {error}"))?;
-        let embedding = array.iter().copied().collect::<Vec<_>>();
-        timing.extract_output = extract_start.elapsed();
-
-        let normalize_start = Instant::now();
-        let embedding = normalize(embedding);
-        timing.normalize_output = normalize_start.elapsed();
+        on_progress("Initializing image embedding model…");
+        let vision_start = Instant::now();
+        let vision_session = Session::builder()
+            .map_err(|error| format!("failed to create vision session builder: {error}"))?
+            .with_memory_pattern(false)
+            .map_err(|error| format!("failed to disable vision memory pattern: {error}"))?
+            .with_execution_providers([ep::CPU::default().with_arena_allocator(false).build()])
+            .map_err(|error| format!("failed to configure vision CPU provider: {error}"))?
+            .with_intra_threads(1)
+            .map_err(|error| format!("failed to configure vision intra-op threads: {error}"))?
+            .with_inter_threads(1)
+            .map_err(|error| format!("failed to configure vision inter-op threads: {error}"))?
+            .commit_from_file(&assets.vision_model_path)
+            .map_err(|error| format!("failed to load vision model: {error}"))?;
+        timing.vision_session_loaded = vision_start.elapsed();
         timing.total = total_start.elapsed();
 
-        Ok((embedding, timing))
+        Ok((
+            Self {
+                spec,
+                vision_session: Mutex::new(vision_session),
+            },
+            timing,
+        ))
+    }
+
+    #[cfg(feature = "semantic-search")]
+    pub(crate) fn embed_image_path_timed(
+        &self,
+        path: &Path,
+    ) -> Result<(Vec<f32>, ImageEmbeddingTiming), String> {
+        embed_image_path_with_session(&self.spec, &self.vision_session, path)
     }
 }
 
@@ -355,27 +379,60 @@ impl EmbeddingModel for OrtDualEncoderModel {
     }
 
     fn embed_image_path(&self, path: &Path) -> Result<Vec<f32>, String> {
-        let input = preprocess_image(path, &self.spec)?;
-        let mut vision_session = self
-            .vision_session
-            .lock()
-            .map_err(|_| "vision session lock poisoned".to_owned())?;
-        let outputs = vision_session
-            .run(ort::inputs! {
-                "pixel_values" => TensorRef::from_array_view(&input)
-                    .map_err(|error| format!("failed to bind image input: {error}"))?
-            })
-            .map_err(|error| format!("failed to run vision model: {error}"))?;
-
-        let array = outputs[self.spec.vision_output_name]
-            .try_extract_array::<f32>()
-            .map_err(|error| format!("failed to extract image embedding: {error}"))?;
-        Ok(normalize(array.iter().copied().collect()))
+        self.embed_image_path_timed(path)
+            .map(|(embedding, _timing)| embedding)
     }
 }
 
-fn preprocess_image(path: &Path, spec: &ModelSpec) -> Result<Array4<f32>, String> {
-    preprocess_image_timed(path, spec).map(|(array, _timing)| array)
+impl EmbeddingModel for OrtImageEmbeddingModel {
+    fn embed_text(&self, _query: &str) -> Result<Vec<f32>, String> {
+        Err("image embedding model cannot embed text".to_owned())
+    }
+
+    fn embed_image_path(&self, path: &Path) -> Result<Vec<f32>, String> {
+        self.embed_image_path_timed(path)
+            .map(|(embedding, _timing)| embedding)
+    }
+}
+
+fn embed_image_path_with_session(
+    spec: &ModelSpec,
+    vision_session: &Mutex<Session>,
+    path: &Path,
+) -> Result<(Vec<f32>, ImageEmbeddingTiming), String> {
+    let total_start = Instant::now();
+    let (input, mut timing) = preprocess_image_timed(path, spec)?;
+
+    let mut vision_session = vision_session
+        .lock()
+        .map_err(|_| "vision session lock poisoned".to_owned())?;
+
+    let bind_start = Instant::now();
+    let pixel_values = TensorRef::from_array_view(&input)
+        .map_err(|error| format!("failed to bind image input: {error}"))?;
+    timing.bind_input = bind_start.elapsed();
+
+    let run_start = Instant::now();
+    let outputs = vision_session
+        .run(ort::inputs! {
+            "pixel_values" => pixel_values
+        })
+        .map_err(|error| format!("failed to run vision model: {error}"))?;
+    timing.model_run = run_start.elapsed();
+
+    let extract_start = Instant::now();
+    let array = outputs[spec.vision_output_name]
+        .try_extract_array::<f32>()
+        .map_err(|error| format!("failed to extract image embedding: {error}"))?;
+    let embedding = array.iter().copied().collect::<Vec<_>>();
+    timing.extract_output = extract_start.elapsed();
+
+    let normalize_start = Instant::now();
+    let embedding = normalize(embedding);
+    timing.normalize_output = normalize_start.elapsed();
+    timing.total = total_start.elapsed();
+
+    Ok((embedding, timing))
 }
 
 fn preprocess_image_timed(
