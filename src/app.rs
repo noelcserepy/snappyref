@@ -355,9 +355,41 @@ struct PerfScenarioState {
     first_embedding_queued_logged: bool,
     first_embedding_done_logged: bool,
     all_embeddings_done_logged: bool,
+    embedding_phases: EmbeddingPhaseMarkers,
     idle_since: Option<Instant>,
     settled_idle_logged: bool,
     model_unload_logged: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+struct ModelLoadTimingSummary {
+    assets_resolved_ms: f64,
+    tokenizer_loaded_ms: f64,
+    text_session_loaded_ms: f64,
+    vision_session_loaded_ms: f64,
+    total_ms: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct EmbeddingPhaseMarkers {
+    first_embedding_queued_ms: Option<f64>,
+    semantic_model_load_started_ms: Option<f64>,
+    semantic_model_ready_ms: Option<f64>,
+    first_embedding_done_ms: Option<f64>,
+    all_embeddings_done_ms: Option<f64>,
+    semantic_model_unload_requested_ms: Option<f64>,
+    semantic_model_unloaded_ms: Option<f64>,
+    model_load_timing: Option<ModelLoadTimingSummary>,
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+struct EmbeddingPhaseSummary {
+    queue_to_model_load_started_ms: Option<f64>,
+    model_cold_mount_ms: Option<f64>,
+    first_embedding_after_model_ready_ms: Option<f64>,
+    total_import_embedding_drain_ms: Option<f64>,
+    model_unload_ms: Option<f64>,
+    model_load_timing: Option<ModelLoadTimingSummary>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -409,6 +441,7 @@ impl PerfScenarioState {
             first_embedding_queued_logged: false,
             first_embedding_done_logged: false,
             all_embeddings_done_logged: false,
+            embedding_phases: EmbeddingPhaseMarkers::default(),
             idle_since: None,
             settled_idle_logged: false,
             model_unload_logged: false,
@@ -420,16 +453,31 @@ impl PerfScenarioState {
     }
 
     fn emit(&mut self, event: &str, mut extra: serde_json::Value) {
+        let elapsed_ms = self.elapsed_ms();
+        self.embedding_phases.record_event(event, elapsed_ms);
         if let Some(object) = extra.as_object_mut() {
             object.insert("event".to_owned(), serde_json::json!(event));
-            object.insert(
-                "elapsed_ms".to_owned(),
-                serde_json::json!(self.elapsed_ms()),
-            );
+            object.insert("elapsed_ms".to_owned(), serde_json::json!(elapsed_ms));
             object.insert("scenario".to_owned(), serde_json::json!(self.name));
         }
         let _ = writeln!(self.events, "{extra}");
         let _ = self.events.flush();
+    }
+
+    fn emit_model_load_timing(&mut self, timing: ModelLoadTimingSummary) {
+        self.embedding_phases
+            .model_load_timing
+            .get_or_insert(timing);
+        self.emit(
+            "semantic_model_load_timing",
+            serde_json::json!({
+                "assets_resolved_ms": timing.assets_resolved_ms,
+                "tokenizer_loaded_ms": timing.tokenizer_loaded_ms,
+                "text_session_loaded_ms": timing.text_session_loaded_ms,
+                "vision_session_loaded_ms": timing.vision_session_loaded_ms,
+                "total_ms": timing.total_ms,
+            }),
+        );
     }
 
     fn manifest_path(&self) -> PathBuf {
@@ -504,6 +552,7 @@ impl PerfScenarioState {
             "visible_imports": self.visible_imports,
             "demand_embeddings_queued": self.demand_embeddings_queued,
             "demand_embeddings_done": self.demand_embeddings_done,
+            "embedding_phases": self.embedding_phases.summary(),
             "import_worker": {
                 "queued_startup": worker_stats.queued_startup,
                 "queued_interactive": worker_stats.queued_interactive,
@@ -525,6 +574,81 @@ impl PerfScenarioState {
             &path,
             serde_json::to_string_pretty(&summary).unwrap_or_default(),
         );
+    }
+}
+
+impl EmbeddingPhaseMarkers {
+    fn record_event(&mut self, event: &str, elapsed_ms: f64) {
+        match event {
+            "first_import_embedding_queued" => {
+                self.first_embedding_queued_ms.get_or_insert(elapsed_ms);
+            }
+            "semantic_model_load_started" => {
+                self.semantic_model_load_started_ms
+                    .get_or_insert(elapsed_ms);
+            }
+            "semantic_model_ready" => {
+                self.semantic_model_ready_ms.get_or_insert(elapsed_ms);
+            }
+            "first_import_embedding_done" => {
+                self.first_embedding_done_ms.get_or_insert(elapsed_ms);
+            }
+            "all_import_embeddings_done" => {
+                self.all_embeddings_done_ms.get_or_insert(elapsed_ms);
+            }
+            "semantic_model_unload_requested" => {
+                self.semantic_model_unload_requested_ms
+                    .get_or_insert(elapsed_ms);
+            }
+            "semantic_model_unloaded" => {
+                self.semantic_model_unloaded_ms.get_or_insert(elapsed_ms);
+            }
+            _ => {}
+        }
+    }
+
+    fn summary(&self) -> Option<EmbeddingPhaseSummary> {
+        let has_embedding_phase = self.first_embedding_queued_ms.is_some()
+            || self.semantic_model_load_started_ms.is_some()
+            || self.semantic_model_ready_ms.is_some()
+            || self.first_embedding_done_ms.is_some()
+            || self.all_embeddings_done_ms.is_some()
+            || self.model_load_timing.is_some();
+        has_embedding_phase.then(|| EmbeddingPhaseSummary {
+            queue_to_model_load_started_ms: duration_between(
+                self.first_embedding_queued_ms,
+                self.semantic_model_load_started_ms,
+            ),
+            model_cold_mount_ms: self
+                .model_load_timing
+                .map(|timing| timing.total_ms)
+                .or_else(|| {
+                    duration_between(
+                        self.semantic_model_load_started_ms,
+                        self.semantic_model_ready_ms,
+                    )
+                }),
+            first_embedding_after_model_ready_ms: duration_between(
+                self.semantic_model_ready_ms,
+                self.first_embedding_done_ms,
+            ),
+            total_import_embedding_drain_ms: duration_between(
+                self.first_embedding_queued_ms,
+                self.all_embeddings_done_ms,
+            ),
+            model_unload_ms: duration_between(
+                self.semantic_model_unload_requested_ms,
+                self.semantic_model_unloaded_ms,
+            ),
+            model_load_timing: self.model_load_timing,
+        })
+    }
+}
+
+fn duration_between(start_ms: Option<f64>, end_ms: Option<f64>) -> Option<f64> {
+    match (start_ms, end_ms) {
+        (Some(start_ms), Some(end_ms)) => Some((end_ms - start_ms).max(0.0)),
+        _ => None,
     }
 }
 
@@ -1690,16 +1814,13 @@ impl SnappyRefApp {
                         text_session_loaded_ms,
                         vision_session_loaded_ms,
                         total_ms,
-                    } => scenario.emit(
-                        "semantic_model_load_timing",
-                        serde_json::json!({
-                            "assets_resolved_ms": assets_resolved_ms,
-                            "tokenizer_loaded_ms": tokenizer_loaded_ms,
-                            "text_session_loaded_ms": text_session_loaded_ms,
-                            "vision_session_loaded_ms": vision_session_loaded_ms,
-                            "total_ms": total_ms,
-                        }),
-                    ),
+                    } => scenario.emit_model_load_timing(ModelLoadTimingSummary {
+                        assets_resolved_ms,
+                        tokenizer_loaded_ms,
+                        text_session_loaded_ms,
+                        vision_session_loaded_ms,
+                        total_ms,
+                    }),
                     crate::search::SemanticPerfEvent::ModelReady => {
                         scenario.emit("semantic_model_ready", serde_json::json!({}));
                     }
@@ -5342,7 +5463,10 @@ fn generated_board_name(boards: &[crate::data::Board]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ArrangementAction, SnappyRefApp, apply_arrangement_action};
+    use super::{
+        ArrangementAction, EmbeddingPhaseMarkers, ModelLoadTimingSummary, SnappyRefApp,
+        apply_arrangement_action,
+    };
     #[cfg(feature = "semantic-search")]
     use crate::crop_flow::CropUndoEntry;
     use crate::data::{
@@ -5366,6 +5490,38 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn embedding_phase_markers_report_summary_durations() {
+        let markers = EmbeddingPhaseMarkers {
+            first_embedding_queued_ms: Some(100.0),
+            semantic_model_load_started_ms: Some(125.0),
+            semantic_model_ready_ms: Some(425.0),
+            first_embedding_done_ms: Some(475.0),
+            all_embeddings_done_ms: Some(825.0),
+            semantic_model_unload_requested_ms: Some(900.0),
+            semantic_model_unloaded_ms: Some(940.0),
+            model_load_timing: Some(ModelLoadTimingSummary {
+                assets_resolved_ms: 5.0,
+                tokenizer_loaded_ms: 0.0,
+                text_session_loaded_ms: 0.0,
+                vision_session_loaded_ms: 290.0,
+                total_ms: 300.0,
+            }),
+        };
+
+        let summary = markers.summary().unwrap();
+
+        assert_eq!(summary.queue_to_model_load_started_ms, Some(25.0));
+        assert_eq!(summary.model_cold_mount_ms, Some(300.0));
+        assert_eq!(summary.first_embedding_after_model_ready_ms, Some(50.0));
+        assert_eq!(summary.total_import_embedding_drain_ms, Some(725.0));
+        assert_eq!(summary.model_unload_ms, Some(40.0));
+        assert_eq!(
+            summary.model_load_timing.unwrap().vision_session_loaded_ms,
+            290.0
+        );
+    }
 
     #[test]
     fn persist_settings_if_changed_true_calls_save_once() {
