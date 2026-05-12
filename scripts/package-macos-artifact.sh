@@ -2,9 +2,8 @@
 # Build the macOS app-artifact zip used by downstream packaging.
 #
 # Output layout: a zip whose single top-level entry is `SnappyRef/SnappyRef.app/`.
-# Models are no longer bundled inside `SnappyRef.app`; the Local Model Store
-# (`SnappyRef/models/`) is added by `package-release-assets.sh` for the full-
-# install variant only.
+# Models are no longer bundled inside `SnappyRef.app`; Semantic Search assets
+# are distributed separately as `snappyref-semantic-search.zip`.
 set -euo pipefail
 
 while [[ $# -gt 0 ]]; do

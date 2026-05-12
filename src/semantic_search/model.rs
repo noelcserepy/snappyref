@@ -9,8 +9,8 @@ use ort::{ep, session::Session, value::TensorRef};
 use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
 
 use crate::model_store::{
-    MISSING_MODEL_USER_MESSAGE, ModelAvailability, classify_availability, migrate_bundled_model,
-    model_store_root,
+    LocalModelStoreStatus, MISSING_MODEL_USER_MESSAGE, model_store_root,
+    refresh_local_model_store_status,
 };
 
 pub trait EmbeddingModel: Send + Sync {
@@ -79,6 +79,16 @@ pub(crate) struct ResolvedModelAssets {
     vision_model_path: PathBuf,
 }
 
+impl ModelSpec {
+    pub(crate) fn required_model_files(&self) -> [&'static str; 3] {
+        [
+            self.tokenizer_file,
+            self.text_model_file,
+            self.vision_model_file,
+        ]
+    }
+}
+
 /// Resolve a [`ModelSpec`] inside a Local Model Store rooted at `store_root`.
 ///
 /// Returns `Ok(assets)` when every required file exists and is non-empty,
@@ -137,35 +147,56 @@ where
         .ok_or_else(|| "executable has no parent directory".to_owned())?
         .to_path_buf();
 
-    // One-shot migration: move any in-bundle model files into the Local Model
-    // Store before resolving assets. The function is idempotent: subsequent
-    // launches see no bundled directory and return NoBundledModel.
-    match migrate_bundled_model(&install_root, &executable_dir) {
-        Ok(crate::model_store::MigrationOutcome::Migrated) => {
+    match local_model_store_status_for(&install_root, &executable_dir, spec) {
+        LocalModelStoreStatus::Installed => {}
+        LocalModelStoreStatus::InstalledViaMigration => {
             on_progress("Migrated bundled model to Local Model Store…");
         }
-        Ok(_) => {}
-        Err(error) => {
-            // A migration error is non-fatal if the Local Model Store already
-            // exists; only fail when there is also no usable store.
-            if !matches!(
-                classify_availability(&install_root, &executable_dir),
-                ModelAvailability::LocalStore
-            ) {
-                return Err(error);
-            }
+        LocalModelStoreStatus::Missing => return Err(MISSING_MODEL_USER_MESSAGE.to_owned()),
+        LocalModelStoreStatus::Downloading { .. } => {
+            return Err("Semantic Search assets are still installing.".to_owned());
         }
-    }
-
-    match classify_availability(&install_root, &executable_dir) {
-        ModelAvailability::LocalStore | ModelAvailability::BundledOnly => {}
-        ModelAvailability::Missing => {
-            return Err(MISSING_MODEL_USER_MESSAGE.to_owned());
-        }
+        LocalModelStoreStatus::Failed(error) => return Err(error),
     }
 
     on_progress("Loading model assets…");
     resolve_assets_in_store(spec, &model_store_root(&install_root))
+}
+
+pub(crate) fn default_local_model_store_status() -> LocalModelStoreStatus {
+    let install_root = match crate::library_location::resolve_install_root() {
+        Ok(root) => root,
+        Err(error) => return LocalModelStoreStatus::Failed(error),
+    };
+    let executable_dir = match std::env::current_exe()
+        .map_err(|error| format!("Failed to resolve current executable path: {error}"))
+        .and_then(|path| {
+            path.parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| "executable has no parent directory".to_owned())
+        }) {
+        Ok(path) => path,
+        Err(error) => return LocalModelStoreStatus::Failed(error),
+    };
+    local_model_store_status_for(
+        &install_root,
+        &executable_dir,
+        &DEFAULT_SEMANTIC_SEARCH_MODEL,
+    )
+}
+
+fn local_model_store_status_for(
+    install_root: &Path,
+    executable_dir: &Path,
+    spec: &ModelSpec,
+) -> LocalModelStoreStatus {
+    let required_files = spec.required_model_files();
+    refresh_local_model_store_status(
+        install_root,
+        executable_dir,
+        spec.model_key,
+        &required_files,
+    )
 }
 
 pub struct OrtDualEncoderModel {

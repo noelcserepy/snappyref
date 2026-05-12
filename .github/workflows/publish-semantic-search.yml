@@ -1,0 +1,109 @@
+name: Publish Semantic Search
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build packaging scripts from
+        required: false
+        default: main
+        type: string
+      release_tag:
+        description: snappyref-dist release tag for the long-lived Semantic Search asset
+        required: false
+        default: semantic-search
+        type: string
+      replace_existing:
+        description: Replace the asset if it already exists on the selected tag
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  DIST_REPO: noelcserepy/snappyref-dist
+  SEMANTIC_SEARCH_ASSET: snappyref-semantic-search.zip
+  SEMANTIC_SEARCH_MODEL_KEY: siglip2_base_patch16_224_int8
+
+jobs:
+  publish:
+    name: Publish Semantic Search asset
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Build Semantic Search zip
+        id: package
+        run: |
+          set -euo pipefail
+          zip_path="${RUNNER_TEMP}/${SEMANTIC_SEARCH_ASSET}"
+          scripts/create-model-bundle.sh "$zip_path"
+          sha256=$(sha256sum "$zip_path" | awk '{print $1}')
+          size=$(wc -c < "$zip_path" | tr -d ' ')
+          echo "zip_path=$zip_path" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          echo "size=$size" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snappyref-semantic-search
+          path: ${{ steps.package.outputs.zip_path }}
+          retention-days: 7
+
+      - name: Publish to snappyref-dist
+        env:
+          GH_TOKEN: ${{ secrets.DIST_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+          zip_path="${{ steps.package.outputs.zip_path }}"
+          replace_existing="${{ inputs.replace_existing }}"
+
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "DIST_REPO_TOKEN secret is not configured" >&2
+            exit 1
+          fi
+
+          if ! gh release view "$tag" --repo "$DIST_REPO" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --repo "$DIST_REPO" \
+              --title "SnappyRef Semantic Search" \
+              --notes "Long-lived Semantic Search asset for SnappyRef." \
+              --prerelease
+          fi
+
+          upload_args=("$tag" --repo "$DIST_REPO" "$zip_path")
+          if [[ "$replace_existing" == "true" ]]; then
+            upload_args+=(--clobber)
+          elif gh release view "$tag" --repo "$DIST_REPO" \
+            --json assets \
+            --jq ".assets[] | select(.name == \"${SEMANTIC_SEARCH_ASSET}\") | .name" \
+            | grep -Fxq "$SEMANTIC_SEARCH_ASSET"; then
+            echo "${SEMANTIC_SEARCH_ASSET} already exists on ${DIST_REPO} release ${tag}." >&2
+            echo "Use a new release_tag for changed assets, or set replace_existing=true for an intentional refresh." >&2
+            exit 1
+          fi
+
+          gh release upload "${upload_args[@]}"
+
+      - name: Write app descriptor summary
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+          url="https://github.com/${DIST_REPO}/releases/download/${tag}/${SEMANTIC_SEARCH_ASSET}"
+
+          {
+            echo "## Semantic Search app descriptor"
+            echo
+            echo '```text'
+            echo "semantic_search_url=$url"
+            echo "semantic_search_sha256=${{ steps.package.outputs.sha256 }}"
+            echo "semantic_search_size=${{ steps.package.outputs.size }}"
+            echo "semantic_search_model_key=${SEMANTIC_SEARCH_MODEL_KEY}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

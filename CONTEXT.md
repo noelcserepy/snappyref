@@ -80,6 +80,10 @@ _Avoid_: Board list, board browser
 The sidebar tab for workspace settings and shortcuts.
 _Avoid_: Options tab, preferences tab
 
+**Semantic Search Settings**:
+The Settings Tab controls that show Semantic Search install status and let the user install, retry, or remove the local search assets.
+_Avoid_: Model settings, AI settings
+
 **Session Dirty State**:
 The app's knowledge that current user session state differs from the last saved session.
 _Avoid_: Unsaved preferences, dirty app state
@@ -129,8 +133,8 @@ _Avoid_: Internal order, selection order
 ### Search and context
 
 **Semantic Search**:
-Always-on image retrieval based on fast local visual/text embeddings.
-_Avoid_: AI search, smart search
+Opt-in local image retrieval based on fast local visual/text embeddings, available after the required local search assets are installed.
+_Avoid_: AI search, smart search, model download
 
 **Embedding Backfill**:
 Opportunistic background work that creates missing semantic-search embeddings after the app is already usable.
@@ -417,10 +421,12 @@ _Avoid_: Update install, apply update
 ### Release operations
 
 **Full Release Workflow**:
-The GitHub Actions workflow that builds macOS, Windows, and model artifacts,
-packages app-only and full-install zips, signs `latest.json`, and publishes the
-release assets.
+The GitHub Actions workflow that builds macOS and Windows app artifacts, packages app-only zips, signs `latest.json`, and publishes the release assets.
 _Avoid_: CI, build job
+
+**Semantic Search Release Asset**:
+The long-lived standalone `snappyref-semantic-search.zip` hosted on `snappyref-dist` that contains the local assets required to enable **Semantic Search**.
+_Avoid_: Full install zip, model artifact, AI package
 
 **Release Build Cache**:
 The bounded GitHub Actions cache family used only by release app builds to

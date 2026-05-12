@@ -45,6 +45,8 @@ pub(crate) enum DownloadError {
     SizeMismatch { expected: u64, actual: u64 },
     /// sha256 of the downloaded bytes did not match the manifest.
     HashMismatch { expected: String, actual: String },
+    /// Caller requested cancellation while streaming the body.
+    Canceled,
 }
 
 impl std::fmt::Display for DownloadError {
@@ -58,6 +60,7 @@ impl std::fmt::Display for DownloadError {
             DownloadError::HashMismatch { expected, actual } => {
                 write!(f, "sha256 mismatch: expected {expected}, got {actual}")
             }
+            DownloadError::Canceled => write!(f, "canceled"),
         }
     }
 }
@@ -92,12 +95,31 @@ pub(crate) type ProgressCallback<'a> = dyn FnMut(u64, u64) + 'a;
 /// On any failure the destination file is removed before returning so a
 /// half-written partial download cannot be mistaken for a verified zip
 /// on the next launch.
+#[allow(dead_code)]
 pub(crate) fn download_from_reader(
     source: &mut dyn Read,
     destination: &Path,
     expected_size: u64,
     expected_sha256: &str,
     progress: &mut ProgressCallback<'_>,
+) -> Result<DownloadOutcome, DownloadError> {
+    download_from_reader_cancellable(
+        source,
+        destination,
+        expected_size,
+        expected_sha256,
+        progress,
+        &|| false,
+    )
+}
+
+pub(crate) fn download_from_reader_cancellable(
+    source: &mut dyn Read,
+    destination: &Path,
+    expected_size: u64,
+    expected_sha256: &str,
+    progress: &mut ProgressCallback<'_>,
+    should_cancel: &dyn Fn() -> bool,
 ) -> Result<DownloadOutcome, DownloadError> {
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)?;
@@ -115,6 +137,11 @@ pub(crate) fn download_from_reader(
     progress(0, expected_size);
 
     loop {
+        if should_cancel() {
+            drop(file);
+            let _ = fs::remove_file(destination);
+            return Err(DownloadError::Canceled);
+        }
         let read = match source.read(&mut buffer) {
             Ok(0) => break,
             Ok(n) => n,
@@ -132,6 +159,11 @@ pub(crate) fn download_from_reader(
         hasher.update(&buffer[..read]);
         written += read as u64;
         progress(written, expected_size);
+    }
+    if should_cancel() {
+        drop(file);
+        let _ = fs::remove_file(destination);
+        return Err(DownloadError::Canceled);
     }
 
     if let Err(error) = file.flush() {
@@ -173,6 +205,24 @@ pub(crate) fn download_from_url(
     expected_sha256: &str,
     progress: &mut ProgressCallback<'_>,
 ) -> Result<DownloadOutcome, DownloadError> {
+    download_from_url_cancellable(
+        url,
+        destination,
+        expected_size,
+        expected_sha256,
+        progress,
+        &|| false,
+    )
+}
+
+pub(crate) fn download_from_url_cancellable(
+    url: &str,
+    destination: &Path,
+    expected_size: u64,
+    expected_sha256: &str,
+    progress: &mut ProgressCallback<'_>,
+    should_cancel: &dyn Fn() -> bool,
+) -> Result<DownloadOutcome, DownloadError> {
     let client = reqwest::blocking::Client::builder()
         .timeout(DOWNLOAD_TIMEOUT)
         .build()
@@ -188,12 +238,13 @@ pub(crate) fn download_from_url(
         )));
     }
     let mut reader = BufReader::new(response);
-    download_from_reader(
+    download_from_reader_cancellable(
         &mut reader,
         destination,
         expected_size,
         expected_sha256,
         progress,
+        should_cancel,
     )
 }
 

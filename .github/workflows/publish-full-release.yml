@@ -46,6 +46,19 @@ on:
         required: false
         default: true
         type: boolean
+      semantic_search_url:
+        description: Semantic Search asset URL compiled into the app
+        required: false
+        default: https://github.com/noelcserepy/snappyref-dist/releases/download/semantic-search/snappyref-semantic-search.zip
+        type: string
+      semantic_search_sha256:
+        description: Semantic Search asset sha256 compiled into the app
+        required: true
+        type: string
+      semantic_search_size:
+        description: Semantic Search asset byte size compiled into the app
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -62,6 +75,9 @@ jobs:
     with:
       ref: ${{ inputs.ref }}
       build_profile: ${{ inputs.build_profile }}
+      semantic_search_url: ${{ inputs.semantic_search_url }}
+      semantic_search_sha256: ${{ inputs.semantic_search_sha256 }}
+      semantic_search_size: ${{ inputs.semantic_search_size }}
 
   macos:
     name: Build macOS app
@@ -70,26 +86,9 @@ jobs:
     with:
       ref: ${{ inputs.ref }}
       build_profile: ${{ inputs.build_profile }}
-
-  models:
-    name: Build model bundle
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-
-      - name: Create model bundle
-        run: |
-          zip_path="${RUNNER_TEMP}/snappyref-models-siglip2_base_patch16_224_int8.zip"
-          scripts/create-model-bundle.sh "$zip_path"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: snappyref-model-bundle
-          path: ${{ runner.temp }}/snappyref-models-siglip2_base_patch16_224_int8.zip
-          retention-days: 7
+      semantic_search_url: ${{ inputs.semantic_search_url }}
+      semantic_search_sha256: ${{ inputs.semantic_search_sha256 }}
+      semantic_search_size: ${{ inputs.semantic_search_size }}
 
   prune-release-caches:
     name: Prune release caches
@@ -134,13 +133,12 @@ jobs:
           fi
 
   package:
-    name: Package full release zips
+    name: Package release zips
     runs-on: ubuntu-latest
     needs:
       - windows
       - macos
-      - models
-    if: ${{ always() && needs.models.result == 'success' && (!inputs.include_windows || needs.windows.result == 'success') && (!inputs.include_macos || needs.macos.result == 'success') }}
+    if: ${{ always() && (!inputs.include_windows || needs.windows.result == 'success') && (!inputs.include_macos || needs.macos.result == 'success') }}
 
     steps:
       - uses: actions/checkout@v4
@@ -154,28 +152,61 @@ jobs:
           path: ${{ runner.temp }}/app-artifacts/windows
 
       - uses: actions/download-artifact@v4
+        if: ${{ inputs.include_windows }}
+        with:
+          name: snappyref-windows-semantic-search-descriptor
+          path: ${{ runner.temp }}/descriptor-artifacts/windows
+
+      - uses: actions/download-artifact@v4
         if: ${{ inputs.include_macos }}
         with:
           name: snappyref-macos-app
           path: ${{ runner.temp }}/app-artifacts/macos
 
       - uses: actions/download-artifact@v4
+        if: ${{ inputs.include_macos }}
         with:
-          name: snappyref-model-bundle
-          path: ${{ runner.temp }}/model-bundle
+          name: snappyref-macos-semantic-search-descriptor
+          path: ${{ runner.temp }}/descriptor-artifacts/macos
 
-      - name: Package app-only and full zips
+      - name: Verify Semantic Search descriptors
+        run: |
+          set -euo pipefail
+          descriptors=()
+          if [[ "${{ inputs.include_windows }}" == "true" ]]; then
+            descriptors+=("${RUNNER_TEMP}/descriptor-artifacts/windows/semantic-search-descriptor.env")
+          fi
+          if [[ "${{ inputs.include_macos }}" == "true" ]]; then
+            descriptors+=("${RUNNER_TEMP}/descriptor-artifacts/macos/semantic-search-descriptor.env")
+          fi
+          if [[ "${#descriptors[@]}" -eq 0 ]]; then
+            echo "no platform descriptors selected" >&2
+            exit 1
+          fi
+          for descriptor in "${descriptors[@]}"; do
+            if [[ ! -s "$descriptor" ]]; then
+              echo "missing Semantic Search descriptor artifact: $descriptor" >&2
+              exit 1
+            fi
+            grep -Eq '^semantic_search_url=.+$' "$descriptor"
+            grep -Eq '^semantic_search_sha256=[0-9a-fA-F]{64}$' "$descriptor"
+            grep -Eq '^semantic_search_size=[1-9][0-9]*$' "$descriptor"
+          done
+          first="${descriptors[0]}"
+          for descriptor in "${descriptors[@]:1}"; do
+            if ! cmp -s "$first" "$descriptor"; then
+              echo "selected app builds were compiled with different Semantic Search descriptors" >&2
+              diff -u "$first" "$descriptor" || true
+              exit 1
+            fi
+          done
+
+      - name: Package app zips
         id: package
         run: |
           set -euo pipefail
           release_assets="${RUNNER_TEMP}/release-assets"
           mkdir -p "$release_assets"
-
-          model_bundle=$(find "${RUNNER_TEMP}/model-bundle" -type f -name 'snappyref-models-*.zip' | head -n 1)
-          if [[ -z "$model_bundle" ]]; then
-            echo "missing model bundle" >&2
-            exit 1
-          fi
 
           tag="${{ inputs.release_tag }}"
 
@@ -187,12 +218,6 @@ jobs:
               --platform windows \
               --app-archive "$windows_app" \
               --output "$release_assets/snappyref-windows-${tag}.zip"
-
-            scripts/package-release-assets.sh \
-              --platform windows \
-              --app-archive "$windows_app" \
-              --include-models --models-bundle "$model_bundle" \
-              --output "$release_assets/snappyref-windows-${tag}-full.zip"
           fi
 
           if [[ "${{ inputs.include_macos }}" == "true" ]]; then
@@ -206,12 +231,6 @@ jobs:
               --platform macos \
               --app-archive "$macos_app_zip" \
               --output "$release_assets/snappyref-mac-${tag}.zip"
-
-            scripts/package-release-assets.sh \
-              --platform macos \
-              --app-archive "$macos_app_zip" \
-              --include-models --models-bundle "$model_bundle" \
-              --output "$release_assets/snappyref-mac-${tag}-full.zip"
           fi
 
           # Derive a deterministic version (strip leading "v") and timestamp
@@ -269,7 +288,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: snappyref-full-release-zips
+          name: snappyref-release-zips
           path: |
             ${{ runner.temp }}/release-assets/*.zip
             ${{ runner.temp }}/release-assets/latest.json
@@ -289,12 +308,7 @@ jobs:
               --notes "Draft SnappyRef release." \
               --draft
           fi
-          # Preserve existing behavior: the source-repo draft receives the
-          # full-install zips. App-only zips and latest.json live on the dist
-          # repo (see the publish-to-dist step below).
-          gh release upload "$tag" \
-            "${RUNNER_TEMP}/release-assets/"*-full.zip \
-            --clobber
+          gh release upload "$tag" "${RUNNER_TEMP}"/release-assets/*.zip --clobber
 
       - name: Publish to snappyref-dist
         if: ${{ inputs.publish_to_dist && inputs.include_macos && inputs.include_windows }}
@@ -317,13 +331,12 @@ jobs:
               --draft
           fi
 
-          # All four zips and the signed manifest are required for an
-          # auto-update-eligible release.
+          # Both app zips and the signed manifest are required for an
+          # auto-update-eligible release. Semantic Search assets live on the
+          # dedicated semantic-search release.
           gh release upload "$tag" \
             --repo "$DIST_REPO" \
             "${RUNNER_TEMP}/release-assets/snappyref-mac-${tag}.zip" \
-            "${RUNNER_TEMP}/release-assets/snappyref-mac-${tag}-full.zip" \
             "${RUNNER_TEMP}/release-assets/snappyref-windows-${tag}.zip" \
-            "${RUNNER_TEMP}/release-assets/snappyref-windows-${tag}-full.zip" \
             "${RUNNER_TEMP}/release-assets/latest.json" \
             --clobber

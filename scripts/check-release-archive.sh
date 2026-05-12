@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Validate a full-install release archive: binary in place, Local Model Store
-# present, no user-owned data leaked, no UPDATE.txt emitted by this pipeline.
+# Validate an app-only release archive: binary in place, Semantic Search assets
+# absent, no user-owned data leaked, no UPDATE.txt emitted by this pipeline.
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
@@ -68,17 +68,17 @@ case "$binary_name" in
     ;;
 esac
 
-# The Local Model Store sits at <install_root>/models/<model_key>/.
-model_prefix="$install_prefix/models"
-require_entry "$model_prefix/siglip2_base_patch16_224_int8/tokenizer.json"
-require_entry "$model_prefix/siglip2_base_patch16_224_int8/onnx/text_model_int8.onnx"
-require_entry "$model_prefix/siglip2_base_patch16_224_int8/onnx/vision_model_int8.onnx"
-
 # UPDATE.txt is no longer emitted by any packaging script.
 forbid_entry "$install_prefix/UPDATE.txt"
 forbid_entry "UPDATE.txt"
 
-# Models must not be left inside the macOS bundle.
+# Semantic Search assets must not be shipped in app release zips.
+if grep -E "^$install_prefix/models(/|$)" <<<"$entries" >/dev/null; then
+  echo "archive contains Semantic Search models directory" >&2
+  exit 1
+fi
+
+# Models must not be left inside the macOS bundle either.
 case "$binary_name" in
   SnappyRef/SnappyRef.app/Contents/MacOS/*)
     if grep -E "^$install_prefix/SnappyRef\\.app/Contents/Resources/models(/|$)" <<<"$entries" >/dev/null; then

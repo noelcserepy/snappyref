@@ -23,16 +23,6 @@ on:
         required: false
         default: ""
         type: string
-      include_models:
-        description: Include reusable model bundle
-        required: false
-        default: true
-        type: boolean
-      model_bundle_tag:
-        description: Release tag that stores the reusable model bundle
-        required: false
-        default: models-siglip2-base-patch16-224-int8
-        type: string
       create_draft_release:
         description: Attach final zips to a draft GitHub Release
         required: false
@@ -60,14 +50,6 @@ on:
       macos_app_run_id:
         required: false
         default: ""
-        type: string
-      include_models:
-        required: false
-        default: true
-        type: boolean
-      model_bundle_tag:
-        required: false
-        default: models-siglip2-base-patch16-224-int8
         type: string
       create_draft_release:
         required: false
@@ -140,6 +122,14 @@ jobs:
           path: ${{ runner.temp }}/app-artifacts/windows
 
       - uses: actions/download-artifact@v4
+        if: ${{ inputs.include_windows }}
+        with:
+          run-id: ${{ steps.resolve.outputs.windows_app_run_id }}
+          github-token: ${{ github.token }}
+          name: snappyref-windows-semantic-search-descriptor
+          path: ${{ runner.temp }}/descriptor-artifacts/windows
+
+      - uses: actions/download-artifact@v4
         if: ${{ inputs.include_macos }}
         with:
           run-id: ${{ steps.resolve.outputs.macos_app_run_id }}
@@ -147,15 +137,45 @@ jobs:
           name: snappyref-macos-app
           path: ${{ runner.temp }}/app-artifacts/macos
 
-      - name: Download reusable model bundle
-        if: ${{ inputs.include_models }}
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.include_macos }}
+        with:
+          run-id: ${{ steps.resolve.outputs.macos_app_run_id }}
+          github-token: ${{ github.token }}
+          name: snappyref-macos-semantic-search-descriptor
+          path: ${{ runner.temp }}/descriptor-artifacts/macos
+
+      - name: Verify Semantic Search descriptors
         run: |
-          mkdir -p "${RUNNER_TEMP}/model-bundle"
-          gh release download "${{ inputs.model_bundle_tag }}" \
-            --pattern 'snappyref-models-*.zip' \
-            --dir "${RUNNER_TEMP}/model-bundle"
+          set -euo pipefail
+          descriptors=()
+          if [[ "${{ inputs.include_windows }}" == "true" ]]; then
+            descriptors+=("${RUNNER_TEMP}/descriptor-artifacts/windows/semantic-search-descriptor.env")
+          fi
+          if [[ "${{ inputs.include_macos }}" == "true" ]]; then
+            descriptors+=("${RUNNER_TEMP}/descriptor-artifacts/macos/semantic-search-descriptor.env")
+          fi
+          if [[ "${#descriptors[@]}" -eq 0 ]]; then
+            echo "no platform descriptors selected" >&2
+            exit 1
+          fi
+          for descriptor in "${descriptors[@]}"; do
+            if [[ ! -s "$descriptor" ]]; then
+              echo "missing Semantic Search descriptor artifact: $descriptor" >&2
+              exit 1
+            fi
+            grep -Eq '^semantic_search_url=.+$' "$descriptor"
+            grep -Eq '^semantic_search_sha256=[0-9a-fA-F]{64}$' "$descriptor"
+            grep -Eq '^semantic_search_size=[1-9][0-9]*$' "$descriptor"
+          done
+          first="${descriptors[0]}"
+          for descriptor in "${descriptors[@]:1}"; do
+            if ! cmp -s "$first" "$descriptor"; then
+              echo "selected app builds were compiled with different Semantic Search descriptors" >&2
+              diff -u "$first" "$descriptor" || true
+              exit 1
+            fi
+          done
 
       - name: Package selected zips
         run: |
@@ -163,26 +183,13 @@ jobs:
           release_assets="${RUNNER_TEMP}/release-assets"
           mkdir -p "$release_assets"
 
-          package_args=()
-          suffix="update"
-          if [[ "${{ inputs.include_models }}" == "true" ]]; then
-            model_bundle=$(find "${RUNNER_TEMP}/model-bundle" -type f -name 'snappyref-models-*.zip' | head -n 1)
-            if [[ -z "$model_bundle" ]]; then
-              echo "missing reusable model bundle" >&2
-              exit 1
-            fi
-            package_args=(--include-models --models-bundle "$model_bundle")
-            suffix="full"
-          fi
-
           if [[ "${{ inputs.include_windows }}" == "true" ]]; then
             windows_app="${RUNNER_TEMP}/windows-app.zip"
             (cd "${RUNNER_TEMP}/app-artifacts/windows" && zip -9 -r "$windows_app" SnappyRef)
             scripts/package-release-assets.sh \
               --platform windows \
               --app-archive "$windows_app" \
-              "${package_args[@]}" \
-              --output "$release_assets/snappyref-windows-${{ inputs.release_tag }}-${suffix}.zip"
+              --output "$release_assets/snappyref-windows-${{ inputs.release_tag }}.zip"
           fi
 
           if [[ "${{ inputs.include_macos }}" == "true" ]]; then
@@ -194,8 +201,7 @@ jobs:
             scripts/package-release-assets.sh \
               --platform macos \
               --app-archive "$macos_app_zip" \
-              "${package_args[@]}" \
-              --output "$release_assets/snappyref-mac-${{ inputs.release_tag }}-${suffix}.zip"
+              --output "$release_assets/snappyref-mac-${{ inputs.release_tag }}.zip"
           fi
 
       - uses: actions/upload-artifact@v4

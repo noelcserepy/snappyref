@@ -88,6 +88,8 @@ pub struct WorkspaceSettings {
     pub canvas_image_max_side: u32,
     #[serde(default = "default_semantic_search_enabled")]
     pub semantic_search_enabled: bool,
+    #[serde(default)]
+    pub semantic_search_first_launch_prompt_seen: bool,
     #[serde(default = "default_rotation_snap_degrees")]
     pub rotation_snap_degrees: f32,
     #[serde(default)]
@@ -133,6 +135,7 @@ impl Default for WorkspaceSettings {
             import_target_canvas_area: DEFAULT_IMPORT_TARGET_CANVAS_AREA,
             canvas_image_max_side: DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             semantic_search_enabled: true,
+            semantic_search_first_launch_prompt_seen: false,
             rotation_snap_degrees: DEFAULT_ROTATION_SNAP_DEGREES,
             default_textbox_background: false,
             pointer_mode: PointerMode::default(),
@@ -161,6 +164,13 @@ mod tests {
         settings.normalize_core_features();
 
         assert!(settings.semantic_search_enabled);
+    }
+
+    #[test]
+    fn first_launch_semantic_search_prompt_starts_unseen() {
+        let settings = WorkspaceSettings::default();
+
+        assert!(!settings.semantic_search_first_launch_prompt_seen);
     }
 }
 
