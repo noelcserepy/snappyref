@@ -37,6 +37,7 @@ pub(crate) struct SidebarRenderResult {
     /// was activated this frame. The app performs the rollback through
     /// the `updater::rollback` module.
     pub rollback_clicked: bool,
+    pub semantic_search_action: Option<SemanticSearchSettingsAction>,
 }
 
 /// Snapshot of the About / Updates section state. The sidebar reads but
@@ -55,6 +56,28 @@ pub(crate) struct AboutUpdatesView<'a> {
     /// allowed (i.e. last manual click was more than one minute ago).
     /// The button still paints but is disabled when this is false.
     pub check_now_enabled: bool,
+    pub semantic_search: SemanticSearchSettingsView,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SemanticSearchSettingsView {
+    pub status: SemanticSearchSettingsStatus,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SemanticSearchSettingsStatus {
+    Installed,
+    Missing,
+    Downloading { percent: u8 },
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SemanticSearchSettingsAction {
+    Install,
+    Retry,
+    Cancel,
+    RequestRemove,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -138,6 +161,7 @@ pub(crate) fn show_sidebar(
             update_pill_clicked: false,
             update_check_now_clicked: false,
             rollback_clicked: false,
+            semantic_search_action: None,
         };
     }
 
@@ -147,6 +171,7 @@ pub(crate) fn show_sidebar(
     let mut update_pill_clicked = false;
     let mut update_check_now_clicked = false;
     let mut rollback_clicked = false;
+    let mut semantic_search_action = None;
 
     let top = screen_rect.top() + SIDEBAR_TOP_MARGIN;
     let bottom = (screen_rect.bottom() - SIDEBAR_BOTTOM_MARGIN).max(top);
@@ -204,6 +229,9 @@ pub(crate) fn show_sidebar(
                             settings_changed |= options_outcome.settings_changed;
                             update_check_now_clicked |= options_outcome.check_now_clicked;
                             rollback_clicked |= options_outcome.rollback_clicked;
+                            if semantic_search_action.is_none() {
+                                semantic_search_action = options_outcome.semantic_search_action;
+                            }
                         }
                     }
                 };
@@ -234,6 +262,7 @@ pub(crate) fn show_sidebar(
         update_pill_clicked,
         update_check_now_clicked,
         rollback_clicked,
+        semantic_search_action,
     }
 }
 
@@ -241,6 +270,7 @@ struct SidebarOptionsOutcome {
     settings_changed: bool,
     check_now_clicked: bool,
     rollback_clicked: bool,
+    semantic_search_action: Option<SemanticSearchSettingsAction>,
 }
 
 struct UpdatePillOutcome {
@@ -430,6 +460,7 @@ fn paint_sidebar_options(
     let mut changed = false;
     let mut check_now_clicked = false;
     let mut rollback_clicked = false;
+    let mut semantic_search_action = None;
     let content_rect = ui.available_rect_before_wrap();
     ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
@@ -446,6 +477,11 @@ fn paint_sidebar_options(
                 });
                 ui.add_space(crate::theme::SPACE_4);
                 paint_sidebar_subcard(ui, |ui| {
+                    semantic_search_action =
+                        paint_semantic_search_settings_section(ui, &about_updates.semantic_search);
+                });
+                ui.add_space(crate::theme::SPACE_4);
+                paint_sidebar_subcard(ui, |ui| {
                     changed |= paint_settings_section(ui, settings, canvas);
                 });
                 ui.add_space(crate::theme::SPACE_6);
@@ -458,6 +494,7 @@ fn paint_sidebar_options(
         settings_changed: changed,
         check_now_clicked,
         rollback_clicked,
+        semantic_search_action,
     }
 }
 
@@ -562,6 +599,95 @@ fn format_last_checked(unix_millis: Option<u64>) -> String {
             format!("{days} days ago")
         }
     }
+}
+
+fn paint_semantic_search_settings_section(
+    ui: &mut egui::Ui,
+    semantic_search: &SemanticSearchSettingsView,
+) -> Option<SemanticSearchSettingsAction> {
+    let mut action = None;
+    ui.add_space(crate::theme::SPACE_2 + 2.0);
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
+        ui.label(
+            egui::RichText::new("Semantic Search")
+                .text_style(egui::TextStyle::Body)
+                .color(crate::theme::TEXT),
+        );
+        let (status, detail) = semantic_search_status_copy(&semantic_search.status);
+        ui.label(
+            egui::RichText::new(status)
+                .text_style(egui::TextStyle::Small)
+                .color(crate::theme::TEXT_MUTED),
+        );
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(detail)
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_SUBTLE),
+            )
+            .wrap(),
+        );
+        ui.add_space(crate::theme::SPACE_2);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+            match &semantic_search.status {
+                SemanticSearchSettingsStatus::Installed => {
+                    if ui.add(quiet_settings_button("Remove")).clicked() {
+                        action = Some(SemanticSearchSettingsAction::RequestRemove);
+                    }
+                }
+                SemanticSearchSettingsStatus::Missing => {
+                    if ui.add(quiet_settings_button("Install")).clicked() {
+                        action = Some(SemanticSearchSettingsAction::Install);
+                    }
+                }
+                SemanticSearchSettingsStatus::Downloading { .. } => {
+                    if ui.add(quiet_settings_button("Cancel")).clicked() {
+                        action = Some(SemanticSearchSettingsAction::Cancel);
+                    }
+                }
+                SemanticSearchSettingsStatus::Failed => {
+                    if ui.add(quiet_settings_button("Retry")).clicked() {
+                        action = Some(SemanticSearchSettingsAction::Retry);
+                    }
+                }
+            }
+        });
+    });
+    ui.add_space(crate::theme::SPACE_2 + 2.0);
+    action
+}
+
+fn semantic_search_status_copy(status: &SemanticSearchSettingsStatus) -> (String, &'static str) {
+    match status {
+        SemanticSearchSettingsStatus::Installed => {
+            ("Installed".to_owned(), "Local search assets are ready.")
+        }
+        SemanticSearchSettingsStatus::Missing => (
+            "Not installed".to_owned(),
+            "Install local search assets to find references by description.",
+        ),
+        SemanticSearchSettingsStatus::Downloading { percent } => (
+            format!("Downloading {percent}%"),
+            "Search assets are downloading in the background.",
+        ),
+        SemanticSearchSettingsStatus::Failed => (
+            "Install failed".to_owned(),
+            "Try installing Semantic Search again after checking your connection.",
+        ),
+    }
+}
+
+fn quiet_settings_button(label: &str) -> egui::Button<'_> {
+    egui::Button::new(
+        egui::RichText::new(label)
+            .text_style(egui::TextStyle::Small)
+            .color(crate::theme::TEXT),
+    )
+    .fill(crate::theme::SURFACE_ELEVATED)
+    .stroke(crate::theme::stroke_subtle())
+    .corner_radius(crate::theme::RADIUS_INLINE)
 }
 
 fn paint_sidebar_boards(

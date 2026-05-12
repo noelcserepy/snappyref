@@ -153,7 +153,7 @@ where
             on_progress("Migrated bundled model to Local Model Store…");
         }
         LocalModelStoreStatus::Missing => return Err(MISSING_MODEL_USER_MESSAGE.to_owned()),
-        LocalModelStoreStatus::Downloading => {
+        LocalModelStoreStatus::Downloading { .. } => {
             return Err("Semantic Search assets are still installing.".to_owned());
         }
         LocalModelStoreStatus::Failed(error) => return Err(error),

@@ -3149,6 +3149,7 @@ fn legacy_user_session_from_row(
                 .map(|value| value.max(1) as u32)
                 .unwrap_or(crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE),
             semantic_search_enabled: row.get::<_, i64>(3).unwrap_or(0) != 0,
+            semantic_search_first_launch_prompt_seen: false,
             rotation_snap_degrees: row
                 .get::<_, f32>(5)
                 .ok()
@@ -4331,6 +4332,7 @@ mod tests {
         session.settings.import_gap = 48.0;
         session.settings.import_target_canvas_area = 45_000.0;
         session.settings.semantic_search_enabled = false;
+        session.settings.semantic_search_first_launch_prompt_seen = true;
         session.settings.canvas_image_max_side = 4096;
         session.settings.rotation_snap_degrees = 45.0;
         session.settings.default_textbox_background = true;
@@ -4346,6 +4348,7 @@ mod tests {
         assert_eq!(reopened.settings.import_gap, 48.0);
         assert_eq!(reopened.settings.import_target_canvas_area, 45_000.0);
         assert!(!reopened.settings.semantic_search_enabled);
+        assert!(reopened.settings.semantic_search_first_launch_prompt_seen);
         assert_eq!(reopened.settings.canvas_image_max_side, 4096);
         assert_eq!(reopened.settings.rotation_snap_degrees, 45.0);
         assert!(reopened.settings.default_textbox_background);
