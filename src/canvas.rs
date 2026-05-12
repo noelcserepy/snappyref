@@ -530,6 +530,37 @@ fn vertical_layout(
     Some((placements, max_width, total_height))
 }
 
+fn rotated_visual_size(width: f32, height: f32, rotation: f32) -> egui::Vec2 {
+    let sin = rotation.sin().abs();
+    let cos = rotation.cos().abs();
+    egui::vec2(width * cos + height * sin, width * sin + height * cos)
+}
+
+#[derive(Clone, Copy)]
+enum CompactSort {
+    MaxSide,
+    Area,
+    Perimeter,
+    Height,
+}
+
+#[derive(Clone, Copy)]
+enum PackHeuristic {
+    BestShortSide,
+    BestLongSide,
+    BestArea,
+}
+
+struct CompactCandidate {
+    placements: Vec<(i64, egui::Pos2)>,
+    width: f32,
+    height: f32,
+    occupancy: f32,
+    aspect: f32,
+    right_edge_raggedness: f32,
+    area: f32,
+}
+
 fn best_compact_layout(
     items: &[SelectedLayoutItem],
     gap: f32,
@@ -538,29 +569,39 @@ fn best_compact_layout(
         return None;
     }
 
-    let mut best_layout: Option<(Vec<(i64, egui::Pos2)>, f32, f32, f32, f32, usize)> = None;
-    for (candidate_index, bin_width) in compact_candidate_widths(items, gap).into_iter().enumerate()
-    {
-        let Some((placements, width, height)) = maxrects_pack_layout(items, bin_width, gap) else {
-            continue;
-        };
-        let area = width * height;
-        let squareness = width.max(height) / width.min(height).max(1.0);
+    let sorts = [
+        CompactSort::MaxSide,
+        CompactSort::Area,
+        CompactSort::Perimeter,
+        CompactSort::Height,
+    ];
+    let heuristics = [
+        PackHeuristic::BestShortSide,
+        PackHeuristic::BestArea,
+        PackHeuristic::BestLongSide,
+    ];
+    let mut best_layout: Option<CompactCandidate> = None;
 
-        match &best_layout {
-            Some((_, _, _, best_squareness, best_area, best_index))
-                if squareness > *best_squareness
-                    || ((squareness - *best_squareness).abs() < 0.001 && area > *best_area)
-                    || ((squareness - *best_squareness).abs() < 0.001
-                        && (area - *best_area).abs() < 0.001
-                        && candidate_index >= *best_index) => {}
-            _ => {
-                best_layout = Some((placements, width, height, squareness, area, candidate_index));
+    for sort in sorts {
+        let sorted_items = sorted_compact_items(items, sort);
+        for heuristic in heuristics {
+            for bin_width in compact_candidate_widths(&sorted_items, gap) {
+                let Some(candidate) =
+                    maxrects_pack_layout(&sorted_items, bin_width, gap, heuristic)
+                else {
+                    continue;
+                };
+                if best_layout
+                    .as_ref()
+                    .is_none_or(|best| compact_candidate_better(&candidate, best))
+                {
+                    best_layout = Some(candidate);
+                }
             }
         }
     }
 
-    best_layout.map(|(placements, width, height, _, _, _)| (placements, width, height))
+    best_layout.map(|candidate| (candidate.placements, candidate.width, candidate.height))
 }
 
 pub(crate) fn compact_layout_for_sizes(
@@ -575,7 +616,7 @@ pub(crate) fn compact_layout_for_sizes(
         return vec![(center_world, sizes[0])];
     }
 
-    let mut items = sizes
+    let items = sizes
         .iter()
         .enumerate()
         .map(|(index, size)| SelectedLayoutItem {
@@ -586,14 +627,6 @@ pub(crate) fn compact_layout_for_sizes(
             height: size.y,
         })
         .collect::<Vec<_>>();
-    items.sort_by(|left, right| {
-        right
-            .width
-            .max(right.height)
-            .total_cmp(&left.width.max(left.height))
-            .then_with(|| (right.width * right.height).total_cmp(&(left.width * left.height)))
-            .then_with(|| left.id.cmp(&right.id))
-    });
 
     let Some((placements, width, height)) = best_compact_layout(&items, gap) else {
         return sizes.iter().map(|size| (center_world, *size)).collect();
@@ -609,6 +642,40 @@ pub(crate) fn compact_layout_for_sizes(
         .collect()
 }
 
+fn sorted_compact_items(
+    items: &[SelectedLayoutItem],
+    sort: CompactSort,
+) -> Vec<SelectedLayoutItem> {
+    let mut sorted = items.to_vec();
+    sorted.sort_by(|left, right| match sort {
+        CompactSort::MaxSide => right
+            .width
+            .max(right.height)
+            .total_cmp(&left.width.max(left.height))
+            .then_with(|| (right.width * right.height).total_cmp(&(left.width * left.height)))
+            .then_with(|| left.id.cmp(&right.id)),
+        CompactSort::Area => (right.width * right.height)
+            .total_cmp(&(left.width * left.height))
+            .then_with(|| {
+                right
+                    .width
+                    .max(right.height)
+                    .total_cmp(&left.width.max(left.height))
+            })
+            .then_with(|| left.id.cmp(&right.id)),
+        CompactSort::Perimeter => (right.width + right.height)
+            .total_cmp(&(left.width + left.height))
+            .then_with(|| (right.width * right.height).total_cmp(&(left.width * left.height)))
+            .then_with(|| left.id.cmp(&right.id)),
+        CompactSort::Height => right
+            .height
+            .total_cmp(&left.height)
+            .then_with(|| right.width.total_cmp(&left.width))
+            .then_with(|| left.id.cmp(&right.id)),
+    });
+    sorted
+}
+
 fn compact_candidate_widths(items: &[SelectedLayoutItem], gap: f32) -> Vec<f32> {
     let total_area = items
         .iter()
@@ -619,14 +686,25 @@ fn compact_candidate_widths(items: &[SelectedLayoutItem], gap: f32) -> Vec<f32> 
         .map(|item| item.width + gap)
         .fold(0.0_f32, f32::max);
     let ideal_width = total_area.sqrt().max(max_width);
-    let mut widths = vec![ideal_width];
+    let mut widths = [0.85, 0.95, 1.0, 1.05, 1.15]
+        .into_iter()
+        .map(|multiplier| (ideal_width * multiplier).max(max_width))
+        .collect::<Vec<_>>();
+    widths.push(max_width);
     let mut running_width = 0.0_f32;
 
-    for item in items {
+    for item in items.iter().take(12) {
         let effective_width = item.width + gap;
         running_width += effective_width;
         widths.push(running_width.max(max_width));
     }
+    widths.push(
+        items
+            .iter()
+            .map(|item| item.width + gap)
+            .sum::<f32>()
+            .max(max_width),
+    );
 
     widths.sort_by(|left, right| left.total_cmp(right));
     widths.dedup_by(|left, right| (*left - *right).abs() < 0.5);
@@ -637,7 +715,8 @@ fn maxrects_pack_layout(
     items: &[SelectedLayoutItem],
     bin_width: f32,
     gap: f32,
-) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
+    heuristic: PackHeuristic,
+) -> Option<CompactCandidate> {
     if items.is_empty() {
         return None;
     }
@@ -655,6 +734,7 @@ fn maxrects_pack_layout(
         height: total_height,
     }];
     let mut placements = Vec::with_capacity(items.len());
+    let mut padded_placements = Vec::with_capacity(items.len());
 
     for item in items {
         let padded = padded_item_rect(item, gap);
@@ -662,53 +742,110 @@ fn maxrects_pack_layout(
             return None;
         }
 
-        let Some(placed) = place_maxrects_item(&mut free_rects, padded) else {
+        let Some(placed) = place_maxrects_item(&mut free_rects, padded, heuristic) else {
             return None;
         };
         placements.push((
             item.id,
             egui::pos2(placed.x + item.width * 0.5, placed.y + item.height * 0.5),
         ));
+        padded_placements.push((item.id, placed));
     }
 
+    normalize_placements_to_origin(items, &mut placements)?;
     let (layout_width, layout_height) = placed_bounds(items, &placements)?;
-    Some((placements, layout_width, layout_height))
+    let (padded_width, padded_height) = placed_padded_bounds(&padded_placements)?;
+    let padded_area = items
+        .iter()
+        .map(|item| (item.width + gap) * (item.height + gap))
+        .sum::<f32>();
+    let score_area = (padded_width * padded_height).max(1.0);
+    let occupancy = padded_area / score_area;
+    let aspect = padded_width.max(padded_height) / padded_width.min(padded_height).max(1.0);
+    Some(CompactCandidate {
+        right_edge_raggedness: right_edge_raggedness(&padded_placements, padded_width),
+        placements,
+        width: layout_width,
+        height: layout_height,
+        occupancy,
+        aspect,
+        area: score_area,
+    })
 }
 
-fn place_maxrects_item(free_rects: &mut Vec<PackRect>, padded: PackRect) -> Option<PackRect> {
-    let mut best_candidate: Option<(usize, PackRect, f32, f32)> = None;
+fn place_maxrects_item(
+    free_rects: &mut Vec<PackRect>,
+    padded: PackRect,
+    heuristic: PackHeuristic,
+) -> Option<PackRect> {
+    let mut best_candidate: Option<(usize, PackRect, PackScore)> = None;
 
     for (index, free) in free_rects.iter().copied().enumerate() {
         if padded.width > free.width + 0.001 || padded.height > free.height + 0.001 {
             continue;
         }
 
-        let short_side_fit = (free.width - padded.width).min(free.height - padded.height);
-        let long_side_fit = (free.width - padded.width).max(free.height - padded.height);
         let placed = PackRect {
             x: free.x,
             y: free.y,
             width: padded.width,
             height: padded.height,
         };
+        let score = pack_score(free, padded, heuristic);
 
         match best_candidate {
-            Some((_, best_rect, best_short, best_long))
-                if short_side_fit > best_short
-                    || ((short_side_fit - best_short).abs() < 0.001
-                        && long_side_fit > best_long)
-                    || ((short_side_fit - best_short).abs() < 0.001
-                        && (long_side_fit - best_long).abs() < 0.001
-                        && (placed.y > best_rect.y
-                            || ((placed.y - best_rect.y).abs() < 0.001
-                                && placed.x >= best_rect.x))) => {}
-            _ => best_candidate = Some((index, placed, short_side_fit, long_side_fit)),
+            Some((_, best_rect, best_score))
+                if !pack_score_better(score, placed, best_score, best_rect) => {}
+            _ => best_candidate = Some((index, placed, score)),
         }
     }
 
-    let (candidate_index, placed, _, _) = best_candidate?;
+    let (candidate_index, placed, _) = best_candidate?;
     split_free_rects(free_rects, candidate_index, placed);
     Some(placed)
+}
+
+#[derive(Clone, Copy)]
+struct PackScore {
+    primary: f32,
+    secondary: f32,
+}
+
+fn pack_score(free: PackRect, padded: PackRect, heuristic: PackHeuristic) -> PackScore {
+    let leftover_width = free.width - padded.width;
+    let leftover_height = free.height - padded.height;
+    let short_side_fit = leftover_width.min(leftover_height);
+    let long_side_fit = leftover_width.max(leftover_height);
+    let area_fit = free.width * free.height - padded.width * padded.height;
+    match heuristic {
+        PackHeuristic::BestShortSide => PackScore {
+            primary: short_side_fit,
+            secondary: long_side_fit,
+        },
+        PackHeuristic::BestLongSide => PackScore {
+            primary: long_side_fit,
+            secondary: short_side_fit,
+        },
+        PackHeuristic::BestArea => PackScore {
+            primary: area_fit,
+            secondary: short_side_fit,
+        },
+    }
+}
+
+fn pack_score_better(
+    score: PackScore,
+    placed: PackRect,
+    best_score: PackScore,
+    best_rect: PackRect,
+) -> bool {
+    score.primary < best_score.primary - 0.001
+        || ((score.primary - best_score.primary).abs() < 0.001
+            && (score.secondary < best_score.secondary - 0.001
+                || ((score.secondary - best_score.secondary).abs() < 0.001
+                    && (placed.y < best_rect.y - 0.001
+                        || ((placed.y - best_rect.y).abs() < 0.001
+                            && placed.x < best_rect.x - 0.001)))))
 }
 
 fn split_free_rects(free_rects: &mut Vec<PackRect>, candidate_index: usize, placed: PackRect) {
@@ -1111,6 +1248,77 @@ fn placed_bounds(
     Some(((max_x - min_x).max(0.0), (max_y - min_y).max(0.0)))
 }
 
+fn normalize_placements_to_origin(
+    items: &[SelectedLayoutItem],
+    placements: &mut [(i64, egui::Pos2)],
+) -> Option<()> {
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+
+    for (item_id, center) in placements.iter() {
+        let item = items.iter().find(|item| item.id == *item_id)?;
+        min_x = min_x.min(center.x - item.width * 0.5);
+        min_y = min_y.min(center.y - item.height * 0.5);
+    }
+
+    if !min_x.is_finite() || !min_y.is_finite() {
+        return None;
+    }
+
+    let offset = egui::vec2(min_x, min_y);
+    for (_, center) in placements {
+        *center -= offset;
+    }
+
+    Some(())
+}
+
+fn placed_padded_bounds(placements: &[(i64, PackRect)]) -> Option<(f32, f32)> {
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+
+    for (_, rect) in placements {
+        max_x = max_x.max(rect.right());
+        max_y = max_y.max(rect.bottom());
+    }
+
+    max_x
+        .is_finite()
+        .then_some((max_x.max(0.0), max_y.max(0.0)))
+}
+
+fn right_edge_raggedness(placements: &[(i64, PackRect)], layout_width: f32) -> f32 {
+    if placements.is_empty() {
+        return 0.0;
+    }
+
+    placements
+        .iter()
+        .map(|(_, rect)| (layout_width - rect.right()).max(0.0))
+        .sum::<f32>()
+        / placements.len() as f32
+}
+
+fn compact_candidate_better(candidate: &CompactCandidate, best: &CompactCandidate) -> bool {
+    const OCCUPANCY_DECIDES_THRESHOLD: f32 = 0.03;
+    if candidate.occupancy > best.occupancy + OCCUPANCY_DECIDES_THRESHOLD {
+        return true;
+    }
+    if best.occupancy > candidate.occupancy + OCCUPANCY_DECIDES_THRESHOLD {
+        return false;
+    }
+
+    candidate.aspect < best.aspect - 0.001
+        || ((candidate.aspect - best.aspect).abs() < 0.001
+            && (candidate.occupancy > best.occupancy + 0.001
+                || ((candidate.occupancy - best.occupancy).abs() < 0.001
+                    && (candidate.right_edge_raggedness < best.right_edge_raggedness - 0.001
+                        || ((candidate.right_edge_raggedness - best.right_edge_raggedness)
+                            .abs()
+                            < 0.001
+                            && candidate.area < best.area - 0.001)))))
+}
+
 fn merge_ids(existing: &[i64], incoming: &[i64]) -> Vec<i64> {
     let mut merged = existing.to_vec();
     for id in incoming {
@@ -1507,7 +1715,8 @@ mod tests {
         FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, PixelCropRect,
         SelectedLayoutItem, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
         TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion, TextboxResizeHandle,
-        best_compact_layout, horizontal_layout, legacy_best_compact_layout, vertical_layout,
+        best_compact_layout, horizontal_layout, legacy_best_compact_layout, rotated_visual_size,
+        vertical_layout,
     };
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
@@ -3831,8 +4040,18 @@ mod tests {
         for ((first_id, first_pos), (second_id, second_pos)) in first.0.iter().zip(second.0.iter())
         {
             assert_eq!(first_id, second_id);
-            assert!((first_pos.x - second_pos.x).abs() < 0.001);
-            assert!((first_pos.y - second_pos.y).abs() < 0.001);
+            assert!(
+                (first_pos.x - second_pos.x).abs() < 0.001,
+                "item {first_id} x moved from {} to {}",
+                first_pos.x,
+                second_pos.x
+            );
+            assert!(
+                (first_pos.y - second_pos.y).abs() < 0.001,
+                "item {first_id} y moved from {} to {}",
+                first_pos.y,
+                second_pos.y
+            );
         }
     }
 
@@ -3845,6 +4064,29 @@ mod tests {
         let (_, legacy_width, legacy_height) = legacy_best_compact_layout(&items, gap).unwrap();
 
         assert!(compact_width * compact_height < legacy_width * legacy_height);
+    }
+
+    #[test]
+    fn compact_layout_prefers_dense_candidate_over_square_with_holes() {
+        let items = vec![
+            layout_item(1, 300.0, 300.0),
+            layout_item(2, 40.0, 50.0),
+            layout_item(3, 50.0, 90.0),
+            layout_item(4, 300.0, 60.0),
+        ];
+        let gap = 12.0;
+
+        let (_, compact_width, compact_height) = best_compact_layout(&items, gap).unwrap();
+        let item_area = items
+            .iter()
+            .map(|item| (item.width + gap) * (item.height + gap))
+            .sum::<f32>();
+        let occupancy = item_area / (compact_width * compact_height);
+
+        assert!(
+            occupancy > 0.75,
+            "compact arrangement should prefer fewer holes over a more square empty box"
+        );
     }
 
     #[test]
@@ -3894,6 +4136,127 @@ mod tests {
                 let right_rect = placement_rect(&items, &placements, right.id);
                 assert!(rectangles_respect_gap(left_rect, right_rect, gap));
             }
+        }
+    }
+
+    #[test]
+    fn compact_arrangement_respects_rotated_placement_footprints() {
+        let mut state = CanvasState::default();
+        let gap = 12.0;
+
+        eframe::egui::__run_test_ui(|ui| {
+            push_test_image(
+                ui,
+                &mut state,
+                1,
+                100,
+                300,
+                1.0,
+                eframe::egui::pos2(0.0, 0.0),
+            );
+            push_test_image(
+                ui,
+                &mut state,
+                2,
+                180,
+                100,
+                1.0,
+                eframe::egui::pos2(500.0, 0.0),
+            );
+        });
+        assert!(state.set_image_rotation(1, std::f32::consts::FRAC_PI_2));
+        state.select_items(&[1, 2]);
+
+        assert_eq!(state.arrange_selected_compact(gap), 2);
+
+        let first = state
+            .document
+            .images
+            .iter()
+            .find(|image| image.record.item.id == 1)
+            .unwrap();
+        let second = state
+            .document
+            .images
+            .iter()
+            .find(|image| image.record.item.id == 2)
+            .unwrap();
+        let first_rect = placement_visual_bounds_world(first);
+        let second_rect = placement_visual_bounds_world(second);
+
+        assert!(
+            rectangles_respect_gap(first_rect, second_rect, gap),
+            "rotated placement footprint should not overlap arranged neighbor"
+        );
+    }
+
+    #[test]
+    fn compact_arrangement_is_idempotent_for_same_selection() {
+        let mut state = CanvasState::default();
+        let gap = 12.0;
+
+        eframe::egui::__run_test_ui(|ui| {
+            push_test_image(
+                ui,
+                &mut state,
+                1,
+                180,
+                120,
+                1.0,
+                eframe::egui::pos2(-300.0, 0.0),
+            );
+            push_test_image(
+                ui,
+                &mut state,
+                2,
+                90,
+                180,
+                1.0,
+                eframe::egui::pos2(0.0, 200.0),
+            );
+            push_test_image(
+                ui,
+                &mut state,
+                3,
+                140,
+                90,
+                1.0,
+                eframe::egui::pos2(240.0, -120.0),
+            );
+            push_test_image(
+                ui,
+                &mut state,
+                4,
+                80,
+                80,
+                1.0,
+                eframe::egui::pos2(460.0, 80.0),
+            );
+        });
+        state.select_items(&[1, 2, 3, 4]);
+
+        assert_eq!(state.arrange_selected_compact(gap), 4);
+        let first_positions = selected_image_positions(&state);
+        assert_eq!(state.arrange_selected_compact(gap), 4);
+        let second_positions = selected_image_positions(&state);
+
+        assert_eq!(first_positions.len(), second_positions.len());
+        for ((first_id, first_pos), (second_id, second_pos)) in
+            first_positions.iter().zip(second_positions.iter())
+        {
+            assert_eq!(first_id, second_id);
+            assert!(
+                (first_pos.x - second_pos.x).abs() < 0.001,
+                "item {first_id} x moved from {} to {}",
+                first_pos.x,
+                second_pos.x
+            );
+            assert!(
+                (first_pos.y - second_pos.y).abs() < 0.001,
+                "item {first_id} y moved from {} to {}",
+                first_pos.y,
+                second_pos.y
+            );
         }
     }
 
@@ -4287,5 +4650,34 @@ mod tests {
             || right.right() + gap <= left.left()
             || left.bottom() + gap <= right.top()
             || right.bottom() + gap <= left.top()
+    }
+
+    fn placement_visual_bounds_world(image: &CanvasImage) -> eframe::egui::Rect {
+        let visual_size = rotated_visual_size(
+            image.record.asset.width as f32 * image.record.item.scale.max(0.01),
+            image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+            image.record.item.rotation,
+        );
+        eframe::egui::Rect::from_center_size(
+            eframe::egui::pos2(image.record.item.x, image.record.item.y),
+            visual_size,
+        )
+    }
+
+    fn selected_image_positions(state: &CanvasState) -> Vec<(i64, eframe::egui::Pos2)> {
+        let mut positions = state
+            .document
+            .images
+            .iter()
+            .filter(|image| state.is_selected(image.record.item.id))
+            .map(|image| {
+                (
+                    image.record.item.id,
+                    eframe::egui::pos2(image.record.item.x, image.record.item.y),
+                )
+            })
+            .collect::<Vec<_>>();
+        positions.sort_by_key(|(item_id, _)| *item_id);
+        positions
     }
 }
