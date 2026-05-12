@@ -81,6 +81,7 @@ pub const SURFACE_ELEVATED: egui::Color32 = PANEL_BG_ELEVATED;
 /// - `TEXT_MUTED` for helper text and secondary values
 /// - `TEXT_SUBTLE` for section labels, table headers, and low-emphasis metadata
 /// - `ACCENT` for active fills and the few states that need emphasis without adding a new hue
+/// - `ACCENT_*` color accents for canvas guides and other explicit color comparisons
 /// - `DESTRUCTIVE` for destructive labels and confirmation actions only
 pub const BORDER: egui::Color32 = egui::Color32::from_rgba_premultiplied(20, 20, 20, 20);
 pub const BORDER_STRONG: egui::Color32 = egui::Color32::from_rgba_premultiplied(31, 31, 31, 31);
@@ -88,6 +89,10 @@ pub const TEXT: egui::Color32 = color(0xF0, 0xF0, 0xF0);
 pub const TEXT_MUTED: egui::Color32 = color(0x8C, 0x8C, 0x8C);
 pub const TEXT_SUBTLE: egui::Color32 = color(0x66, 0x66, 0x66);
 pub const ACCENT: egui::Color32 = ACCENT_GOLD;
+pub const ACCENT_BLUE: egui::Color32 = color(0x25, 0x89, 0xBD);
+pub const ACCENT_GREEN: egui::Color32 = color(0x32, 0x9F, 0x5B);
+pub const ACCENT_ORANGE: egui::Color32 = color(0xD1, 0x7B, 0x0F);
+pub const ACCENT_BRIGHT_ORANGE: egui::Color32 = color(0xFA, 0x83, 0x34);
 pub const INDEXED_DOT: egui::Color32 = INDEXED_GREEN;
 pub const DESTRUCTIVE: egui::Color32 = DESTRUCTIVE_RED;
 pub const DESTRUCTIVE_STROKE: egui::Color32 =

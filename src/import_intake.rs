@@ -27,8 +27,6 @@ pub(crate) struct ImportReservation {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ImportPlacementSettings {
     pub(crate) import_target_canvas_area: f32,
-    pub(crate) import_gap: f32,
-    pub(crate) snap_distance_world: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -63,21 +61,40 @@ impl ImportIntake {
         desired_world: egui::Pos2,
         settings: ImportPlacementSettings,
     ) -> (ImportReservation, Option<CanvasImportPlaceholder>) {
+        self.reserve_import_at_world(
+            layout,
+            target_board_id,
+            label,
+            dimensions,
+            desired_world,
+            settings,
+        )
+    }
+
+    pub(crate) fn reserve_import_at_world(
+        &mut self,
+        layout: &mut Vec<crate::data::BoardLayoutItem>,
+        target_board_id: i64,
+        label: String,
+        dimensions: Option<(u32, u32)>,
+        center_world: egui::Pos2,
+        settings: ImportPlacementSettings,
+    ) -> (ImportReservation, Option<CanvasImportPlaceholder>) {
         let queue_id = self.next_queue_id();
         let placeholder = dimensions.map(|(width, height)| {
             let size_world =
                 import_preview_size_world(width, height, settings.import_target_canvas_area);
-            let reserved_world = crate::import_placement::reserve_import_world(
-                layout,
-                desired_world,
-                size_world,
-                settings.import_gap,
-                settings.snap_distance_world,
-            );
+            layout.push(crate::data::BoardLayoutItem {
+                id: -((layout.len() as i64) + 1),
+                x: center_world.x,
+                y: center_world.y,
+                width: size_world.x,
+                height: size_world.y,
+            });
             let placeholder = CanvasImportPlaceholder {
                 queue_id,
                 label,
-                center_world: reserved_world,
+                center_world,
                 size_world,
             };
             self.queue_placeholder(target_board_id, placeholder.clone());
@@ -308,8 +325,6 @@ mod tests {
             eframe::egui::pos2(10.0, 20.0),
             ImportPlacementSettings {
                 import_target_canvas_area: crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-                import_gap: 24.0,
-                snap_distance_world: 32.0,
             },
         );
 
@@ -337,8 +352,6 @@ mod tests {
             eframe::egui::Pos2::ZERO,
             ImportPlacementSettings {
                 import_target_canvas_area: 10_000.0,
-                import_gap: 24.0,
-                snap_distance_world: 32.0,
             },
         );
 

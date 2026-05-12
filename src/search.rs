@@ -1891,8 +1891,12 @@ fn update_search_placement_preview(
         return;
     }
 
-    let placeholders =
-        crate::canvas::compact_layout_for_sizes(&drag.asset_placeholder_sizes, gap, pointer_world);
+    let placeholders = canvas.compact_guided_preview_placeholders(
+        &drag.asset_placeholder_sizes,
+        pointer_world,
+        screen_rect,
+        gap,
+    );
     canvas.set_move_preview_placeholders(placeholders);
 }
 

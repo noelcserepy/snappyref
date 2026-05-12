@@ -1,4 +1,5 @@
 use eframe::egui;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
@@ -78,6 +79,13 @@ struct ContextMenuItem {
     label: &'static str,
     shortcut: Option<&'static str>,
     enabled: bool,
+}
+
+#[derive(Default)]
+struct PendingImportBatch {
+    target_board_id: i64,
+    pending_queue_ids: HashSet<u64>,
+    loaded_item_ids: Vec<i64>,
 }
 
 #[derive(Clone, Copy)]
@@ -744,6 +752,10 @@ enum VerificationMode {
     SpacingComparison,
     BoardRowsComparison,
     BoardRowsComparisonBottom,
+    GuideColorBlue,
+    GuideColorGreen,
+    GuideColorOrange,
+    GuideColorBrightOrange,
 }
 
 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -996,6 +1008,26 @@ impl AppConfig {
                 #[cfg(debug_assertions)]
                 {
                     verification_mode = Some(VerificationMode::BoardRowsComparisonBottom);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-guide-color=blue" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::GuideColorBlue);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-guide-color=green" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::GuideColorGreen);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-guide-color=orange" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::GuideColorOrange);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-guide-color=bright-orange" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::GuideColorBrightOrange);
                 }
             } else if let Some(query) = argument.strip_prefix("--verify-search=") {
                 #[cfg(debug_assertions)]
@@ -1395,6 +1427,7 @@ pub struct SnappyRefApp {
     perf_scenario: Option<PerfScenarioState>,
     import_intake: ImportIntake,
     residency: ImageResidencyCoordinator,
+    pending_import_batches: Vec<PendingImportBatch>,
     hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
     document_persistence: DocumentPersistence,
     #[cfg(debug_assertions)]
@@ -1474,6 +1507,7 @@ impl SnappyRefApp {
                     perf_scenario: PerfScenarioState::from_config(&config).unwrap_or(None),
                     import_intake: ImportIntake::new(),
                     residency: ImageResidencyCoordinator::default(),
+                    pending_import_batches: Vec::new(),
                     hover_preview_dimensions: std::collections::HashMap::new(),
                     document_persistence: DocumentPersistence::default(),
                     #[cfg(debug_assertions)]
@@ -1681,6 +1715,7 @@ impl SnappyRefApp {
                 perf_scenario: PerfScenarioState::from_config(&config).unwrap_or(None),
                 import_intake: ImportIntake::new(),
                 residency: ImageResidencyCoordinator::default(),
+                pending_import_batches: Vec::new(),
                 hover_preview_dimensions: std::collections::HashMap::new(),
                 document_persistence: DocumentPersistence::default(),
                 #[cfg(debug_assertions)]
@@ -2749,8 +2784,6 @@ impl SnappyRefApp {
     fn import_placement_settings(&self) -> ImportPlacementSettings {
         ImportPlacementSettings {
             import_target_canvas_area: self.settings.import_target_canvas_area,
-            import_gap: self.settings.import_gap,
-            snap_distance_world: crate::import_placement::import_snap_distance_world(&self.canvas),
         }
     }
 
@@ -2781,24 +2814,6 @@ impl SnappyRefApp {
         Ok(layout)
     }
 
-    fn reserve_import_world(
-        &self,
-        layout: &mut Vec<crate::data::BoardLayoutItem>,
-        width: u32,
-        height: u32,
-        desired_world: egui::Pos2,
-        _viewport_world: egui::Rect,
-    ) -> egui::Pos2 {
-        let size = self.import_size_world(width, height);
-        crate::import_placement::reserve_import_world(
-            layout,
-            desired_world,
-            size,
-            self.settings.import_gap,
-            crate::import_placement::import_snap_distance_world(&self.canvas),
-        )
-    }
-
     fn reserve_import(
         &mut self,
         layout: &mut Vec<crate::data::BoardLayoutItem>,
@@ -2814,6 +2829,27 @@ impl SnappyRefApp {
             label,
             dimensions,
             desired_world,
+            self.import_placement_settings(),
+        );
+        if let Some(placeholder) = placeholder {
+            self.add_import_placeholder_to_canvas(placeholder);
+        }
+        reservation
+    }
+
+    fn reserve_import_at_world(
+        &mut self,
+        layout: &mut Vec<crate::data::BoardLayoutItem>,
+        label: String,
+        dimensions: Option<(u32, u32)>,
+        center_world: egui::Pos2,
+    ) -> crate::import_intake::ImportReservation {
+        let (reservation, placeholder) = self.import_intake.reserve_import_at_world(
+            layout,
+            self.active_board_id,
+            label,
+            dimensions,
+            center_world,
             self.import_placement_settings(),
         );
         if let Some(placeholder) = placeholder {
@@ -2927,17 +2963,10 @@ impl SnappyRefApp {
         self.hover_preview_dimensions
             .retain(|path, _| hovered_paths.contains(path));
 
-        let desired_world = self.preferred_import_world(ui.ctx(), screen_rect);
-        let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let mut layout = match self.import_layout_snapshot() {
-            Ok(layout) => layout,
-            Err(_) => return,
-        };
-
         const FALLBACK_WIDTH: u32 = 360;
         const FALLBACK_HEIGHT: u32 = 240;
 
-        let mut previews = Vec::with_capacity(hovered_sources.len());
+        let mut sizes = Vec::with_capacity(hovered_sources.len());
         for source in hovered_sources {
             let (width, height) = match &source {
                 ExternalImportSource::Path(path) => {
@@ -2949,24 +2978,59 @@ impl SnappyRefApp {
                 }
                 ExternalImportSource::Url(_) => (FALLBACK_WIDTH, FALLBACK_HEIGHT),
             };
-            let reserved_world = self.reserve_import_world(
-                &mut layout,
-                width,
-                height,
-                desired_world,
-                viewport_world,
-            );
-            let scale = crate::jobs::initial_import_scale(
-                width,
-                height,
-                true,
-                self.settings.import_target_canvas_area,
-            );
-            let size_world = egui::vec2(width as f32 * scale, height as f32 * scale);
-            previews.push((reserved_world, size_world));
+            sizes.push(self.import_size_world(width, height));
         }
 
+        let previews = self.canvas.compact_guided_preview_placeholders(
+            &sizes,
+            self.preferred_import_world(ui.ctx(), screen_rect),
+            screen_rect,
+            self.settings.import_gap,
+        );
         self.canvas.set_hover_preview_placeholders(previews);
+    }
+
+    fn dropped_import_previews(
+        &mut self,
+        sources: &[ExternalImportSource],
+        desired_world: egui::Pos2,
+        screen_rect: egui::Rect,
+    ) -> Vec<(String, Option<(u32, u32)>, egui::Pos2)> {
+        const FALLBACK_WIDTH: u32 = 360;
+        const FALLBACK_HEIGHT: u32 = 240;
+
+        let specs = sources
+            .iter()
+            .map(|source| {
+                let label = Self::import_source_label(source);
+                let dimensions = match source {
+                    ExternalImportSource::Path(path) => {
+                        image::image_dimensions(path).unwrap_or((FALLBACK_WIDTH, FALLBACK_HEIGHT))
+                    }
+                    ExternalImportSource::Url(_) => (FALLBACK_WIDTH, FALLBACK_HEIGHT),
+                };
+                (
+                    label,
+                    Some(dimensions),
+                    self.import_size_world(dimensions.0, dimensions.1),
+                )
+            })
+            .collect::<Vec<_>>();
+        let sizes = specs
+            .iter()
+            .map(|(_, _, size_world)| *size_world)
+            .collect::<Vec<_>>();
+        let centers = self.canvas.compact_guided_preview_placeholders(
+            &sizes,
+            desired_world,
+            screen_rect,
+            self.settings.import_gap,
+        );
+        specs
+            .into_iter()
+            .zip(centers)
+            .map(|((label, dimensions, _), (center_world, _))| (label, dimensions, center_world))
+            .collect()
     }
 
     fn handle_dropped_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
@@ -2979,7 +3043,10 @@ impl SnappyRefApp {
             return;
         }
 
-        let desired_world = self.preferred_import_world(ui.ctx(), screen_rect);
+        let desired_world = self.preferred_import_world_with_pointer(
+            screen_rect,
+            self.import_drop_screen_pos(ui.ctx()),
+        );
         let viewport_world = self.import_viewport_world_rect(screen_rect);
         let mut layout = match self.import_layout_snapshot() {
             Ok(layout) => layout,
@@ -2989,22 +3056,13 @@ impl SnappyRefApp {
             }
         };
 
-        const FALLBACK_WIDTH: u32 = 360;
-        const FALLBACK_HEIGHT: u32 = 240;
+        let previews = self.dropped_import_previews(&dropped_sources, desired_world, screen_rect);
+        let mut queued_batch_ids = Vec::new();
 
-        for source in dropped_sources {
-            let label = Self::import_source_label(&source);
-            let dimensions = match &source {
-                ExternalImportSource::Path(path) => image::image_dimensions(path).ok(),
-                ExternalImportSource::Url(_) => Some((FALLBACK_WIDTH, FALLBACK_HEIGHT)),
-            };
-            let reservation = self.reserve_import(
-                &mut layout,
-                label,
-                dimensions,
-                desired_world,
-                viewport_world,
-            );
+        for (source, (label, dimensions, center_world)) in dropped_sources.into_iter().zip(previews)
+        {
+            let reservation =
+                self.reserve_import_at_world(&mut layout, label, dimensions, center_world);
 
             let request = match &source {
                 ExternalImportSource::Path(source_path) => {
@@ -3038,6 +3096,7 @@ impl SnappyRefApp {
                 continue;
             }
 
+            queued_batch_ids.push(reservation.queue_id);
             self.status = match &source {
                 ExternalImportSource::Path(path) => {
                     format!("Queued import: {}", path.display())
@@ -3045,6 +3104,80 @@ impl SnappyRefApp {
                 ExternalImportSource::Url(url) => format!("Queued URL import: {url}"),
             };
         }
+        self.register_import_batch(self.active_board_id, queued_batch_ids);
+    }
+
+    fn register_import_batch(&mut self, target_board_id: i64, queue_ids: Vec<u64>) {
+        if queue_ids.len() <= 1 {
+            return;
+        }
+        self.register_import_batch_any_size(target_board_id, queue_ids);
+    }
+
+    fn register_search_import_batch(&mut self, target_board_id: i64, queue_ids: Vec<u64>) {
+        if queue_ids.is_empty() {
+            return;
+        }
+        self.register_import_batch_any_size(target_board_id, queue_ids);
+    }
+
+    fn register_import_batch_any_size(&mut self, target_board_id: i64, queue_ids: Vec<u64>) {
+        self.pending_import_batches.push(PendingImportBatch {
+            target_board_id,
+            pending_queue_ids: queue_ids.into_iter().collect(),
+            loaded_item_ids: Vec::new(),
+        });
+    }
+
+    fn finish_import_queue_id_in_batches(
+        &mut self,
+        target_board_id: Option<i64>,
+        queue_id: Option<u64>,
+        loaded_item_id: Option<i64>,
+    ) {
+        let Some(queue_id) = queue_id else {
+            return;
+        };
+
+        let mut completed_batches = Vec::new();
+        for batch in &mut self.pending_import_batches {
+            if !batch.pending_queue_ids.remove(&queue_id) {
+                continue;
+            }
+            if let Some(item_id) = loaded_item_id
+                && !batch.loaded_item_ids.contains(&item_id)
+            {
+                batch.loaded_item_ids.push(item_id);
+            }
+            if batch.pending_queue_ids.is_empty() {
+                completed_batches.push((
+                    batch.target_board_id,
+                    std::mem::take(&mut batch.loaded_item_ids),
+                ));
+            }
+        }
+        self.pending_import_batches
+            .retain(|batch| !batch.pending_queue_ids.is_empty());
+
+        for (batch_board_id, item_ids) in completed_batches {
+            if target_board_id.is_none_or(|id| id == batch_board_id) {
+                self.finalize_completed_import_batch(batch_board_id, item_ids);
+            }
+        }
+    }
+
+    fn finalize_completed_import_batch(&mut self, target_board_id: i64, item_ids: Vec<i64>) {
+        if item_ids.is_empty() || target_board_id != self.active_board_id {
+            return;
+        }
+        self.canvas.select_items(&item_ids);
+        self.canvas.clear_hover_preview_placeholders();
+        self.canvas.clear_move_preview_placeholders();
+        if item_ids.len() > 1 {
+            self.canvas
+                .arrange_selected_compact(self.settings.import_gap);
+        }
+        self.persist_canvas_changes();
     }
 
     fn handle_clipboard_paste(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
@@ -3733,6 +3866,10 @@ impl SnappyRefApp {
     }
 
     fn apply_loaded_import_outcome(&mut self, outcome: LoadedImportOutcome) {
+        let placeholder_target_board_id = outcome
+            .placeholder_removal
+            .as_ref()
+            .map(|placeholder| placeholder.target_board_id);
         let placeholder_queue_id = outcome.placeholder_removal.map(|placeholder| {
             self.remove_import_placeholder_for_board(
                 placeholder.target_board_id,
@@ -3754,6 +3891,12 @@ impl SnappyRefApp {
         let mut status = status;
         #[cfg(feature = "semantic-search")]
         let indexed_asset = outcome.indexed_asset;
+        let loaded_item_id = outcome.log.as_ref().map(|log| log.record.item.id);
+        self.finish_import_queue_id_in_batches(
+            placeholder_target_board_id,
+            placeholder_queue_id,
+            loaded_item_id,
+        );
         if let Some(log) = outcome.log {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
                 scenario.visible_imports += 1;
@@ -3852,12 +3995,21 @@ impl SnappyRefApp {
     }
 
     fn apply_failed_import_outcome(&mut self, outcome: FailedImportOutcome) {
+        let target_board_id = outcome
+            .placeholder_removal
+            .as_ref()
+            .map(|placeholder| placeholder.target_board_id);
+        let queue_id = outcome
+            .placeholder_removal
+            .as_ref()
+            .map(|placeholder| placeholder.queue_id);
         if let Some(placeholder) = outcome.placeholder_removal {
             self.remove_import_placeholder_for_board(
                 placeholder.target_board_id,
                 placeholder.queue_id,
             );
         }
+        self.finish_import_queue_id_in_batches(target_board_id, queue_id, None);
         self.status = outcome.status;
     }
 
@@ -4900,9 +5052,15 @@ impl SnappyRefApp {
                 return;
             }
         };
-        let viewport_world = self.import_viewport_world_rect(screen_rect);
-
-        for asset_id in drop_request.asset_ids {
+        let asset_preview_centers = self
+            .canvas
+            .move_preview_placeholder_layout_items()
+            .into_iter()
+            .map(|item| egui::pos2(item.x, item.y))
+            .collect::<Vec<_>>();
+        let asset_ids = drop_request.asset_ids;
+        let mut asset_specs = Vec::with_capacity(asset_ids.len());
+        for asset_id in asset_ids {
             let asset = match library.load_asset(asset_id) {
                 Ok(asset) => asset,
                 Err(error) => {
@@ -4910,14 +5068,40 @@ impl SnappyRefApp {
                     return;
                 }
             };
-            let reservation = self.reserve_import(
+            asset_specs.push(asset);
+        }
+        let asset_centers = if asset_preview_centers.len() == asset_specs.len() {
+            asset_preview_centers
+        } else {
+            let sizes = asset_specs
+                .iter()
+                .map(|asset| self.import_size_world(asset.width, asset.height))
+                .collect::<Vec<_>>();
+            self.canvas
+                .compact_guided_preview_placeholders(
+                    &sizes,
+                    drop_world,
+                    screen_rect,
+                    self.settings.import_gap,
+                )
+                .into_iter()
+                .map(|(center, _)| center)
+                .collect()
+        };
+
+        let mut asset_loads = Vec::with_capacity(asset_specs.len());
+        let mut asset_queue_ids = Vec::with_capacity(asset_specs.len());
+        for (asset_index, asset) in asset_specs.into_iter().enumerate() {
+            let placed_world = asset_centers
+                .get(asset_index)
+                .copied()
+                .unwrap_or(drop_world);
+            let reservation = self.reserve_import_at_world(
                 &mut layout,
                 asset.filename.clone(),
                 Some((asset.width, asset.height)),
-                drop_world,
-                viewport_world,
+                placed_world,
             );
-            let placed_world = reservation.reserved_world.unwrap_or(drop_world);
             let scale = crate::jobs::initial_import_scale(
                 asset.width,
                 asset.height,
@@ -4925,7 +5109,7 @@ impl SnappyRefApp {
                 self.settings.import_target_canvas_area,
             );
             let record =
-                match library.create_board_item_from_asset(asset_id, placed_world, scale, 0.0, 0) {
+                match library.create_board_item_from_asset(asset.id, placed_world, scale, 0.0, 0) {
                     Ok(record) => record,
                     Err(error) => {
                         self.remove_import_reservation(reservation);
@@ -4933,8 +5117,13 @@ impl SnappyRefApp {
                         return;
                     }
                 };
-            let item_id = record.item.id;
-            added_ids.push(item_id);
+            asset_queue_ids.push(reservation.queue_id);
+            asset_loads.push((reservation, record));
+        }
+        self.register_search_import_batch(self.active_board_id, asset_queue_ids);
+        let asset_load_count = asset_loads.len();
+
+        for (reservation, record) in asset_loads {
             if let Some(import_worker) = &self.import_worker {
                 if let Err(error) =
                     import_worker.enqueue(crate::jobs::ImportRequest::LoadExisting {
@@ -4951,6 +5140,11 @@ impl SnappyRefApp {
                     })
                 {
                     self.remove_import_reservation(reservation);
+                    self.finish_import_queue_id_in_batches(
+                        Some(self.active_board_id),
+                        Some(reservation.queue_id),
+                        None,
+                    );
                     self.status = error;
                     return;
                 }
@@ -4973,6 +5167,11 @@ impl SnappyRefApp {
                     }
                     crate::jobs::ImportResult::Failed { error, .. } => {
                         self.remove_import_reservation(reservation);
+                        self.finish_import_queue_id_in_batches(
+                            Some(self.active_board_id),
+                            Some(reservation.queue_id),
+                            None,
+                        );
                         self.status = error;
                         return;
                     }
@@ -4981,18 +5180,17 @@ impl SnappyRefApp {
             }
         }
 
-        self.canvas.select_items(&added_ids);
-        if added_ids.len() > 1 {
-            self.canvas
-                .arrange_selected_compact(self.settings.import_gap);
+        if !added_ids.is_empty() {
+            self.canvas.select_items(&added_ids);
+            if added_ids.len() > 1 {
+                self.canvas
+                    .arrange_selected_compact(self.settings.import_gap);
+            }
+            self.persist_canvas_changes();
         }
-        self.persist_canvas_changes();
-        let noun = if added_ids.len() == 1 {
-            "image"
-        } else {
-            "images"
-        };
-        self.status = format!("Added {} search {noun}", added_ids.len());
+        let placed_count = added_ids.len() + asset_load_count;
+        let noun = if placed_count == 1 { "image" } else { "images" };
+        self.status = format!("Added {placed_count} search {noun}");
         self.canvas.clear_search_drag_preview();
         self.canvas.clear_move_preview_placeholders();
         self.search.close_overlay(Some(&mut self.canvas));
@@ -5036,8 +5234,18 @@ impl SnappyRefApp {
     }
 
     fn preferred_import_world(&self, ctx: &egui::Context, screen_rect: egui::Rect) -> egui::Pos2 {
-        let pointer_screen_pos = ctx.input(|input| input.pointer.latest_pos());
+        let pointer_screen_pos = self.import_hover_screen_pos(ctx);
         self.preferred_import_world_with_pointer(screen_rect, pointer_screen_pos)
+    }
+
+    fn import_hover_screen_pos(&self, ctx: &egui::Context) -> Option<egui::Pos2> {
+        crate::native_drop::hovered_screen_pos()
+            .or_else(|| ctx.input(|input| input.pointer.latest_pos()))
+    }
+
+    fn import_drop_screen_pos(&self, ctx: &egui::Context) -> Option<egui::Pos2> {
+        crate::native_drop::take_dropped_screen_pos()
+            .or_else(|| ctx.input(|input| input.pointer.latest_pos()))
     }
 
     fn import_viewport_world_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
@@ -5327,6 +5535,10 @@ impl eframe::App for SnappyRefApp {
                     | VerificationMode::SpacingComparison
                     | VerificationMode::BoardRowsComparison
                     | VerificationMode::BoardRowsComparisonBottom
+                    | VerificationMode::GuideColorBlue
+                    | VerificationMode::GuideColorGreen
+                    | VerificationMode::GuideColorOrange
+                    | VerificationMode::GuideColorBrightOrange
             )
         ) {
             match self.verification_mode {
@@ -5353,6 +5565,38 @@ impl eframe::App for SnappyRefApp {
                         ui,
                         screen_rect,
                         560.0,
+                    );
+                }
+                Some(VerificationMode::GuideColorBlue) => {
+                    crate::design_system_preview::show_guide_color_comparison(
+                        ui,
+                        screen_rect,
+                        "Blue #2589BD",
+                        crate::theme::ACCENT_BLUE,
+                    );
+                }
+                Some(VerificationMode::GuideColorGreen) => {
+                    crate::design_system_preview::show_guide_color_comparison(
+                        ui,
+                        screen_rect,
+                        "Green #329F5B",
+                        crate::theme::ACCENT_GREEN,
+                    );
+                }
+                Some(VerificationMode::GuideColorOrange) => {
+                    crate::design_system_preview::show_guide_color_comparison(
+                        ui,
+                        screen_rect,
+                        "Orange #D17B0F",
+                        crate::theme::ACCENT_ORANGE,
+                    );
+                }
+                Some(VerificationMode::GuideColorBrightOrange) => {
+                    crate::design_system_preview::show_guide_color_comparison(
+                        ui,
+                        screen_rect,
+                        "Bright Orange #FA8334",
+                        crate::theme::ACCENT_BRIGHT_ORANGE,
                     );
                 }
                 _ => crate::design_system_preview::show(ui, screen_rect),
@@ -8191,6 +8435,7 @@ mod tests {
         let active_items = library.load_board_items().unwrap();
         assert_eq!(active_items.len(), 1);
         assert_eq!(harness.state().canvas.import_placeholder_count(), 1);
+        assert_eq!(harness.state().pending_import_batches.len(), 1);
         assert!(
             harness
                 .state()
@@ -8803,27 +9048,89 @@ mod tests {
     }
 
     #[test]
-    fn reserve_import_world_accounts_for_pending_placeholders() {
+    fn completed_multi_file_import_batch_selects_and_compacts_real_items() {
+        let ctx = egui::Context::default();
         let mut app = test_app(None);
-        app.queue_import_placeholder_for_board(
-            app.active_board_id,
-            1,
-            "first".to_owned(),
-            egui::pos2(0.0, 0.0),
-            100,
-            100,
-        );
+        app.register_import_batch(app.active_board_id, vec![1, 2, 3]);
 
-        let mut layout = app.import_layout_snapshot().unwrap();
-        let reserved = app.reserve_import_world(
-            &mut layout,
-            100,
-            100,
-            egui::pos2(0.0, 0.0),
-            test_viewport_world(),
-        );
+        for (id, width, height) in [(1_i64, 180_u32, 80_u32), (2, 70, 210), (3, 140, 120)] {
+            let asset = ImageAsset {
+                id,
+                original_path: PathBuf::from(format!("fixture-{id}.png")),
+                filename: format!("fixture-{id}.png"),
+                mime_type: "image/png".to_owned(),
+                width,
+                height,
+                file_size: 4,
+                imported_at: 0,
+            };
+            let record = BoardItemWithAsset {
+                item: BoardItem {
+                    id,
+                    asset_id: id,
+                    x: 0.0,
+                    y: 0.0,
+                    scale: 1.0,
+                    rotation: 0.0,
+                    z_index: id as i32,
+                    archived: false,
+                },
+                asset,
+            };
+            app.integrate_loaded_import(
+                &ctx,
+                LoadedCanvasItem {
+                    target_board_id: 1,
+                    queue_id: Some(id as u64),
+                    record,
+                    preview_rgba: vec![255; width as usize * height as usize * 4],
+                    preview_width: width,
+                    preview_height: height,
+                    animated_preview: None,
+                    preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                    loaded_lod: crate::data::CanvasImageLod::Working,
+                    existing_load_diagnostics: None,
+                    origin: crate::jobs::ImportOrigin::Path,
+                    trace: None,
+                },
+            );
+        }
 
-        assert_eq!(reserved, egui::pos2(100.0 + app.settings.import_gap, 0.0));
+        assert_eq!(app.canvas.selected_item_ids(), vec![1, 2, 3]);
+        let rects = [1_i64, 2, 3]
+            .into_iter()
+            .map(|item_id| {
+                let record = app.canvas.record_for_item_id(item_id).unwrap();
+                egui::Rect::from_center_size(
+                    egui::pos2(record.item.x, record.item.y),
+                    egui::vec2(
+                        record.asset.width as f32 * record.item.scale,
+                        record.asset.height as f32 * record.item.scale,
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (index, left) in rects.iter().enumerate() {
+            for right in rects.iter().skip(index + 1) {
+                assert!(!left.intersects(*right), "{left:?} overlaps {right:?}");
+            }
+        }
+        assert!(app.pending_import_batches.is_empty());
+    }
+
+    #[test]
+    fn completed_inactive_board_import_batch_does_not_mutate_active_canvas() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.register_import_batch(1, vec![1, 2]);
+        app.active_board_id = 2;
+
+        app.integrate_loaded_import(&ctx, test_loaded_item(1, 1));
+        app.integrate_loaded_import(&ctx, test_loaded_item(2, 1));
+
+        assert!(app.canvas.selected_item_ids().is_empty());
+        assert!(app.canvas.record_for_item_id(1).is_none());
+        assert!(app.pending_import_batches.is_empty());
     }
 
     #[test]
@@ -8980,6 +9287,7 @@ mod tests {
             frame_perf: super::FramePerfState::default(),
             import_intake: super::ImportIntake::new(),
             residency: super::ImageResidencyCoordinator::default(),
+            pending_import_batches: Vec::new(),
             sidebar_open: false,
             sidebar_tab: super::SidebarTab::default(),
             pending_board_delete: None,

@@ -620,6 +620,7 @@ impl CanvasState {
 
     pub fn clear_hover_preview_placeholders(&mut self) {
         self.interaction.hover_preview_placeholders.clear();
+        self.clear_guide_snap_indicators();
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -629,6 +630,28 @@ impl CanvasState {
 
     pub fn clear_move_preview_placeholders(&mut self) {
         self.interaction.move_preview_placeholders.clear();
+    }
+
+    pub(super) fn clear_guide_snap_indicators(&mut self) {
+        self.interaction.guide_snap_indicators.clear();
+    }
+
+    pub(super) fn set_guide_snap_indicators(&mut self, indicators: Vec<super::GuideSnapIndicator>) {
+        self.interaction.guide_snap_indicators = indicators;
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn guide_snap_indicator_count(&self) -> usize {
+        self.interaction.guide_snap_indicators.len()
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn guide_snap_mark_count(&self) -> usize {
+        self.interaction
+            .guide_snap_indicators
+            .iter()
+            .map(|indicator| indicator.marks.len())
+            .sum()
     }
 
     pub fn set_move_preview_placeholders(&mut self, placeholders: Vec<(egui::Pos2, egui::Vec2)>) {
@@ -645,6 +668,47 @@ impl CanvasState {
                         label: String::new(),
                     }),
             );
+    }
+
+    pub fn compact_guided_preview_placeholders(
+        &mut self,
+        sizes: &[egui::Vec2],
+        center_world: egui::Pos2,
+        screen_rect: egui::Rect,
+        gap: f32,
+    ) -> Vec<(egui::Pos2, egui::Vec2)> {
+        let mut placeholders = super::compact_layout_for_sizes(sizes, gap, center_world);
+        let items = placeholders
+            .iter()
+            .enumerate()
+            .map(|(index, (center, size))| SelectedLayoutItem {
+                id: -((index as i64) + 1),
+                x: center.x,
+                y: center.y,
+                width: size.x,
+                height: size.y,
+            })
+            .collect::<Vec<_>>();
+        let Some(bounds) = layout_bounds_with_offset(&items, egui::Vec2::ZERO) else {
+            self.clear_guide_snap_indicators();
+            return placeholders;
+        };
+        let Some(snap_result) =
+            super::interaction::compute_guide_snap_for_rect(self, screen_rect, bounds, &[], false)
+        else {
+            self.clear_guide_snap_indicators();
+            return placeholders;
+        };
+        let snap_offset = snap_result.rect.center() - bounds.center();
+        if snap_offset == egui::Vec2::ZERO {
+            self.clear_guide_snap_indicators();
+            return placeholders;
+        }
+        self.set_guide_snap_indicators(snap_result.indicators);
+        for (center, _) in &mut placeholders {
+            *center += snap_offset;
+        }
+        placeholders
     }
 
     #[cfg_attr(not(test), allow(dead_code))]

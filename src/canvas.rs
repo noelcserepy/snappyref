@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 mod document;
 mod geometry;
+mod guide_snap;
 mod interaction;
 mod render;
 mod state;
@@ -14,8 +15,9 @@ use eframe::egui;
 use interaction::handle_input;
 use render::{
     annotation_style_toolbar_rect, editing_textbox_toolbar_rect, paint_annotation_draft,
-    paint_background, paint_canvas_items, paint_crop_marquee, paint_import_placeholders,
-    paint_marquee, paint_selection_bounds, show_annotation_style_toolbar, show_textbox_editor,
+    paint_background, paint_canvas_items, paint_crop_marquee, paint_guide_snap_indicators,
+    paint_import_placeholders, paint_marquee, paint_selection_bounds,
+    show_annotation_style_toolbar, show_textbox_editor,
 };
 use state::{CanvasDocumentState, CanvasInteractionState, CanvasRenderState};
 
@@ -31,6 +33,7 @@ const IMAGE_ROTATE_HANDLE_OFFSET_SCREEN: f32 = 18.0;
 const IMAGE_ROTATE_HANDLE_RADIUS_SCREEN: f32 = 7.0;
 const IMAGE_ROTATE_HANDLE_HIT_RADIUS_SCREEN: f32 = 13.0;
 const IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN: f32 = 32.0;
+const SELECTION_BORDER_REAPPEAR_SECONDS: f64 = 2.0;
 const MIN_TEXTBOX_WORLD_SIZE: egui::Vec2 = egui::vec2(240.0, 56.0);
 const TEXTBOX_RESIZE_HIT_RADIUS: f32 = 14.0;
 const TEXTBOX_DRAG_THRESHOLD_SCREEN: f32 = 4.0;
@@ -100,6 +103,12 @@ pub struct CanvasDocumentChanges {
     pub updated_annotations: Vec<CanvasAnnotation>,
     pub archived_annotation_ids: Vec<i64>,
     pub stack_order: Option<Vec<crate::data::CanvasStackItem>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GuideSnapIndicator {
+    segments: Vec<(egui::Pos2, egui::Pos2)>,
+    marks: Vec<egui::Pos2>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -256,6 +265,8 @@ struct DragState {
     starting_items: Vec<SelectedLayoutItem>,
     snap_preview_rect_world: Option<egui::Rect>,
     started_at_seconds: f64,
+    last_movement_seconds: f64,
+    last_world_delta: egui::Vec2,
     moved: bool,
 }
 
@@ -446,10 +457,6 @@ impl CanvasState {
         egui::pos2(world.x, world.y)
     }
 
-    pub(crate) fn screen_distance_to_world(&self, screen_distance: f32) -> f32 {
-        screen_distance / self.zoom.max(0.01)
-    }
-
     #[cfg(debug_assertions)]
     pub(crate) fn seed_move_snap_preview_for_selected_items(
         &mut self,
@@ -461,6 +468,8 @@ impl CanvasState {
             starting_items: self.selected_layout_items(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
+            last_movement_seconds: 0.0,
+            last_world_delta: egui::Vec2::ZERO,
             moved: false,
         };
         let snap_preview_rect =
@@ -632,14 +641,19 @@ pub(crate) fn compact_layout_for_sizes(
         return sizes.iter().map(|size| (center_world, *size)).collect();
     };
     let local_center = egui::pos2(width * 0.5, height * 0.5);
-    placements
-        .into_iter()
-        .filter_map(|(id, placement)| {
-            sizes
-                .get(id as usize)
-                .map(|size| (center_world + (placement - local_center), *size))
-        })
-        .collect()
+    let mut ordered = sizes
+        .iter()
+        .map(|size| (center_world, *size))
+        .collect::<Vec<_>>();
+    for (id, placement) in placements {
+        if let Some(slot) = ordered.get_mut(id as usize) {
+            *slot = (
+                center_world + (placement - local_center),
+                sizes[id as usize],
+            );
+        }
+    }
+    ordered
 }
 
 fn sorted_compact_items(
@@ -1616,6 +1630,7 @@ pub fn show(
         debug_labels,
     );
     paint_selection_bounds(&painter, rect, state);
+    paint_guide_snap_indicators(&painter, rect, state);
     paint_crop_marquee(&painter, rect, state);
     paint_annotation_draft(&painter, rect, state);
     paint_marquee(&painter, state);
@@ -1715,8 +1730,8 @@ mod tests {
         FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, PixelCropRect,
         SelectedLayoutItem, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
         TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion, TextboxResizeHandle,
-        best_compact_layout, horizontal_layout, legacy_best_compact_layout, rotated_visual_size,
-        vertical_layout,
+        best_compact_layout, compact_layout_for_sizes, horizontal_layout,
+        legacy_best_compact_layout, rotated_visual_size, vertical_layout,
     };
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
@@ -2218,6 +2233,74 @@ mod tests {
         state.clear_hover_preview_placeholders();
         assert_eq!(state.hover_preview_placeholder_count(), 0);
         assert_eq!(state.import_placeholder_count(), 1);
+    }
+
+    #[test]
+    fn clearing_hover_preview_placeholders_also_clears_guide_indicators() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut state = CanvasState::default();
+            push_test_image(
+                ui,
+                &mut state,
+                1,
+                100,
+                100,
+                1.0,
+                eframe::egui::pos2(0.0, 0.0),
+            );
+
+            state.compact_guided_preview_placeholders(
+                &[eframe::egui::vec2(100.0, 100.0)],
+                eframe::egui::pos2(102.0, 0.0),
+                eframe::egui::Rect::from_min_size(
+                    eframe::egui::Pos2::ZERO,
+                    eframe::egui::vec2(800.0, 600.0),
+                ),
+                24.0,
+            );
+
+            assert_eq!(state.guide_snap_indicator_count(), 1);
+            state.clear_hover_preview_placeholders();
+            assert_eq!(state.guide_snap_indicator_count(), 0);
+        });
+    }
+
+    #[test]
+    fn compact_guided_preview_placeholders_snap_as_one_batch() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut state = CanvasState::default();
+            push_test_image(
+                ui,
+                &mut state,
+                1,
+                100,
+                100,
+                1.0,
+                eframe::egui::pos2(0.0, 0.0),
+            );
+
+            let placeholders = state.compact_guided_preview_placeholders(
+                &[
+                    eframe::egui::vec2(100.0, 100.0),
+                    eframe::egui::vec2(100.0, 100.0),
+                ],
+                eframe::egui::pos2(102.0, 0.0),
+                eframe::egui::Rect::from_min_size(
+                    eframe::egui::Pos2::ZERO,
+                    eframe::egui::vec2(800.0, 600.0),
+                ),
+                24.0,
+            );
+
+            let bounds = placeholders
+                .iter()
+                .map(|(center, size)| eframe::egui::Rect::from_center_size(*center, *size))
+                .reduce(|left, right| left.union(right))
+                .expect("preview bounds");
+            assert_eq!(placeholders.len(), 2);
+            assert_eq!(bounds.left(), 50.0);
+            assert_eq!(state.guide_snap_indicator_count(), 1);
+        });
     }
 
     #[test]
@@ -4052,6 +4135,22 @@ mod tests {
                 first_pos.y,
                 second_pos.y
             );
+        }
+    }
+
+    #[test]
+    fn compact_layout_for_sizes_preserves_input_order() {
+        let sizes = [
+            eframe::egui::vec2(90.0, 40.0),
+            eframe::egui::vec2(300.0, 520.0),
+            eframe::egui::vec2(140.0, 180.0),
+        ];
+
+        let placeholders = compact_layout_for_sizes(&sizes, 12.0, eframe::egui::pos2(100.0, 200.0));
+
+        assert_eq!(placeholders.len(), sizes.len());
+        for (index, (_, size)) in placeholders.iter().enumerate() {
+            assert_eq!(*size, sizes[index]);
         }
     }
 

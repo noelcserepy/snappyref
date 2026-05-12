@@ -43,6 +43,7 @@ pub(super) struct CanvasInteractionState {
     pub import_placeholders: Vec<ImportPlaceholder>,
     pub hover_preview_placeholders: Vec<ImportPlaceholder>,
     pub move_preview_placeholders: Vec<ImportPlaceholder>,
+    pub guide_snap_indicators: Vec<super::GuideSnapIndicator>,
     pub search_drag_preview: Option<SearchDragPreview>,
     pub last_pointer_screen_pos: Option<egui::Pos2>,
     pub alt_pan_active: bool,
