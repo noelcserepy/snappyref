@@ -14,8 +14,9 @@ use crate::palette::{
     search_result_grid_layout, search_result_tile,
 };
 use crate::semantic_search::{
-    DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, SearchQueryResult,
-    SearchResultGroup, SearchScope, SemanticSearchConfig, SemanticSearchService,
+    DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, LocalModelStoreStatus,
+    SearchQueryResult, SearchResultGroup, SearchScope, SemanticSearchConfig, SemanticSearchService,
+    default_local_model_store_status,
 };
 use crate::storage::Library;
 
@@ -52,6 +53,7 @@ pub(crate) struct SearchController {
     next_search_request_id: u64,
     recent_searches: Vec<String>,
     recent_searches_dirty: bool,
+    local_model_store_status: Option<LocalModelStoreStatus>,
     perf_events: Vec<SemanticPerfEvent>,
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
     latency_log: SearchLatencyLog,
@@ -284,6 +286,16 @@ impl SearchController {
             return;
         }
 
+        let model_store_status = default_local_model_store_status();
+        self.sync_model_store_status(model_store_status, status, canvas);
+        if !self
+            .local_model_store_status
+            .as_ref()
+            .is_some_and(LocalModelStoreStatus::assets_available)
+        {
+            return;
+        }
+
         let Some(library) = library else {
             self.overlay.status = SearchOverlayStatus::Error("Storage unavailable".to_owned());
             return;
@@ -305,6 +317,35 @@ impl SearchController {
             Err(error) => {
                 self.overlay.status = SearchOverlayStatus::Error(error.clone());
                 *status = format!("Semantic search unavailable: {error}");
+            }
+        }
+    }
+
+    fn sync_model_store_status(
+        &mut self,
+        model_store_status: LocalModelStoreStatus,
+        status: &mut String,
+        canvas: Option<&mut CanvasState>,
+    ) {
+        self.local_model_store_status = Some(model_store_status.clone());
+        match model_store_status {
+            LocalModelStoreStatus::Installed | LocalModelStoreStatus::InstalledViaMigration => {}
+            LocalModelStoreStatus::Missing => {
+                self.service = None;
+                self.close_overlay(canvas);
+                self.overlay.status = SearchOverlayStatus::Ready;
+            }
+            LocalModelStoreStatus::Downloading => {
+                self.service = None;
+                self.close_overlay(canvas);
+                self.overlay.status =
+                    SearchOverlayStatus::Loading("Installing Semantic Search assets…".to_owned());
+            }
+            LocalModelStoreStatus::Failed(error) => {
+                self.service = None;
+                self.close_overlay(canvas);
+                self.overlay.status = SearchOverlayStatus::Error(error.clone());
+                *status = format!("Semantic Search install failed: {error}");
             }
         }
     }
@@ -604,6 +645,13 @@ impl SearchController {
         original_path: PathBuf,
     ) -> Result<(), String> {
         let Some(service) = &self.service else {
+            if self
+                .local_model_store_status
+                .as_ref()
+                .is_some_and(|status| !status.assets_available())
+            {
+                return Ok(());
+            }
             return Err(
                 "Semantic search service unavailable; cropped image was not queued for indexing"
                     .to_owned(),
@@ -1908,7 +1956,9 @@ mod tests {
         SearchIndexResult, SearchSelectionMode, result_is_on_bottom_row,
     };
     use crate::canvas::CanvasState;
-    use crate::semantic_search::{SearchQueryResult, SearchResultGroup, SearchScope};
+    use crate::semantic_search::{
+        LocalModelStoreStatus, SearchQueryResult, SearchResultGroup, SearchScope,
+    };
     use eframe::egui;
     use std::time::{Duration, Instant};
 
@@ -1935,6 +1985,49 @@ mod tests {
             error,
             "Semantic search service unavailable; cropped image was not queued for indexing"
         );
+    }
+
+    #[test]
+    fn missing_local_model_store_makes_import_embedding_queue_a_noop() {
+        let mut search = SearchController::default();
+        let mut status = "Ready".to_owned();
+        search.sync_model_store_status(LocalModelStoreStatus::Missing, &mut status, None);
+
+        search
+            .queue_asset_index(7, std::path::PathBuf::from("/tmp/imported.png"))
+            .unwrap();
+
+        assert_eq!(search.demand_embedding_pending_count(), 0);
+        assert_eq!(status, "Ready");
+        assert!(search.service.is_none());
+    }
+
+    #[test]
+    fn failed_local_model_store_status_is_inline_install_failure() {
+        let mut search = SearchController::default();
+        let mut status = "Ready".to_owned();
+
+        search.sync_model_store_status(
+            LocalModelStoreStatus::Failed("install root is not writable".to_owned()),
+            &mut status,
+            None,
+        );
+
+        assert_eq!(
+            status,
+            "Semantic Search install failed: install root is not writable"
+        );
+    }
+
+    #[test]
+    fn downloading_local_model_store_status_keeps_service_stopped() {
+        let mut search = SearchController::default();
+        let mut status = "Ready".to_owned();
+
+        search.sync_model_store_status(LocalModelStoreStatus::Downloading, &mut status, None);
+
+        assert!(search.service.is_none());
+        assert_eq!(status, "Ready");
     }
 
     #[test]

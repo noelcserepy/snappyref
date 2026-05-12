@@ -57,6 +57,22 @@ pub(crate) enum ModelAvailability {
     Missing,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LocalModelStoreStatus {
+    Installed,
+    InstalledViaMigration,
+    Missing,
+    #[allow(dead_code)]
+    Downloading,
+    Failed(String),
+}
+
+impl LocalModelStoreStatus {
+    pub(crate) fn assets_available(&self) -> bool {
+        matches!(self, Self::Installed | Self::InstalledViaMigration)
+    }
+}
+
 /// Inspect the filesystem and classify model availability.
 pub(crate) fn classify_availability(
     install_root: &Path,
@@ -72,6 +88,44 @@ pub(crate) fn classify_availability(
         }
     }
     ModelAvailability::Missing
+}
+
+pub(crate) fn refresh_local_model_store_status(
+    install_root: &Path,
+    executable_dir: &Path,
+    model_key: &str,
+    required_files: &[&str],
+) -> LocalModelStoreStatus {
+    let migration = match migrate_bundled_model(install_root, executable_dir) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            if !required_model_files_present(install_root, model_key, required_files) {
+                return LocalModelStoreStatus::Failed(error);
+            }
+            MigrationOutcome::AlreadyMigrated
+        }
+    };
+
+    if required_model_files_present(install_root, model_key, required_files) {
+        return match migration {
+            MigrationOutcome::Migrated => LocalModelStoreStatus::InstalledViaMigration,
+            MigrationOutcome::NoBundledModel | MigrationOutcome::AlreadyMigrated => {
+                LocalModelStoreStatus::Installed
+            }
+        };
+    }
+
+    if matches!(
+        classify_availability(install_root, executable_dir),
+        ModelAvailability::LocalStore | ModelAvailability::BundledOnly
+    ) {
+        return LocalModelStoreStatus::Failed(format!(
+            "Semantic Search assets are incomplete in {}.",
+            model_store_root(install_root).display()
+        ));
+    }
+
+    LocalModelStoreStatus::Missing
 }
 
 /// Move the in-bundle `models/` directory (if any) to `<install_root>/models/`.
@@ -122,6 +176,21 @@ fn dir_has_entries(path: &Path) -> bool {
         return false;
     };
     entries.next().is_some()
+}
+
+fn required_model_files_present(
+    install_root: &Path,
+    model_key: &str,
+    required_files: &[&str],
+) -> bool {
+    let model_root = model_store_root(install_root).join(model_key);
+    required_files.iter().all(|relative| {
+        model_root
+            .join(relative)
+            .metadata()
+            .map(|metadata| metadata.is_file() && metadata.len() > 0)
+            .unwrap_or(false)
+    })
 }
 
 fn move_directory(source: &Path, destination: &Path) -> Result<(), String> {
@@ -197,6 +266,19 @@ mod tests {
     fn write_file(path: &Path, contents: &str) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, contents).unwrap();
+    }
+
+    const TEST_MODEL_KEY: &str = "siglip2_base_patch16_224_int8";
+    const TEST_REQUIRED_FILES: &[&str] = &[
+        "tokenizer.json",
+        "onnx/text_model_int8.onnx",
+        "onnx/vision_model_int8.onnx",
+    ];
+
+    fn write_required_model_files(root: &Path) {
+        for file in TEST_REQUIRED_FILES {
+            write_file(&root.join(TEST_MODEL_KEY).join(file), "model");
+        }
     }
 
     #[test]
@@ -280,6 +362,93 @@ mod tests {
             classify_availability(&install_root, &executable_dir),
             ModelAvailability::Missing,
         );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn local_model_store_status_reports_missing_without_creating_store() {
+        let root = unique_temp_root("status-missing");
+        let install_root = root.join("SnappyRef");
+        let executable_dir = install_root.clone();
+        std::fs::create_dir_all(&install_root).unwrap();
+
+        let status = refresh_local_model_store_status(
+            &install_root,
+            &executable_dir,
+            TEST_MODEL_KEY,
+            TEST_REQUIRED_FILES,
+        );
+
+        assert_eq!(status, LocalModelStoreStatus::Missing);
+        assert!(!install_root.join("models").exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn local_model_store_status_reports_installed_for_complete_store() {
+        let root = unique_temp_root("status-installed");
+        let install_root = root.join("SnappyRef");
+        let executable_dir = install_root.clone();
+        write_required_model_files(&install_root.join("models"));
+
+        let status = refresh_local_model_store_status(
+            &install_root,
+            &executable_dir,
+            TEST_MODEL_KEY,
+            TEST_REQUIRED_FILES,
+        );
+
+        assert_eq!(status, LocalModelStoreStatus::Installed);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn local_model_store_status_reports_installed_via_migration() {
+        let root = unique_temp_root("status-migrated");
+        let install_root = root.join("SnappyRef");
+        let executable_dir = install_root.join("SnappyRef.app/Contents/MacOS");
+        std::fs::create_dir_all(&executable_dir).unwrap();
+        let bundled = install_root.join("SnappyRef.app/Contents/Resources/models");
+        write_required_model_files(&bundled);
+
+        let status = refresh_local_model_store_status(
+            &install_root,
+            &executable_dir,
+            TEST_MODEL_KEY,
+            TEST_REQUIRED_FILES,
+        );
+
+        assert_eq!(status, LocalModelStoreStatus::InstalledViaMigration);
+        assert!(install_root.join("models").join(TEST_MODEL_KEY).exists());
+        assert!(!bundled.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn local_model_store_status_reports_failed_for_incomplete_store() {
+        let root = unique_temp_root("status-incomplete");
+        let install_root = root.join("SnappyRef");
+        let executable_dir = install_root.clone();
+        write_file(
+            &install_root
+                .join("models")
+                .join(TEST_MODEL_KEY)
+                .join("tokenizer.json"),
+            "model",
+        );
+
+        let status = refresh_local_model_store_status(
+            &install_root,
+            &executable_dir,
+            TEST_MODEL_KEY,
+            TEST_REQUIRED_FILES,
+        );
+
+        assert!(matches!(status, LocalModelStoreStatus::Failed(_)));
 
         let _ = std::fs::remove_dir_all(&root);
     }
