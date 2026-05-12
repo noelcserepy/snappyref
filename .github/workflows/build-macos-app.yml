@@ -16,6 +16,19 @@ on:
         options:
           - release-fast
           - release
+      semantic_search_url:
+        description: Compiled Semantic Search asset URL
+        required: false
+        default: https://github.com/noelcserepy/snappyref-dist/releases/download/semantic-search/snappyref-semantic-search.zip
+        type: string
+      semantic_search_sha256:
+        description: Compiled Semantic Search asset sha256
+        required: true
+        type: string
+      semantic_search_size:
+        description: Compiled Semantic Search asset byte size
+        required: true
+        type: string
   workflow_call:
     inputs:
       ref:
@@ -25,6 +38,16 @@ on:
       build_profile:
         required: false
         default: release
+        type: string
+      semantic_search_url:
+        required: false
+        default: https://github.com/noelcserepy/snappyref-dist/releases/download/semantic-search/snappyref-semantic-search.zip
+        type: string
+      semantic_search_sha256:
+        required: true
+        type: string
+      semantic_search_size:
+        required: true
         type: string
 
 permissions:
@@ -62,6 +85,13 @@ jobs:
 
       - name: Build app binary
         run: |
+          if [[ -z "${{ inputs.semantic_search_sha256 }}" || -z "${{ inputs.semantic_search_size }}" ]]; then
+            echo "Semantic Search descriptor inputs are required for release app builds." >&2
+            exit 1
+          fi
+          export SNAPPYREF_SEMANTIC_SEARCH_URL="${{ inputs.semantic_search_url }}"
+          export SNAPPYREF_SEMANTIC_SEARCH_SHA256="${{ inputs.semantic_search_sha256 }}"
+          export SNAPPYREF_SEMANTIC_SEARCH_SIZE="${{ inputs.semantic_search_size }}"
           if [[ "${{ inputs.build_profile }}" == "release" ]]; then
             cargo build --release --locked --bins
             echo "SNAPPYREF_TARGET_DIR=target/release" >> "$GITHUB_ENV"
@@ -69,6 +99,16 @@ jobs:
             cargo build --profile release-fast --locked --no-default-features --features semantic-search --bins
             echo "SNAPPYREF_TARGET_DIR=target/release-fast" >> "$GITHUB_ENV"
           fi
+
+      - name: Write Semantic Search descriptor artifact
+        run: |
+          descriptor_dir="${RUNNER_TEMP}/semantic-search-descriptor"
+          mkdir -p "$descriptor_dir"
+          {
+            echo "semantic_search_url=${{ inputs.semantic_search_url }}"
+            echo "semantic_search_sha256=${{ inputs.semantic_search_sha256 }}"
+            echo "semantic_search_size=${{ inputs.semantic_search_size }}"
+          } > "$descriptor_dir/semantic-search-descriptor.env"
 
       - name: Verify turbojpeg is statically linked
         if: ${{ inputs.build_profile == 'release' }}
@@ -92,4 +132,10 @@ jobs:
         with:
           name: snappyref-macos-app
           path: ${{ runner.temp }}/snappyref-macos-app.zip
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snappyref-macos-semantic-search-descriptor
+          path: ${{ runner.temp }}/semantic-search-descriptor/semantic-search-descriptor.env
           retention-days: 7

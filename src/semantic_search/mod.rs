@@ -1,5 +1,6 @@
 mod index;
 mod install;
+mod install_controller;
 mod model;
 mod service;
 
@@ -8,8 +9,11 @@ pub use index::SearchScope;
 pub(crate) use install::SemanticSearchInstallProgress;
 #[cfg(not(test))]
 pub(crate) use install::{
-    cleanup_semantic_search_install, default_semantic_search_asset_descriptor,
-    install_semantic_search_asset, remove_semantic_search_assets,
+    default_semantic_search_asset_descriptor, install_semantic_search_asset,
+    remove_semantic_search_assets,
+};
+pub(crate) use install_controller::{
+    SemanticSearchInstallController, SemanticSearchInstallDisplay, SemanticSearchInstallSnapshot,
 };
 #[allow(unused_imports)]
 pub use model::AVAILABLE_SEMANTIC_SEARCH_MODELS;

@@ -16,6 +16,19 @@ on:
         options:
           - release-fast
           - release
+      semantic_search_url:
+        description: Compiled Semantic Search asset URL
+        required: false
+        default: https://github.com/noelcserepy/snappyref-dist/releases/download/semantic-search/snappyref-semantic-search.zip
+        type: string
+      semantic_search_sha256:
+        description: Compiled Semantic Search asset sha256
+        required: true
+        type: string
+      semantic_search_size:
+        description: Compiled Semantic Search asset byte size
+        required: true
+        type: string
   workflow_call:
     inputs:
       ref:
@@ -25,6 +38,16 @@ on:
       build_profile:
         required: false
         default: release
+        type: string
+      semantic_search_url:
+        required: false
+        default: https://github.com/noelcserepy/snappyref-dist/releases/download/semantic-search/snappyref-semantic-search.zip
+        type: string
+      semantic_search_sha256:
+        required: true
+        type: string
+      semantic_search_size:
+        required: true
         type: string
 
 permissions:
@@ -65,6 +88,12 @@ jobs:
       - name: Build app binary
         shell: pwsh
         run: |
+          if ([string]::IsNullOrWhiteSpace("${{ inputs.semantic_search_sha256 }}") -or [string]::IsNullOrWhiteSpace("${{ inputs.semantic_search_size }}")) {
+            throw "Semantic Search descriptor inputs are required for release app builds."
+          }
+          $env:SNAPPYREF_SEMANTIC_SEARCH_URL = "${{ inputs.semantic_search_url }}"
+          $env:SNAPPYREF_SEMANTIC_SEARCH_SHA256 = "${{ inputs.semantic_search_sha256 }}"
+          $env:SNAPPYREF_SEMANTIC_SEARCH_SIZE = "${{ inputs.semantic_search_size }}"
           if ("${{ inputs.build_profile }}" -eq "release") {
             cargo build --release --locked --bins
             "SNAPPYREF_TARGET_DIR=target\release" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -72,6 +101,18 @@ jobs:
             cargo build --profile release-fast --locked --no-default-features --features semantic-search --bins
             "SNAPPYREF_TARGET_DIR=target\release-fast" | Out-File -FilePath $env:GITHUB_ENV -Append
           }
+
+      - name: Write Semantic Search descriptor artifact
+        shell: pwsh
+        run: |
+          $descriptorDir = Join-Path $env:RUNNER_TEMP "semantic-search-descriptor"
+          New-Item -ItemType Directory -Force -Path $descriptorDir | Out-Null
+          $descriptorPath = Join-Path $descriptorDir "semantic-search-descriptor.env"
+          @(
+            "semantic_search_url=${{ inputs.semantic_search_url }}"
+            "semantic_search_sha256=${{ inputs.semantic_search_sha256 }}"
+            "semantic_search_size=${{ inputs.semantic_search_size }}"
+          ) | Set-Content -Path $descriptorPath -NoNewline:$false
 
       - name: Verify Windows GUI subsystem
         shell: pwsh
@@ -98,4 +139,10 @@ jobs:
         with:
           name: snappyref-windows-app
           path: ${{ runner.temp }}/snappyref-windows-app
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snappyref-windows-semantic-search-descriptor
+          path: ${{ runner.temp }}/semantic-search-descriptor/semantic-search-descriptor.env
           retention-days: 7

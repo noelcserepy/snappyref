@@ -3696,30 +3696,17 @@ impl SnappyRefApp {
     }
 
     fn blocks_canvas_input(&self, ctx: &egui::Context) -> bool {
-        self.context_menu_pos.is_some()
-            || self.pending_board_delete.is_some()
-            || self.pending_library_remove.is_some()
-            || {
-                #[cfg(feature = "semantic-search")]
-                {
-                    self.pending_semantic_search_remove
-                }
-                #[cfg(not(feature = "semantic-search"))]
-                {
-                    false
-                }
+        self.context_menu_pos.is_some() || self.modal_open() || {
+            #[cfg(feature = "semantic-search")]
+            {
+                self.search.blocks_canvas_input(ctx)
             }
-            || {
-                #[cfg(feature = "semantic-search")]
-                {
-                    self.search.blocks_canvas_input(ctx)
-                }
-                #[cfg(not(feature = "semantic-search"))]
-                {
-                    let _ = ctx;
-                    false
-                }
+            #[cfg(not(feature = "semantic-search"))]
+            {
+                let _ = ctx;
+                false
             }
+        }
     }
 
     fn show_library_remove_confirmation(&mut self, ctx: &egui::Context) {
@@ -5967,17 +5954,7 @@ impl eframe::App for SnappyRefApp {
             sidebar_result.semantic_search_action,
             ui.ctx(),
         );
-        let modal_open =
-            self.pending_board_delete.is_some() || self.pending_library_remove.is_some() || {
-                #[cfg(feature = "semantic-search")]
-                {
-                    self.pending_semantic_search_remove
-                }
-                #[cfg(not(feature = "semantic-search"))]
-                {
-                    false
-                }
-            };
+        let modal_open = self.modal_open();
         if sidebar_open && !modal_open {
             close_sidebar_on_outside_click(
                 ui.ctx(),

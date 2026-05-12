@@ -46,6 +46,19 @@ on:
         required: false
         default: true
         type: boolean
+      semantic_search_url:
+        description: Semantic Search asset URL compiled into the app
+        required: false
+        default: https://github.com/noelcserepy/snappyref-dist/releases/download/semantic-search/snappyref-semantic-search.zip
+        type: string
+      semantic_search_sha256:
+        description: Semantic Search asset sha256 compiled into the app
+        required: true
+        type: string
+      semantic_search_size:
+        description: Semantic Search asset byte size compiled into the app
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -62,6 +75,9 @@ jobs:
     with:
       ref: ${{ inputs.ref }}
       build_profile: ${{ inputs.build_profile }}
+      semantic_search_url: ${{ inputs.semantic_search_url }}
+      semantic_search_sha256: ${{ inputs.semantic_search_sha256 }}
+      semantic_search_size: ${{ inputs.semantic_search_size }}
 
   macos:
     name: Build macOS app
@@ -70,6 +86,9 @@ jobs:
     with:
       ref: ${{ inputs.ref }}
       build_profile: ${{ inputs.build_profile }}
+      semantic_search_url: ${{ inputs.semantic_search_url }}
+      semantic_search_sha256: ${{ inputs.semantic_search_sha256 }}
+      semantic_search_size: ${{ inputs.semantic_search_size }}
 
   prune-release-caches:
     name: Prune release caches
@@ -133,10 +152,54 @@ jobs:
           path: ${{ runner.temp }}/app-artifacts/windows
 
       - uses: actions/download-artifact@v4
+        if: ${{ inputs.include_windows }}
+        with:
+          name: snappyref-windows-semantic-search-descriptor
+          path: ${{ runner.temp }}/descriptor-artifacts/windows
+
+      - uses: actions/download-artifact@v4
         if: ${{ inputs.include_macos }}
         with:
           name: snappyref-macos-app
           path: ${{ runner.temp }}/app-artifacts/macos
+
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.include_macos }}
+        with:
+          name: snappyref-macos-semantic-search-descriptor
+          path: ${{ runner.temp }}/descriptor-artifacts/macos
+
+      - name: Verify Semantic Search descriptors
+        run: |
+          set -euo pipefail
+          descriptors=()
+          if [[ "${{ inputs.include_windows }}" == "true" ]]; then
+            descriptors+=("${RUNNER_TEMP}/descriptor-artifacts/windows/semantic-search-descriptor.env")
+          fi
+          if [[ "${{ inputs.include_macos }}" == "true" ]]; then
+            descriptors+=("${RUNNER_TEMP}/descriptor-artifacts/macos/semantic-search-descriptor.env")
+          fi
+          if [[ "${#descriptors[@]}" -eq 0 ]]; then
+            echo "no platform descriptors selected" >&2
+            exit 1
+          fi
+          for descriptor in "${descriptors[@]}"; do
+            if [[ ! -s "$descriptor" ]]; then
+              echo "missing Semantic Search descriptor artifact: $descriptor" >&2
+              exit 1
+            fi
+            grep -Eq '^semantic_search_url=.+$' "$descriptor"
+            grep -Eq '^semantic_search_sha256=[0-9a-fA-F]{64}$' "$descriptor"
+            grep -Eq '^semantic_search_size=[1-9][0-9]*$' "$descriptor"
+          done
+          first="${descriptors[0]}"
+          for descriptor in "${descriptors[@]:1}"; do
+            if ! cmp -s "$first" "$descriptor"; then
+              echo "selected app builds were compiled with different Semantic Search descriptors" >&2
+              diff -u "$first" "$descriptor" || true
+              exit 1
+            fi
+          done
 
       - name: Package app zips
         id: package

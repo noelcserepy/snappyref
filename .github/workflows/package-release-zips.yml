@@ -122,12 +122,60 @@ jobs:
           path: ${{ runner.temp }}/app-artifacts/windows
 
       - uses: actions/download-artifact@v4
+        if: ${{ inputs.include_windows }}
+        with:
+          run-id: ${{ steps.resolve.outputs.windows_app_run_id }}
+          github-token: ${{ github.token }}
+          name: snappyref-windows-semantic-search-descriptor
+          path: ${{ runner.temp }}/descriptor-artifacts/windows
+
+      - uses: actions/download-artifact@v4
         if: ${{ inputs.include_macos }}
         with:
           run-id: ${{ steps.resolve.outputs.macos_app_run_id }}
           github-token: ${{ github.token }}
           name: snappyref-macos-app
           path: ${{ runner.temp }}/app-artifacts/macos
+
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.include_macos }}
+        with:
+          run-id: ${{ steps.resolve.outputs.macos_app_run_id }}
+          github-token: ${{ github.token }}
+          name: snappyref-macos-semantic-search-descriptor
+          path: ${{ runner.temp }}/descriptor-artifacts/macos
+
+      - name: Verify Semantic Search descriptors
+        run: |
+          set -euo pipefail
+          descriptors=()
+          if [[ "${{ inputs.include_windows }}" == "true" ]]; then
+            descriptors+=("${RUNNER_TEMP}/descriptor-artifacts/windows/semantic-search-descriptor.env")
+          fi
+          if [[ "${{ inputs.include_macos }}" == "true" ]]; then
+            descriptors+=("${RUNNER_TEMP}/descriptor-artifacts/macos/semantic-search-descriptor.env")
+          fi
+          if [[ "${#descriptors[@]}" -eq 0 ]]; then
+            echo "no platform descriptors selected" >&2
+            exit 1
+          fi
+          for descriptor in "${descriptors[@]}"; do
+            if [[ ! -s "$descriptor" ]]; then
+              echo "missing Semantic Search descriptor artifact: $descriptor" >&2
+              exit 1
+            fi
+            grep -Eq '^semantic_search_url=.+$' "$descriptor"
+            grep -Eq '^semantic_search_sha256=[0-9a-fA-F]{64}$' "$descriptor"
+            grep -Eq '^semantic_search_size=[1-9][0-9]*$' "$descriptor"
+          done
+          first="${descriptors[0]}"
+          for descriptor in "${descriptors[@]:1}"; do
+            if ! cmp -s "$first" "$descriptor"; then
+              echo "selected app builds were compiled with different Semantic Search descriptors" >&2
+              diff -u "$first" "$descriptor" || true
+              exit 1
+            fi
+          done
 
       - name: Package selected zips
         run: |

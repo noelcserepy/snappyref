@@ -101,9 +101,9 @@ jobs:
             echo "## Semantic Search app descriptor"
             echo
             echo '```text'
-            echo "SEMANTIC_SEARCH_URL=$url"
-            echo "SEMANTIC_SEARCH_SHA256=${{ steps.package.outputs.sha256 }}"
-            echo "SEMANTIC_SEARCH_SIZE=${{ steps.package.outputs.size }}"
-            echo "SEMANTIC_SEARCH_MODEL_KEY=${SEMANTIC_SEARCH_MODEL_KEY}"
+            echo "semantic_search_url=$url"
+            echo "semantic_search_sha256=${{ steps.package.outputs.sha256 }}"
+            echo "semantic_search_size=${{ steps.package.outputs.size }}"
+            echo "semantic_search_model_key=${SEMANTIC_SEARCH_MODEL_KEY}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

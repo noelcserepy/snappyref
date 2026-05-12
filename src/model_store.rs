@@ -168,10 +168,9 @@ pub(crate) fn migrate_bundled_model(
 }
 
 /// The user-facing error string surfaced when no model assets are available
-/// anywhere. Points the user at the full-install download.
-pub(crate) const MISSING_MODEL_USER_MESSAGE: &str = "Semantic search model not found. Download the full SnappyRef install zip \
-     (the one that includes the models folder) and place SnappyRef next to a \
-     models/ folder before launching.";
+/// anywhere outside the interactive install surfaces.
+pub(crate) const MISSING_MODEL_USER_MESSAGE: &str =
+    "Semantic Search assets are not installed. Install them from Settings or the search palette.";
 
 fn dir_has_entries(path: &Path) -> bool {
     let Ok(mut entries) = std::fs::read_dir(path) else {
@@ -547,10 +546,8 @@ mod tests {
     }
 
     #[test]
-    fn missing_model_user_message_mentions_full_install() {
-        // The message must point users at the full-install download so a fresh
-        // install of the app-only zip is recoverable without a developer ticket.
-        assert!(MISSING_MODEL_USER_MESSAGE.contains("full"));
-        assert!(MISSING_MODEL_USER_MESSAGE.contains("models"));
+    fn missing_model_user_message_mentions_install_surfaces() {
+        assert!(MISSING_MODEL_USER_MESSAGE.contains("Settings"));
+        assert!(MISSING_MODEL_USER_MESSAGE.contains("search palette"));
     }
 }

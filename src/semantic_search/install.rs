@@ -4,6 +4,7 @@ use std::fs::{self, File};
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use zip::ZipArchive;
 
@@ -13,8 +14,8 @@ use crate::updater::{download, install_paths};
 
 const DEFAULT_SEMANTIC_SEARCH_ASSET_URL: &str = "https://github.com/noelcserepy/snappyref-dist/releases/download/semantic-search/snappyref-semantic-search.zip";
 
-const SEMANTIC_SEARCH_DOWNLOAD_NAME: &str = "semantic-search-download.zip";
-const SEMANTIC_SEARCH_STAGING_NAME: &str = "semantic-search-staging";
+const SEMANTIC_SEARCH_DOWNLOAD_PREFIX: &str = "semantic-search-download-";
+const SEMANTIC_SEARCH_STAGING_PREFIX: &str = "semantic-search-staging-";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SemanticSearchAssetDescriptor {
@@ -76,11 +77,6 @@ pub(crate) fn default_semantic_search_asset_descriptor() -> SemanticSearchAssetD
     }
 }
 
-pub(crate) fn cleanup_semantic_search_install(install_root: &Path) {
-    let descriptor = default_semantic_search_asset_descriptor();
-    cleanup_install_paths(install_root, &descriptor.model_key);
-}
-
 pub(crate) fn remove_semantic_search_assets(
     install_root: &Path,
     descriptor: &SemanticSearchAssetDescriptor,
@@ -104,7 +100,6 @@ where
     F: FnMut(SemanticSearchInstallProgress),
 {
     install_inner(install_root, descriptor, canceled, &mut on_progress).map_err(|error| {
-        cleanup_install_paths(install_root, &descriptor.model_key);
         let message = error.to_string();
         if canceled.load(Ordering::Relaxed) {
             on_progress(SemanticSearchInstallProgress::Canceled);
@@ -124,11 +119,13 @@ fn install_inner(
     on_progress: &mut dyn FnMut(SemanticSearchInstallProgress),
 ) -> Result<(), SemanticSearchInstallError> {
     validate_descriptor(descriptor)?;
-    check_canceled(canceled)?;
     cleanup_install_paths(install_root, &descriptor.model_key);
+    check_canceled(canceled)?;
     let updates_dir = install_paths::updates_dir(install_root);
     fs::create_dir_all(&updates_dir)?;
-    let zip_path = updates_dir.join(SEMANTIC_SEARCH_DOWNLOAD_NAME);
+    let attempt_id = unique_install_attempt_id();
+    let zip_path = updates_dir.join(format!("{SEMANTIC_SEARCH_DOWNLOAD_PREFIX}{attempt_id}.zip"));
+    let staging_root = updates_dir.join(format!("{SEMANTIC_SEARCH_STAGING_PREFIX}{attempt_id}"));
     let mut progress = |written: u64, total: u64| {
         let percent = if total == 0 {
             0
@@ -137,20 +134,38 @@ fn install_inner(
         };
         on_progress(SemanticSearchInstallProgress::Progress { percent });
     };
-    download::download_from_url(
+    let result = download::download_from_url_cancellable(
         &descriptor.url,
         &zip_path,
         descriptor.size,
         &descriptor.sha256,
         &mut progress,
+        &|| canceled.load(Ordering::Relaxed),
     )
-    .map_err(|error| SemanticSearchInstallError::Download(error.to_string()))?;
-    check_canceled(canceled)?;
-    stage_and_promote(install_root, descriptor, &zip_path)?;
-    let _ = fs::remove_file(zip_path);
-    on_progress(SemanticSearchInstallProgress::Progress { percent: 100 });
-    on_progress(SemanticSearchInstallProgress::Installed);
-    Ok(())
+    .map_err(|error| SemanticSearchInstallError::Download(error.to_string()))
+    .and_then(|_| check_canceled(canceled))
+    .and_then(|_| stage_and_promote(install_root, descriptor, &zip_path, &staging_root));
+
+    match result {
+        Ok(()) => {
+            let _ = fs::remove_file(zip_path);
+            on_progress(SemanticSearchInstallProgress::Progress { percent: 100 });
+            on_progress(SemanticSearchInstallProgress::Installed);
+            Ok(())
+        }
+        Err(error) => {
+            cleanup_attempt_paths(&zip_path, &staging_root);
+            Err(error)
+        }
+    }
+}
+
+fn unique_install_attempt_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{nanos}", std::process::id())
 }
 
 fn check_canceled(canceled: &AtomicBool) -> Result<(), SemanticSearchInstallError> {
@@ -193,14 +208,14 @@ fn stage_and_promote(
     install_root: &Path,
     descriptor: &SemanticSearchAssetDescriptor,
     zip_path: &Path,
+    staging_root: &Path,
 ) -> Result<(), SemanticSearchInstallError> {
-    let staging_root = install_paths::updates_dir(install_root).join(SEMANTIC_SEARCH_STAGING_NAME);
     if staging_root.exists() {
-        fs::remove_dir_all(&staging_root)?;
+        fs::remove_dir_all(staging_root)?;
     }
-    fs::create_dir_all(&staging_root)?;
-    match extract_zip(zip_path, &staging_root)
-        .and_then(|()| validate_staged_model(&staging_root, descriptor))
+    fs::create_dir_all(staging_root)?;
+    match extract_zip(zip_path, staging_root)
+        .and_then(|()| validate_staged_model(staging_root, descriptor))
         .and_then(|model_root| promote_staged_model(install_root, descriptor, &model_root))
     {
         Ok(()) => {
@@ -296,25 +311,67 @@ fn promote_staged_model(
     descriptor: &SemanticSearchAssetDescriptor,
     staged_model_root: &Path,
 ) -> Result<(), SemanticSearchInstallError> {
+    promote_staged_model_with_hook(install_root, descriptor, staged_model_root, || {})
+}
+
+fn promote_staged_model_with_hook(
+    install_root: &Path,
+    descriptor: &SemanticSearchAssetDescriptor,
+    staged_model_root: &Path,
+    before_final_replace: impl FnOnce(),
+) -> Result<(), SemanticSearchInstallError> {
     let store_root = model_store_root(install_root);
     fs::create_dir_all(&store_root)?;
     let final_model_root = store_root.join(&descriptor.model_key);
     let installing_model_root = store_root.join(format!("{}.installing", descriptor.model_key));
+    let backup_model_root = store_root.join(format!("{}.previous", descriptor.model_key));
     if installing_model_root.exists() {
-        fs::remove_dir_all(&installing_model_root)?;
+        remove_path_any(&installing_model_root)?;
+    }
+    if backup_model_root.exists() {
+        remove_path_any(&backup_model_root)?;
     }
     fs::rename(staged_model_root, &installing_model_root).or_else(|_| {
         copy_dir_recursive(staged_model_root, &installing_model_root)?;
         fs::remove_dir_all(staged_model_root)
     })?;
+
+    let had_existing_model = final_model_root.exists();
     if final_model_root.exists() {
-        fs::remove_dir_all(&final_model_root)?;
+        fs::rename(&final_model_root, &backup_model_root)?;
     }
-    fs::rename(&installing_model_root, &final_model_root).or_else(|_| {
+
+    before_final_replace();
+
+    let promote_result = fs::rename(&installing_model_root, &final_model_root).or_else(|_| {
         copy_dir_recursive(&installing_model_root, &final_model_root)?;
         fs::remove_dir_all(&installing_model_root)
-    })?;
+    });
+
+    if let Err(error) = promote_result {
+        let _ = remove_path_any(&final_model_root);
+        if had_existing_model && backup_model_root.exists() {
+            let _ = fs::rename(&backup_model_root, &final_model_root).or_else(|_| {
+                copy_dir_recursive(&backup_model_root, &final_model_root)?;
+                remove_path_any(&backup_model_root)
+            });
+        }
+        return Err(SemanticSearchInstallError::Io(error));
+    }
+
+    if backup_model_root.exists() {
+        remove_path_any(&backup_model_root)?;
+    }
     Ok(())
+}
+
+fn remove_path_any(path: &Path) -> Result<(), io::Error> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(path),
+        Ok(_) => fs::remove_file(path),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), io::Error> {
@@ -334,10 +391,24 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), io::Error
 
 fn cleanup_install_paths(install_root: &Path, model_key: &str) {
     let updates_dir = install_paths::updates_dir(install_root);
-    let _ = fs::remove_file(updates_dir.join(SEMANTIC_SEARCH_DOWNLOAD_NAME));
-    let _ = fs::remove_dir_all(updates_dir.join(SEMANTIC_SEARCH_STAGING_NAME));
+    if let Ok(entries) = fs::read_dir(&updates_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(SEMANTIC_SEARCH_DOWNLOAD_PREFIX)
+                || name.starts_with(SEMANTIC_SEARCH_STAGING_PREFIX)
+            {
+                let _ = remove_path_any(&entry.path());
+            }
+        }
+    }
     let _ =
         fs::remove_dir_all(model_store_root(install_root).join(format!("{model_key}.installing")));
+}
+
+fn cleanup_attempt_paths(zip_path: &Path, staging_root: &Path) {
+    let _ = fs::remove_file(zip_path);
+    let _ = remove_path_any(staging_root);
 }
 
 #[cfg(test)]
@@ -399,6 +470,20 @@ mod tests {
             size: bytes.len() as u64,
             model_key: DEFAULT_SEMANTIC_SEARCH_MODEL.model_key.to_owned(),
         }
+    }
+
+    fn install_artifacts_exist(root: &Path) -> bool {
+        let updates_dir = install_paths::updates_dir(root);
+        fs::read_dir(updates_dir)
+            .ok()
+            .into_iter()
+            .flat_map(|entries| entries.flatten())
+            .any(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name.starts_with(SEMANTIC_SEARCH_DOWNLOAD_PREFIX)
+                    || name.starts_with(SEMANTIC_SEARCH_STAGING_PREFIX)
+            })
     }
 
     fn serve_once(payload: Vec<u8>) -> (String, thread::JoinHandle<()>) {
@@ -512,11 +597,7 @@ mod tests {
         assert!(model_root.join("onnx/text_model_int8.onnx").is_file());
         assert!(model_root.join("onnx/vision_model_int8.onnx").is_file());
         assert!(progress.contains(&SemanticSearchInstallProgress::Installed));
-        assert!(
-            !install_paths::updates_dir(&root)
-                .join(SEMANTIC_SEARCH_DOWNLOAD_NAME)
-                .exists()
-        );
+        assert!(!install_artifacts_exist(&root));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -546,11 +627,7 @@ mod tests {
             SemanticSearchInstallProgress::Failed { error } if error.contains("size mismatch")
         )));
         assert!(!root.join("models").join(&descriptor.model_key).exists());
-        assert!(
-            !install_paths::updates_dir(&root)
-                .join(SEMANTIC_SEARCH_DOWNLOAD_NAME)
-                .exists()
-        );
+        assert!(!install_artifacts_exist(&root));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -576,11 +653,7 @@ mod tests {
 
         assert!(error.contains("sha256 mismatch"));
         assert!(!root.join("models").join(&descriptor.model_key).exists());
-        assert!(
-            !install_paths::updates_dir(&root)
-                .join(SEMANTIC_SEARCH_DOWNLOAD_NAME)
-                .exists()
-        );
+        assert!(!install_artifacts_exist(&root));
 
         descriptor.url = "https://example.invalid/unused.zip".to_owned();
         let _ = fs::remove_dir_all(root);
@@ -601,11 +674,7 @@ mod tests {
 
         assert!(error.contains("corrupt zip"));
         assert!(!root.join("models").join(&descriptor.model_key).exists());
-        assert!(
-            !install_paths::updates_dir(&root)
-                .join(SEMANTIC_SEARCH_STAGING_NAME)
-                .exists()
-        );
+        assert!(!install_artifacts_exist(&root));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -619,10 +688,13 @@ mod tests {
             size: 1,
             model_key: DEFAULT_SEMANTIC_SEARCH_MODEL.model_key.to_owned(),
         };
-        fs::create_dir_all(install_paths::updates_dir(&root).join(SEMANTIC_SEARCH_STAGING_NAME))
-            .unwrap();
+        fs::create_dir_all(
+            install_paths::updates_dir(&root).join(format!("{SEMANTIC_SEARCH_STAGING_PREFIX}old")),
+        )
+        .unwrap();
         fs::write(
-            install_paths::updates_dir(&root).join(SEMANTIC_SEARCH_DOWNLOAD_NAME),
+            install_paths::updates_dir(&root)
+                .join(format!("{SEMANTIC_SEARCH_DOWNLOAD_PREFIX}old.zip")),
             b"partial",
         )
         .unwrap();
@@ -637,16 +709,7 @@ mod tests {
             install_semantic_search_asset(&root, &descriptor, &canceled, |_| {}).unwrap_err();
 
         assert!(error.contains("canceled"));
-        assert!(
-            !install_paths::updates_dir(&root)
-                .join(SEMANTIC_SEARCH_STAGING_NAME)
-                .exists()
-        );
-        assert!(
-            !install_paths::updates_dir(&root)
-                .join(SEMANTIC_SEARCH_DOWNLOAD_NAME)
-                .exists()
-        );
+        assert!(!install_artifacts_exist(&root));
         assert!(
             !root
                 .join("models")
@@ -686,15 +749,76 @@ mod tests {
         write_zip(&zip_path, &model_entries());
         let descriptor = descriptor_for(&zip_path);
 
-        stage_and_promote(&root, &descriptor, &zip_path).unwrap();
+        let staging_root = install_paths::updates_dir(&root).join("semantic-search-staging-test");
+        stage_and_promote(&root, &descriptor, &zip_path, &staging_root).unwrap();
 
         let model_root = root.join("models").join(&descriptor.model_key);
         assert!(model_root.join("tokenizer.json").is_file());
         assert!(model_root.join("onnx/text_model_int8.onnx").is_file());
         assert!(model_root.join("onnx/vision_model_int8.onnx").is_file());
+        assert!(!staging_root.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_semantic_search_promotion_preserves_existing_local_model_store() {
+        let root = unique_temp_dir("promote-preserve");
+        let descriptor = SemanticSearchAssetDescriptor {
+            url: "https://example.invalid/snappyref-semantic-search.zip".to_owned(),
+            sha256: "0".repeat(64),
+            size: 1,
+            model_key: DEFAULT_SEMANTIC_SEARCH_MODEL.model_key.to_owned(),
+        };
+        let final_model_root = root.join("models").join(&descriptor.model_key);
+        fs::create_dir_all(final_model_root.join("onnx")).unwrap();
+        fs::write(final_model_root.join("tokenizer.json"), b"old-tokenizer").unwrap();
+        fs::write(
+            final_model_root.join("onnx/text_model_int8.onnx"),
+            b"old-text",
+        )
+        .unwrap();
+        fs::write(
+            final_model_root.join("onnx/vision_model_int8.onnx"),
+            b"old-vision",
+        )
+        .unwrap();
+
+        let staged_model_root = root
+            .join("updates/staged/models")
+            .join(&descriptor.model_key);
+        fs::create_dir_all(staged_model_root.join("onnx")).unwrap();
+        fs::write(staged_model_root.join("tokenizer.json"), b"new-tokenizer").unwrap();
+        fs::write(
+            staged_model_root.join("onnx/text_model_int8.onnx"),
+            b"new-text",
+        )
+        .unwrap();
+        fs::write(
+            staged_model_root.join("onnx/vision_model_int8.onnx"),
+            b"new-vision",
+        )
+        .unwrap();
+
+        let blocker = final_model_root.clone();
+        let error = promote_staged_model_with_hook(&root, &descriptor, &staged_model_root, || {
+            fs::write(&blocker, b"not a directory").unwrap();
+        })
+        .unwrap_err();
+
+        assert!(matches!(error, SemanticSearchInstallError::Io(_)));
+        assert_eq!(
+            fs::read_to_string(final_model_root.join("tokenizer.json")).unwrap(),
+            "old-tokenizer"
+        );
+        assert_eq!(
+            fs::read_to_string(final_model_root.join("onnx/text_model_int8.onnx")).unwrap(),
+            "old-text"
+        );
         assert!(
-            !install_paths::updates_dir(&root)
-                .join(SEMANTIC_SEARCH_STAGING_NAME)
+            !root
+                .join("models")
+                .join(format!("{}.previous", descriptor.model_key))
                 .exists()
         );
 
@@ -715,15 +839,12 @@ mod tests {
         );
         let descriptor = descriptor_for(&zip_path);
 
-        let error = stage_and_promote(&root, &descriptor, &zip_path).unwrap_err();
+        let staging_root = install_paths::updates_dir(&root).join("semantic-search-staging-test");
+        let error = stage_and_promote(&root, &descriptor, &zip_path, &staging_root).unwrap_err();
 
         assert!(error.to_string().contains("unsafe zip path"));
         assert!(!root.join("escape.txt").exists());
-        assert!(
-            !install_paths::updates_dir(&root)
-                .join(SEMANTIC_SEARCH_STAGING_NAME)
-                .exists()
-        );
+        assert!(!staging_root.exists());
 
         let _ = fs::remove_dir_all(root);
     }

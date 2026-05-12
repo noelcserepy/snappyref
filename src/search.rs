@@ -1,9 +1,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -16,15 +13,17 @@ use crate::palette::{
     paint_palette_input_row, paint_palette_install_state, paint_palette_no_results_state,
     search_result_grid_content_height, search_result_grid_layout, search_result_tile,
 };
+#[cfg(test)]
+use crate::semantic_search::SemanticSearchInstallProgress;
 use crate::semantic_search::{
     DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, LocalModelStoreStatus,
     SearchQueryResult, SearchResultGroup, SearchScope, SemanticSearchConfig,
-    SemanticSearchInstallProgress, SemanticSearchService, default_local_model_store_status,
+    SemanticSearchInstallController, SemanticSearchInstallDisplay, SemanticSearchInstallSnapshot,
+    SemanticSearchService, default_local_model_store_status,
 };
 #[cfg(not(test))]
 use crate::semantic_search::{
-    cleanup_semantic_search_install, default_semantic_search_asset_descriptor,
-    install_semantic_search_asset, remove_semantic_search_assets,
+    default_semantic_search_asset_descriptor, remove_semantic_search_assets,
 };
 use crate::storage::Library;
 
@@ -62,11 +61,8 @@ pub(crate) struct SearchController {
     recent_searches: Vec<String>,
     recent_searches_dirty: bool,
     local_model_store_status: Option<LocalModelStoreStatus>,
-    semantic_install_rx: Option<mpsc::Receiver<SemanticSearchInstallProgress>>,
-    semantic_install_cancel: Option<Arc<AtomicBool>>,
+    semantic_install: SemanticSearchInstallController,
     perf_events: Vec<SemanticPerfEvent>,
-    #[cfg(test)]
-    test_semantic_install: Option<Box<dyn FnMut(mpsc::Sender<SemanticSearchInstallProgress>)>>,
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
     latency_log: SearchLatencyLog,
 }
@@ -202,9 +198,9 @@ impl SearchController {
     #[cfg(test)]
     pub(crate) fn set_semantic_install_for_test(
         &mut self,
-        installer: impl FnMut(mpsc::Sender<SemanticSearchInstallProgress>) + 'static,
+        installer: impl FnMut(std::sync::mpsc::Sender<SemanticSearchInstallProgress>) + 'static,
     ) {
-        self.test_semantic_install = Some(Box::new(installer));
+        self.semantic_install.set_test_installer(installer);
     }
 
     pub(crate) fn start_semantic_search_install_from_first_launch_prompt(
@@ -224,10 +220,7 @@ impl SearchController {
 
     #[cfg(feature = "semantic-search")]
     pub(crate) fn remove_semantic_search_assets_from_settings(&mut self, status: &mut String) {
-        if let Some(canceled) = self.semantic_install_cancel.take() {
-            canceled.store(true, Ordering::Relaxed);
-        }
-        self.semantic_install_rx = None;
+        self.semantic_install.force_stop();
         #[cfg(not(test))]
         match crate::updater::install_paths::resolve_install_root() {
             Ok(install_root) => {
@@ -482,100 +475,38 @@ impl SearchController {
     }
 
     pub(crate) fn drive_semantic_search_install(&mut self, status: &mut String) -> bool {
-        let Some(rx) = self.semantic_install_rx.take() else {
+        let Some(snapshot) = self.semantic_install.drain() else {
             return false;
         };
-        let mut changed = false;
-        let mut keep_rx = true;
-        while let Ok(progress) = rx.try_recv() {
-            changed = true;
-            match progress {
-                SemanticSearchInstallProgress::Progress { percent } => {
-                    self.local_model_store_status =
-                        Some(LocalModelStoreStatus::Downloading { percent });
-                    self.overlay.status = SearchOverlayStatus::Loading(format!(
-                        "Installing Semantic Search {percent}%"
-                    ));
-                }
-                SemanticSearchInstallProgress::Installed => {
-                    keep_rx = false;
-                    self.semantic_install_cancel = None;
-                    self.local_model_store_status = Some(LocalModelStoreStatus::Installed);
-                    self.overlay.status = SearchOverlayStatus::Ready;
-                    self.overlay.install_action_focus_requested = false;
-                    *status = "Semantic Search installed".to_owned();
-                }
-                SemanticSearchInstallProgress::Failed { error } => {
-                    keep_rx = false;
-                    self.semantic_install_cancel = None;
-                    self.local_model_store_status =
-                        Some(LocalModelStoreStatus::Failed(error.clone()));
-                    self.overlay.status = SearchOverlayStatus::Error(error.clone());
-                    self.overlay.install_action_focus_requested = true;
-                    *status = format!("Semantic Search install failed: {error}");
-                }
-                SemanticSearchInstallProgress::Canceled => {
-                    keep_rx = false;
-                    self.semantic_install_cancel = None;
-                    self.local_model_store_status = Some(LocalModelStoreStatus::Missing);
-                    self.overlay.status = SearchOverlayStatus::Ready;
-                    self.overlay.install_action_focus_requested = true;
-                    *status = "Semantic Search install canceled".to_owned();
-                }
-            }
-        }
-        if keep_rx {
-            self.semantic_install_rx = Some(rx);
-        }
-        changed
+        self.apply_semantic_install_snapshot(snapshot, status);
+        true
     }
 
     fn start_semantic_search_install(&mut self, status: &mut String) {
-        if self.semantic_install_rx.is_some()
-            || matches!(
-                self.local_model_store_status,
-                Some(LocalModelStoreStatus::Downloading { .. })
-            )
-        {
-            return;
-        }
-        let (tx, rx) = mpsc::channel();
-        let canceled = Arc::new(AtomicBool::new(false));
-        self.semantic_install_rx = Some(rx);
-        self.semantic_install_cancel = Some(canceled.clone());
-        self.local_model_store_status = Some(LocalModelStoreStatus::Downloading { percent: 0 });
-        self.overlay.status =
-            SearchOverlayStatus::Loading("Installing Semantic Search 0%".to_owned());
-        self.overlay.install_action_focus_requested = false;
-        *status = "Installing Semantic Search".to_owned();
-
-        #[cfg(test)]
-        if let Some(installer) = self.test_semantic_install.as_mut() {
-            (installer)(tx);
-            return;
-        }
-
-        #[cfg(not(test))]
-        {
-            std::thread::spawn(move || {
-                run_semantic_search_install_worker(tx, canceled);
-            });
+        if let Some(snapshot) = self.semantic_install.start() {
+            self.apply_semantic_install_snapshot(snapshot, status);
         }
     }
 
     fn cancel_semantic_search_install(&mut self, status: &mut String) {
-        if let Some(canceled) = self.semantic_install_cancel.take() {
-            canceled.store(true, Ordering::Relaxed);
+        if let Some(snapshot) = self.semantic_install.request_cancel() {
+            self.apply_semantic_install_snapshot(snapshot, status);
         }
-        self.semantic_install_rx = None;
-        #[cfg(not(test))]
-        if let Ok(install_root) = crate::updater::install_paths::resolve_install_root() {
-            cleanup_semantic_search_install(&install_root);
-        }
-        self.local_model_store_status = Some(LocalModelStoreStatus::Missing);
-        self.overlay.status = SearchOverlayStatus::Ready;
-        self.overlay.install_action_focus_requested = true;
-        *status = "Semantic Search install canceled".to_owned();
+    }
+
+    fn apply_semantic_install_snapshot(
+        &mut self,
+        snapshot: SemanticSearchInstallSnapshot,
+        status: &mut String,
+    ) {
+        self.local_model_store_status = Some(snapshot.model_store_status);
+        self.overlay.status = match snapshot.display {
+            SemanticSearchInstallDisplay::Ready => SearchOverlayStatus::Ready,
+            SemanticSearchInstallDisplay::Loading(message) => SearchOverlayStatus::Loading(message),
+            SemanticSearchInstallDisplay::Error(error) => SearchOverlayStatus::Error(error),
+        };
+        self.overlay.install_action_focus_requested = snapshot.install_action_focus_requested;
+        *status = snapshot.status_message;
     }
 
     pub(crate) fn handle_results(&mut self, canvas: &mut CanvasState) {
@@ -2145,24 +2076,6 @@ impl SearchController {
     }
 }
 
-#[cfg(not(test))]
-fn run_semantic_search_install_worker(
-    tx: mpsc::Sender<SemanticSearchInstallProgress>,
-    canceled: Arc<AtomicBool>,
-) {
-    let install_root = match crate::updater::install_paths::resolve_install_root() {
-        Ok(root) => root,
-        Err(error) => {
-            let _ = tx.send(SemanticSearchInstallProgress::Failed { error });
-            return;
-        }
-    };
-    let descriptor = default_semantic_search_asset_descriptor();
-    let _ = install_semantic_search_asset(&install_root, &descriptor, &canceled, |progress| {
-        let _ = tx.send(progress);
-    });
-}
-
 fn selected_image_pivot(canvas: &CanvasState) -> Option<ImageSearchPivot> {
     let selected = canvas.selected_item_ids();
     if selected.len() != 1 {
@@ -2337,9 +2250,9 @@ mod tests {
         let starts = std::rc::Rc::new(std::cell::Cell::new(0));
         let observed = starts.clone();
         let mut search = SearchController::default();
-        search.test_semantic_install = Some(Box::new(move |_| {
+        search.set_semantic_install_for_test(move |_| {
             observed.set(observed.get() + 1);
-        }));
+        });
         let mut status = "Ready".to_owned();
 
         search.start_semantic_search_install(&mut status);
@@ -2358,9 +2271,9 @@ mod tests {
         let starts = std::rc::Rc::new(std::cell::Cell::new(0));
         let observed = starts.clone();
         let mut search = SearchController::default();
-        search.test_semantic_install = Some(Box::new(move |_| {
+        search.set_semantic_install_for_test(move |_| {
             observed.set(observed.get() + 1);
-        }));
+        });
         let mut status = "Ready".to_owned();
 
         search.start_semantic_search_install_from_first_launch_prompt(&mut status);
@@ -2376,14 +2289,14 @@ mod tests {
     #[test]
     fn semantic_search_install_progress_and_failure_are_shared_status() {
         let mut search = SearchController::default();
-        search.test_semantic_install = Some(Box::new(|tx| {
+        search.set_semantic_install_for_test(|tx| {
             tx.send(SemanticSearchInstallProgress::Progress { percent: 42 })
                 .unwrap();
             tx.send(SemanticSearchInstallProgress::Failed {
                 error: "network: timeout".to_owned(),
             })
             .unwrap();
-        }));
+        });
         let mut status = "Ready".to_owned();
 
         search.start_semantic_search_install(&mut status);
@@ -2403,7 +2316,7 @@ mod tests {
     #[test]
     fn semantic_search_install_cancel_returns_to_missing_state() {
         let mut search = SearchController::default();
-        search.test_semantic_install = Some(Box::new(|_| {}));
+        search.set_semantic_install_for_test(|_| {});
         let mut status = "Ready".to_owned();
 
         search.start_semantic_search_install(&mut status);
@@ -2413,7 +2326,7 @@ mod tests {
             search.local_model_store_status,
             Some(LocalModelStoreStatus::Missing)
         );
-        assert!(search.semantic_install_rx.is_none());
+        assert!(!search.semantic_install.is_running());
         assert!(search.overlay.install_action_focus_requested);
         assert_eq!(status, "Semantic Search install canceled");
     }
