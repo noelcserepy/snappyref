@@ -71,26 +71,6 @@ jobs:
       ref: ${{ inputs.ref }}
       build_profile: ${{ inputs.build_profile }}
 
-  models:
-    name: Build model bundle
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-
-      - name: Create model bundle
-        run: |
-          zip_path="${RUNNER_TEMP}/snappyref-models-siglip2_base_patch16_224_int8.zip"
-          scripts/create-model-bundle.sh "$zip_path"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: snappyref-model-bundle
-          path: ${{ runner.temp }}/snappyref-models-siglip2_base_patch16_224_int8.zip
-          retention-days: 7
-
   prune-release-caches:
     name: Prune release caches
     runs-on: ubuntu-latest
@@ -134,13 +114,12 @@ jobs:
           fi
 
   package:
-    name: Package full release zips
+    name: Package release zips
     runs-on: ubuntu-latest
     needs:
       - windows
       - macos
-      - models
-    if: ${{ always() && needs.models.result == 'success' && (!inputs.include_windows || needs.windows.result == 'success') && (!inputs.include_macos || needs.macos.result == 'success') }}
+    if: ${{ always() && (!inputs.include_windows || needs.windows.result == 'success') && (!inputs.include_macos || needs.macos.result == 'success') }}
 
     steps:
       - uses: actions/checkout@v4
@@ -159,23 +138,12 @@ jobs:
           name: snappyref-macos-app
           path: ${{ runner.temp }}/app-artifacts/macos
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: snappyref-model-bundle
-          path: ${{ runner.temp }}/model-bundle
-
-      - name: Package app-only and full zips
+      - name: Package app zips
         id: package
         run: |
           set -euo pipefail
           release_assets="${RUNNER_TEMP}/release-assets"
           mkdir -p "$release_assets"
-
-          model_bundle=$(find "${RUNNER_TEMP}/model-bundle" -type f -name 'snappyref-models-*.zip' | head -n 1)
-          if [[ -z "$model_bundle" ]]; then
-            echo "missing model bundle" >&2
-            exit 1
-          fi
 
           tag="${{ inputs.release_tag }}"
 
@@ -187,12 +155,6 @@ jobs:
               --platform windows \
               --app-archive "$windows_app" \
               --output "$release_assets/snappyref-windows-${tag}.zip"
-
-            scripts/package-release-assets.sh \
-              --platform windows \
-              --app-archive "$windows_app" \
-              --include-models --models-bundle "$model_bundle" \
-              --output "$release_assets/snappyref-windows-${tag}-full.zip"
           fi
 
           if [[ "${{ inputs.include_macos }}" == "true" ]]; then
@@ -206,12 +168,6 @@ jobs:
               --platform macos \
               --app-archive "$macos_app_zip" \
               --output "$release_assets/snappyref-mac-${tag}.zip"
-
-            scripts/package-release-assets.sh \
-              --platform macos \
-              --app-archive "$macos_app_zip" \
-              --include-models --models-bundle "$model_bundle" \
-              --output "$release_assets/snappyref-mac-${tag}-full.zip"
           fi
 
           # Derive a deterministic version (strip leading "v") and timestamp
@@ -269,7 +225,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: snappyref-full-release-zips
+          name: snappyref-release-zips
           path: |
             ${{ runner.temp }}/release-assets/*.zip
             ${{ runner.temp }}/release-assets/latest.json
@@ -289,12 +245,7 @@ jobs:
               --notes "Draft SnappyRef release." \
               --draft
           fi
-          # Preserve existing behavior: the source-repo draft receives the
-          # full-install zips. App-only zips and latest.json live on the dist
-          # repo (see the publish-to-dist step below).
-          gh release upload "$tag" \
-            "${RUNNER_TEMP}/release-assets/"*-full.zip \
-            --clobber
+          gh release upload "$tag" "${RUNNER_TEMP}"/release-assets/*.zip --clobber
 
       - name: Publish to snappyref-dist
         if: ${{ inputs.publish_to_dist && inputs.include_macos && inputs.include_windows }}
@@ -317,13 +268,12 @@ jobs:
               --draft
           fi
 
-          # All four zips and the signed manifest are required for an
-          # auto-update-eligible release.
+          # Both app zips and the signed manifest are required for an
+          # auto-update-eligible release. Semantic Search assets live on the
+          # dedicated semantic-search release.
           gh release upload "$tag" \
             --repo "$DIST_REPO" \
             "${RUNNER_TEMP}/release-assets/snappyref-mac-${tag}.zip" \
-            "${RUNNER_TEMP}/release-assets/snappyref-mac-${tag}-full.zip" \
             "${RUNNER_TEMP}/release-assets/snappyref-windows-${tag}.zip" \
-            "${RUNNER_TEMP}/release-assets/snappyref-windows-${tag}-full.zip" \
             "${RUNNER_TEMP}/release-assets/latest.json" \
             --clobber

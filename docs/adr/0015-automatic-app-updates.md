@@ -9,12 +9,10 @@ Manual updates impose meaningful friction (visit website, download zip, quit app
 ### Distribution
 
 - A separate public GitHub repository `snappyref-dist` hosts release artifacts. The private source repo stays private.
-- CI publishes per-platform app zips and a signed `latest.json` manifest as release assets on `snappyref-dist`.
+- CI publishes per-platform app zips and a signed `latest.json` manifest as release assets on `snappyref-dist`. The Semantic Search asset is a separate long-lived release asset on the same public distribution repo and is not republished for ordinary app releases.
 - The app fetches `latest.json` directly from the GitHub release URL. No website cron, no API route.
 - Each platform zip contains a single top-level `SnappyRef/` folder so the user's "drag the folder anywhere" model is uniform across macOS and Windows. On macOS the folder contains `SnappyRef.app`; on Windows it contains `snappyref.exe`. The helper binary ships inside the folder/bundle.
-- Two zip flavors per platform:
-  - **App-only zip** (`snappyref-mac-{tag}.zip`, `snappyref-windows-{tag}.zip`): used for auto-update payloads and as the default download. Excludes the model.
-  - **Full-install zip** (`snappyref-mac-{tag}-full.zip`, `snappyref-windows-{tag}-full.zip`): includes `models/` at the folder root. Linked from the website for users who want an offline-friendly first install.
+- One zip flavor per platform: app-only zips (`snappyref-mac-{tag}.zip`, `snappyref-windows-{tag}.zip`) used for both first install and auto-update payloads. They exclude Semantic Search assets.
 
 ### Manifest
 
