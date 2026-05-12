@@ -743,6 +743,7 @@ enum VerificationMode {
     BackgroundTransition,
     ActiveBoardChip,
     SearchLatency,
+    SemanticSearchFirstLaunchPrompt,
     BoardDeleteConfirmation,
     LibraryRemoveConfirmation,
     DesignSystemPreview,
@@ -964,6 +965,13 @@ impl AppConfig {
                 {
                     verification_mode = Some(VerificationMode::SearchLatency);
                 }
+            } else if cfg!(all(debug_assertions, feature = "semantic-search"))
+                && argument == "--verify-semantic-search-first-launch-prompt"
+            {
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                {
+                    verification_mode = Some(VerificationMode::SemanticSearchFirstLaunchPrompt);
+                }
             } else if cfg!(debug_assertions) && argument == "--verify-board-delete-confirmation" {
                 #[cfg(debug_assertions)]
                 {
@@ -1184,6 +1192,14 @@ impl AppConfig {
         matches!(
             self.verification_mode,
             Some(VerificationMode::LibraryRemoveConfirmation)
+        )
+    }
+
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    fn verify_semantic_search_first_launch_prompt_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(VerificationMode::SemanticSearchFirstLaunchPrompt)
         )
     }
 
@@ -1632,6 +1648,13 @@ impl SnappyRefApp {
                     Some(VerificationMode::SearchLatency)
                 ) {
                     app.seed_search_latency_probe();
+                }
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                if config.verify_semantic_search_first_launch_prompt_on_start() {
+                    app.settings.semantic_search_first_launch_prompt_seen = false;
+                    app.search.set_local_model_store_status_for_verification(
+                        crate::semantic_search::LocalModelStoreStatus::Missing,
+                    );
                 }
                 #[cfg(debug_assertions)]
                 if let Some(query) = config.verification_search_query().map(ToOwned::to_owned) {
@@ -2392,7 +2415,9 @@ impl SnappyRefApp {
     }
 
     fn modal_open(&self) -> bool {
-        self.pending_board_delete.is_some() || self.pending_library_remove.is_some()
+        self.pending_board_delete.is_some()
+            || self.pending_library_remove.is_some()
+            || self.should_show_semantic_search_first_launch_prompt()
     }
 
     fn should_block_sidebar_input(&self) -> bool {
@@ -4963,6 +4988,95 @@ impl SnappyRefApp {
     }
 
     #[cfg(feature = "semantic-search")]
+    fn should_show_semantic_search_first_launch_prompt(&self) -> bool {
+        self.library.is_some()
+            && !self.settings.semantic_search_first_launch_prompt_seen
+            && self.search.local_model_assets_missing()
+    }
+
+    #[cfg(not(feature = "semantic-search"))]
+    fn should_show_semantic_search_first_launch_prompt(&self) -> bool {
+        false
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn mark_semantic_search_first_launch_prompt_seen(&mut self) {
+        self.settings.semantic_search_first_launch_prompt_seen = true;
+        self.save_user_session();
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn decline_semantic_search_first_launch_prompt(&mut self) {
+        self.mark_semantic_search_first_launch_prompt_seen();
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn enable_semantic_search_from_first_launch_prompt(&mut self, ctx: &egui::Context) {
+        self.mark_semantic_search_first_launch_prompt_seen();
+        self.search
+            .start_semantic_search_install_from_first_launch_prompt(&mut self.status);
+        ctx.request_repaint_after(std::time::Duration::from_millis(16));
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn show_semantic_search_first_launch_prompt(&mut self, ctx: &egui::Context) {
+        if !self.should_show_semantic_search_first_launch_prompt() {
+            return;
+        }
+
+        let mut decline = false;
+        let mut enable = false;
+        egui::Window::new("Enable Semantic Search?")
+            .id(egui::Id::new("semantic_search_first_launch_prompt"))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .title_bar(false)
+            .frame(semantic_search_prompt_frame(ctx))
+            .show(ctx, |ui| {
+                ui.set_width(semantic_search_prompt_width());
+                semantic_search_prompt_header(ui, "Enable Semantic Search?");
+                semantic_search_prompt_body(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(
+                            "Semantic Search can find references by description after a local download.",
+                        )
+                        .text_style(egui::TextStyle::Body)
+                        .color(crate::theme::TEXT),
+                    );
+                    ui.add_space(crate::theme::SPACE_2);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(
+                                "Download about 200 MB of search assets now, or install later from the search palette with Command+F / Control+F.",
+                            )
+                            .text_style(egui::TextStyle::Small)
+                            .color(crate::theme::TEXT_MUTED),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(crate::theme::SPACE_4);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.add(primary_dialog_button("Enable")).clicked() {
+                                enable = true;
+                            }
+                            if ui.add(secondary_dialog_button("Not Now")).clicked() {
+                                decline = true;
+                            }
+                        });
+                    });
+                });
+            });
+
+        if enable {
+            self.enable_semantic_search_from_first_launch_prompt(ctx);
+        } else if decline {
+            self.decline_semantic_search_first_launch_prompt();
+        }
+    }
+
+    #[cfg(feature = "semantic-search")]
     fn drive_embedding_backfill(&mut self, ctx: &egui::Context) {
         let idle = crate::search::EmbeddingBackfillIdleState {
             app_idle: self.frame_perf.import_results_drained == 0
@@ -5748,6 +5862,8 @@ impl eframe::App for SnappyRefApp {
         self.persist_settings_if_changed(settings_changed);
         self.show_board_delete_confirmation(ui.ctx());
         self.show_library_remove_confirmation(ui.ctx());
+        #[cfg(feature = "semantic-search")]
+        self.show_semantic_search_first_launch_prompt(ui.ctx());
         if !modal_open {
             self.show_context_menu(ui.ctx(), screen_rect, context_menu_just_opened);
             if show_sidebar_hint(ui.ctx(), screen_rect, sidebar_open, &active_board_name) {
@@ -5875,6 +5991,51 @@ fn destructive_dialog_width() -> f32 {
     340.0
 }
 
+fn semantic_search_prompt_width() -> f32 {
+    380.0
+}
+
+fn semantic_search_prompt_frame(ctx: &egui::Context) -> egui::Frame {
+    egui::Frame::window(&ctx.global_style())
+        .fill(crate::theme::SURFACE)
+        .stroke(crate::theme::stroke_subtle())
+        .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_PANEL))
+        .inner_margin(egui::Margin::same(0))
+}
+
+fn semantic_search_prompt_header(ui: &mut egui::Ui, title: &str) {
+    ui.add_space(crate::theme::SPACE_3);
+    ui.horizontal(|ui| {
+        ui.add_space(crate::theme::SPACE_3);
+        ui.label(
+            egui::RichText::new(title)
+                .text_style(egui::TextStyle::Heading)
+                .color(crate::theme::TEXT),
+        );
+    });
+    ui.add_space(crate::theme::SPACE_2);
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        crate::theme::stroke_subtle(),
+    );
+}
+
+fn semantic_search_prompt_body(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: crate::theme::SPACE_3 as i8,
+            right: crate::theme::SPACE_3 as i8,
+            top: crate::theme::SPACE_3 as i8,
+            bottom: crate::theme::SPACE_3 as i8,
+        })
+        .show(ui, |ui| {
+            add_contents(ui);
+        });
+}
+
 fn destructive_dialog_header(ui: &mut egui::Ui, title: &str) {
     ui.add_space(crate::theme::SPACE_3);
     ui.horizontal(|ui| {
@@ -5927,6 +6088,17 @@ fn secondary_dialog_button(label: &str) -> egui::Button<'_> {
     )
     .fill(crate::theme::SURFACE_ELEVATED)
     .stroke(crate::theme::stroke_subtle())
+    .corner_radius(crate::theme::RADIUS_INLINE)
+}
+
+fn primary_dialog_button(label: &str) -> egui::Button<'_> {
+    egui::Button::new(
+        egui::RichText::new(label)
+            .text_style(egui::TextStyle::Button)
+            .color(crate::theme::BACKGROUND),
+    )
+    .fill(crate::theme::ACCENT)
+    .stroke(egui::Stroke::new(1.0, crate::theme::ACCENT))
     .corner_radius(crate::theme::RADIUS_INLINE)
 }
 
@@ -6001,7 +6173,7 @@ mod tests {
         search_result_tile_height,
     };
     #[cfg(feature = "semantic-search")]
-    use crate::semantic_search::{SearchResultGroup, SearchScope};
+    use crate::semantic_search::{LocalModelStoreStatus, SearchResultGroup, SearchScope};
     use crate::sidebar::{
         SidebarTab, block_sidebar_input, should_close_sidebar, show_sidebar, sidebar_rect,
     };
@@ -6093,6 +6265,35 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn first_launch_semantic_search_prompt_waits_for_storage_and_missing_assets() {
+        let root = temp_library_root("snappyref-semantic-prompt");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library));
+
+        assert!(!app.should_show_semantic_search_first_launch_prompt());
+
+        app.search
+            .set_local_model_store_status_for_verification(LocalModelStoreStatus::Missing);
+        assert!(app.should_show_semantic_search_first_launch_prompt());
+
+        app.settings.semantic_search_first_launch_prompt_seen = true;
+        assert!(!app.should_show_semantic_search_first_launch_prompt());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn first_launch_semantic_search_prompt_skips_without_storage() {
+        let mut app = test_app(None);
+        app.search
+            .set_local_model_store_status_for_verification(LocalModelStoreStatus::Missing);
+
+        assert!(!app.should_show_semantic_search_first_launch_prompt());
     }
 
     #[test]

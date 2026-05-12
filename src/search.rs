@@ -178,6 +178,28 @@ impl SearchController {
             .is_some_and(LocalModelStoreStatus::assets_available)
     }
 
+    pub(crate) fn local_model_assets_missing(&self) -> bool {
+        matches!(
+            self.local_model_store_status,
+            Some(LocalModelStoreStatus::Missing)
+        )
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    pub(crate) fn set_local_model_store_status_for_verification(
+        &mut self,
+        status: LocalModelStoreStatus,
+    ) {
+        self.local_model_store_status = Some(status);
+    }
+
+    pub(crate) fn start_semantic_search_install_from_first_launch_prompt(
+        &mut self,
+        status: &mut String,
+    ) {
+        self.start_semantic_search_install(status);
+    }
+
     pub(crate) fn set_recent_searches(&mut self, recent_searches: Vec<String>) {
         self.recent_searches = normalized_recent_searches(recent_searches);
         self.recent_searches_dirty = false;
@@ -2243,6 +2265,26 @@ mod tests {
 
         search.start_semantic_search_install(&mut status);
         search.start_semantic_search_install(&mut status);
+
+        assert_eq!(starts.get(), 1);
+        assert_eq!(
+            search.local_model_store_status,
+            Some(LocalModelStoreStatus::Downloading { percent: 0 })
+        );
+        assert_eq!(status, "Installing Semantic Search");
+    }
+
+    #[test]
+    fn first_launch_prompt_enable_uses_shared_install_flow() {
+        let starts = std::rc::Rc::new(std::cell::Cell::new(0));
+        let observed = starts.clone();
+        let mut search = SearchController::default();
+        search.test_semantic_install = Some(Box::new(move |_| {
+            observed.set(observed.get() + 1);
+        }));
+        let mut status = "Ready".to_owned();
+
+        search.start_semantic_search_install_from_first_launch_prompt(&mut status);
 
         assert_eq!(starts.get(), 1);
         assert_eq!(
