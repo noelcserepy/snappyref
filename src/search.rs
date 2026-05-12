@@ -612,6 +612,7 @@ impl SearchController {
     ) -> bool {
         if self.embedding_backfill.exhausted
             || self.embedding_backfill.in_flight
+            || self.service.is_none()
             || !idle.app_idle
             || self.search_work_in_flight(now)
         {
@@ -894,12 +895,13 @@ impl SearchController {
     }
 
     pub(crate) fn embedding_backfill_is_idle(&self) -> bool {
-        !self.embedding_backfill.in_flight
-            && self.embedding_backfill.exhausted
-            && !self
-                .service
-                .as_ref()
-                .is_some_and(|service| service.search_embedding_cache_warming())
+        self.service.is_none()
+            || (!self.embedding_backfill.in_flight
+                && self.embedding_backfill.exhausted
+                && !self
+                    .service
+                    .as_ref()
+                    .is_some_and(|service| service.search_embedding_cache_warming()))
     }
 
     pub(crate) fn drive_verification_search(
@@ -2223,7 +2225,7 @@ mod tests {
         SemanticSearchInstallProgress,
     };
     use eframe::egui;
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     #[test]
     fn search_scope_defaults_to_this_board_and_survives_close() {
@@ -2399,7 +2401,8 @@ mod tests {
 
     #[test]
     fn embedding_backfill_waits_for_quiet_idle_search_window() {
-        let mut search = SearchController::default();
+        let (mut search, root) =
+            search_controller_with_semantic_service("snappyref-quiet-backfill-search-test");
         let now = Instant::now();
         let idle = EmbeddingBackfillIdleState { app_idle: true };
 
@@ -2415,11 +2418,14 @@ mod tests {
         assert!(!search.can_start_embedding_backfill(now + Duration::from_millis(880), idle));
         assert!(!search.can_start_embedding_backfill(now + Duration::from_millis(1000), idle));
         assert!(search.can_start_embedding_backfill(now + Duration::from_millis(1630), idle));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn embedding_backfill_can_check_immediately_after_demand_embeddings_drain() {
-        let mut search = SearchController::default();
+        let (mut search, root) =
+            search_controller_with_semantic_service("snappyref-demand-drain-backfill-search-test");
         let now = Instant::now();
 
         search.note_demand_embedding_drained_at(now);
@@ -2427,6 +2433,67 @@ mod tests {
         assert!(
             search.can_start_embedding_backfill(now, EmbeddingBackfillIdleState { app_idle: true })
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn embedding_backfill_does_not_start_before_semantic_search_service_exists() {
+        let mut search = SearchController::default();
+        let now = Instant::now();
+        let idle = EmbeddingBackfillIdleState { app_idle: true };
+
+        assert!(!search.can_start_embedding_backfill(now, idle));
+        assert!(!search.can_start_embedding_backfill(now + Duration::from_secs(5), idle));
+        assert!(search.embedding_backfill_is_idle());
+    }
+
+    #[test]
+    fn embedding_backfill_starts_after_semantic_search_service_exists_and_app_is_idle() {
+        let (mut search, root) =
+            search_controller_with_semantic_service("snappyref-installed-backfill-search-test");
+        let now = Instant::now();
+        let idle = EmbeddingBackfillIdleState { app_idle: true };
+
+        assert!(!search.can_start_embedding_backfill(now, idle));
+        assert!(search.can_start_embedding_backfill(now + Duration::from_millis(750), idle));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn search_controller_with_semantic_service(
+        prefix: &str,
+    ) -> (SearchController, std::path::PathBuf) {
+        let root = temp_root(prefix);
+        let library = crate::storage::Library::initialize(root.join("library")).unwrap();
+        let search = SearchController {
+            service: Some(
+                crate::semantic_search::SemanticSearchService::new(
+                    library,
+                    crate::semantic_search::SemanticSearchConfig {
+                        enabled: false,
+                        model: crate::semantic_search::DEFAULT_SEMANTIC_SEARCH_MODEL,
+                        canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+                    },
+                )
+                .unwrap(),
+            ),
+            ..SearchController::default()
+        };
+        (search, root)
+    }
+
+    fn temp_root(prefix: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "{}-{}",
+            prefix,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        root
     }
 
     #[test]
