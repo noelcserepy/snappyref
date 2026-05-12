@@ -1266,6 +1266,7 @@ pub(super) fn compute_guide_snap_for_rect(
 ) -> Option<egui::Rect> {
     let candidates = guide_snap_candidate_rects(state, screen_rect, excluded_ids);
     if candidates.is_empty() {
+        state.clear_guide_snap_indicators();
         return None;
     }
 

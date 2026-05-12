@@ -1,4 +1,5 @@
 use eframe::egui;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
@@ -78,6 +79,12 @@ struct ContextMenuItem {
     label: &'static str,
     shortcut: Option<&'static str>,
     enabled: bool,
+}
+
+#[derive(Default)]
+struct PendingImportBatch {
+    pending_queue_ids: HashSet<u64>,
+    loaded_item_ids: Vec<i64>,
 }
 
 #[derive(Clone, Copy)]
@@ -1419,6 +1426,7 @@ pub struct SnappyRefApp {
     perf_scenario: Option<PerfScenarioState>,
     import_intake: ImportIntake,
     residency: ImageResidencyCoordinator,
+    pending_import_batches: Vec<PendingImportBatch>,
     hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
     document_persistence: DocumentPersistence,
     #[cfg(debug_assertions)]
@@ -1498,6 +1506,7 @@ impl SnappyRefApp {
                     perf_scenario: PerfScenarioState::from_config(&config).unwrap_or(None),
                     import_intake: ImportIntake::new(),
                     residency: ImageResidencyCoordinator::default(),
+                    pending_import_batches: Vec::new(),
                     hover_preview_dimensions: std::collections::HashMap::new(),
                     document_persistence: DocumentPersistence::default(),
                     #[cfg(debug_assertions)]
@@ -1705,6 +1714,7 @@ impl SnappyRefApp {
                 perf_scenario: PerfScenarioState::from_config(&config).unwrap_or(None),
                 import_intake: ImportIntake::new(),
                 residency: ImageResidencyCoordinator::default(),
+                pending_import_batches: Vec::new(),
                 hover_preview_dimensions: std::collections::HashMap::new(),
                 document_persistence: DocumentPersistence::default(),
                 #[cfg(debug_assertions)]
@@ -3046,6 +3056,7 @@ impl SnappyRefApp {
         };
 
         let previews = self.dropped_import_previews(&dropped_sources, desired_world, screen_rect);
+        let mut queued_batch_ids = Vec::new();
 
         for (source, (label, dimensions, center_world)) in dropped_sources.into_iter().zip(previews)
         {
@@ -3084,6 +3095,7 @@ impl SnappyRefApp {
                 continue;
             }
 
+            queued_batch_ids.push(reservation.queue_id);
             self.status = match &source {
                 ExternalImportSource::Path(path) => {
                     format!("Queued import: {}", path.display())
@@ -3091,6 +3103,62 @@ impl SnappyRefApp {
                 ExternalImportSource::Url(url) => format!("Queued URL import: {url}"),
             };
         }
+        self.register_import_batch(queued_batch_ids);
+    }
+
+    fn register_import_batch(&mut self, queue_ids: Vec<u64>) {
+        if queue_ids.len() <= 1 {
+            return;
+        }
+        self.pending_import_batches.push(PendingImportBatch {
+            pending_queue_ids: queue_ids.into_iter().collect(),
+            loaded_item_ids: Vec::new(),
+        });
+    }
+
+    fn finish_import_queue_id_in_batches(
+        &mut self,
+        queue_id: Option<u64>,
+        loaded_item_id: Option<i64>,
+    ) {
+        let Some(queue_id) = queue_id else {
+            return;
+        };
+
+        let mut completed_batches = Vec::new();
+        for batch in &mut self.pending_import_batches {
+            if !batch.pending_queue_ids.remove(&queue_id) {
+                continue;
+            }
+            if let Some(item_id) = loaded_item_id
+                && !batch.loaded_item_ids.contains(&item_id)
+            {
+                batch.loaded_item_ids.push(item_id);
+            }
+            if batch.pending_queue_ids.is_empty() {
+                completed_batches.push(std::mem::take(&mut batch.loaded_item_ids));
+            }
+        }
+        self.pending_import_batches
+            .retain(|batch| !batch.pending_queue_ids.is_empty());
+
+        for item_ids in completed_batches {
+            self.finalize_completed_import_batch(item_ids);
+        }
+    }
+
+    fn finalize_completed_import_batch(&mut self, item_ids: Vec<i64>) {
+        if item_ids.is_empty() {
+            return;
+        }
+        self.canvas.select_items(&item_ids);
+        self.canvas.clear_hover_preview_placeholders();
+        self.canvas.clear_move_preview_placeholders();
+        if item_ids.len() > 1 {
+            self.canvas
+                .arrange_selected_compact(self.settings.import_gap);
+        }
+        self.persist_canvas_changes();
     }
 
     fn handle_clipboard_paste(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
@@ -3800,6 +3868,8 @@ impl SnappyRefApp {
         let mut status = status;
         #[cfg(feature = "semantic-search")]
         let indexed_asset = outcome.indexed_asset;
+        let loaded_item_id = outcome.log.as_ref().map(|log| log.record.item.id);
+        self.finish_import_queue_id_in_batches(placeholder_queue_id, loaded_item_id);
         if let Some(log) = outcome.log {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
                 scenario.visible_imports += 1;
@@ -3898,12 +3968,16 @@ impl SnappyRefApp {
     }
 
     fn apply_failed_import_outcome(&mut self, outcome: FailedImportOutcome) {
+        let queue_id = outcome
+            .placeholder_removal
+            .map(|placeholder| placeholder.queue_id);
         if let Some(placeholder) = outcome.placeholder_removal {
             self.remove_import_placeholder_for_board(
                 placeholder.target_board_id,
                 placeholder.queue_id,
             );
         }
+        self.finish_import_queue_id_in_batches(queue_id, None);
         self.status = outcome.status;
     }
 
@@ -8902,6 +8976,77 @@ mod tests {
     }
 
     #[test]
+    fn completed_multi_file_import_batch_selects_and_compacts_real_items() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.register_import_batch(vec![1, 2, 3]);
+
+        for (id, width, height) in [(1_i64, 180_u32, 80_u32), (2, 70, 210), (3, 140, 120)] {
+            let asset = ImageAsset {
+                id,
+                original_path: PathBuf::from(format!("fixture-{id}.png")),
+                filename: format!("fixture-{id}.png"),
+                mime_type: "image/png".to_owned(),
+                width,
+                height,
+                file_size: 4,
+                imported_at: 0,
+            };
+            let record = BoardItemWithAsset {
+                item: BoardItem {
+                    id,
+                    asset_id: id,
+                    x: 0.0,
+                    y: 0.0,
+                    scale: 1.0,
+                    rotation: 0.0,
+                    z_index: id as i32,
+                    archived: false,
+                },
+                asset,
+            };
+            app.integrate_loaded_import(
+                &ctx,
+                LoadedCanvasItem {
+                    target_board_id: 1,
+                    queue_id: Some(id as u64),
+                    record,
+                    preview_rgba: vec![255; width as usize * height as usize * 4],
+                    preview_width: width,
+                    preview_height: height,
+                    animated_preview: None,
+                    preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                    loaded_lod: crate::data::CanvasImageLod::Working,
+                    existing_load_diagnostics: None,
+                    origin: crate::jobs::ImportOrigin::Path,
+                    trace: None,
+                },
+            );
+        }
+
+        assert_eq!(app.canvas.selected_item_ids(), vec![1, 2, 3]);
+        let rects = [1_i64, 2, 3]
+            .into_iter()
+            .map(|item_id| {
+                let record = app.canvas.record_for_item_id(item_id).unwrap();
+                egui::Rect::from_center_size(
+                    egui::pos2(record.item.x, record.item.y),
+                    egui::vec2(
+                        record.asset.width as f32 * record.item.scale,
+                        record.asset.height as f32 * record.item.scale,
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (index, left) in rects.iter().enumerate() {
+            for right in rects.iter().skip(index + 1) {
+                assert!(!left.intersects(*right), "{left:?} overlaps {right:?}");
+            }
+        }
+        assert!(app.pending_import_batches.is_empty());
+    }
+
+    #[test]
     fn import_reservation_captures_board_queue_and_optional_placeholder() {
         let root = temp_library_root("snappyref-import-reservation");
         let library = Library::initialize(root.clone()).unwrap();
@@ -9055,6 +9200,7 @@ mod tests {
             frame_perf: super::FramePerfState::default(),
             import_intake: super::ImportIntake::new(),
             residency: super::ImageResidencyCoordinator::default(),
+            pending_import_batches: Vec::new(),
             sidebar_open: false,
             sidebar_tab: super::SidebarTab::default(),
             pending_board_delete: None,

@@ -620,6 +620,7 @@ impl CanvasState {
 
     pub fn clear_hover_preview_placeholders(&mut self) {
         self.interaction.hover_preview_placeholders.clear();
+        self.clear_guide_snap_indicators();
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -697,6 +698,7 @@ impl CanvasState {
                 .map(|snap_rect| snap_rect.center() - bounds.center())
                 .unwrap_or(egui::Vec2::ZERO);
         if snap_offset == egui::Vec2::ZERO {
+            self.clear_guide_snap_indicators();
             return placeholders;
         }
         for (center, _) in &mut placeholders {

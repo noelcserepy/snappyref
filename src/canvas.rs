@@ -2230,6 +2230,36 @@ mod tests {
     }
 
     #[test]
+    fn clearing_hover_preview_placeholders_also_clears_guide_indicators() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut state = CanvasState::default();
+            push_test_image(
+                ui,
+                &mut state,
+                1,
+                100,
+                100,
+                1.0,
+                eframe::egui::pos2(0.0, 0.0),
+            );
+
+            state.compact_guided_preview_placeholders(
+                &[eframe::egui::vec2(100.0, 100.0)],
+                eframe::egui::pos2(102.0, 0.0),
+                eframe::egui::Rect::from_min_size(
+                    eframe::egui::Pos2::ZERO,
+                    eframe::egui::vec2(800.0, 600.0),
+                ),
+                24.0,
+            );
+
+            assert_eq!(state.guide_snap_indicator_count(), 1);
+            state.clear_hover_preview_placeholders();
+            assert_eq!(state.guide_snap_indicator_count(), 0);
+        });
+    }
+
+    #[test]
     fn compact_guided_preview_placeholders_snap_as_one_batch() {
         eframe::egui::__run_test_ui(|ui| {
             let mut state = CanvasState::default();

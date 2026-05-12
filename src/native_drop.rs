@@ -133,6 +133,7 @@ impl NativeDropPayload {
 #[cfg(target_os = "macos")]
 mod platform {
     use std::collections::HashSet;
+    use std::ffi::{CStr, c_char};
     use std::sync::{Mutex, Once, OnceLock};
 
     use eframe::egui;
@@ -176,6 +177,8 @@ mod platform {
                         dragging_updated_swizzled as DragOperationMethod,
                         &ORIGINAL_DRAGGING_UPDATED,
                     );
+                } else {
+                    add_dragging_updated_method();
                 }
                 if let Some(method) = class.instance_method(sel!(performDragOperation:)) {
                     swizzle_bool_method(
@@ -259,6 +262,28 @@ mod platform {
         let _ = original.set(previous);
     }
 
+    unsafe fn add_dragging_updated_method() {
+        let class_name = CStr::from_bytes_with_nul(b"WinitWindowDelegate\0")
+            .expect("static Objective-C class name");
+        let class = unsafe { objc2::ffi::objc_getClass(class_name.as_ptr()) };
+        if class.is_null() {
+            return;
+        }
+
+        let types =
+            CStr::from_bytes_with_nul(b"Q@:@\0").expect("static Objective-C method encoding");
+        unsafe {
+            let _ = objc2::ffi::class_addMethod(
+                class as *mut _,
+                sel!(draggingUpdated:).as_ptr(),
+                std::mem::transmute::<DragOperationMethod, objc2::ffi::IMP>(
+                    dragging_updated_added as DragOperationMethod,
+                ),
+                types.as_ptr() as *const c_char,
+            );
+        }
+    }
+
     unsafe fn swizzle_bool_method(
         method: &Method,
         replacement: DragBoolMethod,
@@ -339,6 +364,33 @@ mod platform {
         call_original_drag_operation(&ORIGINAL_DRAGGING_UPDATED, this, cmd, sender)
     }
 
+    unsafe extern "C" fn dragging_updated_added(
+        _this: &AnyObject,
+        _cmd: Sel,
+        sender: &NSObject,
+    ) -> NSDragOperation {
+        let accepts_file_payload = has_file_payload(sender);
+        let (payload, should_claim_drag) = extract_drag_payload(sender);
+        let pos = dragging_screen_pos(sender);
+        if !payload.is_empty() {
+            state()
+                .lock()
+                .expect("native drop state mutex poisoned")
+                .set_hovered(payload, pos);
+            return NSDragOperation::Copy;
+        }
+
+        state()
+            .lock()
+            .expect("native drop state mutex poisoned")
+            .set_hovered_pos(pos);
+        if accepts_file_payload || should_claim_drag {
+            NSDragOperation::Copy
+        } else {
+            NSDragOperation::None
+        }
+    }
+
     unsafe extern "C" fn perform_drag_operation_swizzled(
         this: &AnyObject,
         cmd: Sel,
@@ -379,17 +431,38 @@ mod platform {
     }
 
     fn dragging_screen_pos(sender: &NSObject) -> Option<egui::Pos2> {
-        let point: NSPoint = unsafe { msg_send![sender, draggingLocation] };
+        let window_point: NSPoint = unsafe { msg_send![sender, draggingLocation] };
         let window: Option<Retained<NSObject>> =
             unsafe { msg_send_id![sender, draggingDestinationWindow] };
         let content_view: Option<Retained<NSObject>> = window
             .as_ref()
             .and_then(|window| unsafe { msg_send_id![&**window, contentView] });
         let bounds: NSRect = unsafe { msg_send![&**content_view.as_ref()?, bounds] };
-        Some(egui::pos2(
-            point.x as f32,
-            (bounds.size.height - point.y) as f32,
+        let view_point: NSPoint = unsafe {
+            msg_send![
+                &**content_view.as_ref()?,
+                convertPoint: window_point,
+                fromView: Option::<&NSObject>::None
+            ]
+        };
+        let is_flipped: bool = unsafe { msg_send![&**content_view.as_ref()?, isFlipped] };
+        Some(view_point_to_egui_pos(
+            view_point.x,
+            view_point.y,
+            bounds.size.height,
+            is_flipped,
         ))
+    }
+
+    fn view_point_to_egui_pos(x: f64, y: f64, bounds_height: f64, is_flipped: bool) -> egui::Pos2 {
+        egui::pos2(
+            x as f32,
+            if is_flipped {
+                y as f32
+            } else {
+                (bounds_height - y) as f32
+            },
+        )
     }
 
     fn call_original_drag_operation(
@@ -428,10 +501,7 @@ mod platform {
     fn extract_drag_payload(sender: &NSObject) -> (super::NativeDropPayload, bool) {
         let pasteboard: Retained<NSPasteboard> =
             unsafe { msg_send_id![sender, draggingPasteboard] };
-        if pasteboard
-            .propertyListForType(unsafe { NSFilenamesPboardType })
-            .is_some()
-        {
+        if has_file_payload_on_pasteboard(&pasteboard) {
             return (super::NativeDropPayload::default(), false);
         }
 
@@ -473,6 +543,18 @@ mod platform {
             },
             should_claim_drag,
         )
+    }
+
+    fn has_file_payload(sender: &NSObject) -> bool {
+        let pasteboard: Retained<NSPasteboard> =
+            unsafe { msg_send_id![sender, draggingPasteboard] };
+        has_file_payload_on_pasteboard(&pasteboard)
+    }
+
+    fn has_file_payload_on_pasteboard(pasteboard: &NSPasteboard) -> bool {
+        pasteboard
+            .propertyListForType(unsafe { NSFilenamesPboardType })
+            .is_some()
     }
 
     fn extract_drag_urls_from_item(
@@ -563,6 +645,27 @@ mod platform {
             || lower.contains("html")
             || lower.contains("text")
             || lower.contains("string")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::view_point_to_egui_pos;
+
+        #[test]
+        fn flipped_winit_view_points_are_already_top_left_origin() {
+            let pos = view_point_to_egui_pos(240.0, 520.0, 900.0, true);
+
+            assert_eq!(pos.x, 240.0);
+            assert_eq!(pos.y, 520.0);
+        }
+
+        #[test]
+        fn unflipped_appkit_points_are_converted_to_top_left_origin() {
+            let pos = view_point_to_egui_pos(240.0, 520.0, 900.0, false);
+
+            assert_eq!(pos.x, 240.0);
+            assert_eq!(pos.y, 380.0);
+        }
     }
 }
 
