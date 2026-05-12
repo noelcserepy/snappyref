@@ -39,6 +39,7 @@ pub(crate) struct SearchOverlayState {
     pub suppress_next_outside_click: bool,
     pub image_pivot: Option<ImageSearchPivot>,
     pub scope: SearchScope,
+    pub install_action_focus_requested: bool,
 }
 
 impl Default for SearchOverlayState {
@@ -62,6 +63,7 @@ impl Default for SearchOverlayState {
             suppress_next_outside_click: false,
             image_pivot: None,
             scope: SearchScope::ThisBoard,
+            install_action_focus_requested: false,
         }
     }
 }
@@ -736,6 +738,68 @@ pub(crate) fn paint_palette_no_results_state(ui: &mut egui::Ui, status: &SearchO
                 .truncate(),
             );
         });
+}
+
+pub(crate) fn paint_palette_install_state(
+    ui: &mut egui::Ui,
+    status: &SearchOverlayStatus,
+    focus_requested: &mut bool,
+    installing: bool,
+) -> egui::Response {
+    let button_id = egui::Id::new("semantic_search_install_action");
+    let mut response = None;
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: crate::theme::SPACE_4 as i8,
+            right: crate::theme::SPACE_4 as i8,
+            top: crate::theme::SPACE_4 as i8,
+            bottom: crate::theme::SPACE_4 as i8,
+        })
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_3);
+            ui.label(
+                egui::RichText::new("Semantic Search requires a local download.")
+                    .text_style(egui::TextStyle::Body)
+                    .color(crate::theme::TEXT),
+            );
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(
+                        "Install the search assets to find references by description.",
+                    )
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_MUTED),
+                )
+                .wrap(),
+            );
+            if let SearchOverlayStatus::Error(message) = status {
+                ui.label(
+                    egui::RichText::new(message)
+                        .text_style(egui::TextStyle::Small)
+                        .color(crate::theme::DESTRUCTIVE),
+                );
+            }
+            let label = match status {
+                SearchOverlayStatus::Error(_) => "Retry",
+                SearchOverlayStatus::Loading(message) => message.as_str(),
+                _ => "Install",
+            };
+            let button = egui::Button::new(label)
+                .min_size(egui::vec2(112.0, 30.0))
+                .corner_radius(crate::theme::RADIUS_CONTROL);
+            let resp = ui
+                .push_id(button_id, |ui| ui.add_enabled(!installing, button))
+                .inner;
+            if *focus_requested {
+                resp.request_focus();
+                *focus_requested = !resp.has_focus();
+                if *focus_requested {
+                    ui.ctx().request_repaint_after(Duration::from_millis(16));
+                }
+            }
+            response = Some(resp);
+        });
+    response.expect("semantic install action allocated")
 }
 
 fn paint_palette_empty_group(

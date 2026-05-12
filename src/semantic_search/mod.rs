@@ -1,12 +1,22 @@
 mod index;
+mod install;
 mod model;
 mod service;
 
+pub(crate) use crate::model_store::LocalModelStoreStatus;
 pub use index::SearchScope;
+pub(crate) use install::SemanticSearchInstallProgress;
+#[cfg(not(test))]
+pub(crate) use install::{
+    cleanup_semantic_search_install, default_semantic_search_asset_descriptor,
+    install_semantic_search_asset, remove_semantic_search_assets,
+};
 #[allow(unused_imports)]
 pub use model::AVAILABLE_SEMANTIC_SEARCH_MODELS;
 pub use model::DEFAULT_SEMANTIC_SEARCH_MODEL;
-pub(crate) use model::{ImageEmbeddingTiming, ModelLoadTiming, OrtDualEncoderModel};
+pub(crate) use model::{
+    ImageEmbeddingTiming, ModelLoadTiming, OrtDualEncoderModel, default_local_model_store_status,
+};
 pub use service::{
     IndexResult, SearchQueryResult, SearchResultGroup, SemanticSearchConfig, SemanticSearchService,
 };
