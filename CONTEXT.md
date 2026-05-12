@@ -38,6 +38,14 @@ _Avoid_: Note, label
 The board-local visual guide mode for the canvas.
 _Avoid_: Grid setting, workspace background
 
+**Guide Snapping**:
+Manual drag alignment that nudges a single placement's visual axis-aligned bounds to viewport-near placement edges, corners, centers, or layout-gap adjacency and shows alignment guides.
+_Avoid_: Grid snapping, layout snapping, arrangement snapping
+
+**Selection Border**:
+The outline that shows the current canvas selection; it hides while a placement is moving and reappears after the movement pauses or the drag ends.
+_Avoid_: Drag guide, snap outline
+
 **Viewport**:
 The board-local pan and zoom state.
 _Avoid_: Camera, view, canvas position
@@ -53,7 +61,7 @@ The persisted state that restores the user's active board, viewport, workspace s
 _Avoid_: Preferences row, app state
 
 **Workspace Settings**:
-Global user preferences that apply across boards, such as import gap, image sizing, rotation snap, and textbox defaults.
+Global user preferences that apply across boards, such as layout gap, image sizing, rotation snap, and textbox defaults.
 _Avoid_: Board settings, options
 
 **Sidebar State**:

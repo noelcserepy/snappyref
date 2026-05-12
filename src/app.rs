@@ -744,6 +744,10 @@ enum VerificationMode {
     SpacingComparison,
     BoardRowsComparison,
     BoardRowsComparisonBottom,
+    GuideColorBlue,
+    GuideColorGreen,
+    GuideColorOrange,
+    GuideColorBrightOrange,
 }
 
 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -996,6 +1000,26 @@ impl AppConfig {
                 #[cfg(debug_assertions)]
                 {
                     verification_mode = Some(VerificationMode::BoardRowsComparisonBottom);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-guide-color=blue" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::GuideColorBlue);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-guide-color=green" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::GuideColorGreen);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-guide-color=orange" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::GuideColorOrange);
+                }
+            } else if cfg!(debug_assertions) && argument == "--compare-guide-color=bright-orange" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::GuideColorBrightOrange);
                 }
             } else if let Some(query) = argument.strip_prefix("--verify-search=") {
                 #[cfg(debug_assertions)]
@@ -5327,6 +5351,10 @@ impl eframe::App for SnappyRefApp {
                     | VerificationMode::SpacingComparison
                     | VerificationMode::BoardRowsComparison
                     | VerificationMode::BoardRowsComparisonBottom
+                    | VerificationMode::GuideColorBlue
+                    | VerificationMode::GuideColorGreen
+                    | VerificationMode::GuideColorOrange
+                    | VerificationMode::GuideColorBrightOrange
             )
         ) {
             match self.verification_mode {
@@ -5353,6 +5381,38 @@ impl eframe::App for SnappyRefApp {
                         ui,
                         screen_rect,
                         560.0,
+                    );
+                }
+                Some(VerificationMode::GuideColorBlue) => {
+                    crate::design_system_preview::show_guide_color_comparison(
+                        ui,
+                        screen_rect,
+                        "Blue #2589BD",
+                        crate::theme::ACCENT_BLUE,
+                    );
+                }
+                Some(VerificationMode::GuideColorGreen) => {
+                    crate::design_system_preview::show_guide_color_comparison(
+                        ui,
+                        screen_rect,
+                        "Green #329F5B",
+                        crate::theme::ACCENT_GREEN,
+                    );
+                }
+                Some(VerificationMode::GuideColorOrange) => {
+                    crate::design_system_preview::show_guide_color_comparison(
+                        ui,
+                        screen_rect,
+                        "Orange #D17B0F",
+                        crate::theme::ACCENT_ORANGE,
+                    );
+                }
+                Some(VerificationMode::GuideColorBrightOrange) => {
+                    crate::design_system_preview::show_guide_color_comparison(
+                        ui,
+                        screen_rect,
+                        "Bright Orange #FA8334",
+                        crate::theme::ACCENT_BRIGHT_ORANGE,
                     );
                 }
                 _ => crate::design_system_preview::show(ui, screen_rect),

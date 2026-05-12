@@ -20,6 +20,10 @@ use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasStackItem, Canva
 // primary-press on a placement so click-to-select doesn't jerk the image via
 // snap.
 const IMAGE_MOVE_DEBOUNCE_SECONDS: f64 = 0.090;
+const GUIDE_SNAP_ACQUIRE_DISTANCE_SCREEN: f32 = 8.0;
+const GUIDE_SNAP_RELEASE_DISTANCE_SCREEN: f32 = 12.0;
+const GUIDE_SNAP_VIEWPORT_PADDING_SCREEN: f32 = 64.0;
+const GUIDE_SNAP_EPSILON: f32 = 0.001;
 
 pub(super) fn handle_input(
     ui: &egui::Ui,
@@ -232,6 +236,8 @@ pub(super) fn handle_input(
                         starting_items,
                         snap_preview_rect_world: None,
                         started_at_seconds: ui.input(|input| input.time),
+                        last_movement_seconds: ui.input(|input| input.time),
+                        last_world_delta: egui::Vec2::ZERO,
                         moved: false,
                     });
                     state.interaction.image_transform_state = None;
@@ -416,16 +422,31 @@ pub(super) fn handle_input(
         }
         let pointer_world = state.screen_to_world(pointer_pos, rect);
         let world_delta = pointer_world - drag_state.pointer_start_world;
-        let snap_preview_rect = compute_drag_snap_preview(state, rect, &drag_state, world_delta);
+        let guide_snap_disabled = ui.input(|input| input.modifiers.command);
+        let snap_preview_rect = if guide_snap_disabled {
+            state.clear_guide_snap_indicators();
+            state.clear_move_preview_placeholders();
+            None
+        } else {
+            compute_drag_snap_preview(state, rect, &drag_state, world_delta)
+        };
         apply_dragged_item_positions(
             state,
             &drag_state.starting_items,
             world_delta,
             snap_preview_rect,
         );
+        let now = ui.input(|input| input.time);
         if let Some(active_drag_state) = &mut state.interaction.drag_state {
             active_drag_state.snap_preview_rect_world = snap_preview_rect;
+            if (world_delta - active_drag_state.last_world_delta).length_sq() > 0.01 {
+                active_drag_state.last_movement_seconds = now;
+                active_drag_state.last_world_delta = world_delta;
+            }
             active_drag_state.moved = true;
+            ui.ctx().request_repaint_after(Duration::from_secs_f64(
+                super::SELECTION_BORDER_REAPPEAR_SECONDS,
+            ));
         }
     }
 
@@ -466,6 +487,7 @@ pub(super) fn handle_input(
                 }
             }
             state.clear_move_preview_placeholders();
+            state.clear_guide_snap_indicators();
         }
         state.interaction.marquee_state = None;
         state.clear_move_preview_placeholders();
@@ -1159,6 +1181,15 @@ pub(super) fn compute_drag_snap_preview(
     drag_state: &DragState,
     world_delta: egui::Vec2,
 ) -> Option<egui::Rect> {
+    if drag_state.starting_items.len() == 1 {
+        let snap_rect = compute_single_placement_guide_snap(state, rect, drag_state, world_delta);
+        if snap_rect.is_none() {
+            state.clear_move_preview_placeholders();
+            state.clear_guide_snap_indicators();
+        }
+        return snap_rect;
+    }
+
     let excluded_ids = drag_state
         .starting_items
         .iter()
@@ -1204,6 +1235,395 @@ pub(super) fn compute_drag_snap_preview(
 
     state.clear_move_preview_placeholders();
     Some(candidate.rect)
+}
+
+fn compute_single_placement_guide_snap(
+    state: &mut CanvasState,
+    screen_rect: egui::Rect,
+    drag_state: &DragState,
+    world_delta: egui::Vec2,
+) -> Option<egui::Rect> {
+    let item = drag_state.starting_items.first()?;
+    let desired_rect = offset_layout_bounds(&drag_state.starting_items, world_delta)?;
+    let candidates = guide_snap_candidate_rects(state, screen_rect, item.id);
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let threshold = guide_snap_threshold_world(state, drag_state);
+    let mut best_x = best_axis_alignment_snap_x(desired_rect, &candidates, threshold);
+    consider_horizontal_adjacency_snaps(
+        desired_rect,
+        &candidates,
+        state.layout_gap,
+        threshold,
+        &mut best_x,
+    );
+    let mut best_y = best_axis_alignment_snap_y(desired_rect, &candidates, threshold);
+    consider_vertical_adjacency_snaps(
+        desired_rect,
+        &candidates,
+        state.layout_gap,
+        threshold,
+        &mut best_y,
+    );
+
+    let nudge = egui::vec2(
+        best_x.map(|snap| snap.nudge).unwrap_or(0.0),
+        best_y.map(|snap| snap.nudge).unwrap_or(0.0),
+    );
+    if nudge.length_sq() <= GUIDE_SNAP_EPSILON {
+        state.clear_guide_snap_indicators();
+        return None;
+    }
+    let snapped_rect = desired_rect.translate(nudge);
+    let mut indicators = Vec::new();
+    if let Some(snap) = best_x {
+        indicators.push(guide_indicator_for_axis(
+            GuideAxis::Vertical,
+            snap.coord,
+            snap.kind,
+            snapped_rect,
+            &candidates,
+        ));
+    }
+    if let Some(snap) = best_y {
+        indicators.push(guide_indicator_for_axis(
+            GuideAxis::Horizontal,
+            snap.coord,
+            snap.kind,
+            snapped_rect,
+            &candidates,
+        ));
+    }
+    if let (Some(x_snap), Some(y_snap)) = (best_x, best_y) {
+        add_guide_intersection_marks(&mut indicators, egui::pos2(x_snap.coord, y_snap.coord));
+    }
+    state.set_guide_snap_indicators(indicators);
+    Some(snapped_rect)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct GuideAxisSnap {
+    nudge: f32,
+    distance: f32,
+    coord: f32,
+    kind: GuideSnapKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GuideAxis {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GuideSnapKind {
+    Edge,
+    Center,
+    Adjacency,
+}
+
+fn guide_snap_threshold_world(state: &CanvasState, drag_state: &DragState) -> f32 {
+    let threshold_screen = if drag_state.snap_preview_rect_world.is_some() {
+        GUIDE_SNAP_RELEASE_DISTANCE_SCREEN
+    } else {
+        GUIDE_SNAP_ACQUIRE_DISTANCE_SCREEN
+    };
+    threshold_screen / state.zoom.max(0.01)
+}
+
+fn guide_snap_candidate_rects(
+    state: &CanvasState,
+    screen_rect: egui::Rect,
+    excluded_item_id: i64,
+) -> Vec<egui::Rect> {
+    let viewport = viewport_near_world_rect(state, screen_rect);
+    state
+        .document
+        .images
+        .iter()
+        .filter(|image| image.record.item.id != excluded_item_id)
+        .filter_map(|image| {
+            let visual_size = super::rotated_visual_size(
+                image.record.asset.width as f32 * image.record.item.scale.max(0.01),
+                image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+                image.record.item.rotation,
+            );
+            let rect = egui::Rect::from_center_size(
+                egui::pos2(image.record.item.x, image.record.item.y),
+                visual_size,
+            );
+            rect.intersects(viewport).then_some(rect)
+        })
+        .collect()
+}
+
+fn viewport_near_world_rect(state: &CanvasState, screen_rect: egui::Rect) -> egui::Rect {
+    let expanded = screen_rect.expand(GUIDE_SNAP_VIEWPORT_PADDING_SCREEN);
+    egui::Rect::from_two_pos(
+        state.screen_to_world(expanded.min, screen_rect),
+        state.screen_to_world(expanded.max, screen_rect),
+    )
+}
+
+fn best_axis_alignment_snap_x(
+    desired_rect: egui::Rect,
+    candidates: &[egui::Rect],
+    threshold: f32,
+) -> Option<GuideAxisSnap> {
+    let desired_coords = [
+        (desired_rect.left(), false),
+        (desired_rect.center().x, true),
+        (desired_rect.right(), false),
+    ];
+    let mut best = None;
+    for candidate in candidates {
+        let candidate_coords = [
+            (candidate.left(), false),
+            (candidate.center().x, true),
+            (candidate.right(), false),
+        ];
+        for (desired, desired_center) in desired_coords {
+            for (target, target_center) in candidate_coords {
+                if desired_center != target_center {
+                    continue;
+                }
+                let kind = if desired_center {
+                    GuideSnapKind::Center
+                } else {
+                    GuideSnapKind::Edge
+                };
+                best = consider_axis_snap(best, target - desired, threshold, target, kind);
+            }
+        }
+    }
+    best
+}
+
+fn best_axis_alignment_snap_y(
+    desired_rect: egui::Rect,
+    candidates: &[egui::Rect],
+    threshold: f32,
+) -> Option<GuideAxisSnap> {
+    let desired_coords = [
+        (desired_rect.top(), false),
+        (desired_rect.center().y, true),
+        (desired_rect.bottom(), false),
+    ];
+    let mut best = None;
+    for candidate in candidates {
+        let candidate_coords = [
+            (candidate.top(), false),
+            (candidate.center().y, true),
+            (candidate.bottom(), false),
+        ];
+        for (desired, desired_center) in desired_coords {
+            for (target, target_center) in candidate_coords {
+                if desired_center != target_center {
+                    continue;
+                }
+                let kind = if desired_center {
+                    GuideSnapKind::Center
+                } else {
+                    GuideSnapKind::Edge
+                };
+                best = consider_axis_snap(best, target - desired, threshold, target, kind);
+            }
+        }
+    }
+    best
+}
+
+fn consider_horizontal_adjacency_snaps(
+    desired_rect: egui::Rect,
+    candidates: &[egui::Rect],
+    gap: f32,
+    threshold: f32,
+    best: &mut Option<GuideAxisSnap>,
+) {
+    for candidate in candidates {
+        if vertical_overlap_span(desired_rect, *candidate) <= GUIDE_SNAP_EPSILON {
+            continue;
+        }
+        for nudge in [
+            candidate.right() + gap - desired_rect.left(),
+            candidate.left() - gap - desired_rect.right(),
+        ] {
+            let coord = if nudge > 0.0 {
+                desired_rect.left() + nudge
+            } else {
+                desired_rect.right() + nudge
+            };
+            *best = consider_axis_snap(*best, nudge, threshold, coord, GuideSnapKind::Adjacency);
+        }
+    }
+}
+
+fn consider_vertical_adjacency_snaps(
+    desired_rect: egui::Rect,
+    candidates: &[egui::Rect],
+    gap: f32,
+    threshold: f32,
+    best: &mut Option<GuideAxisSnap>,
+) {
+    for candidate in candidates {
+        if horizontal_overlap_span(desired_rect, *candidate) <= GUIDE_SNAP_EPSILON {
+            continue;
+        }
+        for nudge in [
+            candidate.bottom() + gap - desired_rect.top(),
+            candidate.top() - gap - desired_rect.bottom(),
+        ] {
+            let coord = if nudge > 0.0 {
+                desired_rect.top() + nudge
+            } else {
+                desired_rect.bottom() + nudge
+            };
+            *best = consider_axis_snap(*best, nudge, threshold, coord, GuideSnapKind::Adjacency);
+        }
+    }
+}
+
+fn consider_axis_snap(
+    best: Option<GuideAxisSnap>,
+    nudge: f32,
+    threshold: f32,
+    coord: f32,
+    kind: GuideSnapKind,
+) -> Option<GuideAxisSnap> {
+    let distance = nudge.abs();
+    if distance > threshold || distance <= GUIDE_SNAP_EPSILON {
+        return best;
+    }
+    match best {
+        Some(best) if best.distance <= distance => Some(best),
+        _ => Some(GuideAxisSnap {
+            nudge,
+            distance,
+            coord,
+            kind,
+        }),
+    }
+}
+
+fn vertical_overlap_span(left: egui::Rect, right: egui::Rect) -> f32 {
+    (left.bottom().min(right.bottom()) - left.top().max(right.top())).max(0.0)
+}
+
+fn horizontal_overlap_span(left: egui::Rect, right: egui::Rect) -> f32 {
+    (left.right().min(right.right()) - left.left().max(right.left())).max(0.0)
+}
+
+fn guide_indicator_for_axis(
+    axis: GuideAxis,
+    coord: f32,
+    kind: GuideSnapKind,
+    snapped_rect: egui::Rect,
+    candidates: &[egui::Rect],
+) -> super::GuideSnapIndicator {
+    let mut marks = Vec::new();
+    collect_axis_marks(axis, coord, kind, snapped_rect, &mut marks);
+    for candidate in candidates {
+        collect_axis_marks(axis, coord, kind, *candidate, &mut marks);
+    }
+    dedupe_points(&mut marks);
+
+    if marks.is_empty() {
+        return super::GuideSnapIndicator {
+            segments: Vec::new(),
+            marks,
+        };
+    }
+
+    let segment = match axis {
+        GuideAxis::Vertical => {
+            let min_y = marks
+                .iter()
+                .map(|point| point.y)
+                .fold(f32::INFINITY, f32::min);
+            let max_y = marks
+                .iter()
+                .map(|point| point.y)
+                .fold(f32::NEG_INFINITY, f32::max);
+            (egui::pos2(coord, min_y), egui::pos2(coord, max_y))
+        }
+        GuideAxis::Horizontal => {
+            let min_x = marks
+                .iter()
+                .map(|point| point.x)
+                .fold(f32::INFINITY, f32::min);
+            let max_x = marks
+                .iter()
+                .map(|point| point.x)
+                .fold(f32::NEG_INFINITY, f32::max);
+            (egui::pos2(min_x, coord), egui::pos2(max_x, coord))
+        }
+    };
+
+    super::GuideSnapIndicator {
+        segments: vec![segment],
+        marks,
+    }
+}
+
+fn collect_axis_marks(
+    axis: GuideAxis,
+    coord: f32,
+    kind: GuideSnapKind,
+    rect: egui::Rect,
+    marks: &mut Vec<egui::Pos2>,
+) {
+    for point in rect_snap_points(rect, kind) {
+        let aligned = match axis {
+            GuideAxis::Vertical => (point.x - coord).abs() <= GUIDE_SNAP_EPSILON,
+            GuideAxis::Horizontal => (point.y - coord).abs() <= GUIDE_SNAP_EPSILON,
+        };
+        if aligned {
+            marks.push(point);
+        }
+    }
+}
+
+fn rect_snap_points(rect: egui::Rect, kind: GuideSnapKind) -> Vec<egui::Pos2> {
+    match kind {
+        GuideSnapKind::Edge | GuideSnapKind::Adjacency => {
+            vec![
+                rect.left_top(),
+                rect.right_top(),
+                rect.left_bottom(),
+                rect.right_bottom(),
+            ]
+        }
+        GuideSnapKind::Center => vec![
+            egui::pos2(rect.center().x, rect.top()),
+            egui::pos2(rect.left(), rect.center().y),
+            rect.center(),
+            egui::pos2(rect.right(), rect.center().y),
+            egui::pos2(rect.center().x, rect.bottom()),
+        ],
+    }
+}
+
+fn dedupe_points(points: &mut Vec<egui::Pos2>) {
+    let mut deduped = Vec::with_capacity(points.len());
+    for point in points.drain(..) {
+        if deduped
+            .iter()
+            .any(|existing: &egui::Pos2| existing.distance(point) <= GUIDE_SNAP_EPSILON)
+        {
+            continue;
+        }
+        deduped.push(point);
+    }
+    *points = deduped;
+}
+
+fn add_guide_intersection_marks(indicators: &mut [super::GuideSnapIndicator], point: egui::Pos2) {
+    for indicator in indicators {
+        indicator.marks.push(point);
+        dedupe_points(&mut indicator.marks);
+    }
 }
 
 fn apply_preview_hysteresis(
@@ -1654,7 +2074,7 @@ mod tests {
     }
 
     #[test]
-    fn drag_snap_preview_appears_for_nearby_image_targets() {
+    fn drag_snap_preview_acquires_nearby_placement_target() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 180, 140);
@@ -1666,6 +2086,8 @@ mod tests {
             starting_items: canvas.selected_layout_items(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
+            last_movement_seconds: 0.0,
+            last_world_delta: egui::Vec2::ZERO,
             moved: false,
         };
 
@@ -1673,15 +2095,15 @@ mod tests {
             &mut canvas,
             test_screen_rect(),
             &drag_state,
-            egui::vec2(60.0, 0.0),
+            egui::vec2(82.0, 0.0),
         )
         .expect("expected snap preview");
         let current_bounds =
-            offset_layout_bounds(&drag_state.starting_items, egui::vec2(60.0, 0.0))
+            offset_layout_bounds(&drag_state.starting_items, egui::vec2(82.0, 0.0))
                 .expect("bounds");
         let snap_offset = snap_rect.center() - current_bounds.center();
 
-        assert_eq!(snap_offset, egui::vec2(24.0, 0.0));
+        assert_eq!(snap_offset, egui::vec2(2.0, 0.0));
         assert_eq!(canvas.move_preview_placeholder_count(), 0);
     }
 
@@ -1698,6 +2120,8 @@ mod tests {
             starting_items: canvas.selected_layout_items(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
+            last_movement_seconds: 0.0,
+            last_world_delta: egui::Vec2::ZERO,
             moved: false,
         };
 
@@ -1713,7 +2137,7 @@ mod tests {
     }
 
     #[test]
-    fn drag_snap_preview_can_snap_against_textboxes() {
+    fn drag_snap_preview_ignores_textbox_targets_for_guide_snapping() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(0.0, 0.0), 180, 140);
@@ -1738,33 +2162,30 @@ mod tests {
             starting_items: canvas.selected_layout_items(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
+            last_movement_seconds: 0.0,
+            last_world_delta: egui::Vec2::ZERO,
             moved: false,
         };
 
-        let (delta, snap_rect) = (0..=200)
-            .find_map(|delta_x| {
-                let delta = egui::vec2(delta_x as f32, 0.0);
-                compute_drag_snap_preview(&mut canvas, test_screen_rect(), &drag_state, delta)
-                    .map(|rect| (delta, rect))
-            })
-            .expect("expected textbox snap preview");
-        let current_bounds =
-            offset_layout_bounds(&drag_state.starting_items, delta).expect("bounds");
-        let snap_offset = snap_rect.center() - current_bounds.center();
+        let snap_rect = compute_drag_snap_preview(
+            &mut canvas,
+            test_screen_rect(),
+            &drag_state,
+            egui::vec2(10.0, 0.0),
+        );
 
-        assert!(snap_offset.x.abs() <= 32.0);
-        assert_eq!(snap_offset.y, 0.0);
+        assert!(snap_rect.is_none());
         assert_eq!(canvas.move_preview_placeholder_count(), 0);
     }
 
     #[test]
-    fn drag_snap_preview_preserves_previous_world_rect_for_hysteresis() {
+    fn drag_snap_preview_uses_larger_release_threshold_after_acquiring() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        add_test_image(&mut canvas, &ctx, 1, egui::pos2(-170.0, 150.0), 120, 180);
-        add_test_image(&mut canvas, &ctx, 2, egui::pos2(10.0, -120.0), 220, 120);
-        add_test_image(&mut canvas, &ctx, 3, egui::pos2(70.0, 36.0), 180, 140);
-        canvas.select_items(&[3]);
+        canvas.set_layout_gap(24.0);
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
+        add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
+        canvas.select_items(&[2]);
 
         let rect = test_screen_rect();
         let mut drag_state = DragState {
@@ -1772,19 +2193,177 @@ mod tests {
             starting_items: canvas.selected_layout_items(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
+            last_movement_seconds: 0.0,
+            last_world_delta: egui::Vec2::ZERO,
             moved: false,
         };
 
-        let first_delta = egui::vec2(-50.0, 0.0);
+        let first_delta = egui::vec2(-53.0, 0.0);
         let first_rect = compute_drag_snap_preview(&mut canvas, rect, &drag_state, first_delta)
             .expect("expected initial snap preview");
         drag_state.snap_preview_rect_world = Some(first_rect);
 
-        let second_delta = egui::vec2(-47.0, 0.0);
+        let second_delta = egui::vec2(-46.0, 0.0);
         let second_rect = compute_drag_snap_preview(&mut canvas, rect, &drag_state, second_delta)
-            .expect("expected hysteresis snap preview");
+            .expect("expected release-threshold snap preview");
 
         assert_eq!(second_rect.center(), first_rect.center());
+    }
+
+    #[test]
+    fn single_placement_guide_snapping_ignores_targets_outside_guide_threshold() {
+        let ctx = egui::Context::default();
+        let mut canvas = CanvasState::default();
+        canvas.set_layout_gap(24.0);
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
+        add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
+        canvas.select_items(&[2]);
+
+        let drag_state = DragState {
+            pointer_start_world: egui::Pos2::ZERO,
+            starting_items: canvas.selected_layout_items(),
+            snap_preview_rect_world: None,
+            started_at_seconds: 0.0,
+            last_movement_seconds: 0.0,
+            last_world_delta: egui::Vec2::ZERO,
+            moved: false,
+        };
+
+        let snap_rect = compute_drag_snap_preview(
+            &mut canvas,
+            test_screen_rect(),
+            &drag_state,
+            egui::vec2(-44.0, 0.0),
+        );
+
+        assert!(snap_rect.is_none());
+    }
+
+    #[test]
+    fn single_placement_guide_snapping_acquires_layout_gap_adjacency() {
+        let ctx = egui::Context::default();
+        let mut canvas = CanvasState::default();
+        canvas.set_layout_gap(24.0);
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
+        add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
+        canvas.select_items(&[2]);
+
+        let drag_state = DragState {
+            pointer_start_world: egui::Pos2::ZERO,
+            starting_items: canvas.selected_layout_items(),
+            snap_preview_rect_world: None,
+            started_at_seconds: 0.0,
+            last_movement_seconds: 0.0,
+            last_world_delta: egui::Vec2::ZERO,
+            moved: false,
+        };
+
+        let snap_rect = compute_drag_snap_preview(
+            &mut canvas,
+            test_screen_rect(),
+            &drag_state,
+            egui::vec2(-53.0, 0.0),
+        )
+        .expect("expected guide snap preview");
+
+        assert_eq!(snap_rect.center(), egui::pos2(124.0, 40.0));
+    }
+
+    #[test]
+    fn single_placement_guide_snapping_records_indicator() {
+        let ctx = egui::Context::default();
+        let mut canvas = CanvasState::default();
+        canvas.set_layout_gap(24.0);
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
+        add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
+        canvas.select_items(&[2]);
+
+        let drag_state = DragState {
+            pointer_start_world: egui::Pos2::ZERO,
+            starting_items: canvas.selected_layout_items(),
+            snap_preview_rect_world: None,
+            started_at_seconds: 0.0,
+            last_movement_seconds: 0.0,
+            last_world_delta: egui::Vec2::ZERO,
+            moved: false,
+        };
+
+        let _ = compute_drag_snap_preview(
+            &mut canvas,
+            test_screen_rect(),
+            &drag_state,
+            egui::vec2(-53.0, 0.0),
+        );
+
+        assert_eq!(canvas.guide_snap_indicator_count(), 1);
+        assert_eq!(canvas.guide_snap_mark_count(), 2);
+    }
+
+    #[test]
+    fn guide_snapping_marks_all_edge_points_on_the_guide_line() {
+        let ctx = egui::Context::default();
+        let mut canvas = CanvasState::default();
+        canvas.set_layout_gap(24.0);
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
+        add_test_image(&mut canvas, &ctx, 2, egui::pos2(160.0, 0.0), 100, 140);
+        canvas.select_items(&[2]);
+
+        let drag_state = DragState {
+            pointer_start_world: egui::Pos2::ZERO,
+            starting_items: canvas.selected_layout_items(),
+            snap_preview_rect_world: None,
+            started_at_seconds: 0.0,
+            last_movement_seconds: 0.0,
+            last_world_delta: egui::Vec2::ZERO,
+            moved: false,
+        };
+
+        let snap_rect = compute_drag_snap_preview(
+            &mut canvas,
+            test_screen_rect(),
+            &drag_state,
+            egui::vec2(-67.0, 0.0),
+        )
+        .expect("expected edge guide snap");
+
+        assert_eq!(snap_rect.left(), 50.0);
+        assert_eq!(canvas.guide_snap_indicator_count(), 1);
+        assert_eq!(canvas.guide_snap_mark_count(), 4);
+        assert_eq!(
+            canvas.interaction.guide_snap_indicators[0].segments[0],
+            (egui::pos2(50.0, -70.0), egui::pos2(50.0, 70.0))
+        );
+    }
+
+    #[test]
+    fn guide_snapping_marks_center_axis_only_for_center_alignment() {
+        let ctx = egui::Context::default();
+        let mut canvas = CanvasState::default();
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
+        add_test_image(&mut canvas, &ctx, 2, egui::pos2(7.0, 180.0), 60, 100);
+        canvas.select_items(&[2]);
+
+        let drag_state = DragState {
+            pointer_start_world: egui::Pos2::ZERO,
+            starting_items: canvas.selected_layout_items(),
+            snap_preview_rect_world: None,
+            started_at_seconds: 0.0,
+            last_movement_seconds: 0.0,
+            last_world_delta: egui::Vec2::ZERO,
+            moved: false,
+        };
+
+        let snap_rect = compute_drag_snap_preview(
+            &mut canvas,
+            test_screen_rect(),
+            &drag_state,
+            egui::vec2(0.0, 0.0),
+        )
+        .expect("expected center guide snap");
+
+        assert_eq!(snap_rect.center().x, 0.0);
+        assert_eq!(canvas.guide_snap_indicator_count(), 1);
+        assert_eq!(canvas.guide_snap_mark_count(), 6);
     }
 
     fn add_test_image(

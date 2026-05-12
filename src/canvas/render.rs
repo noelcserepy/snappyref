@@ -35,6 +35,8 @@ use super::{AnnotationPaintStats, CanvasDocumentState};
 const BACKGROUND_DOT_ALPHA: u8 = 76;
 const BACKGROUND_GRID_ALPHA: u8 = 58;
 const BACKGROUND_LOD_FADE_BAND_SCREEN: f32 = 24.0;
+const GUIDE_SNAP_COLOR: egui::Color32 = crate::theme::ACCENT_ORANGE;
+const GUIDE_SNAP_X_RADIUS: f32 = 2.0;
 
 pub(super) fn paint_images(
     painter: &egui::Painter,
@@ -473,7 +475,9 @@ fn paint_image_overlay(
             egui::StrokeKind::Outside,
         );
     }
-    if state.is_selected(image.record.item.id) {
+    if state.is_selected(image.record.item.id)
+        && selection_border_visible(state, painter.ctx().input(|input| input.time))
+    {
         let corners = image_screen_corners_for_record(
             &image.record,
             state.pan,
@@ -499,6 +503,15 @@ fn paint_image_overlay(
             crate::theme::TEXT,
         );
     }
+}
+
+fn selection_border_visible(state: &CanvasState, now_seconds: f64) -> bool {
+    let Some(drag_state) = &state.interaction.drag_state else {
+        return true;
+    };
+    !drag_state.moved
+        || now_seconds - drag_state.last_movement_seconds
+            >= super::SELECTION_BORDER_REAPPEAR_SECONDS
 }
 
 fn paint_image_mesh(
@@ -1547,6 +1560,10 @@ pub(super) fn paint_selection_bounds(
     rect: egui::Rect,
     state: &CanvasState,
 ) {
+    if !selection_border_visible(state, painter.ctx().input(|input| input.time)) {
+        return;
+    }
+
     if state.document.selected_annotation_ids.is_empty()
         && state.document.selected_item_ids.len() <= 1
     {
@@ -1572,6 +1589,38 @@ pub(super) fn paint_selection_bounds(
         egui::StrokeKind::Outside,
     );
     paint_rotation_handle(painter, rect, state);
+}
+
+pub(super) fn paint_guide_snap_indicators(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    state: &CanvasState,
+) {
+    let stroke = egui::Stroke::new(1.0, GUIDE_SNAP_COLOR);
+    for indicator in &state.interaction.guide_snap_indicators {
+        for (start_world, end_world) in &indicator.segments {
+            let start = state.world_to_screen(*start_world, rect);
+            let end = state.world_to_screen(*end_world, rect);
+            painter.line_segment([start, end], stroke);
+        }
+        for marker_world in &indicator.marks {
+            let marker = state.world_to_screen(*marker_world, rect);
+            painter.line_segment(
+                [
+                    marker + egui::vec2(-GUIDE_SNAP_X_RADIUS, -GUIDE_SNAP_X_RADIUS),
+                    marker + egui::vec2(GUIDE_SNAP_X_RADIUS, GUIDE_SNAP_X_RADIUS),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    marker + egui::vec2(-GUIDE_SNAP_X_RADIUS, GUIDE_SNAP_X_RADIUS),
+                    marker + egui::vec2(GUIDE_SNAP_X_RADIUS, -GUIDE_SNAP_X_RADIUS),
+                ],
+                stroke,
+            );
+        }
+    }
 }
 
 fn paint_rotation_handle(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) {
@@ -1829,6 +1878,34 @@ mod tests {
             desired_image_lod(&state, rect, 9),
             Some(CanvasImageLod::Detail)
         );
+    }
+
+    #[test]
+    fn selection_border_hides_while_placement_movement_is_recent() {
+        let state = CanvasState {
+            interaction: crate::canvas::CanvasInteractionState {
+                drag_state: Some(crate::canvas::DragState {
+                    pointer_start_world: egui::Pos2::ZERO,
+                    starting_items: vec![crate::canvas::SelectedLayoutItem {
+                        id: 1,
+                        x: 0.0,
+                        y: 0.0,
+                        width: 100.0,
+                        height: 100.0,
+                    }],
+                    snap_preview_rect_world: None,
+                    started_at_seconds: 10.0,
+                    last_movement_seconds: 10.5,
+                    last_world_delta: egui::vec2(4.0, 0.0),
+                    moved: true,
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(!selection_border_visible(&state, 11.0));
+        assert!(selection_border_visible(&state, 12.6));
     }
 
     fn test_image(

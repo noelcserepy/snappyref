@@ -14,8 +14,9 @@ use eframe::egui;
 use interaction::handle_input;
 use render::{
     annotation_style_toolbar_rect, editing_textbox_toolbar_rect, paint_annotation_draft,
-    paint_background, paint_canvas_items, paint_crop_marquee, paint_import_placeholders,
-    paint_marquee, paint_selection_bounds, show_annotation_style_toolbar, show_textbox_editor,
+    paint_background, paint_canvas_items, paint_crop_marquee, paint_guide_snap_indicators,
+    paint_import_placeholders, paint_marquee, paint_selection_bounds,
+    show_annotation_style_toolbar, show_textbox_editor,
 };
 use state::{CanvasDocumentState, CanvasInteractionState, CanvasRenderState};
 
@@ -31,6 +32,7 @@ const IMAGE_ROTATE_HANDLE_OFFSET_SCREEN: f32 = 18.0;
 const IMAGE_ROTATE_HANDLE_RADIUS_SCREEN: f32 = 7.0;
 const IMAGE_ROTATE_HANDLE_HIT_RADIUS_SCREEN: f32 = 13.0;
 const IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN: f32 = 32.0;
+const SELECTION_BORDER_REAPPEAR_SECONDS: f64 = 2.0;
 const MIN_TEXTBOX_WORLD_SIZE: egui::Vec2 = egui::vec2(240.0, 56.0);
 const TEXTBOX_RESIZE_HIT_RADIUS: f32 = 14.0;
 const TEXTBOX_DRAG_THRESHOLD_SCREEN: f32 = 4.0;
@@ -100,6 +102,12 @@ pub struct CanvasDocumentChanges {
     pub updated_annotations: Vec<CanvasAnnotation>,
     pub archived_annotation_ids: Vec<i64>,
     pub stack_order: Option<Vec<crate::data::CanvasStackItem>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GuideSnapIndicator {
+    segments: Vec<(egui::Pos2, egui::Pos2)>,
+    marks: Vec<egui::Pos2>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -256,6 +264,8 @@ struct DragState {
     starting_items: Vec<SelectedLayoutItem>,
     snap_preview_rect_world: Option<egui::Rect>,
     started_at_seconds: f64,
+    last_movement_seconds: f64,
+    last_world_delta: egui::Vec2,
     moved: bool,
 }
 
@@ -461,6 +471,8 @@ impl CanvasState {
             starting_items: self.selected_layout_items(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
+            last_movement_seconds: 0.0,
+            last_world_delta: egui::Vec2::ZERO,
             moved: false,
         };
         let snap_preview_rect =
@@ -1616,6 +1628,7 @@ pub fn show(
         debug_labels,
     );
     paint_selection_bounds(&painter, rect, state);
+    paint_guide_snap_indicators(&painter, rect, state);
     paint_crop_marquee(&painter, rect, state);
     paint_annotation_draft(&painter, rect, state);
     paint_marquee(&painter, state);

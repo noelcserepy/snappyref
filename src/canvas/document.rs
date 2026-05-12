@@ -631,6 +631,28 @@ impl CanvasState {
         self.interaction.move_preview_placeholders.clear();
     }
 
+    pub(super) fn clear_guide_snap_indicators(&mut self) {
+        self.interaction.guide_snap_indicators.clear();
+    }
+
+    pub(super) fn set_guide_snap_indicators(&mut self, indicators: Vec<super::GuideSnapIndicator>) {
+        self.interaction.guide_snap_indicators = indicators;
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn guide_snap_indicator_count(&self) -> usize {
+        self.interaction.guide_snap_indicators.len()
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn guide_snap_mark_count(&self) -> usize {
+        self.interaction
+            .guide_snap_indicators
+            .iter()
+            .map(|indicator| indicator.marks.len())
+            .sum()
+    }
+
     pub fn set_move_preview_placeholders(&mut self, placeholders: Vec<(egui::Pos2, egui::Vec2)>) {
         self.interaction.move_preview_placeholders.clear();
         self.interaction

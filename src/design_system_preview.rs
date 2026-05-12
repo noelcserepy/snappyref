@@ -101,6 +101,56 @@ pub(crate) fn show_compact_controls_comparison(ui: &mut egui::Ui, screen_rect: e
         });
 }
 
+pub(crate) fn show_guide_color_comparison(
+    ui: &mut egui::Ui,
+    screen_rect: egui::Rect,
+    name: &str,
+    color: egui::Color32,
+) {
+    ui.painter()
+        .rect_filled(screen_rect, 0, crate::theme::BACKGROUND);
+
+    let panel_width = 920.0_f32.min(screen_rect.width() - crate::theme::SPACE_8 * 2.0);
+    let panel_height = 620.0_f32.min(screen_rect.height() - crate::theme::SPACE_8 * 2.0);
+    let panel_rect =
+        egui::Rect::from_center_size(screen_rect.center(), egui::vec2(panel_width, panel_height));
+
+    egui::Area::new(egui::Id::new(format!("guide_color_comparison_{name}")))
+        .order(egui::Order::Foreground)
+        .fixed_pos(panel_rect.min)
+        .show(ui.ctx(), |ui| {
+            ui.set_min_size(panel_rect.size());
+            egui::Frame::new()
+                .fill(crate::theme::SURFACE)
+                .stroke(crate::theme::stroke_subtle())
+                .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_PANEL))
+                .inner_margin(egui::Margin::same(crate::theme::SPACE_6 as i8))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing =
+                        egui::vec2(crate::theme::SPACE_4, crate::theme::SPACE_3);
+                    ui.label(
+                        egui::RichText::new(format!("Guide color: {name}"))
+                            .text_style(crate::theme::display_text_style())
+                            .color(crate::theme::TEXT),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "Guide lines and half-size X markers only where snap points align.",
+                        )
+                        .text_style(egui::TextStyle::Body)
+                        .color(crate::theme::TEXT_MUTED),
+                    );
+                    ui.add_space(crate::theme::SPACE_4);
+                    let available_width = ui.available_width();
+                    let (canvas_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(available_width, panel_height - 122.0),
+                        egui::Sense::hover(),
+                    );
+                    paint_guide_color_sample(ui.painter(), canvas_rect, color);
+                });
+        });
+}
+
 pub(crate) fn show_radius_comparison(ui: &mut egui::Ui, screen_rect: egui::Rect) {
     ui.painter()
         .rect_filled(screen_rect, 0, crate::theme::BACKGROUND);
@@ -339,6 +389,26 @@ fn color_tokens(ui: &mut egui::Ui) {
             crate::theme::ACCENT,
             "Active focus and selection emphasis",
         ),
+        (
+            "Accent Blue",
+            crate::theme::ACCENT_BLUE,
+            "Canvas guide accent candidate",
+        ),
+        (
+            "Accent Green",
+            crate::theme::ACCENT_GREEN,
+            "Canvas guide accent candidate",
+        ),
+        (
+            "Accent Orange",
+            crate::theme::ACCENT_ORANGE,
+            "Canvas guide accent candidate",
+        ),
+        (
+            "Bright Orange",
+            crate::theme::ACCENT_BRIGHT_ORANGE,
+            "Canvas guide accent candidate",
+        ),
         ("Text", crate::theme::TEXT, "Primary readable copy"),
         ("Muted", crate::theme::TEXT_MUTED, "Secondary values"),
         ("Subtle", crate::theme::TEXT_SUBTLE, "Low-emphasis metadata"),
@@ -372,6 +442,106 @@ fn color_tokens(ui: &mut egui::Ui) {
                 ui.end_row();
             }
         });
+}
+
+fn paint_guide_color_sample(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    painter.rect_filled(rect, crate::theme::RADIUS_CONTROL, crate::theme::BACKGROUND);
+
+    let left = egui::Rect::from_min_size(
+        rect.left_top() + egui::vec2(106.0, 86.0),
+        egui::vec2(250.0, 178.0),
+    );
+    let right = egui::Rect::from_min_size(
+        egui::pos2(left.right(), left.top()),
+        egui::vec2(380.0, 178.0),
+    );
+    let lower = egui::Rect::from_min_size(
+        egui::pos2(right.center().x - 123.0, rect.top() + 334.0),
+        egui::vec2(246.0, 122.0),
+    );
+
+    for item_rect in [left, right, lower] {
+        painter.rect_filled(item_rect, 0, egui::Color32::from_rgb(245, 245, 242));
+    }
+
+    let stroke = egui::Stroke::new(1.0, color);
+    let center_y = left.center().y;
+    let shared_x = left.right();
+    let center_x = right.center().x;
+    let marker_radius = 2.0;
+
+    // Edge alignment: the two rectangles share the same vertical edge.
+    painter.line_segment(
+        [
+            egui::pos2(shared_x, left.top()),
+            egui::pos2(shared_x, left.bottom()),
+        ],
+        stroke,
+    );
+    for mark in [
+        left.right_top(),
+        left.right_bottom(),
+        right.left_top(),
+        right.left_bottom(),
+    ] {
+        paint_guide_x(painter, mark, marker_radius, stroke);
+    }
+
+    // Center alignment: these centers line up horizontally.
+    painter.line_segment(
+        [
+            egui::pos2(left.left(), center_y),
+            egui::pos2(right.right(), center_y),
+        ],
+        stroke,
+    );
+    for mark in [
+        left.left_center(),
+        left.center(),
+        left.right_center(),
+        right.left_center(),
+        right.center(),
+        right.right_center(),
+    ] {
+        paint_guide_x(painter, mark, marker_radius, stroke);
+    }
+
+    // Center alignment on the other axis. The line starts and ends at aligned
+    // snap points rather than crossing unrelated target centers.
+    painter.line_segment(
+        [
+            egui::pos2(center_x, right.top()),
+            egui::pos2(center_x, lower.bottom()),
+        ],
+        stroke,
+    );
+    for mark in [
+        right.center_top(),
+        right.center(),
+        right.center_bottom(),
+        lower.center_top(),
+        lower.center(),
+        lower.center_bottom(),
+    ] {
+        paint_guide_x(painter, mark, marker_radius, stroke);
+    }
+}
+
+fn paint_guide_x(painter: &egui::Painter, center: egui::Pos2, radius: f32, stroke: egui::Stroke) {
+    painter.line_segment(
+        [
+            center + egui::vec2(-radius, -radius),
+            center + egui::vec2(radius, radius),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            center + egui::vec2(-radius, radius),
+            center + egui::vec2(radius, -radius),
+        ],
+        stroke,
+    );
 }
 
 fn board_rows_variant_current(ui: &mut egui::Ui) {
