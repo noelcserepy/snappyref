@@ -1029,9 +1029,8 @@ pub(super) fn selected_image_rotation_handle_screen_pos(
     }
 
     let rotation = selected_group_rotation_angle(state)?;
-    selected_image_rotation_screen_rect(state, rect).map(|selection_rect| {
-        group_rotation_handle_screen_pos(selection_rect.expand(6.0), rotation)
-    })
+    selected_image_rotation_screen_rect(state, rect)
+        .map(|selection_rect| group_rotation_handle_screen_pos(selection_rect, rotation))
 }
 
 fn selected_image_rotation_screen_rect(
@@ -1181,8 +1180,8 @@ pub(super) fn compute_drag_snap_preview(
     drag_state: &DragState,
     world_delta: egui::Vec2,
 ) -> Option<egui::Rect> {
-    if drag_state.starting_items.len() == 1 {
-        let snap_rect = compute_single_placement_guide_snap(state, rect, drag_state, world_delta);
+    if !drag_state.starting_items.is_empty() {
+        let snap_rect = compute_placement_guide_snap(state, rect, drag_state, world_delta);
         if snap_rect.is_none() {
             state.clear_move_preview_placeholders();
             state.clear_guide_snap_indicators();
@@ -1237,15 +1236,19 @@ pub(super) fn compute_drag_snap_preview(
     Some(candidate.rect)
 }
 
-fn compute_single_placement_guide_snap(
+fn compute_placement_guide_snap(
     state: &mut CanvasState,
     screen_rect: egui::Rect,
     drag_state: &DragState,
     world_delta: egui::Vec2,
 ) -> Option<egui::Rect> {
-    let item = drag_state.starting_items.first()?;
     let desired_rect = offset_layout_bounds(&drag_state.starting_items, world_delta)?;
-    let candidates = guide_snap_candidate_rects(state, screen_rect, item.id);
+    let excluded_ids = drag_state
+        .starting_items
+        .iter()
+        .map(|item| item.id)
+        .collect::<Vec<_>>();
+    let candidates = guide_snap_candidate_rects(state, screen_rect, &excluded_ids);
     if candidates.is_empty() {
         return None;
     }
@@ -1336,14 +1339,14 @@ fn guide_snap_threshold_world(state: &CanvasState, drag_state: &DragState) -> f3
 fn guide_snap_candidate_rects(
     state: &CanvasState,
     screen_rect: egui::Rect,
-    excluded_item_id: i64,
+    excluded_item_ids: &[i64],
 ) -> Vec<egui::Rect> {
     let viewport = viewport_near_world_rect(state, screen_rect);
     state
         .document
         .images
         .iter()
-        .filter(|image| image.record.item.id != excluded_item_id)
+        .filter(|image| !excluded_item_ids.contains(&image.record.item.id))
         .filter_map(|image| {
             let visual_size = super::rotated_visual_size(
                 image.record.asset.width as f32 * image.record.item.scale.max(0.01),
@@ -2006,10 +2009,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(120.0, 0.0), 100, 80);
         canvas.select_items(&[1, 2]);
         let screen_rect = test_screen_rect();
-        let selection_rect = canvas
-            .selection_screen_rect(screen_rect)
-            .unwrap()
-            .expand(6.0);
+        let selection_rect = canvas.selection_screen_rect(screen_rect).unwrap();
 
         let (line_start, handle_pos) =
             selected_image_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
@@ -2034,10 +2034,7 @@ mod tests {
         let _ = canvas.set_image_rotation(1, std::f32::consts::FRAC_PI_2);
         let _ = canvas.set_image_rotation(2, std::f32::consts::FRAC_PI_2);
         let screen_rect = test_screen_rect();
-        let selection_rect = canvas
-            .selection_screen_rect(screen_rect)
-            .unwrap()
-            .expand(6.0);
+        let selection_rect = canvas.selection_screen_rect(screen_rect).unwrap();
 
         let (line_start, handle_pos) =
             selected_image_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
@@ -2360,6 +2357,73 @@ mod tests {
             egui::vec2(0.0, 0.0),
         )
         .expect("expected center guide snap");
+
+        assert_eq!(snap_rect.center().x, 0.0);
+        assert_eq!(canvas.guide_snap_indicator_count(), 1);
+        assert_eq!(canvas.guide_snap_mark_count(), 6);
+    }
+
+    #[test]
+    fn multi_placement_guide_snapping_uses_selection_bounding_box_edge() {
+        let ctx = egui::Context::default();
+        let mut canvas = CanvasState::default();
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
+        add_test_image(&mut canvas, &ctx, 2, egui::pos2(210.0, -40.0), 80, 80);
+        add_test_image(&mut canvas, &ctx, 3, egui::pos2(320.0, 60.0), 60, 100);
+        canvas.select_items(&[2, 3]);
+
+        let drag_state = DragState {
+            pointer_start_world: egui::Pos2::ZERO,
+            starting_items: canvas.selected_layout_items(),
+            snap_preview_rect_world: None,
+            started_at_seconds: 0.0,
+            last_movement_seconds: 0.0,
+            last_world_delta: egui::Vec2::ZERO,
+            moved: false,
+        };
+
+        let snap_rect = compute_drag_snap_preview(
+            &mut canvas,
+            test_screen_rect(),
+            &drag_state,
+            egui::vec2(-119.0, 0.0),
+        )
+        .expect("expected multi-selection guide snap");
+
+        assert_eq!(snap_rect.left(), 50.0);
+        assert_eq!(canvas.guide_snap_indicator_count(), 1);
+        assert_eq!(
+            canvas.interaction.guide_snap_indicators[0].segments[0],
+            (egui::pos2(50.0, -80.0), egui::pos2(50.0, 110.0))
+        );
+    }
+
+    #[test]
+    fn multi_placement_guide_snapping_uses_selection_bounding_box_center() {
+        let ctx = egui::Context::default();
+        let mut canvas = CanvasState::default();
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
+        add_test_image(&mut canvas, &ctx, 2, egui::pos2(170.0, -40.0), 80, 80);
+        add_test_image(&mut canvas, &ctx, 3, egui::pos2(280.0, 60.0), 60, 100);
+        canvas.select_items(&[2, 3]);
+
+        let drag_state = DragState {
+            pointer_start_world: egui::Pos2::ZERO,
+            starting_items: canvas.selected_layout_items(),
+            snap_preview_rect_world: None,
+            started_at_seconds: 0.0,
+            last_movement_seconds: 0.0,
+            last_world_delta: egui::Vec2::ZERO,
+            moved: false,
+        };
+
+        let snap_rect = compute_drag_snap_preview(
+            &mut canvas,
+            test_screen_rect(),
+            &drag_state,
+            egui::vec2(-213.0, 0.0),
+        )
+        .expect("expected multi-selection center guide snap");
 
         assert_eq!(snap_rect.center().x, 0.0);
         assert_eq!(canvas.guide_snap_indicator_count(), 1);

@@ -35,6 +35,7 @@ use super::{AnnotationPaintStats, CanvasDocumentState};
 const BACKGROUND_DOT_ALPHA: u8 = 76;
 const BACKGROUND_GRID_ALPHA: u8 = 58;
 const BACKGROUND_LOD_FADE_BAND_SCREEN: f32 = 24.0;
+const SELECTION_BORDER_WIDTH: f32 = 1.0;
 const GUIDE_SNAP_COLOR: egui::Color32 = crate::theme::ACCENT_ORANGE;
 const GUIDE_SNAP_X_RADIUS: f32 = 2.0;
 
@@ -1583,9 +1584,9 @@ pub(super) fn paint_selection_bounds(
     };
 
     painter.rect_stroke(
-        selection_rect.expand(6.0),
+        selection_rect,
         0.0,
-        crate::theme::stroke_strong(),
+        egui::Stroke::new(SELECTION_BORDER_WIDTH, crate::theme::TEXT),
         egui::StrokeKind::Outside,
     );
     paint_rotation_handle(painter, rect, state);
