@@ -8,11 +8,11 @@ use super::geometry::{
 use super::render::textbox_pointer_region;
 use super::{
     ANNOTATION_HIT_RADIUS, AnnotationDraftState, AnnotationDragState, CanvasHit, CanvasImage,
-    CanvasState, CropState, DragState, IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN,
-    IMAGE_RESIZE_HIT_RADIUS, IMAGE_ROTATE_HANDLE_HIT_RADIUS_SCREEN, ImageResizeHandle,
-    ImageTransformState, MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE,
-    PendingAnnotation, SelectedLayoutItem, TEXTBOX_DRAG_THRESHOLD_SCREEN,
-    TEXTBOX_RESIZE_HIT_RADIUS, TextboxPointerRegion, TextboxResizeHandle, TextboxTransformState,
+    CanvasState, CropState, DragState, IMAGE_RESIZE_HIT_RADIUS,
+    IMAGE_ROTATE_HANDLE_HIT_RADIUS_SCREEN, ImageResizeHandle, ImageTransformState, MAX_CANVAS_ZOOM,
+    MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation, SelectedLayoutItem,
+    TEXTBOX_DRAG_THRESHOLD_SCREEN, TEXTBOX_RESIZE_HIT_RADIUS, TextboxPointerRegion,
+    TextboxResizeHandle, TextboxTransformState,
 };
 use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasStackItem, CanvasTextSize};
 
@@ -20,10 +20,6 @@ use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasStackItem, Canva
 // primary-press on a placement so click-to-select doesn't jerk the image via
 // snap.
 const IMAGE_MOVE_DEBOUNCE_SECONDS: f64 = 0.090;
-const GUIDE_SNAP_ACQUIRE_DISTANCE_SCREEN: f32 = 8.0;
-const GUIDE_SNAP_RELEASE_DISTANCE_SCREEN: f32 = 12.0;
-const GUIDE_SNAP_VIEWPORT_PADDING_SCREEN: f32 = 64.0;
-const GUIDE_SNAP_EPSILON: f32 = 0.001;
 
 pub(super) fn handle_input(
     ui: &egui::Ui,
@@ -1180,60 +1176,15 @@ pub(super) fn compute_drag_snap_preview(
     drag_state: &DragState,
     world_delta: egui::Vec2,
 ) -> Option<egui::Rect> {
-    if !drag_state.starting_items.is_empty() {
-        let snap_rect = compute_placement_guide_snap(state, rect, drag_state, world_delta);
-        if snap_rect.is_none() {
-            state.clear_move_preview_placeholders();
-            state.clear_guide_snap_indicators();
-        }
-        return snap_rect;
-    }
-
-    let excluded_ids = drag_state
-        .starting_items
-        .iter()
-        .map(|item| item.id)
-        .collect::<Vec<_>>();
-    let obstacles = state.board_snap_obstacles_excluding(&excluded_ids);
-    let Some(bounds) = offset_layout_bounds(&drag_state.starting_items, world_delta) else {
+    let Some(result) = compute_placement_guide_snap(state, rect, drag_state, world_delta) else {
         state.clear_move_preview_placeholders();
+        state.clear_guide_snap_indicators();
         return None;
     };
-
-    let max_snap_distance_world = IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN / state.zoom.max(0.01);
-    let request = crate::layout_snap::MoveSnapRequest {
-        desired_rect: bounds,
-        drag_delta: world_delta,
-        gap: state.layout_gap,
-        max_snap_distance: max_snap_distance_world,
-    };
-    let candidate = apply_preview_hysteresis(
-        crate::layout_snap::best_move_snap_candidate(&obstacles, &request),
-        drag_state
-            .snap_preview_rect_world
-            .and_then(|previous_rect| {
-                crate::layout_snap::validate_move_snap_candidate(
-                    &obstacles,
-                    &request,
-                    previous_rect,
-                )
-            }),
-        (IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN * 0.2) / state.zoom.max(0.01),
-    );
-    let Some(candidate) = candidate else {
-        state.clear_move_preview_placeholders();
-        return None;
-    };
-
-    let candidate_screen = state.world_to_screen(candidate.rect.center(), rect);
-    let desired_screen = state.world_to_screen(bounds.center(), rect);
-    if candidate_screen.distance(desired_screen) >= IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN {
-        state.clear_move_preview_placeholders();
-        return None;
-    }
 
     state.clear_move_preview_placeholders();
-    Some(candidate.rect)
+    state.set_guide_snap_indicators(result.indicators);
+    Some(result.rect)
 }
 
 fn compute_placement_guide_snap(
@@ -1241,7 +1192,7 @@ fn compute_placement_guide_snap(
     screen_rect: egui::Rect,
     drag_state: &DragState,
     world_delta: egui::Vec2,
-) -> Option<egui::Rect> {
+) -> Option<super::guide_snap::GuideSnapResult> {
     let desired_rect = offset_layout_bounds(&drag_state.starting_items, world_delta)?;
     let excluded_ids = drag_state
         .starting_items
@@ -1258,99 +1209,19 @@ fn compute_placement_guide_snap(
 }
 
 pub(super) fn compute_guide_snap_for_rect(
-    state: &mut CanvasState,
+    state: &CanvasState,
     screen_rect: egui::Rect,
     desired_rect: egui::Rect,
     excluded_ids: &[i64],
     previously_snapped: bool,
-) -> Option<egui::Rect> {
+) -> Option<super::guide_snap::GuideSnapResult> {
     let candidates = guide_snap_candidate_rects(state, screen_rect, excluded_ids);
-    if candidates.is_empty() {
-        state.clear_guide_snap_indicators();
-        return None;
-    }
-
-    let threshold = guide_snap_threshold_world(state, previously_snapped);
-    let mut best_x = best_axis_alignment_snap_x(desired_rect, &candidates, threshold);
-    consider_horizontal_adjacency_snaps(
+    super::guide_snap::snap_rect(super::guide_snap::GuideSnapRequest {
         desired_rect,
-        &candidates,
-        state.layout_gap,
-        threshold,
-        &mut best_x,
-    );
-    let mut best_y = best_axis_alignment_snap_y(desired_rect, &candidates, threshold);
-    consider_vertical_adjacency_snaps(
-        desired_rect,
-        &candidates,
-        state.layout_gap,
-        threshold,
-        &mut best_y,
-    );
-
-    let nudge = egui::vec2(
-        best_x.map(|snap| snap.nudge).unwrap_or(0.0),
-        best_y.map(|snap| snap.nudge).unwrap_or(0.0),
-    );
-    if nudge.length_sq() <= GUIDE_SNAP_EPSILON {
-        state.clear_guide_snap_indicators();
-        return None;
-    }
-    let snapped_rect = desired_rect.translate(nudge);
-    let mut indicators = Vec::new();
-    if let Some(snap) = best_x {
-        indicators.push(guide_indicator_for_axis(
-            GuideAxis::Vertical,
-            snap.coord,
-            snap.kind,
-            snapped_rect,
-            &candidates,
-        ));
-    }
-    if let Some(snap) = best_y {
-        indicators.push(guide_indicator_for_axis(
-            GuideAxis::Horizontal,
-            snap.coord,
-            snap.kind,
-            snapped_rect,
-            &candidates,
-        ));
-    }
-    if let (Some(x_snap), Some(y_snap)) = (best_x, best_y) {
-        add_guide_intersection_marks(&mut indicators, egui::pos2(x_snap.coord, y_snap.coord));
-    }
-    state.set_guide_snap_indicators(indicators);
-    Some(snapped_rect)
-}
-
-#[derive(Clone, Copy, Debug)]
-struct GuideAxisSnap {
-    nudge: f32,
-    distance: f32,
-    coord: f32,
-    kind: GuideSnapKind,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum GuideAxis {
-    Horizontal,
-    Vertical,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum GuideSnapKind {
-    Edge,
-    Center,
-    Adjacency,
-}
-
-fn guide_snap_threshold_world(state: &CanvasState, previously_snapped: bool) -> f32 {
-    let threshold_screen = if previously_snapped {
-        GUIDE_SNAP_RELEASE_DISTANCE_SCREEN
-    } else {
-        GUIDE_SNAP_ACQUIRE_DISTANCE_SCREEN
-    };
-    threshold_screen / state.zoom.max(0.01)
+        candidates: &candidates,
+        gap: state.layout_gap,
+        threshold: super::guide_snap::threshold_world(state.zoom, previously_snapped),
+    })
 }
 
 fn guide_snap_candidate_rects(
@@ -1380,287 +1251,11 @@ fn guide_snap_candidate_rects(
 }
 
 fn viewport_near_world_rect(state: &CanvasState, screen_rect: egui::Rect) -> egui::Rect {
-    let expanded = screen_rect.expand(GUIDE_SNAP_VIEWPORT_PADDING_SCREEN);
+    let expanded = screen_rect.expand(super::guide_snap::VIEWPORT_PADDING_SCREEN);
     egui::Rect::from_two_pos(
         state.screen_to_world(expanded.min, screen_rect),
         state.screen_to_world(expanded.max, screen_rect),
     )
-}
-
-fn best_axis_alignment_snap_x(
-    desired_rect: egui::Rect,
-    candidates: &[egui::Rect],
-    threshold: f32,
-) -> Option<GuideAxisSnap> {
-    let desired_coords = [
-        (desired_rect.left(), false),
-        (desired_rect.center().x, true),
-        (desired_rect.right(), false),
-    ];
-    let mut best = None;
-    for candidate in candidates {
-        let candidate_coords = [
-            (candidate.left(), false),
-            (candidate.center().x, true),
-            (candidate.right(), false),
-        ];
-        for (desired, desired_center) in desired_coords {
-            for (target, target_center) in candidate_coords {
-                if desired_center != target_center {
-                    continue;
-                }
-                let kind = if desired_center {
-                    GuideSnapKind::Center
-                } else {
-                    GuideSnapKind::Edge
-                };
-                best = consider_axis_snap(best, target - desired, threshold, target, kind);
-            }
-        }
-    }
-    best
-}
-
-fn best_axis_alignment_snap_y(
-    desired_rect: egui::Rect,
-    candidates: &[egui::Rect],
-    threshold: f32,
-) -> Option<GuideAxisSnap> {
-    let desired_coords = [
-        (desired_rect.top(), false),
-        (desired_rect.center().y, true),
-        (desired_rect.bottom(), false),
-    ];
-    let mut best = None;
-    for candidate in candidates {
-        let candidate_coords = [
-            (candidate.top(), false),
-            (candidate.center().y, true),
-            (candidate.bottom(), false),
-        ];
-        for (desired, desired_center) in desired_coords {
-            for (target, target_center) in candidate_coords {
-                if desired_center != target_center {
-                    continue;
-                }
-                let kind = if desired_center {
-                    GuideSnapKind::Center
-                } else {
-                    GuideSnapKind::Edge
-                };
-                best = consider_axis_snap(best, target - desired, threshold, target, kind);
-            }
-        }
-    }
-    best
-}
-
-fn consider_horizontal_adjacency_snaps(
-    desired_rect: egui::Rect,
-    candidates: &[egui::Rect],
-    gap: f32,
-    threshold: f32,
-    best: &mut Option<GuideAxisSnap>,
-) {
-    for candidate in candidates {
-        if vertical_overlap_span(desired_rect, *candidate) <= GUIDE_SNAP_EPSILON {
-            continue;
-        }
-        for nudge in [
-            candidate.right() + gap - desired_rect.left(),
-            candidate.left() - gap - desired_rect.right(),
-        ] {
-            let coord = if nudge > 0.0 {
-                desired_rect.left() + nudge
-            } else {
-                desired_rect.right() + nudge
-            };
-            *best = consider_axis_snap(*best, nudge, threshold, coord, GuideSnapKind::Adjacency);
-        }
-    }
-}
-
-fn consider_vertical_adjacency_snaps(
-    desired_rect: egui::Rect,
-    candidates: &[egui::Rect],
-    gap: f32,
-    threshold: f32,
-    best: &mut Option<GuideAxisSnap>,
-) {
-    for candidate in candidates {
-        if horizontal_overlap_span(desired_rect, *candidate) <= GUIDE_SNAP_EPSILON {
-            continue;
-        }
-        for nudge in [
-            candidate.bottom() + gap - desired_rect.top(),
-            candidate.top() - gap - desired_rect.bottom(),
-        ] {
-            let coord = if nudge > 0.0 {
-                desired_rect.top() + nudge
-            } else {
-                desired_rect.bottom() + nudge
-            };
-            *best = consider_axis_snap(*best, nudge, threshold, coord, GuideSnapKind::Adjacency);
-        }
-    }
-}
-
-fn consider_axis_snap(
-    best: Option<GuideAxisSnap>,
-    nudge: f32,
-    threshold: f32,
-    coord: f32,
-    kind: GuideSnapKind,
-) -> Option<GuideAxisSnap> {
-    let distance = nudge.abs();
-    if distance > threshold || distance <= GUIDE_SNAP_EPSILON {
-        return best;
-    }
-    match best {
-        Some(best) if best.distance <= distance => Some(best),
-        _ => Some(GuideAxisSnap {
-            nudge,
-            distance,
-            coord,
-            kind,
-        }),
-    }
-}
-
-fn vertical_overlap_span(left: egui::Rect, right: egui::Rect) -> f32 {
-    (left.bottom().min(right.bottom()) - left.top().max(right.top())).max(0.0)
-}
-
-fn horizontal_overlap_span(left: egui::Rect, right: egui::Rect) -> f32 {
-    (left.right().min(right.right()) - left.left().max(right.left())).max(0.0)
-}
-
-fn guide_indicator_for_axis(
-    axis: GuideAxis,
-    coord: f32,
-    kind: GuideSnapKind,
-    snapped_rect: egui::Rect,
-    candidates: &[egui::Rect],
-) -> super::GuideSnapIndicator {
-    let mut marks = Vec::new();
-    collect_axis_marks(axis, coord, kind, snapped_rect, &mut marks);
-    for candidate in candidates {
-        collect_axis_marks(axis, coord, kind, *candidate, &mut marks);
-    }
-    dedupe_points(&mut marks);
-
-    if marks.is_empty() {
-        return super::GuideSnapIndicator {
-            segments: Vec::new(),
-            marks,
-        };
-    }
-
-    let segment = match axis {
-        GuideAxis::Vertical => {
-            let min_y = marks
-                .iter()
-                .map(|point| point.y)
-                .fold(f32::INFINITY, f32::min);
-            let max_y = marks
-                .iter()
-                .map(|point| point.y)
-                .fold(f32::NEG_INFINITY, f32::max);
-            (egui::pos2(coord, min_y), egui::pos2(coord, max_y))
-        }
-        GuideAxis::Horizontal => {
-            let min_x = marks
-                .iter()
-                .map(|point| point.x)
-                .fold(f32::INFINITY, f32::min);
-            let max_x = marks
-                .iter()
-                .map(|point| point.x)
-                .fold(f32::NEG_INFINITY, f32::max);
-            (egui::pos2(min_x, coord), egui::pos2(max_x, coord))
-        }
-    };
-
-    super::GuideSnapIndicator {
-        segments: vec![segment],
-        marks,
-    }
-}
-
-fn collect_axis_marks(
-    axis: GuideAxis,
-    coord: f32,
-    kind: GuideSnapKind,
-    rect: egui::Rect,
-    marks: &mut Vec<egui::Pos2>,
-) {
-    for point in rect_snap_points(rect, kind) {
-        let aligned = match axis {
-            GuideAxis::Vertical => (point.x - coord).abs() <= GUIDE_SNAP_EPSILON,
-            GuideAxis::Horizontal => (point.y - coord).abs() <= GUIDE_SNAP_EPSILON,
-        };
-        if aligned {
-            marks.push(point);
-        }
-    }
-}
-
-fn rect_snap_points(rect: egui::Rect, kind: GuideSnapKind) -> Vec<egui::Pos2> {
-    match kind {
-        GuideSnapKind::Edge | GuideSnapKind::Adjacency => {
-            vec![
-                rect.left_top(),
-                rect.right_top(),
-                rect.left_bottom(),
-                rect.right_bottom(),
-            ]
-        }
-        GuideSnapKind::Center => vec![
-            egui::pos2(rect.center().x, rect.top()),
-            egui::pos2(rect.left(), rect.center().y),
-            rect.center(),
-            egui::pos2(rect.right(), rect.center().y),
-            egui::pos2(rect.center().x, rect.bottom()),
-        ],
-    }
-}
-
-fn dedupe_points(points: &mut Vec<egui::Pos2>) {
-    let mut deduped = Vec::with_capacity(points.len());
-    for point in points.drain(..) {
-        if deduped
-            .iter()
-            .any(|existing: &egui::Pos2| existing.distance(point) <= GUIDE_SNAP_EPSILON)
-        {
-            continue;
-        }
-        deduped.push(point);
-    }
-    *points = deduped;
-}
-
-fn add_guide_intersection_marks(indicators: &mut [super::GuideSnapIndicator], point: egui::Pos2) {
-    for indicator in indicators {
-        indicator.marks.push(point);
-        dedupe_points(&mut indicator.marks);
-    }
-}
-
-fn apply_preview_hysteresis(
-    best: Option<crate::layout_snap::MoveSnapCandidate>,
-    previous: Option<crate::layout_snap::MoveSnapCandidate>,
-    hysteresis_distance: f32,
-) -> Option<crate::layout_snap::MoveSnapCandidate> {
-    match (best, previous) {
-        (Some(best), Some(previous))
-            if best.rect.center().distance(previous.rect.center()) <= hysteresis_distance =>
-        {
-            Some(previous)
-        }
-        (Some(best), _) => Some(best),
-        (None, Some(previous)) => Some(previous),
-        (None, None) => None,
-    }
 }
 
 pub(super) fn offset_layout_bounds(

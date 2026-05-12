@@ -83,6 +83,7 @@ struct ContextMenuItem {
 
 #[derive(Default)]
 struct PendingImportBatch {
+    target_board_id: i64,
     pending_queue_ids: HashSet<u64>,
     loaded_item_ids: Vec<i64>,
 }
@@ -3103,14 +3104,26 @@ impl SnappyRefApp {
                 ExternalImportSource::Url(url) => format!("Queued URL import: {url}"),
             };
         }
-        self.register_import_batch(queued_batch_ids);
+        self.register_import_batch(self.active_board_id, queued_batch_ids);
     }
 
-    fn register_import_batch(&mut self, queue_ids: Vec<u64>) {
+    fn register_import_batch(&mut self, target_board_id: i64, queue_ids: Vec<u64>) {
         if queue_ids.len() <= 1 {
             return;
         }
+        self.register_import_batch_any_size(target_board_id, queue_ids);
+    }
+
+    fn register_search_import_batch(&mut self, target_board_id: i64, queue_ids: Vec<u64>) {
+        if queue_ids.is_empty() {
+            return;
+        }
+        self.register_import_batch_any_size(target_board_id, queue_ids);
+    }
+
+    fn register_import_batch_any_size(&mut self, target_board_id: i64, queue_ids: Vec<u64>) {
         self.pending_import_batches.push(PendingImportBatch {
+            target_board_id,
             pending_queue_ids: queue_ids.into_iter().collect(),
             loaded_item_ids: Vec::new(),
         });
@@ -3118,6 +3131,7 @@ impl SnappyRefApp {
 
     fn finish_import_queue_id_in_batches(
         &mut self,
+        target_board_id: Option<i64>,
         queue_id: Option<u64>,
         loaded_item_id: Option<i64>,
     ) {
@@ -3136,19 +3150,24 @@ impl SnappyRefApp {
                 batch.loaded_item_ids.push(item_id);
             }
             if batch.pending_queue_ids.is_empty() {
-                completed_batches.push(std::mem::take(&mut batch.loaded_item_ids));
+                completed_batches.push((
+                    batch.target_board_id,
+                    std::mem::take(&mut batch.loaded_item_ids),
+                ));
             }
         }
         self.pending_import_batches
             .retain(|batch| !batch.pending_queue_ids.is_empty());
 
-        for item_ids in completed_batches {
-            self.finalize_completed_import_batch(item_ids);
+        for (batch_board_id, item_ids) in completed_batches {
+            if target_board_id.is_none_or(|id| id == batch_board_id) {
+                self.finalize_completed_import_batch(batch_board_id, item_ids);
+            }
         }
     }
 
-    fn finalize_completed_import_batch(&mut self, item_ids: Vec<i64>) {
-        if item_ids.is_empty() {
+    fn finalize_completed_import_batch(&mut self, target_board_id: i64, item_ids: Vec<i64>) {
+        if item_ids.is_empty() || target_board_id != self.active_board_id {
             return;
         }
         self.canvas.select_items(&item_ids);
@@ -3847,6 +3866,10 @@ impl SnappyRefApp {
     }
 
     fn apply_loaded_import_outcome(&mut self, outcome: LoadedImportOutcome) {
+        let placeholder_target_board_id = outcome
+            .placeholder_removal
+            .as_ref()
+            .map(|placeholder| placeholder.target_board_id);
         let placeholder_queue_id = outcome.placeholder_removal.map(|placeholder| {
             self.remove_import_placeholder_for_board(
                 placeholder.target_board_id,
@@ -3869,7 +3892,11 @@ impl SnappyRefApp {
         #[cfg(feature = "semantic-search")]
         let indexed_asset = outcome.indexed_asset;
         let loaded_item_id = outcome.log.as_ref().map(|log| log.record.item.id);
-        self.finish_import_queue_id_in_batches(placeholder_queue_id, loaded_item_id);
+        self.finish_import_queue_id_in_batches(
+            placeholder_target_board_id,
+            placeholder_queue_id,
+            loaded_item_id,
+        );
         if let Some(log) = outcome.log {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
                 scenario.visible_imports += 1;
@@ -3968,8 +3995,13 @@ impl SnappyRefApp {
     }
 
     fn apply_failed_import_outcome(&mut self, outcome: FailedImportOutcome) {
+        let target_board_id = outcome
+            .placeholder_removal
+            .as_ref()
+            .map(|placeholder| placeholder.target_board_id);
         let queue_id = outcome
             .placeholder_removal
+            .as_ref()
             .map(|placeholder| placeholder.queue_id);
         if let Some(placeholder) = outcome.placeholder_removal {
             self.remove_import_placeholder_for_board(
@@ -3977,7 +4009,7 @@ impl SnappyRefApp {
                 placeholder.queue_id,
             );
         }
-        self.finish_import_queue_id_in_batches(queue_id, None);
+        self.finish_import_queue_id_in_batches(target_board_id, queue_id, None);
         self.status = outcome.status;
     }
 
@@ -5026,8 +5058,9 @@ impl SnappyRefApp {
             .into_iter()
             .map(|item| egui::pos2(item.x, item.y))
             .collect::<Vec<_>>();
-
-        for (asset_index, asset_id) in drop_request.asset_ids.into_iter().enumerate() {
+        let asset_ids = drop_request.asset_ids;
+        let mut asset_specs = Vec::with_capacity(asset_ids.len());
+        for asset_id in asset_ids {
             let asset = match library.load_asset(asset_id) {
                 Ok(asset) => asset,
                 Err(error) => {
@@ -5035,7 +5068,31 @@ impl SnappyRefApp {
                     return;
                 }
             };
-            let placed_world = asset_preview_centers
+            asset_specs.push(asset);
+        }
+        let asset_centers = if asset_preview_centers.len() == asset_specs.len() {
+            asset_preview_centers
+        } else {
+            let sizes = asset_specs
+                .iter()
+                .map(|asset| self.import_size_world(asset.width, asset.height))
+                .collect::<Vec<_>>();
+            self.canvas
+                .compact_guided_preview_placeholders(
+                    &sizes,
+                    drop_world,
+                    screen_rect,
+                    self.settings.import_gap,
+                )
+                .into_iter()
+                .map(|(center, _)| center)
+                .collect()
+        };
+
+        let mut asset_loads = Vec::with_capacity(asset_specs.len());
+        let mut asset_queue_ids = Vec::with_capacity(asset_specs.len());
+        for (asset_index, asset) in asset_specs.into_iter().enumerate() {
+            let placed_world = asset_centers
                 .get(asset_index)
                 .copied()
                 .unwrap_or(drop_world);
@@ -5052,7 +5109,7 @@ impl SnappyRefApp {
                 self.settings.import_target_canvas_area,
             );
             let record =
-                match library.create_board_item_from_asset(asset_id, placed_world, scale, 0.0, 0) {
+                match library.create_board_item_from_asset(asset.id, placed_world, scale, 0.0, 0) {
                     Ok(record) => record,
                     Err(error) => {
                         self.remove_import_reservation(reservation);
@@ -5060,8 +5117,13 @@ impl SnappyRefApp {
                         return;
                     }
                 };
-            let item_id = record.item.id;
-            added_ids.push(item_id);
+            asset_queue_ids.push(reservation.queue_id);
+            asset_loads.push((reservation, record));
+        }
+        self.register_search_import_batch(self.active_board_id, asset_queue_ids);
+        let asset_load_count = asset_loads.len();
+
+        for (reservation, record) in asset_loads {
             if let Some(import_worker) = &self.import_worker {
                 if let Err(error) =
                     import_worker.enqueue(crate::jobs::ImportRequest::LoadExisting {
@@ -5078,6 +5140,11 @@ impl SnappyRefApp {
                     })
                 {
                     self.remove_import_reservation(reservation);
+                    self.finish_import_queue_id_in_batches(
+                        Some(self.active_board_id),
+                        Some(reservation.queue_id),
+                        None,
+                    );
                     self.status = error;
                     return;
                 }
@@ -5100,6 +5167,11 @@ impl SnappyRefApp {
                     }
                     crate::jobs::ImportResult::Failed { error, .. } => {
                         self.remove_import_reservation(reservation);
+                        self.finish_import_queue_id_in_batches(
+                            Some(self.active_board_id),
+                            Some(reservation.queue_id),
+                            None,
+                        );
                         self.status = error;
                         return;
                     }
@@ -5108,18 +5180,17 @@ impl SnappyRefApp {
             }
         }
 
-        self.canvas.select_items(&added_ids);
-        if added_ids.len() > 1 {
-            self.canvas
-                .arrange_selected_compact(self.settings.import_gap);
+        if !added_ids.is_empty() {
+            self.canvas.select_items(&added_ids);
+            if added_ids.len() > 1 {
+                self.canvas
+                    .arrange_selected_compact(self.settings.import_gap);
+            }
+            self.persist_canvas_changes();
         }
-        self.persist_canvas_changes();
-        let noun = if added_ids.len() == 1 {
-            "image"
-        } else {
-            "images"
-        };
-        self.status = format!("Added {} search {noun}", added_ids.len());
+        let placed_count = added_ids.len() + asset_load_count;
+        let noun = if placed_count == 1 { "image" } else { "images" };
+        self.status = format!("Added {placed_count} search {noun}");
         self.canvas.clear_search_drag_preview();
         self.canvas.clear_move_preview_placeholders();
         self.search.close_overlay(Some(&mut self.canvas));
@@ -8364,6 +8435,7 @@ mod tests {
         let active_items = library.load_board_items().unwrap();
         assert_eq!(active_items.len(), 1);
         assert_eq!(harness.state().canvas.import_placeholder_count(), 1);
+        assert_eq!(harness.state().pending_import_batches.len(), 1);
         assert!(
             harness
                 .state()
@@ -8979,7 +9051,7 @@ mod tests {
     fn completed_multi_file_import_batch_selects_and_compacts_real_items() {
         let ctx = egui::Context::default();
         let mut app = test_app(None);
-        app.register_import_batch(vec![1, 2, 3]);
+        app.register_import_batch(app.active_board_id, vec![1, 2, 3]);
 
         for (id, width, height) in [(1_i64, 180_u32, 80_u32), (2, 70, 210), (3, 140, 120)] {
             let asset = ImageAsset {
@@ -9043,6 +9115,21 @@ mod tests {
                 assert!(!left.intersects(*right), "{left:?} overlaps {right:?}");
             }
         }
+        assert!(app.pending_import_batches.is_empty());
+    }
+
+    #[test]
+    fn completed_inactive_board_import_batch_does_not_mutate_active_canvas() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.register_import_batch(1, vec![1, 2]);
+        app.active_board_id = 2;
+
+        app.integrate_loaded_import(&ctx, test_loaded_item(1, 1));
+        app.integrate_loaded_import(&ctx, test_loaded_item(2, 1));
+
+        assert!(app.canvas.selected_item_ids().is_empty());
+        assert!(app.canvas.record_for_item_id(1).is_none());
         assert!(app.pending_import_batches.is_empty());
     }
 

@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 mod document;
 mod geometry;
+mod guide_snap;
 mod interaction;
 mod render;
 mod state;
@@ -640,14 +641,19 @@ pub(crate) fn compact_layout_for_sizes(
         return sizes.iter().map(|size| (center_world, *size)).collect();
     };
     let local_center = egui::pos2(width * 0.5, height * 0.5);
-    placements
-        .into_iter()
-        .filter_map(|(id, placement)| {
-            sizes
-                .get(id as usize)
-                .map(|size| (center_world + (placement - local_center), *size))
-        })
-        .collect()
+    let mut ordered = sizes
+        .iter()
+        .map(|size| (center_world, *size))
+        .collect::<Vec<_>>();
+    for (id, placement) in placements {
+        if let Some(slot) = ordered.get_mut(id as usize) {
+            *slot = (
+                center_world + (placement - local_center),
+                sizes[id as usize],
+            );
+        }
+    }
+    ordered
 }
 
 fn sorted_compact_items(
@@ -1724,8 +1730,8 @@ mod tests {
         FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, PixelCropRect,
         SelectedLayoutItem, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
         TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion, TextboxResizeHandle,
-        best_compact_layout, horizontal_layout, legacy_best_compact_layout, rotated_visual_size,
-        vertical_layout,
+        best_compact_layout, compact_layout_for_sizes, horizontal_layout,
+        legacy_best_compact_layout, rotated_visual_size, vertical_layout,
     };
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
@@ -4129,6 +4135,22 @@ mod tests {
                 first_pos.y,
                 second_pos.y
             );
+        }
+    }
+
+    #[test]
+    fn compact_layout_for_sizes_preserves_input_order() {
+        let sizes = [
+            eframe::egui::vec2(90.0, 40.0),
+            eframe::egui::vec2(300.0, 520.0),
+            eframe::egui::vec2(140.0, 180.0),
+        ];
+
+        let placeholders = compact_layout_for_sizes(&sizes, 12.0, eframe::egui::pos2(100.0, 200.0));
+
+        assert_eq!(placeholders.len(), sizes.len());
+        for (index, (_, size)) in placeholders.iter().enumerate() {
+            assert_eq!(*size, sizes[index]);
         }
     }
 

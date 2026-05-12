@@ -693,14 +693,18 @@ impl CanvasState {
             self.clear_guide_snap_indicators();
             return placeholders;
         };
-        let snap_offset =
+        let Some(snap_result) =
             super::interaction::compute_guide_snap_for_rect(self, screen_rect, bounds, &[], false)
-                .map(|snap_rect| snap_rect.center() - bounds.center())
-                .unwrap_or(egui::Vec2::ZERO);
+        else {
+            self.clear_guide_snap_indicators();
+            return placeholders;
+        };
+        let snap_offset = snap_result.rect.center() - bounds.center();
         if snap_offset == egui::Vec2::ZERO {
             self.clear_guide_snap_indicators();
             return placeholders;
         }
+        self.set_guide_snap_indicators(snap_result.indicators);
         for (center, _) in &mut placeholders {
             *center += snap_offset;
         }
