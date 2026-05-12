@@ -4953,6 +4953,16 @@ impl SnappyRefApp {
     }
 
     #[cfg(feature = "semantic-search")]
+    fn drive_semantic_search_install(&mut self, ctx: &egui::Context) {
+        if self.search.drive_semantic_search_install(&mut self.status) {
+            if self.search.local_model_assets_available() {
+                self.sync_semantic_search_service();
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
+    }
+
+    #[cfg(feature = "semantic-search")]
     fn drive_embedding_backfill(&mut self, ctx: &egui::Context) {
         let idle = crate::search::EmbeddingBackfillIdleState {
             app_idle: self.frame_perf.import_results_drained == 0
@@ -4986,6 +4996,7 @@ impl SnappyRefApp {
             ctx,
             screen_rect,
             &mut self.canvas,
+            &mut self.status,
             crate::search::SearchPlacementPreviewConfig {
                 import_target_canvas_area: self.settings.import_target_canvas_area,
                 import_gap: self.settings.import_gap,
@@ -5486,6 +5497,8 @@ impl eframe::App for SnappyRefApp {
         self.handle_import_results(ui.ctx());
         #[cfg(feature = "semantic-search")]
         self.handle_search_results();
+        #[cfg(feature = "semantic-search")]
+        self.drive_semantic_search_install(ui.ctx());
         self.handle_crop_undo(ui.ctx());
         self.drive_search_latency_probe(ui.ctx());
         self.drive_verification_search();

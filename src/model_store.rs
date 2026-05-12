@@ -63,7 +63,9 @@ pub(crate) enum LocalModelStoreStatus {
     InstalledViaMigration,
     Missing,
     #[allow(dead_code)]
-    Downloading,
+    Downloading {
+        percent: u8,
+    },
     Failed(String),
 }
 
