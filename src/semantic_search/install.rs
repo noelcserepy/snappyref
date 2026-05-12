@@ -81,6 +81,19 @@ pub(crate) fn cleanup_semantic_search_install(install_root: &Path) {
     cleanup_install_paths(install_root, &descriptor.model_key);
 }
 
+pub(crate) fn remove_semantic_search_assets(
+    install_root: &Path,
+    descriptor: &SemanticSearchAssetDescriptor,
+) -> Result<(), String> {
+    cleanup_install_paths(install_root, &descriptor.model_key);
+    let model_root = model_store_root(install_root).join(&descriptor.model_key);
+    if model_root.exists() {
+        fs::remove_dir_all(&model_root)
+            .map_err(|error| format!("failed to remove {}: {error}", model_root.display()))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn install_semantic_search_asset<F>(
     install_root: &Path,
     descriptor: &SemanticSearchAssetDescriptor,
@@ -444,6 +457,31 @@ mod tests {
                 .join(SEMANTIC_SEARCH_STAGING_NAME)
                 .exists()
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn removing_semantic_search_assets_keeps_library_and_embeddings() {
+        let root = unique_temp_dir("remove");
+        let descriptor = SemanticSearchAssetDescriptor {
+            url: "https://example.invalid/snappyref-semantic-search.zip".to_owned(),
+            sha256: "0".repeat(64),
+            size: 1,
+            model_key: DEFAULT_SEMANTIC_SEARCH_MODEL.model_key.to_owned(),
+        };
+        let model_root = root.join("models").join(&descriptor.model_key);
+        fs::create_dir_all(model_root.join("onnx")).unwrap();
+        fs::write(model_root.join("tokenizer.json"), b"tokenizer").unwrap();
+        fs::write(model_root.join("onnx/text_model_int8.onnx"), b"text").unwrap();
+        let library_root = root.join("library");
+        fs::create_dir_all(library_root.join("embeddings")).unwrap();
+        fs::write(library_root.join("embeddings/cache.bin"), b"embedding").unwrap();
+
+        remove_semantic_search_assets(&root, &descriptor).unwrap();
+
+        assert!(!model_root.exists());
+        assert!(library_root.join("embeddings/cache.bin").is_file());
 
         let _ = fs::remove_dir_all(root);
     }

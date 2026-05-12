@@ -24,7 +24,7 @@ use crate::semantic_search::{
 #[cfg(not(test))]
 use crate::semantic_search::{
     cleanup_semantic_search_install, default_semantic_search_asset_descriptor,
-    install_semantic_search_asset,
+    install_semantic_search_asset, remove_semantic_search_assets,
 };
 use crate::storage::Library;
 
@@ -185,6 +185,12 @@ impl SearchController {
         )
     }
 
+    pub(crate) fn local_model_store_status(&self) -> LocalModelStoreStatus {
+        self.local_model_store_status
+            .clone()
+            .unwrap_or(LocalModelStoreStatus::Missing)
+    }
+
     #[cfg(any(test, debug_assertions))]
     pub(crate) fn set_local_model_store_status_for_verification(
         &mut self,
@@ -198,6 +204,58 @@ impl SearchController {
         status: &mut String,
     ) {
         self.start_semantic_search_install(status);
+    }
+
+    pub(crate) fn start_semantic_search_install_from_settings(&mut self, status: &mut String) {
+        self.start_semantic_search_install(status);
+    }
+
+    pub(crate) fn cancel_semantic_search_install_from_settings(&mut self, status: &mut String) {
+        self.cancel_semantic_search_install(status);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    pub(crate) fn remove_semantic_search_assets_from_settings(&mut self, status: &mut String) {
+        if let Some(canceled) = self.semantic_install_cancel.take() {
+            canceled.store(true, Ordering::Relaxed);
+        }
+        self.semantic_install_rx = None;
+        #[cfg(not(test))]
+        match crate::updater::install_paths::resolve_install_root() {
+            Ok(install_root) => {
+                let descriptor = default_semantic_search_asset_descriptor();
+                match remove_semantic_search_assets(&install_root, &descriptor) {
+                    Ok(()) => {
+                        self.service = None;
+                        self.local_model_store_status = Some(LocalModelStoreStatus::Missing);
+                        self.overlay.status = SearchOverlayStatus::Ready;
+                        self.overlay.install_action_focus_requested = true;
+                        self.reset_embedding_backfill();
+                        *status = "Semantic Search removed".to_owned();
+                    }
+                    Err(error) => {
+                        self.local_model_store_status =
+                            Some(LocalModelStoreStatus::Failed(error.clone()));
+                        self.overlay.status = SearchOverlayStatus::Error(error.clone());
+                        *status = format!("Semantic Search remove failed: {error}");
+                    }
+                }
+            }
+            Err(error) => {
+                self.local_model_store_status = Some(LocalModelStoreStatus::Failed(error.clone()));
+                self.overlay.status = SearchOverlayStatus::Error(error.clone());
+                *status = format!("Semantic Search remove failed: {error}");
+            }
+        }
+        #[cfg(test)]
+        {
+            self.service = None;
+            self.local_model_store_status = Some(LocalModelStoreStatus::Missing);
+            self.overlay.status = SearchOverlayStatus::Ready;
+            self.overlay.install_action_focus_requested = true;
+            self.reset_embedding_backfill();
+            *status = "Semantic Search removed".to_owned();
+        }
     }
 
     pub(crate) fn set_recent_searches(&mut self, recent_searches: Vec<String>) {

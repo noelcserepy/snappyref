@@ -23,8 +23,9 @@ use crate::residency::{
 #[cfg(feature = "semantic-search")]
 use crate::search::SearchController;
 use crate::sidebar::{
-    SidebarBoardAction, SidebarTab, block_sidebar_input, close_sidebar_on_outside_click,
-    show_sidebar, show_sidebar_hint, sidebar_rect,
+    SemanticSearchSettingsAction, SemanticSearchSettingsStatus, SidebarBoardAction, SidebarTab,
+    block_sidebar_input, close_sidebar_on_outside_click, show_sidebar, show_sidebar_hint,
+    sidebar_rect,
 };
 use crate::updater::{UpdateConfig, UpdateService, UpdateState};
 
@@ -1436,6 +1437,8 @@ pub struct SnappyRefApp {
     sidebar_tab: SidebarTab,
     pending_board_delete: Option<PendingBoardDelete>,
     pending_library_remove: Option<PendingLibraryRemove>,
+    #[cfg(feature = "semantic-search")]
+    pending_semantic_search_remove: bool,
     context_menu_pos: Option<egui::Pos2>,
     status: String,
     perf_log: Option<PerfLogState>,
@@ -1513,6 +1516,8 @@ impl SnappyRefApp {
                     },
                     pending_board_delete: None,
                     pending_library_remove: None,
+                    #[cfg(feature = "semantic-search")]
+                    pending_semantic_search_remove: false,
                     context_menu_pos: None,
                     status,
                     perf_log: config.perf_log_enabled().then(|| PerfLogState {
@@ -1549,6 +1554,10 @@ impl SnappyRefApp {
                 }
                 if config.open_sidebar_boards_on_start() {
                     app.sidebar_tab = SidebarTab::Boards;
+                }
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                if config.open_sidebar_on_start() {
+                    app.settings.semantic_search_first_launch_prompt_seen = true;
                 }
                 #[cfg(feature = "semantic-search")]
                 app.sync_semantic_search_service();
@@ -1728,6 +1737,8 @@ impl SnappyRefApp {
                 },
                 pending_board_delete: None,
                 pending_library_remove: None,
+                #[cfg(feature = "semantic-search")]
+                pending_semantic_search_remove: false,
                 context_menu_pos: None,
                 status: format!("Storage unavailable: {error}"),
                 perf_log: config.perf_log_enabled().then(|| PerfLogState {
@@ -2312,6 +2323,39 @@ impl SnappyRefApp {
         }
     }
 
+    #[cfg(feature = "semantic-search")]
+    fn handle_semantic_search_settings_action(
+        &mut self,
+        action: Option<SemanticSearchSettingsAction>,
+        ctx: &egui::Context,
+    ) {
+        match action {
+            Some(SemanticSearchSettingsAction::Install)
+            | Some(SemanticSearchSettingsAction::Retry) => {
+                self.search
+                    .start_semantic_search_install_from_settings(&mut self.status);
+                ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            }
+            Some(SemanticSearchSettingsAction::Cancel) => {
+                self.search
+                    .cancel_semantic_search_install_from_settings(&mut self.status);
+                ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            }
+            Some(SemanticSearchSettingsAction::RequestRemove) => {
+                self.pending_semantic_search_remove = true;
+            }
+            None => {}
+        }
+    }
+
+    #[cfg(not(feature = "semantic-search"))]
+    fn handle_semantic_search_settings_action(
+        &mut self,
+        _action: Option<SemanticSearchSettingsAction>,
+        _ctx: &egui::Context,
+    ) {
+    }
+
     fn request_board_delete(&mut self, board_id: i64, board_name: String) {
         self.pending_board_delete = Some(PendingBoardDelete {
             board_id,
@@ -2417,6 +2461,16 @@ impl SnappyRefApp {
     fn modal_open(&self) -> bool {
         self.pending_board_delete.is_some()
             || self.pending_library_remove.is_some()
+            || {
+                #[cfg(feature = "semantic-search")]
+                {
+                    self.pending_semantic_search_remove
+                }
+                #[cfg(not(feature = "semantic-search"))]
+                {
+                    false
+                }
+            }
             || self.should_show_semantic_search_first_launch_prompt()
     }
 
@@ -2442,6 +2496,12 @@ impl SnappyRefApp {
             last_checked_unix_millis: self.update_service.last_check_completed_at(),
             backup_present,
             check_now_enabled,
+            semantic_search: crate::sidebar::SemanticSearchSettingsView {
+                #[cfg(feature = "semantic-search")]
+                status: semantic_search_settings_status(self.search.local_model_store_status()),
+                #[cfg(not(feature = "semantic-search"))]
+                status: SemanticSearchSettingsStatus::Failed,
+            },
         }
     }
 
@@ -3642,6 +3702,16 @@ impl SnappyRefApp {
             || {
                 #[cfg(feature = "semantic-search")]
                 {
+                    self.pending_semantic_search_remove
+                }
+                #[cfg(not(feature = "semantic-search"))]
+                {
+                    false
+                }
+            }
+            || {
+                #[cfg(feature = "semantic-search")]
+                {
                     self.search.blocks_canvas_input(ctx)
                 }
                 #[cfg(not(feature = "semantic-search"))]
@@ -3692,6 +3762,50 @@ impl SnappyRefApp {
                             .clicked()
                         {
                             self.confirm_pending_library_remove();
+                        }
+                    });
+                });
+            });
+    }
+
+    #[cfg(feature = "semantic-search")]
+    fn show_semantic_search_remove_confirmation(&mut self, ctx: &egui::Context) {
+        if !self.pending_semantic_search_remove {
+            return;
+        }
+
+        egui::Window::new("Remove Semantic Search?")
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .frame(destructive_confirmation_frame(ctx))
+            .show(ctx, |ui| {
+                ui.set_min_width(destructive_dialog_width());
+                destructive_dialog_header(ui, "Remove Semantic Search?");
+                destructive_dialog_body(ui, |ui| {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(
+                                "Local search assets will be removed. Library data and saved search indexing stay intact.",
+                            )
+                            .text_style(egui::TextStyle::Small)
+                            .color(crate::theme::TEXT_MUTED),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(crate::theme::SPACE_3);
+                    ui.horizontal(|ui| {
+                        if ui.add(secondary_dialog_button("Cancel")).clicked() {
+                            self.pending_semantic_search_remove = false;
+                        }
+                        if ui
+                            .add(destructive_action_button("Remove Semantic Search"))
+                            .clicked()
+                        {
+                            self.pending_semantic_search_remove = false;
+                            self.search
+                                .remove_semantic_search_assets_from_settings(&mut self.status);
                         }
                     });
                 });
@@ -5048,7 +5162,7 @@ impl SnappyRefApp {
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(
-                                "Download about 200 MB of search assets now, or install later from the search palette with Command+F / Control+F.",
+                                "Download about 200 MB of search assets now, or install later from Settings or the search palette with Command+F / Control+F.",
                             )
                             .text_style(egui::TextStyle::Small)
                             .color(crate::theme::TEXT_MUTED),
@@ -5599,6 +5713,27 @@ fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egui::Response
     response
 }
 
+#[cfg(feature = "semantic-search")]
+fn semantic_search_settings_status(
+    status: crate::semantic_search::LocalModelStoreStatus,
+) -> SemanticSearchSettingsStatus {
+    match status {
+        crate::semantic_search::LocalModelStoreStatus::Installed
+        | crate::semantic_search::LocalModelStoreStatus::InstalledViaMigration => {
+            SemanticSearchSettingsStatus::Installed
+        }
+        crate::semantic_search::LocalModelStoreStatus::Missing => {
+            SemanticSearchSettingsStatus::Missing
+        }
+        crate::semantic_search::LocalModelStoreStatus::Downloading { percent } => {
+            SemanticSearchSettingsStatus::Downloading { percent }
+        }
+        crate::semantic_search::LocalModelStoreStatus::Failed(_) => {
+            SemanticSearchSettingsStatus::Failed
+        }
+    }
+}
+
 impl eframe::App for SnappyRefApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let screen_rect = ui.ctx().viewport_rect();
@@ -5828,8 +5963,21 @@ impl eframe::App for SnappyRefApp {
             sidebar_result.board_action
         };
         self.handle_board_action(board_action);
+        self.handle_semantic_search_settings_action(
+            sidebar_result.semantic_search_action,
+            ui.ctx(),
+        );
         let modal_open =
-            self.pending_board_delete.is_some() || self.pending_library_remove.is_some();
+            self.pending_board_delete.is_some() || self.pending_library_remove.is_some() || {
+                #[cfg(feature = "semantic-search")]
+                {
+                    self.pending_semantic_search_remove
+                }
+                #[cfg(not(feature = "semantic-search"))]
+                {
+                    false
+                }
+            };
         if sidebar_open && !modal_open {
             close_sidebar_on_outside_click(
                 ui.ctx(),
@@ -5862,6 +6010,8 @@ impl eframe::App for SnappyRefApp {
         self.persist_settings_if_changed(settings_changed);
         self.show_board_delete_confirmation(ui.ctx());
         self.show_library_remove_confirmation(ui.ctx());
+        #[cfg(feature = "semantic-search")]
+        self.show_semantic_search_remove_confirmation(ui.ctx());
         #[cfg(feature = "semantic-search")]
         self.show_semantic_search_first_launch_prompt(ui.ctx());
         if !modal_open {
@@ -6293,6 +6443,25 @@ mod tests {
         app.search
             .set_local_model_store_status_for_verification(LocalModelStoreStatus::Missing);
 
+        assert!(!app.should_show_semantic_search_first_launch_prompt());
+    }
+
+    #[test]
+    #[cfg(feature = "semantic-search")]
+    fn removing_semantic_search_keeps_first_launch_prompt_seen() {
+        let mut app = test_app(None);
+        app.settings.semantic_search_first_launch_prompt_seen = true;
+        app.search
+            .set_local_model_store_status_for_verification(LocalModelStoreStatus::Installed);
+
+        app.search
+            .remove_semantic_search_assets_from_settings(&mut app.status);
+
+        assert!(app.settings.semantic_search_first_launch_prompt_seen);
+        assert_eq!(
+            app.search.local_model_store_status(),
+            LocalModelStoreStatus::Missing
+        );
         assert!(!app.should_show_semantic_search_first_launch_prompt());
     }
 
@@ -8018,6 +8187,76 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "semantic-search")]
+    fn settings_semantic_search_install_and_cancel_share_download_state() {
+        let mut app = test_app(None);
+        app.sidebar_open = true;
+        app.sidebar_tab = SidebarTab::Options;
+        app.search
+            .set_local_model_store_status_for_verification(LocalModelStoreStatus::Missing);
+        let mut harness = app_harness(app, |ctx, app| {
+            render_sidebar_for_test(ctx, app);
+        });
+
+        harness.get_by_label("Install").click();
+        harness.run();
+
+        assert_eq!(
+            harness.state().search.local_model_store_status(),
+            LocalModelStoreStatus::Downloading { percent: 0 }
+        );
+        assert_eq!(harness.state().status, "Installing Semantic Search");
+
+        harness.get_by_label("Cancel").click();
+        harness.run();
+
+        assert_eq!(
+            harness.state().search.local_model_store_status(),
+            LocalModelStoreStatus::Missing
+        );
+        assert_eq!(harness.state().status, "Semantic Search install canceled");
+    }
+
+    #[test]
+    #[cfg(feature = "semantic-search")]
+    fn settings_semantic_search_remove_requires_confirmation() {
+        let mut app = test_app(None);
+        app.sidebar_open = true;
+        app.sidebar_tab = SidebarTab::Options;
+        app.settings.semantic_search_first_launch_prompt_seen = true;
+        app.search
+            .set_local_model_store_status_for_verification(LocalModelStoreStatus::Installed);
+        let mut harness = app_harness(app, |ctx, app| {
+            render_sidebar_for_test(ctx, app);
+            app.show_semantic_search_remove_confirmation(ctx);
+        });
+
+        harness.get_by_label("Remove").click();
+        harness.run();
+
+        assert!(harness.state().pending_semantic_search_remove);
+        assert_eq!(
+            harness.state().search.local_model_store_status(),
+            LocalModelStoreStatus::Installed
+        );
+
+        harness.get_by_label("Remove Semantic Search").click();
+        harness.run();
+
+        assert!(!harness.state().pending_semantic_search_remove);
+        assert_eq!(
+            harness.state().search.local_model_store_status(),
+            LocalModelStoreStatus::Missing
+        );
+        assert!(
+            harness
+                .state()
+                .settings
+                .semantic_search_first_launch_prompt_seen
+        );
+    }
+
+    #[test]
     fn rapid_sidebar_board_name_clicks_keep_last_requested_board_active() {
         let root = temp_library_root("snappyref-rapid-sidebar-board-clicks");
         let library = Library::initialize(root.clone()).unwrap();
@@ -9506,6 +9745,8 @@ mod tests {
             sidebar_tab: super::SidebarTab::default(),
             pending_board_delete: None,
             pending_library_remove: None,
+            #[cfg(feature = "semantic-search")]
+            pending_semantic_search_remove: false,
             context_menu_pos: None,
             status: String::new(),
             perf_log: None,
@@ -9559,6 +9800,7 @@ mod tests {
             sidebar_result.board_action
         };
         app.handle_board_action(board_action);
+        app.handle_semantic_search_settings_action(sidebar_result.semantic_search_action, ctx);
     }
 
     fn app_harness<'a>(
