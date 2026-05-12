@@ -2773,8 +2773,6 @@ impl SnappyRefApp {
     fn import_placement_settings(&self) -> ImportPlacementSettings {
         ImportPlacementSettings {
             import_target_canvas_area: self.settings.import_target_canvas_area,
-            import_gap: self.settings.import_gap,
-            snap_distance_world: crate::import_placement::import_snap_distance_world(&self.canvas),
         }
     }
 
@@ -2803,25 +2801,6 @@ impl SnappyRefApp {
         };
         layout.extend(self.canvas.import_placeholder_layout_items());
         Ok(layout)
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    fn reserve_import_world(
-        &self,
-        layout: &mut Vec<crate::data::BoardLayoutItem>,
-        width: u32,
-        height: u32,
-        desired_world: egui::Pos2,
-        _viewport_world: egui::Rect,
-    ) -> egui::Pos2 {
-        let size = self.import_size_world(width, height);
-        crate::import_placement::reserve_import_world(
-            layout,
-            desired_world,
-            size,
-            self.settings.import_gap,
-            crate::import_placement::import_snap_distance_world(&self.canvas),
-        )
     }
 
     fn reserve_import(
@@ -3053,7 +3032,10 @@ impl SnappyRefApp {
             return;
         }
 
-        let desired_world = self.preferred_import_world(ui.ctx(), screen_rect);
+        let desired_world = self.preferred_import_world_with_pointer(
+            screen_rect,
+            self.import_drop_screen_pos(ui.ctx()),
+        );
         let viewport_world = self.import_viewport_world_rect(screen_rect);
         let mut layout = match self.import_layout_snapshot() {
             Ok(layout) => layout,
@@ -5107,8 +5089,18 @@ impl SnappyRefApp {
     }
 
     fn preferred_import_world(&self, ctx: &egui::Context, screen_rect: egui::Rect) -> egui::Pos2 {
-        let pointer_screen_pos = ctx.input(|input| input.pointer.latest_pos());
+        let pointer_screen_pos = self.import_hover_screen_pos(ctx);
         self.preferred_import_world_with_pointer(screen_rect, pointer_screen_pos)
+    }
+
+    fn import_hover_screen_pos(&self, ctx: &egui::Context) -> Option<egui::Pos2> {
+        crate::native_drop::hovered_screen_pos()
+            .or_else(|| ctx.input(|input| input.pointer.latest_pos()))
+    }
+
+    fn import_drop_screen_pos(&self, ctx: &egui::Context) -> Option<egui::Pos2> {
+        crate::native_drop::take_dropped_screen_pos()
+            .or_else(|| ctx.input(|input| input.pointer.latest_pos()))
     }
 
     fn import_viewport_world_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
@@ -8907,30 +8899,6 @@ mod tests {
         assert_eq!(app.canvas.import_placeholder_count(), 1);
         app.canvas.remove_import_placeholder(7);
         assert_eq!(app.canvas.import_placeholder_count(), 0);
-    }
-
-    #[test]
-    fn reserve_import_world_accounts_for_pending_placeholders() {
-        let mut app = test_app(None);
-        app.queue_import_placeholder_for_board(
-            app.active_board_id,
-            1,
-            "first".to_owned(),
-            egui::pos2(0.0, 0.0),
-            100,
-            100,
-        );
-
-        let mut layout = app.import_layout_snapshot().unwrap();
-        let reserved = app.reserve_import_world(
-            &mut layout,
-            100,
-            100,
-            egui::pos2(0.0, 0.0),
-            test_viewport_world(),
-        );
-
-        assert_eq!(reserved, egui::pos2(100.0 + app.settings.import_gap, 0.0));
     }
 
     #[test]

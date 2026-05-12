@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use eframe::egui;
+
 fn append_http_urls_from_text(text: &str, urls: &mut Vec<String>) {
     let mut remainder = text;
     while let Some(start) = remainder
@@ -87,23 +89,32 @@ struct NativeDropState {
     dropped_urls: Vec<String>,
     hovered_paths: Vec<PathBuf>,
     dropped_paths: Vec<PathBuf>,
+    hovered_pos: Option<egui::Pos2>,
+    dropped_pos: Option<egui::Pos2>,
 }
 
 impl NativeDropState {
-    fn set_hovered(&mut self, payload: NativeDropPayload) {
+    fn set_hovered(&mut self, payload: NativeDropPayload, pos: Option<egui::Pos2>) {
         self.hovered_urls = payload.urls;
         self.hovered_paths = payload.paths;
+        self.hovered_pos = pos;
+    }
+
+    fn set_hovered_pos(&mut self, pos: Option<egui::Pos2>) {
+        self.hovered_pos = pos;
     }
 
     fn clear_hovered(&mut self) {
         self.hovered_urls.clear();
         self.hovered_paths.clear();
+        self.hovered_pos = None;
     }
 
-    fn set_dropped(&mut self, payload: NativeDropPayload) {
+    fn set_dropped(&mut self, payload: NativeDropPayload, pos: Option<egui::Pos2>) {
         self.clear_hovered();
         self.dropped_urls.extend(payload.urls);
         self.dropped_paths.extend(payload.paths);
+        self.dropped_pos = pos;
     }
 }
 
@@ -124,17 +135,20 @@ mod platform {
     use std::collections::HashSet;
     use std::sync::{Mutex, Once, OnceLock};
 
+    use eframe::egui;
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject, Imp, Method, NSObject, Sel};
-    use objc2::{msg_send_id, sel};
+    use objc2::{msg_send, msg_send_id, sel};
     use objc2_app_kit::{
         NSDragOperation, NSFilenamesPboardType, NSPasteboard, NSPasteboardTypeHTML,
         NSPasteboardTypeString, NSPasteboardTypeURL,
     };
+    use objc2_foundation::{NSPoint, NSRect};
 
     static INSTALL: Once = Once::new();
     static STATE: OnceLock<Mutex<super::NativeDropState>> = OnceLock::new();
     static ORIGINAL_DRAGGING_ENTERED: OnceLock<Imp> = OnceLock::new();
+    static ORIGINAL_DRAGGING_UPDATED: OnceLock<Imp> = OnceLock::new();
     static ORIGINAL_PERFORM_DRAG_OPERATION: OnceLock<Imp> = OnceLock::new();
     static ORIGINAL_DRAGGING_EXITED: OnceLock<Imp> = OnceLock::new();
 
@@ -154,6 +168,13 @@ mod platform {
                         method,
                         dragging_entered_swizzled as DragOperationMethod,
                         &ORIGINAL_DRAGGING_ENTERED,
+                    );
+                }
+                if let Some(method) = class.instance_method(sel!(draggingUpdated:)) {
+                    swizzle_drag_operation_method(
+                        method,
+                        dragging_updated_swizzled as DragOperationMethod,
+                        &ORIGINAL_DRAGGING_UPDATED,
                     );
                 }
                 if let Some(method) = class.instance_method(sel!(performDragOperation:)) {
@@ -190,6 +211,13 @@ mod platform {
             .clone()
     }
 
+    pub(super) fn hovered_screen_pos() -> Option<egui::Pos2> {
+        state()
+            .lock()
+            .expect("native drop state mutex poisoned")
+            .hovered_pos
+    }
+
     pub(super) fn take_dropped_urls() -> Vec<String> {
         std::mem::take(
             &mut state()
@@ -206,6 +234,14 @@ mod platform {
                 .expect("native drop state mutex poisoned")
                 .dropped_paths,
         )
+    }
+
+    pub(super) fn take_dropped_screen_pos() -> Option<egui::Pos2> {
+        state()
+            .lock()
+            .expect("native drop state mutex poisoned")
+            .dropped_pos
+            .take()
     }
 
     fn state() -> &'static Mutex<super::NativeDropState> {
@@ -251,11 +287,12 @@ mod platform {
         sender: &NSObject,
     ) -> NSDragOperation {
         let (payload, should_claim_drag) = extract_drag_payload(sender);
+        let pos = dragging_screen_pos(sender);
         if !payload.is_empty() {
             state()
                 .lock()
                 .expect("native drop state mutex poisoned")
-                .set_hovered(payload);
+                .set_hovered(payload, pos);
             return NSDragOperation::Copy;
         }
         if should_claim_drag {
@@ -266,7 +303,40 @@ mod platform {
             return NSDragOperation::Copy;
         }
 
+        state()
+            .lock()
+            .expect("native drop state mutex poisoned")
+            .set_hovered_pos(pos);
         call_original_drag_operation(&ORIGINAL_DRAGGING_ENTERED, this, cmd, sender)
+    }
+
+    unsafe extern "C" fn dragging_updated_swizzled(
+        this: &AnyObject,
+        cmd: Sel,
+        sender: &NSObject,
+    ) -> NSDragOperation {
+        let (payload, should_claim_drag) = extract_drag_payload(sender);
+        let pos = dragging_screen_pos(sender);
+        if !payload.is_empty() {
+            state()
+                .lock()
+                .expect("native drop state mutex poisoned")
+                .set_hovered(payload, pos);
+            return NSDragOperation::Copy;
+        }
+        if should_claim_drag {
+            state()
+                .lock()
+                .expect("native drop state mutex poisoned")
+                .set_hovered_pos(pos);
+            return NSDragOperation::Copy;
+        }
+
+        state()
+            .lock()
+            .expect("native drop state mutex poisoned")
+            .set_hovered_pos(pos);
+        call_original_drag_operation(&ORIGINAL_DRAGGING_UPDATED, this, cmd, sender)
     }
 
     unsafe extern "C" fn perform_drag_operation_swizzled(
@@ -275,9 +345,10 @@ mod platform {
         sender: &NSObject,
     ) -> bool {
         let (payload, should_claim_drag) = extract_drag_payload(sender);
+        let pos = dragging_screen_pos(sender);
         if !payload.is_empty() {
             let mut state = state().lock().expect("native drop state mutex poisoned");
-            state.set_dropped(payload);
+            state.set_dropped(payload, pos);
             return true;
         }
         if should_claim_drag {
@@ -288,6 +359,10 @@ mod platform {
             return true;
         }
 
+        state()
+            .lock()
+            .expect("native drop state mutex poisoned")
+            .dropped_pos = pos;
         call_original_drag_bool(&ORIGINAL_PERFORM_DRAG_OPERATION, this, cmd, sender)
     }
 
@@ -301,6 +376,20 @@ mod platform {
             .expect("native drop state mutex poisoned")
             .clear_hovered();
         call_original_drag_void(&ORIGINAL_DRAGGING_EXITED, this, cmd, sender);
+    }
+
+    fn dragging_screen_pos(sender: &NSObject) -> Option<egui::Pos2> {
+        let point: NSPoint = unsafe { msg_send![sender, draggingLocation] };
+        let window: Option<Retained<NSObject>> =
+            unsafe { msg_send_id![sender, draggingDestinationWindow] };
+        let content_view: Option<Retained<NSObject>> = window
+            .as_ref()
+            .and_then(|window| unsafe { msg_send_id![&**window, contentView] });
+        let bounds: NSRect = unsafe { msg_send![&**content_view.as_ref()?, bounds] };
+        Some(egui::pos2(
+            point.x as f32,
+            (bounds.size.height - point.y) as f32,
+        ))
     }
 
     fn call_original_drag_operation(
@@ -485,10 +574,12 @@ mod platform {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, OnceLock};
 
+    use eframe::egui;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use windows_sys::Win32::Foundation::{
-        DV_E_FORMATETC, E_NOINTERFACE, HGLOBAL, HWND, POINTL, S_OK,
+        DV_E_FORMATETC, E_NOINTERFACE, HGLOBAL, HWND, POINT, POINTL, S_OK,
     };
+    use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
     use windows_sys::Win32::System::Com::{DVASPECT_CONTENT, FORMATETC, STGMEDIUM, TYMED_HGLOBAL};
     use windows_sys::Win32::System::DataExchange::RegisterClipboardFormatW;
     use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
@@ -550,6 +641,13 @@ mod platform {
             .clone()
     }
 
+    pub(super) fn hovered_screen_pos() -> Option<egui::Pos2> {
+        state()
+            .lock()
+            .expect("native drop state mutex poisoned")
+            .hovered_pos
+    }
+
     pub(super) fn take_dropped_urls() -> Vec<String> {
         std::mem::take(
             &mut state()
@@ -566,6 +664,14 @@ mod platform {
                 .expect("native drop state mutex poisoned")
                 .dropped_paths,
         )
+    }
+
+    pub(super) fn take_dropped_screen_pos() -> Option<egui::Pos2> {
+        state()
+            .lock()
+            .expect("native drop state mutex poisoned")
+            .dropped_pos
+            .take()
     }
 
     fn state() -> &'static Mutex<super::NativeDropState> {
@@ -710,17 +816,18 @@ mod platform {
             this: *mut IDropTarget,
             data_object: *const c_void,
             _key_state: u32,
-            _point: *const POINTL,
+            point: *const POINTL,
             effect: *mut u32,
         ) -> HRESULT {
             let data = unsafe { Self::from_interface(this) };
             let payload = unsafe { extract_drop_payload(data_object) };
             data.hovered_is_valid = !payload.is_empty();
+            let pos = unsafe { client_point(data.hwnd, point) };
             data.cursor_effect = if data.hovered_is_valid {
                 state()
                     .lock()
                     .expect("native drop state mutex poisoned")
-                    .set_hovered(payload);
+                    .set_hovered(payload, pos);
                 DROPEFFECT_COPY
             } else {
                 DROPEFFECT_NONE
@@ -734,10 +841,16 @@ mod platform {
         unsafe extern "system" fn drag_over(
             this: *mut IDropTarget,
             _key_state: u32,
-            _point: *const POINTL,
+            point: *const POINTL,
             effect: *mut u32,
         ) -> HRESULT {
             let data = unsafe { Self::from_interface(this) };
+            if data.hovered_is_valid {
+                state()
+                    .lock()
+                    .expect("native drop state mutex poisoned")
+                    .set_hovered_pos(unsafe { client_point(data.hwnd, point) });
+            }
             unsafe {
                 *effect = data.cursor_effect;
             }
@@ -761,7 +874,7 @@ mod platform {
             this: *mut IDropTarget,
             data_object: *const c_void,
             _key_state: u32,
-            _point: *const POINTL,
+            point: *const POINTL,
             effect: *mut u32,
         ) -> HRESULT {
             let data = unsafe { Self::from_interface(this) };
@@ -770,7 +883,7 @@ mod platform {
                 state()
                     .lock()
                     .expect("native drop state mutex poisoned")
-                    .set_dropped(payload);
+                    .set_dropped(payload, unsafe { client_point(data.hwnd, point) });
                 unsafe {
                     *effect = DROPEFFECT_COPY;
                 }
@@ -787,6 +900,21 @@ mod platform {
         unsafe fn from_interface<'a, InterfaceT>(this: *mut InterfaceT) -> &'a mut DropTargetData {
             unsafe { &mut *(this as *mut DropTargetData) }
         }
+    }
+
+    unsafe fn client_point(hwnd: HWND, point: *const POINTL) -> Option<egui::Pos2> {
+        if point.is_null() {
+            return None;
+        }
+        let point = unsafe { &*point };
+        let mut client = POINT {
+            x: point.x,
+            y: point.y,
+        };
+        if unsafe { ScreenToClient(hwnd, &mut client) } == 0 {
+            return None;
+        }
+        Some(egui::pos2(client.x as f32, client.y as f32))
     }
 
     static DROP_TARGET_VTBL: IDropTargetVtbl = IDropTargetVtbl {
@@ -941,6 +1069,8 @@ mod platform {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod platform {
+    use eframe::egui;
+
     pub(super) fn install(_cc: &eframe::CreationContext<'_>) {}
 
     pub(super) fn hovered_urls() -> Vec<String> {
@@ -951,12 +1081,20 @@ mod platform {
         Vec::new()
     }
 
+    pub(super) fn hovered_screen_pos() -> Option<egui::Pos2> {
+        None
+    }
+
     pub(super) fn take_dropped_urls() -> Vec<String> {
         Vec::new()
     }
 
     pub(super) fn take_dropped_paths() -> Vec<std::path::PathBuf> {
         Vec::new()
+    }
+
+    pub(super) fn take_dropped_screen_pos() -> Option<egui::Pos2> {
+        None
     }
 }
 
@@ -972,12 +1110,20 @@ pub fn hovered_paths() -> Vec<PathBuf> {
     platform::hovered_paths()
 }
 
+pub fn hovered_screen_pos() -> Option<egui::Pos2> {
+    platform::hovered_screen_pos()
+}
+
 pub fn take_dropped_url_strings() -> Vec<String> {
     platform::take_dropped_urls()
 }
 
 pub fn take_dropped_paths() -> Vec<PathBuf> {
     platform::take_dropped_paths()
+}
+
+pub fn take_dropped_screen_pos() -> Option<egui::Pos2> {
+    platform::take_dropped_screen_pos()
 }
 
 #[cfg(test)]

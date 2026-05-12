@@ -3439,39 +3439,19 @@ fn resolve_import_world(
     item_height: f32,
     import_gap: f32,
 ) -> Result<egui::Pos2, String> {
-    let Some(reserved_world) = reserved_world else {
-        let existing_items = library.load_board_layout_items_for_board(target_board_id)?;
-        return Ok(arrange_rect_with_existing_layout(
-            &existing_items,
-            desired_world,
-            viewport_world,
-            item_width,
-            item_height,
-            import_gap,
-        ));
-    };
+    if let Some(reserved_world) = reserved_world {
+        return Ok(reserved_world);
+    }
 
     let existing_items = library.load_board_layout_items_for_board(target_board_id)?;
-    let reserved_rect = egui::Rect::from_center_size(
-        reserved_world,
-        egui::vec2(item_width.max(0.0), item_height.max(0.0)),
-    );
-    let overlaps_existing = existing_items.iter().any(|item| {
-        rects_overlap_with_gap(reserved_rect, displayed_layout_rect(item).rect, import_gap)
-    });
-
-    if overlaps_existing {
-        Ok(arrange_rect_with_existing_layout(
-            &existing_items,
-            desired_world,
-            viewport_world,
-            item_width,
-            item_height,
-            import_gap,
-        ))
-    } else {
-        Ok(reserved_world)
-    }
+    Ok(arrange_rect_with_existing_layout(
+        &existing_items,
+        desired_world,
+        viewport_world,
+        item_width,
+        item_height,
+        import_gap,
+    ))
 }
 
 pub fn arrange_rect_with_existing_layout(
@@ -4159,12 +4139,11 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_reserved_world_is_rearranged_before_persisting() {
-        let root = temp_library_root("placement-overlapping-reserved-world");
+    fn overlapping_reserved_world_is_preserved_when_persisting() {
+        let root = temp_library_root("placement-preserved-reserved-world");
         let library = Library::initialize(root.clone()).unwrap();
         seed_board_item(&library, 1, 0.0, 0.0, 100, 100, 1.0);
         let reserved_world = eframe::egui::Pos2::ZERO;
-        let gap = crate::data::DEFAULT_IMPORT_GAP;
 
         let loaded = match import_clipboard(
             &library,
@@ -4180,7 +4159,7 @@ mod tests {
             CanvasImageSettings::default(),
             false,
             DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-            gap,
+            crate::data::DEFAULT_IMPORT_GAP,
             None,
             None,
         ) {
@@ -4190,15 +4169,8 @@ mod tests {
             }
         };
 
-        let existing_rect =
-            eframe::egui::Rect::from_center_size(reserved_world, eframe::egui::vec2(100.0, 100.0));
-        let imported_rect = eframe::egui::Rect::from_center_size(
-            eframe::egui::pos2(loaded.record.item.x, loaded.record.item.y),
-            eframe::egui::vec2(100.0, 100.0),
-        );
-
-        assert_ne!(imported_rect.center(), reserved_world);
-        assert!(!rects_overlap_with_gap(imported_rect, existing_rect, gap));
+        assert_eq!(loaded.record.item.x, reserved_world.x);
+        assert_eq!(loaded.record.item.y, reserved_world.y);
         let _ = fs::remove_dir_all(root);
     }
 
