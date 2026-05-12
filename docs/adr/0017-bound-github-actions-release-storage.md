@@ -23,6 +23,11 @@ SnappyRef keeps release workflow storage bounded:
 - GitHub Actions artifacts remain short-lived job handoff files with
   `retention-days: 7`; durable release files belong on GitHub Releases in the
   source repo or `snappyref-dist`, not in Actions artifact storage.
+- The full release workflow can run with `actions_artifact_handoff=false` when
+  Actions artifact quota is unavailable. In that mode, platform build jobs use
+  temporary source-repo draft release assets for cross-runner handoff, the
+  package job downloads them, and the temporary handoff assets are deleted after
+  packaging.
 
 ## Consequences
 
@@ -35,5 +40,8 @@ SnappyRef keeps release workflow storage bounded:
 - If GitHub artifact quota is exceeded, deleting artifacts and caches may still
   require GitHub's storage accounting window to refresh before uploads work
   again.
+- The release-asset handoff path avoids Actions artifact quota, but it still
+  depends on source-repo release permissions and should keep handoff asset names
+  temporary and explicitly cleaned up.
 - Removing PR CI means local hook setup is more important on fresh clones:
   `git config core.hooksPath .githooks`.

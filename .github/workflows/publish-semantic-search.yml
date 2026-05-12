@@ -49,12 +49,6 @@ jobs:
           echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
           echo "size=$size" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: snappyref-semantic-search
-          path: ${{ steps.package.outputs.zip_path }}
-          retention-days: 7
-
       - name: Publish to snappyref-dist
         env:
           GH_TOKEN: ${{ secrets.DIST_REPO_TOKEN }}

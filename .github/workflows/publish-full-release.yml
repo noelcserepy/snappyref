@@ -46,6 +46,11 @@ on:
         required: false
         default: true
         type: boolean
+      actions_artifact_handoff:
+        description: Use GitHub Actions artifacts for build handoff and release zip retention
+        required: false
+        default: true
+        type: boolean
       semantic_search_url:
         description: Semantic Search asset URL compiled into the app
         required: false
@@ -78,6 +83,8 @@ jobs:
       semantic_search_url: ${{ inputs.semantic_search_url }}
       semantic_search_sha256: ${{ inputs.semantic_search_sha256 }}
       semantic_search_size: ${{ inputs.semantic_search_size }}
+      upload_actions_artifacts: ${{ inputs.actions_artifact_handoff }}
+      handoff_release_tag: ${{ inputs.release_tag }}
 
   macos:
     name: Build macOS app
@@ -89,6 +96,8 @@ jobs:
       semantic_search_url: ${{ inputs.semantic_search_url }}
       semantic_search_sha256: ${{ inputs.semantic_search_sha256 }}
       semantic_search_size: ${{ inputs.semantic_search_size }}
+      upload_actions_artifacts: ${{ inputs.actions_artifact_handoff }}
+      handoff_release_tag: ${{ inputs.release_tag }}
 
   prune-release-caches:
     name: Prune release caches
@@ -146,28 +155,66 @@ jobs:
           ref: ${{ inputs.ref }}
 
       - uses: actions/download-artifact@v4
-        if: ${{ inputs.include_windows }}
+        if: ${{ inputs.actions_artifact_handoff && inputs.include_windows }}
         with:
           name: snappyref-windows-app
           path: ${{ runner.temp }}/app-artifacts/windows
 
       - uses: actions/download-artifact@v4
-        if: ${{ inputs.include_windows }}
+        if: ${{ inputs.actions_artifact_handoff && inputs.include_windows }}
         with:
           name: snappyref-windows-semantic-search-descriptor
           path: ${{ runner.temp }}/descriptor-artifacts/windows
 
       - uses: actions/download-artifact@v4
-        if: ${{ inputs.include_macos }}
+        if: ${{ inputs.actions_artifact_handoff && inputs.include_macos }}
         with:
           name: snappyref-macos-app
           path: ${{ runner.temp }}/app-artifacts/macos
 
       - uses: actions/download-artifact@v4
-        if: ${{ inputs.include_macos }}
+        if: ${{ inputs.actions_artifact_handoff && inputs.include_macos }}
         with:
           name: snappyref-macos-semantic-search-descriptor
           path: ${{ runner.temp }}/descriptor-artifacts/macos
+
+      - name: Download release asset handoff files
+        if: ${{ !inputs.actions_artifact_handoff }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+          handoff_dir="${RUNNER_TEMP}/release-handoff"
+          mkdir -p "$handoff_dir"
+
+          if [[ "${{ inputs.include_windows }}" == "true" ]]; then
+            gh release download "$tag" \
+              --pattern snappyref-windows-app.zip \
+              --pattern snappyref-windows-semantic-search-descriptor.env \
+              --dir "$handoff_dir" \
+              --clobber
+            mkdir -p "${RUNNER_TEMP}/app-artifacts/windows" "${RUNNER_TEMP}/descriptor-artifacts/windows"
+            unzip -q "$handoff_dir/snappyref-windows-app.zip" -d "${RUNNER_TEMP}/app-artifacts/windows"
+            if [[ ! -d "${RUNNER_TEMP}/app-artifacts/windows/SnappyRef" ]]; then
+              echo "Windows handoff archive must contain SnappyRef/" >&2
+              exit 1
+            fi
+            cp "$handoff_dir/snappyref-windows-semantic-search-descriptor.env" \
+              "${RUNNER_TEMP}/descriptor-artifacts/windows/semantic-search-descriptor.env"
+          fi
+
+          if [[ "${{ inputs.include_macos }}" == "true" ]]; then
+            gh release download "$tag" \
+              --pattern snappyref-macos-app.zip \
+              --pattern snappyref-macos-semantic-search-descriptor.env \
+              --dir "$handoff_dir" \
+              --clobber
+            mkdir -p "${RUNNER_TEMP}/app-artifacts/macos" "${RUNNER_TEMP}/descriptor-artifacts/macos"
+            cp "$handoff_dir/snappyref-macos-app.zip" "${RUNNER_TEMP}/app-artifacts/macos/"
+            cp "$handoff_dir/snappyref-macos-semantic-search-descriptor.env" \
+              "${RUNNER_TEMP}/descriptor-artifacts/macos/semantic-search-descriptor.env"
+          fi
 
       - name: Verify Semantic Search descriptors
         run: |
@@ -287,6 +334,7 @@ jobs:
           rm -rf "${RUNNER_TEMP}/signing"
 
       - uses: actions/upload-artifact@v4
+        if: ${{ inputs.actions_artifact_handoff }}
         with:
           name: snappyref-release-zips
           path: |
@@ -340,3 +388,31 @@ jobs:
             "${RUNNER_TEMP}/release-assets/snappyref-windows-${tag}.zip" \
             "${RUNNER_TEMP}/release-assets/latest.json" \
             --clobber
+
+      - name: Clean up release asset handoff files
+        if: ${{ always() && !inputs.actions_artifact_handoff }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+          names=(
+            snappyref-windows-app.zip
+            snappyref-windows-semantic-search-descriptor.env
+            snappyref-macos-app.zip
+            snappyref-macos-semantic-search-descriptor.env
+          )
+
+          for name in "${names[@]}"; do
+            mapfile -t asset_ids < <(
+              gh release view "$tag" \
+                --json assets \
+                --jq ".assets[] | select(.name == \"${name}\") | .id" \
+                2>/dev/null || true
+            )
+            for asset_id in "${asset_ids[@]}"; do
+              gh api \
+                --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+            done
+          done

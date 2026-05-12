@@ -29,6 +29,16 @@ on:
         description: Compiled Semantic Search asset byte size
         required: true
         type: string
+      upload_actions_artifacts:
+        description: Upload app and descriptor through GitHub Actions artifacts
+        required: false
+        default: true
+        type: boolean
+      handoff_release_tag:
+        description: Source-repo release tag used when Actions artifact handoff is disabled
+        required: false
+        default: ''
+        type: string
   workflow_call:
     inputs:
       ref:
@@ -49,9 +59,17 @@ on:
       semantic_search_size:
         required: true
         type: string
+      upload_actions_artifacts:
+        required: false
+        default: true
+        type: boolean
+      handoff_release_tag:
+        required: false
+        default: ''
+        type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   windows:
@@ -134,15 +152,60 @@ jobs:
           # Ship the auto-update helper alongside the main exe. ADR-0015:
           # the helper lives at SnappyRef/snappyref-updater.exe.
           Copy-Item (Join-Path $env:SNAPPYREF_TARGET_DIR "snappyref-updater.exe") $packageRoot
+          Copy-Item `
+            (Join-Path $env:RUNNER_TEMP "semantic-search-descriptor\semantic-search-descriptor.env") `
+            (Join-Path $env:RUNNER_TEMP "snappyref-windows-semantic-search-descriptor.env")
+          Compress-Archive `
+            -Path (Join-Path $env:RUNNER_TEMP "snappyref-windows-app\SnappyRef") `
+            -DestinationPath (Join-Path $env:RUNNER_TEMP "snappyref-windows-app.zip") `
+            -Force
 
       - uses: actions/upload-artifact@v4
+        if: ${{ inputs.upload_actions_artifacts }}
         with:
           name: snappyref-windows-app
           path: ${{ runner.temp }}/snappyref-windows-app
           retention-days: 7
 
       - uses: actions/upload-artifact@v4
+        if: ${{ inputs.upload_actions_artifacts }}
         with:
           name: snappyref-windows-semantic-search-descriptor
           path: ${{ runner.temp }}/semantic-search-descriptor/semantic-search-descriptor.env
           retention-days: 7
+
+      - name: Upload app handoff release assets
+        if: ${{ !inputs.upload_actions_artifacts }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $false
+          $tag = "${{ inputs.handoff_release_tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            throw "handoff_release_tag is required when upload_actions_artifacts=false"
+          }
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag `
+              --target "${{ inputs.ref }}" `
+              --title "SnappyRef $tag" `
+              --notes "Draft SnappyRef release." `
+              --draft
+            if ($LASTEXITCODE -ne 0) {
+              gh release view $tag *> $null
+              if ($LASTEXITCODE -ne 0) {
+                throw "failed to create or find release $tag"
+              }
+            }
+          }
+
+          gh release upload $tag `
+            (Join-Path $env:RUNNER_TEMP "snappyref-windows-app.zip") `
+            (Join-Path $env:RUNNER_TEMP "snappyref-windows-semantic-search-descriptor.env") `
+            --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to upload release handoff assets"
+          }
