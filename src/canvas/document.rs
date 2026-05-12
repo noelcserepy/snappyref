@@ -669,6 +669,42 @@ impl CanvasState {
             );
     }
 
+    pub fn compact_guided_preview_placeholders(
+        &mut self,
+        sizes: &[egui::Vec2],
+        center_world: egui::Pos2,
+        screen_rect: egui::Rect,
+        gap: f32,
+    ) -> Vec<(egui::Pos2, egui::Vec2)> {
+        let mut placeholders = super::compact_layout_for_sizes(sizes, gap, center_world);
+        let items = placeholders
+            .iter()
+            .enumerate()
+            .map(|(index, (center, size))| SelectedLayoutItem {
+                id: -((index as i64) + 1),
+                x: center.x,
+                y: center.y,
+                width: size.x,
+                height: size.y,
+            })
+            .collect::<Vec<_>>();
+        let Some(bounds) = layout_bounds_with_offset(&items, egui::Vec2::ZERO) else {
+            self.clear_guide_snap_indicators();
+            return placeholders;
+        };
+        let snap_offset =
+            super::interaction::compute_guide_snap_for_rect(self, screen_rect, bounds, &[], false)
+                .map(|snap_rect| snap_rect.center() - bounds.center())
+                .unwrap_or(egui::Vec2::ZERO);
+        if snap_offset == egui::Vec2::ZERO {
+            return placeholders;
+        }
+        for (center, _) in &mut placeholders {
+            *center += snap_offset;
+        }
+        placeholders
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn move_preview_placeholder_count(&self) -> usize {
         self.interaction.move_preview_placeholders.len()

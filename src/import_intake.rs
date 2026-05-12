@@ -96,6 +96,48 @@ impl ImportIntake {
         )
     }
 
+    pub(crate) fn reserve_import_at_world(
+        &mut self,
+        layout: &mut Vec<crate::data::BoardLayoutItem>,
+        target_board_id: i64,
+        label: String,
+        dimensions: Option<(u32, u32)>,
+        center_world: egui::Pos2,
+        settings: ImportPlacementSettings,
+    ) -> (ImportReservation, Option<CanvasImportPlaceholder>) {
+        let queue_id = self.next_queue_id();
+        let placeholder = dimensions.map(|(width, height)| {
+            let size_world =
+                import_preview_size_world(width, height, settings.import_target_canvas_area);
+            layout.push(crate::data::BoardLayoutItem {
+                id: -((layout.len() as i64) + 1),
+                x: center_world.x,
+                y: center_world.y,
+                width: size_world.x,
+                height: size_world.y,
+            });
+            let placeholder = CanvasImportPlaceholder {
+                queue_id,
+                label,
+                center_world,
+                size_world,
+            };
+            self.queue_placeholder(target_board_id, placeholder.clone());
+            placeholder
+        });
+
+        (
+            ImportReservation {
+                target_board_id,
+                queue_id,
+                reserved_world: placeholder
+                    .as_ref()
+                    .map(|placeholder| placeholder.center_world),
+            },
+            placeholder,
+        )
+    }
+
     pub(crate) fn remove_import_reservation(&mut self, reservation: ImportReservation) {
         self.remove_placeholder_for_board(reservation.target_board_id, reservation.queue_id);
     }

@@ -1248,12 +1248,28 @@ fn compute_placement_guide_snap(
         .iter()
         .map(|item| item.id)
         .collect::<Vec<_>>();
-    let candidates = guide_snap_candidate_rects(state, screen_rect, &excluded_ids);
+    compute_guide_snap_for_rect(
+        state,
+        screen_rect,
+        desired_rect,
+        &excluded_ids,
+        drag_state.snap_preview_rect_world.is_some(),
+    )
+}
+
+pub(super) fn compute_guide_snap_for_rect(
+    state: &mut CanvasState,
+    screen_rect: egui::Rect,
+    desired_rect: egui::Rect,
+    excluded_ids: &[i64],
+    previously_snapped: bool,
+) -> Option<egui::Rect> {
+    let candidates = guide_snap_candidate_rects(state, screen_rect, excluded_ids);
     if candidates.is_empty() {
         return None;
     }
 
-    let threshold = guide_snap_threshold_world(state, drag_state);
+    let threshold = guide_snap_threshold_world(state, previously_snapped);
     let mut best_x = best_axis_alignment_snap_x(desired_rect, &candidates, threshold);
     consider_horizontal_adjacency_snaps(
         desired_rect,
@@ -1327,8 +1343,8 @@ enum GuideSnapKind {
     Adjacency,
 }
 
-fn guide_snap_threshold_world(state: &CanvasState, drag_state: &DragState) -> f32 {
-    let threshold_screen = if drag_state.snap_preview_rect_world.is_some() {
+fn guide_snap_threshold_world(state: &CanvasState, previously_snapped: bool) -> f32 {
+    let threshold_screen = if previously_snapped {
         GUIDE_SNAP_RELEASE_DISTANCE_SCREEN
     } else {
         GUIDE_SNAP_ACQUIRE_DISTANCE_SCREEN

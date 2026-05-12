@@ -2234,6 +2234,44 @@ mod tests {
     }
 
     #[test]
+    fn compact_guided_preview_placeholders_snap_as_one_batch() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut state = CanvasState::default();
+            push_test_image(
+                ui,
+                &mut state,
+                1,
+                100,
+                100,
+                1.0,
+                eframe::egui::pos2(0.0, 0.0),
+            );
+
+            let placeholders = state.compact_guided_preview_placeholders(
+                &[
+                    eframe::egui::vec2(100.0, 100.0),
+                    eframe::egui::vec2(100.0, 100.0),
+                ],
+                eframe::egui::pos2(102.0, 0.0),
+                eframe::egui::Rect::from_min_size(
+                    eframe::egui::Pos2::ZERO,
+                    eframe::egui::vec2(800.0, 600.0),
+                ),
+                24.0,
+            );
+
+            let bounds = placeholders
+                .iter()
+                .map(|(center, size)| eframe::egui::Rect::from_center_size(*center, *size))
+                .reduce(|left, right| left.union(right))
+                .expect("preview bounds");
+            assert_eq!(placeholders.len(), 2);
+            assert_eq!(bounds.left(), 50.0);
+            assert_eq!(state.guide_snap_indicator_count(), 1);
+        });
+    }
+
+    #[test]
     fn textbox_multiline_content_requires_more_than_min_height() {
         assert!(textbox_required_world_height(80.0, 1.0) > 56.0);
 

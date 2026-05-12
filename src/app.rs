@@ -2805,6 +2805,7 @@ impl SnappyRefApp {
         Ok(layout)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn reserve_import_world(
         &self,
         layout: &mut Vec<crate::data::BoardLayoutItem>,
@@ -2838,6 +2839,27 @@ impl SnappyRefApp {
             label,
             dimensions,
             desired_world,
+            self.import_placement_settings(),
+        );
+        if let Some(placeholder) = placeholder {
+            self.add_import_placeholder_to_canvas(placeholder);
+        }
+        reservation
+    }
+
+    fn reserve_import_at_world(
+        &mut self,
+        layout: &mut Vec<crate::data::BoardLayoutItem>,
+        label: String,
+        dimensions: Option<(u32, u32)>,
+        center_world: egui::Pos2,
+    ) -> crate::import_intake::ImportReservation {
+        let (reservation, placeholder) = self.import_intake.reserve_import_at_world(
+            layout,
+            self.active_board_id,
+            label,
+            dimensions,
+            center_world,
             self.import_placement_settings(),
         );
         if let Some(placeholder) = placeholder {
@@ -2951,17 +2973,10 @@ impl SnappyRefApp {
         self.hover_preview_dimensions
             .retain(|path, _| hovered_paths.contains(path));
 
-        let desired_world = self.preferred_import_world(ui.ctx(), screen_rect);
-        let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let mut layout = match self.import_layout_snapshot() {
-            Ok(layout) => layout,
-            Err(_) => return,
-        };
-
         const FALLBACK_WIDTH: u32 = 360;
         const FALLBACK_HEIGHT: u32 = 240;
 
-        let mut previews = Vec::with_capacity(hovered_sources.len());
+        let mut sizes = Vec::with_capacity(hovered_sources.len());
         for source in hovered_sources {
             let (width, height) = match &source {
                 ExternalImportSource::Path(path) => {
@@ -2973,24 +2988,59 @@ impl SnappyRefApp {
                 }
                 ExternalImportSource::Url(_) => (FALLBACK_WIDTH, FALLBACK_HEIGHT),
             };
-            let reserved_world = self.reserve_import_world(
-                &mut layout,
-                width,
-                height,
-                desired_world,
-                viewport_world,
-            );
-            let scale = crate::jobs::initial_import_scale(
-                width,
-                height,
-                true,
-                self.settings.import_target_canvas_area,
-            );
-            let size_world = egui::vec2(width as f32 * scale, height as f32 * scale);
-            previews.push((reserved_world, size_world));
+            sizes.push(self.import_size_world(width, height));
         }
 
+        let previews = self.canvas.compact_guided_preview_placeholders(
+            &sizes,
+            self.preferred_import_world(ui.ctx(), screen_rect),
+            screen_rect,
+            self.settings.import_gap,
+        );
         self.canvas.set_hover_preview_placeholders(previews);
+    }
+
+    fn dropped_import_previews(
+        &mut self,
+        sources: &[ExternalImportSource],
+        desired_world: egui::Pos2,
+        screen_rect: egui::Rect,
+    ) -> Vec<(String, Option<(u32, u32)>, egui::Pos2)> {
+        const FALLBACK_WIDTH: u32 = 360;
+        const FALLBACK_HEIGHT: u32 = 240;
+
+        let specs = sources
+            .iter()
+            .map(|source| {
+                let label = Self::import_source_label(source);
+                let dimensions = match source {
+                    ExternalImportSource::Path(path) => {
+                        image::image_dimensions(path).unwrap_or((FALLBACK_WIDTH, FALLBACK_HEIGHT))
+                    }
+                    ExternalImportSource::Url(_) => (FALLBACK_WIDTH, FALLBACK_HEIGHT),
+                };
+                (
+                    label,
+                    Some(dimensions),
+                    self.import_size_world(dimensions.0, dimensions.1),
+                )
+            })
+            .collect::<Vec<_>>();
+        let sizes = specs
+            .iter()
+            .map(|(_, _, size_world)| *size_world)
+            .collect::<Vec<_>>();
+        let centers = self.canvas.compact_guided_preview_placeholders(
+            &sizes,
+            desired_world,
+            screen_rect,
+            self.settings.import_gap,
+        );
+        specs
+            .into_iter()
+            .zip(centers)
+            .map(|((label, dimensions, _), (center_world, _))| (label, dimensions, center_world))
+            .collect()
     }
 
     fn handle_dropped_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
@@ -3013,22 +3063,12 @@ impl SnappyRefApp {
             }
         };
 
-        const FALLBACK_WIDTH: u32 = 360;
-        const FALLBACK_HEIGHT: u32 = 240;
+        let previews = self.dropped_import_previews(&dropped_sources, desired_world, screen_rect);
 
-        for source in dropped_sources {
-            let label = Self::import_source_label(&source);
-            let dimensions = match &source {
-                ExternalImportSource::Path(path) => image::image_dimensions(path).ok(),
-                ExternalImportSource::Url(_) => Some((FALLBACK_WIDTH, FALLBACK_HEIGHT)),
-            };
-            let reservation = self.reserve_import(
-                &mut layout,
-                label,
-                dimensions,
-                desired_world,
-                viewport_world,
-            );
+        for (source, (label, dimensions, center_world)) in dropped_sources.into_iter().zip(previews)
+        {
+            let reservation =
+                self.reserve_import_at_world(&mut layout, label, dimensions, center_world);
 
             let request = match &source {
                 ExternalImportSource::Path(source_path) => {
@@ -4924,9 +4964,14 @@ impl SnappyRefApp {
                 return;
             }
         };
-        let viewport_world = self.import_viewport_world_rect(screen_rect);
+        let asset_preview_centers = self
+            .canvas
+            .move_preview_placeholder_layout_items()
+            .into_iter()
+            .map(|item| egui::pos2(item.x, item.y))
+            .collect::<Vec<_>>();
 
-        for asset_id in drop_request.asset_ids {
+        for (asset_index, asset_id) in drop_request.asset_ids.into_iter().enumerate() {
             let asset = match library.load_asset(asset_id) {
                 Ok(asset) => asset,
                 Err(error) => {
@@ -4934,14 +4979,16 @@ impl SnappyRefApp {
                     return;
                 }
             };
-            let reservation = self.reserve_import(
+            let placed_world = asset_preview_centers
+                .get(asset_index)
+                .copied()
+                .unwrap_or(drop_world);
+            let reservation = self.reserve_import_at_world(
                 &mut layout,
                 asset.filename.clone(),
                 Some((asset.width, asset.height)),
-                drop_world,
-                viewport_world,
+                placed_world,
             );
-            let placed_world = reservation.reserved_world.unwrap_or(drop_world);
             let scale = crate::jobs::initial_import_scale(
                 asset.width,
                 asset.height,
