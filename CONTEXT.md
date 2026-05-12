@@ -402,6 +402,27 @@ _Avoid_: Update agent, install agent
 The flow that runs when the user clicks Restart on a **Ready** **Update Pill**: save the **User Session**, stop worker child processes, write the **Pending Update Descriptor**, launch the **Updater Helper**, and exit the app.
 _Avoid_: Update install, apply update
 
+### Release operations
+
+**Full Release Workflow**:
+The GitHub Actions workflow that builds macOS, Windows, and model artifacts,
+packages app-only and full-install zips, signs `latest.json`, and publishes the
+release assets.
+_Avoid_: CI, build job
+
+**Release Build Cache**:
+The bounded GitHub Actions cache family used only by release app builds to
+speed repeated macOS and Windows builds without letting cache entries grow
+unbounded. At most the latest cache per platform/build-profile family should
+remain after a full release run.
+_Avoid_: CI cache, artifact, release asset
+
+**Release Artifact**:
+A transient GitHub Actions artifact passed between release workflow jobs, such
+as a built app archive or model bundle. Release artifacts are not the durable
+public release assets hosted on `snappyref-dist`.
+_Avoid_: Release asset, build cache
+
 ## Relationships
 
 - A **Library** has one or more non-archived **Boards**.

@@ -43,6 +43,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-windows-${{ inputs.build_profile }}
+          add-job-id-key: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install libjpeg-turbo
         if: ${{ inputs.build_profile == 'release' }}

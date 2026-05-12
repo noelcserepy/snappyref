@@ -51,7 +51,7 @@ a fresh clone:
 git config core.hooksPath .githooks
 ```
 
-CI only checks formatting. The hook is the local backstop for the other checks.
+The hook is the local backstop for formatting and cargo checks.
 Bypass with `git push --no-verify` when you genuinely need to (e.g. debugging
 branches that you know will not merge).
 
