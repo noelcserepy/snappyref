@@ -199,6 +199,14 @@ impl SearchController {
         self.local_model_store_status = Some(status);
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_semantic_install_for_test(
+        &mut self,
+        installer: impl FnMut(mpsc::Sender<SemanticSearchInstallProgress>) + 'static,
+    ) {
+        self.test_semantic_install = Some(Box::new(installer));
+    }
+
     pub(crate) fn start_semantic_search_install_from_first_launch_prompt(
         &mut self,
         status: &mut String,
@@ -1852,6 +1860,17 @@ impl SearchController {
         self.overlay.open = true;
         self.overlay.focus_requested = true;
         self.overlay.suppress_next_outside_click = true;
+        if self.install_surface_visible() {
+            self.overlay.focus_requested = false;
+            self.overlay.install_action_focus_requested = true;
+            if matches!(
+                self.local_model_store_status,
+                Some(LocalModelStoreStatus::Missing)
+            ) {
+                self.overlay.status = SearchOverlayStatus::Ready;
+            }
+            return;
+        }
         if matches!(self.overlay.status, SearchOverlayStatus::Error(_)) {
             return;
         }

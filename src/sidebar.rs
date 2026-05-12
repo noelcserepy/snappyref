@@ -1535,7 +1535,10 @@ fn shortcut_label_uses_small_symbol_glyphs(keys: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_shortcut_label, paint_board_row, shortcut_label_uses_small_symbol_glyphs};
+    use super::{
+        SemanticSearchSettingsStatus, display_shortcut_label, paint_board_row,
+        semantic_search_status_copy, shortcut_label_uses_small_symbol_glyphs,
+    };
     use eframe::egui;
 
     #[test]
@@ -1553,6 +1556,30 @@ mod tests {
         assert!(shortcut_label_uses_small_symbol_glyphs("⇧ ⌘ L"));
         assert!(shortcut_label_uses_small_symbol_glyphs("↵"));
         assert!(!shortcut_label_uses_small_symbol_glyphs("⌘ B"));
+    }
+
+    #[test]
+    fn semantic_search_settings_status_copy_covers_lifecycle_states() {
+        assert_eq!(
+            semantic_search_status_copy(&SemanticSearchSettingsStatus::Missing),
+            (
+                "Not installed".to_owned(),
+                "Install local search assets to find references by description."
+            )
+        );
+        assert_eq!(
+            semantic_search_status_copy(&SemanticSearchSettingsStatus::Downloading { percent: 37 })
+                .0,
+            "Downloading 37%"
+        );
+        assert_eq!(
+            semantic_search_status_copy(&SemanticSearchSettingsStatus::Failed).0,
+            "Install failed"
+        );
+        assert_eq!(
+            semantic_search_status_copy(&SemanticSearchSettingsStatus::Installed).0,
+            "Installed"
+        );
     }
 
     #[test]

@@ -343,8 +343,11 @@ fn cleanup_install_paths(install_root: &Path, model_key: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::mpsc::channel;
+    use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
     use zip::write::SimpleFileOptions;
     use zip::{CompressionMethod, ZipWriter};
@@ -386,12 +389,43 @@ mod tests {
 
     fn descriptor_for(zip_path: &Path) -> SemanticSearchAssetDescriptor {
         let bytes = fs::read(zip_path).unwrap();
+        descriptor_for_bytes(&bytes)
+    }
+
+    fn descriptor_for_bytes(bytes: &[u8]) -> SemanticSearchAssetDescriptor {
         SemanticSearchAssetDescriptor {
             url: "https://example.invalid/snappyref-semantic-search.zip".to_owned(),
             sha256: download::sha256_hex(&bytes),
             size: bytes.len() as u64,
             model_key: DEFAULT_SEMANTIC_SEARCH_MODEL.model_key.to_owned(),
         }
+    }
+
+    fn serve_once(payload: Vec<u8>) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{addr}/semantic.zip");
+        let (ready_tx, ready_rx) = channel::<()>();
+        let handle = thread::spawn(move || {
+            ready_tx.send(()).unwrap();
+            if let Ok((stream, _)) = listener.accept() {
+                handle_request(stream, &payload);
+            }
+        });
+        ready_rx.recv().unwrap();
+        (url, handle)
+    }
+
+    fn handle_request(mut stream: TcpStream, payload: &[u8]) {
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf);
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/zip\r\nConnection: close\r\n\r\n",
+            payload.len()
+        );
+        let _ = stream.write_all(headers.as_bytes());
+        let _ = stream.write_all(payload);
+        let _ = stream.flush();
     }
 
     fn model_entries<'a>() -> Vec<(&'a str, &'a [u8])> {
@@ -410,6 +444,239 @@ mod tests {
                 b"vision",
             ),
         ]
+    }
+
+    #[test]
+    fn semantic_search_descriptor_rejects_missing_download_contract() {
+        let mut descriptor = SemanticSearchAssetDescriptor {
+            url: "https://example.invalid/snappyref-semantic-search.zip".to_owned(),
+            sha256: "0".repeat(64),
+            size: 1,
+            model_key: DEFAULT_SEMANTIC_SEARCH_MODEL.model_key.to_owned(),
+        };
+
+        descriptor.url.clear();
+        assert!(
+            validate_descriptor(&descriptor)
+                .unwrap_err()
+                .to_string()
+                .contains("URL is not configured")
+        );
+
+        descriptor.url = "https://example.invalid/snappyref-semantic-search.zip".to_owned();
+        descriptor.size = 0;
+        assert!(
+            validate_descriptor(&descriptor)
+                .unwrap_err()
+                .to_string()
+                .contains("size is not configured")
+        );
+
+        descriptor.size = 1;
+        descriptor.sha256 = "not-a-sha".to_owned();
+        assert!(
+            validate_descriptor(&descriptor)
+                .unwrap_err()
+                .to_string()
+                .contains("sha256 is not configured")
+        );
+
+        descriptor.sha256 = "0".repeat(64);
+        descriptor.model_key.clear();
+        assert!(
+            validate_descriptor(&descriptor)
+                .unwrap_err()
+                .to_string()
+                .contains("model key is not configured")
+        );
+    }
+
+    #[test]
+    fn semantic_search_asset_download_success_installs_local_model_store() {
+        let root = unique_temp_dir("download-ok");
+        let zip_path = root.join("semantic.zip");
+        write_zip(&zip_path, &model_entries());
+        let zip_bytes = fs::read(&zip_path).unwrap();
+        let (url, handle) = serve_once(zip_bytes.clone());
+        let mut descriptor = descriptor_for_bytes(&zip_bytes);
+        descriptor.url = url;
+        let canceled = AtomicBool::new(false);
+        let mut progress = Vec::new();
+
+        install_semantic_search_asset(&root, &descriptor, &canceled, |event| progress.push(event))
+            .unwrap();
+        let _ = handle.join();
+
+        let model_root = root.join("models").join(&descriptor.model_key);
+        assert!(model_root.join("tokenizer.json").is_file());
+        assert!(model_root.join("onnx/text_model_int8.onnx").is_file());
+        assert!(model_root.join("onnx/vision_model_int8.onnx").is_file());
+        assert!(progress.contains(&SemanticSearchInstallProgress::Installed));
+        assert!(
+            !install_paths::updates_dir(&root)
+                .join(SEMANTIC_SEARCH_DOWNLOAD_NAME)
+                .exists()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn semantic_search_asset_download_rejects_size_mismatch_and_cleans_up() {
+        let root = unique_temp_dir("download-size");
+        let zip_path = root.join("semantic.zip");
+        write_zip(&zip_path, &model_entries());
+        let zip_bytes = fs::read(&zip_path).unwrap();
+        let (url, handle) = serve_once(zip_bytes.clone());
+        let mut descriptor = descriptor_for_bytes(&zip_bytes);
+        descriptor.url = url;
+        descriptor.size += 1;
+        let canceled = AtomicBool::new(false);
+        let mut progress = Vec::new();
+
+        let error = install_semantic_search_asset(&root, &descriptor, &canceled, |event| {
+            progress.push(event)
+        })
+        .unwrap_err();
+        let _ = handle.join();
+
+        assert!(error.contains("size mismatch"));
+        assert!(progress.iter().any(|event| matches!(
+            event,
+            SemanticSearchInstallProgress::Failed { error } if error.contains("size mismatch")
+        )));
+        assert!(!root.join("models").join(&descriptor.model_key).exists());
+        assert!(
+            !install_paths::updates_dir(&root)
+                .join(SEMANTIC_SEARCH_DOWNLOAD_NAME)
+                .exists()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn semantic_search_asset_download_rejects_sha_mismatch_and_cleans_up() {
+        let root = unique_temp_dir("download-sha");
+        let zip_path = root.join("semantic.zip");
+        write_zip(&zip_path, &model_entries());
+        let zip_bytes = fs::read(&zip_path).unwrap();
+        let (url, handle) = serve_once(zip_bytes);
+        let mut descriptor = SemanticSearchAssetDescriptor {
+            url,
+            sha256: "f".repeat(64),
+            size: fs::metadata(&zip_path).unwrap().len(),
+            model_key: DEFAULT_SEMANTIC_SEARCH_MODEL.model_key.to_owned(),
+        };
+        let canceled = AtomicBool::new(false);
+
+        let error =
+            install_semantic_search_asset(&root, &descriptor, &canceled, |_| {}).unwrap_err();
+        let _ = handle.join();
+
+        assert!(error.contains("sha256 mismatch"));
+        assert!(!root.join("models").join(&descriptor.model_key).exists());
+        assert!(
+            !install_paths::updates_dir(&root)
+                .join(SEMANTIC_SEARCH_DOWNLOAD_NAME)
+                .exists()
+        );
+
+        descriptor.url = "https://example.invalid/unused.zip".to_owned();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn semantic_search_asset_download_rejects_corrupt_zip_and_removes_staging() {
+        let root = unique_temp_dir("download-corrupt");
+        let zip_bytes = b"not a zip".to_vec();
+        let (url, handle) = serve_once(zip_bytes.clone());
+        let mut descriptor = descriptor_for_bytes(&zip_bytes);
+        descriptor.url = url;
+        let canceled = AtomicBool::new(false);
+
+        let error =
+            install_semantic_search_asset(&root, &descriptor, &canceled, |_| {}).unwrap_err();
+        let _ = handle.join();
+
+        assert!(error.contains("corrupt zip"));
+        assert!(!root.join("models").join(&descriptor.model_key).exists());
+        assert!(
+            !install_paths::updates_dir(&root)
+                .join(SEMANTIC_SEARCH_STAGING_NAME)
+                .exists()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn canceled_semantic_search_install_cleans_partial_paths() {
+        let root = unique_temp_dir("cancel-cleanup");
+        let descriptor = SemanticSearchAssetDescriptor {
+            url: "https://example.invalid/snappyref-semantic-search.zip".to_owned(),
+            sha256: "0".repeat(64),
+            size: 1,
+            model_key: DEFAULT_SEMANTIC_SEARCH_MODEL.model_key.to_owned(),
+        };
+        fs::create_dir_all(install_paths::updates_dir(&root).join(SEMANTIC_SEARCH_STAGING_NAME))
+            .unwrap();
+        fs::write(
+            install_paths::updates_dir(&root).join(SEMANTIC_SEARCH_DOWNLOAD_NAME),
+            b"partial",
+        )
+        .unwrap();
+        fs::create_dir_all(
+            root.join("models")
+                .join(format!("{}.installing", descriptor.model_key)),
+        )
+        .unwrap();
+        let canceled = AtomicBool::new(true);
+
+        let error =
+            install_semantic_search_asset(&root, &descriptor, &canceled, |_| {}).unwrap_err();
+
+        assert!(error.contains("canceled"));
+        assert!(
+            !install_paths::updates_dir(&root)
+                .join(SEMANTIC_SEARCH_STAGING_NAME)
+                .exists()
+        );
+        assert!(
+            !install_paths::updates_dir(&root)
+                .join(SEMANTIC_SEARCH_DOWNLOAD_NAME)
+                .exists()
+        );
+        assert!(
+            !root
+                .join("models")
+                .join(format!("{}.installing", descriptor.model_key))
+                .exists()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn semantic_search_install_reports_unwritable_install_root() {
+        let root = unique_temp_dir("unwritable-root");
+        let install_root = root.join("SnappyRef");
+        fs::write(&install_root, b"not a directory").unwrap();
+        let descriptor = SemanticSearchAssetDescriptor {
+            url: "https://example.invalid/snappyref-semantic-search.zip".to_owned(),
+            sha256: "0".repeat(64),
+            size: 1,
+            model_key: DEFAULT_SEMANTIC_SEARCH_MODEL.model_key.to_owned(),
+        };
+        let canceled = AtomicBool::new(false);
+
+        let error = install_semantic_search_asset(&install_root, &descriptor, &canceled, |_| {})
+            .unwrap_err();
+
+        assert!(error.contains("io:"));
+        assert!(!install_root.join("updates").exists());
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

@@ -6438,12 +6438,87 @@ mod tests {
 
     #[cfg(feature = "semantic-search")]
     #[test]
+    fn first_launch_semantic_search_prompt_skips_installed_and_migrated_assets() {
+        let root = temp_library_root("snappyref-semantic-prompt-installed");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library));
+
+        app.search
+            .set_local_model_store_status_for_verification(LocalModelStoreStatus::Installed);
+        assert!(!app.should_show_semantic_search_first_launch_prompt());
+
+        app.search.set_local_model_store_status_for_verification(
+            LocalModelStoreStatus::InstalledViaMigration,
+        );
+        assert!(!app.should_show_semantic_search_first_launch_prompt());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
     fn first_launch_semantic_search_prompt_skips_without_storage() {
         let mut app = test_app(None);
         app.search
             .set_local_model_store_status_for_verification(LocalModelStoreStatus::Missing);
 
         assert!(!app.should_show_semantic_search_first_launch_prompt());
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn first_launch_semantic_search_prompt_not_now_persists_suppression() {
+        let root = temp_library_root("snappyref-semantic-prompt-not-now");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.search
+            .set_local_model_store_status_for_verification(LocalModelStoreStatus::Missing);
+
+        app.decline_semantic_search_first_launch_prompt();
+
+        assert!(!app.should_show_semantic_search_first_launch_prompt());
+        assert!(
+            library
+                .load_user_session()
+                .unwrap()
+                .settings
+                .semantic_search_first_launch_prompt_seen
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn first_launch_semantic_search_prompt_enable_persists_seen_and_starts_install() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("snappyref-semantic-prompt-enable");
+        let library = Library::initialize(root.clone()).unwrap();
+        let starts = std::rc::Rc::new(std::cell::Cell::new(0));
+        let observed = starts.clone();
+        let mut app = test_app(Some(library.clone()));
+        app.search
+            .set_local_model_store_status_for_verification(LocalModelStoreStatus::Missing);
+        app.search.set_semantic_install_for_test(move |_| {
+            observed.set(observed.get() + 1);
+        });
+
+        app.enable_semantic_search_from_first_launch_prompt(&ctx);
+
+        assert_eq!(starts.get(), 1);
+        assert_eq!(
+            app.search.local_model_store_status(),
+            LocalModelStoreStatus::Downloading { percent: 0 }
+        );
+        assert!(
+            library
+                .load_user_session()
+                .unwrap()
+                .settings
+                .semantic_search_first_launch_prompt_seen
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -8219,6 +8294,30 @@ mod tests {
 
     #[test]
     #[cfg(feature = "semantic-search")]
+    fn settings_semantic_search_failed_state_retries_shared_install() {
+        let mut app = test_app(None);
+        app.sidebar_open = true;
+        app.sidebar_tab = SidebarTab::Options;
+        app.search
+            .set_local_model_store_status_for_verification(LocalModelStoreStatus::Failed(
+                "network: timeout".to_owned(),
+            ));
+        let mut harness = app_harness(app, |ctx, app| {
+            render_sidebar_for_test(ctx, app);
+        });
+
+        harness.get_by_label("Retry").click();
+        harness.run();
+
+        assert_eq!(
+            harness.state().search.local_model_store_status(),
+            LocalModelStoreStatus::Downloading { percent: 0 }
+        );
+        assert_eq!(harness.state().status, "Installing Semantic Search");
+    }
+
+    #[test]
+    #[cfg(feature = "semantic-search")]
     fn settings_semantic_search_remove_requires_confirmation() {
         let mut app = test_app(None);
         app.sidebar_open = true;
@@ -8533,6 +8632,45 @@ mod tests {
 
         assert!(app.search.overlay.open);
         assert!(app.search.overlay.focus_requested);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_shortcut_opens_missing_palette_with_focused_install_action() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.settings.semantic_search_enabled = true;
+        app.search
+            .set_local_model_store_status_for_verification(LocalModelStoreStatus::Missing);
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                modifiers: egui::Modifiers {
+                    command: true,
+                    ..Default::default()
+                },
+                events: vec![egui::Event::Key {
+                    key: egui::Key::F,
+                    physical_key: Some(egui::Key::F),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        ..Default::default()
+                    },
+                }],
+                ..Default::default()
+            },
+            |ui| app.handle_search_shortcut(ui.ctx()),
+        );
+
+        assert!(app.search.overlay.open);
+        assert!(app.search.overlay.install_action_focus_requested);
+        assert!(app.search.overlay.results.is_empty());
+        assert_eq!(
+            app.search.local_model_store_status(),
+            LocalModelStoreStatus::Missing
+        );
     }
 
     #[cfg(feature = "semantic-search")]
