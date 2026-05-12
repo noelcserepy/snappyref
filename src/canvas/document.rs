@@ -1235,20 +1235,14 @@ impl CanvasState {
     }
 
     pub fn arrange_selected_compact(&mut self, gap: f32) -> usize {
-        let mut items = self.selected_layout_items();
+        let items = self.selected_layout_items();
         if items.len() <= 1 {
             return items.len();
         }
 
-        items.sort_by(|left, right| {
-            right
-                .width
-                .max(right.height)
-                .total_cmp(&left.width.max(left.height))
-                .then_with(|| (right.width * right.height).total_cmp(&(left.width * left.height)))
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
+        let current_center = self
+            .source_center_for_layout_items(&items)
+            .unwrap_or(egui::Pos2::ZERO);
 
         let Some((placements, width, height)) = super::best_compact_layout(&items, gap) else {
             return 0;
@@ -1757,12 +1751,19 @@ impl CanvasState {
             .images
             .iter()
             .filter(|image| self.is_selected(image.record.item.id))
-            .map(|image| SelectedLayoutItem {
-                id: image.record.item.id,
-                x: image.record.item.x,
-                y: image.record.item.y,
-                width: image.record.asset.width as f32 * image.record.item.scale.max(0.01),
-                height: image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+            .map(|image| {
+                let visual_size = super::rotated_visual_size(
+                    image.record.asset.width as f32 * image.record.item.scale.max(0.01),
+                    image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+                    image.record.item.rotation,
+                );
+                SelectedLayoutItem {
+                    id: image.record.item.id,
+                    x: image.record.item.x,
+                    y: image.record.item.y,
+                    width: visual_size.x,
+                    height: visual_size.y,
+                }
             })
             .collect()
     }
@@ -1772,12 +1773,19 @@ impl CanvasState {
             .images
             .iter()
             .filter(|image| item_ids.contains(&image.record.item.id))
-            .map(|image| SelectedLayoutItem {
-                id: image.record.item.id,
-                x: image.record.item.x,
-                y: image.record.item.y,
-                width: image.record.asset.width as f32 * image.record.item.scale.max(0.01),
-                height: image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+            .map(|image| {
+                let visual_size = super::rotated_visual_size(
+                    image.record.asset.width as f32 * image.record.item.scale.max(0.01),
+                    image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+                    image.record.item.rotation,
+                );
+                SelectedLayoutItem {
+                    id: image.record.item.id,
+                    x: image.record.item.x,
+                    y: image.record.item.y,
+                    width: visual_size.x,
+                    height: visual_size.y,
+                }
             })
             .collect()
     }
@@ -1795,15 +1803,6 @@ impl CanvasState {
         }
 
         let source_center = self.source_center_for_layout_items(&items)?;
-        items.sort_by(|left, right| {
-            right
-                .width
-                .max(right.height)
-                .total_cmp(&left.width.max(left.height))
-                .then_with(|| (right.width * right.height).total_cmp(&(left.width * left.height)))
-                .then_with(|| left.id.cmp(&right.id))
-        });
-
         let Some((placements, width, height)) = super::best_compact_layout(&items, self.layout_gap)
         else {
             return Some(items);

@@ -42,6 +42,10 @@ _Avoid_: Grid setting, workspace background
 The board-local pan and zoom state.
 _Avoid_: Camera, view, canvas position
 
+**Dense Compact Layout**:
+The compact arrangement objective for selected placements: minimize visible holes first, then prefer a rough square when density is close. Squareness should decide only when candidate occupancy is roughly within three percentage points. Compact arrangement is placement-only: it may reorder selected placements and change their positions, but it preserves authored scale and rotation. The packed block should keep clean top and left edges; right-edge cleanliness is only a soft tie-break among near-equivalent candidates.
+_Avoid_: Perfect square layout, masonry layout
+
 ### Session and preferences
 
 **User Session**:
