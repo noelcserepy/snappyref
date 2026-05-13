@@ -92,6 +92,18 @@ _Avoid_: Model settings, AI settings
 The app's knowledge that current user session state differs from the last saved session.
 _Avoid_: Unsaved preferences, dirty app state
 
+**Document Dirty State**:
+The app's knowledge that the Active Board's persisted canvas document differs from the in-memory Placements, Annotations, archive state, or Stack Order.
+_Avoid_: Unsaved canvas, changed items
+
+**Persistence Queue**:
+The off-main-thread handoff for saving User Session and Document Dirty State to the Library without blocking interaction frames. UI code enqueues value snapshots or document changes; explicit flush seams wait for durability when lifecycle correctness requires it.
+_Avoid_: Autosave thread, background database
+
+**Flush Seam**:
+A lifecycle point where queued persistence must be durable before proceeding, such as board switch, app exit, update restart, or destructive board/library actions.
+_Avoid_: Save point, sync barrier
+
 **Pointer Mode**:
 The workspace setting that selects how the canvas interprets scroll and primary-drag input for navigation.
 _Avoid_: Input mode, scroll mode, mouse setting

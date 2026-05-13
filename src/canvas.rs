@@ -105,6 +105,15 @@ pub struct CanvasDocumentChanges {
     pub stack_order: Option<Vec<crate::data::CanvasStackItem>>,
 }
 
+impl CanvasDocumentChanges {
+    pub fn has_changes(&self) -> bool {
+        !self.updated_items.is_empty()
+            || !self.updated_annotations.is_empty()
+            || !self.archived_annotation_ids.is_empty()
+            || self.stack_order.is_some()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct GuideSnapIndicator {
     segments: Vec<(egui::Pos2, egui::Pos2)>,

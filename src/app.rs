@@ -31,6 +31,7 @@ use crate::updater::{UpdateConfig, UpdateService, UpdateState};
 
 const STARTUP_VIEWPORT_SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
 const MAX_IMPORT_RESULTS_PER_FRAME: usize = 4;
+const USER_SESSION_SAVE_DEBOUNCE: Duration = Duration::from_millis(750);
 /// Minimum wall time between Settings Tab "Check for updates now" clicks.
 /// ADR-0015: discovery is opportunistic and the manual button is a
 /// convenience, not a way to hammer the manifest endpoint.
@@ -1449,6 +1450,9 @@ pub struct SnappyRefApp {
     pending_import_batches: Vec<PendingImportBatch>,
     hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
     document_persistence: DocumentPersistence,
+    pending_user_session: Option<crate::data::UserSession>,
+    pending_user_session_save_at: Option<Instant>,
+    board_summaries_cache: BoardSummariesCache,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -1465,6 +1469,26 @@ pub struct SnappyRefApp {
     /// to throttle the Settings Tab button to one invocation per minute
     /// independent of wall-clock noise. `None` until the first click.
     last_manual_update_check: Option<Instant>,
+}
+
+#[derive(Default)]
+struct BoardSummariesCache {
+    summaries: Vec<crate::data::BoardSummary>,
+}
+
+impl BoardSummariesCache {
+    fn summaries(&self) -> Vec<crate::data::BoardSummary> {
+        self.summaries.clone()
+    }
+
+    fn clear(&mut self) {
+        self.summaries.clear();
+    }
+
+    fn refresh_from(&mut self, library: &crate::storage::Library) -> Result<(), String> {
+        self.summaries = library.list_board_summaries()?;
+        Ok(())
+    }
 }
 
 impl SnappyRefApp {
@@ -1530,7 +1554,10 @@ impl SnappyRefApp {
                     residency: ImageResidencyCoordinator::default(),
                     pending_import_batches: Vec::new(),
                     hover_preview_dimensions: std::collections::HashMap::new(),
-                    document_persistence: DocumentPersistence::default(),
+                    document_persistence: DocumentPersistence::queued(library.clone()),
+                    pending_user_session: None,
+                    pending_user_session_save_at: None,
+                    board_summaries_cache: BoardSummariesCache::default(),
                     #[cfg(debug_assertions)]
                     verification_mode: config.verification_mode,
                     #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -1549,6 +1576,7 @@ impl SnappyRefApp {
                 app.search
                     .set_latency_logging_enabled(config.search_latency_log);
                 app.load_user_session();
+                app.refresh_board_summaries();
                 if config.open_sidebar_on_start() {
                     app.sidebar_open = true;
                 }
@@ -1752,6 +1780,9 @@ impl SnappyRefApp {
                 pending_import_batches: Vec::new(),
                 hover_preview_dimensions: std::collections::HashMap::new(),
                 document_persistence: DocumentPersistence::default(),
+                pending_user_session: None,
+                pending_user_session_save_at: None,
+                board_summaries_cache: BoardSummariesCache::default(),
                 #[cfg(debug_assertions)]
                 verification_mode: config.verification_mode,
                 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -2248,16 +2279,17 @@ impl SnappyRefApp {
             && embedding_idle
     }
 
-    fn board_summaries(&mut self) -> Vec<crate::data::BoardSummary> {
+    fn board_summaries(&self) -> Vec<crate::data::BoardSummary> {
+        self.board_summaries_cache.summaries()
+    }
+
+    fn refresh_board_summaries(&mut self) {
         let Some(library) = &self.library else {
-            return Vec::new();
+            self.board_summaries_cache.clear();
+            return;
         };
-        match library.list_board_summaries() {
-            Ok(boards) => boards,
-            Err(error) => {
-                self.status = error;
-                Vec::new()
-            }
+        if let Err(error) = self.board_summaries_cache.refresh_from(library) {
+            self.status = error;
         }
     }
 
@@ -2284,6 +2316,7 @@ impl SnappyRefApp {
         };
 
         self.switch_to_board(board.id);
+        self.refresh_board_summaries();
         if keep_sidebar_open {
             self.sidebar_open = true;
         }
@@ -2306,7 +2339,10 @@ impl SnappyRefApp {
                     return;
                 };
                 match library.rename_board(board_id, &name) {
-                    Ok(()) => self.status = "Renamed board".to_owned(),
+                    Ok(()) => {
+                        self.refresh_board_summaries();
+                        self.status = "Renamed board".to_owned();
+                    }
                     Err(error) => self.status = error,
                 }
             }
@@ -2388,6 +2424,7 @@ impl SnappyRefApp {
         if deleted_active_board {
             self.load_active_board();
         }
+        self.refresh_board_summaries();
 
         self.status = format!("Deleted {}", pending.board_name);
     }
@@ -2395,6 +2432,7 @@ impl SnappyRefApp {
     fn save_active_board_before_transition(&mut self) {
         self.persist_canvas_changes();
         self.save_user_session();
+        self.flush_persistence();
     }
 
     fn load_active_board(&mut self) {
@@ -2696,7 +2734,7 @@ impl SnappyRefApp {
         self.update_popover_open = false;
 
         // 2. Save the User Session so the new app can restore it.
-        self.save_user_session();
+        self.save_active_board_before_transition();
 
         // 3. Stop worker child processes. ImportWorker's queue + thread
         // shutdown runs in its Drop impl; the embedding helper's stdin
@@ -3603,6 +3641,7 @@ impl SnappyRefApp {
         }
 
         self.canvas.remove_assets(&pending.asset_ids);
+        self.refresh_board_summaries();
         let noun = if pending.asset_ids.len() == 1 {
             "asset"
         } else {
@@ -3829,6 +3868,7 @@ impl SnappyRefApp {
         if needs_existing_reload {
             self.enqueue_existing_items();
         }
+        self.refresh_board_summaries();
     }
 
     fn handle_import_results(&mut self, ctx: &egui::Context) {
@@ -3851,6 +3891,9 @@ impl SnappyRefApp {
                 result,
             );
             self.apply_import_result_residency_outcome(ctx, outcome);
+        }
+        if drained_count > 0 {
+            self.refresh_board_summaries();
         }
 
         self.frame_perf.import_results_drained = drained_count;
@@ -4351,6 +4394,61 @@ impl SnappyRefApp {
         ) {
             self.status = error;
         }
+        self.pending_user_session = None;
+        self.pending_user_session_save_at = None;
+    }
+
+    fn persist_canvas_changes_debounced(&mut self, ctx: &egui::Context) {
+        let document_changed = match self
+            .document_persistence
+            .commit_canvas_document_changes(self.library.as_ref(), &mut self.canvas)
+        {
+            Ok(document_changed) => document_changed,
+            Err(error) => {
+                self.status = error;
+                false
+            }
+        };
+        let session = self.current_user_session();
+        if document_changed {
+            if let Err(error) = self
+                .document_persistence
+                .save_user_session(self.library.as_ref(), session)
+            {
+                self.status = error;
+            }
+            self.pending_user_session = None;
+            self.pending_user_session_save_at = None;
+            return;
+        }
+
+        if !self.document_persistence.user_session_changed(&session) {
+            self.pending_user_session = None;
+            self.pending_user_session_save_at = None;
+            return;
+        }
+
+        if self.pending_user_session.as_ref() != Some(&session) {
+            self.pending_user_session = Some(session);
+            self.pending_user_session_save_at = Some(Instant::now() + USER_SESSION_SAVE_DEBOUNCE);
+        }
+
+        let Some(save_at) = self.pending_user_session_save_at else {
+            return;
+        };
+        let now = Instant::now();
+        if now >= save_at {
+            if let Some(session) = self.pending_user_session.take()
+                && let Err(error) = self
+                    .document_persistence
+                    .save_user_session(self.library.as_ref(), session)
+            {
+                self.status = error;
+            }
+            self.pending_user_session_save_at = None;
+        } else {
+            ctx.request_repaint_after(save_at - now);
+        }
     }
 
     fn update_window_state(&mut self, ctx: &egui::Context) {
@@ -4408,7 +4506,11 @@ impl SnappyRefApp {
         let viewport_world = self.import_viewport_world_rect(screen_rect);
         let mut context = self.active_board_command_context(viewport_world);
         match crate::active_board_commands::delete_selected_from_board(&mut context) {
-            Ok(Some(status)) => self.status = status,
+            Ok(Some(status)) => {
+                self.flush_persistence();
+                self.refresh_board_summaries();
+                self.status = status;
+            }
             Ok(None) => {}
             Err(error) => self.status = error,
         }
@@ -4420,6 +4522,14 @@ impl SnappyRefApp {
             .document_persistence
             .save_user_session(self.library.as_ref(), session)
         {
+            self.status = error;
+        }
+        self.pending_user_session = None;
+        self.pending_user_session_save_at = None;
+    }
+
+    fn flush_persistence(&mut self) {
+        if let Err(error) = self.document_persistence.flush() {
             self.status = error;
         }
     }
@@ -5373,6 +5483,7 @@ impl SnappyRefApp {
                     .arrange_selected_compact(self.settings.import_gap);
             }
             self.persist_canvas_changes();
+            self.refresh_board_summaries();
         }
         let placed_count = added_ids.len() + asset_load_count;
         let noun = if placed_count == 1 { "image" } else { "images" };
@@ -5857,7 +5968,7 @@ impl eframe::App for SnappyRefApp {
         #[cfg(feature = "semantic-search")]
         self.drive_embedding_backfill(ui.ctx());
         self.handle_pending_annotation_requests();
-        self.persist_canvas_changes();
+        self.persist_canvas_changes_debounced(ui.ctx());
         let settled_idle = self.app_settled_idle();
         self.update_service.tick(settled_idle);
         if let Some(wait) = self.update_service.time_until_next_check() {
@@ -5958,7 +6069,7 @@ impl eframe::App for SnappyRefApp {
     }
 
     fn on_exit(&mut self) {
-        self.save_user_session();
+        self.save_active_board_before_transition();
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
@@ -6234,8 +6345,8 @@ fn generated_board_name(boards: &[crate::data::Board]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ArrangementAction, EmbeddingPhaseMarkers, ModelLoadTimingSummary, SnappyRefApp,
-        apply_arrangement_action,
+        ArrangementAction, BoardSummariesCache, EmbeddingPhaseMarkers, ModelLoadTimingSummary,
+        SnappyRefApp, apply_arrangement_action,
     };
     #[cfg(feature = "semantic-search")]
     use crate::crop_flow::CropUndoEntry;
@@ -6486,6 +6597,48 @@ mod tests {
     }
 
     #[test]
+    fn board_summaries_are_served_from_cache_until_refreshed() {
+        let root = temp_library_root("snappyref-board-summary-cache");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library.clone()));
+
+        app.refresh_board_summaries();
+        assert_eq!(app.board_summaries().len(), 1);
+
+        library.create_board("Second").unwrap();
+        assert_eq!(
+            app.board_summaries().len(),
+            1,
+            "rendering should use cached Board Summaries, not query storage every frame"
+        );
+
+        app.refresh_board_summaries();
+        assert_eq!(app.board_summaries().len(), 2);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn creating_board_refreshes_board_summaries_cache() {
+        let root = temp_library_root("snappyref-board-summary-create-refresh");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library));
+        app.refresh_board_summaries();
+
+        app.create_and_switch_board(true);
+
+        let summaries = app.board_summaries();
+        assert_eq!(summaries.len(), 2);
+        assert!(
+            summaries
+                .iter()
+                .any(|summary| summary.board.name == "Board 2")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn persist_canvas_changes_saves_viewport_changes() {
         let root = temp_library_root("snappyref-app-viewport-session");
         let library = Library::initialize(root.clone()).unwrap();
@@ -6508,6 +6661,38 @@ mod tests {
             session.viewport.canvas_background,
             crate::data::CanvasBackground::Dots
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn debounced_canvas_persistence_defers_session_only_viewport_changes() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("snappyref-app-viewport-session-debounce");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.canvas
+            .apply_viewport_state(&crate::data::ViewportState {
+                camera_pan_x: 10.0,
+                camera_pan_y: 20.0,
+                camera_zoom: 1.75,
+                canvas_background: crate::data::CanvasBackground::Dots,
+            });
+
+        app.persist_canvas_changes_debounced(&ctx);
+
+        let session = library.load_user_session().unwrap();
+        assert_ne!(session.viewport.camera_pan_x, 10.0);
+        assert!(app.pending_user_session.is_some());
+
+        app.pending_user_session_save_at = Some(Instant::now() - Duration::from_millis(1));
+        app.persist_canvas_changes_debounced(&ctx);
+
+        let session = library.load_user_session().unwrap();
+        assert_eq!(session.viewport.camera_pan_x, 10.0);
+        assert_eq!(session.viewport.camera_pan_y, 20.0);
+        assert_eq!(session.viewport.camera_zoom, 1.75);
+        assert!(app.pending_user_session.is_none());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -8246,7 +8431,9 @@ mod tests {
     #[test]
     #[cfg(feature = "semantic-search")]
     fn settings_semantic_search_remove_requires_confirmation() {
-        let mut app = test_app(None);
+        let root = temp_library_root("snappyref-semantic-search-remove-confirm");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library));
         app.sidebar_open = true;
         app.sidebar_tab = SidebarTab::Options;
         app.settings.semantic_search_first_launch_prompt_seen = true;
@@ -8257,6 +8444,8 @@ mod tests {
             app.show_semantic_search_remove_confirmation(ctx);
         });
 
+        harness.get_by_label("Semantic Search").scroll_to_me();
+        harness.run();
         harness.get_by_label("Remove").click();
         harness.run();
 
@@ -8280,6 +8469,8 @@ mod tests {
                 .settings
                 .semantic_search_first_launch_prompt_seen
         );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -8533,8 +8724,12 @@ mod tests {
     #[test]
     fn search_shortcut_opens_overlay_when_enabled() {
         let ctx = egui::Context::default();
-        let mut app = test_app(None);
+        let root = temp_library_root("snappyref-search-shortcut-enabled");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut app = test_app(Some(library));
         app.settings.semantic_search_enabled = true;
+        app.search
+            .set_local_model_store_status_for_verification(LocalModelStoreStatus::Installed);
 
         let _ = ctx.run_ui(
             egui::RawInput {
@@ -8559,6 +8754,8 @@ mod tests {
 
         assert!(app.search.overlay.open);
         assert!(app.search.overlay.focus_requested);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[cfg(feature = "semantic-search")]
@@ -8690,6 +8887,8 @@ mod tests {
         let second = library.create_board("Second").unwrap();
         let mut app = test_app(Some(library.clone()));
         app.settings.semantic_search_enabled = true;
+        app.search
+            .set_local_model_store_status_for_verification(LocalModelStoreStatus::Installed);
         app.search.overlay.scope = SearchScope::ThisBoard;
         let mut harness = app_harness(app, |ctx, app| {
             let screen_rect = test_screen_rect();
@@ -9630,7 +9829,10 @@ mod tests {
             .collect::<Vec<_>>();
         for (index, left) in rects.iter().enumerate() {
             for right in rects.iter().skip(index + 1) {
-                assert!(!left.intersects(*right), "{left:?} overlaps {right:?}");
+                assert!(
+                    !rects_have_positive_overlap(*left, *right),
+                    "{left:?} overlaps {right:?}"
+                );
             }
         }
         assert!(app.pending_import_batches.is_empty());
@@ -9790,7 +9992,7 @@ mod tests {
     }
 
     fn test_app(library: Option<Library>) -> SnappyRefApp {
-        SnappyRefApp {
+        let mut app = SnappyRefApp {
             canvas: crate::canvas::CanvasState::default(),
             screenshot_capture: crate::screenshot::ScreenshotCapture::new(None),
             window_capture: None,
@@ -9821,6 +10023,9 @@ mod tests {
             perf_scenario: None,
             hover_preview_dimensions: std::collections::HashMap::new(),
             document_persistence: super::DocumentPersistence::default(),
+            pending_user_session: None,
+            pending_user_session_save_at: None,
+            board_summaries_cache: BoardSummariesCache::default(),
             #[cfg(debug_assertions)]
             verification_mode: None,
             #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -9834,7 +10039,9 @@ mod tests {
             update_service: super::UpdateService::new(super::UpdateConfig::default()),
             update_popover_open: false,
             last_manual_update_check: None,
-        }
+        };
+        app.refresh_board_summaries();
+        app
     }
 
     fn test_screen_rect() -> egui::Rect {
@@ -9896,6 +10103,13 @@ mod tests {
         harness.drag_at(from);
         harness.hover_at(to);
         harness.drop_at(to);
+    }
+
+    fn rects_have_positive_overlap(left: egui::Rect, right: egui::Rect) -> bool {
+        left.left() < right.right()
+            && right.left() < left.right()
+            && left.top() < right.bottom()
+            && right.top() < left.bottom()
     }
 
     fn temp_library_root(prefix: &str) -> PathBuf {
