@@ -221,6 +221,10 @@ mod platform {
             .hovered_pos
     }
 
+    pub(super) fn cursor_screen_pos() -> Option<egui::Pos2> {
+        None
+    }
+
     pub(super) fn take_dropped_urls() -> Vec<String> {
         std::mem::take(
             &mut state()
@@ -769,12 +773,14 @@ mod platform {
         RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop,
     };
     use windows_sys::Win32::UI::Shell::{DragQueryFileW, HDROP};
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
     use windows_sys::core::{GUID, HRESULT};
 
     type IUnknown = c_void;
 
     static STATE: OnceLock<Mutex<super::NativeDropState>> = OnceLock::new();
     static REGISTRATION: OnceLock<Mutex<Option<DropTargetRegistration>>> = OnceLock::new();
+    static WINDOW_HWND: OnceLock<isize> = OnceLock::new();
 
     pub(super) fn install(cc: &eframe::CreationContext<'_>) {
         let Ok(handle) = cc.window_handle() else {
@@ -787,6 +793,7 @@ mod platform {
         if hwnd.is_null() {
             return;
         }
+        let _ = WINDOW_HWND.set(hwnd as isize);
 
         let registration = REGISTRATION.get_or_init(|| Mutex::new(None));
         let mut registration = registration
@@ -833,6 +840,23 @@ mod platform {
             .lock()
             .expect("native drop state mutex poisoned")
             .hovered_pos
+    }
+
+    pub(super) fn cursor_screen_pos() -> Option<egui::Pos2> {
+        let hwnd = *WINDOW_HWND.get()? as HWND;
+        let mut cursor = POINT { x: 0, y: 0 };
+        if unsafe { GetCursorPos(&mut cursor) } == 0 {
+            return None;
+        }
+        unsafe {
+            client_point(
+                hwnd,
+                POINTL {
+                    x: cursor.x,
+                    y: cursor.y,
+                },
+            )
+        }
     }
 
     pub(super) fn take_dropped_urls() -> Vec<String> {
@@ -1295,6 +1319,10 @@ mod platform {
         None
     }
 
+    pub(super) fn cursor_screen_pos() -> Option<egui::Pos2> {
+        None
+    }
+
     pub(super) fn take_dropped_urls() -> Vec<String> {
         Vec::new()
     }
@@ -1326,6 +1354,10 @@ pub fn hovered_paths() -> Vec<PathBuf> {
 
 pub fn hovered_screen_pos() -> Option<egui::Pos2> {
     platform::hovered_screen_pos()
+}
+
+pub fn cursor_screen_pos() -> Option<egui::Pos2> {
+    platform::cursor_screen_pos()
 }
 
 pub fn take_dropped_url_strings() -> Vec<String> {

@@ -597,8 +597,8 @@ fn apply_canvas_navigation(
 /// the pointer; leave true trackpad pan (Point units) and pinch (`Event::Zoom`)
 /// alone so they still work for users with mixed input devices.
 ///
-/// Scroll-wheel up (negative y per egui convention) -> zoom in. Each line tick
-/// scales by 1.1; sub-line deltas scale smoothly via `1.1^(-y)`.
+/// Scroll-wheel up (positive y from winit line-wheel events) -> zoom in. Each
+/// line tick scales by 1.1; sub-line deltas scale smoothly via `1.1^y`.
 pub(super) fn map_mouse_mode_scroll_events(events: &[egui::Event]) -> (f32, egui::Vec2) {
     let mut zoom_factor: f32 = 1.0;
     let mut pan_delta = egui::Vec2::ZERO;
@@ -620,7 +620,7 @@ pub(super) fn map_mouse_mode_scroll_events(events: &[egui::Event]) -> (f32, egui
         }
     }
     if wheel_zoom_y.abs() > f32::EPSILON {
-        zoom_factor *= 1.1_f32.powf(-wheel_zoom_y);
+        zoom_factor *= 1.1_f32.powf(wheel_zoom_y);
     }
     (zoom_factor, pan_delta)
 }
@@ -2110,7 +2110,7 @@ mod tests {
     fn mouse_mode_wheel_up_zooms_in() {
         let events = vec![wheel_event(
             egui::MouseWheelUnit::Line,
-            egui::vec2(0.0, -1.0),
+            egui::vec2(0.0, 1.0),
         )];
         let (zoom_factor, pan_delta) = map_mouse_mode_scroll_events(&events);
         assert!(
@@ -2125,7 +2125,7 @@ mod tests {
     fn mouse_mode_wheel_down_zooms_out() {
         let events = vec![wheel_event(
             egui::MouseWheelUnit::Line,
-            egui::vec2(0.0, 1.0),
+            egui::vec2(0.0, -1.0),
         )];
         let (zoom_factor, _) = map_mouse_mode_scroll_events(&events);
         assert!(

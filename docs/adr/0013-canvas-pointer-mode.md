@@ -7,7 +7,7 @@ The target user is an artist on a Windows PC using a mouse. PureRef-style wheel-
 ## Decision
 
 - Add `pointer_mode: PointerMode { Mouse, Trackpad }` to **Workspace Settings**, default `Mouse` on every platform and for existing sessions deserialized without the field.
-- **Mouse Mode** intercepts only true mouse-wheel notches (`MouseWheelUnit::Line | Page`) and routes them to zoom around the pointer (`1.1` factor per line, smooth via `1.1^(-Δy)`). Horizontal wheel and `Shift`+wheel are no-ops.
+- **Mouse Mode** intercepts only true mouse-wheel notches (`MouseWheelUnit::Line | Page`) and routes them to zoom around the pointer (`1.1` factor per line, smooth via `1.1^Δy`, matching winit's positive-up line-wheel convention). Horizontal wheel and `Shift`+wheel are no-ops.
 - **Mouse Mode** is permissive about trackpad inputs that happen to arrive: pinch (`Event::Zoom`) and `Point`-unit scroll still zoom and pan respectively, so users with hybrid setups never lose those affordances.
 - **Trackpad Mode** is exactly current behavior: egui's `zoom_delta()` and `translation_delta()` smart inputs.
 - `Alt`/`Option`+LMB always pans the canvas in both modes, even when the press lands on a placement. Mirrors PureRef.

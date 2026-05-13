@@ -10,10 +10,12 @@ The incorrect pointer signature existed while the point was ignored. Once drop p
 - Do not revoke an existing Windows drop target while installing SnappyRef's native drop bridge.
 - If `RegisterDragDrop` reports that the window is already registered, keep the existing target and rely on winit for file drops.
 - The custom Windows bridge may still register when no prior target exists, but URL-drop support is lower priority than preserving file import.
+- When winit owns file drops, its hover/drop file events do not carry coordinates. Keep the window handle and query the current OS cursor position as the placement fallback during file hover/drop.
 
 ## Consequences
 
 - Native drop coordinates can be used safely for Windows import placement.
 - Explorer file drops keep working through winit if the custom URL bridge cannot attach.
+- Explorer file-drop previews can still follow the cursor while winit owns the drop target.
 - Browser URL drops on Windows may be unavailable when winit already owns the drop target.
 - A future richer URL-drop implementation should chain or cooperate with winit rather than replacing it blindly.
