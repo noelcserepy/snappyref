@@ -222,7 +222,7 @@ impl SearchController {
     pub(crate) fn remove_semantic_search_assets_from_settings(&mut self, status: &mut String) {
         self.semantic_install.force_stop();
         #[cfg(not(test))]
-        match crate::updater::install_paths::resolve_install_root() {
+        match crate::library_location::resolve_data_root() {
             Ok(install_root) => {
                 let descriptor = default_semantic_search_asset_descriptor();
                 match remove_semantic_search_assets(&install_root, &descriptor) {

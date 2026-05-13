@@ -754,7 +754,8 @@ mod platform {
     use eframe::egui;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use windows_sys::Win32::Foundation::{
-        DV_E_FORMATETC, E_NOINTERFACE, HGLOBAL, HWND, POINT, POINTL, S_OK,
+        DRAGDROP_E_ALREADYREGISTERED, DV_E_FORMATETC, E_NOINTERFACE, HGLOBAL, HWND, POINT, POINTL,
+        S_OK,
     };
     use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
     use windows_sys::Win32::System::Com::{DVASPECT_CONTENT, FORMATETC, STGMEDIUM, TYMED_HGLOBAL};
@@ -797,12 +798,17 @@ mod platform {
 
         unsafe {
             let _ = OleInitialize(ptr::null());
-            let _ = RevokeDragDrop(hwnd);
         }
-        let target = DropTargetRegistration::new(hwnd);
+        let mut target = DropTargetRegistration::new(hwnd);
         let result = unsafe { RegisterDragDrop(hwnd, target.data as *mut c_void) };
         if result >= 0 {
+            target.registered = true;
             *registration = Some(target);
+        } else if result == DRAGDROP_E_ALREADYREGISTERED {
+            // Winit already registered the window for file drops. Keep that
+            // working rather than replacing it with a custom bridge that is
+            // only needed for richer URL payloads.
+            drop(target);
         }
     }
 
@@ -905,13 +911,13 @@ mod platform {
             this: *mut IDropTarget,
             data_object: *const c_void,
             key_state: u32,
-            point: *const POINTL,
+            point: POINTL,
             effect: *mut u32,
         ) -> HRESULT,
         DragOver: unsafe extern "system" fn(
             this: *mut IDropTarget,
             key_state: u32,
-            point: *const POINTL,
+            point: POINTL,
             effect: *mut u32,
         ) -> HRESULT,
         DragLeave: unsafe extern "system" fn(this: *mut IDropTarget) -> HRESULT,
@@ -919,7 +925,7 @@ mod platform {
             this: *mut IDropTarget,
             data_object: *const c_void,
             key_state: u32,
-            point: *const POINTL,
+            point: POINTL,
             effect: *mut u32,
         ) -> HRESULT,
     }
@@ -939,6 +945,7 @@ mod platform {
 
     struct DropTargetRegistration {
         data: *mut DropTargetData,
+        registered: bool,
     }
 
     unsafe impl Send for DropTargetRegistration {}
@@ -956,6 +963,7 @@ mod platform {
             });
             Self {
                 data: Box::into_raw(data),
+                registered: false,
             }
         }
     }
@@ -963,8 +971,10 @@ mod platform {
     impl Drop for DropTargetRegistration {
         fn drop(&mut self) {
             unsafe {
-                let hwnd = (*self.data).hwnd;
-                let _ = RevokeDragDrop(hwnd);
+                if self.registered {
+                    let hwnd = (*self.data).hwnd;
+                    let _ = RevokeDragDrop(hwnd);
+                }
                 DropTarget::release(self.data as *mut IUnknown);
             }
         }
@@ -1015,7 +1025,7 @@ mod platform {
             this: *mut IDropTarget,
             data_object: *const c_void,
             _key_state: u32,
-            point: *const POINTL,
+            point: POINTL,
             effect: *mut u32,
         ) -> HRESULT {
             let data = unsafe { Self::from_interface(this) };
@@ -1040,7 +1050,7 @@ mod platform {
         unsafe extern "system" fn drag_over(
             this: *mut IDropTarget,
             _key_state: u32,
-            point: *const POINTL,
+            point: POINTL,
             effect: *mut u32,
         ) -> HRESULT {
             let data = unsafe { Self::from_interface(this) };
@@ -1073,7 +1083,7 @@ mod platform {
             this: *mut IDropTarget,
             data_object: *const c_void,
             _key_state: u32,
-            point: *const POINTL,
+            point: POINTL,
             effect: *mut u32,
         ) -> HRESULT {
             let data = unsafe { Self::from_interface(this) };
@@ -1101,11 +1111,7 @@ mod platform {
         }
     }
 
-    unsafe fn client_point(hwnd: HWND, point: *const POINTL) -> Option<egui::Pos2> {
-        if point.is_null() {
-            return None;
-        }
-        let point = unsafe { &*point };
+    unsafe fn client_point(hwnd: HWND, point: POINTL) -> Option<egui::Pos2> {
         let mut client = POINT {
             x: point.x,
             y: point.y,
