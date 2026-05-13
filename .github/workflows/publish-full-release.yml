@@ -6,7 +6,7 @@ on:
       release_tag:
         description: Release tag, for example v0.1.0
         required: true
-        default: v0.1.5
+        default: v0.1.6
         type: string
       notes_url:
         description: Public URL the auto-updater shows for these release notes
@@ -49,7 +49,7 @@ on:
       actions_artifact_handoff:
         description: Use GitHub Actions artifacts for build handoff and release zip retention
         required: false
-        default: true
+        default: false
         type: boolean
       semantic_search_url:
         description: Semantic Search asset URL compiled into the app
