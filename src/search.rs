@@ -396,6 +396,12 @@ impl SearchController {
             return;
         }
 
+        #[cfg(test)]
+        let model_store_status = self
+            .local_model_store_status
+            .clone()
+            .unwrap_or_else(default_local_model_store_status);
+        #[cfg(not(test))]
         let model_store_status = default_local_model_store_status();
         self.sync_model_store_status(model_store_status, status, canvas);
         if !self

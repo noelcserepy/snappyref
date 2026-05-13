@@ -1686,6 +1686,7 @@ mod tests {
     fn drag_snap_preview_acquires_nearby_placement_target() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
+        canvas.set_layout_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 180, 140);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(0.0, 0.0), 180, 140);
         canvas.select_items(&[2]);
