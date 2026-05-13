@@ -220,6 +220,7 @@ jobs:
         run: |
           set -euo pipefail
           descriptors=()
+          canonical_descriptors=()
           if [[ "${{ inputs.include_windows }}" == "true" ]]; then
             descriptors+=("${RUNNER_TEMP}/descriptor-artifacts/windows/semantic-search-descriptor.env")
           fi
@@ -235,12 +236,15 @@ jobs:
               echo "missing Semantic Search descriptor artifact: $descriptor" >&2
               exit 1
             fi
-            grep -Eq '^semantic_search_url=.+$' "$descriptor"
-            grep -Eq '^semantic_search_sha256=[0-9a-fA-F]{64}$' "$descriptor"
-            grep -Eq '^semantic_search_size=[1-9][0-9]*$' "$descriptor"
+            canonical="${RUNNER_TEMP}/canonical-$(basename "$(dirname "$descriptor")")-semantic-search-descriptor.env"
+            tr -d '\r' < "$descriptor" > "$canonical"
+            canonical_descriptors+=("$canonical")
+            grep -Eq '^semantic_search_url=.+$' "$canonical"
+            grep -Eq '^semantic_search_sha256=[0-9a-fA-F]{64}$' "$canonical"
+            grep -Eq '^semantic_search_size=[1-9][0-9]*$' "$canonical"
           done
-          first="${descriptors[0]}"
-          for descriptor in "${descriptors[@]:1}"; do
+          first="${canonical_descriptors[0]}"
+          for descriptor in "${canonical_descriptors[@]:1}"; do
             if ! cmp -s "$first" "$descriptor"; then
               echo "selected app builds were compiled with different Semantic Search descriptors" >&2
               diff -u "$first" "$descriptor" || true
@@ -404,15 +408,5 @@ jobs:
           )
 
           for name in "${names[@]}"; do
-            mapfile -t asset_ids < <(
-              gh release view "$tag" \
-                --json assets \
-                --jq ".assets[] | select(.name == \"${name}\") | .id" \
-                2>/dev/null || true
-            )
-            for asset_id in "${asset_ids[@]}"; do
-              gh api \
-                --method DELETE \
-                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
-            done
+            gh release delete-asset "$tag" "$name" --yes 2>/dev/null || true
           done
