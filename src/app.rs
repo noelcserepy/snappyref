@@ -2558,7 +2558,7 @@ impl SnappyRefApp {
 
     /// Process a Settings Tab "Check for updates now" click. Throttled to
     /// one invocation per [`MANUAL_UPDATE_CHECK_THROTTLE`].
-    fn handle_update_check_now_click(&mut self) {
+    fn handle_update_check_now_click(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
         if let Some(last) = self.last_manual_update_check {
             if now.duration_since(last) < MANUAL_UPDATE_CHECK_THROTTLE {
@@ -2567,6 +2567,7 @@ impl SnappyRefApp {
         }
         self.last_manual_update_check = Some(now);
         self.update_service.request_check_now();
+        ctx.request_repaint();
     }
 
     /// Process a Settings Tab "Rollback to previous version" click.
@@ -6036,7 +6037,7 @@ impl eframe::App for SnappyRefApp {
             sidebar_result.update_pill_rect,
         );
         if sidebar_result.update_check_now_clicked {
-            self.handle_update_check_now_click();
+            self.handle_update_check_now_click(ui.ctx());
         }
         if sidebar_result.rollback_clicked {
             self.handle_rollback_click();
@@ -6370,6 +6371,10 @@ mod tests {
     use egui_kittest::{Harness, kittest::Queryable};
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -8405,6 +8410,29 @@ mod tests {
     }
 
     #[test]
+    fn manual_update_check_handler_requests_repaint() {
+        let mut app = test_app(None);
+        let ctx = egui::Context::default();
+        let repaint_requests = Arc::new(AtomicUsize::new(0));
+        let repaint_requests_for_callback = repaint_requests.clone();
+        ctx.set_request_repaint_callback(move |_| {
+            repaint_requests_for_callback.fetch_add(1, Ordering::SeqCst);
+        });
+        let baseline_repaints = repaint_requests.load(Ordering::SeqCst);
+
+        app.handle_update_check_now_click(&ctx);
+
+        assert!(
+            app.last_manual_update_check.is_some(),
+            "settings click must queue a manual update check"
+        );
+        assert!(
+            repaint_requests.load(Ordering::SeqCst) > baseline_repaints,
+            "manual update check must request a repaint so the queued check runs next frame"
+        );
+    }
+
+    #[test]
     #[cfg(feature = "semantic-search")]
     fn settings_semantic_search_failed_state_retries_shared_install() {
         let mut app = test_app(None);
@@ -10076,6 +10104,9 @@ mod tests {
         };
         app.handle_board_action(board_action);
         app.handle_semantic_search_settings_action(sidebar_result.semantic_search_action, ctx);
+        if sidebar_result.update_check_now_clicked {
+            app.handle_update_check_now_click(ctx);
+        }
     }
 
     fn app_harness<'a>(

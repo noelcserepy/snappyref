@@ -17,7 +17,9 @@ SnappyRef keeps release workflow storage bounded:
   release cache families:
   - `release-macos-{build_profile}`
   - `release-windows-{build_profile}`
-- Release build caches are saved only for `main` builds.
+- Release build caches are saved for release app builds so manually
+  dispatched builds can refresh the stable cache family even when the
+  workflow run itself was launched from a non-`main` ref.
 - The full release workflow prunes release caches after platform builds and
   keeps only the latest cache for each included platform/build-profile family.
 - GitHub Actions artifacts remain short-lived job handoff files with

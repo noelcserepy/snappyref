@@ -92,7 +92,7 @@ jobs:
           shared-key: release-macos-${{ inputs.build_profile }}
           add-job-id-key: false
           cache-bin: false
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: true
 
       - name: Install libjpeg-turbo
         if: ${{ inputs.build_profile == 'release' }}
