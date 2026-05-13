@@ -80,6 +80,14 @@ pub(crate) enum SemanticSearchSettingsAction {
     RequestRemove,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidebarOptionsSection {
+    AboutUpdates,
+    SemanticSearch,
+    WorkspaceSettings,
+    Shortcuts,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SidebarBoardAction {
     CreateBoard,
@@ -470,23 +478,44 @@ fn paint_sidebar_options(
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 ui.add_space(crate::theme::SPACE_3);
-                paint_sidebar_subcard(ui, |ui| {
-                    let about_outcome = paint_about_updates_section(ui, about_updates);
-                    check_now_clicked |= about_outcome.check_now_clicked;
-                    rollback_clicked |= about_outcome.rollback_clicked;
-                });
-                ui.add_space(crate::theme::SPACE_4);
-                paint_sidebar_subcard(ui, |ui| {
-                    semantic_search_action =
-                        paint_semantic_search_settings_section(ui, &about_updates.semantic_search);
-                });
-                ui.add_space(crate::theme::SPACE_4);
-                paint_sidebar_subcard(ui, |ui| {
-                    changed |= paint_settings_section(ui, settings, canvas);
-                });
-                ui.add_space(crate::theme::SPACE_6);
-                paint_sidebar_section_header(ui, "Shortcuts", None);
-                paint_supported_shortcuts_section(ui);
+                for (index, section) in
+                    sidebar_options_section_order(&about_updates.semantic_search.status)
+                        .into_iter()
+                        .enumerate()
+                {
+                    if index > 0 {
+                        ui.add_space(match section {
+                            SidebarOptionsSection::Shortcuts => crate::theme::SPACE_6,
+                            _ => crate::theme::SPACE_4,
+                        });
+                    }
+                    match section {
+                        SidebarOptionsSection::AboutUpdates => {
+                            paint_sidebar_subcard(ui, |ui| {
+                                let about_outcome = paint_about_updates_section(ui, about_updates);
+                                check_now_clicked |= about_outcome.check_now_clicked;
+                                rollback_clicked |= about_outcome.rollback_clicked;
+                            });
+                        }
+                        SidebarOptionsSection::SemanticSearch => {
+                            paint_sidebar_subcard(ui, |ui| {
+                                semantic_search_action = paint_semantic_search_settings_section(
+                                    ui,
+                                    &about_updates.semantic_search,
+                                );
+                            });
+                        }
+                        SidebarOptionsSection::WorkspaceSettings => {
+                            paint_sidebar_subcard(ui, |ui| {
+                                changed |= paint_settings_section(ui, settings, canvas);
+                            });
+                        }
+                        SidebarOptionsSection::Shortcuts => {
+                            paint_sidebar_section_header(ui, "Shortcuts", None);
+                            paint_supported_shortcuts_section(ui);
+                        }
+                    }
+                }
                 ui.add_space(crate::theme::SPACE_4);
             });
     });
@@ -495,6 +524,29 @@ fn paint_sidebar_options(
         check_now_clicked,
         rollback_clicked,
         semantic_search_action,
+    }
+}
+
+fn sidebar_options_section_order(
+    semantic_search_status: &SemanticSearchSettingsStatus,
+) -> Vec<SidebarOptionsSection> {
+    if matches!(
+        semantic_search_status,
+        SemanticSearchSettingsStatus::Installed
+    ) {
+        vec![
+            SidebarOptionsSection::WorkspaceSettings,
+            SidebarOptionsSection::Shortcuts,
+            SidebarOptionsSection::SemanticSearch,
+            SidebarOptionsSection::AboutUpdates,
+        ]
+    } else {
+        vec![
+            SidebarOptionsSection::SemanticSearch,
+            SidebarOptionsSection::WorkspaceSettings,
+            SidebarOptionsSection::Shortcuts,
+            SidebarOptionsSection::AboutUpdates,
+        ]
     }
 }
 
@@ -532,30 +584,32 @@ fn paint_about_updates_section(
             .color(crate::theme::TEXT_SUBTLE),
         );
         ui.add_space(crate::theme::SPACE_2);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
-            let check_button = egui::Button::new(
-                egui::RichText::new("Check for updates now")
+        let button_width = ui.available_width();
+        let check_button = egui::Button::new(
+            egui::RichText::new("Check for updates now")
+                .text_style(egui::TextStyle::Small)
+                .color(crate::theme::TEXT),
+        );
+        if ui
+            .add_enabled_ui(about.check_now_enabled, |ui| {
+                ui.add_sized([button_width, 0.0], check_button)
+            })
+            .inner
+            .clicked()
+        {
+            check_now_clicked = true;
+        }
+        if about.backup_present {
+            ui.add_space(crate::theme::SPACE_2);
+            let rollback_button = egui::Button::new(
+                egui::RichText::new("Rollback to previous version")
                     .text_style(egui::TextStyle::Small)
                     .color(crate::theme::TEXT),
             );
-            if ui
-                .add_enabled(about.check_now_enabled, check_button)
-                .clicked()
-            {
-                check_now_clicked = true;
+            if ui.add_sized([button_width, 0.0], rollback_button).clicked() {
+                rollback_clicked = true;
             }
-            if about.backup_present {
-                let rollback_button = egui::Button::new(
-                    egui::RichText::new("Rollback to previous version")
-                        .text_style(egui::TextStyle::Small)
-                        .color(crate::theme::TEXT),
-                );
-                if ui.add(rollback_button).clicked() {
-                    rollback_clicked = true;
-                }
-            }
-        });
+        }
     });
     ui.add_space(crate::theme::SPACE_2 + 2.0);
 
@@ -674,7 +728,7 @@ fn semantic_search_status_copy(status: &SemanticSearchSettingsStatus) -> (String
         ),
         SemanticSearchSettingsStatus::Failed => (
             "Install failed".to_owned(),
-            "Try installing Semantic Search again after checking your connection.",
+            "Try again. If it still fails, keep SnappyRef in a writable folder and check network access.",
         ),
     }
 }
@@ -1536,8 +1590,9 @@ fn shortcut_label_uses_small_symbol_glyphs(keys: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        SemanticSearchSettingsStatus, display_shortcut_label, paint_board_row,
-        semantic_search_status_copy, shortcut_label_uses_small_symbol_glyphs,
+        SemanticSearchSettingsStatus, SidebarOptionsSection, display_shortcut_label,
+        paint_board_row, semantic_search_status_copy, shortcut_label_uses_small_symbol_glyphs,
+        sidebar_options_section_order,
     };
     use eframe::egui;
 
@@ -1576,9 +1631,40 @@ mod tests {
             semantic_search_status_copy(&SemanticSearchSettingsStatus::Failed).0,
             "Install failed"
         );
+        assert!(
+            semantic_search_status_copy(&SemanticSearchSettingsStatus::Failed)
+                .1
+                .contains("writable folder")
+        );
         assert_eq!(
             semantic_search_status_copy(&SemanticSearchSettingsStatus::Installed).0,
             "Installed"
+        );
+    }
+
+    #[test]
+    fn sidebar_options_keep_installed_semantic_search_and_about_at_bottom() {
+        assert_eq!(
+            sidebar_options_section_order(&SemanticSearchSettingsStatus::Installed),
+            vec![
+                SidebarOptionsSection::WorkspaceSettings,
+                SidebarOptionsSection::Shortcuts,
+                SidebarOptionsSection::SemanticSearch,
+                SidebarOptionsSection::AboutUpdates,
+            ]
+        );
+    }
+
+    #[test]
+    fn sidebar_options_keep_missing_semantic_search_prominent_but_about_at_bottom() {
+        assert_eq!(
+            sidebar_options_section_order(&SemanticSearchSettingsStatus::Missing),
+            vec![
+                SidebarOptionsSection::SemanticSearch,
+                SidebarOptionsSection::WorkspaceSettings,
+                SidebarOptionsSection::Shortcuts,
+                SidebarOptionsSection::AboutUpdates,
+            ]
         );
     }
 

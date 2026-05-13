@@ -23,11 +23,13 @@ on:
         type: string
       semantic_search_sha256:
         description: Compiled Semantic Search asset sha256
-        required: true
+        required: false
+        default: 252bbd840e67c09041feaf2e127f791903dab31d50bffb4810a162f1f1999429
         type: string
       semantic_search_size:
         description: Compiled Semantic Search asset byte size
-        required: true
+        required: false
+        default: "253732373"
         type: string
       upload_actions_artifacts:
         description: Upload app and descriptor through GitHub Actions artifacts
@@ -54,10 +56,12 @@ on:
         default: https://github.com/noelcserepy/snappyref-dist/releases/download/semantic-search/snappyref-semantic-search.zip
         type: string
       semantic_search_sha256:
-        required: true
+        required: false
+        default: 252bbd840e67c09041feaf2e127f791903dab31d50bffb4810a162f1f1999429
         type: string
       semantic_search_size:
-        required: true
+        required: false
+        default: "253732373"
         type: string
       upload_actions_artifacts:
         required: false
