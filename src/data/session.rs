@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::CanvasBackground;
 
-pub const DEFAULT_IMPORT_GAP: f32 = 24.0;
+pub const DEFAULT_IMPORT_GAP: f32 = 0.0;
 pub const DEFAULT_CANVAS_IMAGE_MAX_SIDE: u32 = 2000;
 pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
 pub const DEFAULT_ROTATION_SNAP_DEGREES: f32 = 15.0;
@@ -171,6 +171,13 @@ mod tests {
         let settings = WorkspaceSettings::default();
 
         assert!(!settings.semantic_search_first_launch_prompt_seen);
+    }
+
+    #[test]
+    fn default_image_gap_is_zero_for_new_workspaces() {
+        let settings = WorkspaceSettings::default();
+
+        assert_eq!(settings.import_gap, 0.0);
     }
 }
 

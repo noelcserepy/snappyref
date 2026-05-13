@@ -2419,7 +2419,7 @@ impl Library {
                     camera_pan_y  REAL NOT NULL,
                     camera_zoom   REAL NOT NULL,
                     auto_image_scaling INTEGER NOT NULL DEFAULT 1,
-                    import_gap    REAL NOT NULL DEFAULT 24.0,
+                    import_gap    REAL NOT NULL DEFAULT 0.0,
                     import_target_canvas_area REAL NOT NULL DEFAULT 90000.0,
                     canvas_background TEXT NOT NULL DEFAULT 'none',
                     semantic_search_enabled INTEGER NOT NULL DEFAULT 1,
@@ -3440,7 +3440,7 @@ fn ensure_user_session_import_gap_column(connection: &Connection) -> Result<(), 
 
     connection
         .execute(
-            "ALTER TABLE user_session ADD COLUMN import_gap REAL NOT NULL DEFAULT 24.0",
+            "ALTER TABLE user_session ADD COLUMN import_gap REAL NOT NULL DEFAULT 0.0",
             [],
         )
         .map_err(|error| format!("failed to add import_gap column to user_session: {error}"))?;

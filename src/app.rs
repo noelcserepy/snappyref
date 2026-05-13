@@ -3132,64 +3132,7 @@ impl SnappyRefApp {
             screen_rect,
             self.import_drop_screen_pos(ui.ctx()),
         );
-        let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let mut layout = match self.import_layout_snapshot() {
-            Ok(layout) => layout,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
-
-        let previews = self.dropped_import_previews(&dropped_sources, desired_world, screen_rect);
-        let mut queued_batch_ids = Vec::new();
-
-        for (source, (label, dimensions, center_world)) in dropped_sources.into_iter().zip(previews)
-        {
-            let reservation =
-                self.reserve_import_at_world(&mut layout, label, dimensions, center_world);
-
-            let request = match &source {
-                ExternalImportSource::Path(source_path) => {
-                    crate::import_intake::import_path_request(
-                        source_path.clone(),
-                        reservation,
-                        desired_world,
-                        viewport_world,
-                        self.import_request_config(),
-                        self.import_trace(),
-                    )
-                }
-                ExternalImportSource::Url(url) => crate::import_intake::import_url_request(
-                    url.clone(),
-                    reservation,
-                    desired_world,
-                    viewport_world,
-                    self.import_request_config(),
-                    self.import_trace(),
-                ),
-            };
-
-            if let Err(error) = self
-                .import_worker
-                .as_ref()
-                .expect("checked import worker")
-                .enqueue(request)
-            {
-                self.remove_import_reservation(reservation);
-                self.status = error;
-                continue;
-            }
-
-            queued_batch_ids.push(reservation.queue_id);
-            self.status = match &source {
-                ExternalImportSource::Path(path) => {
-                    format!("Queued import: {}", path.display())
-                }
-                ExternalImportSource::Url(url) => format!("Queued URL import: {url}"),
-            };
-        }
-        self.register_import_batch(self.active_board_id, queued_batch_ids);
+        self.enqueue_external_import_sources(dropped_sources, screen_rect, desired_world);
     }
 
     fn register_import_batch(&mut self, target_board_id: i64, queue_ids: Vec<u64>) {
@@ -3272,20 +3215,48 @@ impl SnappyRefApp {
                 _ => None,
             })
         });
-        let Some(paste_text) = paste_text else {
-            return;
-        };
-
-        let desired_world = self.preferred_import_world(ctx, screen_rect);
-        if self.handle_internal_clipboard_paste_at(&paste_text, desired_world) {
+        let paste_requested = paste_text.is_some()
+            || ctx.input(|input| input.modifiers.command && input.key_pressed(egui::Key::V));
+        if !paste_requested {
             return;
         }
 
-        if self.handle_clipboard_url_import_at(screen_rect, &paste_text, desired_world) {
+        let desired_world = self.preferred_import_world(ctx, screen_rect);
+        if let Some(paste_text) = paste_text {
+            if self.handle_internal_clipboard_paste_at(&paste_text, desired_world) {
+                return;
+            }
+
+            if self.handle_clipboard_url_import_at(screen_rect, &paste_text, desired_world) {
+                return;
+            }
+        }
+
+        if self.handle_clipboard_path_import_at(screen_rect, desired_world) {
             return;
         }
 
         self.handle_external_clipboard_image_paste_at(screen_rect, desired_world);
+    }
+
+    fn handle_clipboard_path_import_at(
+        &mut self,
+        screen_rect: egui::Rect,
+        desired_world: egui::Pos2,
+    ) -> bool {
+        if self.import_worker.is_none() {
+            return false;
+        }
+        let sources = crate::native_drop::clipboard_paths()
+            .into_iter()
+            .map(ExternalImportSource::Path)
+            .collect::<Vec<_>>();
+        if sources.is_empty() {
+            return false;
+        }
+
+        self.enqueue_external_import_sources(sources, screen_rect, desired_world);
+        true
     }
 
     fn handle_external_clipboard_image_paste_at(
@@ -3404,6 +3375,75 @@ impl SnappyRefApp {
 
         self.status = format!("Queued URL import: {url}");
         true
+    }
+
+    fn enqueue_external_import_sources(
+        &mut self,
+        sources: Vec<ExternalImportSource>,
+        screen_rect: egui::Rect,
+        desired_world: egui::Pos2,
+    ) {
+        if self.import_worker.is_none() || sources.is_empty() {
+            return;
+        }
+
+        let viewport_world = self.import_viewport_world_rect(screen_rect);
+        let mut layout = match self.import_layout_snapshot() {
+            Ok(layout) => layout,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
+
+        let previews = self.dropped_import_previews(&sources, desired_world, screen_rect);
+        let mut queued_batch_ids = Vec::new();
+
+        for (source, (label, dimensions, center_world)) in sources.into_iter().zip(previews) {
+            let reservation =
+                self.reserve_import_at_world(&mut layout, label, dimensions, center_world);
+
+            let request = match &source {
+                ExternalImportSource::Path(source_path) => {
+                    crate::import_intake::import_path_request(
+                        source_path.clone(),
+                        reservation,
+                        desired_world,
+                        viewport_world,
+                        self.import_request_config(),
+                        self.import_trace(),
+                    )
+                }
+                ExternalImportSource::Url(url) => crate::import_intake::import_url_request(
+                    url.clone(),
+                    reservation,
+                    desired_world,
+                    viewport_world,
+                    self.import_request_config(),
+                    self.import_trace(),
+                ),
+            };
+
+            if let Err(error) = self
+                .import_worker
+                .as_ref()
+                .expect("checked import worker")
+                .enqueue(request)
+            {
+                self.remove_import_reservation(reservation);
+                self.status = error;
+                continue;
+            }
+
+            queued_batch_ids.push(reservation.queue_id);
+            self.status = match &source {
+                ExternalImportSource::Path(path) => {
+                    format!("Queued import: {}", path.display())
+                }
+                ExternalImportSource::Url(url) => format!("Queued URL import: {url}"),
+            };
+        }
+        self.register_import_batch(self.active_board_id, queued_batch_ids);
     }
 
     fn handle_clipboard_copy(&mut self, ctx: &egui::Context) {

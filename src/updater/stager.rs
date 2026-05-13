@@ -250,6 +250,13 @@ fn validate_layout(bundle_root: &Path, platform: TargetPlatform) -> Result<(), S
                     "macOS zip's `Contents/MacOS/` is empty".to_owned(),
                 ));
             }
+            let helper = macos_dir.join("snappyref-updater");
+            if !helper.is_file() {
+                return Err(StageError::InvalidLayout(
+                    "macOS zip is missing `SnappyRef.app/Contents/MacOS/snappyref-updater`"
+                        .to_owned(),
+                ));
+            }
         }
         TargetPlatform::Windows => {
             // Windows layout: SnappyRef/snappyref.exe at the folder root.
@@ -257,6 +264,12 @@ fn validate_layout(bundle_root: &Path, platform: TargetPlatform) -> Result<(), S
             if !exe.is_file() {
                 return Err(StageError::InvalidLayout(
                     "Windows zip is missing `SnappyRef/snappyref.exe`".to_owned(),
+                ));
+            }
+            let helper = bundle_root.join("snappyref-updater.exe");
+            if !helper.is_file() {
+                return Err(StageError::InvalidLayout(
+                    "Windows zip is missing `SnappyRef/snappyref-updater.exe`".to_owned(),
                 ));
             }
         }
@@ -317,6 +330,10 @@ mod tests {
             (
                 "SnappyRef/SnappyRef.app/Contents/MacOS/snappyref",
                 b"fake-binary",
+            ),
+            (
+                "SnappyRef/SnappyRef.app/Contents/MacOS/snappyref-updater",
+                b"fake-helper",
             ),
             ("SnappyRef/SnappyRef.app/Contents/Info.plist", b"<plist/>"),
         ]
@@ -506,6 +523,61 @@ mod tests {
         match err {
             StageError::InvalidLayout(msg) => {
                 assert!(msg.contains("snappyref.exe"), "msg was {msg}");
+            }
+            other => panic!("expected InvalidLayout, got {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejects_macos_zip_missing_updater_helper() {
+        let dir = unique_temp_dir("macos-no-helper");
+        let zip_path = dir.join("no-helper.zip");
+        write_zip(
+            &zip_path,
+            &[
+                ("SnappyRef/", &[][..]),
+                ("SnappyRef/SnappyRef.app/", &[][..]),
+                ("SnappyRef/SnappyRef.app/Contents/", &[][..]),
+                ("SnappyRef/SnappyRef.app/Contents/MacOS/", &[][..]),
+                (
+                    "SnappyRef/SnappyRef.app/Contents/MacOS/snappyref",
+                    b"fake-binary",
+                ),
+                ("SnappyRef/SnappyRef.app/Contents/Info.plist", b"<plist/>"),
+            ],
+        );
+        let staging = dir.join("staging-no-helper");
+
+        let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap_err();
+        match err {
+            StageError::InvalidLayout(msg) => {
+                assert!(msg.contains("snappyref-updater"), "msg was {msg}");
+            }
+            other => panic!("expected InvalidLayout, got {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejects_windows_zip_missing_updater_helper() {
+        let dir = unique_temp_dir("windows-no-helper");
+        let zip_path = dir.join("no-helper.zip");
+        write_zip(
+            &zip_path,
+            &[
+                ("SnappyRef/", &[][..]),
+                ("SnappyRef/snappyref.exe", b"fake-exe"),
+            ],
+        );
+        let staging = dir.join("staging-no-helper");
+
+        let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Windows).unwrap_err();
+        match err {
+            StageError::InvalidLayout(msg) => {
+                assert!(msg.contains("snappyref-updater.exe"), "msg was {msg}");
             }
             other => panic!("expected InvalidLayout, got {other:?}"),
         }
