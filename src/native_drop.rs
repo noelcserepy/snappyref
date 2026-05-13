@@ -141,8 +141,8 @@ mod platform {
     use objc2::runtime::{AnyClass, AnyObject, Imp, Method, NSObject, Sel};
     use objc2::{msg_send, msg_send_id, sel};
     use objc2_app_kit::{
-        NSDragOperation, NSFilenamesPboardType, NSPasteboard, NSPasteboardTypeHTML,
-        NSPasteboardTypeString, NSPasteboardTypeURL,
+        NSDragOperation, NSFilenamesPboardType, NSPasteboard, NSPasteboardTypeFileURL,
+        NSPasteboardTypeHTML, NSPasteboardTypeString, NSPasteboardTypeURL,
     };
     use objc2_foundation::{NSPoint, NSRect};
 
@@ -245,6 +245,10 @@ mod platform {
             .expect("native drop state mutex poisoned")
             .dropped_pos
             .take()
+    }
+
+    pub(super) fn clipboard_paths() -> Vec<std::path::PathBuf> {
+        Vec::new()
     }
 
     fn state() -> &'static Mutex<super::NativeDropState> {
@@ -501,15 +505,21 @@ mod platform {
     fn extract_drag_payload(sender: &NSObject) -> (super::NativeDropPayload, bool) {
         let pasteboard: Retained<NSPasteboard> =
             unsafe { msg_send_id![sender, draggingPasteboard] };
-        if has_file_payload_on_pasteboard(&pasteboard) {
-            return (super::NativeDropPayload::default(), false);
+        let mut payload = super::NativeDropPayload::default();
+        append_file_paths_from_pasteboard(&pasteboard, &mut payload.paths);
+        if !payload.paths.is_empty() {
+            return (payload, true);
         }
 
         let mut urls = Vec::new();
         let mut should_claim_drag = true;
         if let Some(items) = unsafe { pasteboard.pasteboardItems() } {
             for item in items {
+                append_file_paths_from_item(&item, &mut payload.paths);
                 should_claim_drag |= extract_drag_urls_from_item(&item, &mut urls);
+            }
+            if !payload.paths.is_empty() {
+                return (payload, true);
             }
             if !urls.is_empty() {
                 return (
@@ -539,7 +549,7 @@ mod platform {
         (
             super::NativeDropPayload {
                 urls: super::best_drag_image_urls(urls),
-                paths: Vec::new(),
+                paths: payload.paths,
             },
             should_claim_drag,
         )
@@ -555,6 +565,44 @@ mod platform {
         pasteboard
             .propertyListForType(unsafe { NSFilenamesPboardType })
             .is_some()
+    }
+
+    fn append_file_paths_from_pasteboard(
+        pasteboard: &NSPasteboard,
+        paths: &mut Vec<std::path::PathBuf>,
+    ) {
+        let Some(plist) = pasteboard.propertyListForType(unsafe { NSFilenamesPboardType }) else {
+            return;
+        };
+        let count: usize = unsafe { msg_send![&*plist, count] };
+        for index in 0..count {
+            let path: Option<Retained<objc2_foundation::NSString>> =
+                unsafe { msg_send_id![&*plist, objectAtIndex: index] };
+            if let Some(path) = path {
+                let path = std::path::PathBuf::from(path.to_string());
+                if !paths.contains(&path) {
+                    paths.push(path);
+                }
+            }
+        }
+    }
+
+    fn append_file_paths_from_item(
+        item: &objc2_app_kit::NSPasteboardItem,
+        paths: &mut Vec<std::path::PathBuf>,
+    ) {
+        let Some(value) = (unsafe { item.stringForType(NSPasteboardTypeFileURL) }) else {
+            return;
+        };
+        let Ok(url) = url::Url::parse(&value.to_string()) else {
+            return;
+        };
+        let Ok(path) = url.to_file_path() else {
+            return;
+        };
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
     }
 
     fn extract_drag_urls_from_item(
@@ -684,11 +732,14 @@ mod platform {
     };
     use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
     use windows_sys::Win32::System::Com::{DVASPECT_CONTENT, FORMATETC, STGMEDIUM, TYMED_HGLOBAL};
-    use windows_sys::Win32::System::DataExchange::RegisterClipboardFormatW;
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+        RegisterClipboardFormatW,
+    };
     use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
     use windows_sys::Win32::System::Ole::{
-        CF_HDROP, CF_UNICODETEXT, DROPEFFECT_COPY, DROPEFFECT_NONE, RegisterDragDrop,
-        ReleaseStgMedium, RevokeDragDrop,
+        CF_HDROP, CF_UNICODETEXT, DROPEFFECT_COPY, DROPEFFECT_NONE, OleInitialize,
+        RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop,
     };
     use windows_sys::Win32::UI::Shell::{DragQueryFileW, HDROP};
     use windows_sys::core::{GUID, HRESULT};
@@ -719,6 +770,7 @@ mod platform {
         }
 
         unsafe {
+            let _ = OleInitialize(ptr::null());
             let _ = RevokeDragDrop(hwnd);
         }
         let target = DropTargetRegistration::new(hwnd);
@@ -779,6 +831,24 @@ mod platform {
 
     fn state() -> &'static Mutex<super::NativeDropState> {
         STATE.get_or_init(|| Mutex::new(super::NativeDropState::default()))
+    }
+
+    pub(super) fn clipboard_paths() -> Vec<std::path::PathBuf> {
+        unsafe {
+            if IsClipboardFormatAvailable(CF_HDROP as u32) == 0 {
+                return Vec::new();
+            }
+            if OpenClipboard(ptr::null_mut()) == 0 {
+                return Vec::new();
+            }
+            let handle = GetClipboardData(CF_HDROP as u32);
+            let mut paths = Vec::new();
+            if !handle.is_null() {
+                append_hdrop_paths(handle as HDROP, &mut paths);
+            }
+            let _ = CloseClipboard();
+            paths
+        }
     }
 
     #[repr(C)]
@@ -1047,23 +1117,28 @@ mod platform {
     unsafe fn append_paths(data_object: *const c_void, paths: &mut Vec<std::path::PathBuf>) {
         let _ = unsafe {
             with_hglobal_data(data_object, CF_HDROP, |hglobal, _pointer, _size| {
-                let hdrop = hglobal as HDROP;
-                let item_count = unsafe { DragQueryFileW(hdrop, 0xffffffff, ptr::null_mut(), 0) };
-                for index in 0..item_count {
-                    let character_count =
-                        unsafe { DragQueryFileW(hdrop, index, ptr::null_mut(), 0) };
-                    if character_count == 0 {
-                        continue;
-                    }
-                    let mut buffer = Vec::with_capacity(character_count as usize + 1);
-                    unsafe {
-                        DragQueryFileW(hdrop, index, buffer.as_mut_ptr(), character_count + 1);
-                        buffer.set_len(character_count as usize);
-                    }
-                    paths.push(OsString::from_wide(&buffer).into());
-                }
+                unsafe { append_hdrop_paths(hglobal as HDROP, paths) };
             })
         };
+    }
+
+    unsafe fn append_hdrop_paths(hdrop: HDROP, paths: &mut Vec<std::path::PathBuf>) {
+        let item_count = unsafe { DragQueryFileW(hdrop, 0xffffffff, ptr::null_mut(), 0) };
+        for index in 0..item_count {
+            let character_count = unsafe { DragQueryFileW(hdrop, index, ptr::null_mut(), 0) };
+            if character_count == 0 {
+                continue;
+            }
+            let mut buffer = Vec::with_capacity(character_count as usize + 1);
+            unsafe {
+                DragQueryFileW(hdrop, index, buffer.as_mut_ptr(), character_count + 1);
+                buffer.set_len(character_count as usize);
+            }
+            let path = std::path::PathBuf::from(OsString::from_wide(&buffer));
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
     }
 
     unsafe fn drop_text_values(data_object: *const c_void) -> Vec<String> {
@@ -1199,6 +1274,10 @@ mod platform {
     pub(super) fn take_dropped_screen_pos() -> Option<egui::Pos2> {
         None
     }
+
+    pub(super) fn clipboard_paths() -> Vec<std::path::PathBuf> {
+        Vec::new()
+    }
 }
 
 pub fn install_url_drop_bridge(cc: &eframe::CreationContext<'_>) {
@@ -1227,6 +1306,10 @@ pub fn take_dropped_paths() -> Vec<PathBuf> {
 
 pub fn take_dropped_screen_pos() -> Option<egui::Pos2> {
     platform::take_dropped_screen_pos()
+}
+
+pub fn clipboard_paths() -> Vec<PathBuf> {
+    platform::clipboard_paths()
 }
 
 #[cfg(test)]
