@@ -6,7 +6,7 @@ on:
       release_tag:
         description: Release tag, for example v0.1.0
         required: true
-        default: v0.1.5
+        default: v0.1.6
         type: string
       notes_url:
         description: Public URL the auto-updater shows for these release notes
@@ -49,7 +49,7 @@ on:
       actions_artifact_handoff:
         description: Use GitHub Actions artifacts for build handoff and release zip retention
         required: false
-        default: true
+        default: false
         type: boolean
       semantic_search_url:
         description: Semantic Search asset URL compiled into the app
@@ -394,6 +394,29 @@ jobs:
             "${RUNNER_TEMP}/release-assets/snappyref-windows-${tag}.zip" \
             "${RUNNER_TEMP}/release-assets/latest.json" \
             --clobber
+
+      - name: Refresh SnappyRef web release data
+        if: ${{ inputs.publish_to_dist && inputs.include_macos && inputs.include_windows }}
+        env:
+          SNAPPYREF_WEB_RELEASE_REFRESH_URL: ${{ secrets.SNAPPYREF_WEB_RELEASE_REFRESH_URL }}
+          SNAPPYREF_WEB_RELEASE_REFRESH_SECRET: ${{ secrets.SNAPPYREF_WEB_RELEASE_REFRESH_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${SNAPPYREF_WEB_RELEASE_REFRESH_URL:-}" || -z "${SNAPPYREF_WEB_RELEASE_REFRESH_SECRET:-}" ]]; then
+            echo "::notice::SnappyRef web release refresh secrets are not configured; skipping web refresh."
+            exit 0
+          fi
+
+          tag="${{ inputs.release_tag }}"
+          payload="{\"tag\":\"${tag}\"}"
+
+          curl --fail-with-body --show-error --silent \
+            --request POST \
+            --header "content-type: application/json" \
+            --header "x-snappyref-release-refresh-secret: ${SNAPPYREF_WEB_RELEASE_REFRESH_SECRET}" \
+            --data "$payload" \
+            "$SNAPPYREF_WEB_RELEASE_REFRESH_URL"
 
       - name: Clean up release asset handoff files
         if: ${{ always() && !inputs.actions_artifact_handoff }}

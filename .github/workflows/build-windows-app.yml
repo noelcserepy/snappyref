@@ -91,6 +91,7 @@ jobs:
         with:
           shared-key: release-windows-${{ inputs.build_profile }}
           add-job-id-key: false
+          cache-bin: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install libjpeg-turbo
