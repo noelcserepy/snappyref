@@ -3132,64 +3132,7 @@ impl SnappyRefApp {
             screen_rect,
             self.import_drop_screen_pos(ui.ctx()),
         );
-        let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let mut layout = match self.import_layout_snapshot() {
-            Ok(layout) => layout,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
-
-        let previews = self.dropped_import_previews(&dropped_sources, desired_world, screen_rect);
-        let mut queued_batch_ids = Vec::new();
-
-        for (source, (label, dimensions, center_world)) in dropped_sources.into_iter().zip(previews)
-        {
-            let reservation =
-                self.reserve_import_at_world(&mut layout, label, dimensions, center_world);
-
-            let request = match &source {
-                ExternalImportSource::Path(source_path) => {
-                    crate::import_intake::import_path_request(
-                        source_path.clone(),
-                        reservation,
-                        desired_world,
-                        viewport_world,
-                        self.import_request_config(),
-                        self.import_trace(),
-                    )
-                }
-                ExternalImportSource::Url(url) => crate::import_intake::import_url_request(
-                    url.clone(),
-                    reservation,
-                    desired_world,
-                    viewport_world,
-                    self.import_request_config(),
-                    self.import_trace(),
-                ),
-            };
-
-            if let Err(error) = self
-                .import_worker
-                .as_ref()
-                .expect("checked import worker")
-                .enqueue(request)
-            {
-                self.remove_import_reservation(reservation);
-                self.status = error;
-                continue;
-            }
-
-            queued_batch_ids.push(reservation.queue_id);
-            self.status = match &source {
-                ExternalImportSource::Path(path) => {
-                    format!("Queued import: {}", path.display())
-                }
-                ExternalImportSource::Url(url) => format!("Queued URL import: {url}"),
-            };
-        }
-        self.register_import_batch(self.active_board_id, queued_batch_ids);
+        self.enqueue_external_import_sources(dropped_sources, screen_rect, desired_world);
     }
 
     fn register_import_batch(&mut self, target_board_id: i64, queue_ids: Vec<u64>) {
