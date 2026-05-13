@@ -181,7 +181,7 @@ The short window during which the embedding worker keeps an idle **Embedding Hel
 _Avoid_: Helper keep-alive forever, model cache TTL
 
 **Local Model Store**:
-The on-disk directory at `<install_root>/models/` that holds the semantic search model files, kept outside the app bundle and as a sibling of `library/` so it survives app updates and reinstalls.
+The on-disk directory at `<data_root>/models/` that holds the semantic search model files, kept outside the app bundle and beside `library/` so it survives app updates and reinstalls. `data_root` is the portable install folder when that folder is writable; protected installs fall back to the user's app-data directory.
 _Avoid_: Bundled model, model cache, model resources
 
 **Image Preparation Helper Process**:

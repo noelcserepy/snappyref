@@ -140,7 +140,7 @@ fn resolve_model_assets<F>(
 where
     F: FnMut(&str),
 {
-    let install_root = crate::library_location::resolve_install_root()?;
+    let install_root = crate::library_location::resolve_data_root()?;
     let executable_dir = std::env::current_exe()
         .map_err(|error| format!("Failed to resolve current executable path: {error}"))?
         .parent()
@@ -164,7 +164,7 @@ where
 }
 
 pub(crate) fn default_local_model_store_status() -> LocalModelStoreStatus {
-    let install_root = match crate::library_location::resolve_install_root() {
+    let install_root = match crate::library_location::resolve_data_root() {
         Ok(root) => root,
         Err(error) => return LocalModelStoreStatus::Failed(error),
     };

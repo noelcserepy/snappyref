@@ -151,7 +151,7 @@ fn run_semantic_search_install_worker(
     tx: mpsc::Sender<SemanticSearchInstallProgress>,
     canceled: Arc<AtomicBool>,
 ) {
-    let install_root = match crate::updater::install_paths::resolve_install_root() {
+    let install_root = match crate::library_location::resolve_data_root() {
         Ok(root) => root,
         Err(error) => {
             let _ = tx.send(SemanticSearchInstallProgress::Failed { error });
