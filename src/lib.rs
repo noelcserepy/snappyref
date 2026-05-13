@@ -8,6 +8,7 @@ mod data;
 #[cfg(debug_assertions)]
 mod design_system_preview;
 mod document_persistence;
+mod drop_intake;
 mod import_intake;
 mod jobs;
 mod layout_snap;

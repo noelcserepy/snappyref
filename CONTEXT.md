@@ -50,6 +50,10 @@ _Avoid_: Drag guide, snap outline
 The board-local pan and zoom state.
 _Avoid_: Camera, view, canvas position
 
+**External Drag Intake**:
+The pre-import normalization of OS/window drag-and-drop input into external asset sources plus an optional canvas screen anchor. It merges egui and native platform payloads, de-duplicates paths and URLs, and resolves drag/drop coordinates before import preview or enqueueing.
+_Avoid_: Import pipeline, native drop bridge, placement flow
+
 **Dense Compact Layout**:
 The compact arrangement objective for selected placements: minimize visible holes first, then prefer a rough square when density is close. Squareness should decide only when candidate occupancy is roughly within three percentage points. Compact arrangement is placement-only: it may reorder selected placements and change their positions, but it preserves authored scale and rotation. The packed block should keep clean top and left edges; right-edge cleanliness is only a soft tie-break among near-equivalent candidates.
 _Avoid_: Perfect square layout, masonry layout

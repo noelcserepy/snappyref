@@ -2950,88 +2950,9 @@ impl SnappyRefApp {
         }
     }
 
-    fn normalize_import_url(raw: &str) -> Option<String> {
-        crate::import_intake::normalize_import_url(raw)
-    }
-
-    fn import_source_label(source: &ExternalImportSource) -> String {
-        crate::import_intake::import_source_label(source)
-    }
-
-    fn hovered_import_sources(&mut self, ui: &egui::Ui) -> Vec<ExternalImportSource> {
-        let hovered_files = ui.input(|input| input.raw.hovered_files.clone());
-        let mut sources = Vec::new();
-        let mut seen_paths = std::collections::HashSet::new();
-        let mut seen_urls = std::collections::HashSet::new();
-
-        for file in hovered_files {
-            if let Some(path) = file.path {
-                let path_text = path.to_string_lossy();
-                if let Some(url) = Self::normalize_import_url(&path_text) {
-                    if seen_urls.insert(url.clone()) {
-                        sources.push(ExternalImportSource::Url(url));
-                    }
-                } else if seen_paths.insert(path.clone()) {
-                    sources.push(ExternalImportSource::Path(path));
-                }
-            }
-        }
-
-        for path in crate::native_drop::hovered_paths() {
-            if seen_paths.insert(path.clone()) {
-                sources.push(ExternalImportSource::Path(path));
-            }
-        }
-
-        for url in crate::native_drop::hovered_url_strings() {
-            if seen_urls.insert(url.clone()) {
-                sources.push(ExternalImportSource::Url(url));
-            }
-        }
-
-        sources
-    }
-
-    fn dropped_import_sources(&mut self, ui: &egui::Ui) -> Vec<ExternalImportSource> {
-        let dropped_files = ui.input(|input| input.raw.dropped_files.clone());
-        let mut sources = Vec::new();
-        let mut seen_paths = std::collections::HashSet::new();
-        let mut seen_urls = std::collections::HashSet::new();
-
-        for file in dropped_files {
-            if let Some(path) = file.path {
-                let path_text = path.to_string_lossy();
-                if let Some(url) = Self::normalize_import_url(&path_text) {
-                    if seen_urls.insert(url.clone()) {
-                        sources.push(ExternalImportSource::Url(url));
-                    }
-                } else if seen_paths.insert(path.clone()) {
-                    sources.push(ExternalImportSource::Path(path));
-                }
-            } else if let Some(url) = Self::normalize_import_url(&file.name) {
-                if seen_urls.insert(url.clone()) {
-                    sources.push(ExternalImportSource::Url(url));
-                }
-            }
-        }
-
-        for path in crate::native_drop::take_dropped_paths() {
-            if seen_paths.insert(path.clone()) {
-                sources.push(ExternalImportSource::Path(path));
-            }
-        }
-
-        for url in crate::native_drop::take_dropped_url_strings() {
-            if seen_urls.insert(url.clone()) {
-                sources.push(ExternalImportSource::Url(url));
-            }
-        }
-
-        sources
-    }
-
     fn handle_hovered_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
-        let hovered_sources = self.hovered_import_sources(ui);
+        let hover_intake = crate::drop_intake::hovered(ui);
+        let hovered_sources = hover_intake.sources;
         if hovered_sources.is_empty() {
             self.canvas.clear_hover_preview_placeholders();
             self.hover_preview_dimensions.clear();
@@ -3068,7 +2989,7 @@ impl SnappyRefApp {
 
         let previews = self.canvas.compact_guided_preview_placeholders(
             &sizes,
-            self.preferred_import_world(ui.ctx(), screen_rect),
+            self.preferred_import_world_with_pointer(screen_rect, hover_intake.screen_pos),
             screen_rect,
             self.settings.import_gap,
         );
@@ -3087,7 +3008,7 @@ impl SnappyRefApp {
         let specs = sources
             .iter()
             .map(|source| {
-                let label = Self::import_source_label(source);
+                let label = crate::import_intake::import_source_label(source);
                 let dimensions = match source {
                     ExternalImportSource::Path(path) => {
                         image::image_dimensions(path).unwrap_or((FALLBACK_WIDTH, FALLBACK_HEIGHT))
@@ -3123,15 +3044,14 @@ impl SnappyRefApp {
             return;
         }
 
-        let dropped_sources = self.dropped_import_sources(ui);
+        let drop_intake = crate::drop_intake::take_drop(ui);
+        let dropped_sources = drop_intake.sources;
         if dropped_sources.is_empty() {
             return;
         }
 
-        let desired_world = self.preferred_import_world_with_pointer(
-            screen_rect,
-            self.import_drop_screen_pos(ui.ctx()),
-        );
+        let desired_world =
+            self.preferred_import_world_with_pointer(screen_rect, drop_intake.screen_pos);
         self.enqueue_external_import_sources(dropped_sources, screen_rect, desired_world);
     }
 
@@ -3335,7 +3255,7 @@ impl SnappyRefApp {
         if self.import_worker.is_none() {
             return false;
         }
-        let Some(url) = Self::normalize_import_url(paste_text) else {
+        let Some(url) = crate::import_intake::normalize_import_url(paste_text) else {
             return false;
         };
 
@@ -3349,7 +3269,7 @@ impl SnappyRefApp {
         };
         let reservation = self.reserve_import(
             &mut layout,
-            Self::import_source_label(&ExternalImportSource::Url(url.clone())),
+            crate::import_intake::import_source_label(&ExternalImportSource::Url(url.clone())),
             Some((360, 240)),
             desired_world,
             viewport_world,
@@ -5500,18 +5420,8 @@ impl SnappyRefApp {
     }
 
     fn preferred_import_world(&self, ctx: &egui::Context, screen_rect: egui::Rect) -> egui::Pos2 {
-        let pointer_screen_pos = self.import_hover_screen_pos(ctx);
+        let pointer_screen_pos = ctx.input(|input| input.pointer.latest_pos());
         self.preferred_import_world_with_pointer(screen_rect, pointer_screen_pos)
-    }
-
-    fn import_hover_screen_pos(&self, ctx: &egui::Context) -> Option<egui::Pos2> {
-        crate::native_drop::hovered_screen_pos()
-            .or_else(|| ctx.input(|input| input.pointer.latest_pos()))
-    }
-
-    fn import_drop_screen_pos(&self, ctx: &egui::Context) -> Option<egui::Pos2> {
-        crate::native_drop::take_dropped_screen_pos()
-            .or_else(|| ctx.input(|input| input.pointer.latest_pos()))
     }
 
     fn import_viewport_world_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
@@ -9836,30 +9746,33 @@ mod tests {
     #[test]
     fn normalize_import_url_accepts_http_and_https_only() {
         assert_eq!(
-            SnappyRefApp::normalize_import_url(" https://example.com/cat.png?size=large "),
+            crate::import_intake::normalize_import_url(" https://example.com/cat.png?size=large "),
             Some("https://example.com/cat.png?size=large".to_owned())
         );
         assert_eq!(
-            SnappyRefApp::normalize_import_url("http://example.com/dog.gif"),
+            crate::import_intake::normalize_import_url("http://example.com/dog.gif"),
             Some("http://example.com/dog.gif".to_owned())
         );
         assert_eq!(
-            SnappyRefApp::normalize_import_url("file:///tmp/cat.png"),
+            crate::import_intake::normalize_import_url("file:///tmp/cat.png"),
             None
         );
-        assert_eq!(SnappyRefApp::normalize_import_url("not a url"), None);
+        assert_eq!(
+            crate::import_intake::normalize_import_url("not a url"),
+            None
+        );
     }
 
     #[test]
     fn import_source_label_prefers_url_path_basename_then_host() {
         assert_eq!(
-            SnappyRefApp::import_source_label(&super::ExternalImportSource::Url(
+            crate::import_intake::import_source_label(&super::ExternalImportSource::Url(
                 "https://images.example.com/path/cat.gif?size=large".to_owned()
             )),
             "cat.gif"
         );
         assert_eq!(
-            SnappyRefApp::import_source_label(&super::ExternalImportSource::Url(
+            crate::import_intake::import_source_label(&super::ExternalImportSource::Url(
                 "https://images.example.com".to_owned()
             )),
             "images.example.com"
