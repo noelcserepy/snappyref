@@ -107,20 +107,7 @@ scripts/windows-build-release-fast.sh
 Then launch the GUI:
 
 ```sh
-script='$launch = Join-Path $env:TEMP "launch-snappyref-gui.ps1"
-$repo = (Get-Location).Path
-$exe = Join-Path $repo "target\release-fast\snappyref.exe"
-@"
-Set-Location ''$repo''
-Start-Process -FilePath ''$exe'' -WorkingDirectory ''$repo''
-"@ | Set-Content -Encoding UTF8 $launch
-$time = (Get-Date).AddMinutes(1).ToString("HH:mm")
-schtasks /Delete /TN SnappyRefAgentLaunch /F 2>$null | Out-Null
-schtasks /Create /TN SnappyRefAgentLaunch /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$launch`"" /SC ONCE /ST $time /F /IT
-schtasks /Run /TN SnappyRefAgentLaunch
-'
-enc=$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')
-scripts/windows-remote.sh "powershell -NoProfile -EncodedCommand $enc"
+scripts/windows-launch-gui.sh
 ```
 
 Verify that the process started:
@@ -133,7 +120,11 @@ Notes:
 
 - `/IT` requires an active logged-in user session. If nobody is logged in, the
   task may run but no visible window appears.
-- The task name is `SnappyRefAgentLaunch`; the command deletes/recreates it.
+- The task name is `SnappyRefAgentLaunch`; the launcher deletes/recreates it,
+  runs it, waits for SnappyRef to appear, then deletes the task before the
+  one-shot scheduled time can fire a second GUI later.
+- The launcher stops existing `snappyref` processes before starting a new one,
+  so a manual verification request leaves exactly one GUI instance.
 - Do not use this for automated checks. It is for human-visible GUI
   verification on the Windows machine.
 

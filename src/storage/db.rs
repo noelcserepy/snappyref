@@ -658,11 +658,12 @@ impl Library {
             .map_err(|error| format!("failed to archive board {board_id} items: {error}"))?;
         transaction
             .execute(
-                "DELETE FROM canvas_annotations
+                "UPDATE canvas_annotations
+                 SET archived = 1
                  WHERE board_id = ?1",
                 params![board_id],
             )
-            .map_err(|error| format!("failed to delete board {board_id} annotations: {error}"))?;
+            .map_err(|error| format!("failed to archive board {board_id} annotations: {error}"))?;
         transaction
             .execute(
                 "UPDATE boards
@@ -988,6 +989,29 @@ impl Library {
         Ok(())
     }
 
+    pub fn update_board_item_document_state(&self, item: &BoardItem) -> Result<(), String> {
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "UPDATE board_items
+                 SET asset_id = ?1, x = ?2, y = ?3, scale = ?4, rotation = ?5, z_index = ?6, archived = ?7
+                 WHERE id = ?8",
+                params![
+                    item.asset_id,
+                    item.x,
+                    item.y,
+                    item.scale,
+                    item.rotation,
+                    item.z_index,
+                    if item.archived { 1_i64 } else { 0_i64 },
+                    item.id,
+                ],
+            )
+            .map_err(|error| format!("failed to update board item document state: {error}"))?;
+
+        Ok(())
+    }
+
     pub fn load_asset(&self, asset_id: i64) -> Result<ImageAsset, String> {
         let connection = self.connection()?;
         connection
@@ -1053,6 +1077,41 @@ impl Library {
         transaction
             .commit()
             .map_err(|error| format!("failed to commit archive transaction: {error}"))?;
+
+        Ok(())
+    }
+
+    pub fn restore_board_items(&self, item_ids: &[i64]) -> Result<(), String> {
+        if item_ids.is_empty() {
+            return Ok(());
+        }
+
+        let mut connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start restore transaction: {error}"))?;
+
+        for item_id in item_ids {
+            transaction
+                .execute(
+                    "UPDATE board_items
+                     SET archived = 0
+                     WHERE id = ?1
+                       AND board_id = ?2",
+                    params![item_id, active_board_id],
+                )
+                .map_err(|error| format!("failed to restore board item {item_id}: {error}"))?;
+            append_canvas_stack_item(
+                &transaction,
+                active_board_id,
+                CanvasStackItem::Placement(*item_id),
+            )?;
+        }
+
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit restore transaction: {error}"))?;
 
         Ok(())
     }
@@ -2330,42 +2389,39 @@ impl Library {
         Ok(())
     }
 
-    pub fn delete_canvas_annotations(&self, annotation_ids: &[i64]) -> Result<(), String> {
+    pub fn restore_canvas_annotations(&self, annotation_ids: &[i64]) -> Result<(), String> {
         if annotation_ids.is_empty() {
             return Ok(());
         }
 
         let mut connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
         let transaction = connection
             .transaction()
-            .map_err(|error| format!("failed to start annotation delete transaction: {error}"))?;
+            .map_err(|error| format!("failed to start annotation restore transaction: {error}"))?;
 
         for annotation_id in annotation_ids {
             transaction
                 .execute(
-                    "DELETE FROM canvas_annotations WHERE id = ?1",
-                    params![annotation_id],
+                    "UPDATE canvas_annotations
+                     SET archived = 0
+                     WHERE id = ?1
+                       AND board_id = ?2",
+                    params![annotation_id, active_board_id],
                 )
                 .map_err(|error| {
-                    format!("failed to delete canvas annotation {annotation_id}: {error}")
+                    format!("failed to restore canvas annotation {annotation_id}: {error}")
                 })?;
-            transaction
-                .execute(
-                    "DELETE FROM canvas_stack_items
-                     WHERE item_kind = 'annotation'
-                       AND item_id = ?1",
-                    params![annotation_id],
-                )
-                .map_err(|error| {
-                    format!(
-                        "failed to remove deleted canvas annotation {annotation_id} from stack: {error}"
-                    )
-                })?;
+            append_canvas_stack_item(
+                &transaction,
+                active_board_id,
+                CanvasStackItem::Annotation(*annotation_id),
+            )?;
         }
 
         transaction
             .commit()
-            .map_err(|error| format!("failed to commit annotation delete transaction: {error}"))?;
+            .map_err(|error| format!("failed to commit annotation restore transaction: {error}"))?;
 
         Ok(())
     }
@@ -4186,7 +4242,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_board_archives_board_preserves_assets_and_cleans_board_content() {
+    fn delete_board_archives_board_preserves_assets_and_archives_board_content() {
         let root = temp_root("snappyref-board-delete-test");
         let library = Library::initialize(root.clone()).unwrap();
         let first = library.list_boards().unwrap()[0].clone();
@@ -4239,12 +4295,12 @@ mod tests {
             let connection = Connection::open(root.join("library.db")).unwrap();
             let annotation_count: i64 = connection
                 .query_row(
-                    "SELECT COUNT(*) FROM canvas_annotations WHERE id = ?1",
+                    "SELECT COUNT(*) FROM canvas_annotations WHERE id = ?1 AND archived = 1",
                     [annotation.id],
                     |row| row.get(0),
                 )
                 .unwrap();
-            assert_eq!(annotation_count, 0);
+            assert_eq!(annotation_count, 1);
         }
 
         assert!(library.delete_board(first.id).is_ok());
@@ -5331,6 +5387,16 @@ mod tests {
 
         library.archive_canvas_annotations(&[created.id]).unwrap();
         assert!(library.load_canvas_annotations().unwrap().is_empty());
+
+        library.restore_canvas_annotations(&[created.id]).unwrap();
+        let restored = library.load_canvas_annotations().unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].id, created.id);
+        assert_eq!(restored[0].text, "updated");
+        assert_eq!(
+            library.load_canvas_stack_order().unwrap(),
+            vec![CanvasStackItem::Annotation(created.id)]
+        );
 
         let _ = fs::remove_dir_all(root);
     }
