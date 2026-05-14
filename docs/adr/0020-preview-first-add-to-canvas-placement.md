@@ -11,7 +11,7 @@ This supersedes treating imports, library-result placement, and final load integ
 - Local imports use known file dimensions when cheaply available; if preview dimensions are approximate, final batch completion compacts again using real placement sizes.
 - Asset Result drops use known asset dimensions and skip dimension fetching, but otherwise follow the same placeholder, reservation, guide, snapping, and completion path as imports.
 - Async completion owns final selection and final compaction for the batch.
-- Pending batches carry the target board id. Completion for an inactive board must not mutate the current canvas selection or arrangement.
+- Pending batches carry the target board id and intended world anchor. Completion for an inactive board must not mutate the current canvas selection or arrangement.
 - Preview layout preserves caller/source order when mapping compact slots back to queued work, even if the packer internally reorders items.
 - Guide indicators clear when preview placeholders clear or when there is no active snap.
 

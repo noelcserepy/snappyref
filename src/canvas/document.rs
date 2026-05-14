@@ -678,6 +678,27 @@ impl CanvasState {
         gap: f32,
     ) -> Vec<(egui::Pos2, egui::Vec2)> {
         let mut placeholders = super::compact_layout_for_sizes(sizes, gap, center_world);
+        self.guide_snap_preview_placeholders(&mut placeholders, screen_rect);
+        placeholders
+    }
+
+    pub fn balanced_guided_preview_placeholders(
+        &mut self,
+        sizes: &[egui::Vec2],
+        center_world: egui::Pos2,
+        screen_rect: egui::Rect,
+        gap: f32,
+    ) -> Vec<(egui::Pos2, egui::Vec2)> {
+        let mut placeholders = super::balanced_grid_layout_for_sizes(sizes, gap, center_world);
+        self.guide_snap_preview_placeholders(&mut placeholders, screen_rect);
+        placeholders
+    }
+
+    fn guide_snap_preview_placeholders(
+        &mut self,
+        placeholders: &mut [(egui::Pos2, egui::Vec2)],
+        screen_rect: egui::Rect,
+    ) {
         let items = placeholders
             .iter()
             .enumerate()
@@ -691,24 +712,23 @@ impl CanvasState {
             .collect::<Vec<_>>();
         let Some(bounds) = layout_bounds_with_offset(&items, egui::Vec2::ZERO) else {
             self.clear_guide_snap_indicators();
-            return placeholders;
+            return;
         };
         let Some(snap_result) =
             super::interaction::compute_guide_snap_for_rect(self, screen_rect, bounds, &[], false)
         else {
             self.clear_guide_snap_indicators();
-            return placeholders;
+            return;
         };
         let snap_offset = snap_result.rect.center() - bounds.center();
         if snap_offset == egui::Vec2::ZERO {
             self.clear_guide_snap_indicators();
-            return placeholders;
+            return;
         }
         self.set_guide_snap_indicators(snap_result.indicators);
-        for (center, _) in &mut placeholders {
+        for (center, _) in placeholders {
             *center += snap_offset;
         }
-        placeholders
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -1316,6 +1336,29 @@ impl CanvasState {
             placements,
             current_center.to_vec2() - local_center.to_vec2(),
         )
+    }
+
+    pub fn center_selected_placements_on(&mut self, center_world: egui::Pos2) -> usize {
+        let items = self.selected_layout_items();
+        let Some(bounds) = layout_bounds_with_offset(&items, egui::Vec2::ZERO) else {
+            return 0;
+        };
+        let delta = center_world - bounds.center();
+        let mut moved_ids = Vec::with_capacity(items.len());
+
+        for item in items {
+            if let Some(image) = self.image_by_item_id_mut(item.id) {
+                image.record.item.x += delta.x;
+                image.record.item.y += delta.y;
+                moved_ids.push(item.id);
+            }
+        }
+
+        for item_id in &moved_ids {
+            self.mark_dirty(*item_id);
+        }
+
+        moved_ids.len()
     }
 
     pub fn move_selected_canvas_items_to_front(&mut self) -> bool {

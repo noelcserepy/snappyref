@@ -665,6 +665,60 @@ pub(crate) fn compact_layout_for_sizes(
     ordered
 }
 
+pub(crate) fn balanced_grid_layout_for_sizes(
+    sizes: &[egui::Vec2],
+    gap: f32,
+    center_world: egui::Pos2,
+) -> Vec<(egui::Pos2, egui::Vec2)> {
+    if sizes.is_empty() {
+        return Vec::new();
+    }
+    if sizes.len() == 1 {
+        return vec![(center_world, sizes[0])];
+    }
+
+    let average_width = sizes.iter().map(|size| size.x + gap).sum::<f32>() / sizes.len() as f32;
+    let average_height = sizes.iter().map(|size| size.y + gap).sum::<f32>() / sizes.len() as f32;
+    let columns = ((sizes.len() as f32 * average_height / average_width.max(1.0))
+        .sqrt()
+        .ceil() as usize)
+        .clamp(1, sizes.len());
+    let rows = sizes.len().div_ceil(columns);
+
+    let mut column_widths = vec![0.0_f32; columns];
+    let mut row_heights = vec![0.0_f32; rows];
+    for (index, size) in sizes.iter().enumerate() {
+        let column = index % columns;
+        let row = index / columns;
+        column_widths[column] = column_widths[column].max(size.x);
+        row_heights[row] = row_heights[row].max(size.y);
+    }
+
+    let total_width = column_widths.iter().sum::<f32>() + gap * columns.saturating_sub(1) as f32;
+    let total_height = row_heights.iter().sum::<f32>() + gap * rows.saturating_sub(1) as f32;
+    let start_x = center_world.x - total_width * 0.5;
+    let start_y = center_world.y - total_height * 0.5;
+
+    let mut centers = Vec::with_capacity(sizes.len());
+    let mut y = start_y;
+    for (row, row_height) in row_heights.iter().copied().enumerate() {
+        let mut x = start_x;
+        for (column, column_width) in column_widths.iter().copied().enumerate() {
+            let index = row * columns + column;
+            if let Some(size) = sizes.get(index).copied() {
+                centers.push((
+                    egui::pos2(x + column_width * 0.5, y + row_height * 0.5),
+                    size,
+                ));
+            }
+            x += column_width + gap;
+        }
+        y += row_height + gap;
+    }
+
+    centers
+}
+
 fn sorted_compact_items(
     items: &[SelectedLayoutItem],
     sort: CompactSort,
@@ -1739,8 +1793,8 @@ mod tests {
         FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, PixelCropRect,
         SelectedLayoutItem, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
         TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion, TextboxResizeHandle,
-        best_compact_layout, compact_layout_for_sizes, horizontal_layout,
-        legacy_best_compact_layout, rotated_visual_size, vertical_layout,
+        balanced_grid_layout_for_sizes, best_compact_layout, compact_layout_for_sizes,
+        horizontal_layout, legacy_best_compact_layout, rotated_visual_size, vertical_layout,
     };
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
@@ -4161,6 +4215,35 @@ mod tests {
         for (index, (_, size)) in placeholders.iter().enumerate() {
             assert_eq!(*size, sizes[index]);
         }
+    }
+
+    #[test]
+    fn balanced_grid_layout_avoids_single_column_for_equal_approximate_batch() {
+        let sizes = vec![eframe::egui::vec2(360.0, 240.0); 13];
+        let placeholders =
+            balanced_grid_layout_for_sizes(&sizes, 24.0, eframe::egui::pos2(100.0, 200.0));
+        let distinct_x = placeholders
+            .iter()
+            .fold(Vec::<i32>::new(), |mut values, (center, _)| {
+                let rounded = center.x.round() as i32;
+                if !values.contains(&rounded) {
+                    values.push(rounded);
+                }
+                values
+            });
+        let distinct_y = placeholders
+            .iter()
+            .fold(Vec::<i32>::new(), |mut values, (center, _)| {
+                let rounded = center.y.round() as i32;
+                if !values.contains(&rounded) {
+                    values.push(rounded);
+                }
+                values
+            });
+
+        assert_eq!(placeholders.len(), sizes.len());
+        assert!(distinct_x.len() > 1);
+        assert!(distinct_y.len() > 1);
     }
 
     #[test]

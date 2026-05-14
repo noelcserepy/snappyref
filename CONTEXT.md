@@ -54,6 +54,10 @@ _Avoid_: Camera, view, canvas position
 The pre-import normalization of OS/window drag-and-drop input into external asset sources plus an optional canvas screen anchor. It merges egui and native platform payloads, de-duplicates paths and URLs, and resolves drag/drop coordinates before import preview or enqueueing.
 _Avoid_: Import pipeline, native drop bridge, placement flow
 
+**Import Batch Anchor**:
+The board-world point that records where an async batch of imported placements should land after completion. Preview placeholders may use approximate dimensions, but final batch completion compacts the loaded placements around this anchor so paste/drop intent survives URL loads, failures, and out-of-order completion.
+_Avoid_: Placeholder center, batch center, drop position
+
 **Dense Compact Layout**:
 The compact arrangement objective for selected placements: minimize visible holes first, then prefer a rough square when density is close. Squareness should decide only when candidate occupancy is roughly within three percentage points. Compact arrangement is placement-only: it may reorder selected placements and change their positions, but it preserves authored scale and rotation. The packed block should keep clean top and left edges; right-edge cleanliness is only a soft tie-break among near-equivalent candidates.
 _Avoid_: Perfect square layout, masonry layout

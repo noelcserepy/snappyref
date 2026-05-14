@@ -91,6 +91,52 @@ For one-off commands, use:
 scripts/windows-remote.sh '<powershell-command>'
 ```
 
+## Visible GUI Launch
+
+SSH-launched Windows GUI apps may run in a non-interactive session and not
+appear on the logged-in desktop. For manual app verification, build the Windows
+binary through the repo wrapper, then launch it in the interactive desktop
+session with a one-shot scheduled task.
+
+Build the same Windows feature set used by the fast release smoke path:
+
+```sh
+scripts/windows-build-release-fast.sh
+```
+
+Then launch the GUI:
+
+```sh
+script='$launch = Join-Path $env:TEMP "launch-snappyref-gui.ps1"
+$repo = (Get-Location).Path
+$exe = Join-Path $repo "target\release-fast\snappyref.exe"
+@"
+Set-Location ''$repo''
+Start-Process -FilePath ''$exe'' -WorkingDirectory ''$repo''
+"@ | Set-Content -Encoding UTF8 $launch
+$time = (Get-Date).AddMinutes(1).ToString("HH:mm")
+schtasks /Delete /TN SnappyRefAgentLaunch /F 2>$null | Out-Null
+schtasks /Create /TN SnappyRefAgentLaunch /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$launch`"" /SC ONCE /ST $time /F /IT
+schtasks /Run /TN SnappyRefAgentLaunch
+'
+enc=$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')
+scripts/windows-remote.sh "powershell -NoProfile -EncodedCommand $enc"
+```
+
+Verify that the process started:
+
+```sh
+scripts/windows-remote.sh 'Get-Process snappyref -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,MainWindowTitle,StartTime | Format-List'
+```
+
+Notes:
+
+- `/IT` requires an active logged-in user session. If nobody is logged in, the
+  task may run but no visible window appears.
+- The task name is `SnappyRefAgentLaunch`; the command deletes/recreates it.
+- Do not use this for automated checks. It is for human-visible GUI
+  verification on the Windows machine.
+
 ## Workflow
 
 1. Confirm `.env.windows` exists.

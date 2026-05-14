@@ -263,6 +263,10 @@ mod platform {
         paths
     }
 
+    pub(super) fn clipboard_pureref_binary() -> Option<Vec<u8>> {
+        None
+    }
+
     fn state() -> &'static Mutex<super::NativeDropState> {
         STATE.get_or_init(|| Mutex::new(super::NativeDropState::default()))
     }
@@ -907,6 +911,16 @@ mod platform {
         }
     }
 
+    pub(super) fn clipboard_pureref_binary() -> Option<Vec<u8>> {
+        let format = registered_clipboard_format("pureref/binary") as u32;
+        unsafe {
+            if format == 0 || IsClipboardFormatAvailable(format) == 0 {
+                return None;
+            }
+            clipboard_hglobal_bytes(format)
+        }
+    }
+
     #[repr(C)]
     struct IUnknownVtbl {
         QueryInterface: unsafe extern "system" fn(
@@ -1263,6 +1277,30 @@ mod platform {
         }
     }
 
+    unsafe fn clipboard_hglobal_bytes(format: u32) -> Option<Vec<u8>> {
+        if unsafe { OpenClipboard(ptr::null_mut()) } == 0 {
+            return None;
+        }
+
+        let bytes = (|| {
+            let handle = unsafe { GetClipboardData(format) };
+            if handle.is_null() {
+                return None;
+            }
+            let pointer = unsafe { GlobalLock(handle) };
+            if pointer.is_null() {
+                return None;
+            }
+            let size = unsafe { GlobalSize(handle) };
+            let bytes = unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), size) }.to_vec();
+            let _ = unsafe { GlobalUnlock(handle) };
+            Some(bytes)
+        })();
+
+        let _ = unsafe { CloseClipboard() };
+        bytes
+    }
+
     fn registered_clipboard_format(name: &str) -> u16 {
         let wide = name
             .encode_utf16()
@@ -1338,6 +1376,10 @@ mod platform {
     pub(super) fn clipboard_paths() -> Vec<std::path::PathBuf> {
         Vec::new()
     }
+
+    pub(super) fn clipboard_pureref_binary() -> Option<Vec<u8>> {
+        None
+    }
 }
 
 pub fn install_url_drop_bridge(cc: &eframe::CreationContext<'_>) {
@@ -1374,6 +1416,10 @@ pub fn take_dropped_screen_pos() -> Option<egui::Pos2> {
 
 pub fn clipboard_paths() -> Vec<PathBuf> {
     platform::clipboard_paths()
+}
+
+pub fn clipboard_pureref_binary() -> Option<Vec<u8>> {
+    platform::clipboard_pureref_binary()
 }
 
 #[cfg(test)]
