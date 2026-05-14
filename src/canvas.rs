@@ -269,6 +269,14 @@ struct SelectedLayoutItem {
 }
 
 #[derive(Clone)]
+struct ImageScaleStart {
+    item_id: i64,
+    center_world: egui::Pos2,
+    start_scale: f32,
+    min_scale: f32,
+}
+
+#[derive(Clone)]
 struct DragState {
     pointer_start_world: egui::Pos2,
     starting_items: Vec<SelectedLayoutItem>,
@@ -301,6 +309,12 @@ enum ImageTransformState {
         anchor_screen: egui::Pos2,
         start_handle_screen: egui::Pos2,
         start_scale: f32,
+    },
+    Scaling {
+        item_ids: Vec<i64>,
+        pointer_start_screen: egui::Pos2,
+        group_center_world: egui::Pos2,
+        starting_items: Vec<ImageScaleStart>,
     },
     Rotating {
         item_ids: Vec<i64>,

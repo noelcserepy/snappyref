@@ -179,6 +179,13 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: None,
     },
     SupportedShortcut {
+        action: "Scale selection",
+        windows: "Ctrl+Alt+Drag",
+        mac: "⌘⌥ Drag",
+        binding: None,
+        shortcut_action: None,
+    },
+    SupportedShortcut {
         action: "Focus selection",
         windows: "Space",
         mac: "Space",

@@ -1341,7 +1341,7 @@ fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
         );
         ui.add_space(crate::theme::SPACE_3);
 
-        let (core_shortcuts, layout_shortcuts) = SUPPORTED_SHORTCUTS.split_at(9);
+        let (core_shortcuts, layout_shortcuts) = SUPPORTED_SHORTCUTS.split_at(10);
         paint_shortcut_group(ui, "Core actions", core_shortcuts);
         ui.add_space(crate::theme::SPACE_3);
         paint_shortcut_group(ui, "Layout + history", layout_shortcuts);
