@@ -276,7 +276,7 @@ pub(crate) fn delete_selected_from_board(
     let annotation_ids = context.canvas.delete_selected_annotations();
     if !annotation_ids.is_empty() {
         if let Some(library) = context.library {
-            library.delete_canvas_annotations(&annotation_ids)?;
+            library.archive_canvas_annotations(&annotation_ids)?;
         }
         let noun = if annotation_ids.len() == 1 {
             "annotation"

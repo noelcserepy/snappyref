@@ -9,6 +9,7 @@ mod data;
 mod design_system_preview;
 mod document_persistence;
 mod drop_intake;
+mod history;
 mod import_intake;
 mod jobs;
 mod layout_snap;

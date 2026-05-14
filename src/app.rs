@@ -11,6 +11,7 @@ use crate::active_board_commands::{
 };
 use crate::crop_flow::CropFlow;
 use crate::document_persistence::DocumentPersistence;
+use crate::history::{DocumentHistory, HistoryAction, HistoryDirection, RowChange};
 use crate::import_intake::{
     ExternalImportSource, ImportIntake, ImportPlacementSettings, ImportRequestConfig,
 };
@@ -299,7 +300,7 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: Some(SupportedShortcutAction::AverageSelectionArea),
     },
     SupportedShortcut {
-        action: "Undo crop",
+        action: "Undo",
         windows: "Ctrl+Z",
         mac: "⌘Z",
         binding: Some(ShortcutBinding {
@@ -1490,6 +1491,7 @@ pub struct SnappyRefApp {
     window_state: crate::data::WindowState,
     persist_window_state: bool,
     crop_flow: CropFlow,
+    document_history: DocumentHistory,
     max_texture_side: usize,
     settings: crate::data::WorkspaceSettings,
     #[cfg(feature = "semantic-search")]
@@ -1590,6 +1592,7 @@ impl SnappyRefApp {
                     window_state: crate::data::WindowState::default(),
                     persist_window_state: config.persist_window_state_enabled(),
                     crop_flow: CropFlow::default(),
+                    document_history: DocumentHistory::default(),
                     max_texture_side,
                     settings: crate::data::WorkspaceSettings::default(),
                     #[cfg(feature = "semantic-search")]
@@ -1816,6 +1819,7 @@ impl SnappyRefApp {
                 window_state: crate::data::WindowState::default(),
                 persist_window_state: config.persist_window_state_enabled(),
                 crop_flow: CropFlow::default(),
+                document_history: DocumentHistory::default(),
                 max_texture_side,
                 settings: crate::data::WorkspaceSettings::default(),
                 #[cfg(feature = "semantic-search")]
@@ -3783,18 +3787,28 @@ impl SnappyRefApp {
     }
 
     fn move_selected_canvas_items_to_front(&mut self) {
+        let before_stack_order = self.canvas.canvas_stack_order();
         let viewport_world = self.startup_viewport_world_rect();
         let mut context = self.active_board_command_context(viewport_world);
-        if let Err(error) = crate::active_board_commands::move_selected_to_front(&mut context) {
-            self.status = error;
+        match crate::active_board_commands::move_selected_to_front(&mut context) {
+            Ok(true) => {
+                self.record_stack_order_history("Move selection to front", before_stack_order)
+            }
+            Ok(false) => {}
+            Err(error) => self.status = error,
         }
     }
 
     fn move_selected_canvas_items_to_back(&mut self) {
+        let before_stack_order = self.canvas.canvas_stack_order();
         let viewport_world = self.startup_viewport_world_rect();
         let mut context = self.active_board_command_context(viewport_world);
-        if let Err(error) = crate::active_board_commands::move_selected_to_back(&mut context) {
-            self.status = error;
+        match crate::active_board_commands::move_selected_to_back(&mut context) {
+            Ok(true) => {
+                self.record_stack_order_history("Move selection to back", before_stack_order)
+            }
+            Ok(false) => {}
+            Err(error) => self.status = error,
         }
     }
 
@@ -4049,10 +4063,13 @@ impl SnappyRefApp {
             egui::Pos2::ZERO,
             STARTUP_VIEWPORT_SIZE,
         ));
+        let before_stack_order = self.canvas.canvas_stack_order();
         let mut context = self.active_board_command_context(viewport_world);
         match crate::active_board_commands::paste_json_at(&mut context, paste_text, anchor_world) {
             Ok(Some(outcome)) => {
+                let label = outcome.status.clone();
                 self.apply_paste_command_outcome(outcome);
+                self.record_created_selection_history(label, before_stack_order);
                 true
             }
             Ok(None) => false,
@@ -4073,14 +4090,69 @@ impl SnappyRefApp {
             egui::Pos2::ZERO,
             STARTUP_VIEWPORT_SIZE,
         ));
+        let before_stack_order = self.canvas.canvas_stack_order();
         let mut context = self.active_board_command_context(viewport_world);
         let outcome = crate::active_board_commands::paste_board_payload_at(
             &mut context,
             payload,
             requested_anchor_world,
         )?;
+        let label = outcome.status.clone();
         self.apply_paste_command_outcome(outcome);
+        self.record_created_selection_history(label, before_stack_order);
         Ok(())
+    }
+
+    fn record_stack_order_history(
+        &mut self,
+        label: &str,
+        before_stack_order: Vec<crate::data::CanvasStackItem>,
+    ) {
+        self.document_history.record_applied(HistoryAction {
+            label: label.to_owned(),
+            placements: Vec::new(),
+            annotations: Vec::new(),
+            stack_order: Some(RowChange {
+                before: Some(before_stack_order),
+                after: Some(self.canvas.canvas_stack_order()),
+            }),
+        });
+    }
+
+    fn record_created_selection_history(
+        &mut self,
+        label: String,
+        before_stack_order: Vec<crate::data::CanvasStackItem>,
+    ) {
+        let placement_changes = self
+            .canvas
+            .selected_item_ids()
+            .into_iter()
+            .filter_map(|item_id| self.canvas.record_for_item_id(item_id))
+            .map(|record| RowChange {
+                before: None,
+                after: Some(record),
+            })
+            .collect();
+        let annotation_changes = self
+            .canvas
+            .selected_annotation_ids()
+            .into_iter()
+            .filter_map(|annotation_id| self.canvas.annotation_for_id(annotation_id))
+            .map(|annotation| RowChange {
+                before: None,
+                after: Some(annotation),
+            })
+            .collect();
+        self.document_history.record_applied(HistoryAction {
+            label,
+            placements: placement_changes,
+            annotations: annotation_changes,
+            stack_order: Some(RowChange {
+                before: Some(before_stack_order),
+                after: Some(self.canvas.canvas_stack_order()),
+            }),
+        });
     }
 
     fn apply_paste_command_outcome(&mut self, outcome: PasteCommandOutcome) {
@@ -4176,6 +4248,15 @@ impl SnappyRefApp {
                 let ui_integration_ms = ui_integration_started_at.elapsed().as_secs_f64() * 1000.0;
                 self.residency
                     .note_loaded_item(integration.updated_record.item.id);
+                self.document_history.record_applied(HistoryAction {
+                    label: "Crop image".to_owned(),
+                    placements: vec![RowChange {
+                        before: Some(integration.previous_record.clone()),
+                        after: Some(integration.updated_record.clone()),
+                    }],
+                    annotations: Vec::new(),
+                    stack_order: None,
+                });
                 let mut status = "Cropped image".to_owned();
                 #[cfg(feature = "semantic-search")]
                 if let Some((asset_id, original_path)) = integration.indexed_asset {
@@ -4247,6 +4328,20 @@ impl SnappyRefApp {
             placeholder_queue_id,
             loaded_item_id,
         );
+        if perf_counts_as_import
+            && let Some(log) = outcome.log.as_ref()
+            && log.record.item.archived == false
+        {
+            self.document_history.record_applied(HistoryAction {
+                label: "Import image".to_owned(),
+                placements: vec![RowChange {
+                    before: None,
+                    after: Some(log.record.clone()),
+                }],
+                annotations: Vec::new(),
+                stack_order: None,
+            });
+        }
         if let Some(log) = outcome.log {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
                 scenario.visible_imports += 1;
@@ -4363,14 +4458,103 @@ impl SnappyRefApp {
         self.status = outcome.status;
     }
 
-    fn handle_crop_undo(&mut self, ctx: &egui::Context) {
+    fn handle_history_shortcuts(&mut self, ctx: &egui::Context) {
         let undo_requested = ctx.input(|input| {
             input.modifiers.command && !input.modifiers.shift && input.key_pressed(egui::Key::Z)
         });
-        if !undo_requested {
+        let redo_requested = ctx.input(|input| {
+            input.modifiers.command && input.modifiers.shift && input.key_pressed(egui::Key::Z)
+        });
+        if redo_requested {
+            self.redo_document_history();
+        } else if undo_requested {
+            self.undo_document_history(ctx);
+        }
+    }
+
+    fn undo_document_history(&mut self, ctx: &egui::Context) {
+        let Some(library) = self.library.clone() else {
+            self.status = "Storage unavailable".to_owned();
             return;
+        };
+        match self.document_history.undo(&library) {
+            Ok(Some(applied)) => {
+                self.apply_history_to_active_canvas(&applied.action, applied.direction);
+                self.status = format!("Undid {}", applied.label);
+            }
+            Ok(None) => self.undo_crop_fallback(ctx),
+            Err(error) => self.status = error,
+        }
+    }
+
+    fn redo_document_history(&mut self) {
+        let Some(library) = self.library.clone() else {
+            self.status = "Storage unavailable".to_owned();
+            return;
+        };
+        match self.document_history.redo(&library) {
+            Ok(Some(applied)) => {
+                self.apply_history_to_active_canvas(&applied.action, applied.direction);
+                self.status = format!("Redid {}", applied.label);
+            }
+            Ok(None) => {}
+            Err(error) => self.status = error,
+        }
+    }
+
+    fn apply_history_to_active_canvas(
+        &mut self,
+        action: &HistoryAction,
+        direction: HistoryDirection,
+    ) {
+        for change in &action.annotations {
+            let target = match direction {
+                HistoryDirection::Forward => change.after.clone(),
+                HistoryDirection::Backward => change.before.clone(),
+            }
+            .or_else(|| match direction {
+                HistoryDirection::Forward => change.before.clone().map(|mut annotation| {
+                    annotation.archived = true;
+                    annotation
+                }),
+                HistoryDirection::Backward => change.after.clone().map(|mut annotation| {
+                    annotation.archived = true;
+                    annotation
+                }),
+            });
+            self.canvas.apply_annotation_history_state(target);
         }
 
+        for change in &action.placements {
+            let target = match direction {
+                HistoryDirection::Forward => change.after.clone(),
+                HistoryDirection::Backward => change.before.clone(),
+            }
+            .or_else(|| match direction {
+                HistoryDirection::Forward => change.before.clone().map(|mut record| {
+                    record.item.archived = true;
+                    record
+                }),
+                HistoryDirection::Backward => change.after.clone().map(|mut record| {
+                    record.item.archived = true;
+                    record
+                }),
+            });
+            self.canvas.apply_placement_history_state(target);
+        }
+
+        if let Some(change) = &action.stack_order {
+            let target = match direction {
+                HistoryDirection::Forward => change.after.clone(),
+                HistoryDirection::Backward => change.before.clone(),
+            };
+            if let Some(stack_order) = target {
+                self.canvas.restore_canvas_stack_order(stack_order);
+            }
+        }
+    }
+
+    fn undo_crop_fallback(&mut self, ctx: &egui::Context) {
         match self.crop_flow.undo_last_crop(
             ctx,
             &mut self.canvas,
@@ -4573,6 +4757,7 @@ impl SnappyRefApp {
         };
 
         while let Some(request) = self.canvas.take_pending_annotation() {
+            let before_stack_order = self.canvas.canvas_stack_order();
             let background_enabled = request.kind == crate::data::CanvasAnnotationKind::Textbox
                 && self.settings.default_textbox_background;
             match library.create_canvas_annotation(
@@ -4590,6 +4775,25 @@ impl SnappyRefApp {
                         annotation.kind == crate::data::CanvasAnnotationKind::Textbox;
                     let annotation_id = annotation.id;
                     self.canvas.add_annotation(annotation);
+                    if let Some(created) = self.canvas.annotation_for_id(annotation_id) {
+                        self.document_history.record_applied(HistoryAction {
+                            label: match request.kind {
+                                crate::data::CanvasAnnotationKind::Arrow => "Added arrow",
+                                crate::data::CanvasAnnotationKind::Line => "Added line",
+                                crate::data::CanvasAnnotationKind::Textbox => "Added textbox",
+                            }
+                            .to_owned(),
+                            placements: Vec::new(),
+                            annotations: vec![RowChange {
+                                before: None,
+                                after: Some(created),
+                            }],
+                            stack_order: Some(RowChange {
+                                before: Some(before_stack_order),
+                                after: Some(self.canvas.canvas_stack_order()),
+                            }),
+                        });
+                    }
                     if should_focus_text {
                         self.canvas.begin_textbox_edit(annotation_id);
                     }
@@ -4607,6 +4811,7 @@ impl SnappyRefApp {
     }
 
     fn persist_canvas_changes(&mut self) {
+        self.record_pending_document_changes_history("Edit board");
         let session = self.current_user_session();
         if let Err(error) = self.document_persistence.commit_canvas_changes(
             self.library.as_ref(),
@@ -4620,6 +4825,7 @@ impl SnappyRefApp {
     }
 
     fn persist_canvas_changes_debounced(&mut self, ctx: &egui::Context) {
+        self.record_pending_document_changes_history("Edit board");
         let document_changed = match self
             .document_persistence
             .commit_canvas_document_changes(self.library.as_ref(), &mut self.canvas)
@@ -4670,6 +4876,64 @@ impl SnappyRefApp {
         } else {
             ctx.request_repaint_after(save_at - now);
         }
+    }
+
+    fn record_pending_document_changes_history(&mut self, label: &str) {
+        let Some(library) = &self.library else {
+            return;
+        };
+        let changes = self.canvas.pending_document_changes_preview();
+        if !changes.has_changes() {
+            return;
+        }
+
+        let current_items = library.load_board_items().unwrap_or_default();
+        let current_annotations = library.load_canvas_annotations().unwrap_or_default();
+        let current_stack_order = library.load_canvas_stack_order().ok();
+        let placement_changes = changes
+            .updated_items
+            .into_iter()
+            .filter_map(|after| {
+                let before = current_items
+                    .iter()
+                    .find(|record| record.item.id == after.id)
+                    .cloned();
+                let asset = if let Some(before) = &before {
+                    before.asset.clone()
+                } else {
+                    library.load_asset(after.asset_id).ok()?
+                };
+                Some(RowChange {
+                    before,
+                    after: Some(crate::data::BoardItemWithAsset { item: after, asset }),
+                })
+            })
+            .collect::<Vec<_>>();
+        let annotation_changes = changes
+            .updated_annotations
+            .into_iter()
+            .map(|after| {
+                let before = current_annotations
+                    .iter()
+                    .find(|annotation| annotation.id == after.id)
+                    .cloned();
+                RowChange {
+                    before,
+                    after: Some(after),
+                }
+            })
+            .collect::<Vec<_>>();
+        let stack_order = changes.stack_order.map(|after| RowChange {
+            before: current_stack_order,
+            after: Some(after),
+        });
+
+        self.document_history.record_applied(HistoryAction {
+            label: label.to_owned(),
+            placements: placement_changes,
+            annotations: annotation_changes,
+            stack_order,
+        });
     }
 
     fn update_window_state(&mut self, ctx: &egui::Context) {
@@ -4724,10 +4988,54 @@ impl SnappyRefApp {
     }
 
     fn delete_selected_items_from_board(&mut self, screen_rect: egui::Rect) {
+        let before_items = self
+            .canvas
+            .selected_item_ids()
+            .into_iter()
+            .filter_map(|item_id| self.canvas.record_for_item_id(item_id))
+            .collect::<Vec<_>>();
+        let before_annotations = self
+            .canvas
+            .selected_annotation_ids()
+            .into_iter()
+            .filter_map(|annotation_id| self.canvas.annotation_for_id(annotation_id))
+            .collect::<Vec<_>>();
+        let before_stack_order = self.canvas.canvas_stack_order();
         let viewport_world = self.import_viewport_world_rect(screen_rect);
         let mut context = self.active_board_command_context(viewport_world);
         match crate::active_board_commands::delete_selected_from_board(&mut context) {
             Ok(Some(status)) => {
+                let placement_changes = before_items
+                    .into_iter()
+                    .map(|record| {
+                        let mut archived = record.clone();
+                        archived.item.archived = true;
+                        RowChange {
+                            before: Some(record),
+                            after: Some(archived),
+                        }
+                    })
+                    .collect();
+                let annotation_changes = before_annotations
+                    .into_iter()
+                    .map(|annotation| {
+                        let mut archived = annotation.clone();
+                        archived.archived = true;
+                        RowChange {
+                            before: Some(annotation),
+                            after: Some(archived),
+                        }
+                    })
+                    .collect();
+                self.document_history.record_applied(HistoryAction {
+                    label: status.clone(),
+                    placements: placement_changes,
+                    annotations: annotation_changes,
+                    stack_order: Some(RowChange {
+                        before: Some(before_stack_order),
+                        after: Some(self.canvas.canvas_stack_order()),
+                    }),
+                });
                 self.flush_persistence();
                 self.refresh_board_summaries();
                 self.status = status;
@@ -6017,7 +6325,7 @@ impl eframe::App for SnappyRefApp {
         self.handle_search_results();
         #[cfg(feature = "semantic-search")]
         self.drive_semantic_search_install(ui.ctx());
-        self.handle_crop_undo(ui.ctx());
+        self.handle_history_shortcuts(ui.ctx());
         self.drive_search_latency_probe(ui.ctx());
         self.drive_verification_search();
         if self.drive_perf_scenario(ui.ctx(), screen_rect) {
@@ -7159,6 +7467,77 @@ mod tests {
     }
 
     #[test]
+    fn delete_selected_annotation_records_undo_history() {
+        let root = temp_library_root("snappyref-delete-annotation-history");
+        let library = Library::initialize(root.clone()).unwrap();
+        let annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Textbox,
+                egui::pos2(40.0, 60.0),
+                egui::pos2(140.0, 100.0),
+                "note",
+                CanvasTextSize::M,
+                CanvasStrokeWidth::M,
+                crate::data::CanvasAnnotationColor::Sky,
+                true,
+            )
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.canvas.add_annotation(annotation.clone());
+        app.canvas.select_content(&[], &[annotation.id]);
+
+        app.delete_selected_items_from_board(test_screen_rect());
+        assert!(library.load_canvas_annotations().unwrap().is_empty());
+
+        assert_eq!(
+            app.document_history
+                .undo(&library)
+                .unwrap()
+                .map(|applied| applied.label),
+            Some("Deleted 1 annotation".to_owned())
+        );
+        assert_eq!(library.load_canvas_annotations().unwrap(), vec![annotation]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn undo_delete_annotation_patches_active_canvas_without_board_reload() {
+        let ctx = egui::Context::default();
+        let root = temp_library_root("snappyref-undo-no-board-reload");
+        let library = Library::initialize(root.clone()).unwrap();
+        let annotation = library
+            .create_canvas_annotation(
+                CanvasAnnotationKind::Textbox,
+                egui::pos2(40.0, 60.0),
+                egui::pos2(140.0, 100.0),
+                "note",
+                CanvasTextSize::M,
+                CanvasStrokeWidth::M,
+                crate::data::CanvasAnnotationColor::Sky,
+                true,
+            )
+            .unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.import_worker = None;
+        app.canvas.add_annotation(annotation.clone());
+        app.canvas.select_content(&[], &[annotation.id]);
+
+        app.delete_selected_items_from_board(test_screen_rect());
+        assert!(app.canvas.annotation_for_id(annotation.id).is_none());
+
+        app.undo_document_history(&ctx);
+
+        assert_eq!(
+            app.canvas.annotation_for_id(annotation.id),
+            Some(annotation)
+        );
+        assert_eq!(app.status, "Undid Deleted 1 annotation");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn paste_preserves_mixed_selection_stack_order_and_places_group_at_front() {
         let ctx = egui::Context::default();
         let root = temp_library_root("snappyref-mixed-paste-stack-order");
@@ -8068,7 +8447,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_from_board_archives_image_placements_but_hard_deletes_annotations() {
+    fn delete_from_board_archives_image_placements_and_annotations() {
         let ctx = egui::Context::default();
         let root = temp_library_root("snappyref-delete-from-board");
         let library = Library::initialize(root.clone()).unwrap();
@@ -8136,12 +8515,12 @@ mod tests {
         let connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
         let annotation_count: i64 = connection
             .query_row(
-                "SELECT COUNT(*) FROM canvas_annotations WHERE id = ?1",
+                "SELECT COUNT(*) FROM canvas_annotations WHERE id = ?1 AND archived = 1",
                 [annotation.id],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(annotation_count, 0);
+        assert_eq!(annotation_count, 1);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -10361,6 +10740,7 @@ mod tests {
             window_state: crate::data::WindowState::default(),
             persist_window_state: true,
             crop_flow: super::CropFlow::default(),
+            document_history: super::DocumentHistory::default(),
             max_texture_side: 8192,
             settings: crate::data::WorkspaceSettings::default(),
             #[cfg(feature = "semantic-search")]

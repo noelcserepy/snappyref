@@ -957,6 +957,35 @@ impl CanvasState {
         self.render.textbox_layout_cache.clear();
     }
 
+    pub fn apply_annotation_history_state(&mut self, annotation: Option<CanvasAnnotation>) {
+        let Some(annotation) = annotation else {
+            return;
+        };
+        if annotation.archived {
+            self.remove_annotation_locally(annotation.id);
+        } else {
+            self.add_annotation(annotation);
+        }
+    }
+
+    pub fn apply_placement_history_state(&mut self, record: Option<BoardItemWithAsset>) {
+        let Some(record) = record else {
+            return;
+        };
+        if record.item.archived {
+            self.delete_items(&[record.item.id]);
+            return;
+        }
+        if let Some(image) = self.image_by_item_id_mut(record.item.id) {
+            image.record = record;
+            self.document
+                .images
+                .sort_by_key(|image| image.record.item.z_index);
+        } else {
+            let _ = self.add_reference_item(record);
+        }
+    }
+
     pub fn set_canvas_stack_order(&mut self, stack_order: Vec<CanvasStackItem>) {
         if self.document.stack_order != stack_order {
             self.document.stack_order = stack_order;
@@ -1028,6 +1057,44 @@ impl CanvasState {
                 &mut self.document.pending_archived_annotation_ids,
             ),
             stack_order,
+        }
+    }
+
+    pub fn pending_document_changes_preview(&self) -> CanvasDocumentChanges {
+        let updated_items = self
+            .document
+            .dirty_item_ids
+            .iter()
+            .filter_map(|id| {
+                self.document
+                    .images
+                    .iter()
+                    .find(|image| image.record.item.id == *id)
+                    .map(|image| image.record.item.clone())
+            })
+            .collect();
+
+        let updated_annotations = self
+            .document
+            .dirty_annotation_ids
+            .iter()
+            .filter_map(|id| {
+                self.document
+                    .annotations
+                    .iter()
+                    .find(|annotation| annotation.id == *id)
+                    .cloned()
+            })
+            .collect();
+
+        CanvasDocumentChanges {
+            updated_items,
+            updated_annotations,
+            archived_annotation_ids: self.document.pending_archived_annotation_ids.clone(),
+            stack_order: self
+                .document
+                .stack_order_dirty
+                .then(|| self.ordered_canvas_items_back_to_front()),
         }
     }
 

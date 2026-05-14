@@ -12,6 +12,7 @@ pub(crate) struct CropUndoEntry {
 #[derive(Clone, Debug)]
 pub(crate) struct CroppedImageIntegration {
     pub(crate) updated_record: crate::data::BoardItemWithAsset,
+    pub(crate) previous_record: crate::data::BoardItemWithAsset,
     pub(crate) indexed_asset: Option<(i64, std::path::PathBuf)>,
 }
 
@@ -137,7 +138,7 @@ impl CropFlow {
         match canvas.apply_cropped_item(ctx, cropped, asset.clone(), updated_item) {
             Ok(()) => {
                 self.push_undo_entry(CropUndoEntry {
-                    previous_record: previous_snapshot.0,
+                    previous_record: previous_snapshot.0.clone(),
                     previous_rgba: previous_snapshot.1,
                     previous_preview_width: previous_snapshot.2,
                     previous_preview_height: previous_snapshot.3,
@@ -151,6 +152,7 @@ impl CropFlow {
                 .then(|| (asset.id, asset.original_path.clone()));
                 Ok(CroppedImageIntegration {
                     updated_record,
+                    previous_record: previous_snapshot.0,
                     indexed_asset,
                 })
             }
