@@ -20,6 +20,7 @@ mod native_drop;
 #[cfg(feature = "semantic-search")]
 mod palette;
 mod perf;
+mod pureref_clipboard;
 mod residency;
 mod screenshot;
 #[cfg(feature = "semantic-search")]

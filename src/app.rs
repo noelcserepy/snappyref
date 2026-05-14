@@ -86,6 +86,7 @@ struct ContextMenuItem {
 #[derive(Default)]
 struct PendingImportBatch {
     target_board_id: i64,
+    anchor_world: egui::Pos2,
     pending_queue_ids: HashSet<u64>,
     loaded_item_ids: Vec<i64>,
 }
@@ -3196,15 +3197,23 @@ impl SnappyRefApp {
         const FALLBACK_WIDTH: u32 = 360;
         const FALLBACK_HEIGHT: u32 = 240;
 
+        let mut uses_approximate_dimensions = false;
         let specs = sources
             .iter()
             .map(|source| {
                 let label = crate::import_intake::import_source_label(source);
                 let dimensions = match source {
-                    ExternalImportSource::Path(path) => {
-                        image::image_dimensions(path).unwrap_or((FALLBACK_WIDTH, FALLBACK_HEIGHT))
+                    ExternalImportSource::Path(path) => match image::image_dimensions(path) {
+                        Ok(dimensions) => dimensions,
+                        Err(_) => {
+                            uses_approximate_dimensions = true;
+                            (FALLBACK_WIDTH, FALLBACK_HEIGHT)
+                        }
+                    },
+                    ExternalImportSource::Url(_) => {
+                        uses_approximate_dimensions = true;
+                        (FALLBACK_WIDTH, FALLBACK_HEIGHT)
                     }
-                    ExternalImportSource::Url(_) => (FALLBACK_WIDTH, FALLBACK_HEIGHT),
                 };
                 (
                     label,
@@ -3217,12 +3226,21 @@ impl SnappyRefApp {
             .iter()
             .map(|(_, _, size_world)| *size_world)
             .collect::<Vec<_>>();
-        let centers = self.canvas.compact_guided_preview_placeholders(
-            &sizes,
-            desired_world,
-            screen_rect,
-            self.settings.import_gap,
-        );
+        let centers = if uses_approximate_dimensions && sizes.len() > 1 {
+            self.canvas.balanced_guided_preview_placeholders(
+                &sizes,
+                desired_world,
+                screen_rect,
+                self.settings.import_gap,
+            )
+        } else {
+            self.canvas.compact_guided_preview_placeholders(
+                &sizes,
+                desired_world,
+                screen_rect,
+                self.settings.import_gap,
+            )
+        };
         specs
             .into_iter()
             .zip(centers)
@@ -3246,23 +3264,39 @@ impl SnappyRefApp {
         self.enqueue_external_import_sources(dropped_sources, screen_rect, desired_world);
     }
 
-    fn register_import_batch(&mut self, target_board_id: i64, queue_ids: Vec<u64>) {
+    fn register_import_batch(
+        &mut self,
+        target_board_id: i64,
+        anchor_world: egui::Pos2,
+        queue_ids: Vec<u64>,
+    ) {
         if queue_ids.len() <= 1 {
             return;
         }
-        self.register_import_batch_any_size(target_board_id, queue_ids);
+        self.register_import_batch_any_size(target_board_id, anchor_world, queue_ids);
     }
 
-    fn register_search_import_batch(&mut self, target_board_id: i64, queue_ids: Vec<u64>) {
+    fn register_search_import_batch(
+        &mut self,
+        target_board_id: i64,
+        anchor_world: egui::Pos2,
+        queue_ids: Vec<u64>,
+    ) {
         if queue_ids.is_empty() {
             return;
         }
-        self.register_import_batch_any_size(target_board_id, queue_ids);
+        self.register_import_batch_any_size(target_board_id, anchor_world, queue_ids);
     }
 
-    fn register_import_batch_any_size(&mut self, target_board_id: i64, queue_ids: Vec<u64>) {
+    fn register_import_batch_any_size(
+        &mut self,
+        target_board_id: i64,
+        anchor_world: egui::Pos2,
+        queue_ids: Vec<u64>,
+    ) {
         self.pending_import_batches.push(PendingImportBatch {
             target_board_id,
+            anchor_world,
             pending_queue_ids: queue_ids.into_iter().collect(),
             loaded_item_ids: Vec::new(),
         });
@@ -3291,6 +3325,7 @@ impl SnappyRefApp {
             if batch.pending_queue_ids.is_empty() {
                 completed_batches.push((
                     batch.target_board_id,
+                    batch.anchor_world,
                     std::mem::take(&mut batch.loaded_item_ids),
                 ));
             }
@@ -3298,14 +3333,19 @@ impl SnappyRefApp {
         self.pending_import_batches
             .retain(|batch| !batch.pending_queue_ids.is_empty());
 
-        for (batch_board_id, item_ids) in completed_batches {
+        for (batch_board_id, anchor_world, item_ids) in completed_batches {
             if target_board_id.is_none_or(|id| id == batch_board_id) {
-                self.finalize_completed_import_batch(batch_board_id, item_ids);
+                self.finalize_completed_import_batch(batch_board_id, anchor_world, item_ids);
             }
         }
     }
 
-    fn finalize_completed_import_batch(&mut self, target_board_id: i64, item_ids: Vec<i64>) {
+    fn finalize_completed_import_batch(
+        &mut self,
+        target_board_id: i64,
+        anchor_world: egui::Pos2,
+        item_ids: Vec<i64>,
+    ) {
         if item_ids.is_empty() || target_board_id != self.active_board_id {
             return;
         }
@@ -3316,6 +3356,7 @@ impl SnappyRefApp {
             self.canvas
                 .arrange_selected_compact(self.settings.import_gap);
         }
+        self.canvas.center_selected_placements_on(anchor_world);
         self.persist_canvas_changes();
     }
 
@@ -3333,6 +3374,15 @@ impl SnappyRefApp {
         }
 
         let desired_world = self.preferred_import_world(ctx, screen_rect);
+        self.handle_clipboard_paste_at(screen_rect, desired_world, paste_text);
+    }
+
+    fn handle_clipboard_paste_at(
+        &mut self,
+        screen_rect: egui::Rect,
+        desired_world: egui::Pos2,
+        paste_text: Option<String>,
+    ) {
         if let Some(paste_text) = paste_text {
             if self.handle_internal_clipboard_paste_at(&paste_text, desired_world) {
                 return;
@@ -3344,6 +3394,10 @@ impl SnappyRefApp {
         }
 
         if self.handle_clipboard_path_import_at(screen_rect, desired_world) {
+            return;
+        }
+
+        if self.handle_pureref_clipboard_import_at(screen_rect, desired_world) {
             return;
         }
 
@@ -3367,6 +3421,33 @@ impl SnappyRefApp {
         }
 
         self.enqueue_external_import_sources(sources, screen_rect, desired_world);
+        true
+    }
+
+    fn handle_pureref_clipboard_import_at(
+        &mut self,
+        screen_rect: egui::Rect,
+        desired_world: egui::Pos2,
+    ) -> bool {
+        if self.import_worker.is_none() {
+            return false;
+        }
+
+        let Some(bytes) = crate::native_drop::clipboard_pureref_binary() else {
+            return false;
+        };
+        let sources = crate::pureref_clipboard::sources_from_binary(&bytes);
+        if sources.is_empty() {
+            return false;
+        }
+
+        let source_count = sources.len();
+        self.enqueue_external_import_sources(sources, screen_rect, desired_world);
+        self.status = if source_count == 1 {
+            "Queued PureRef paste: 1 image".to_owned()
+        } else {
+            format!("Queued PureRef paste: {source_count} images")
+        };
         true
     }
 
@@ -3554,7 +3635,7 @@ impl SnappyRefApp {
                 ExternalImportSource::Url(url) => format!("Queued URL import: {url}"),
             };
         }
-        self.register_import_batch(self.active_board_id, queued_batch_ids);
+        self.register_import_batch(self.active_board_id, desired_world, queued_batch_ids);
     }
 
     fn handle_clipboard_copy(&mut self, ctx: &egui::Context) {
@@ -3723,24 +3804,11 @@ impl SnappyRefApp {
         screen_rect: egui::Rect,
     ) {
         let paste_text = self.context_clipboard_text(ctx);
-        if let Some(paste_text) = paste_text {
-            let desired_world = self
-                .context_menu_pos
-                .map(|pos| self.canvas.screen_to_world(pos, screen_rect))
-                .unwrap_or_else(|| self.preferred_import_world(ctx, screen_rect));
-            if self.handle_internal_clipboard_paste_at(&paste_text, desired_world) {
-                return;
-            }
-            if self.handle_clipboard_url_import_at(screen_rect, &paste_text, desired_world) {
-                return;
-            }
-        }
-
         let desired_world = self
             .context_menu_pos
             .map(|pos| self.canvas.screen_to_world(pos, screen_rect))
             .unwrap_or_else(|| self.preferred_import_world(ctx, screen_rect));
-        self.handle_external_clipboard_image_paste_at(screen_rect, desired_world);
+        self.handle_clipboard_paste_at(screen_rect, desired_world, paste_text);
     }
 
     fn context_clipboard_text(&mut self, ctx: &egui::Context) -> Option<String> {
@@ -5569,7 +5637,7 @@ impl SnappyRefApp {
             asset_queue_ids.push(reservation.queue_id);
             asset_loads.push((reservation, record));
         }
-        self.register_search_import_batch(self.active_board_id, asset_queue_ids);
+        self.register_search_import_batch(self.active_board_id, drop_world, asset_queue_ids);
         let asset_load_count = asset_loads.len();
 
         for (reservation, record) in asset_loads {
@@ -9986,7 +10054,7 @@ mod tests {
     fn completed_multi_file_import_batch_selects_and_compacts_real_items() {
         let ctx = egui::Context::default();
         let mut app = test_app(None);
-        app.register_import_batch(app.active_board_id, vec![1, 2, 3]);
+        app.register_import_batch(app.active_board_id, egui::pos2(120.0, 80.0), vec![1, 2, 3]);
 
         for (id, width, height) in [(1_i64, 180_u32, 80_u32), (2, 70, 210), (3, 140, 120)] {
             let asset = ImageAsset {
@@ -10053,6 +10121,43 @@ mod tests {
                 );
             }
         }
+        let group_bounds = rects
+            .iter()
+            .copied()
+            .reduce(|bounds, rect| bounds.union(rect))
+            .unwrap();
+        assert!((group_bounds.center().x - 120.0).abs() < 0.1);
+        assert!((group_bounds.center().y - 80.0).abs() < 0.1);
+        assert!(app.pending_import_batches.is_empty());
+    }
+
+    #[test]
+    fn completed_import_batch_uses_original_anchor_after_out_of_order_failures() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        let anchor = egui::pos2(-340.0, 210.0);
+        app.register_import_batch(app.active_board_id, anchor, vec![1, 2, 3]);
+
+        let mut third = test_loaded_item(3, app.active_board_id);
+        third.record.asset.width = 140;
+        third.record.asset.height = 80;
+        third.record.item.x = 4000.0;
+        third.record.item.y = -1000.0;
+        app.integrate_loaded_import(&ctx, third);
+
+        app.finish_import_queue_id_in_batches(Some(app.active_board_id), Some(2), None);
+
+        let mut first = test_loaded_item(1, app.active_board_id);
+        first.record.asset.width = 90;
+        first.record.asset.height = 170;
+        first.record.item.x = -2500.0;
+        first.record.item.y = 3600.0;
+        app.integrate_loaded_import(&ctx, first);
+
+        assert_eq!(app.canvas.selected_item_ids(), vec![3, 1]);
+        let bounds = app.canvas.selected_bounds_world().unwrap();
+        assert!((bounds.center().x - anchor.x).abs() < 0.1);
+        assert!((bounds.center().y - anchor.y).abs() < 0.1);
         assert!(app.pending_import_batches.is_empty());
     }
 
@@ -10060,7 +10165,7 @@ mod tests {
     fn completed_inactive_board_import_batch_does_not_mutate_active_canvas() {
         let ctx = egui::Context::default();
         let mut app = test_app(None);
-        app.register_import_batch(1, vec![1, 2]);
+        app.register_import_batch(1, egui::pos2(0.0, 0.0), vec![1, 2]);
         app.active_board_id = 2;
 
         app.integrate_loaded_import(&ctx, test_loaded_item(1, 1));
@@ -10197,6 +10302,41 @@ mod tests {
             )),
             "images.example.com"
         );
+    }
+
+    #[test]
+    fn url_batch_previews_use_balanced_layout_for_approximate_dimensions() {
+        let mut app = test_app(None);
+        let sources = (0..13)
+            .map(|index| {
+                super::ExternalImportSource::Url(format!("https://example.com/image-{index}.png"))
+            })
+            .collect::<Vec<_>>();
+
+        let previews =
+            app.dropped_import_previews(&sources, egui::pos2(100.0, 200.0), test_screen_rect());
+        let distinct_x = previews
+            .iter()
+            .fold(Vec::<i32>::new(), |mut values, (_, _, center)| {
+                let rounded = center.x.round() as i32;
+                if !values.contains(&rounded) {
+                    values.push(rounded);
+                }
+                values
+            });
+        let distinct_y = previews
+            .iter()
+            .fold(Vec::<i32>::new(), |mut values, (_, _, center)| {
+                let rounded = center.y.round() as i32;
+                if !values.contains(&rounded) {
+                    values.push(rounded);
+                }
+                values
+            });
+
+        assert_eq!(previews.len(), sources.len());
+        assert!(distinct_x.len() > 1);
+        assert!(distinct_y.len() > 1);
     }
 
     #[test]
