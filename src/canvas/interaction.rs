@@ -21,6 +21,7 @@ use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasStackItem, Canva
 // snap.
 const IMAGE_MOVE_DEBOUNCE_SECONDS: f64 = 0.090;
 const IMAGE_DRAG_SCALE_DOUBLING_DISTANCE_SCREEN: f32 = 240.0;
+const MOUSE_WHEEL_ZOOM_FACTOR_PER_LINE: f32 = 1.144;
 
 #[derive(Clone, Debug, PartialEq)]
 struct ImageScaleTransform {
@@ -646,7 +647,7 @@ fn apply_canvas_navigation(
 /// alone so they still work for users with mixed input devices.
 ///
 /// Scroll-wheel up (positive y from winit line-wheel events) -> zoom in. Each
-/// line tick scales by 1.1; sub-line deltas scale smoothly via `1.1^y`.
+/// line tick scales by 1.144; sub-line deltas scale smoothly via `1.144^y`.
 pub(super) fn map_mouse_mode_scroll_events(events: &[egui::Event]) -> (f32, egui::Vec2) {
     let mut zoom_factor: f32 = 1.0;
     let mut pan_delta = egui::Vec2::ZERO;
@@ -668,7 +669,7 @@ pub(super) fn map_mouse_mode_scroll_events(events: &[egui::Event]) -> (f32, egui
         }
     }
     if wheel_zoom_y.abs() > f32::EPSILON {
-        zoom_factor *= 1.1_f32.powf(wheel_zoom_y);
+        zoom_factor *= MOUSE_WHEEL_ZOOM_FACTOR_PER_LINE.powf(wheel_zoom_y);
     }
     (zoom_factor, pan_delta)
 }
@@ -2310,7 +2311,7 @@ mod tests {
             zoom_factor > 1.0,
             "wheel up should zoom in, got {zoom_factor}"
         );
-        assert!((zoom_factor - 1.1).abs() < 1e-5);
+        assert!((zoom_factor - 1.144).abs() < 1e-5);
         assert_eq!(pan_delta, egui::Vec2::ZERO);
     }
 
@@ -2325,7 +2326,7 @@ mod tests {
             zoom_factor < 1.0,
             "wheel down should zoom out, got {zoom_factor}"
         );
-        assert!((zoom_factor - (1.0 / 1.1)).abs() < 1e-5);
+        assert!((zoom_factor - (1.0 / 1.144)).abs() < 1e-5);
     }
 
     #[test]
