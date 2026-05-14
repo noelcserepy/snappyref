@@ -333,6 +333,52 @@ pub struct AppConfig {
     verification_search_query: Option<String>,
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
     verification_search_scope: crate::semantic_search::SearchScope,
+    update_smoke_install: bool,
+    update_smoke_status_path: Option<std::path::PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum UpdateSmokePhase {
+    WaitingForIdle,
+    WaitingForAvailable,
+    WaitingForReady,
+    TriggeredRestart,
+}
+
+#[derive(Clone, Debug)]
+struct UpdateSmokeState {
+    phase: UpdateSmokePhase,
+    started_at: Instant,
+    timeout: Duration,
+    status_path: Option<std::path::PathBuf>,
+}
+
+impl UpdateSmokeState {
+    fn from_config(config: &AppConfig) -> Option<Self> {
+        if !config.update_smoke_install {
+            return None;
+        }
+        let timeout = std::env::var("SNAPPYREF_UPDATE_SMOKE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .map(Duration::from_secs)
+            .unwrap_or_else(|| Duration::from_secs(300));
+        Some(Self {
+            phase: UpdateSmokePhase::WaitingForIdle,
+            started_at: Instant::now(),
+            timeout,
+            status_path: config.update_smoke_status_path.clone(),
+        })
+    }
+
+    fn phase_label(&self) -> &'static str {
+        match self.phase {
+            UpdateSmokePhase::WaitingForIdle => "waiting_for_idle",
+            UpdateSmokePhase::WaitingForAvailable => "waiting_for_available",
+            UpdateSmokePhase::WaitingForReady => "waiting_for_ready",
+            UpdateSmokePhase::TriggeredRestart => "triggered_restart",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -801,6 +847,9 @@ impl AppConfig {
         let mut perf_corpus = None;
         let mut perf_run_dir = None;
         let mut startup_trace = false;
+        let mut update_smoke_install = false;
+        let mut update_smoke_status_path =
+            std::env::var_os("SNAPPYREF_UPDATE_SMOKE_STATUS").map(std::path::PathBuf::from);
         #[cfg(all(debug_assertions, feature = "semantic-search"))]
         let mut search_latency_log = std::env::var_os("SNAPPYREF_SEARCH_LATENCY_LOG").is_some();
         #[cfg(debug_assertions)]
@@ -821,6 +870,12 @@ impl AppConfig {
                 no_startup_focus = true;
             } else if argument == "--perf-log" {
                 perf_log = true;
+            } else if argument == "--update-smoke-install" {
+                update_smoke_install = true;
+            } else if argument == "--update-smoke-status" {
+                update_smoke_status_path = arguments.next().map(std::path::PathBuf::from);
+            } else if let Some(path) = argument.strip_prefix("--update-smoke-status=") {
+                update_smoke_status_path = Some(std::path::PathBuf::from(path));
             } else if argument == "--perf-report" {
                 perf_report = true;
             } else if argument == "--perf-decode" {
@@ -1086,6 +1141,8 @@ impl AppConfig {
             #[cfg(all(debug_assertions, feature = "semantic-search"))]
             verification_search_scope,
             library_root,
+            update_smoke_install,
+            update_smoke_status_path,
         }
     }
 
@@ -1376,7 +1433,8 @@ impl AppConfig {
         !(self.no_startup_focus
             || self.screenshot_path.is_some()
             || self.verification_mode_active()
-            || self.perf_scenario_requested())
+            || self.perf_scenario_requested()
+            || self.update_smoke_install)
     }
 
     pub(crate) fn restored_window_state(&self) -> Option<crate::data::WindowState> {
@@ -1396,6 +1454,7 @@ impl AppConfig {
         self.screenshot_path.is_none()
             && !self.verification_mode_active()
             && !self.perf_scenario_requested()
+            && !self.update_smoke_install
     }
 
     #[cfg(debug_assertions)]
@@ -1465,6 +1524,7 @@ pub struct SnappyRefApp {
     sidebar_hot_preview: bool,
     update_service: UpdateService,
     update_popover_open: bool,
+    update_smoke: Option<UpdateSmokeState>,
     /// Monotonic instant of the last "Check for updates now" click. Used
     /// to throttle the Settings Tab button to one invocation per minute
     /// independent of wall-clock noise. `None` until the first click.
@@ -1501,6 +1561,7 @@ impl SnappyRefApp {
             crate::native_capture::NativeWindowCapture::from_creation_context(cc)
         };
         let max_texture_side = cc.egui_ctx.input(|input| input.max_texture_side.max(1));
+        let update_smoke = UpdateSmokeState::from_config(&config);
 
         let library = config
             .library_root()
@@ -1570,6 +1631,7 @@ impl SnappyRefApp {
                     sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                     update_service: UpdateService::new(UpdateConfig::default()),
                     update_popover_open: false,
+                    update_smoke: update_smoke.clone(),
                     last_manual_update_check: None,
                 };
                 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -1795,6 +1857,7 @@ impl SnappyRefApp {
                 sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                 update_service: UpdateService::new(UpdateConfig::default()),
                 update_popover_open: false,
+                update_smoke,
                 last_manual_update_check: None,
             },
         }
@@ -2570,6 +2633,95 @@ impl SnappyRefApp {
         ctx.request_repaint();
     }
 
+    fn write_update_smoke_status(&self, status: &str) {
+        let Some(path) = self
+            .update_smoke
+            .as_ref()
+            .and_then(|smoke| smoke.status_path.as_ref())
+        else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, status);
+    }
+
+    fn fail_update_smoke(&mut self, ctx: &egui::Context, reason: impl Into<String>) {
+        let reason = reason.into();
+        self.status = format!("Update smoke failed: {reason}");
+        self.write_update_smoke_status(&format!("failed:{reason}"));
+        self.update_smoke = None;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    fn drive_update_smoke(&mut self, ctx: &egui::Context, settled_idle: bool) {
+        let Some(smoke) = self.update_smoke.as_ref() else {
+            return;
+        };
+        if smoke.started_at.elapsed() > smoke.timeout {
+            let phase = smoke.phase_label();
+            self.fail_update_smoke(ctx, format!("timeout in {phase}"));
+            return;
+        }
+
+        match smoke.phase {
+            UpdateSmokePhase::WaitingForIdle => {
+                if !settled_idle {
+                    ctx.request_repaint_after(Duration::from_millis(250));
+                    return;
+                }
+                self.write_update_smoke_status("checking");
+                self.update_service.request_check_now();
+                if let Some(smoke) = &mut self.update_smoke {
+                    smoke.phase = UpdateSmokePhase::WaitingForAvailable;
+                }
+                ctx.request_repaint_after(Duration::from_millis(250));
+            }
+            UpdateSmokePhase::WaitingForAvailable => match self.update_service.state().clone() {
+                UpdateState::Available { version, .. } => {
+                    self.write_update_smoke_status(&format!("available:{version}"));
+                    self.update_service.start_install();
+                    if let Some(smoke) = &mut self.update_smoke {
+                        smoke.phase = UpdateSmokePhase::WaitingForReady;
+                    }
+                    ctx.request_repaint_after(Duration::from_millis(250));
+                }
+                UpdateState::Ready { version } => {
+                    self.write_update_smoke_status(&format!("triggered:{version}"));
+                    if let Some(smoke) = &mut self.update_smoke {
+                        smoke.phase = UpdateSmokePhase::TriggeredRestart;
+                    }
+                    self.trigger_restart_into_update(ctx);
+                }
+                UpdateState::Failed => {
+                    self.fail_update_smoke(ctx, "update service failed");
+                }
+                _ => {
+                    ctx.request_repaint_after(Duration::from_millis(250));
+                }
+            },
+            UpdateSmokePhase::WaitingForReady => match self.update_service.state().clone() {
+                UpdateState::Ready { version } => {
+                    self.write_update_smoke_status(&format!("triggered:{version}"));
+                    if let Some(smoke) = &mut self.update_smoke {
+                        smoke.phase = UpdateSmokePhase::TriggeredRestart;
+                    }
+                    self.trigger_restart_into_update(ctx);
+                }
+                UpdateState::Failed => {
+                    self.fail_update_smoke(ctx, "update service failed");
+                }
+                _ => {
+                    ctx.request_repaint_after(Duration::from_millis(250));
+                }
+            },
+            UpdateSmokePhase::TriggeredRestart => {
+                ctx.request_repaint_after(Duration::from_millis(250));
+            }
+        }
+    }
+
     /// Process a Settings Tab "Rollback to previous version" click.
     /// Performs the rollback through `updater::rollback`; on success the
     /// status line invites the user to relaunch. The next launch's
@@ -2748,7 +2900,7 @@ impl SnappyRefApp {
         }
 
         // 4. Build + write the descriptor.
-        let launch_args: Vec<String> = std::env::args().skip(1).collect();
+        let launch_args = restart_launch_args();
         let Some(descriptor) = self.update_service.pending_restart_descriptor(launch_args) else {
             self.status = "No staged update is ready to restart into".to_owned();
             return;
@@ -5972,6 +6124,7 @@ impl eframe::App for SnappyRefApp {
         self.persist_canvas_changes_debounced(ui.ctx());
         let settled_idle = self.app_settled_idle();
         self.update_service.tick(settled_idle);
+        self.drive_update_smoke(ui.ctx(), settled_idle);
         if let Some(wait) = self.update_service.time_until_next_check() {
             // Make sure we wake up at the next scheduled check; clamp to
             // a reasonable lower bound so we never hot-loop.
@@ -6136,6 +6289,25 @@ fn snappyref_updater_path() -> Result<std::path::PathBuf, String> {
         "snappyref-updater"
     };
     Ok(parent.join(name))
+}
+
+fn restart_launch_args() -> Vec<String> {
+    let mut filtered = Vec::new();
+    let mut arguments = std::env::args().skip(1);
+    while let Some(argument) = arguments.next() {
+        if argument == "--update-smoke-install" {
+            continue;
+        }
+        if argument == "--update-smoke-status" {
+            let _ = arguments.next();
+            continue;
+        }
+        if argument.starts_with("--update-smoke-status=") {
+            continue;
+        }
+        filtered.push(argument);
+    }
+    filtered
 }
 
 fn shortcut_pressed(ctx: &egui::Context, binding: ShortcutBinding) -> bool {
@@ -7520,13 +7692,31 @@ mod tests {
                 .map(|item| (item.action, item.shortcut))
                 .collect::<Vec<_>>(),
             vec![
-                (super::ContextMenuAction::Copy, Some("⌘ C")),
-                (super::ContextMenuAction::Paste, Some("⌘ V")),
-                (super::ContextMenuAction::Duplicate, Some("⌘ D")),
+                (
+                    super::ContextMenuAction::Copy,
+                    Some(super::platform_shortcut_label("⌘ C", "Ctrl C")),
+                ),
+                (
+                    super::ContextMenuAction::Paste,
+                    Some(super::platform_shortcut_label("⌘ V", "Ctrl V")),
+                ),
+                (
+                    super::ContextMenuAction::Duplicate,
+                    Some(super::platform_shortcut_label("⌘ D", "Ctrl D")),
+                ),
                 (super::ContextMenuAction::DeleteFromBoard, Some("del")),
-                (super::ContextMenuAction::MoveToFront, Some("⌘ .")),
-                (super::ContextMenuAction::MoveToBack, Some("⌘ ,")),
-                (super::ContextMenuAction::SearchUsingImage, Some("⌘ F")),
+                (
+                    super::ContextMenuAction::MoveToFront,
+                    Some(super::platform_shortcut_label("⌘ .", "Ctrl .")),
+                ),
+                (
+                    super::ContextMenuAction::MoveToBack,
+                    Some(super::platform_shortcut_label("⌘ ,", "Ctrl ,")),
+                ),
+                (
+                    super::ContextMenuAction::SearchUsingImage,
+                    Some(super::platform_shortcut_label("⌘ F", "Ctrl F")),
+                ),
                 (super::ContextMenuAction::RemoveFromLibrary, None),
             ]
         );
@@ -10066,6 +10256,7 @@ mod tests {
             sidebar_hot_preview: false,
             update_service: super::UpdateService::new(super::UpdateConfig::default()),
             update_popover_open: false,
+            update_smoke: None,
             last_manual_update_check: None,
         };
         app.refresh_board_summaries();
