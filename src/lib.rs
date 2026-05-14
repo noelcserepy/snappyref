@@ -125,6 +125,7 @@ pub fn run() -> eframe::Result<()> {
     }
     let viewport_size = config.startup_viewport_size();
     let restored_window = config.restored_window_state();
+    let restored_settings = config.restored_workspace_settings();
     let startup_focus_enabled = config.startup_focus_enabled();
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size([viewport_size.x, viewport_size.y])
@@ -141,6 +142,12 @@ pub fn run() -> eframe::Result<()> {
         if let (Some(x), Some(y)) = (window.outer_x, window.outer_y) {
             viewport = viewport.with_position([x, y]);
         }
+    }
+    if restored_settings
+        .as_ref()
+        .is_some_and(|settings| settings.always_on_top)
+    {
+        viewport = viewport.with_window_level(eframe::egui::viewport::WindowLevel::AlwaysOnTop);
     }
     let mut options = eframe::NativeOptions {
         viewport,

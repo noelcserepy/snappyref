@@ -1108,6 +1108,13 @@ fn paint_settings_section(
         |ui| paint_pointer_mode_control(ui, &mut settings.pointer_mode),
     );
     paint_setting_divider(ui);
+    changed |= paint_setting_row(
+        ui,
+        "Always on top",
+        "Keep SnappyRef above normal windows.",
+        |ui| paint_switch(ui, &mut settings.always_on_top).changed(),
+    );
+    paint_setting_divider(ui);
     changed |= paint_setting_row(ui, "Canvas background", "Quiet board guide.", |ui| {
         paint_background_mode_control(ui, canvas)
     });

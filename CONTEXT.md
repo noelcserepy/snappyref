@@ -72,6 +72,10 @@ _Avoid_: Preferences row, app state
 Global user preferences that apply across boards, such as layout gap, image sizing, rotation snap, and textbox defaults.
 _Avoid_: Board settings, options
 
+**Always on Top**:
+The Workspace Settings window mode that keeps SnappyRef above normal app windows while the user works elsewhere.
+_Avoid_: Pin window, floating app
+
 **Sidebar State**:
 The persisted open/closed state and selected tab of the sidebar.
 _Avoid_: Sidebar settings, panel state

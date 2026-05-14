@@ -3157,6 +3157,7 @@ fn legacy_user_session_from_row(
                 .unwrap_or(crate::data::DEFAULT_ROTATION_SNAP_DEGREES),
             default_textbox_background: row.get::<_, i64>(6).unwrap_or(0) != 0,
             pointer_mode: crate::data::PointerMode::default(),
+            always_on_top: false,
             last_update_check_at: None,
         },
         sidebar_open: row.get::<_, i64>(7).unwrap_or(0) != 0,
@@ -3728,6 +3729,7 @@ mod tests {
         session.settings.canvas_image_max_side = 4096;
         session.settings.rotation_snap_degrees = 30.0;
         session.settings.default_textbox_background = true;
+        session.settings.always_on_top = true;
         session.sidebar_open = true;
         session.sidebar_tab = "boards".to_owned();
         library.save_user_session(&session).unwrap();
@@ -3766,6 +3768,7 @@ mod tests {
         assert_eq!(reloaded_session.settings.canvas_image_max_side, 4096);
         assert_eq!(reloaded_session.settings.rotation_snap_degrees, 30.0);
         assert!(reloaded_session.settings.default_textbox_background);
+        assert!(reloaded_session.settings.always_on_top);
         assert!(reloaded_session.sidebar_open);
         assert_eq!(reloaded_session.sidebar_tab, "boards");
         assert_eq!(items.len(), 1);
