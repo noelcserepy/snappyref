@@ -99,9 +99,12 @@ pub(crate) struct UpdateConfig {
 impl Default for UpdateConfig {
     fn default() -> Self {
         Self {
-            manifest_url: DEFAULT_MANIFEST_URL.to_owned(),
-            release_page_url: DEFAULT_RELEASE_PAGE_URL.to_owned(),
-            current_version: env!("CARGO_PKG_VERSION").to_owned(),
+            manifest_url: std::env::var("SNAPPYREF_UPDATE_MANIFEST_URL")
+                .unwrap_or_else(|_| DEFAULT_MANIFEST_URL.to_owned()),
+            release_page_url: std::env::var("SNAPPYREF_UPDATE_RELEASE_PAGE_URL")
+                .unwrap_or_else(|_| DEFAULT_RELEASE_PAGE_URL.to_owned()),
+            current_version: std::env::var("SNAPPYREF_UPDATE_CURRENT_VERSION")
+                .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned()),
             install_root: None,
         }
     }

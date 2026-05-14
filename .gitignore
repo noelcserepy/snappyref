@@ -3,6 +3,7 @@ library/
 .claude/
 .scratch/
 .ralph/
+.env.windows
 tests/fixtures/external/files/
 perf-assets/images
 perf-assets/runs

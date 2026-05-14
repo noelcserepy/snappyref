@@ -152,16 +152,19 @@ fn validate(descriptor: &PendingUpdateDescriptor) -> Result<(), DescriptorError>
 mod tests {
     use super::*;
 
+    fn descriptor_root() -> PathBuf {
+        std::env::temp_dir().join("snappyref")
+    }
+
     fn descriptor() -> PendingUpdateDescriptor {
+        let root = descriptor_root();
         PendingUpdateDescriptor {
             parent_pid: 4242,
             expected_new_version: "1.2.3".to_owned(),
-            install_root: PathBuf::from("/tmp/snappyref"),
-            current_bundle: PathBuf::from("/tmp/snappyref/SnappyRef.app"),
-            staged_bundle: PathBuf::from(
-                "/tmp/snappyref/updates/staging-1.2.3/SnappyRef/SnappyRef.app",
-            ),
-            staging_dir: PathBuf::from("/tmp/snappyref/updates/staging-1.2.3"),
+            install_root: root.clone(),
+            current_bundle: root.join("SnappyRef.app"),
+            staged_bundle: root.join("updates/staging-1.2.3/SnappyRef/SnappyRef.app"),
+            staging_dir: root.join("updates/staging-1.2.3"),
             launch_args: vec!["--foo".to_owned(), "bar".to_owned()],
         }
     }

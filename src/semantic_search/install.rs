@@ -813,9 +813,11 @@ mod tests {
         )
         .unwrap();
 
-        let blocker = final_model_root.clone();
+        let installing_model_root = root
+            .join("models")
+            .join(format!("{}.installing", descriptor.model_key));
         let error = promote_staged_model_with_hook(&root, &descriptor, &staged_model_root, || {
-            fs::write(&blocker, b"not a directory").unwrap();
+            remove_path_any(&installing_model_root).unwrap();
         })
         .unwrap_err();
 

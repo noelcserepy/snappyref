@@ -3,6 +3,27 @@
 Use this checklist before the first public release and for any release that can touch storage,
 startup routing, bundled assets, or app migration code.
 
+## Published-Manifest Smokes
+
+Run these only when you explicitly need to prove the real update channel works:
+
+```sh
+scripts/update-smoke-macos.sh
+scripts/update-smoke-windows.sh
+```
+
+The macOS script builds a local app bundle into `target/update-smoke/macos/SnappyRef`.
+The Windows script syncs the Mac checkout to the configured Windows machine, builds
+there, and creates `target\update-smoke\windows\SnappyRef` on that machine.
+
+Both launch the scratch app with `SNAPPYREF_UPDATE_CURRENT_VERSION=0.0.0`, fetch
+the published GitHub `latest.json`, download and verify the latest release zip for
+the host platform, trigger the normal `snappyref-updater` helper, and check that
+the scratch install was swapped with a `.previous` / `.old` backup retained.
+
+These are not pre-push checks. They are networked, depend on `snappyref-dist`, launch
+the GUI app, and intentionally test the public channel rather than a local fixture.
+
 ## First-Release Update Drill
 
 This drill is mandatory before the first release. It must use an actual generated release zip,
