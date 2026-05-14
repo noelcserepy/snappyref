@@ -1108,6 +1108,13 @@ fn paint_settings_section(
         |ui| paint_pointer_mode_control(ui, &mut settings.pointer_mode),
     );
     paint_setting_divider(ui);
+    changed |= paint_setting_row(
+        ui,
+        "Always on top",
+        "Keep SnappyRef above normal windows.",
+        |ui| paint_switch(ui, &mut settings.always_on_top).changed(),
+    );
+    paint_setting_divider(ui);
     changed |= paint_setting_row(ui, "Canvas background", "Quiet board guide.", |ui| {
         paint_background_mode_control(ui, canvas)
     });
@@ -1334,7 +1341,7 @@ fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
         );
         ui.add_space(crate::theme::SPACE_3);
 
-        let (core_shortcuts, layout_shortcuts) = SUPPORTED_SHORTCUTS.split_at(9);
+        let (core_shortcuts, layout_shortcuts) = SUPPORTED_SHORTCUTS.split_at(10);
         paint_shortcut_group(ui, "Core actions", core_shortcuts);
         ui.add_space(crate::theme::SPACE_3);
         paint_shortcut_group(ui, "Layout + history", layout_shortcuts);

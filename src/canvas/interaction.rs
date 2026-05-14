@@ -9,10 +9,10 @@ use super::render::textbox_pointer_region;
 use super::{
     ANNOTATION_HIT_RADIUS, AnnotationDraftState, AnnotationDragState, CanvasHit, CanvasImage,
     CanvasState, CropState, DragState, IMAGE_RESIZE_HIT_RADIUS,
-    IMAGE_ROTATE_HANDLE_HIT_RADIUS_SCREEN, ImageResizeHandle, ImageTransformState, MAX_CANVAS_ZOOM,
-    MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation, SelectedLayoutItem,
-    TEXTBOX_DRAG_THRESHOLD_SCREEN, TEXTBOX_RESIZE_HIT_RADIUS, TextboxPointerRegion,
-    TextboxResizeHandle, TextboxTransformState,
+    IMAGE_ROTATE_HANDLE_HIT_RADIUS_SCREEN, ImageResizeHandle, ImageScaleStart, ImageTransformState,
+    MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, PendingAnnotation,
+    SelectedLayoutItem, TEXTBOX_DRAG_THRESHOLD_SCREEN, TEXTBOX_RESIZE_HIT_RADIUS,
+    TextboxPointerRegion, TextboxResizeHandle, TextboxTransformState,
 };
 use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasStackItem, CanvasTextSize};
 
@@ -20,6 +20,15 @@ use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasStackItem, Canva
 // primary-press on a placement so click-to-select doesn't jerk the image via
 // snap.
 const IMAGE_MOVE_DEBOUNCE_SECONDS: f64 = 0.090;
+const IMAGE_DRAG_SCALE_DOUBLING_DISTANCE_SCREEN: f32 = 240.0;
+const MOUSE_WHEEL_ZOOM_FACTOR_PER_LINE: f32 = 1.144;
+
+#[derive(Clone, Debug, PartialEq)]
+struct ImageScaleTransform {
+    item_id: i64,
+    center_world: egui::Pos2,
+    scale: f32,
+}
 
 pub(super) fn handle_input(
     ui: &egui::Ui,
@@ -43,6 +52,7 @@ pub(super) fn handle_input(
     let draw_kind = drawing_annotation_kind(ui);
     let shift_held = ui.input(|i| i.modifiers.shift);
     let alt_held = ui.input(|i| i.modifiers.alt);
+    let image_drag_scale_modifier_held = ui.input(|i| i.modifiers.command && i.modifiers.alt);
     let pointer_in_canvas_rect = pointer_pos
         .map(|pointer_pos| {
             input_rect.contains(pointer_pos)
@@ -52,6 +62,17 @@ pub(super) fn handle_input(
 
     if pointer_in_canvas_rect && response.dragged_by(egui::PointerButton::Middle) {
         state.pan += response.drag_delta();
+    }
+
+    if pointer_in_canvas_rect
+        && primary_pressed
+        && image_drag_scale_modifier_held
+        && let Some(pointer_pos) = pointer_pos
+        && let Some(item_id) = hit_test_image(state, rect, pointer_pos)
+    {
+        begin_image_drag_scale(state, rect, item_id, pointer_pos);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        return;
     }
 
     // Alt+LMB pan: starts a canvas pan even over a placement, mirroring PureRef.
@@ -93,7 +114,7 @@ pub(super) fn handle_input(
 
     if matches!(
         state.interaction.image_transform_state.as_ref(),
-        Some(ImageTransformState::Rotating { .. })
+        Some(ImageTransformState::Rotating { .. } | ImageTransformState::Scaling { .. })
     ) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     } else if let Some(pointer_pos) = pointer_pos
@@ -118,6 +139,12 @@ pub(super) fn handle_input(
         && let Some(handle) = hit_test_image_resize_handle(state, rect, image, pointer_pos)
     {
         ui.ctx().set_cursor_icon(image_resize_cursor_icon(handle));
+    } else if pointer_in_canvas_rect
+        && image_drag_scale_modifier_held
+        && let Some(pointer_pos) = pointer_pos
+        && hit_test_image(state, rect, pointer_pos).is_some()
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     } else if let Some(pointer_pos) = pointer_pos
         && rotation_handle_key_held
         && hit_test_selected_image_rotation_handle(state, rect, pointer_pos)
@@ -376,6 +403,23 @@ pub(super) fn handle_input(
                     state.set_image_center_and_scale(item_id, center_world, scale);
                 }
             }
+            ImageTransformState::Scaling {
+                pointer_start_screen,
+                group_center_world,
+                starting_items,
+                ..
+            } => {
+                let factor = image_drag_scale_factor(pointer_start_screen, pointer_pos);
+                for transform in
+                    scaled_image_transforms(&starting_items, group_center_world, factor)
+                {
+                    state.set_image_center_and_scale(
+                        transform.item_id,
+                        transform.center_world,
+                        transform.scale,
+                    );
+                }
+            }
             ImageTransformState::Rotating {
                 item_ids: _,
                 center_screen,
@@ -454,6 +498,11 @@ pub(super) fn handle_input(
         } else if let Some(transform_state) = state.interaction.image_transform_state.take() {
             match transform_state {
                 ImageTransformState::Resizing { item_id, .. } => state.mark_dirty(item_id),
+                ImageTransformState::Scaling { item_ids, .. } => {
+                    for item_id in item_ids {
+                        state.mark_dirty(item_id);
+                    }
+                }
                 ImageTransformState::Rotating { item_ids, .. } => {
                     for item_id in item_ids {
                         state.mark_dirty(item_id);
@@ -598,7 +647,7 @@ fn apply_canvas_navigation(
 /// alone so they still work for users with mixed input devices.
 ///
 /// Scroll-wheel up (positive y from winit line-wheel events) -> zoom in. Each
-/// line tick scales by 1.1; sub-line deltas scale smoothly via `1.1^y`.
+/// line tick scales by 1.144; sub-line deltas scale smoothly via `1.144^y`.
 pub(super) fn map_mouse_mode_scroll_events(events: &[egui::Event]) -> (f32, egui::Vec2) {
     let mut zoom_factor: f32 = 1.0;
     let mut pan_delta = egui::Vec2::ZERO;
@@ -620,7 +669,7 @@ pub(super) fn map_mouse_mode_scroll_events(events: &[egui::Event]) -> (f32, egui
         }
     }
     if wheel_zoom_y.abs() > f32::EPSILON {
-        zoom_factor *= 1.1_f32.powf(wheel_zoom_y);
+        zoom_factor *= MOUSE_WHEEL_ZOOM_FACTOR_PER_LINE.powf(wheel_zoom_y);
     }
     (zoom_factor, pan_delta)
 }
@@ -761,6 +810,54 @@ fn begin_image_resize(
     });
 }
 
+fn begin_image_drag_scale(
+    state: &mut CanvasState,
+    rect: egui::Rect,
+    hit_item_id: i64,
+    pointer_pos: egui::Pos2,
+) {
+    if !state.is_selected(hit_item_id) {
+        state.set_single_selection(hit_item_id);
+    }
+    let item_ids = selected_existing_image_ids(state);
+    if item_ids.is_empty() {
+        return;
+    }
+    let Some(selection_rect) = selected_image_screen_rect_for_items(state, rect, &item_ids) else {
+        return;
+    };
+    let group_center_world = state.screen_to_world(selection_rect.center(), rect);
+    let starting_items = item_ids
+        .iter()
+        .filter_map(|item_id| {
+            state
+                .image_by_item_id(*item_id)
+                .map(|image| ImageScaleStart {
+                    item_id: *item_id,
+                    center_world: egui::pos2(image.record.item.x, image.record.item.y),
+                    start_scale: image.record.item.scale,
+                    min_scale: min_image_scale(&image.record.asset),
+                })
+        })
+        .collect::<Vec<_>>();
+
+    state.finish_textbox_edit();
+    state.document.selected_annotation_ids.clear();
+    state.interaction.drag_state = None;
+    state.interaction.annotation_drag_state = None;
+    state.interaction.marquee_state = None;
+    state.interaction.crop_state = None;
+    state.interaction.annotation_draft_state = None;
+    state.interaction.textbox_transform_state = None;
+    state.clear_move_preview_placeholders();
+    state.interaction.image_transform_state = Some(ImageTransformState::Scaling {
+        item_ids,
+        pointer_start_screen: pointer_pos,
+        group_center_world,
+        starting_items,
+    });
+}
+
 fn begin_image_rotation(state: &mut CanvasState, rect: egui::Rect, pointer_pos: egui::Pos2) {
     let item_ids = selected_existing_image_ids(state);
     if item_ids.is_empty() {
@@ -805,6 +902,18 @@ fn begin_image_rotation(state: &mut CanvasState, rect: egui::Rect, pointer_pos: 
         start_pointer_angle,
         starting_items,
     });
+}
+
+fn selected_image_screen_rect_for_items(
+    state: &CanvasState,
+    rect: egui::Rect,
+    item_ids: &[i64],
+) -> Option<egui::Rect> {
+    item_ids
+        .iter()
+        .filter_map(|item_id| state.image_by_item_id(*item_id))
+        .map(|image| image_screen_rect(state, rect, image))
+        .reduce(|bounds, image_rect| bounds.union(image_rect))
 }
 
 fn begin_annotation_drag(
@@ -1138,6 +1247,29 @@ pub(super) fn resized_image_transform(
     let normalized_ratio = scale / start_scale.max(f32::EPSILON);
     let handle_screen = anchor_screen + start_delta * normalized_ratio;
     (anchor_screen.lerp(handle_screen, 0.5), scale)
+}
+
+fn image_drag_scale_factor(start_screen: egui::Pos2, pointer_pos: egui::Pos2) -> f32 {
+    let dx = pointer_pos.x - start_screen.x;
+    2.0_f32.powf(dx / IMAGE_DRAG_SCALE_DOUBLING_DISTANCE_SCREEN)
+}
+
+fn scaled_image_transforms(
+    starting_items: &[ImageScaleStart],
+    group_center_world: egui::Pos2,
+    factor: f32,
+) -> Vec<ImageScaleTransform> {
+    starting_items
+        .iter()
+        .map(|item| {
+            let offset = item.center_world - group_center_world;
+            ImageScaleTransform {
+                item_id: item.item_id,
+                center_world: group_center_world + offset * factor,
+                scale: (item.start_scale * factor).max(item.min_scale),
+            }
+        })
+        .collect()
 }
 
 fn rotated_image_delta(
@@ -1600,9 +1732,9 @@ pub(super) fn pending_annotation_from_draft(
 #[cfg(test)]
 mod tests {
     use super::{
-        DragState, ImageTransformState, begin_image_rotation, compute_drag_snap_preview,
-        map_mouse_mode_scroll_events, offset_layout_bounds,
-        selected_image_rotation_handle_screen_pos,
+        DragState, ImageTransformState, begin_image_drag_scale, begin_image_rotation,
+        compute_drag_snap_preview, image_drag_scale_factor, map_mouse_mode_scroll_events,
+        offset_layout_bounds, scaled_image_transforms, selected_image_rotation_handle_screen_pos,
     };
     use crate::canvas::CanvasState;
     use crate::data::{
@@ -1679,6 +1811,67 @@ mod tests {
                 ref starting_items,
                 ..
             }) if item_ids == &vec![1, 2] && starting_items.len() == 2
+        ));
+    }
+
+    #[test]
+    fn horizontal_image_drag_scale_grows_to_the_right_and_shrinks_to_the_left() {
+        let start = egui::pos2(200.0, 120.0);
+
+        let grow = image_drag_scale_factor(start, egui::pos2(440.0, 120.0));
+        let shrink = image_drag_scale_factor(start, egui::pos2(-40.0, 120.0));
+
+        assert!((grow - 2.0).abs() < 0.01);
+        assert!((shrink - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn image_drag_scale_preserves_multi_image_layout_around_group_center() {
+        let starting_items = vec![
+            super::ImageScaleStart {
+                item_id: 1,
+                center_world: egui::pos2(-100.0, 0.0),
+                start_scale: 1.0,
+                min_scale: 0.1,
+            },
+            super::ImageScaleStart {
+                item_id: 2,
+                center_world: egui::pos2(100.0, 0.0),
+                start_scale: 0.5,
+                min_scale: 0.1,
+            },
+        ];
+
+        let transforms = scaled_image_transforms(&starting_items, egui::pos2(0.0, 0.0), 2.0);
+
+        assert_eq!(transforms[0].item_id, 1);
+        assert_eq!(transforms[0].center_world, egui::pos2(-200.0, 0.0));
+        assert!((transforms[0].scale - 2.0).abs() < 0.01);
+        assert_eq!(transforms[1].item_id, 2);
+        assert_eq!(transforms[1].center_world, egui::pos2(200.0, 0.0));
+        assert!((transforms[1].scale - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn image_drag_scale_state_captures_selected_group() {
+        let ctx = egui::Context::default();
+        let mut canvas = CanvasState::default();
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(-100.0, 0.0), 100, 80);
+        add_test_image(&mut canvas, &ctx, 2, egui::pos2(100.0, 0.0), 100, 80);
+        canvas.select_items(&[1, 2]);
+
+        begin_image_drag_scale(&mut canvas, test_screen_rect(), 1, egui::pos2(380.0, 360.0));
+
+        assert!(matches!(
+            canvas.interaction.image_transform_state,
+            Some(ImageTransformState::Scaling {
+                ref item_ids,
+                group_center_world,
+                ref starting_items,
+                ..
+            }) if item_ids == &vec![1, 2]
+                && group_center_world == egui::pos2(0.0, 0.0)
+                && starting_items.len() == 2
         ));
     }
 
@@ -2118,7 +2311,7 @@ mod tests {
             zoom_factor > 1.0,
             "wheel up should zoom in, got {zoom_factor}"
         );
-        assert!((zoom_factor - 1.1).abs() < 1e-5);
+        assert!((zoom_factor - 1.144).abs() < 1e-5);
         assert_eq!(pan_delta, egui::Vec2::ZERO);
     }
 
@@ -2133,7 +2326,7 @@ mod tests {
             zoom_factor < 1.0,
             "wheel down should zoom out, got {zoom_factor}"
         );
-        assert!((zoom_factor - (1.0 / 1.1)).abs() < 1e-5);
+        assert!((zoom_factor - (1.0 / 1.144)).abs() < 1e-5);
     }
 
     #[test]

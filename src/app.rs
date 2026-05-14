@@ -52,6 +52,7 @@ enum SupportedShortcutAction {
     MoveSelectionToFront,
     MoveSelectionToBack,
     ToggleSidebar,
+    ToggleAlwaysOnTop,
     FocusSelection,
     Arrange(ArrangementAction),
     ApplyDefaultAverageArea,
@@ -179,6 +180,13 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: None,
     },
     SupportedShortcut {
+        action: "Scale selection",
+        windows: "Ctrl+Alt+Drag",
+        mac: "⌘⌥ Drag",
+        binding: None,
+        shortcut_action: None,
+    },
+    SupportedShortcut {
         action: "Focus selection",
         windows: "Space",
         mac: "Space",
@@ -239,6 +247,17 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
             shift: false,
         }),
         shortcut_action: Some(SupportedShortcutAction::ToggleSidebar),
+    },
+    SupportedShortcut {
+        action: "Toggle always on top",
+        windows: "Ctrl+Shift+T",
+        mac: "⇧⌘T",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::T,
+            command: true,
+            shift: true,
+        }),
+        shortcut_action: Some(SupportedShortcutAction::ToggleAlwaysOnTop),
     },
     SupportedShortcut {
         action: "Compact arrange",
@@ -1450,6 +1469,18 @@ impl AppConfig {
             .ok()?;
         let window = library.load_user_session().ok()?.window;
         window.is_restorable().then_some(window)
+    }
+
+    pub(crate) fn restored_workspace_settings(&self) -> Option<crate::data::WorkspaceSettings> {
+        if !self.persist_window_state_enabled() {
+            return None;
+        }
+        let library = self
+            .library_root()
+            .map(std::path::Path::to_path_buf)
+            .and_then(crate::storage::Library::initialize)
+            .ok()?;
+        Some(library.load_user_session().ok()?.settings)
     }
 
     fn persist_window_state_enabled(&self) -> bool {
@@ -4595,6 +4626,7 @@ impl SnappyRefApp {
                 | SupportedShortcutAction::MoveSelectionToFront
                 | SupportedShortcutAction::MoveSelectionToBack
                 | SupportedShortcutAction::ToggleSidebar
+                | SupportedShortcutAction::ToggleAlwaysOnTop
                 | SupportedShortcutAction::ApplyDefaultAverageArea
                 | SupportedShortcutAction::AverageSelectionArea
                 | SupportedShortcutAction::Arrange(_) => shortcut
@@ -4644,6 +4676,9 @@ impl SnappyRefApp {
                 }
                 SupportedShortcutAction::ToggleSidebar => {
                     self.sidebar_open = !self.sidebar_open;
+                }
+                SupportedShortcutAction::ToggleAlwaysOnTop => {
+                    self.set_always_on_top(ctx, !self.settings.always_on_top);
                 }
                 SupportedShortcutAction::Arrange(action) => {
                     if self.canvas.selected_item_ids().len() > 1 {
@@ -6050,6 +6085,24 @@ impl SnappyRefApp {
         Self::persist_settings_if_changed_with(settings_changed, || self.save_user_session());
     }
 
+    fn set_always_on_top(&mut self, ctx: &egui::Context, enabled: bool) {
+        if self.settings.always_on_top == enabled {
+            return;
+        }
+        self.settings.always_on_top = enabled;
+        self.apply_always_on_top_window_level(ctx);
+        self.save_user_session();
+    }
+
+    fn apply_always_on_top_window_level(&self, ctx: &egui::Context) {
+        let level = if self.settings.always_on_top {
+            egui::viewport::WindowLevel::AlwaysOnTop
+        } else {
+            egui::viewport::WindowLevel::Normal
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+    }
+
     fn persist_settings_if_changed_with<F>(settings_changed: bool, mut persist: F)
     where
         F: FnMut(),
@@ -6514,6 +6567,7 @@ impl eframe::App for SnappyRefApp {
             .map(|summary| summary.board.name.clone())
             .unwrap_or_else(|| "My Board".to_owned());
         let about_updates = self.about_updates_view();
+        let always_on_top_before = self.settings.always_on_top;
         let sidebar_result = show_sidebar(
             ui.ctx(),
             screen_rect,
@@ -6557,6 +6611,9 @@ impl eframe::App for SnappyRefApp {
         }
         if sidebar_result.settings_changed {
             self.sidebar_open = true;
+            if self.settings.always_on_top != always_on_top_before {
+                self.apply_always_on_top_window_level(ui.ctx());
+            }
             #[cfg(feature = "semantic-search")]
             self.sync_semantic_search_service();
         }
@@ -6894,8 +6951,8 @@ fn generated_board_name(boards: &[crate::data::Board]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ArrangementAction, BoardSummariesCache, EmbeddingPhaseMarkers, ModelLoadTimingSummary,
-        SnappyRefApp, apply_arrangement_action,
+        AppConfig, ArrangementAction, BoardSummariesCache, EmbeddingPhaseMarkers,
+        ModelLoadTimingSummary, SnappyRefApp, apply_arrangement_action,
     };
     #[cfg(feature = "semantic-search")]
     use crate::crop_flow::CropUndoEntry;
@@ -7003,6 +7060,49 @@ mod tests {
         assert_eq!(
             session.viewport.canvas_background,
             crate::data::CanvasBackground::Grid
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn app_config_restores_always_on_top_workspace_setting() {
+        let root = temp_library_root("snappyref-always-on-top-startup");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut session = library.load_user_session().unwrap();
+        session.settings.always_on_top = true;
+        library.save_user_session(&session).unwrap();
+
+        let config = AppConfig {
+            screenshot_path: None,
+            library_root: Ok(root.clone()),
+            no_startup_focus: false,
+            perf_log: false,
+            perf_report: false,
+            perf_decode_path: None,
+            perf_import_path: None,
+            perf_embedding_lod: false,
+            perf_embedding_lod_limit: 30,
+            perf_scenario: None,
+            perf_corpus: None,
+            perf_run_dir: None,
+            startup_trace: false,
+            #[cfg(all(debug_assertions, feature = "semantic-search"))]
+            search_latency_log: false,
+            #[cfg(debug_assertions)]
+            verification_mode: None,
+            #[cfg(debug_assertions)]
+            verification_search_query: None,
+            #[cfg(all(debug_assertions, feature = "semantic-search"))]
+            verification_search_scope: crate::semantic_search::SearchScope::ThisBoard,
+            update_smoke_install: false,
+            update_smoke_status_path: None,
+        };
+
+        assert!(
+            config
+                .restored_workspace_settings()
+                .is_some_and(|settings| settings.always_on_top)
         );
 
         let _ = fs::remove_dir_all(root);
@@ -8039,6 +8139,53 @@ mod tests {
 
             assert_eq!(app.status, expected_status);
         }
+    }
+
+    #[test]
+    fn always_on_top_shortcut_toggles_workspace_setting() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+
+        let output = ctx.run_ui(
+            egui::RawInput {
+                modifiers: egui::Modifiers {
+                    command: true,
+                    shift: true,
+                    ..Default::default()
+                },
+                events: vec![egui::Event::Key {
+                    key: egui::Key::T,
+                    physical_key: Some(egui::Key::T),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        shift: true,
+                        ..Default::default()
+                    },
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                app.handle_selection_shortcuts(
+                    ui.ctx(),
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),
+                )
+            },
+        );
+
+        assert!(app.settings.always_on_top);
+        let commands = &output
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .expect("root viewport output should exist")
+            .commands;
+        assert!(commands.iter().any(|command| {
+            matches!(
+                command,
+                egui::ViewportCommand::WindowLevel(egui::viewport::WindowLevel::AlwaysOnTop)
+            )
+        }));
     }
 
     #[test]

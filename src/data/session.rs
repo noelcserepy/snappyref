@@ -96,6 +96,8 @@ pub struct WorkspaceSettings {
     pub default_textbox_background: bool,
     #[serde(default)]
     pub pointer_mode: PointerMode,
+    #[serde(default)]
+    pub always_on_top: bool,
     /// Unix-epoch milliseconds of the most recent successful update
     /// discovery check. `None` means the app has not yet performed a
     /// check on this machine; the Settings Tab renders that as "never".
@@ -139,6 +141,7 @@ impl Default for WorkspaceSettings {
             rotation_snap_degrees: DEFAULT_ROTATION_SNAP_DEGREES,
             default_textbox_background: false,
             pointer_mode: PointerMode::default(),
+            always_on_top: false,
             last_update_check_at: None,
         }
     }

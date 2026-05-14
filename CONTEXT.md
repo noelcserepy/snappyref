@@ -42,6 +42,10 @@ _Avoid_: Grid setting, workspace background
 Manual drag alignment that nudges a single placement's visual axis-aligned bounds to viewport-near placement edges, corners, centers, or layout-gap adjacency and shows alignment guides.
 _Avoid_: Grid snapping, layout snapping, arrangement snapping
 
+**Scale Drag**:
+A modifier primary-drag that scales the Placement under the pointer, or all selected Placements when the drag starts on a selected Placement, around the selected Placement group center.
+_Avoid_: Image zoom, canvas zoom, resize tool
+
 **Selection Border**:
 The outline that shows the current canvas selection; it hides while a placement is moving and reappears after the movement pauses or the drag ends.
 _Avoid_: Drag guide, snap outline
@@ -71,6 +75,10 @@ _Avoid_: Preferences row, app state
 **Workspace Settings**:
 Global user preferences that apply across boards, such as layout gap, image sizing, rotation snap, and textbox defaults.
 _Avoid_: Board settings, options
+
+**Always on Top**:
+The Workspace Settings window mode that keeps SnappyRef above normal app windows while the user works elsewhere.
+_Avoid_: Pin window, floating app
 
 **Sidebar State**:
 The persisted open/closed state and selected tab of the sidebar.
