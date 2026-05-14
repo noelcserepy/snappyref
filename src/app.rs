@@ -3684,8 +3684,15 @@ impl SnappyRefApp {
             return;
         }
 
-        let outcome = match crate::active_board_commands::copy_selection_to_json(&self.canvas) {
-            Ok(Some(outcome)) => outcome,
+        self.copy_selection_to_system_clipboard();
+    }
+
+    fn copy_selection_to_system_clipboard(&mut self) {
+        let payload = match crate::clipboard_copy::build_selection_copy_payload(
+            &self.canvas,
+            self.library.as_ref(),
+        ) {
+            Ok(Some(payload)) => payload,
             Ok(None) => return,
             Err(error) => {
                 self.status = error;
@@ -3693,38 +3700,29 @@ impl SnappyRefApp {
             }
         };
 
-        ctx.copy_text(outcome.payload_json);
+        if let Err(error) = crate::clipboard_copy::write_payload(&payload) {
+            self.status = error;
+            return;
+        }
 
-        let noun = if outcome.item_count == 1 {
+        let noun = if payload.item_count == 1 {
             "item"
         } else {
             "items"
         };
-        self.status = format!("Copied {} {noun}", outcome.item_count);
+        self.status = if payload.external_image.is_some() {
+            format!("Copied {} {noun} + image", payload.item_count)
+        } else {
+            format!("Copied {} {noun}", payload.item_count)
+        };
     }
 
-    fn copy_selection_to_context_clipboard(&mut self, ctx: &egui::Context) {
+    fn copy_selection_to_context_clipboard(&mut self, _ctx: &egui::Context) {
         if !self.canvas.has_selection() {
             return;
         }
 
-        let outcome = match crate::active_board_commands::copy_selection_to_json(&self.canvas) {
-            Ok(Some(outcome)) => outcome,
-            Ok(None) => return,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
-
-        ctx.copy_text(outcome.payload_json);
-
-        let noun = if outcome.item_count == 1 {
-            "item"
-        } else {
-            "items"
-        };
-        self.status = format!("Copied {} {noun}", outcome.item_count);
+        self.copy_selection_to_system_clipboard();
     }
 
     fn context_menu_items(&self) -> Vec<ContextMenuItem> {
@@ -8189,7 +8187,7 @@ mod tests {
     }
 
     #[test]
-    fn copy_selection_emits_internal_json_text_without_clipboard_image_data() {
+    fn copy_selection_payload_preserves_internal_json_for_mixed_selection() {
         let ctx = egui::Context::default();
         let mut app = test_app(None);
         app.canvas.add_loaded_item(&ctx, test_loaded_item(1, 1));
@@ -8209,25 +8207,16 @@ mod tests {
         });
         app.canvas.select_content(&[1], &[20]);
 
-        let mut commands = Vec::new();
-        let _ = ctx.run_ui(
-            egui::RawInput {
-                events: vec![egui::Event::Copy],
-                ..Default::default()
-            },
-            |ui| {
-                app.handle_clipboard_copy(ui.ctx());
-                commands = ui.ctx().output(|output| output.commands.clone());
-            },
-        );
-
-        assert_eq!(commands.len(), 1);
-        let egui::OutputCommand::CopyText(payload) = &commands[0] else {
-            panic!("copy should emit text payload only");
-        };
-        let payload =
-            serde_json::from_str::<crate::active_board_commands::ClipboardBoardSelection>(payload)
+        let copy_payload =
+            crate::clipboard_copy::build_selection_copy_payload(&app.canvas, app.library.as_ref())
+                .unwrap()
                 .unwrap();
+        assert!(copy_payload.external_image.is_none());
+        let payload =
+            serde_json::from_str::<crate::active_board_commands::ClipboardBoardSelection>(
+                &copy_payload.internal_json,
+            )
+            .unwrap();
         assert_eq!(
             payload.kind,
             crate::active_board_commands::COPY_PAYLOAD_KIND
