@@ -73,7 +73,3 @@ Update implementation, the debug preview, and this document together when shared
 
 - Should the design-system preview eventually show real sidebar and palette compositions by calling shared paint helpers, or stay focused on token and primitive semantics?
 - Should annotation colors become documented semantic tokens, or remain canvas-domain values owned by annotation behavior?
-- Temporary comparison: compact control consolidation is available with `cargo run -- --compare-compact-controls --screenshot /tmp/snappyref-compact-controls.png`. Option C is selected for sidebar settings; palette pills and canvas toolbar controls still need focused follow-up before migration.
-- Temporary comparison: radius semantics are available with `cargo run -- --compare-radii --screenshot /tmp/snappyref-radii.png`. The selected merge collapses previous row/chip/group values into `RADIUS_COMPACT`.
-- Temporary comparison: spacing scale consolidation is available with `cargo run -- --compare-spacing --screenshot /tmp/snappyref-spacing.png`. Option B is selected: keep `4/8/12/16/24/32`, retire `20` as a named token, and allow documented 1-3px optical corrections.
-- Temporary comparison: sidebar board-row component variants are available with `cargo run -- --compare-board-rows --screenshot /tmp/snappyref-board-rows.png`; option B is selected. Use `--compare-board-rows-bottom` for a deterministic scrolled lower capture.

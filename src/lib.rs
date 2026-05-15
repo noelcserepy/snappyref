@@ -13,7 +13,6 @@ mod drop_intake;
 mod history;
 mod import_intake;
 mod jobs;
-mod layout_snap;
 mod library_location;
 #[cfg(feature = "semantic-search")]
 mod model_store;

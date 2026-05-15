@@ -240,7 +240,7 @@ pub(crate) fn search_result_tile(
     let tile_radius = if selected {
         0
     } else {
-        crate::theme::RADIUS_PANEL
+        crate::theme::RADIUS_COMPACT
     };
 
     let preview_rect = egui::Rect::from_min_size(
@@ -316,21 +316,12 @@ fn search_asset_preview(
         }
     }
 
-    let started_at = Instant::now();
     let result = Arc::new(Mutex::new(None));
     let worker_result = result.clone();
     let worker_ctx = ctx.clone();
     let worker_path = path.to_path_buf();
     std::thread::spawn(move || {
         let decoded = decode_search_asset_preview(&worker_path);
-        if cfg!(debug_assertions) && std::env::var_os("SNAPPYREF_SEARCH_LATENCY_LOG").is_some() {
-            let elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
-            let loaded = decoded.is_some();
-            eprintln!(
-                "[search-phase] search_asset_preview_decode asset_id={asset_id} loaded={loaded} ms={elapsed_ms:.2} path={}",
-                worker_path.display()
-            );
-        }
         if let Ok(mut result) = worker_result.lock() {
             *result = Some(decoded);
         }
@@ -721,10 +712,10 @@ pub(crate) fn paint_palette_no_results_state(ui: &mut egui::Ui, status: &SearchO
     let text = palette_status_text(status, "No results");
     egui::Frame::new()
         .inner_margin(egui::Margin {
-            left: 18,
-            right: 18,
-            top: 26,
-            bottom: 24,
+            left: crate::theme::SPACE_4 as i8,
+            right: crate::theme::SPACE_4 as i8,
+            top: crate::theme::SPACE_6 as i8,
+            bottom: crate::theme::SPACE_6 as i8,
         })
         .show(ui, |ui| {
             ui.add_sized(
@@ -834,7 +825,7 @@ fn paint_palette_empty_group(
         if active || response.hovered() {
             ui.painter().rect_filled(
                 rect.shrink2(egui::vec2(2.0, 2.0)),
-                crate::theme::RADIUS_PANEL,
+                crate::theme::RADIUS_COMPACT,
                 if active {
                     crate::theme::SURFACE_ELEVATED
                 } else {

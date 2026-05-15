@@ -1,4 +1,4 @@
-//! Integration tests for the `snappyref-updater` helper binary.
+//! macOS integration tests for the `snappyref-updater` helper binary.
 //!
 //! The helper's job is to wait for the running app to exit, swap the
 //! current bundle with a staged one, and relaunch. These tests exercise
@@ -6,7 +6,7 @@
 //! sleep-based fake parent process and a relaunch-override env so the
 //! test can assert the relaunch happened without spinning up a GUI.
 
-#![cfg(any(target_os = "macos", target_os = "windows"))]
+#![cfg(target_os = "macos")]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -53,29 +53,18 @@ impl Fixture {
         let staged_top = staging_dir.join("SnappyRef");
         fs::create_dir_all(&staged_top).unwrap();
 
-        let (current_bundle, staged_bundle) = if cfg!(target_os = "macos") {
-            let current = install_root.join("SnappyRef.app");
-            let current_macos = current.join("Contents/MacOS");
-            fs::create_dir_all(&current_macos).unwrap();
-            fs::write(current_macos.join("snappyref"), b"old-binary").unwrap();
-            fs::write(current.join("Contents/Info.plist"), b"<plist/>").unwrap();
+        let current_bundle = install_root.join("SnappyRef.app");
+        let current_macos = current_bundle.join("Contents/MacOS");
+        fs::create_dir_all(&current_macos).unwrap();
+        fs::write(current_macos.join("snappyref"), b"old-binary").unwrap();
+        fs::write(current_bundle.join("Contents/Info.plist"), b"<plist/>").unwrap();
 
-            let staged = staged_top.join("SnappyRef.app");
-            let staged_macos = staged.join("Contents/MacOS");
-            fs::create_dir_all(&staged_macos).unwrap();
-            fs::write(staged_macos.join("snappyref"), b"new-binary").unwrap();
-            fs::write(staged_macos.join("snappyref-updater"), b"new-helper").unwrap();
-            fs::write(staged.join("Contents/Info.plist"), b"<plist/>").unwrap();
-            (current, staged)
-        } else {
-            let current = install_root.join("snappyref.exe");
-            fs::write(&current, b"old-binary").unwrap();
-
-            let staged = staged_top.join("snappyref.exe");
-            fs::write(&staged, b"new-binary").unwrap();
-            fs::write(staged_top.join("snappyref-updater.exe"), b"new-helper").unwrap();
-            (current, staged)
-        };
+        let staged_bundle = staged_top.join("SnappyRef.app");
+        let staged_macos = staged_bundle.join("Contents/MacOS");
+        fs::create_dir_all(&staged_macos).unwrap();
+        fs::write(staged_macos.join("snappyref"), b"new-binary").unwrap();
+        fs::write(staged_macos.join("snappyref-updater"), b"new-helper").unwrap();
+        fs::write(staged_bundle.join("Contents/Info.plist"), b"<plist/>").unwrap();
 
         let relaunch_marker = install_root.join("relaunch-marker.txt");
 
@@ -91,17 +80,12 @@ impl Fixture {
     }
 
     fn backup_path(&self) -> PathBuf {
-        let suffix = if cfg!(target_os = "windows") {
-            ".old"
-        } else {
-            ".previous"
-        };
         let name = self
             .current_bundle
             .file_name()
             .map(|n| {
                 let mut s = n.to_os_string();
-                s.push(suffix);
+                s.push(".previous");
                 s
             })
             .unwrap();
@@ -120,26 +104,15 @@ impl Drop for Fixture {
 }
 
 /// Spawn a long-lived child process to act as the "running app" the helper
-/// must wait on. We use the host's `sleep` (Unix) or `timeout` (Windows)
-/// since they're guaranteed available.
+/// must wait on.
 fn spawn_fake_parent() -> std::process::Child {
-    if cfg!(target_os = "windows") {
-        Command::new("cmd")
-            .args(["/c", "timeout /T 30 /NOBREAK > NUL"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn fake parent")
-    } else {
-        Command::new("/bin/sleep")
-            .arg("30")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn fake parent")
-    }
+    Command::new("/bin/sleep")
+        .arg("30")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn fake parent")
 }
 
 /// Resolve a "touch a file" program that takes args. On Unix `/bin/sh -c
@@ -147,43 +120,23 @@ fn spawn_fake_parent() -> std::process::Child {
 /// minimal cross-platform shape: the helper passes `<bundle> <args...>` so
 /// the override program writes its argv to the marker.
 ///
-/// We use the host shell for portability:
-///   Unix: /bin/sh with a wrapper that writes argv to $MARKER
-///   Windows: cmd.exe with the equivalent
-///
-/// For simplicity in tests, we use a small script file we write into the
+/// For simplicity in tests, we use a small shell script we write into the
 /// install root and point `SNAPPYREF_UPDATER_RELAUNCH_PROGRAM` at it.
 fn write_relaunch_override_script(install_root: &Path, marker: &Path) -> PathBuf {
-    if cfg!(target_os = "windows") {
-        let script = install_root.join("relaunch.bat");
-        fs::write(
-            &script,
-            format!(
-                "@echo off\r\necho RELAUNCHED %*> \"{}\"\r\n",
-                marker.display()
-            ),
-        )
-        .unwrap();
-        script
-    } else {
-        let script = install_root.join("relaunch.sh");
-        fs::write(
-            &script,
-            format!(
-                "#!/bin/sh\necho \"RELAUNCHED $@\" > \"{}\"\n",
-                marker.display()
-            ),
-        )
-        .unwrap();
-        let mut perms = fs::metadata(&script).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&script, perms).unwrap();
-        script
-    }
+    let script = install_root.join("relaunch.sh");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\necho \"RELAUNCHED $@\" > \"{}\"\n",
+            marker.display()
+        ),
+    )
+    .unwrap();
+    let mut perms = fs::metadata(&script).unwrap().permissions();
+    use std::os::unix::fs::PermissionsExt;
+    perms.set_mode(0o755);
+    fs::set_permissions(&script, perms).unwrap();
+    script
 }
 
 fn wait_for_marker(marker: &Path, timeout: Duration) -> bool {
@@ -259,19 +212,11 @@ fn helper_swaps_bundle_and_relaunches_after_parent_exits() {
     assert!(backup.exists(), "backup must exist at {}", backup.display());
 
     // Confirm the swapped content is the new bundle's payload.
-    let probe = if cfg!(target_os = "windows") {
-        fs::read(&fixture.current_bundle).unwrap()
-    } else {
-        fs::read(fixture.current_bundle.join("Contents/MacOS/snappyref")).unwrap()
-    };
+    let probe = fs::read(fixture.current_bundle.join("Contents/MacOS/snappyref")).unwrap();
     assert_eq!(probe, b"new-binary");
 
     // The old payload survives in the backup.
-    let backup_probe = if cfg!(target_os = "windows") {
-        fs::read(&backup).unwrap()
-    } else {
-        fs::read(backup.join("Contents/MacOS/snappyref")).unwrap()
-    };
+    let backup_probe = fs::read(backup.join("Contents/MacOS/snappyref")).unwrap();
     assert_eq!(backup_probe, b"old-binary");
 
     // Relaunch fired with the swapped current_bundle path and launch args.
@@ -315,12 +260,8 @@ fn helper_overwrites_existing_backup() {
 
     // Plant a stale backup from a previous update.
     let backup = fixture.backup_path();
-    if cfg!(target_os = "windows") {
-        fs::write(&backup, b"older-binary").unwrap();
-    } else {
-        fs::create_dir_all(backup.join("Contents/MacOS")).unwrap();
-        fs::write(backup.join("Contents/MacOS/snappyref"), b"older-binary").unwrap();
-    }
+    fs::create_dir_all(backup.join("Contents/MacOS")).unwrap();
+    fs::write(backup.join("Contents/MacOS/snappyref"), b"older-binary").unwrap();
 
     let mut parent = spawn_fake_parent();
     let parent_pid = parent.id();
@@ -359,11 +300,7 @@ fn helper_overwrites_existing_backup() {
 
     // Backup now contains the just-replaced "old-binary", not the
     // pre-existing "older-binary".
-    let backup_probe = if cfg!(target_os = "windows") {
-        fs::read(&backup).unwrap()
-    } else {
-        fs::read(backup.join("Contents/MacOS/snappyref")).unwrap()
-    };
+    let backup_probe = fs::read(backup.join("Contents/MacOS/snappyref")).unwrap();
     assert_eq!(backup_probe, b"old-binary");
 }
 
@@ -388,10 +325,6 @@ fn helper_rejects_malformed_descriptor() {
     );
     // Current bundle must be untouched; no swap occurred.
     assert!(fixture.current_bundle.exists());
-    let probe = if cfg!(target_os = "windows") {
-        fs::read(&fixture.current_bundle).unwrap()
-    } else {
-        fs::read(fixture.current_bundle.join("Contents/MacOS/snappyref")).unwrap()
-    };
+    let probe = fs::read(fixture.current_bundle.join("Contents/MacOS/snappyref")).unwrap();
     assert_eq!(probe, b"old-binary");
 }

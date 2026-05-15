@@ -39,5 +39,5 @@ This is a precondition for ADR-0015 (automatic app updates): the updater cannot 
 - Diagnostic and reset flows must read the model from the new location. Any future "reset model" command operates on the Local Model Store, not the bundle.
 - Deleting the Local Model Store triggers a refetch on next launch; it survives library reset and is unaffected by app updates.
 - Existing users do not manually move files; the in-app migration handles it on the first launch after upgrade.
-- The Local Model Store inherits the existing portable-folder caveat: if the user drops `SnappyRef.app` directly into `/Applications` on macOS, `<install_root>` becomes admin-owned and writes will fail. `UPDATE.txt` and the website download page must instruct users to keep the SnappyRef folder in a writable location (e.g., `~/SnappyRef/`, `~/Documents/SnappyRef/`).
+- The Local Model Store inherits the existing portable-folder caveat: if the user drops `SnappyRef.app` directly into `/Applications` on macOS, `<install_root>` becomes admin-owned and writes will fall back to the user's app-data directory per ADR-0021. The website download page should still nudge users toward a writable SnappyRef folder for the simplest portable layout.
 - Without ADR-0015 (auto-update), this change still stands on its own — smaller release zips and a cleaner separation between app and acquired data.

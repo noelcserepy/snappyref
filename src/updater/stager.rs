@@ -337,14 +337,6 @@ mod tests {
         vec![
             ("SnappyRef/", &[][..]),
             ("SnappyRef/snappyref.exe", b"fake-exe"),
-            ("SnappyRef/snappyref-updater.exe", b"fake-helper"),
-        ]
-    }
-
-    fn windows_single_exe_zip_entries<'a>() -> Vec<(&'a str, &'a [u8])> {
-        vec![
-            ("SnappyRef/", &[][..]),
-            ("SnappyRef/snappyref.exe", b"fake-exe"),
         ]
     }
 
@@ -373,21 +365,6 @@ mod tests {
         let dir = unique_temp_dir("windows-ok");
         let zip_path = dir.join("ok.zip");
         write_zip(&zip_path, &windows_zip_entries());
-        let staging = dir.join("staging-1.0.0");
-
-        let outcome = extract_and_validate(&zip_path, &staging, TargetPlatform::Windows).unwrap();
-
-        assert_eq!(outcome.bundle_root, staging.join("SnappyRef"));
-        assert!(staging.join("SnappyRef/snappyref.exe").is_file());
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn extracts_windows_single_exe_zip_with_expected_layout() {
-        let dir = unique_temp_dir("windows-single-exe-ok");
-        let zip_path = dir.join("ok.zip");
-        write_zip(&zip_path, &windows_single_exe_zip_entries());
         let staging = dir.join("staging-1.0.0");
 
         let outcome = extract_and_validate(&zip_path, &staging, TargetPlatform::Windows).unwrap();

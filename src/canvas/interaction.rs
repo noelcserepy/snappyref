@@ -16,7 +16,7 @@ use super::{
 };
 use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasStackItem, CanvasTextSize};
 
-// Suppresses drag movement (and layout snapping) for the first 90ms after
+// Suppresses drag movement (and guide snapping) for the first 90ms after
 // primary-press on a placement so click-to-select doesn't jerk the image via
 // snap.
 const IMAGE_MOVE_DEBOUNCE_SECONDS: f64 = 0.090;

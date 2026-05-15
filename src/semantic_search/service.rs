@@ -5,7 +5,6 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
-use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::storage::{AssetSearchHit, EmbeddingStatus, Library};
@@ -442,12 +441,10 @@ fn search_with_image_pivot_with_limit_in_scope_for(
     text_query: Option<&str>,
     limit: usize,
 ) -> Result<Vec<SearchResultGroup>, String> {
-    let phase_started_at = Instant::now();
     let source_blob = library
         .load_asset_embedding(source_asset_id, model_key)?
         .ok_or_else(|| "Source image not indexed yet".to_owned())?;
     let source_embedding = normalized_embedding_blob(&source_blob)?;
-    let source_ms = phase_started_at.elapsed().as_secs_f64() * 1000.0;
 
     let mut hits = search_assets(
         library,
@@ -457,11 +454,9 @@ fn search_with_image_pivot_with_limit_in_scope_for(
         &source_embedding,
         IMAGE_PIVOT_CANDIDATE_LIMIT,
     )?;
-    let search_ms = phase_started_at.elapsed().as_secs_f64() * 1000.0 - source_ms;
     hits.retain(|hit| hit.asset_id != source_asset_id);
 
     let text_query = text_query.map(str::trim).filter(|query| !query.is_empty());
-    let refine_started_at = Instant::now();
     if let Some(query) = text_query {
         let query_embedding = text_embedding(query, model_state, index_tx, text_embedding_cache)?;
 
@@ -480,20 +475,9 @@ fn search_with_image_pivot_with_limit_in_scope_for(
         }
         hits.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));
     }
-    let refine_ms = refine_started_at.elapsed().as_secs_f64() * 1000.0;
 
     hits.truncate(limit);
-    let group_started_at = Instant::now();
-    let hit_count = hits.len();
     let results = group_hits(library, scope, hits)?;
-    if semantic_search_phase_log_enabled() {
-        let group_ms = group_started_at.elapsed().as_secs_f64() * 1000.0;
-        let total_ms = phase_started_at.elapsed().as_secs_f64() * 1000.0;
-        let result_count = results.len();
-        eprintln!(
-            "[search-phase] image_pivot scope={scope:?} source_asset_id={source_asset_id} source_ms={source_ms:.2} search_ms={search_ms:.2} refine_ms={refine_ms:.2} group_ms={group_ms:.2} total_ms={total_ms:.2} hits={hit_count} results={result_count}"
-        );
-    }
     Ok(results)
 }
 
@@ -645,23 +629,15 @@ fn search_cached_library_embeddings(
     query_embedding: &[f32],
     limit: usize,
 ) -> Result<Vec<AssetSearchHit>, String> {
-    let phase_started_at = Instant::now();
     let cached_embeddings = search_embedding_cache
         .lock()
         .map_err(|_| "semantic-search embedding cache poisoned".to_owned())?
         .library_embeddings
         .clone();
-    let cache_wait_ms = phase_started_at.elapsed().as_secs_f64() * 1000.0;
-    let (embeddings, loaded_cache) = if let Some(embeddings) = cached_embeddings {
-        (embeddings, false)
+    let embeddings = if let Some(embeddings) = cached_embeddings {
+        embeddings
     } else {
-        let load_started_at = Instant::now();
         let decoded_embeddings = load_decoded_library_embeddings(library, model_key)?;
-        let load_ms = load_started_at.elapsed().as_secs_f64() * 1000.0;
-        if semantic_search_phase_log_enabled() {
-            let len = decoded_embeddings.len();
-            eprintln!("[search-phase] library_cache_load_ms={load_ms:.2} embeddings={len}");
-        }
         let mut cache = search_embedding_cache
             .lock()
             .map_err(|_| "semantic-search embedding cache poisoned".to_owned())?;
@@ -669,20 +645,10 @@ fn search_cached_library_embeddings(
         if cache.library_embeddings.is_none() {
             cache.library_embeddings = Some(decoded_embeddings.clone());
         }
-        (decoded_embeddings, true)
+        decoded_embeddings
     };
 
-    let score_started_at = Instant::now();
     let hits = score_decoded_embeddings(&embeddings, query_embedding, limit)?;
-    if semantic_search_phase_log_enabled() {
-        let score_ms = score_started_at.elapsed().as_secs_f64() * 1000.0;
-        let total_ms = phase_started_at.elapsed().as_secs_f64() * 1000.0;
-        let embedding_count = embeddings.len();
-        let hit_count = hits.len();
-        eprintln!(
-            "[search-phase] library_search cache_wait_ms={cache_wait_ms:.2} loaded_cache={loaded_cache} score_ms={score_ms:.2} total_ms={total_ms:.2} embeddings={embedding_count} hits={hit_count}"
-        );
-    }
     Ok(hits)
 }
 
@@ -787,10 +753,6 @@ fn warm_search_embedding_cache(
             cache.library_embeddings = Some(decoded_embeddings);
         }
     });
-}
-
-fn semantic_search_phase_log_enabled() -> bool {
-    cfg!(debug_assertions) && std::env::var_os("SNAPPYREF_SEARCH_LATENCY_LOG").is_some()
 }
 
 fn group_hits(

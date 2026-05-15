@@ -465,9 +465,9 @@ fn paint_image_overlay(
         .contains(&image.record.item.id)
     {
         let stroke = if state.interaction.active_search_item_id == Some(image.record.item.id) {
-            egui::Stroke::new(3.0, egui::Color32::from_rgb(255, 170, 72))
+            egui::Stroke::new(3.0, crate::theme::ACCENT_BRIGHT_ORANGE)
         } else {
-            egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 215, 140))
+            egui::Stroke::new(2.0, crate::theme::ACCENT_ORANGE)
         };
         painter.rect_stroke(
             image_rect.expand(2.0),

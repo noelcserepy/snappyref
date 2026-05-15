@@ -63,8 +63,6 @@ pub(crate) struct SearchController {
     local_model_store_status: Option<LocalModelStoreStatus>,
     semantic_install: SemanticSearchInstallController,
     perf_events: Vec<SemanticPerfEvent>,
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    latency_log: SearchLatencyLog,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -123,19 +121,6 @@ struct EmbeddingBackfillScheduler {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EmbeddingBackfillIdleState {
     pub(crate) app_idle: bool,
-}
-
-#[cfg(all(debug_assertions, feature = "semantic-search"))]
-#[derive(Clone, Debug, Default)]
-struct SearchLatencyLog {
-    enabled: bool,
-    command_started_at: Option<Instant>,
-    tab_started_at: Option<Instant>,
-    tab_target_scope: Option<SearchScope>,
-    command_ready_logged: bool,
-    command_painted_logged: bool,
-    tab_ready_logged: bool,
-    tab_painted_logged: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -291,91 +276,6 @@ impl SearchController {
     /// the app exits and the updater helper swaps the bundle.
     pub(crate) fn shutdown_helper_processes(&mut self) {
         self.service = None;
-    }
-
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    pub(crate) fn set_latency_logging_enabled(&mut self, enabled: bool) {
-        self.latency_log.enabled = enabled;
-        if enabled {
-            eprintln!("[search-latency] passive normal-mode logging enabled");
-        }
-    }
-
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    pub(crate) fn begin_image_search_latency_trace(&mut self, source: &'static str, asset_id: i64) {
-        if !self.latency_log.enabled {
-            return;
-        }
-        self.latency_log.command_started_at = Some(Instant::now());
-        self.latency_log.tab_started_at = None;
-        self.latency_log.tab_target_scope = None;
-        self.latency_log.command_ready_logged = false;
-        self.latency_log.command_painted_logged = false;
-        self.latency_log.tab_ready_logged = false;
-        self.latency_log.tab_painted_logged = false;
-        eprintln!("[search-latency] {source}_started asset_id={asset_id}");
-    }
-
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    fn begin_tab_latency_trace(&mut self) {
-        if !self.latency_log.enabled {
-            return;
-        }
-        let target_scope = match self.overlay.scope {
-            SearchScope::ThisBoard => SearchScope::Library,
-            SearchScope::Library => SearchScope::ThisBoard,
-        };
-        self.latency_log.tab_started_at = Some(Instant::now());
-        self.latency_log.tab_target_scope = Some(target_scope);
-        self.latency_log.tab_ready_logged = false;
-        self.latency_log.tab_painted_logged = false;
-        eprintln!("[search-latency] tab_started target_scope={target_scope:?}");
-    }
-
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    fn log_active_results_ready(&mut self, scope: SearchScope) {
-        if !self.latency_log.enabled {
-            return;
-        }
-        if scope == SearchScope::ThisBoard
-            && !self.latency_log.command_ready_logged
-            && let Some(started_at) = self.latency_log.command_started_at
-        {
-            let elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
-            self.latency_log.command_ready_logged = true;
-            eprintln!("[search-latency] normal_board_result_ready_ms={elapsed_ms:.2}");
-        }
-        if Some(scope) == self.latency_log.tab_target_scope
-            && !self.latency_log.tab_ready_logged
-            && let Some(started_at) = self.latency_log.tab_started_at
-        {
-            let elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
-            self.latency_log.tab_ready_logged = true;
-            eprintln!("[search-latency] normal_tab_result_ready_ms={elapsed_ms:.2}");
-        }
-    }
-
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    fn log_visible_results_painted(&mut self) {
-        if !self.latency_log.enabled || self.overlay.results.is_empty() {
-            return;
-        }
-        if self.overlay.scope == SearchScope::ThisBoard
-            && !self.latency_log.command_painted_logged
-            && let Some(started_at) = self.latency_log.command_started_at
-        {
-            let elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
-            self.latency_log.command_painted_logged = true;
-            eprintln!("[search-latency] normal_board_results_painted_ms={elapsed_ms:.2}");
-        }
-        if Some(self.overlay.scope) == self.latency_log.tab_target_scope
-            && !self.latency_log.tab_painted_logged
-            && let Some(started_at) = self.latency_log.tab_started_at
-        {
-            let elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
-            self.latency_log.tab_painted_logged = true;
-            eprintln!("[search-latency] normal_tab_results_painted_ms={elapsed_ms:.2}");
-        }
     }
 
     pub(crate) fn sync_service(
@@ -723,7 +623,6 @@ impl SearchController {
                 self.overlay.has_more_results = results.len() > self.overlay.result_limit;
                 results.truncate(self.overlay.result_limit);
                 self.overlay.results = results;
-                let completed_scope = active_search.cache_key.scope;
                 self.result_cache.insert(
                     active_search.cache_key,
                     SearchCacheEntry {
@@ -734,8 +633,6 @@ impl SearchController {
                 self.select_after_results_refresh();
                 self.overlay.status = SearchOverlayStatus::Ready;
                 self.apply_search_matches(canvas);
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                self.log_active_results_ready(completed_scope);
             }
             SearchQueryResult::Failed { request_id, error }
                 if Some(request_id) == active_request_id =>
@@ -762,15 +659,6 @@ impl SearchController {
                 let Some(cache_key) = self.prefetch_searches.remove(&request_id) else {
                     return;
                 };
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                if self.latency_log.enabled {
-                    eprintln!(
-                        "[search-latency] prefetch_completed scope={:?} pivot_asset_id={:?} request_id={request_id} results={}",
-                        cache_key.scope,
-                        cache_key.pivot_asset_id,
-                        results.len()
-                    );
-                }
                 let has_more_results = results.len() > cache_key.result_limit;
                 results.truncate(cache_key.result_limit);
                 self.result_cache.insert(
@@ -900,22 +788,6 @@ impl SearchController {
             )
     }
 
-    #[cfg(debug_assertions)]
-    pub(crate) fn verification_result_count(&self) -> usize {
-        self.overlay.results.len()
-    }
-
-    #[cfg(debug_assertions)]
-    pub(crate) fn verification_scope(&self) -> SearchScope {
-        self.overlay.scope
-    }
-
-    #[cfg(debug_assertions)]
-    pub(crate) fn verification_toggle_scope(&mut self, canvas: &mut CanvasState) {
-        self.toggle_scope();
-        self.submit_query(canvas);
-    }
-
     pub(crate) fn search_using_selected_image(
         &mut self,
         enabled: bool,
@@ -935,7 +807,7 @@ impl SearchController {
             Some(canvas),
             canvas_image_max_side,
         );
-        self.open_image_pivot_search(pivot, "selected_image_search", canvas);
+        self.open_image_pivot_search(pivot, canvas);
         self.overlay.open = true;
         self.overlay.focus_requested = true;
         self.overlay.suppress_next_outside_click = true;
@@ -973,7 +845,7 @@ impl SearchController {
 
         if pivot.is_some() && self.overlay.image_pivot != pivot {
             if let Some(pivot) = pivot {
-                self.open_image_pivot_search(pivot, "cmd_f_image_search", canvas);
+                self.open_image_pivot_search(pivot, canvas);
             }
         }
 
@@ -1013,8 +885,6 @@ impl SearchController {
         let tab_toggled_scope =
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Tab));
         if tab_toggled_scope {
-            #[cfg(all(debug_assertions, feature = "semantic-search"))]
-            self.begin_tab_latency_trace();
             self.toggle_scope();
             self.submit_query(canvas);
             ctx.request_repaint();
@@ -1280,8 +1150,6 @@ impl SearchController {
                                 &self.overlay.status,
                                 self.overlay.scope,
                             ) {
-                                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                                self.begin_tab_latency_trace();
                                 self.toggle_scope();
                                 self.submit_query(canvas);
                                 ctx.request_repaint();
@@ -1289,9 +1157,6 @@ impl SearchController {
                         }
                     });
             });
-
-        #[cfg(all(debug_assertions, feature = "semantic-search"))]
-        self.log_visible_results_painted();
 
         let overlay_rect = area_response.response.rect;
         if !drag_outside {
@@ -1771,14 +1636,7 @@ impl SearchController {
         }
     }
 
-    fn open_image_pivot_search(
-        &mut self,
-        pivot: ImageSearchPivot,
-        latency_source: &'static str,
-        canvas: &mut CanvasState,
-    ) {
-        #[cfg(all(debug_assertions, feature = "semantic-search"))]
-        self.begin_image_search_latency_trace(latency_source, pivot.asset_id);
+    fn open_image_pivot_search(&mut self, pivot: ImageSearchPivot, canvas: &mut CanvasState) {
         self.overlay.query.clear();
         self.overlay.last_submitted_query.clear();
         self.overlay.results.clear();
@@ -1855,15 +1713,6 @@ impl SearchController {
             return;
         }
         if let Some(cached) = self.result_cache.get(&cache_key).cloned() {
-            #[cfg(all(debug_assertions, feature = "semantic-search"))]
-            if self.latency_log.enabled {
-                eprintln!(
-                    "[search-latency] submit_query_cache_hit scope={:?} pivot_asset_id={:?} results={}",
-                    cache_key.scope,
-                    cache_key.pivot_asset_id,
-                    cached.results.len()
-                );
-            }
             self.active_search = None;
             self.overlay.last_submitted_query = query;
             self.overlay.results = cached.results;
@@ -1871,8 +1720,6 @@ impl SearchController {
             self.select_after_results_refresh();
             self.overlay.status = SearchOverlayStatus::Ready;
             self.apply_search_matches(canvas);
-            #[cfg(all(debug_assertions, feature = "semantic-search"))]
-            self.log_active_results_ready(cache_key.scope);
             return;
         }
         if let Some(request_id) =
@@ -1882,13 +1729,6 @@ impl SearchController {
                     (*prefetch_key == cache_key).then_some(*request_id)
                 })
         {
-            #[cfg(all(debug_assertions, feature = "semantic-search"))]
-            if self.latency_log.enabled {
-                eprintln!(
-                    "[search-latency] submit_query_adopt_prefetch scope={:?} pivot_asset_id={:?} request_id={request_id}",
-                    cache_key.scope, cache_key.pivot_asset_id
-                );
-            }
             self.prefetch_searches.remove(&request_id);
             self.active_search = Some(ActiveSearchRequest {
                 request_id,
@@ -1932,13 +1772,6 @@ impl SearchController {
 
         match enqueue_result {
             Ok(()) => {
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                if self.latency_log.enabled {
-                    eprintln!(
-                        "[search-latency] submit_query_enqueued scope={:?} pivot_asset_id={:?} request_id={request_id}",
-                        cache_key.scope, cache_key.pivot_asset_id
-                    );
-                }
                 self.active_search = Some(ActiveSearchRequest {
                     request_id,
                     cache_key,
@@ -2008,13 +1841,6 @@ impl SearchController {
             ),
         };
         if enqueue_result.is_ok() {
-            #[cfg(all(debug_assertions, feature = "semantic-search"))]
-            if self.latency_log.enabled {
-                eprintln!(
-                    "[search-latency] prefetch_enqueued scope={opposite_scope:?} pivot_asset_id={:?} request_id={request_id}",
-                    cache_key.pivot_asset_id
-                );
-            }
             self.prefetch_searches.insert(request_id, cache_key);
         }
     }
@@ -2045,8 +1871,6 @@ impl SearchController {
         self.overlay.has_more_results = cached.has_more_results;
         self.select_after_results_refresh();
         self.overlay.status = SearchOverlayStatus::Ready;
-        #[cfg(all(debug_assertions, feature = "semantic-search"))]
-        self.log_active_results_ready(cache_key.scope);
         true
     }
 

@@ -32,7 +32,6 @@ const IMAGE_RESIZE_HIT_RADIUS: f32 = 14.0;
 const IMAGE_ROTATE_HANDLE_OFFSET_SCREEN: f32 = 18.0;
 const IMAGE_ROTATE_HANDLE_RADIUS_SCREEN: f32 = 7.0;
 const IMAGE_ROTATE_HANDLE_HIT_RADIUS_SCREEN: f32 = 13.0;
-const IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN: f32 = 32.0;
 const SELECTION_BORDER_REAPPEAR_SECONDS: f64 = 2.0;
 const MIN_TEXTBOX_WORLD_SIZE: egui::Vec2 = egui::vec2(240.0, 56.0);
 const TEXTBOX_RESIZE_HIT_RADIUS: f32 = 14.0;
@@ -1118,207 +1117,6 @@ fn padded_item_rect(item: &SelectedLayoutItem, gap: f32) -> PackRect {
     }
 }
 
-#[cfg(test)]
-fn legacy_best_compact_layout(
-    items: &[SelectedLayoutItem],
-    gap: f32,
-) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
-    if items.is_empty() {
-        return None;
-    }
-
-    let mut best_layout: Option<(Vec<(i64, egui::Pos2)>, f32, f32, f32, f32, usize)> = None;
-    for (candidate_index, bin_width) in legacy_compact_candidate_widths(items, gap)
-        .into_iter()
-        .enumerate()
-    {
-        let Some((placements, width, height)) = legacy_skyline_pack_layout(items, bin_width, gap)
-        else {
-            continue;
-        };
-        let squareness = width.max(height) / width.min(height).max(1.0);
-        let area = width * height;
-
-        match &best_layout {
-            Some((_, _, _, best_squareness, best_area, best_index))
-                if squareness > *best_squareness
-                    || ((squareness - *best_squareness).abs() < 0.001 && area > *best_area)
-                    || ((squareness - *best_squareness).abs() < 0.001
-                        && (area - *best_area).abs() < 0.001
-                        && candidate_index >= *best_index) => {}
-            _ => {
-                best_layout = Some((placements, width, height, squareness, area, candidate_index));
-            }
-        }
-    }
-
-    best_layout.map(|(placements, width, height, _, _, _)| (placements, width, height))
-}
-
-#[cfg(test)]
-fn legacy_compact_candidate_widths(items: &[SelectedLayoutItem], gap: f32) -> Vec<f32> {
-    let total_area = items
-        .iter()
-        .map(|item| item.width * item.height)
-        .sum::<f32>();
-    let max_width = items.iter().map(|item| item.width).fold(0.0_f32, f32::max);
-    let ideal_width = total_area.sqrt().max(max_width);
-    let mut widths = vec![ideal_width];
-    let mut running_width = 0.0_f32;
-
-    for (index, item) in items.iter().enumerate() {
-        running_width += item.width;
-        if index > 0 {
-            running_width += gap;
-        }
-        widths.push(running_width.max(max_width));
-    }
-
-    widths.sort_by(|left, right| left.total_cmp(right));
-    widths.dedup_by(|left, right| (*left - *right).abs() < 0.5);
-    widths
-}
-
-#[cfg(test)]
-fn legacy_skyline_pack_layout(
-    items: &[SelectedLayoutItem],
-    bin_width: f32,
-    gap: f32,
-) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
-    if items.is_empty() {
-        return None;
-    }
-
-    let mut skyline = vec![LegacySkylineNode {
-        x: 0.0,
-        y: 0.0,
-        width: bin_width,
-    }];
-    let mut placements = Vec::with_capacity(items.len());
-
-    for item in items {
-        let occupied_width = item.width + gap;
-        let occupied_height = item.height + gap;
-        if occupied_width > bin_width + 0.001 {
-            return None;
-        }
-
-        let mut best_candidate: Option<(usize, f32, f32)> = None;
-        for node_index in 0..skyline.len() {
-            let Some(candidate_y) =
-                legacy_skyline_candidate_y(&skyline, node_index, occupied_width, bin_width)
-            else {
-                continue;
-            };
-            let candidate_x = skyline[node_index].x;
-            match best_candidate {
-                Some((_, best_y, best_x))
-                    if candidate_y > best_y
-                        || ((candidate_y - best_y).abs() < 0.001 && candidate_x >= best_x) => {}
-                _ => best_candidate = Some((node_index, candidate_y, candidate_x)),
-            }
-        }
-
-        let Some((node_index, place_y, place_x)) = best_candidate else {
-            return None;
-        };
-        legacy_skyline_insert(
-            &mut skyline,
-            node_index,
-            place_x,
-            place_y,
-            occupied_width,
-            occupied_height,
-        );
-        placements.push((
-            item.id,
-            egui::pos2(place_x + item.width * 0.5, place_y + item.height * 0.5),
-        ));
-    }
-
-    let (layout_width, layout_height) = placed_bounds(items, &placements)?;
-    Some((placements, layout_width, layout_height))
-}
-
-#[cfg(test)]
-fn legacy_skyline_candidate_y(
-    skyline: &[LegacySkylineNode],
-    start_index: usize,
-    occupied_width: f32,
-    bin_width: f32,
-) -> Option<f32> {
-    let start = skyline[start_index];
-    if start.x + occupied_width > bin_width + 0.001 {
-        return None;
-    }
-
-    let mut width_left = occupied_width;
-    let mut index = start_index;
-    let mut candidate_y = start.y;
-
-    while width_left > 0.0 {
-        let node = *skyline.get(index)?;
-        candidate_y = candidate_y.max(node.y);
-        width_left -= node.width;
-        index += 1;
-    }
-
-    Some(candidate_y)
-}
-
-#[cfg(test)]
-fn legacy_skyline_insert(
-    skyline: &mut Vec<LegacySkylineNode>,
-    node_index: usize,
-    x: f32,
-    y: f32,
-    occupied_width: f32,
-    occupied_height: f32,
-) {
-    let new_y = y + occupied_height;
-    skyline.insert(
-        node_index,
-        LegacySkylineNode {
-            x,
-            y: new_y,
-            width: occupied_width,
-        },
-    );
-
-    let index = node_index + 1;
-    let end_x = x + occupied_width;
-    while index < skyline.len() {
-        let node = skyline[index];
-        if node.x >= end_x {
-            break;
-        }
-
-        let overlap = end_x - node.x;
-        if overlap >= node.width - 0.001 {
-            skyline.remove(index);
-        } else {
-            skyline[index].x += overlap;
-            skyline[index].width -= overlap;
-            break;
-        }
-    }
-
-    legacy_merge_skyline_nodes(skyline);
-}
-
-#[cfg(test)]
-fn legacy_merge_skyline_nodes(skyline: &mut Vec<LegacySkylineNode>) {
-    let mut index = 0;
-    while index + 1 < skyline.len() {
-        if (skyline[index].y - skyline[index + 1].y).abs() < 0.001 {
-            skyline[index].width += skyline[index + 1].width;
-            skyline.remove(index + 1);
-        } else {
-            index += 1;
-        }
-    }
-}
-
 fn placed_bounds(
     items: &[SelectedLayoutItem],
     placements: &[(i64, egui::Pos2)],
@@ -1436,33 +1234,6 @@ impl PackRect {
     fn bottom(self) -> f32 {
         self.y + self.height
     }
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy)]
-struct LegacySkylineNode {
-    x: f32,
-    y: f32,
-    width: f32,
-}
-
-#[cfg(test)]
-pub(crate) fn legacy_compact_layout_area_for_sizes(
-    items: &[(i64, f32, f32)],
-    gap: f32,
-) -> Option<f32> {
-    let items = items
-        .iter()
-        .map(|(id, width, height)| SelectedLayoutItem {
-            id: *id,
-            x: 0.0,
-            y: 0.0,
-            width: *width,
-            height: *height,
-        })
-        .collect::<Vec<_>>();
-    let (_, width, height) = legacy_best_compact_layout(&items, gap)?;
-    Some(width * height)
 }
 
 impl ImagePassResources {
@@ -1808,7 +1579,7 @@ mod tests {
         SelectedLayoutItem, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
         TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion, TextboxResizeHandle,
         balanced_grid_layout_for_sizes, best_compact_layout, compact_layout_for_sizes,
-        horizontal_layout, legacy_best_compact_layout, rotated_visual_size, vertical_layout,
+        horizontal_layout, rotated_visual_size, vertical_layout,
     };
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
@@ -4261,14 +4032,21 @@ mod tests {
     }
 
     #[test]
-    fn compact_layout_has_smaller_area_than_legacy_skyline_on_hole_prone_fixture() {
+    fn compact_layout_keeps_hole_prone_fixture_dense() {
         let items = hole_prone_items();
         let gap = 12.0;
 
         let (_, compact_width, compact_height) = best_compact_layout(&items, gap).unwrap();
-        let (_, legacy_width, legacy_height) = legacy_best_compact_layout(&items, gap).unwrap();
+        let item_area = items
+            .iter()
+            .map(|item| item.width * item.height)
+            .sum::<f32>();
+        let occupancy = item_area / (compact_width * compact_height);
 
-        assert!(compact_width * compact_height < legacy_width * legacy_height);
+        assert!(
+            occupancy > 0.75,
+            "compact arrangement should keep the mixed-size fixture dense"
+        );
     }
 
     #[test]

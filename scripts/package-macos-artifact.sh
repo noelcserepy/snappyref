@@ -8,11 +8,6 @@ set -euo pipefail
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --skip-models)
-      # Deprecated flag: models are never bundled. Accepted for compatibility
-      # with existing CI invocations until they are updated.
-      shift
-      ;;
     --models-dir)
       echo "--models-dir is no longer supported: models ship outside the bundle in SnappyRef/models/" >&2
       exit 2
@@ -28,7 +23,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ $# -ne 1 ]]; then
-  echo "usage: $0 [--skip-models] <output.zip>" >&2
+  echo "usage: $0 <output.zip>" >&2
   exit 2
 fi
 
