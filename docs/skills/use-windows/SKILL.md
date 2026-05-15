@@ -125,6 +125,12 @@ Notes:
   one-shot scheduled time can fire a second GUI later.
 - The launcher stops existing `snappyref` processes before starting a new one,
   so a manual verification request leaves exactly one GUI instance.
+- For update testing with a fake running version, launch through a `.cmd`
+  wrapper in the interactive scheduled task that sets
+  `SNAPPYREF_UPDATE_CURRENT_VERSION=<version>` before invoking
+  `target\release-fast\snappyref.exe`; verify it landed by also setting
+  `SNAPPYREF_UPDATE_DIAGNOSTIC_PATH` and checking the diagnostic begins with
+  `new current_version=<version>`.
 - Do not use this for automated checks. It is for human-visible GUI
   verification on the Windows machine.
 
