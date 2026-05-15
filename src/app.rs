@@ -2966,6 +2966,15 @@ impl SnappyRefApp {
         // 6. Tell egui to close — the helper polls our PID and starts the
         // swap as soon as we exit.
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        #[cfg(target_os = "windows")]
+        {
+            // Windows keeps the running exe locked. If the viewport close
+            // command is ignored or delayed, the helper times out and cannot
+            // rename the binary into place. We have already flushed user
+            // state and stopped helper workers above, so exit directly after
+            // the updater helper is alive.
+            std::process::exit(0);
+        }
     }
 
     fn load_user_session(&mut self) {

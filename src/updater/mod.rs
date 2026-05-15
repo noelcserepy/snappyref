@@ -460,9 +460,13 @@ impl UpdateService {
     }
 
     /// Suggested wait until updater work needs another tick, used by
-    /// callers to request a future repaint. While a worker is in flight,
-    /// the UI must keep polling so completed channel messages are drained.
+    /// callers to request a future repaint. Poll while waiting for the
+    /// first settled-idle sample and while a worker is in flight so
+    /// discovery cannot stall in a quiescent UI.
     pub(crate) fn time_until_next_check(&self) -> Option<Duration> {
+        if self.settled_idle_at.is_none() {
+            return Some(Duration::from_millis(250));
+        }
         if self.in_flight.is_some() || self.install_rx.is_some() {
             return Some(Duration::from_millis(250));
         }
@@ -1362,6 +1366,19 @@ mod tests {
         assert_eq!(
             service.time_until_next_check(),
             Some(Duration::from_millis(250))
+        );
+    }
+
+    #[test]
+    fn time_until_next_check_polls_until_settled_idle_latches() {
+        let mut service = UpdateService::new(UpdateConfig::default());
+
+        service.tick(false);
+
+        assert_eq!(
+            service.time_until_next_check(),
+            Some(Duration::from_millis(250)),
+            "startup discovery must keep ticking until settled idle can be observed"
         );
     }
 }
