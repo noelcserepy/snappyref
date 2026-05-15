@@ -4,9 +4,9 @@
 //! `.previous` / `.old` sibling next to the live binary (ADR-0015). This
 //! module owns the inverse operation: detect that backup, restore it into
 //! place, and demote the live binary to the backup slot in the same
-//! atomic-ish swap. The CLI flag `snappyref --rollback` and the Settings
-//! Tab "Rollback to previous version" button both go through here so the
-//! observable behavior is identical regardless of entry point.
+//! atomic-ish swap. User-facing rollback is deferred for v1; this module
+//! stays as internal recovery machinery and a tested inverse of the update
+//! swap.
 //!
 //! Invariant: at every observable point during a rollback there is at
 //! least one bootable binary inside `<install_root>` — either the current
@@ -97,11 +97,9 @@ impl std::fmt::Display for RollbackError {
 
 impl std::error::Error for RollbackError {}
 
-/// Entry point for the `snappyref --rollback` CLI flag. Resolves the
-/// install root via the same path the running app uses, performs the
-/// rollback, and renders a short status message to stdout/stderr. The
-/// returned exit code matches the spec: `0` on success, non-zero on any
-/// failure (including "no backup present").
+/// Internal CLI-style entry point retained for diagnostics and tests. The
+/// shipped app does not expose a supported rollback command in v1.
+#[allow(dead_code)]
 pub fn run_cli() -> i32 {
     let install_root = match crate::updater::install_paths::resolve_install_root() {
         Ok(root) => root,
@@ -134,18 +132,9 @@ pub fn run_cli() -> i32 {
     }
 }
 
-/// Cheap predicate that the Settings Tab calls each frame to decide
-/// whether the "Rollback to previous version" button is visible. Returns
-/// `false` for unsupported platforms so callers do not have to special-case.
-pub(crate) fn backup_exists(install_root: &Path) -> bool {
-    let Some(platform) = TargetPlatform::current() else {
-        return false;
-    };
-    backup_exists_at(install_root, platform)
-}
-
-/// Variant of [`backup_exists`] that takes an explicit platform; used by
-/// unit tests so the helper is exercised on any host.
+/// Test helper that takes an explicit platform so backup-slot detection is
+/// exercised on any host.
+#[cfg(test)]
 pub(crate) fn backup_exists_at(install_root: &Path, platform: TargetPlatform) -> bool {
     let paths = RollbackPaths::new(install_root, platform);
     backup_present(&paths.backup)

@@ -1,8 +1,8 @@
 # Automatic app updates
 
-SnappyRef will perform automatic in-app updates on macOS and Windows. The app polls a static signed update manifest in the background, surfaces an **Available Update** through a pill in the sidebar, and on user confirmation downloads, verifies, swaps, and relaunches the app via a small helper binary. This supersedes ADR-0006 (manual updates for v1).
+SnappyRef will perform automatic in-app updates on macOS and Windows. The app polls a static signed update manifest in the background, surfaces an **Available Update** through a pill in the sidebar, and on user confirmation downloads, verifies, swaps, and relaunches the app. macOS uses a small helper binary for app-bundle swaps; Windows uses a single-exe self-replace path with a temporary runner copied from the current executable. This supersedes ADR-0006 (manual updates for v1).
 
-Manual updates impose meaningful friction (visit website, download zip, quit app, replace files, relaunch) that discourages users from staying current and slows feature delivery. With release packaging, the model lifecycle (ADR-0014), and the user-owned library contract now stable enough to make safe assumptions, an in-app updater can carry the upgrade cost for the user. The design below favors smallest viable surface area: static hosting, signed manifest, helper-binary swap, no rollout logic, no telemetry.
+Manual updates impose meaningful friction (visit website, download zip, quit app, replace files, relaunch) that discourages users from staying current and slows feature delivery. With release packaging, the model lifecycle (ADR-0014), and the user-owned library contract now stable enough to make safe assumptions, an in-app updater can carry the upgrade cost for the user. The design below favors smallest viable surface area: static hosting, signed manifest, platform-local swap mechanics, no rollout logic, no telemetry.
 
 ## Decision
 
@@ -11,7 +11,7 @@ Manual updates impose meaningful friction (visit website, download zip, quit app
 - A separate public GitHub repository `snappyref-dist` hosts release artifacts. The private source repo stays private.
 - CI publishes per-platform app zips and a signed `latest.json` manifest as release assets on `snappyref-dist`. The Semantic Search asset is a separate long-lived release asset on the same public distribution repo and is not republished for ordinary app releases.
 - The app fetches `latest.json` directly from the GitHub release URL. No website cron, no API route.
-- Each platform zip contains a single top-level `SnappyRef/` folder so the user's "drag the folder anywhere" model is uniform across macOS and Windows. On macOS the folder contains `SnappyRef.app`; on Windows it contains `snappyref.exe`. The helper binary ships inside the folder/bundle.
+- Each platform zip contains a single top-level `SnappyRef/` folder so the user's "drag the folder anywhere" model is uniform across macOS and Windows. On macOS the folder contains `SnappyRef.app`, including the macOS updater helper inside the app bundle. On Windows the folder contains only `snappyref.exe`.
 - One zip flavor per platform: app-only zips (`snappyref-mac-{tag}.zip`, `snappyref-windows-{tag}.zip`) used for both first install and auto-update payloads. They exclude Semantic Search assets.
 
 ### Manifest
@@ -30,30 +30,29 @@ Manual updates impose meaningful friction (visit website, download zip, quit app
 
 ### UI
 
-- An update pill appears in the sidebar near the bottom when an Available Update exists.
-- First click opens a small popover showing the new version number, a release-notes link, and `Install` / `Later` buttons.
-- During download the pill becomes a progress indicator in place; on completion it flips to `Restart`.
-- The Settings tab includes an `About / Updates` section: current version, last-checked time, manual `Check for updates`, and a `Rollback to previous version` button (visible only when a backup exists).
+- The Settings tab includes an `About / Updates` section with current version, last-checked time, manual `Check for updates`, update download/install progress, and a `Restart` action when a staged update is ready.
+- A staged update discovered on a later launch stays restartable; it must not render as an in-progress finish state unless the user-initiated update flow is actively applying it.
+- Rollback UI is deferred for v1.
 
 ### Install mechanics
 
 - Downloaded zip is staged inside the install folder at `<install_root>/updates/staging-{version}/`, alongside `library/` and `models/`. This keeps all SnappyRef-related state inside the user's portable folder; no system app-data directories are used.
-- The `snappyref-updater` helper binary ships inside the bundle/folder alongside the main executable (`SnappyRef.app/Contents/MacOS/snappyref-updater` on macOS, `SnappyRef/snappyref-updater.exe` on Windows).
-- On user confirmation: the app saves the **User Session**, stops worker child processes (embedding helper, image preparation helper), writes a pending-update descriptor into `<install_root>/updates/`, launches the helper binary, and exits.
-- The helper waits for the parent process to exit, performs the platform-specific swap inside `<install_root>`, launches the new app, and exits:
-  - **macOS**: rename current `SnappyRef.app` to `SnappyRef.app.previous`; move the staged bundle into place at `<install_root>/SnappyRef.app`; `open SnappyRef.app`.
-  - **Windows**: rename current `snappyref.exe` to `snappyref.exe.old`; write new exe alongside; launch new exe.
-- The helper explicitly strips the `com.apple.quarantine` xattr from the staged bundle before swap as defense-in-depth. In-process `reqwest` downloads do not set the xattr, so Gatekeeper does not engage on the swapped bundle. Real Developer ID signing remains a future, separate decision.
+- On user confirmation: the app saves the **User Session** and stops worker child processes (embedding helper, image preparation helper).
+- **macOS** writes a pending-update descriptor into `<install_root>/updates/`, launches the `snappyref-updater` helper binary from inside `SnappyRef.app`, and exits. The helper waits for the parent process to exit, renames current `SnappyRef.app` to `SnappyRef.app.previous`, moves the staged bundle into place at `<install_root>/SnappyRef.app`, launches it with `open`, removes staging, and exits.
+- **Windows** uses a single-exe self-replace path. The running app writes the pending-update descriptor, copies its current executable to a temporary runner under `<install_root>/updates/`, launches that runner, and exits. The runner copies the staged `snappyref.exe` to `snappyref.exe.new`, flushes it, waits until the live executable can be renamed, renames the current executable to `snappyref.exe.old`, renames `.new` into the live `snappyref.exe` slot, launches the new executable with the original launch args, removes staging, and exits. The temporary runner is best-effort cleaned by normal update-file cleanup on a later launch.
+- The macOS helper explicitly strips the `com.apple.quarantine` xattr from the staged bundle before swap as defense-in-depth. In-process `reqwest` downloads do not set the xattr, so Gatekeeper does not engage on the swapped bundle. Real Developer ID signing remains a future, separate decision.
 - After a successful launch of the new version, the staging directory `<install_root>/updates/staging-{version}/` is removed; the `.previous` / `.old` backup is retained until the next update overwrites it.
 
-### Helper-binary updateability asymmetry
+### Windows single-exe update path
 
-The swap unit on macOS is `SnappyRef.app/` and on Windows is `snappyref.exe`. The helper ships inside the swap unit on macOS (`SnappyRef.app/Contents/MacOS/snappyref-updater`) so a normal update automatically refreshes it. On Windows the helper is a sibling file (`SnappyRef/snappyref-updater.exe`) outside the swap unit, so a routine update replaces only `snappyref.exe` and leaves the existing helper in place. We accept this asymmetry for v1: the helper's contract (read descriptor, wait on PID, perform rename swap, relaunch) is small and stable, and treating it as a frozen part of the install layout keeps the Windows swap atomic and dependency-free. A future helper-protocol change must either (a) extend the Windows swap to replace `snappyref-updater.exe` too, or (b) ship a one-time installer that overwrites the helper alongside.
+Windows does not ship a permanent updater helper. Earlier designs used `SnappyRef/snappyref-updater.exe`, but that introduced helper updateability, UAC filename heuristics, and stale-helper failure modes while the Windows release unit is only one executable. Windows cannot reliably overwrite the live executable from the process whose image is mapped, so SnappyRef copies the current exe to a temporary runner and lets that separate process perform the rename-based self-replace flow after the app exits.
+
+This keeps Windows package shape and update behavior local to `snappyref.exe`. If Windows later gains required sidecar files, this decision must be revisited before those sidecars become part of the release contract.
 
 ### Rollback
 
-- Exactly one prior version is retained as `SnappyRef.app.previous` / `snappyref.exe.old`. Each update overwrites the prior backup.
-- Rollback is exposed two ways: a CLI flag (`snappyref --rollback`) for the case where the new version cannot launch, and a `Rollback to previous version` button in the Settings tab. No automatic watchdog rollback in v1.
+- Exactly one prior version is retained as `SnappyRef.app.previous` / `snappyref.exe.old` so failed update investigations have a local recovery source. Each update overwrites the prior backup.
+- User-facing rollback is not supported in v1. No Settings rollback button and no automatic watchdog rollback.
 
 ### What is preserved across updates
 

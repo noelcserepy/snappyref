@@ -31,9 +31,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $targetDir = Join-Path $repoRoot "target\release-fast"
 $appExe = Join-Path $installRoot "snappyref.exe"
-$helperExe = Join-Path $installRoot "snappyref-updater.exe"
 Copy-Item (Join-Path $targetDir "snappyref.exe") $appExe
-Copy-Item (Join-Path $targetDir "snappyref-updater.exe") $helperExe
 
 $process = New-Object System.Diagnostics.Process
 $process.StartInfo.FileName = $appExe
@@ -74,6 +72,9 @@ if (-not (Test-Path -LiteralPath $appExe)) {
 }
 if (-not (Test-Path -LiteralPath (Join-Path $installRoot "snappyref.exe.old"))) {
     throw "backup exe missing at $(Join-Path $installRoot "snappyref.exe.old")"
+}
+if (Test-Path -LiteralPath (Join-Path $installRoot "snappyref-updater.exe")) {
+    throw "Windows single-exe update smoke unexpectedly found snappyref-updater.exe"
 }
 
 Get-CimInstance Win32_Process |

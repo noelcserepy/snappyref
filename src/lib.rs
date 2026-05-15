@@ -36,11 +36,9 @@ mod ui_layout;
 pub mod updater;
 
 pub fn run() -> eframe::Result<()> {
-    if std::env::args()
-        .skip(1)
-        .any(|argument| argument == "--rollback")
-    {
-        let exit_code = updater::rollback::run_cli();
+    #[cfg(target_os = "windows")]
+    if updater::windows_self_replace::launch_args_contain_runner_flag(std::env::args().skip(1)) {
+        let exit_code = updater::windows_self_replace::run_runner_from_args();
         std::process::exit(exit_code);
     }
 

@@ -427,23 +427,27 @@ A published app version newer than the running one, discovered by the app's back
 _Avoid_: Pending update, downloaded update, new release
 
 **Update Pill**:
-The sidebar widget that surfaces an **Available Update**. Visible only in the **Available**, **Downloading**, **Ready**, or **Failed** state; the rest of the time it is **Hidden**. Clicking an Available pill opens the **Update Popover**; clicking a Ready pill triggers the **Restart Into Update** flow.
+The legacy sidebar widget that surfaced an **Available Update** before update controls moved into Settings.
 _Avoid_: Update badge, update banner, update toast
 
 **Update Popover**:
-The small panel anchored to the **Update Pill** that shows the new version, a release-notes link, an Install button, and a Later button. Install starts the in-app download/verify/stage flow.
+The legacy panel anchored to the **Update Pill** before update controls moved into Settings.
 _Avoid_: Update modal, update dialog
 
 **Pending Update Descriptor**:
-The JSON record the running app writes into `<install_root>/updates/pending-update.json` right before exiting for a **Restart Into Update**. It hands the **Updater Helper** the parent PID, the current and staged bundle paths, the staging directory, the expected new version, and the original launch args.
+The JSON record the running app writes into `<install_root>/updates/pending-update.json` right before exiting for a **Restart Into Update**. It hands the **Updater Helper** or Windows self-replace runner the parent PID, the current and staged bundle paths, the staging directory, the expected new version, and the original launch args.
 _Avoid_: Update manifest (that is the signed `latest.json`), restart token
 
 **Updater Helper**:
-The `snappyref-updater` binary that ships next to the main `snappyref` executable. The app launches it during a **Restart Into Update**; the helper waits for the app's PID to exit, swaps the staged bundle into place (renaming the prior bundle to `.previous`/`.old`), relaunches the new app with the original launch args, and removes the staging directory.
+The macOS `snappyref-updater` binary that ships inside `SnappyRef.app`. The app launches it during a macOS **Restart Into Update**; the helper waits for the app's PID to exit, swaps the staged app bundle into place, relaunches the new app with the original launch args, and removes the staging directory.
 _Avoid_: Update agent, install agent
 
+**Windows Self-Replace**:
+The Windows **Restart Into Update** apply path where the running `snappyref.exe` copies itself to a temporary runner in `<install_root>/updates/`, launches that runner with the **Pending Update Descriptor**, and exits. The runner copies the staged executable to a `.new` slot, renames the current executable to `snappyref.exe.old`, renames `.new` into the live slot, launches the new executable, and removes staging.
+_Avoid_: Windows updater helper, installer
+
 **Restart Into Update**:
-The flow that runs when the user clicks Restart on a **Ready** **Update Pill**: save the **User Session**, stop worker child processes, write the **Pending Update Descriptor**, launch the **Updater Helper**, and exit the app.
+The flow that runs when the user clicks Restart for a staged app update: save the **User Session**, stop worker child processes, then apply the staged update. macOS writes a **Pending Update Descriptor**, launches the **Updater Helper**, and exits. Windows writes a **Pending Update Descriptor**, launches a temporary **Windows Self-Replace** runner, and exits.
 _Avoid_: Update install, apply update
 
 ### Release operations
