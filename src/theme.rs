@@ -82,6 +82,7 @@ pub const SURFACE_ELEVATED: egui::Color32 = PANEL_BG_ELEVATED;
 /// - `TEXT_SUBTLE` for section labels, table headers, and low-emphasis metadata
 /// - `ACCENT` for active fills and the few states that need emphasis without adding a new hue
 /// - `ACCENT_*` color accents for canvas guides and other explicit color comparisons
+/// - `INDEXED_DOT` for indexed/ready semantic-search status in the palette footer
 /// - `DESTRUCTIVE` for destructive labels and confirmation actions only
 pub const BORDER: egui::Color32 = egui::Color32::from_rgba_premultiplied(20, 20, 20, 20);
 pub const BORDER_STRONG: egui::Color32 = egui::Color32::from_rgba_premultiplied(31, 31, 31, 31);
@@ -98,6 +99,23 @@ pub const DESTRUCTIVE: egui::Color32 = DESTRUCTIVE_RED;
 pub const DESTRUCTIVE_STROKE: egui::Color32 =
     egui::Color32::from_rgba_premultiplied(119, 35, 22, 150);
 pub const DESTRUCTIVE_FILL: egui::Color32 = egui::Color32::from_rgba_premultiplied(33, 10, 6, 42);
+
+/// Quiet settings and inset-group roles.
+///
+/// Usage:
+/// - `QUIET_INSET_FILL` for sidebar subcards and compact preview groups
+/// - `QUIET_INLINE_ACTIVE_FILL` for selected quiet inline controls and compact input fills
+/// - `QUIET_INLINE_HOVER_FILL` for hover-only quiet inline controls
+/// - `QUIET_INLINE_*` metrics for compact read-heavy settings choices
+pub const QUIET_INSET_FILL: egui::Color32 = egui::Color32::from_rgba_premultiplied(5, 5, 5, 5);
+pub const QUIET_INLINE_ACTIVE_FILL: egui::Color32 =
+    egui::Color32::from_rgba_premultiplied(12, 12, 12, 12);
+pub const QUIET_INLINE_HOVER_FILL: egui::Color32 =
+    egui::Color32::from_rgba_premultiplied(7, 7, 7, 7);
+pub const QUIET_INLINE_PAD_X: f32 = 10.0;
+pub const QUIET_INLINE_PAD_Y: f32 = 5.0;
+pub const QUIET_INLINE_MIN_WIDTH: f32 = 32.0;
+pub const QUIET_INLINE_HEIGHT: f32 = 24.0;
 
 pub fn configure_theme(ctx: &egui::Context) {
     configure_fonts(ctx);

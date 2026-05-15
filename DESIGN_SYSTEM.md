@@ -6,7 +6,7 @@
 - Layout helpers: `src/ui_layout.rs`
 - Shared UI patterns: `src/sidebar.rs`, `src/palette.rs`, `src/canvas/render.rs`
 - Preview/probe: `src/design_system_preview.rs`, exposed through `--verify-design-system` in debug builds
-- Verification command: `cargo run -- --verify-design-system --screenshot /tmp/snappyref-design-system.png`
+- Verification command: `cargo run --bin snappyref -- --verify-design-system --screenshot /tmp/snappyref-design-system.png`
 - Temporary comparisons: add narrow debug-only probes in `src/app.rs` and remove them after the decision unless they become reusable verification states.
 
 ## Design Decisions
@@ -63,7 +63,11 @@ Keep labels concise and chrome subordinate to the reference material.
 
 `ACCENT_BLUE`, `ACCENT_GREEN`, `ACCENT_ORANGE`, and `ACCENT_BRIGHT_ORANGE` are secondary accent candidates for explicit canvas guide or comparison states. Keep them out of generic chrome unless the visual role is named and tested.
 
+`INDEXED_DOT` is a semantic-search status marker for indexed/ready search state in the palette footer. Do not use it as a generic success color or decorative green.
+
 `DESTRUCTIVE`, `DESTRUCTIVE_STROKE`, and `DESTRUCTIVE_FILL` are for destructive labels, confirmation borders, and destructive confirmation actions. The base is `#CA3C25`; keep repeated row affordances quiet unless hovered or focused.
+
+`QUIET_INSET_FILL`, `QUIET_INLINE_ACTIVE_FILL`, and `QUIET_INLINE_HOVER_FILL` are low-contrast fills for sidebar subcards, quiet inline choices, and compact settings inputs. Use `QUIET_INLINE_*` metrics for read-heavy settings controls so selected, hover, and field states keep one density.
 
 ### Components And Patterns
 

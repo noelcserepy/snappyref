@@ -82,7 +82,7 @@ fn right_column(ui: &mut egui::Ui) {
 
 fn token_strip(ui: &mut egui::Ui) {
     egui::Frame::new()
-        .fill(egui::Color32::from_white_alpha(5))
+        .fill(crate::theme::QUIET_INSET_FILL)
         .stroke(crate::theme::stroke_subtle())
         .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_COMPACT))
         .inner_margin(egui::Margin {
@@ -102,7 +102,8 @@ fn token_strip(ui: &mut egui::Ui) {
                     ("Palette", crate::theme::PALETTE_SURFACE),
                     ("Accent", crate::theme::ACCENT),
                     ("Blue guide", crate::theme::ACCENT_BLUE),
-                    ("Green status", crate::theme::ACCENT_GREEN),
+                    ("Green guide", crate::theme::ACCENT_GREEN),
+                    ("Indexed", crate::theme::INDEXED_DOT),
                     ("Destructive", crate::theme::DESTRUCTIVE),
                 ] {
                     token_chip(ui, name, color);
@@ -331,7 +332,7 @@ fn inline_choice(ui: &mut egui::Ui, label: &str, active: bool) {
             .color(text_color),
     )
     .fill(if active {
-        egui::Color32::from_white_alpha(12)
+        crate::theme::QUIET_INLINE_ACTIVE_FILL
     } else {
         egui::Color32::TRANSPARENT
     })
@@ -341,20 +342,23 @@ fn inline_choice(ui: &mut egui::Ui, label: &str, active: bool) {
         egui::Stroke::NONE
     })
     .corner_radius(crate::theme::RADIUS_INLINE)
-    .min_size(egui::vec2(32.0, 24.0));
+    .min_size(egui::vec2(
+        crate::theme::QUIET_INLINE_MIN_WIDTH,
+        crate::theme::QUIET_INLINE_HEIGHT,
+    ));
     ui.add(button);
 }
 
 fn number_field_sample(ui: &mut egui::Ui, value: &str, suffix: &str) {
     egui::Frame::new()
-        .fill(egui::Color32::from_white_alpha(12))
+        .fill(crate::theme::QUIET_INLINE_ACTIVE_FILL)
         .stroke(crate::theme::stroke_subtle())
         .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_INLINE))
         .inner_margin(egui::Margin {
-            left: 10,
-            right: 10,
-            top: 4,
-            bottom: 4,
+            left: crate::theme::QUIET_INLINE_PAD_X as i8,
+            right: crate::theme::QUIET_INLINE_PAD_X as i8,
+            top: crate::theme::SPACE_1 as i8,
+            bottom: crate::theme::SPACE_1 as i8,
         })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -592,7 +596,7 @@ fn radius_samples(ui: &mut egui::Ui) {
 
 fn subcard(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
-        .fill(egui::Color32::from_white_alpha(5))
+        .fill(crate::theme::QUIET_INSET_FILL)
         .stroke(crate::theme::stroke_subtle())
         .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_COMPACT))
         .inner_margin(egui::Margin {
