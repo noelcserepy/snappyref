@@ -266,12 +266,6 @@ fn validate_layout(bundle_root: &Path, platform: TargetPlatform) -> Result<(), S
                     "Windows zip is missing `SnappyRef/snappyref.exe`".to_owned(),
                 ));
             }
-            let helper = bundle_root.join("snappyref-updater.exe");
-            if !helper.is_file() {
-                return Err(StageError::InvalidLayout(
-                    "Windows zip is missing `SnappyRef/snappyref-updater.exe`".to_owned(),
-                ));
-            }
         }
     }
     Ok(())
@@ -347,6 +341,13 @@ mod tests {
         ]
     }
 
+    fn windows_single_exe_zip_entries<'a>() -> Vec<(&'a str, &'a [u8])> {
+        vec![
+            ("SnappyRef/", &[][..]),
+            ("SnappyRef/snappyref.exe", b"fake-exe"),
+        ]
+    }
+
     #[test]
     fn extracts_macos_zip_with_expected_layout() {
         let dir = unique_temp_dir("macos-ok");
@@ -372,6 +373,21 @@ mod tests {
         let dir = unique_temp_dir("windows-ok");
         let zip_path = dir.join("ok.zip");
         write_zip(&zip_path, &windows_zip_entries());
+        let staging = dir.join("staging-1.0.0");
+
+        let outcome = extract_and_validate(&zip_path, &staging, TargetPlatform::Windows).unwrap();
+
+        assert_eq!(outcome.bundle_root, staging.join("SnappyRef"));
+        assert!(staging.join("SnappyRef/snappyref.exe").is_file());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extracts_windows_single_exe_zip_with_expected_layout() {
+        let dir = unique_temp_dir("windows-single-exe-ok");
+        let zip_path = dir.join("ok.zip");
+        write_zip(&zip_path, &windows_single_exe_zip_entries());
         let staging = dir.join("staging-1.0.0");
 
         let outcome = extract_and_validate(&zip_path, &staging, TargetPlatform::Windows).unwrap();
@@ -554,30 +570,6 @@ mod tests {
         match err {
             StageError::InvalidLayout(msg) => {
                 assert!(msg.contains("snappyref-updater"), "msg was {msg}");
-            }
-            other => panic!("expected InvalidLayout, got {other:?}"),
-        }
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn rejects_windows_zip_missing_updater_helper() {
-        let dir = unique_temp_dir("windows-no-helper");
-        let zip_path = dir.join("no-helper.zip");
-        write_zip(
-            &zip_path,
-            &[
-                ("SnappyRef/", &[][..]),
-                ("SnappyRef/snappyref.exe", b"fake-exe"),
-            ],
-        );
-        let staging = dir.join("staging-no-helper");
-
-        let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Windows).unwrap_err();
-        match err {
-            StageError::InvalidLayout(msg) => {
-                assert!(msg.contains("snappyref-updater.exe"), "msg was {msg}");
             }
             other => panic!("expected InvalidLayout, got {other:?}"),
         }

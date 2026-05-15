@@ -134,18 +134,9 @@ pub fn run_cli() -> i32 {
     }
 }
 
-/// Cheap predicate that the Settings Tab calls each frame to decide
-/// whether the "Rollback to previous version" button is visible. Returns
-/// `false` for unsupported platforms so callers do not have to special-case.
-pub(crate) fn backup_exists(install_root: &Path) -> bool {
-    let Some(platform) = TargetPlatform::current() else {
-        return false;
-    };
-    backup_exists_at(install_root, platform)
-}
-
-/// Variant of [`backup_exists`] that takes an explicit platform; used by
-/// unit tests so the helper is exercised on any host.
+/// Test helper that takes an explicit platform so backup-slot detection is
+/// exercised on any host.
+#[cfg(test)]
 pub(crate) fn backup_exists_at(install_root: &Path, platform: TargetPlatform) -> bool {
     let paths = RollbackPaths::new(install_root, platform);
     backup_present(&paths.backup)

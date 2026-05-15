@@ -16,7 +16,8 @@
 //! Download/staging belongs to slice 5. In slice 4 the "Install" button is
 //! a stopgap that opens the release page in the user's default browser.
 
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -30,6 +31,8 @@ pub mod rollback;
 pub(crate) mod stager;
 pub(crate) mod state;
 pub(crate) mod version;
+#[cfg(any(target_os = "windows", test))]
+pub(crate) mod windows_self_replace;
 
 pub(crate) use state::UpdateState;
 
@@ -52,6 +55,7 @@ pub(crate) const DEFAULT_RELEASE_PAGE_URL: &str =
 /// Network/parse timeout for the fetch worker. Keep small so a hung TCP
 /// connection cannot keep a background thread alive past the next 6h tick.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
+const FIRST_CHECK_MAX_DELAY: Duration = Duration::from_secs(10);
 
 /// Runtime state for the update service. Owned by the app and ticked from
 /// the main update loop.
@@ -94,6 +98,7 @@ pub(crate) struct UpdateConfig {
     /// Install root override, applied to the in-app updates/staging
     /// resolution. `None` resolves via `install_paths::resolve_install_root`.
     pub install_root: Option<PathBuf>,
+    pub diagnostic_path: Option<PathBuf>,
 }
 
 impl Default for UpdateConfig {
@@ -106,6 +111,8 @@ impl Default for UpdateConfig {
             current_version: std::env::var("SNAPPYREF_UPDATE_CURRENT_VERSION")
                 .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned()),
             install_root: None,
+            diagnostic_path: std::env::var_os("SNAPPYREF_UPDATE_DIAGNOSTIC_PATH")
+                .map(PathBuf::from),
         }
     }
 }
@@ -133,6 +140,15 @@ pub(crate) struct DiscoveryResult {
 
 impl UpdateService {
     pub(crate) fn new(config: UpdateConfig) -> Self {
+        if let Some(path) = &config.diagnostic_path {
+            write_diagnostic(
+                path,
+                &format!(
+                    "new current_version={} manifest_url={}",
+                    config.current_version, config.manifest_url
+                ),
+            );
+        }
         let service = Self {
             state: UpdateState::Hidden,
             started_at: Instant::now(),
@@ -355,8 +371,19 @@ impl UpdateService {
         &self.state
     }
 
-    pub(crate) fn release_page_url(&self) -> &str {
-        &self.config.release_page_url
+    pub(crate) fn current_version(&self) -> &str {
+        &self.config.current_version
+    }
+
+    pub(crate) fn check_in_flight(&self) -> bool {
+        self.in_flight.is_some()
+    }
+
+    pub(crate) fn latest_known(&self) -> bool {
+        matches!(self.state, UpdateState::Hidden)
+            && self.last_check_completed_at.is_some()
+            && self.consecutive_failures == 0
+            && self.in_flight.is_none()
     }
 
     /// Called once per egui frame. `app_settled_idle` should be true once
@@ -365,6 +392,7 @@ impl UpdateService {
     pub(crate) fn tick(&mut self, app_settled_idle: bool) {
         if app_settled_idle && self.settled_idle_at.is_none() {
             self.settled_idle_at = Some(Instant::now());
+            self.write_diagnostic("settled_idle");
         }
 
         if let Some(rx) = &self.in_flight {
@@ -382,12 +410,21 @@ impl UpdateService {
                     if let Some(manifest) = result.manifest.clone() {
                         self.last_manifest = Some(manifest);
                     }
+                    self.write_diagnostic(&format!(
+                        "result outcome={:?} state_before={:?}",
+                        result.outcome, self.state
+                    ));
+                    let newer_available =
+                        matches!(result.outcome, CheckOutcome::NewerAvailable { .. });
                     self.state.apply(result.outcome);
+                    self.write_diagnostic(&format!("state_after={:?}", self.state));
                     // On a confirmed new version, see if a previously
                     // staged bundle is already on disk for it and the
                     // pill can short-circuit to Ready.
                     if let Some(manifest) = self.last_manifest.clone() {
-                        self.detect_existing_staging(&manifest);
+                        if newer_available {
+                            self.detect_existing_staging(&manifest);
+                        }
                     }
                 }
                 Err(TryRecvError::Empty) => {
@@ -410,8 +447,17 @@ impl UpdateService {
         // queue regardless of the schedule. Throttling is the caller's
         // responsibility — the UI gates the button to one click per
         // minute so a wedged network does not get pinged repeatedly.
-        if self.manual_check_requested && self.settled_idle_at.is_some() {
+        if self.manual_check_requested {
             self.manual_check_requested = false;
+            self.start_check();
+            return;
+        }
+
+        if self.settled_idle_at.is_none()
+            && self.last_check.is_none()
+            && self.started_at.elapsed() >= FIRST_CHECK_MAX_DELAY
+        {
+            self.write_diagnostic("first_check_max_delay_elapsed");
             self.start_check();
             return;
         }
@@ -434,6 +480,7 @@ impl UpdateService {
     /// Tab "Check for updates now" button.
     pub(crate) fn request_check_now(&mut self) {
         self.manual_check_requested = true;
+        self.write_diagnostic("manual_check_requested");
     }
 
     /// Unix-epoch milliseconds the most recent check completed. `None`
@@ -450,13 +497,6 @@ impl UpdateService {
         if self.last_check_completed_at.is_none() {
             self.last_check_completed_at = unix_millis;
         }
-    }
-
-    /// Resolve `<install_root>` for the running process, honoring the
-    /// same env override the discovery service uses. Returns `None` if
-    /// resolution fails so callers can hide the Rollback button.
-    pub(crate) fn install_root(&self) -> Option<PathBuf> {
-        self.resolved_install_root()
     }
 
     /// Suggested wait until updater work needs another tick, used by
@@ -478,6 +518,7 @@ impl UpdateService {
             return;
         }
         let (tx, rx) = channel();
+        self.write_diagnostic("start_check");
         self.spawn_fetch(tx);
         self.in_flight = Some(rx);
         self.next_check_after = None;
@@ -490,6 +531,12 @@ impl UpdateService {
             let outcome = run_fetch(&config);
             let _ = tx.send(outcome);
         });
+    }
+
+    fn write_diagnostic(&self, message: &str) {
+        if let Some(path) = &self.config.diagnostic_path {
+            write_diagnostic(path, message);
+        }
     }
 
     #[cfg(test)]
@@ -684,9 +731,15 @@ fn run_install(context: InstallContext, tx: Sender<InstallProgress>) {
 }
 
 fn run_fetch(config: &UpdateConfig) -> DiscoveryResult {
+    if let Some(path) = &config.diagnostic_path {
+        write_diagnostic(path, "fetch_begin");
+    }
     let bytes = match fetch_manifest(&config.manifest_url) {
         Ok(bytes) => bytes,
         Err(error) => {
+            if let Some(path) = &config.diagnostic_path {
+                write_diagnostic(path, &format!("fetch_failed {error}"));
+            }
             log_failure("fetch", &error);
             return DiscoveryResult {
                 outcome: CheckOutcome::Failed,
@@ -697,6 +750,9 @@ fn run_fetch(config: &UpdateConfig) -> DiscoveryResult {
     let manifest = match manifest::parse_and_verify(&bytes) {
         Ok(manifest) => manifest,
         Err(error) => {
+            if let Some(path) = &config.diagnostic_path {
+                write_diagnostic(path, &format!("verify_failed {error}"));
+            }
             log_failure("verify", &error);
             return DiscoveryResult {
                 outcome: CheckOutcome::Failed,
@@ -705,6 +761,15 @@ fn run_fetch(config: &UpdateConfig) -> DiscoveryResult {
         }
     };
     let outcome = classify(&manifest, &config.current_version, &config.release_page_url);
+    if let Some(path) = &config.diagnostic_path {
+        write_diagnostic(
+            path,
+            &format!(
+                "fetch_ok manifest_version={} current_version={} outcome={outcome:?}",
+                manifest.version, config.current_version
+            ),
+        );
+    }
     DiscoveryResult {
         outcome,
         manifest: Some(manifest),
@@ -739,6 +804,20 @@ fn current_unix_millis() -> Option<u64> {
 fn log_failure(stage: &str, error: &dyn std::fmt::Display) {
     // ADR-0015: failures must never raise a popup; logging only.
     eprintln!("update discovery {stage} failed: {error}");
+}
+
+fn write_diagnostic(path: &Path, message: &str) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+    let _ = writeln!(file, "{message}");
 }
 
 /// Compare a verified manifest's version against `current_version` and
@@ -838,11 +917,35 @@ mod tests {
         let mut service = UpdateService::new(UpdateConfig::default());
         service.test_fetch = Some(Box::new(|| panic!("must not fetch before settled idle")));
         // Many frames before settled idle reports true. The service must
-        // not touch the network or the state.
+        // not touch the network or the state before the bounded fallback.
         for _ in 0..16 {
             service.tick(false);
         }
         assert_eq!(*service.state(), UpdateState::Hidden);
+    }
+
+    #[test]
+    fn service_runs_first_check_after_max_delay_without_settled_idle() {
+        let mut service = UpdateService::new(UpdateConfig::default());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = calls.clone();
+        service.test_fetch = Some(Box::new(move || {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            DiscoveryResult {
+                outcome: CheckOutcome::UpToDate,
+                manifest: None,
+            }
+        }));
+
+        service.started_at = Instant::now() - FIRST_CHECK_MAX_DELAY;
+        service.tick(false);
+        service.tick(false);
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "first update check must not be blocked forever by busy app state"
+        );
     }
 
     #[test]
@@ -1157,6 +1260,45 @@ mod tests {
     }
 
     #[test]
+    fn detect_existing_staging_does_not_promote_when_manifest_is_not_newer() {
+        if TargetPlatform::current().is_none() {
+            return;
+        }
+        let scratch = std::env::temp_dir().join(format!(
+            "snappyref-updater-up-to-date-staging-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        write_valid_staging(&scratch, "1.0.0", &"0".repeat(64));
+
+        let mut service = UpdateService::new(UpdateConfig {
+            current_version: "1.0.0".to_owned(),
+            install_root: Some(scratch.clone()),
+            ..UpdateConfig::default()
+        });
+        let key = signing_key();
+        let bytes = build_manifest_bytes("1.0.0", &key);
+        let public = key.verifying_key();
+        let bytes_clone = bytes.clone();
+        service.test_fetch = Some(Box::new(move || {
+            let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
+            let outcome = classify(&manifest, "1.0.0", "https://example/release");
+            DiscoveryResult {
+                outcome,
+                manifest: Some(manifest),
+            }
+        }));
+        drive_until_quiescent(&mut service);
+
+        assert_eq!(*service.state(), UpdateState::Hidden);
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
     fn detect_existing_staging_rejects_a_bundle_without_a_sha_sidecar() {
         // A staging dir produced by a pre-sidecar build (or one whose
         // sidecar was lost) must not be promoted: we can't prove it
@@ -1350,6 +1492,30 @@ mod tests {
             calls.load(Ordering::SeqCst) > baseline,
             "manual request must trigger an extra fetch (baseline {baseline}, observed {})",
             calls.load(Ordering::SeqCst),
+        );
+    }
+
+    #[test]
+    fn request_check_now_forces_a_check_before_settled_idle() {
+        let mut service = UpdateService::new(UpdateConfig::default());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = calls.clone();
+        service.test_fetch = Some(Box::new(move || {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            DiscoveryResult {
+                outcome: CheckOutcome::UpToDate,
+                manifest: None,
+            }
+        }));
+
+        service.request_check_now();
+        service.tick(false);
+        service.tick(false);
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "manual request must not wait for settled idle"
         );
     }
 

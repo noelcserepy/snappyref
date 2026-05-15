@@ -33,7 +33,7 @@ use crate::updater::{UpdateConfig, UpdateService, UpdateState};
 const STARTUP_VIEWPORT_SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
 const MAX_IMPORT_RESULTS_PER_FRAME: usize = 4;
 const USER_SESSION_SAVE_DEBOUNCE: Duration = Duration::from_millis(750);
-/// Minimum wall time between Settings Tab "Check for updates now" clicks.
+/// Minimum wall time between Settings Tab update-check clicks.
 /// ADR-0015: discovery is opportunistic and the manual button is a
 /// convenience, not a way to hammer the manifest endpoint.
 const MANUAL_UPDATE_CHECK_THROTTLE: Duration = Duration::from_secs(60);
@@ -1557,10 +1557,10 @@ pub struct SnappyRefApp {
     #[cfg(debug_assertions)]
     sidebar_hot_preview: bool,
     update_service: UpdateService,
-    update_popover_open: bool,
+    user_update_flow_active: bool,
     update_smoke: Option<UpdateSmokeState>,
-    /// Monotonic instant of the last "Check for updates now" click. Used
-    /// to throttle the Settings Tab button to one invocation per minute
+    /// Monotonic instant of the last update-check click. Used to throttle
+    /// the Settings Tab button to one invocation per minute
     /// independent of wall-clock noise. `None` until the first click.
     last_manual_update_check: Option<Instant>,
 }
@@ -1665,7 +1665,7 @@ impl SnappyRefApp {
                     #[cfg(debug_assertions)]
                     sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                     update_service: UpdateService::new(UpdateConfig::default()),
-                    update_popover_open: false,
+                    user_update_flow_active: false,
                     update_smoke: update_smoke.clone(),
                     last_manual_update_check: None,
                 };
@@ -1892,7 +1892,7 @@ impl SnappyRefApp {
                 #[cfg(debug_assertions)]
                 sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                 update_service: UpdateService::new(UpdateConfig::default()),
-                update_popover_open: false,
+                user_update_flow_active: false,
                 update_smoke,
                 last_manual_update_check: None,
             },
@@ -2615,30 +2615,80 @@ impl SnappyRefApp {
         self.sidebar_open && !self.modal_open()
     }
 
-    /// Build the Settings Tab "About / Updates" view payload. Recomputed
-    /// every frame because backup presence is a filesystem fact that may
-    /// change while the app is running (e.g. an updater helper just ran).
-    fn about_updates_view(&self) -> crate::sidebar::AboutUpdatesView<'static> {
-        let backup_present = self
-            .update_service
-            .install_root()
-            .map(|root| crate::updater::rollback::backup_exists(&root))
-            .unwrap_or(false);
+    /// Build the Settings Tab "About / Updates" view payload from the
+    /// internal updater state machine.
+    fn about_updates_view(&self) -> crate::sidebar::AboutUpdatesView {
         let check_now_enabled = match self.last_manual_update_check {
             None => true,
             Some(instant) => instant.elapsed() >= MANUAL_UPDATE_CHECK_THROTTLE,
         };
+        let (update_button_label, update_button_enabled, update_button_primary, update_status) =
+            self.about_update_action_view(check_now_enabled);
         crate::sidebar::AboutUpdatesView {
-            current_version: env!("CARGO_PKG_VERSION"),
+            current_version: self.update_service.current_version().to_owned(),
             last_checked_unix_millis: self.update_service.last_check_completed_at(),
-            backup_present,
-            check_now_enabled,
+            update_button_label,
+            update_button_enabled,
+            update_button_primary,
+            update_status,
             semantic_search: crate::sidebar::SemanticSearchSettingsView {
                 #[cfg(feature = "semantic-search")]
                 status: semantic_search_settings_status(self.search.local_model_store_status()),
                 #[cfg(not(feature = "semantic-search"))]
                 status: SemanticSearchSettingsStatus::Failed,
             },
+        }
+    }
+
+    fn about_update_action_view(
+        &self,
+        check_now_enabled: bool,
+    ) -> (String, bool, bool, Option<String>) {
+        if self.update_service.check_in_flight() {
+            return (
+                "Checking for updates".to_owned(),
+                false,
+                false,
+                Some("Checking for updates...".to_owned()),
+            );
+        }
+        match self.update_service.state() {
+            UpdateState::Hidden => {
+                let status = self
+                    .update_service
+                    .latest_known()
+                    .then(|| "You are on the latest version.".to_owned());
+                (
+                    "Check for updates".to_owned(),
+                    check_now_enabled,
+                    false,
+                    status,
+                )
+            }
+            UpdateState::Available { version, .. } => (
+                "Update".to_owned(),
+                true,
+                true,
+                Some(format!("Version {version} is available.")),
+            ),
+            UpdateState::Downloading { percent, .. } => (
+                "Updating".to_owned(),
+                false,
+                false,
+                Some(format!("Downloading {percent}%")),
+            ),
+            UpdateState::Ready { .. } => (
+                "Finishing update".to_owned(),
+                false,
+                false,
+                Some("Restarting to finish update...".to_owned()),
+            ),
+            UpdateState::Failed => (
+                "Check for updates".to_owned(),
+                check_now_enabled,
+                false,
+                Some("Update check failed.".to_owned()),
+            ),
         }
     }
 
@@ -2655,18 +2705,52 @@ impl SnappyRefApp {
         }
     }
 
-    /// Process a Settings Tab "Check for updates now" click. Throttled to
-    /// one invocation per [`MANUAL_UPDATE_CHECK_THROTTLE`].
-    fn handle_update_check_now_click(&mut self, ctx: &egui::Context) {
-        let now = Instant::now();
-        if let Some(last) = self.last_manual_update_check {
-            if now.duration_since(last) < MANUAL_UPDATE_CHECK_THROTTLE {
-                return;
+    fn handle_update_action_click(&mut self, ctx: &egui::Context) {
+        match self.update_service.state().clone() {
+            UpdateState::Available { .. } => {
+                self.user_update_flow_active = true;
+                self.update_service.start_install();
+                ctx.request_repaint();
+            }
+            UpdateState::Ready { .. } => {
+                self.user_update_flow_active = true;
+                self.trigger_restart_into_update(ctx);
+            }
+            UpdateState::Downloading { .. } => {}
+            UpdateState::Hidden | UpdateState::Failed => {
+                self.request_manual_update_check(ctx);
             }
         }
-        self.last_manual_update_check = Some(now);
-        self.update_service.request_check_now();
+    }
+
+    /// Process a Settings Tab update check click. Throttled to one
+    /// invocation per [`MANUAL_UPDATE_CHECK_THROTTLE`].
+    fn request_manual_update_check(&mut self, ctx: &egui::Context) {
+        if !self.update_service.check_in_flight() {
+            let now = Instant::now();
+            if let Some(last) = self.last_manual_update_check {
+                if now.duration_since(last) < MANUAL_UPDATE_CHECK_THROTTLE {
+                    return;
+                }
+            }
+            self.last_manual_update_check = Some(now);
+            self.update_service.request_check_now();
+        }
         ctx.request_repaint();
+    }
+
+    fn drive_user_update_flow(&mut self, ctx: &egui::Context) {
+        if !self.user_update_flow_active {
+            return;
+        }
+        match self.update_service.state().clone() {
+            UpdateState::Ready { .. } => self.trigger_restart_into_update(ctx),
+            UpdateState::Failed => self.user_update_flow_active = false,
+            UpdateState::Downloading { .. } => {
+                ctx.request_repaint_after(Duration::from_millis(250))
+            }
+            _ => {}
+        }
     }
 
     fn write_update_smoke_status(&self, status: &str) {
@@ -2758,156 +2842,6 @@ impl SnappyRefApp {
         }
     }
 
-    /// Process a Settings Tab "Rollback to previous version" click.
-    /// Performs the rollback through `updater::rollback`; on success the
-    /// status line invites the user to relaunch. The next launch's
-    /// discovery cycle will mark the manifest version Available again,
-    /// which is the intended behavior (the user can re-attempt the
-    /// update or keep the rollback indefinitely).
-    fn handle_rollback_click(&mut self) {
-        let Some(install_root) = self.update_service.install_root() else {
-            self.status = "Rollback unavailable: install root could not be resolved.".to_owned();
-            return;
-        };
-        match crate::updater::rollback::perform(&install_root) {
-            Ok(outcome) => {
-                self.status = format!(
-                    "Rolled back to previous version. Relaunch SnappyRef to use {}.",
-                    outcome
-                        .restored_to
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or("the restored binary"),
-                );
-            }
-            Err(crate::updater::rollback::RollbackError::NoBackup) => {
-                self.status = "No previous version is available to roll back to.".to_owned();
-            }
-            Err(error) => {
-                self.status = format!("Rollback failed: {error}");
-            }
-        }
-    }
-
-    fn handle_update_pill_interaction(
-        &mut self,
-        ctx: &egui::Context,
-        pill_clicked: bool,
-        pill_rect: Option<egui::Rect>,
-    ) {
-        // Clicking the pill while in Ready short-circuits the popover and
-        // kicks off the full swap-and-relaunch flow. Slice 6 (ADR-0015):
-        // save the user session, stop worker child processes, write the
-        // pending-update descriptor, launch `snappyref-updater`, exit.
-        if pill_clicked && matches!(self.update_service.state(), UpdateState::Ready { .. }) {
-            self.trigger_restart_into_update(ctx);
-            return;
-        }
-        if pill_clicked {
-            self.update_popover_open = !self.update_popover_open;
-        }
-        if !self.update_popover_open {
-            return;
-        }
-        let (version, notes_url) = match self.update_service.state() {
-            UpdateState::Available {
-                version, notes_url, ..
-            } => (version.clone(), notes_url.clone()),
-            // Popover is only meaningful for Available; close it
-            // otherwise so a state transition (e.g. Failed) can never
-            // leave a stale popover anchored to a missing pill.
-            _ => {
-                self.update_popover_open = false;
-                return;
-            }
-        };
-        let release_page_url = self.update_service.release_page_url().to_owned();
-        let Some(pill_rect) = pill_rect else {
-            return;
-        };
-
-        // Anchor the popover above the pill so it doesn't fall off the
-        // bottom of the screen. Same x as the pill, bottom edge a few
-        // pixels above the pill's top edge.
-        let popover_width = 240.0;
-        let popover_pos = egui::pos2(pill_rect.left(), pill_rect.top() - crate::theme::SPACE_2);
-
-        let mut install_clicked = false;
-        let mut later_clicked = false;
-        let mut notes_clicked = false;
-
-        let area_response = egui::Area::new(egui::Id::new("update_popover"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(egui::pos2(popover_pos.x, popover_pos.y - 1.0))
-            .pivot(egui::Align2::LEFT_BOTTOM)
-            .show(ctx, |ui| {
-                ui.set_max_width(popover_width);
-                egui::Frame::new()
-                    .fill(crate::theme::SURFACE_ELEVATED)
-                    .stroke(crate::theme::stroke_subtle())
-                    .corner_radius(crate::theme::RADIUS_PANEL)
-                    .inner_margin(crate::theme::PANEL_PADDING)
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::theme::SPACE_2);
-                        ui.label(
-                            egui::RichText::new(format!("Version {version}"))
-                                .color(crate::theme::TEXT)
-                                .strong(),
-                        );
-                        let release_notes = ui.add(
-                            egui::Label::new(
-                                egui::RichText::new("Release notes")
-                                    .color(crate::theme::ACCENT)
-                                    .underline(),
-                            )
-                            .sense(egui::Sense::click()),
-                        );
-                        if release_notes.clicked() {
-                            notes_clicked = true;
-                        }
-                        ui.add_space(crate::theme::SPACE_2);
-                        ui.horizontal(|ui| {
-                            if ui.button("Install").clicked() {
-                                install_clicked = true;
-                            }
-                            if ui.button("Later").clicked() {
-                                later_clicked = true;
-                            }
-                        });
-                    });
-            });
-
-        if notes_clicked {
-            ctx.open_url(egui::OpenUrl::new_tab(notes_url));
-        }
-        if install_clicked {
-            // Slice 5: start the in-app download + verify + stage flow.
-            // The pill transitions to Downloading; the popover closes so
-            // the in-place progress is visible. Stopgap "open release
-            // page" is kept as a fallback if no platform entry exists
-            // for the current target OS.
-            let _ = release_page_url;
-            self.update_service.start_install();
-            self.update_popover_open = false;
-        }
-        if later_clicked {
-            self.update_popover_open = false;
-        }
-
-        // Click outside the popover (and outside the pill itself) closes
-        // it. This matches the existing sidebar dismissal pattern.
-        let popover_rect = area_response.response.rect;
-        let pointer_clicked = ctx.input(|input| input.pointer.any_click());
-        if pointer_clicked {
-            let click_pos = ctx.input(|input| input.pointer.interact_pos());
-            let inside_popover = click_pos.is_some_and(|p| popover_rect.contains(p));
-            let inside_pill = click_pos.is_some_and(|p| pill_rect.contains(p));
-            if !inside_popover && !inside_pill {
-                self.update_popover_open = false;
-            }
-        }
-    }
-
     /// Drive the swap-and-relaunch flow when the user clicks the Ready
     /// pill. Sequence (ADR-0015):
     ///
@@ -2915,12 +2849,11 @@ impl SnappyRefApp {
     /// 2. save the User Session — the new app's first launch reads it back.
     /// 3. drop worker child processes (embedding helper, import worker)
     ///    so the swap is not racing live filesystem writers.
-    /// 4. write the pending-update descriptor into `<install_root>/updates/`.
-    /// 5. spawn `snappyref-updater` with the descriptor path.
-    /// 6. ask egui to close the viewport — the helper waits for our PID
-    ///    to exit before it touches the bundle.
-    fn trigger_restart_into_update(&mut self, ctx: &egui::Context) {
-        self.update_popover_open = false;
+    /// 4. apply the staged update using the platform's swap path:
+    ///    Windows launches a temporary self-replace runner; macOS writes
+    ///    a pending-update descriptor and launches `snappyref-updater`.
+    fn trigger_restart_into_update(&mut self, _ctx: &egui::Context) {
+        self.user_update_flow_active = false;
 
         // 2. Save the User Session so the new app can restore it.
         self.save_active_board_before_transition();
@@ -2941,39 +2874,51 @@ impl SnappyRefApp {
             self.status = "No staged update is ready to restart into".to_owned();
             return;
         };
-        let descriptor_path = crate::updater::descriptor::default_path(&descriptor.install_root);
-        if let Err(error) = crate::updater::descriptor::write(&descriptor_path, &descriptor) {
-            self.status = format!("Failed to write update descriptor: {error}");
-            return;
-        }
-
-        // 5. Spawn the helper detached. argv[1] is the descriptor path.
-        let helper_path = match snappyref_updater_path() {
-            Ok(path) => path,
-            Err(error) => {
-                self.status = format!("Failed to locate updater helper: {error}");
-                return;
-            }
-        };
-        if let Err(error) = std::process::Command::new(&helper_path)
-            .arg(&descriptor_path)
-            .spawn()
-        {
-            self.status = format!("Failed to launch updater helper: {error}");
-            return;
-        }
-
-        // 6. Tell egui to close — the helper polls our PID and starts the
-        // swap as soon as we exit.
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         #[cfg(target_os = "windows")]
         {
-            // Windows keeps the running exe locked. If the viewport close
-            // command is ignored or delayed, the helper times out and cannot
-            // rename the binary into place. We have already flushed user
-            // state and stopped helper workers above, so exit directly after
-            // the updater helper is alive.
+            let descriptor_path =
+                crate::updater::descriptor::default_path(&descriptor.install_root);
+            if let Err(error) = crate::updater::windows_self_replace::apply_and_relaunch(
+                &descriptor,
+                &descriptor_path,
+            ) {
+                if self.update_smoke.is_some() {
+                    self.fail_update_smoke(_ctx, format!("apply failed: {error}"));
+                    return;
+                }
+                self.status = format!("Failed to apply Windows update: {error}");
+                return;
+            }
             std::process::exit(0);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let descriptor_path =
+                crate::updater::descriptor::default_path(&descriptor.install_root);
+            if let Err(error) = crate::updater::descriptor::write(&descriptor_path, &descriptor) {
+                self.status = format!("Failed to write update descriptor: {error}");
+                return;
+            }
+
+            // 5. Spawn the helper detached. argv[1] is the descriptor path.
+            let helper_path = match snappyref_updater_path() {
+                Ok(path) => path,
+                Err(error) => {
+                    self.status = format!("Failed to locate updater helper: {error}");
+                    return;
+                }
+            };
+            if let Err(error) = std::process::Command::new(&helper_path)
+                .arg(&descriptor_path)
+                .spawn()
+            {
+                self.status = format!("Failed to launch updater helper: {error}");
+                return;
+            }
+
+            // 6. Tell egui to close — the helper polls our PID and starts the
+            // swap as soon as we exit.
+            _ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
@@ -6561,6 +6506,7 @@ impl eframe::App for SnappyRefApp {
         let settled_idle = self.app_settled_idle();
         self.update_service.tick(settled_idle);
         self.drive_update_smoke(ui.ctx(), settled_idle);
+        self.drive_user_update_flow(ui.ctx());
         if let Some(wait) = self.update_service.time_until_next_check() {
             // Make sure we wake up at the next scheduled check; clamp to
             // a reasonable lower bound so we never hot-loop.
@@ -6624,16 +6570,8 @@ impl eframe::App for SnappyRefApp {
             #[cfg(feature = "semantic-search")]
             self.sync_semantic_search_service();
         }
-        self.handle_update_pill_interaction(
-            ui.ctx(),
-            sidebar_result.update_pill_clicked,
-            sidebar_result.update_pill_rect,
-        );
-        if sidebar_result.update_check_now_clicked {
-            self.handle_update_check_now_click(ui.ctx());
-        }
-        if sidebar_result.rollback_clicked {
-            self.handle_rollback_click();
+        if sidebar_result.update_action_clicked {
+            self.handle_update_action_click(ui.ctx());
         }
         let mut settings_changed = sidebar_result.settings_changed;
         if self.sync_last_update_check_timestamp() {
@@ -6714,21 +6652,16 @@ impl crate::active_board_load::ActiveBoardLoadHost for SnappyRefApp {
     }
 }
 
-/// Locate `snappyref-updater` next to the running executable. The helper
-/// ships inside the same `MacOS/` (macOS) or folder root (Windows) as the
-/// main `snappyref` binary, so the only stable lookup is by sibling path
-/// from `current_exe`. The `.exe` suffix is appended on Windows.
+/// Locate the macOS `snappyref-updater` helper next to the running executable.
+/// The helper ships inside the same `MacOS/` directory as the main `snappyref`
+/// binary, so the stable lookup is by sibling path from `current_exe`.
+#[cfg(not(target_os = "windows"))]
 fn snappyref_updater_path() -> Result<std::path::PathBuf, String> {
     let current_exe = std::env::current_exe().map_err(|error| format!("current_exe: {error}"))?;
     let parent = current_exe
         .parent()
         .ok_or_else(|| "current_exe has no parent directory".to_owned())?;
-    let name = if cfg!(target_os = "windows") {
-        "snappyref-updater.exe"
-    } else {
-        "snappyref-updater"
-    };
-    Ok(parent.join(name))
+    Ok(parent.join("snappyref-updater"))
 }
 
 fn restart_launch_args() -> Vec<String> {
@@ -9172,6 +9105,8 @@ mod tests {
             render_sidebar_for_test(ctx, app);
         });
 
+        harness.get_by_label("Semantic Search").scroll_to_me();
+        harness.run();
         harness.get_by_label("Install").click();
         harness.run();
 
@@ -9181,6 +9116,8 @@ mod tests {
         );
         assert_eq!(harness.state().status, "Installing Semantic Search");
 
+        harness.get_by_label("Semantic Search").scroll_to_me();
+        harness.run();
         harness.get_by_label("Cancel").click();
         harness.run();
 
@@ -9192,7 +9129,7 @@ mod tests {
     }
 
     #[test]
-    fn manual_update_check_handler_requests_repaint() {
+    fn update_action_check_requests_repaint() {
         let mut app = test_app(None);
         let ctx = egui::Context::default();
         let repaint_requests = Arc::new(AtomicUsize::new(0));
@@ -9202,7 +9139,7 @@ mod tests {
         });
         let baseline_repaints = repaint_requests.load(Ordering::SeqCst);
 
-        app.handle_update_check_now_click(&ctx);
+        app.handle_update_action_click(&ctx);
 
         assert!(
             app.last_manual_update_check.is_some(),
@@ -9228,6 +9165,8 @@ mod tests {
             render_sidebar_for_test(ctx, app);
         });
 
+        harness.get_by_label("Semantic Search").scroll_to_me();
+        harness.run();
         harness.get_by_label("Retry").click();
         harness.run();
 
@@ -10920,7 +10859,7 @@ mod tests {
             #[cfg(debug_assertions)]
             sidebar_hot_preview: false,
             update_service: super::UpdateService::new(super::UpdateConfig::default()),
-            update_popover_open: false,
+            user_update_flow_active: false,
             update_smoke: None,
             last_manual_update_check: None,
         };
@@ -10960,8 +10899,8 @@ mod tests {
         };
         app.handle_board_action(board_action);
         app.handle_semantic_search_settings_action(sidebar_result.semantic_search_action, ctx);
-        if sidebar_result.update_check_now_clicked {
-            app.handle_update_check_now_click(ctx);
+        if sidebar_result.update_action_clicked {
+            app.handle_update_action_click(ctx);
         }
     }
 

@@ -154,9 +154,6 @@ jobs:
           $packageRoot = Join-Path $env:RUNNER_TEMP "snappyref-windows-app\SnappyRef"
           New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
           Copy-Item (Join-Path $env:SNAPPYREF_TARGET_DIR "snappyref.exe") $packageRoot
-          # Ship the auto-update helper alongside the main exe. ADR-0015:
-          # the helper lives at SnappyRef/snappyref-updater.exe.
-          Copy-Item (Join-Path $env:SNAPPYREF_TARGET_DIR "snappyref-updater.exe") $packageRoot
           Copy-Item `
             (Join-Path $env:RUNNER_TEMP "semantic-search-descriptor\semantic-search-descriptor.env") `
             (Join-Path $env:RUNNER_TEMP "snappyref-windows-semantic-search-descriptor.env")

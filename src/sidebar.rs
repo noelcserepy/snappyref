@@ -1,8 +1,6 @@
 use eframe::egui;
 
 use crate::app::{SUPPORTED_SHORTCUTS, SupportedShortcut};
-use crate::updater::UpdateState;
-
 pub(crate) const SIDEBAR_WIDTH: f32 = 268.0;
 pub(crate) const SIDEBAR_TOP_MARGIN: f32 = 40.0;
 pub(crate) const SIDEBAR_BOTTOM_MARGIN: f32 = 16.0;
@@ -23,39 +21,24 @@ pub(crate) struct SidebarRenderResult {
     pub settings_changed: bool,
     pub interactive_rect: Option<egui::Rect>,
     pub board_action: Option<SidebarBoardAction>,
-    /// Screen-space rect of the Update Pill if it was painted this
-    /// frame, used to anchor the popover.
-    pub update_pill_rect: Option<egui::Rect>,
-    /// True when the Update Pill was clicked this frame; the app
-    /// toggles the popover in response.
-    pub update_pill_clicked: bool,
-    /// True when the Settings Tab "Check for updates now" button was
-    /// activated this frame. The app forwards the request to the
-    /// update service; throttling is the responsibility of the sidebar.
-    pub update_check_now_clicked: bool,
-    /// True when the Settings Tab "Rollback to previous version" button
-    /// was activated this frame. The app performs the rollback through
-    /// the `updater::rollback` module.
-    pub rollback_clicked: bool,
+    /// True when the Settings Tab update action was activated this frame.
+    pub update_action_clicked: bool,
     pub semantic_search_action: Option<SemanticSearchSettingsAction>,
 }
 
 /// Snapshot of the About / Updates section state. The sidebar reads but
 /// does not mutate any of these; the app owns the data.
 #[derive(Clone, Debug)]
-pub(crate) struct AboutUpdatesView<'a> {
+pub(crate) struct AboutUpdatesView {
     /// Running app version, normally `env!("CARGO_PKG_VERSION")`.
-    pub current_version: &'a str,
+    pub current_version: String,
     /// Unix-epoch milliseconds of the last completed check. `None`
     /// renders as "never".
     pub last_checked_unix_millis: Option<u64>,
-    /// True when a `.previous` / `.old` backup exists at the install
-    /// root. Drives the visibility of the Rollback button.
-    pub backup_present: bool,
-    /// True when the "Check for updates now" button is currently
-    /// allowed (i.e. last manual click was more than one minute ago).
-    /// The button still paints but is disabled when this is false.
-    pub check_now_enabled: bool,
+    pub update_button_label: String,
+    pub update_button_enabled: bool,
+    pub update_button_primary: bool,
+    pub update_status: Option<String>,
     pub semantic_search: SemanticSearchSettingsView,
 }
 
@@ -83,7 +66,6 @@ pub(crate) enum SemanticSearchSettingsAction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SidebarOptionsSection {
     AboutUpdates,
-    SemanticSearch,
     WorkspaceSettings,
     Shortcuts,
 }
@@ -157,28 +139,22 @@ pub(crate) fn show_sidebar(
     boards: &[crate::data::BoardSummary],
     active_board_id: i64,
     forced_board_hover_index: Option<usize>,
-    update_state: &UpdateState,
-    about_updates: AboutUpdatesView<'_>,
+    _update_state: &crate::updater::UpdateState,
+    about_updates: AboutUpdatesView,
 ) -> SidebarRenderResult {
     if !sidebar_open {
         return SidebarRenderResult {
             settings_changed: false,
             interactive_rect: None,
             board_action: None,
-            update_pill_rect: None,
-            update_pill_clicked: false,
-            update_check_now_clicked: false,
-            rollback_clicked: false,
+            update_action_clicked: false,
             semantic_search_action: None,
         };
     }
 
     let mut settings_changed = false;
     let mut board_action = None;
-    let mut update_pill_rect = None;
-    let mut update_pill_clicked = false;
-    let mut update_check_now_clicked = false;
-    let mut rollback_clicked = false;
+    let mut update_action_clicked = false;
     let mut semantic_search_action = None;
 
     let top = screen_rect.top() + SIDEBAR_TOP_MARGIN;
@@ -208,14 +184,7 @@ pub(crate) fn show_sidebar(
                 egui::StrokeKind::Inside,
             );
 
-            // Reserve a bottom strip for the Update Pill so its presence
-            // never collides with tab content height.
-            let pill_strip_height = update_pill_strip_height(update_state);
-            let content_bottom = shape_rect.bottom() - pill_strip_height;
-            let inner_rect = egui::Rect::from_min_max(
-                shape_rect.min,
-                egui::pos2(shape_rect.right(), content_bottom),
-            );
+            let inner_rect = shape_rect;
             let ui_builder = egui::UiBuilder::new().max_rect(inner_rect);
             ui.scope_builder(ui_builder, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
@@ -235,8 +204,7 @@ pub(crate) fn show_sidebar(
                             let options_outcome =
                                 paint_sidebar_options(ui, settings, canvas, &about_updates);
                             settings_changed |= options_outcome.settings_changed;
-                            update_check_now_clicked |= options_outcome.check_now_clicked;
-                            rollback_clicked |= options_outcome.rollback_clicked;
+                            update_action_clicked |= options_outcome.update_action_clicked;
                             if semantic_search_action.is_none() {
                                 semantic_search_action = options_outcome.semantic_search_action;
                             }
@@ -249,162 +217,21 @@ pub(crate) fn show_sidebar(
                     ui.add_enabled_ui(false, |ui| paint_contents(ui));
                 }
             });
-
-            if pill_strip_height > 0.0 {
-                let pill_strip_rect = egui::Rect::from_min_max(
-                    egui::pos2(shape_rect.left(), content_bottom),
-                    egui::pos2(shape_rect.right(), shape_rect.bottom()),
-                );
-                let pill_outcome =
-                    paint_update_pill(ui, pill_strip_rect, update_state, input_enabled);
-                update_pill_rect = pill_outcome.rect;
-                update_pill_clicked = pill_outcome.clicked;
-            }
         });
 
     SidebarRenderResult {
         settings_changed,
         interactive_rect: Some(area_response.response.rect),
         board_action,
-        update_pill_rect,
-        update_pill_clicked,
-        update_check_now_clicked,
-        rollback_clicked,
+        update_action_clicked,
         semantic_search_action,
     }
 }
 
 struct SidebarOptionsOutcome {
     settings_changed: bool,
-    check_now_clicked: bool,
-    rollback_clicked: bool,
+    update_action_clicked: bool,
     semantic_search_action: Option<SemanticSearchSettingsAction>,
-}
-
-struct UpdatePillOutcome {
-    rect: Option<egui::Rect>,
-    clicked: bool,
-}
-
-fn update_pill_strip_height(state: &UpdateState) -> f32 {
-    if matches!(state, UpdateState::Hidden) {
-        0.0
-    } else {
-        // Pill height + above/below padding.
-        crate::theme::CONTROL_HEIGHT + crate::theme::SPACE_3 * 2.0
-    }
-}
-
-fn paint_update_pill(
-    ui: &mut egui::Ui,
-    strip_rect: egui::Rect,
-    state: &UpdateState,
-    input_enabled: bool,
-) -> UpdatePillOutcome {
-    // Four observable shapes: clickable opener (Available), clickable
-    // restarter (Ready), in-place progress bar (Downloading), quiet
-    // failure indicator (Failed). Hidden returns early above.
-    enum PillShape {
-        Opens { label: String },
-        Restart { label: String },
-        Progress { label: String, percent: u8 },
-        Quiet { label: String },
-    }
-
-    let shape = match state {
-        UpdateState::Hidden => {
-            return UpdatePillOutcome {
-                rect: None,
-                clicked: false,
-            };
-        }
-        UpdateState::Available { version, .. } => PillShape::Opens {
-            label: format!("Update {version}"),
-        },
-        UpdateState::Downloading { percent, .. } => PillShape::Progress {
-            label: format!("Downloading {percent}%"),
-            percent: (*percent).min(100),
-        },
-        UpdateState::Ready { .. } => PillShape::Restart {
-            label: "Restart".to_owned(),
-        },
-        UpdateState::Failed => PillShape::Quiet {
-            label: "Update check failed".to_owned(),
-        },
-    };
-
-    let pad_x = crate::theme::SPACE_3;
-    let pill_rect = egui::Rect::from_min_max(
-        egui::pos2(
-            strip_rect.left() + pad_x,
-            strip_rect.top() + crate::theme::SPACE_3,
-        ),
-        egui::pos2(
-            strip_rect.right() - pad_x,
-            strip_rect.bottom() - crate::theme::SPACE_3,
-        ),
-    );
-    let id = egui::Id::new("sidebar_update_pill");
-    let is_clickable = matches!(shape, PillShape::Opens { .. } | PillShape::Restart { .. });
-    let sense = if is_clickable {
-        egui::Sense::click()
-    } else {
-        egui::Sense::hover()
-    };
-    let response = ui.interact(pill_rect, id, sense);
-    let interactive = input_enabled && is_clickable;
-    let fill = crate::theme::SURFACE_ELEVATED;
-    let stroke = if is_clickable {
-        egui::Stroke::new(1.0, crate::theme::ACCENT)
-    } else {
-        crate::theme::stroke_subtle()
-    };
-    ui.painter().rect(
-        pill_rect,
-        crate::theme::RADIUS_COMPACT,
-        fill,
-        stroke,
-        egui::StrokeKind::Inside,
-    );
-
-    // Progress bar fill — painted before the label so the text sits on top.
-    if let PillShape::Progress { percent, .. } = &shape {
-        let fraction = (*percent as f32 / 100.0).clamp(0.0, 1.0);
-        if fraction > 0.0 {
-            let bar_width = (pill_rect.width() * fraction).max(1.0);
-            let bar_rect = egui::Rect::from_min_max(
-                pill_rect.min,
-                egui::pos2(pill_rect.min.x + bar_width, pill_rect.max.y),
-            );
-            ui.painter().rect_filled(
-                bar_rect,
-                crate::theme::RADIUS_COMPACT,
-                crate::theme::ACCENT.gamma_multiply(0.25),
-            );
-        }
-    }
-
-    let (label, text_color) = match &shape {
-        PillShape::Opens { label } | PillShape::Restart { label } => {
-            (label.clone(), crate::theme::TEXT)
-        }
-        PillShape::Progress { label, .. } => (label.clone(), crate::theme::TEXT),
-        PillShape::Quiet { label } => (label.clone(), crate::theme::TEXT_MUTED),
-    };
-    let font = ui.style().text_styles[&egui::TextStyle::Body].clone();
-    let galley = ui.painter().layout_no_wrap(label, font, text_color);
-    let label_pos = egui::pos2(
-        pill_rect.center().x - galley.size().x * 0.5,
-        pill_rect.center().y - galley.size().y * 0.5 - 1.0,
-    );
-    ui.painter().galley(label_pos, galley, text_color);
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Update")
-    });
-    UpdatePillOutcome {
-        rect: Some(pill_rect),
-        clicked: interactive && response.clicked(),
-    }
 }
 
 fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
@@ -445,17 +272,9 @@ fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
             .layout_no_wrap((*label).to_owned(), font, label_color);
         let label_pos = egui::pos2(
             cell.center().x - galley.size().x * 0.5,
-            cell.center().y - galley.size().y * 0.5 - 2.0,
+            cell.center().y - galley.size().y * 0.5 + 2.0,
         );
         ui.painter().galley(label_pos, galley, label_color);
-        if selected {
-            let underline_y = cell.bottom();
-            let underline = egui::Rect::from_min_max(
-                egui::pos2(cell.center().x - 18.0, underline_y - 1.5),
-                egui::pos2(cell.center().x + 18.0, underline_y),
-            );
-            ui.painter().rect_filled(underline, 0, crate::theme::ACCENT);
-        }
     }
 }
 
@@ -463,11 +282,10 @@ fn paint_sidebar_options(
     ui: &mut egui::Ui,
     settings: &mut crate::data::WorkspaceSettings,
     canvas: &mut crate::canvas::CanvasState,
-    about_updates: &AboutUpdatesView<'_>,
+    about_updates: &AboutUpdatesView,
 ) -> SidebarOptionsOutcome {
     let mut changed = false;
-    let mut check_now_clicked = false;
-    let mut rollback_clicked = false;
+    let mut update_action_clicked = false;
     let mut semantic_search_action = None;
     let content_rect = ui.available_rect_before_wrap();
     ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
@@ -477,7 +295,7 @@ fn paint_sidebar_options(
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-                ui.add_space(crate::theme::SPACE_3);
+                ui.add_space(crate::theme::SPACE_1);
                 for (index, section) in
                     sidebar_options_section_order(&about_updates.semantic_search.status)
                         .into_iter()
@@ -493,21 +311,19 @@ fn paint_sidebar_options(
                         SidebarOptionsSection::AboutUpdates => {
                             paint_sidebar_subcard(ui, |ui| {
                                 let about_outcome = paint_about_updates_section(ui, about_updates);
-                                check_now_clicked |= about_outcome.check_now_clicked;
-                                rollback_clicked |= about_outcome.rollback_clicked;
-                            });
-                        }
-                        SidebarOptionsSection::SemanticSearch => {
-                            paint_sidebar_subcard(ui, |ui| {
-                                semantic_search_action = paint_semantic_search_settings_section(
-                                    ui,
-                                    &about_updates.semantic_search,
-                                );
+                                update_action_clicked |= about_outcome.update_action_clicked;
                             });
                         }
                         SidebarOptionsSection::WorkspaceSettings => {
                             paint_sidebar_subcard(ui, |ui| {
-                                changed |= paint_settings_section(ui, settings, canvas);
+                                let settings_outcome = paint_settings_section(
+                                    ui,
+                                    settings,
+                                    canvas,
+                                    &about_updates.semantic_search,
+                                );
+                                changed |= settings_outcome.changed;
+                                semantic_search_action = settings_outcome.semantic_search_action;
                             });
                         }
                         SidebarOptionsSection::Shortcuts => {
@@ -521,8 +337,7 @@ fn paint_sidebar_options(
     });
     SidebarOptionsOutcome {
         settings_changed: changed,
-        check_now_clicked,
-        rollback_clicked,
+        update_action_clicked,
         semantic_search_action,
     }
 }
@@ -530,50 +345,28 @@ fn paint_sidebar_options(
 fn sidebar_options_section_order(
     semantic_search_status: &SemanticSearchSettingsStatus,
 ) -> Vec<SidebarOptionsSection> {
-    if matches!(
-        semantic_search_status,
-        SemanticSearchSettingsStatus::Installed
-    ) {
-        vec![
-            SidebarOptionsSection::WorkspaceSettings,
-            SidebarOptionsSection::Shortcuts,
-            SidebarOptionsSection::SemanticSearch,
-            SidebarOptionsSection::AboutUpdates,
-        ]
-    } else {
-        vec![
-            SidebarOptionsSection::SemanticSearch,
-            SidebarOptionsSection::WorkspaceSettings,
-            SidebarOptionsSection::Shortcuts,
-            SidebarOptionsSection::AboutUpdates,
-        ]
-    }
+    let _ = semantic_search_status;
+    vec![
+        SidebarOptionsSection::AboutUpdates,
+        SidebarOptionsSection::WorkspaceSettings,
+        SidebarOptionsSection::Shortcuts,
+    ]
 }
 
 struct AboutUpdatesOutcome {
-    check_now_clicked: bool,
-    rollback_clicked: bool,
+    update_action_clicked: bool,
 }
 
-fn paint_about_updates_section(
-    ui: &mut egui::Ui,
-    about: &AboutUpdatesView<'_>,
-) -> AboutUpdatesOutcome {
-    let mut check_now_clicked = false;
-    let mut rollback_clicked = false;
+fn paint_about_updates_section(ui: &mut egui::Ui, about: &AboutUpdatesView) -> AboutUpdatesOutcome {
+    let mut update_action_clicked = false;
 
     ui.add_space(crate::theme::SPACE_2 + 2.0);
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
         ui.label(
-            egui::RichText::new("About / Updates")
+            egui::RichText::new(format!("Version {}", about.current_version))
                 .text_style(egui::TextStyle::Body)
                 .color(crate::theme::TEXT),
-        );
-        ui.label(
-            egui::RichText::new(format!("Version {}", about.current_version))
-                .text_style(egui::TextStyle::Small)
-                .color(crate::theme::TEXT_SUBTLE),
         );
         ui.label(
             egui::RichText::new(format!(
@@ -584,38 +377,45 @@ fn paint_about_updates_section(
             .color(crate::theme::TEXT_SUBTLE),
         );
         ui.add_space(crate::theme::SPACE_2);
+        if let Some(status) = &about.update_status {
+            ui.label(
+                egui::RichText::new(status)
+                    .text_style(egui::TextStyle::Small)
+                    .color(crate::theme::TEXT_MUTED),
+            );
+            ui.add_space(crate::theme::SPACE_2);
+        }
         let button_width = ui.available_width();
-        let check_button = egui::Button::new(
-            egui::RichText::new("Check for updates now")
+        let text_color = if about.update_button_primary {
+            crate::theme::BACKGROUND
+        } else {
+            crate::theme::TEXT
+        };
+        let mut update_button = egui::Button::new(
+            egui::RichText::new(&about.update_button_label)
                 .text_style(egui::TextStyle::Small)
-                .color(crate::theme::TEXT),
-        );
+                .color(text_color),
+        )
+        .corner_radius(crate::theme::RADIUS_INLINE);
+        if about.update_button_primary {
+            update_button = update_button
+                .fill(crate::theme::ACCENT)
+                .stroke(egui::Stroke::NONE);
+        }
         if ui
-            .add_enabled_ui(about.check_now_enabled, |ui| {
-                ui.add_sized([button_width, 0.0], check_button)
+            .add_enabled_ui(about.update_button_enabled, |ui| {
+                ui.add_sized([button_width, 0.0], update_button)
             })
             .inner
             .clicked()
         {
-            check_now_clicked = true;
-        }
-        if about.backup_present {
-            ui.add_space(crate::theme::SPACE_2);
-            let rollback_button = egui::Button::new(
-                egui::RichText::new("Rollback to previous version")
-                    .text_style(egui::TextStyle::Small)
-                    .color(crate::theme::TEXT),
-            );
-            if ui.add_sized([button_width, 0.0], rollback_button).clicked() {
-                rollback_clicked = true;
-            }
+            update_action_clicked = true;
         }
     });
     ui.add_space(crate::theme::SPACE_2 + 2.0);
 
     AboutUpdatesOutcome {
-        check_now_clicked,
-        rollback_clicked,
+        update_action_clicked,
     }
 }
 
@@ -711,6 +511,11 @@ fn paint_semantic_search_settings_section(
     });
     ui.add_space(crate::theme::SPACE_2 + 2.0);
     action
+}
+
+struct SettingsSectionOutcome {
+    changed: bool,
+    semantic_search_action: Option<SemanticSearchSettingsAction>,
 }
 
 fn semantic_search_status_copy(status: &SemanticSearchSettingsStatus) -> (String, &'static str) {
@@ -1098,7 +903,8 @@ fn paint_settings_section(
     ui: &mut egui::Ui,
     settings: &mut crate::data::WorkspaceSettings,
     canvas: &mut crate::canvas::CanvasState,
-) -> bool {
+    semantic_search: &SemanticSearchSettingsView,
+) -> SettingsSectionOutcome {
     let mut changed = false;
 
     changed |= paint_setting_row(
@@ -1124,14 +930,13 @@ fn paint_settings_section(
         "Rotation snap",
         "Default snap angle for image rotation.",
         |ui| {
-            ui.add(
-                egui::DragValue::new(&mut settings.rotation_snap_degrees)
-                    .speed(1.0)
-                    .range(0.0..=180.0)
-                    .fixed_decimals(0)
-                    .suffix(" deg"),
+            paint_number_text_field(
+                ui,
+                "rotation-snap-degrees",
+                &mut settings.rotation_snap_degrees,
+                0.0..=180.0,
+                "deg",
             )
-            .changed()
         },
     );
     paint_setting_divider(ui);
@@ -1163,17 +968,22 @@ fn paint_settings_section(
     );
     paint_setting_divider(ui);
     changed |= paint_setting_row(ui, "Image gap", "Gap used when placing new images.", |ui| {
-        ui.add(
-            egui::DragValue::new(&mut settings.import_gap)
-                .speed(0.5)
-                .range(0.0..=128.0)
-                .fixed_decimals(0)
-                .suffix(" units"),
+        paint_number_text_field(
+            ui,
+            "image-gap",
+            &mut settings.import_gap,
+            0.0..=128.0,
+            "units",
         )
-        .changed()
     });
 
-    changed
+    paint_setting_divider(ui);
+    let semantic_search_action = paint_semantic_search_settings_section(ui, semantic_search);
+
+    SettingsSectionOutcome {
+        changed,
+        semantic_search_action,
+    }
 }
 
 fn paint_setting_row(
@@ -1319,6 +1129,84 @@ fn paint_inline_choice_response(ui: &mut egui::Ui, label: &str, selected: bool) 
     response
 }
 
+fn paint_number_text_field(
+    ui: &mut egui::Ui,
+    id_source: &'static str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    suffix: &'static str,
+) -> bool {
+    let id = ui.make_persistent_id(("settings-number-field", id_source));
+    let has_focus = ui.memory(|memory| memory.has_focus(id));
+    let mut text = ui
+        .data(|data| data.get_temp::<String>(id))
+        .unwrap_or_else(|| format!("{value:.0}"));
+    if !has_focus {
+        text = format!("{value:.0}");
+    }
+
+    let mut changed = false;
+    let frame = egui::Frame::new()
+        .fill(egui::Color32::from_white_alpha(12))
+        .stroke(crate::theme::stroke_subtle())
+        .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_INLINE))
+        .inner_margin(egui::Margin {
+            left: 10,
+            right: 10,
+            top: 4,
+            bottom: 4,
+        });
+    let response = frame
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+                let response = ui
+                    .scope(|ui| {
+                        ui.visuals_mut().selection.bg_fill = crate::theme::ACCENT;
+                        ui.visuals_mut().selection.stroke =
+                            egui::Stroke::new(1.0, crate::theme::BACKGROUND);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut text)
+                                .id(id)
+                                .font(egui::TextStyle::Button)
+                                .text_color(crate::theme::TEXT)
+                                .frame(egui::Frame::NONE)
+                                .desired_width(48.0),
+                        )
+                    })
+                    .inner;
+                ui.label(
+                    egui::RichText::new(suffix)
+                        .text_style(egui::TextStyle::Small)
+                        .color(crate::theme::TEXT_MUTED),
+                );
+                response
+            })
+            .inner
+        })
+        .inner;
+
+    if response.changed() {
+        if let Ok(parsed) = text.trim().parse::<f32>() {
+            let clamped = parsed.clamp(*range.start(), *range.end());
+            if (*value - clamped).abs() > f32::EPSILON {
+                *value = clamped;
+                changed = true;
+            }
+        }
+    }
+
+    let commit_invalid = response.lost_focus()
+        && ui.input(|input| input.key_pressed(egui::Key::Enter) || input.pointer.any_click())
+        && text.trim().parse::<f32>().is_err();
+    if commit_invalid {
+        text = format!("{value:.0}");
+    }
+    ui.data_mut(|data| data.insert_temp(id, text));
+
+    changed
+}
+
 fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
     let pad = crate::theme::SPACE_3;
     let indent_rect = egui::Rect::from_min_max(
@@ -1327,20 +1215,6 @@ fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
     );
     ui.scope_builder(egui::UiBuilder::new().max_rect(indent_rect), |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-        ui.label(
-            egui::RichText::new("Implemented")
-                .text_style(egui::TextStyle::Body)
-                .strong()
-                .color(crate::theme::TEXT),
-        );
-        ui.add_space(2.0);
-        ui.label(
-            egui::RichText::new("Bindings grouped by task.")
-                .text_style(egui::TextStyle::Small)
-                .color(crate::theme::TEXT_SUBTLE),
-        );
-        ui.add_space(crate::theme::SPACE_3);
-
         let (core_shortcuts, layout_shortcuts) = SUPPORTED_SHORTCUTS.split_at(10);
         paint_shortcut_group(ui, "Core actions", core_shortcuts);
         ui.add_space(crate::theme::SPACE_3);
@@ -1618,27 +1492,25 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_options_keep_installed_semantic_search_and_about_at_bottom() {
+    fn sidebar_options_keep_about_updates_at_top_when_semantic_search_is_installed() {
         assert_eq!(
             sidebar_options_section_order(&SemanticSearchSettingsStatus::Installed),
             vec![
+                SidebarOptionsSection::AboutUpdates,
                 SidebarOptionsSection::WorkspaceSettings,
                 SidebarOptionsSection::Shortcuts,
-                SidebarOptionsSection::SemanticSearch,
-                SidebarOptionsSection::AboutUpdates,
             ]
         );
     }
 
     #[test]
-    fn sidebar_options_keep_missing_semantic_search_prominent_but_about_at_bottom() {
+    fn sidebar_options_keep_about_updates_at_top_when_semantic_search_is_missing() {
         assert_eq!(
             sidebar_options_section_order(&SemanticSearchSettingsStatus::Missing),
             vec![
-                SidebarOptionsSection::SemanticSearch,
+                SidebarOptionsSection::AboutUpdates,
                 SidebarOptionsSection::WorkspaceSettings,
                 SidebarOptionsSection::Shortcuts,
-                SidebarOptionsSection::AboutUpdates,
             ]
         );
     }

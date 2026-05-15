@@ -54,13 +54,11 @@ case "$binary_name" in
     install_prefix="SnappyRef"
     require_entry "$install_prefix/SnappyRef.app/Contents/Info.plist"
     require_entry "$install_prefix/SnappyRef.app/Contents/Resources/snappyref.icns"
-    # ADR-0015: the auto-update helper ships next to the main binary
-    # inside the bundle on macOS and inside the install folder on Windows.
+    # ADR-0015: macOS keeps a helper inside the bundle for app-bundle swaps.
     require_entry "$install_prefix/SnappyRef.app/Contents/MacOS/snappyref-updater"
     ;;
   SnappyRef/*)
     install_prefix="SnappyRef"
-    require_entry "$install_prefix/snappyref-updater.exe"
     ;;
   *)
     echo "unexpected binary path: $binary_name" >&2
