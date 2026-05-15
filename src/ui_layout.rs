@@ -1,16 +1,5 @@
 use eframe::egui;
 
-/// Default row helper for mixed inline controls.
-///
-/// Equivalent to a horizontal `items-center`: children flow left-to-right
-/// and align on their vertical centers without consuming the remaining panel.
-pub(crate) fn row_center_y<R>(
-    ui: &mut egui::Ui,
-    add_contents: impl FnOnce(&mut egui::Ui) -> R,
-) -> egui::InnerResponse<R> {
-    ui.horizontal(add_contents)
-}
-
 /// Right-aligned row layout for trailing action groups.
 pub(crate) fn row_end_center_y_layout() -> egui::Layout {
     egui::Layout::right_to_left(egui::Align::Center)

@@ -1,6 +1,6 @@
 # Automatic app updates
 
-SnappyRef will perform automatic in-app updates on macOS and Windows. The app polls a static signed update manifest in the background, surfaces an **Available Update** through a pill in the sidebar, and on user confirmation downloads, verifies, swaps, and relaunches the app. macOS uses a small helper binary for app-bundle swaps; Windows uses a single-exe self-replace path with a temporary runner copied from the current executable. This supersedes ADR-0006 (manual updates for v1).
+SnappyRef will perform automatic in-app updates on macOS and Windows. The app polls a static signed update manifest in the background, surfaces update state in Settings, and on user confirmation downloads, verifies, swaps, and relaunches the app. macOS uses a small helper binary for app-bundle swaps; Windows uses a single-exe self-replace path with a temporary runner copied from the current executable. This supersedes ADR-0006 (manual updates for v1).
 
 Manual updates impose meaningful friction (visit website, download zip, quit app, replace files, relaunch) that discourages users from staying current and slows feature delivery. With release packaging, the model lifecycle (ADR-0014), and the user-owned library contract now stable enough to make safe assumptions, an in-app updater can carry the upgrade cost for the user. The design below favors smallest viable surface area: static hosting, signed manifest, platform-local swap mechanics, no rollout logic, no telemetry.
 
@@ -25,7 +25,7 @@ Manual updates impose meaningful friction (visit website, download zip, quit app
 - The client checks for updates after **Settled Idle** following startup (never blocks startup), then every 6 hours while the app remains running.
 - Discovery (fetching the manifest) is separate from download (fetching the zip). Discovery is automatic; download is gated on explicit user click.
 - The client verifies the manifest signature before trusting any field. It verifies the downloaded zip's sha256 against the manifest before applying.
-- A failed check (no network, GitHub unreachable, signature mismatch) backs off exponentially up to 6 hours and never surfaces a popup. The pill stays in its last known state.
+- A failed check (no network, GitHub unreachable, signature mismatch) backs off exponentially up to 6 hours and never surfaces a popup. Settings keeps the last known update state.
 - The ping is a plain GET with no parameters, no body, no telemetry. The client filters per-platform fields locally.
 
 ### UI
@@ -67,7 +67,7 @@ This keeps Windows package shape and update behavior local to `snappyref.exe`. I
 - The website's download page should link to the latest release on `snappyref-dist` rather than to manually-managed UploadThing URLs; UploadThing can be retired for release hosting.
 - Without Developer ID signing or Notarization, the first manual install on macOS still requires the right-click-open Gatekeeper bypass. Auto-updates are silent after that. Real platform code signing is a separate future ADR.
 - The auto-updater depends on ADR-0014 (relocated model). A release that included auto-update support but kept the in-bundle model would either move ~400 MB per update or break model availability after swap.
-- All update state lives in `<install_root>`. If the user has placed `SnappyRef.app` directly into `/Applications` on macOS, the install root is admin-owned and the updater cannot write `updates/` or swap the bundle. `UPDATE.txt` and the website download page must instruct users to keep the SnappyRef folder in a writable location. A future enhancement may detect this case and surface a clear error.
+- Update staging lives under `<install_root>/updates/`. If the user has placed `SnappyRef.app` directly into `/Applications` on macOS, the install root is admin-owned and the updater cannot write `updates/` or swap the bundle. The website download page should instruct users to keep the SnappyRef folder in a writable location. A future enhancement may detect protected app installs and surface a clear error.
 - Discovery is opportunistic; there is no guarantee of immediate update propagation. A critical fix may take up to 6 hours per user to surface. Acceptable for the user base v1 targets; force-update can be revisited later.
 - No telemetry is collected. Adoption metrics are not available; this is intentional for v1 and can be reconsidered with explicit consent later.
 - ADR-0006 (manual updates for v1) is superseded by this decision.

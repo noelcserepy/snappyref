@@ -1,15 +1,14 @@
 //! The `snappyref-updater` helper binary.
 //!
-//! Ships inside the bundle/folder next to the main `snappyref` executable
-//! (`SnappyRef.app/Contents/MacOS/snappyref-updater` on macOS,
-//! `SnappyRef/snappyref-updater.exe` on Windows). The running app launches
-//! this helper just before exiting and hands it the path to a
+//! Ships inside the macOS app bundle next to the main `snappyref` executable
+//! (`SnappyRef.app/Contents/MacOS/snappyref-updater`). The running app
+//! launches this helper just before exiting and hands it the path to a
 //! [`PendingUpdateDescriptor`] JSON file on disk; the helper then:
 //!
 //! 1. reads + validates the descriptor;
 //! 2. waits for the parent app's PID to exit (polling, with a timeout);
 //! 3. strips `com.apple.quarantine` from the staged bundle on macOS;
-//! 4. renames the current bundle to a `.previous` / `.old` backup,
+//! 4. renames the current bundle to a `.previous` backup,
 //!    overwriting any prior backup;
 //! 5. moves the staged bundle into the current bundle's location;
 //! 6. relaunches the new app with the original launch args;
@@ -39,8 +38,7 @@ const PARENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// integration test fixture to keep the wait snappy.
 const PARENT_WAIT_TIMEOUT_ENV: &str = "SNAPPYREF_UPDATER_PARENT_WAIT_TIMEOUT_MS";
 /// Env override for the relaunch command. When set, the helper invokes
-/// `<program> <new_bundle> <launch_args...>` instead of the platform's
-/// native launcher (`open` on macOS, the new exe directly on Windows).
+/// `<program> <new_bundle> <launch_args...>` instead of `open`.
 /// Used by the integration test to assert the relaunch contract without
 /// actually starting a GUI app.
 const RELAUNCH_OVERRIDE_ENV: &str = "SNAPPYREF_UPDATER_RELAUNCH_PROGRAM";

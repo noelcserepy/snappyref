@@ -3105,7 +3105,6 @@ fn canvas_snapshot_cache_candidates(
         if let Some(path) = library.canvas_image_cache_path_for_lod(asset_id, max_side, lod) {
             paths.push(path);
         }
-        paths.push(library.legacy_canvas_image_cache_path_for_lod(asset_id, max_side, lod));
     }
     paths
 }
@@ -3334,26 +3333,12 @@ fn preferred_backfill_source_path(
     lod: CanvasImageLod,
 ) -> Option<PathBuf> {
     match lod {
-        CanvasImageLod::Working => Some(library.legacy_canvas_image_cache_path_for_lod(
+        CanvasImageLod::Working => None,
+        CanvasImageLod::Overview => library.canvas_image_cache_path_for_lod(
             record.asset.id,
             canvas_image_settings.max_side,
-            lod,
-        ))
-        .filter(|path| path.is_file()),
-        CanvasImageLod::Overview => library
-            .canvas_image_cache_path_for_lod(
-                record.asset.id,
-                canvas_image_settings.max_side,
-                CanvasImageLod::Working,
-            )
-            .or_else(|| {
-                Some(library.legacy_canvas_image_cache_path_for_lod(
-                    record.asset.id,
-                    canvas_image_settings.max_side,
-                    CanvasImageLod::Working,
-                ))
-            })
-            .filter(|path| path.is_file()),
+            CanvasImageLod::Working,
+        ),
         CanvasImageLod::Detail => None,
     }
 }

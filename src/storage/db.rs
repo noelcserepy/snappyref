@@ -332,18 +332,6 @@ impl Library {
             .collect()
     }
 
-    pub fn legacy_canvas_image_cache_path_for_lod(
-        &self,
-        asset_id: i64,
-        max_side: u32,
-        lod: CanvasImageLod,
-    ) -> PathBuf {
-        self.thumbs_dir.join(format!(
-            "asset-{asset_id}-canvas-v2-downscale-{}-{max_side}.png",
-            lod.as_str()
-        ))
-    }
-
     pub fn canvas_image_cache_destination_for_extension(
         &self,
         asset_id: i64,

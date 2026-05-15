@@ -346,8 +346,6 @@ pub struct AppConfig {
     perf_corpus: Option<std::path::PathBuf>,
     perf_run_dir: Option<std::path::PathBuf>,
     startup_trace: bool,
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    search_latency_log: bool,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
     #[cfg(debug_assertions)]
@@ -811,47 +809,10 @@ enum VerificationMode {
     BackgroundDots,
     BackgroundTransition,
     ActiveBoardChip,
-    SearchLatency,
     SemanticSearchFirstLaunchPrompt,
     BoardDeleteConfirmation,
     LibraryRemoveConfirmation,
     DesignSystemPreview,
-    CompactControlsComparison,
-    RadiusComparison,
-    DestructiveActionsComparison,
-    SpacingComparison,
-    BoardRowsComparison,
-    BoardRowsComparisonBottom,
-    GuideColorBlue,
-    GuideColorGreen,
-    GuideColorOrange,
-    GuideColorBrightOrange,
-}
-
-#[cfg(all(debug_assertions, feature = "semantic-search"))]
-#[derive(Clone, Debug)]
-struct SearchLatencyProbe {
-    phase: SearchLatencyProbePhase,
-    selected_item_id: Option<i64>,
-    probe_started_at: Instant,
-    command_started_at: Option<Instant>,
-    tab_started_at: Option<Instant>,
-    board_result_ready_ms: Option<f64>,
-    library_result_ready_ms: Option<f64>,
-    board_results_ms: Option<f64>,
-}
-
-#[cfg(all(debug_assertions, feature = "semantic-search"))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SearchLatencyProbePhase {
-    WaitExistingImage,
-    OpenSearch,
-    WaitBoardResults,
-    WaitBoardPaint,
-    SwitchToLibrary,
-    WaitLibraryResults,
-    WaitLibraryPaint,
-    Done,
 }
 
 impl AppConfig {
@@ -871,8 +832,6 @@ impl AppConfig {
         let mut update_smoke_install = false;
         let mut update_smoke_status_path =
             std::env::var_os("SNAPPYREF_UPDATE_SMOKE_STATUS").map(std::path::PathBuf::from);
-        #[cfg(all(debug_assertions, feature = "semantic-search"))]
-        let mut search_latency_log = std::env::var_os("SNAPPYREF_SEARCH_LATENCY_LOG").is_some();
         #[cfg(debug_assertions)]
         let mut verification_mode = None;
         #[cfg(debug_assertions)]
@@ -887,7 +846,7 @@ impl AppConfig {
                 screenshot_path = arguments.next().map(std::path::PathBuf::from);
             } else if let Some(path) = argument.strip_prefix("--screenshot=") {
                 screenshot_path = Some(std::path::PathBuf::from(path));
-            } else if argument == "--no-startup-focus" || argument == "--agent-background" {
+            } else if argument == "--no-startup-focus" {
                 no_startup_focus = true;
             } else if argument == "--perf-log" {
                 perf_log = true;
@@ -931,13 +890,6 @@ impl AppConfig {
                 perf_run_dir = Some(std::path::PathBuf::from(path));
             } else if argument == "--startup-trace" {
                 startup_trace = true;
-            } else if cfg!(all(debug_assertions, feature = "semantic-search"))
-                && argument == "--search-latency-log"
-            {
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                {
-                    search_latency_log = true;
-                }
             } else if cfg!(debug_assertions) && argument == "--verify-sidebar" {
                 #[cfg(debug_assertions)]
                 {
@@ -1038,11 +990,6 @@ impl AppConfig {
                 {
                     verification_mode = Some(VerificationMode::ActiveBoardChip);
                 }
-            } else if cfg!(debug_assertions) && argument == "--verify-search-latency" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::SearchLatency);
-                }
             } else if cfg!(all(debug_assertions, feature = "semantic-search"))
                 && argument == "--verify-semantic-search-first-launch-prompt"
             {
@@ -1064,56 +1011,6 @@ impl AppConfig {
                 #[cfg(debug_assertions)]
                 {
                     verification_mode = Some(VerificationMode::DesignSystemPreview);
-                }
-            } else if cfg!(debug_assertions) && argument == "--compare-compact-controls" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::CompactControlsComparison);
-                }
-            } else if cfg!(debug_assertions) && argument == "--compare-radii" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::RadiusComparison);
-                }
-            } else if cfg!(debug_assertions) && argument == "--compare-destructive-actions" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::DestructiveActionsComparison);
-                }
-            } else if cfg!(debug_assertions) && argument == "--compare-spacing" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::SpacingComparison);
-                }
-            } else if cfg!(debug_assertions) && argument == "--compare-board-rows" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::BoardRowsComparison);
-                }
-            } else if cfg!(debug_assertions) && argument == "--compare-board-rows-bottom" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::BoardRowsComparisonBottom);
-                }
-            } else if cfg!(debug_assertions) && argument == "--compare-guide-color=blue" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::GuideColorBlue);
-                }
-            } else if cfg!(debug_assertions) && argument == "--compare-guide-color=green" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::GuideColorGreen);
-                }
-            } else if cfg!(debug_assertions) && argument == "--compare-guide-color=orange" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::GuideColorOrange);
-                }
-            } else if cfg!(debug_assertions) && argument == "--compare-guide-color=bright-orange" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::GuideColorBrightOrange);
                 }
             } else if let Some(query) = argument.strip_prefix("--verify-search=") {
                 #[cfg(debug_assertions)]
@@ -1153,8 +1050,6 @@ impl AppConfig {
             perf_corpus,
             perf_run_dir,
             startup_trace,
-            #[cfg(all(debug_assertions, feature = "semantic-search"))]
-            search_latency_log,
             #[cfg(debug_assertions)]
             verification_mode,
             #[cfg(debug_assertions)]
@@ -1329,12 +1224,6 @@ impl AppConfig {
                         | VerificationMode::BoardDeleteConfirmation
                         | VerificationMode::LibraryRemoveConfirmation
                         | VerificationMode::DesignSystemPreview
-                        | VerificationMode::CompactControlsComparison
-                        | VerificationMode::RadiusComparison
-                        | VerificationMode::DestructiveActionsComparison
-                        | VerificationMode::SpacingComparison
-                        | VerificationMode::BoardRowsComparison
-                        | VerificationMode::BoardRowsComparisonBottom
                 )
             )
     }
@@ -1351,26 +1240,7 @@ impl AppConfig {
 
     #[cfg(debug_assertions)]
     pub(crate) fn startup_viewport_size(&self) -> egui::Vec2 {
-        if matches!(
-            self.verification_mode,
-            Some(
-                VerificationMode::BoardRowsComparison | VerificationMode::BoardRowsComparisonBottom
-            )
-        ) {
-            egui::vec2(1720.0, 1480.0)
-        } else if matches!(
-            self.verification_mode,
-            Some(
-                VerificationMode::CompactControlsComparison
-                    | VerificationMode::RadiusComparison
-                    | VerificationMode::DestructiveActionsComparison
-                    | VerificationMode::SpacingComparison
-                    | VerificationMode::BoardRowsComparison
-                    | VerificationMode::BoardRowsComparisonBottom
-            )
-        ) {
-            egui::vec2(1180.0, 1040.0)
-        } else if self.open_sidebar_narrow_on_start() {
+        if self.open_sidebar_narrow_on_start() {
             egui::vec2(780.0, STARTUP_VIEWPORT_SIZE.y)
         } else {
             STARTUP_VIEWPORT_SIZE
@@ -1548,8 +1418,6 @@ pub struct SnappyRefApp {
     board_summaries_cache: BoardSummariesCache,
     #[cfg(debug_assertions)]
     verification_mode: Option<VerificationMode>,
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    search_latency_probe: Option<SearchLatencyProbe>,
     #[cfg(debug_assertions)]
     verification_search_query: Option<String>,
     #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -1656,8 +1524,6 @@ impl SnappyRefApp {
                     board_summaries_cache: BoardSummariesCache::default(),
                     #[cfg(debug_assertions)]
                     verification_mode: config.verification_mode,
-                    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                    search_latency_probe: None,
                     #[cfg(debug_assertions)]
                     verification_search_query: None,
                     #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -1669,9 +1535,6 @@ impl SnappyRefApp {
                     update_smoke: update_smoke.clone(),
                     last_manual_update_check: None,
                 };
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                app.search
-                    .set_latency_logging_enabled(config.search_latency_log);
                 app.load_user_session();
                 app.refresh_board_summaries();
                 if config.open_sidebar_on_start() {
@@ -1777,13 +1640,6 @@ impl SnappyRefApp {
                     app.seed_background_verification(mode);
                 }
                 #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                if matches!(
-                    config.verification_mode,
-                    Some(VerificationMode::SearchLatency)
-                ) {
-                    app.seed_search_latency_probe();
-                }
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
                 if config.verify_semantic_search_first_launch_prompt_on_start() {
                     app.settings.semantic_search_first_launch_prompt_seen = false;
                     app.search.set_local_model_store_status_for_verification(
@@ -1883,8 +1739,6 @@ impl SnappyRefApp {
                 board_summaries_cache: BoardSummariesCache::default(),
                 #[cfg(debug_assertions)]
                 verification_mode: config.verification_mode,
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                search_latency_probe: None,
                 #[cfg(debug_assertions)]
                 verification_search_query: None,
                 #[cfg(all(debug_assertions, feature = "semantic-search"))]
@@ -5222,7 +5076,7 @@ impl SnappyRefApp {
     fn seed_svg_verification(&mut self, ctx: &egui::Context) {
         self.canvas
             .apply_viewport_state(&crate::data::ViewportState::default());
-        self.canvas.clear_scene_for_verification();
+        self.canvas.clear_board_for_verification();
         let width = 240_u32;
         let height = 160_u32;
         let svg = format!(
@@ -5281,7 +5135,7 @@ impl SnappyRefApp {
     fn seed_move_snap_verification(&mut self, ctx: &egui::Context) {
         self.canvas
             .apply_viewport_state(&crate::data::ViewportState::default());
-        self.canvas.clear_scene_for_verification();
+        self.canvas.clear_board_for_verification();
         self.settings.import_gap = 24.0;
         self.canvas.set_layout_gap(self.settings.import_gap);
 
@@ -5332,7 +5186,7 @@ impl SnappyRefApp {
     fn seed_context_menu_verification(&mut self, ctx: &egui::Context) {
         self.canvas
             .apply_viewport_state(&crate::data::ViewportState::default());
-        self.canvas.clear_scene_for_verification();
+        self.canvas.clear_board_for_verification();
 
         let image_result = self.seed_import_verification_image(
             ctx,
@@ -5366,23 +5220,6 @@ impl SnappyRefApp {
             (Err(error), _) | (_, Some(Err(error))) => self.status = error,
             (_, None) => self.status = "Library unavailable".to_owned(),
         }
-    }
-
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    fn seed_search_latency_probe(&mut self) {
-        self.settings.semantic_search_enabled = true;
-        self.sync_semantic_search_service();
-        self.search_latency_probe = Some(SearchLatencyProbe {
-            phase: SearchLatencyProbePhase::WaitExistingImage,
-            selected_item_id: None,
-            probe_started_at: Instant::now(),
-            command_started_at: None,
-            tab_started_at: None,
-            board_results_ms: None,
-            board_result_ready_ms: None,
-            library_result_ready_ms: None,
-        });
-        eprintln!("[search-latency] probe started; waiting for first existing canvas image");
     }
 
     #[cfg(debug_assertions)]
@@ -5520,138 +5357,12 @@ impl SnappyRefApp {
             .is_none_or(|query| self.search.verification_search_settled(query))
     }
 
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    fn drive_search_latency_probe(&mut self, ctx: &egui::Context) -> bool {
-        let Some(mut probe) = self.search_latency_probe.take() else {
-            return false;
-        };
-
-        match probe.phase {
-            SearchLatencyProbePhase::WaitExistingImage => {
-                let item_ids = self.canvas.all_item_ids();
-                let preferred = item_ids.iter().copied().find(|item_id| {
-                    self.canvas
-                        .record_for_item_id(*item_id)
-                        .is_some_and(|record| record.asset.id == 179)
-                });
-                if let Some(item_id) = preferred.or_else(|| item_ids.first().copied()) {
-                    let wait_ms = probe.probe_started_at.elapsed().as_secs_f64() * 1000.0;
-                    let asset_id = self
-                        .canvas
-                        .record_for_item_id(item_id)
-                        .map(|record| record.asset.id)
-                        .unwrap_or_default();
-                    probe.selected_item_id = Some(item_id);
-                    self.canvas.select_items(&[item_id]);
-                    eprintln!(
-                        "[search-latency] selected_existing_item_id={item_id} selected_asset_id={asset_id} wait_for_item_ms={wait_ms:.2}"
-                    );
-                    probe.phase = SearchLatencyProbePhase::OpenSearch;
-                }
-            }
-            SearchLatencyProbePhase::OpenSearch => {
-                let Some(selected_item_id) = probe.selected_item_id else {
-                    probe.phase = SearchLatencyProbePhase::WaitExistingImage;
-                    self.search_latency_probe = Some(probe);
-                    return true;
-                };
-                self.canvas.select_items(&[selected_item_id]);
-                let started_at = Instant::now();
-                self.search_using_selected_image();
-                probe.command_started_at = Some(started_at);
-                probe.phase = SearchLatencyProbePhase::WaitBoardResults;
-                eprintln!("[search-latency] command_f_opened_image_search");
-            }
-            SearchLatencyProbePhase::WaitBoardResults => {
-                if self.search.verification_result_count() > 0
-                    && self.search.verification_scope()
-                        == crate::semantic_search::SearchScope::ThisBoard
-                {
-                    let ready_ms = probe
-                        .command_started_at
-                        .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0)
-                        .unwrap_or_default();
-                    probe.board_result_ready_ms = Some(ready_ms);
-                    eprintln!("[search-latency] board_result_ready_ms={ready_ms:.2}");
-                    probe.phase = SearchLatencyProbePhase::WaitBoardPaint;
-                }
-            }
-            SearchLatencyProbePhase::WaitBoardPaint => {
-                if self.search.verification_result_count() > 0
-                    && self.search.verification_scope()
-                        == crate::semantic_search::SearchScope::ThisBoard
-                {
-                    let board_ms = probe
-                        .command_started_at
-                        .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0)
-                        .unwrap_or_default();
-                    eprintln!("[search-latency] board_results_ms={board_ms:.2}");
-                    probe.board_results_ms = Some(board_ms);
-                    probe.phase = SearchLatencyProbePhase::SwitchToLibrary;
-                }
-            }
-            SearchLatencyProbePhase::SwitchToLibrary => {
-                let started_at = Instant::now();
-                self.search.verification_toggle_scope(&mut self.canvas);
-                probe.tab_started_at = Some(started_at);
-                probe.phase = SearchLatencyProbePhase::WaitLibraryResults;
-                eprintln!("[search-latency] tab_pressed_switch_to_library");
-            }
-            SearchLatencyProbePhase::WaitLibraryResults => {
-                if self.search.verification_result_count() > 0
-                    && self.search.verification_scope()
-                        == crate::semantic_search::SearchScope::Library
-                {
-                    let ready_ms = probe
-                        .tab_started_at
-                        .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0)
-                        .unwrap_or_default();
-                    probe.library_result_ready_ms = Some(ready_ms);
-                    eprintln!("[search-latency] library_result_ready_ms={ready_ms:.2}");
-                    probe.phase = SearchLatencyProbePhase::WaitLibraryPaint;
-                }
-            }
-            SearchLatencyProbePhase::WaitLibraryPaint => {
-                if self.search.verification_result_count() > 0
-                    && self.search.verification_scope()
-                        == crate::semantic_search::SearchScope::Library
-                {
-                    let library_ms = probe
-                        .tab_started_at
-                        .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0)
-                        .unwrap_or_default();
-                    let board_ms = probe.board_results_ms.unwrap_or_default();
-                    let board_ready_ms = probe.board_result_ready_ms.unwrap_or_default();
-                    let library_ready_ms = probe.library_result_ready_ms.unwrap_or_default();
-                    eprintln!(
-                        "[search-latency] summary board_ready_ms={board_ready_ms:.2} board_painted_ms={board_ms:.2} library_ready_ms={library_ready_ms:.2} library_painted_ms={library_ms:.2}"
-                    );
-                    probe.phase = SearchLatencyProbePhase::Done;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            }
-            SearchLatencyProbePhase::Done => {}
-        }
-
-        let active = probe.phase != SearchLatencyProbePhase::Done;
-        self.search_latency_probe = Some(probe);
-        if active {
-            ctx.request_repaint_after(std::time::Duration::from_millis(16));
-        }
-        active
-    }
-
     #[cfg(not(all(debug_assertions, feature = "semantic-search")))]
     fn drive_verification_search(&mut self) {}
 
     #[cfg(not(all(debug_assertions, feature = "semantic-search")))]
     fn verification_search_settled(&self) -> bool {
         true
-    }
-
-    #[cfg(not(all(debug_assertions, feature = "semantic-search")))]
-    fn drive_search_latency_probe(&mut self, _ctx: &egui::Context) -> bool {
-        false
     }
 
     #[cfg(feature = "semantic-search")]
@@ -6337,7 +6048,6 @@ impl eframe::App for SnappyRefApp {
         #[cfg(feature = "semantic-search")]
         self.drive_semantic_search_install(ui.ctx());
         self.handle_history_shortcuts(ui.ctx());
-        self.drive_search_latency_probe(ui.ctx());
         self.drive_verification_search();
         if self.drive_perf_scenario(ui.ctx(), screen_rect) {
             return;
@@ -6377,80 +6087,9 @@ impl eframe::App for SnappyRefApp {
         #[cfg(debug_assertions)]
         if matches!(
             self.verification_mode,
-            Some(
-                VerificationMode::DesignSystemPreview
-                    | VerificationMode::CompactControlsComparison
-                    | VerificationMode::RadiusComparison
-                    | VerificationMode::DestructiveActionsComparison
-                    | VerificationMode::SpacingComparison
-                    | VerificationMode::BoardRowsComparison
-                    | VerificationMode::BoardRowsComparisonBottom
-                    | VerificationMode::GuideColorBlue
-                    | VerificationMode::GuideColorGreen
-                    | VerificationMode::GuideColorOrange
-                    | VerificationMode::GuideColorBrightOrange
-            )
+            Some(VerificationMode::DesignSystemPreview)
         ) {
-            match self.verification_mode {
-                Some(VerificationMode::CompactControlsComparison) => {
-                    crate::design_system_preview::show_compact_controls_comparison(ui, screen_rect);
-                }
-                Some(VerificationMode::RadiusComparison) => {
-                    crate::design_system_preview::show_radius_comparison(ui, screen_rect);
-                }
-                Some(VerificationMode::DestructiveActionsComparison) => {
-                    crate::design_system_preview::show_destructive_actions_comparison(
-                        ui,
-                        screen_rect,
-                    );
-                }
-                Some(VerificationMode::SpacingComparison) => {
-                    crate::design_system_preview::show_spacing_comparison(ui, screen_rect);
-                }
-                Some(VerificationMode::BoardRowsComparison) => {
-                    crate::design_system_preview::show_board_rows_comparison(ui, screen_rect, 0.0);
-                }
-                Some(VerificationMode::BoardRowsComparisonBottom) => {
-                    crate::design_system_preview::show_board_rows_comparison(
-                        ui,
-                        screen_rect,
-                        560.0,
-                    );
-                }
-                Some(VerificationMode::GuideColorBlue) => {
-                    crate::design_system_preview::show_guide_color_comparison(
-                        ui,
-                        screen_rect,
-                        "Blue #2589BD",
-                        crate::theme::ACCENT_BLUE,
-                    );
-                }
-                Some(VerificationMode::GuideColorGreen) => {
-                    crate::design_system_preview::show_guide_color_comparison(
-                        ui,
-                        screen_rect,
-                        "Green #329F5B",
-                        crate::theme::ACCENT_GREEN,
-                    );
-                }
-                Some(VerificationMode::GuideColorOrange) => {
-                    crate::design_system_preview::show_guide_color_comparison(
-                        ui,
-                        screen_rect,
-                        "Orange #D17B0F",
-                        crate::theme::ACCENT_ORANGE,
-                    );
-                }
-                Some(VerificationMode::GuideColorBrightOrange) => {
-                    crate::design_system_preview::show_guide_color_comparison(
-                        ui,
-                        screen_rect,
-                        "Bright Orange #FA8334",
-                        crate::theme::ACCENT_BRIGHT_ORANGE,
-                    );
-                }
-                _ => crate::design_system_preview::show(ui, screen_rect),
-            }
+            crate::design_system_preview::show(ui, screen_rect);
             if self
                 .screenshot_capture
                 .handle_event(ui.ctx(), &mut self.status)
@@ -7033,8 +6672,6 @@ mod tests {
             perf_corpus: None,
             perf_run_dir: None,
             startup_trace: false,
-            #[cfg(all(debug_assertions, feature = "semantic-search"))]
-            search_latency_log: false,
             #[cfg(debug_assertions)]
             verification_mode: None,
             #[cfg(debug_assertions)]
@@ -7361,16 +6998,13 @@ mod tests {
 
         let bounds = canvas.selected_bounds_world().unwrap();
         let arranged_area = bounds.width() * bounds.height();
-        let legacy_area = crate::canvas::legacy_compact_layout_area_for_sizes(
-            &fixture
-                .iter()
-                .map(|(id, width, height)| (*id, *width as f32, *height as f32))
-                .collect::<Vec<_>>(),
-            gap,
-        )
-        .unwrap();
+        let item_area = fixture
+            .iter()
+            .map(|(_, width, height)| *width as f32 * *height as f32)
+            .sum::<f32>();
+        let occupancy = item_area / arranged_area;
 
-        assert!(arranged_area < legacy_area);
+        assert!(occupancy > 0.75);
         assert_eq!(status, format!("Compacted {} images", fixture.len()));
     }
 
@@ -10856,8 +10490,6 @@ mod tests {
             board_summaries_cache: BoardSummariesCache::default(),
             #[cfg(debug_assertions)]
             verification_mode: None,
-            #[cfg(all(debug_assertions, feature = "semantic-search"))]
-            search_latency_probe: None,
             #[cfg(debug_assertions)]
             verification_search_query: None,
             #[cfg(all(debug_assertions, feature = "semantic-search"))]

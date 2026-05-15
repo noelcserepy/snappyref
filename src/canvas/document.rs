@@ -470,7 +470,7 @@ impl CanvasState {
     }
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub fn clear_scene_for_verification(&mut self) {
+    pub fn clear_board_for_verification(&mut self) {
         self.document = super::state::CanvasDocumentState::default();
         self.interaction = super::state::CanvasInteractionState::default();
         self.render.asset_rgba_cache.clear();
@@ -825,50 +825,25 @@ impl CanvasState {
         let source_center_world = self.source_center_for_layout_items(items)?;
         let world_delta = desired_anchor_world - source_center_world;
         let bounds = layout_bounds_with_offset(items, world_delta)?;
-        let obstacles = self.board_snap_obstacles_excluding(item_ids);
-        let max_snap_distance_world =
-            super::IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN / self.zoom.max(0.01);
-        let request = crate::layout_snap::MoveSnapRequest {
-            desired_rect: bounds,
-            drag_delta: world_delta,
-            gap: self.layout_gap,
-            max_snap_distance: max_snap_distance_world,
-        };
-        let previous = self
+        let previously_snapped = self
             .interaction
             .search_drag_preview
             .as_ref()
-            .and_then(|preview| preview.snap_preview_rect_world)
-            .and_then(|previous_rect| {
-                crate::layout_snap::validate_move_snap_candidate(
-                    &obstacles,
-                    &request,
-                    previous_rect,
-                )
-            });
-        let best = crate::layout_snap::best_move_snap_candidate(&obstacles, &request);
-        let hysteresis_distance =
-            (super::IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN * 0.2) / self.zoom.max(0.01);
-        let candidate = match (best, previous) {
-            (Some(best), Some(previous))
-                if best.rect.center().distance(previous.rect.center()) <= hysteresis_distance =>
-            {
-                Some(previous)
-            }
-            (Some(best), _) => Some(best),
-            (None, Some(previous)) => Some(previous),
-            (None, None) => None,
-        };
-        let Some(candidate) = candidate else {
+            .is_some_and(|preview| preview.snap_preview_rect_world.is_some());
+        let Some(snap_result) = super::interaction::compute_guide_snap_for_rect(
+            self,
+            screen_rect,
+            bounds,
+            item_ids,
+            previously_snapped,
+        ) else {
+            self.clear_guide_snap_indicators();
             return Some((desired_anchor_world, None));
         };
-        let candidate_screen = self.world_to_screen(candidate.rect.center(), screen_rect);
-        let desired_screen = self.world_to_screen(bounds.center(), screen_rect);
-        if candidate_screen.distance(desired_screen) >= super::IMAGE_MOVE_SNAP_MAX_DISTANCE_SCREEN {
-            return Some((desired_anchor_world, None));
-        }
-        let snap_offset = candidate.rect.center() - bounds.center();
-        Some((desired_anchor_world + snap_offset, Some(candidate.rect)))
+        let snap_rect = snap_result.rect;
+        self.set_guide_snap_indicators(snap_result.indicators);
+        let snap_offset = snap_rect.center() - bounds.center();
+        Some((desired_anchor_world + snap_offset, Some(snap_rect)))
     }
 
     pub fn take_pending_image_lod_loads(&mut self) -> Vec<(i64, CanvasImageLod)> {
@@ -1996,47 +1971,6 @@ impl CanvasState {
 
     fn source_center_for_layout_items(&self, items: &[SelectedLayoutItem]) -> Option<egui::Pos2> {
         layout_bounds_with_offset(items, egui::Vec2::ZERO).map(|bounds| bounds.center())
-    }
-
-    pub fn board_snap_obstacles_excluding(
-        &self,
-        excluded_item_ids: &[i64],
-    ) -> Vec<crate::layout_snap::SnapObstacle> {
-        let mut obstacles = self
-            .document
-            .images
-            .iter()
-            .filter(|image| !excluded_item_ids.contains(&image.record.item.id))
-            .map(|image| {
-                crate::layout_snap::SnapObstacle::from_center_size(
-                    egui::pos2(image.record.item.x, image.record.item.y),
-                    egui::vec2(
-                        image.record.asset.width as f32 * image.record.item.scale.max(0.01),
-                        image.record.asset.height as f32 * image.record.item.scale.max(0.01),
-                    ),
-                )
-            })
-            .collect::<Vec<_>>();
-        obstacles.extend(self.document.annotations.iter().filter_map(|annotation| {
-            (annotation.kind == CanvasAnnotationKind::Textbox).then(|| {
-                let world_rect = textbox_world_rect(annotation);
-                crate::layout_snap::SnapObstacle::from_center_size(
-                    world_rect.center(),
-                    world_rect.size(),
-                )
-            })
-        }));
-        obstacles.extend(
-            self.import_placeholder_layout_items()
-                .into_iter()
-                .map(|placeholder| {
-                    crate::layout_snap::SnapObstacle::from_center_size(
-                        egui::pos2(placeholder.x, placeholder.y),
-                        egui::vec2(placeholder.width, placeholder.height),
-                    )
-                }),
-        );
-        obstacles
     }
 
     pub(super) fn apply_arrangement(

@@ -59,6 +59,7 @@ case "$binary_name" in
     ;;
   SnappyRef/*)
     install_prefix="SnappyRef"
+    forbid_entry "$install_prefix/snappyref-updater.exe"
     ;;
   *)
     echo "unexpected binary path: $binary_name" >&2

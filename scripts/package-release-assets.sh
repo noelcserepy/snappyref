@@ -71,16 +71,11 @@ case "$platform" in
     scripts/check-release-archive.sh "$output" SnappyRef/snappyref.exe
     ;;
   macos)
-    if [[ -d "$app_root/SnappyRef/SnappyRef.app" ]]; then
-      cp -R "$app_root/SnappyRef/." "$install_root/"
-    elif [[ -d "$app_root/SnappyRef.app" ]]; then
-      # Backwards-compatible path for app-artifact zips produced before this
-      # change shipped: the .app sat at the archive root.
-      cp -R "$app_root/SnappyRef.app" "$install_root/SnappyRef.app"
-    else
+    if [[ ! -d "$app_root/SnappyRef/SnappyRef.app" ]]; then
       echo "missing SnappyRef.app in app archive" >&2
       exit 1
     fi
+    cp -R "$app_root/SnappyRef/." "$install_root/"
     rm -f "$install_root/UPDATE.txt"
     # The bundle must never carry an in-bundle models directory after the move
     # to the Local Model Store.

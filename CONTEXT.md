@@ -108,6 +108,14 @@ _Avoid_: Unsaved preferences, dirty app state
 The app's knowledge that the Active Board's persisted canvas document differs from the in-memory Placements, Annotations, archive state, or Stack Order.
 _Avoid_: Unsaved canvas, changed items
 
+**Document History**:
+The active-board undo/redo stack of board document edits. It stores board-local changes such as Placement and Annotation creation/removal, transforms, arrange, stack-order changes, crop/relink operations, and board lifecycle edits so they can be reversed in place without reloading the board.
+_Avoid_: Crop history, app history, global history
+
+**History Entry**:
+A single reversible **Document History** step that captures enough before/after board document state to apply Undo or Redo.
+_Avoid_: Command log, event, audit record
+
 **Persistence Queue**:
 The off-main-thread handoff for saving User Session and Document Dirty State to the Library without blocking interaction frames. UI code enqueues value snapshots or document changes; explicit flush seams wait for durability when lifecycle correctness requires it.
 _Avoid_: Autosave thread, background database
@@ -367,12 +375,24 @@ _Avoid_: Empty library state
 ### Commands and interaction
 
 **Copy**:
-The operation that writes selected board content to the app's internal clipboard payload.
-_Avoid_: Export, system copy
+The operation that writes selected board content to the clipboard. SnappyRef always includes its internal metadata payload when possible; when exactly one supported Placement is selected it may also include an OS-native raster image for external image editors.
+_Avoid_: Export
 
 **Paste**:
-The operation that creates copied or external clipboard content on the active board using placement logic.
-_Avoid_: Import, drop
+The operation that creates copied or external clipboard content on the active board using placement logic. SnappyRef-native clipboard payloads recreate board content; external image/file/PureRef clipboard payloads enter through **External Drag Intake** and async import placement, preserving the intended **Import Batch Anchor**.
+_Avoid_: Drop
+
+**PureRef Clipboard Paste**:
+The Windows paste path that reads PureRef's clipboard payload, extracts image source paths or URLs, and imports them as a selected batch on the active board.
+_Avoid_: PureRef import mode, PureRef sync
+
+**Undo**:
+The command that applies the previous **Document History** entry to the Active Board in place.
+_Avoid_: Reload board, undo crop only
+
+**Redo**:
+The command that reapplies the next **Document History** entry to the Active Board in place after Undo.
+_Avoid_: Repeat command
 
 **Duplicate**:
 The operation that creates an offset copy of selected board content on the same board.

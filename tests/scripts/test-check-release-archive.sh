@@ -39,9 +39,28 @@ fi
 grep -q "in-bundle models directory" "$tmp_dir/mac-models.err"
 
 rm -rf "$tmp_dir/root"
+mkdir -p "$tmp_dir/root/SnappyRef"
+touch "$tmp_dir/root/SnappyRef/snappyref.exe"
+make_zip "$tmp_dir/windows-ok.zip" SnappyRef
+
+"$repo_root/scripts/check-release-archive.sh" \
+  "$tmp_dir/windows-ok.zip" \
+  "SnappyRef/snappyref.exe"
+
+touch "$tmp_dir/root/SnappyRef/snappyref-updater.exe"
+make_zip "$tmp_dir/windows-helper.zip" SnappyRef
+
+if "$repo_root/scripts/check-release-archive.sh" \
+  "$tmp_dir/windows-helper.zip" \
+  "SnappyRef/snappyref.exe" 2>"$tmp_dir/windows-helper.err"; then
+  echo "expected windows archive with updater helper to fail" >&2
+  exit 1
+fi
+grep -q "snappyref-updater.exe" "$tmp_dir/windows-helper.err"
+
+rm -rf "$tmp_dir/root"
 mkdir -p "$tmp_dir/root/SnappyRef/models/siglip2"
 touch "$tmp_dir/root/SnappyRef/snappyref.exe"
-touch "$tmp_dir/root/SnappyRef/snappyref-updater.exe"
 touch "$tmp_dir/root/SnappyRef/models/siglip2/tokenizer.json"
 make_zip "$tmp_dir/windows-models.zip" SnappyRef
 
