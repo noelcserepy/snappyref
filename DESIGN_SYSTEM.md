@@ -1,75 +1,102 @@
 # Design System
 
-## Purpose
-
-SnappyRef is a dense local-first desktop reference board. The design system protects a quiet, shortcut-friendly workspace where images and annotations stay primary and app chrome stays predictable, compact, and low-friction.
-
 ## Project Paths
 
 - Tokens/styles: `src/theme.rs`
 - Layout helpers: `src/ui_layout.rs`
 - Shared UI patterns: `src/sidebar.rs`, `src/palette.rs`, `src/canvas/render.rs`
-- Permanent preview: debug probe in `src/design_system_preview.rs`
-- Verification entry point: `cargo run -- --verify-design-system --screenshot /tmp/snappyref-design-system.png`
+- Preview/probe: `src/design_system_preview.rs`, exposed through `--verify-design-system` in debug builds
+- Verification command: `cargo run -- --verify-design-system --screenshot /tmp/snappyref-design-system.png`
 - Temporary comparisons: add narrow debug-only probes in `src/app.rs` and remove them after the decision unless they become reusable verification states.
 
-## Visual Vocabulary
+## Design Decisions
+
+### Visual Posture
+
+SnappyRef is a dense local-first desktop reference board. The design system protects a quiet, shortcut-friendly workspace where images and annotations stay primary and app chrome stays predictable, compact, and low-friction.
 
 SnappyRef uses a dark, layout-first interface. Surfaces are quiet and compact; spacing and alignment do more work than borders or decoration. The canvas background is the dominant workspace, while sidebars, palettes, context menus, and toolbars should feel temporary and subordinate to arranging references.
 
-The app favors low-radius rectangular controls, restrained contrast, and concise labels. Use warmer surface tones only where they help separate overlays from the canvas. Use emphasis sparingly: selected items, active focus, and currently actionable state can stand out; generic importance should not create new color roles.
+Use emphasis sparingly. Selected items, active focus, and currently actionable state can stand out; generic importance should not create new color roles.
+
+Supported mode: dark theme only.
+
+### Layout And Spacing
 
 Default to left-aligned content and titles. Center alignment should be an explicit exception for spatial canvas geometry, icon-only controls, or brief status elements where symmetry is the point.
 
-## Tokens And Semantics
+Use `SPACE_1`/`SPACE_2`/`SPACE_3`/`SPACE_4`/`SPACE_6`/`SPACE_8` for 4/8/12/16/24/32px spacing. Do not reintroduce a 20px token. Values of 1-3px are allowed only as local optical corrections; map other near-token spacing back to the semantic scale unless a component has a documented reason.
 
-- `BACKGROUND` in `src/theme.rs`: use for the canvas and app-level backdrop. Do not use for grouped panels that need to read as controls.
-- `SURFACE`: use for sidebars, drawers, resting controls, and grouped UI. Do not use as a selected state.
-- `PALETTE_SURFACE`: use for the command/search palette panel only. Do not generalize it into a second default panel color.
-- `SURFACE_ELEVATED`: use for hover states, selected rows, selected surfaces, and separation inside an existing panel. Do not use for ordinary resting chrome.
-- `BORDER` and `BORDER_STRONG`: use for quiet separators and stronger control affordance. Prefer spacing before adding new borders.
-- `TEXT`, `TEXT_MUTED`, `TEXT_SUBTLE`: use for primary labels, secondary values, and low-emphasis metadata respectively. Do not use subtle text for required instructions.
-- `ACCENT`: use for active selection, focus, and the few states that need emphasis without adding a new hue. Do not use for generic decoration.
-- `ACCENT_BLUE`, `ACCENT_GREEN`, `ACCENT_ORANGE`, and `ACCENT_BRIGHT_ORANGE`: secondary accent candidates for explicit canvas guide or comparison states. Keep them out of generic chrome unless the visual role is named and tested.
-- `DESTRUCTIVE`, `DESTRUCTIVE_STROKE`, and `DESTRUCTIVE_FILL`: use for destructive labels, confirmation borders, and destructive confirmation actions. The base is `#CA3C25`; keep repeated row affordances quiet unless hovered or focused.
-- Spacing constants: use `SPACE_1`/`SPACE_2`/`SPACE_3`/`SPACE_4`/`SPACE_6`/`SPACE_8` for 4/8/12/16/24/32px spacing. Do not reintroduce a 20px token. Values of 1-3px are allowed only as local optical corrections; map other near-token spacing back to the semantic scale unless a component has a documented reason.
-- Stack spacing: use `SPACE_1` between repeated rows in one navigation/list stack when each row owns its internal padding; use `SPACE_2` between denser inline controls; use `SPACE_3` between a row stack and its immediate follow-up action; use `SPACE_4` before explanatory helper text or a new content group; use `SPACE_6` or larger only between major sections. Hover/focus state must not change allocated row size or stack spacing.
-- Radius constants: use `RADIUS_NONE` for structural fills and rules, `RADIUS_MICRO` for tiny marks and thumbnails, `RADIUS_INLINE` for quiet inline settings controls, `RADIUS_COMPACT` for rows/chips/hints/inset groups, `RADIUS_CONTROL` for explicit buttons and canvas toolbars, and `RADIUS_PANEL` for floating panels and major overlays.
-- Alignment helpers in `src/ui_layout.rs`: use `row_center_y` for mixed inline rows, `row_end_center_y_layout` for trailing action groups, `column_left` for default stacked content, `column_center_x` only for brief centered status/spatial previews, `centered_single` only for one child that should occupy the available rect, and `centered_pos` for manually painted content centered in a rect. Avoid ad hoc center math unless a component has a documented optical correction.
+Use `SPACE_1` between repeated rows in one navigation/list stack when each row owns its internal padding. Use `SPACE_2` between denser inline controls. Use `SPACE_3` between a row stack and its immediate follow-up action. Use `SPACE_4` before explanatory helper text or a new content group. Use `SPACE_6` or larger only between major sections. Hover/focus state must not change allocated row size or stack spacing.
 
-## Components And Patterns
+Use `row_center_y` for mixed inline rows, `row_end_center_y_layout` for trailing action groups, `column_left` for default stacked content, `column_center_x` only for brief centered status/spatial previews, `centered_single` only for one child that should occupy the available rect, and `centered_pos` for manually painted content centered in a rect. Avoid ad hoc center math unless a component has a documented optical correction.
 
-- Sidebar: app-level settings and board navigation live in `src/sidebar.rs`. It should stay compact, left-anchored, and dismissible; do not turn it into a persistent inspector unless the product flow changes.
-- Sidebar board row: use for board switching, rename, delete affordance, active-board indication, and shortcut hints. Treat it as a compact navigation row: active rows get a left rail and quiet fill, idle rows stay transparent, shortcuts read as metadata, and destructive delete language appears only when the full row rect is hovered or focused. Normal rows paint static text; mount text-editing controls only during rename so hover/focus cannot change row geometry. Do not reuse it for generic lists unless the list has board-level navigation semantics.
-- Sidebar subcard: use for grouped settings inside the sidebar. Do not nest cards inside it.
-- Quiet inline controls: use for compact setting choices and binary setting values in read-heavy panels. Only the active state gets a quiet frame; inactive choices should read as available text, not separate pills. Do not use this for canvas toolbars where the target needs to stay visually explicit.
-- Destructive actions: use explicit destructive language and reserved destructive color in context menus and confirmations. Do not make repeated row-level delete affordances loud by default.
-- Search palette: semantic search and library recall live in `src/search.rs` with reusable paint helpers in `src/palette.rs`. It should remain an overlay workflow, not a second sidebar.
-- Canvas overlays and toolbars: annotation and edit controls live close to the selected item in `src/canvas/render.rs`. They should stay compact and avoid obscuring the reference material.
-- Debug verification probes: keep screenshotable UI states in `src/app.rs` when they expose a broadly useful state. Keep one-off inspection probes narrow and remove them after use.
+### Surfaces And Chrome
 
-## Preview And Verification
+The app favors low-radius rectangular controls, restrained contrast, and concise labels. Use warmer surface tones only where they help separate overlays from the canvas.
 
-- Preview location: `src/design_system_preview.rs`, exposed through `--verify-design-system` in debug builds.
-- Command: `cargo run -- --verify-design-system --screenshot /tmp/snappyref-design-system.png`
-- Sidebar board-row probes: `cargo run -- --verify-sidebar-boards --screenshot /tmp/snappyref-sidebar-boards.png` and `cargo run -- --verify-sidebar-boards-hover --screenshot /tmp/snappyref-sidebar-boards-hover.png`
-- Destructive confirmation probes: `cargo run -- --verify-board-delete-confirmation --screenshot /tmp/snappyref-board-delete-confirmation.png` and `cargo run -- --verify-library-remove-confirmation --screenshot /tmp/snappyref-library-remove-confirmation.png`
-- Required checks before publishing design-system changes: `cargo fmt`, `cargo check`, then capture and inspect the preview screenshot.
-- When sharing screenshots in chat, use a unique filename or copy the verified screenshot to a timestamped `/tmp` path before embedding it. Reusing the same `/tmp/*.png` path can show stale cached images in the chat even when the file on disk is current.
-- Supported mode: dark theme only.
-- Screenshot artifacts are temporary evidence and should not be committed unless explicitly requested.
+Use `RADIUS_NONE` for structural fills and rules, `RADIUS_MICRO` for tiny marks and thumbnails, `RADIUS_INLINE` for quiet inline settings controls, `RADIUS_COMPACT` for rows/chips/hints/inset groups, `RADIUS_CONTROL` for explicit buttons and canvas toolbars, and `RADIUS_PANEL` for floating panels and major overlays.
 
-## Updating This Design System
+Prefer spacing before adding new borders.
 
-Before changing shared UI, classify the change as local-only, reuse, extension, new primitive, token change, pattern change, exception, or conflict.
+Do not nest cards inside sidebar subcards.
 
-Update implementation, the debug preview, and this document together when shared visual semantics change. Local one-offs can stay local, but document intentional exceptions when future work is likely to mistake them for drift.
+### Typography
 
-## Known Drift
+Use `TEXT` for primary labels, `TEXT_MUTED` for secondary values, and `TEXT_SUBTLE` for low-emphasis metadata. Do not use subtle text for required instructions.
 
-- Some reusable paint helpers are private to their modules, which keeps ownership simple but limits direct preview reuse. Prefer extracting a helper only when a real app usage needs it too.
+Keep labels concise and chrome subordinate to the reference material.
 
-## Open Questions
+### Color Semantics
 
-- Should the design-system preview eventually show real sidebar and palette compositions by calling shared paint helpers, or stay focused on token and primitive semantics?
-- Should annotation colors become documented semantic tokens, or remain canvas-domain values owned by annotation behavior?
+`BACKGROUND` is for the canvas and app-level backdrop. Do not use it for grouped panels that need to read as controls.
+
+`SURFACE` is for sidebars, drawers, resting controls, and grouped UI. Do not use it as a selected state.
+
+`PALETTE_SURFACE` is for the command/search palette panel only. Do not generalize it into a second default panel color.
+
+`SURFACE_ELEVATED` is for hover states, selected rows, selected surfaces, and separation inside an existing panel. Do not use it for ordinary resting chrome.
+
+`BORDER` and `BORDER_STRONG` are for quiet separators and stronger control affordance.
+
+`ACCENT` is for active selection, focus, and the few states that need emphasis without adding a new hue. Do not use it for generic decoration.
+
+`ACCENT_BLUE`, `ACCENT_GREEN`, `ACCENT_ORANGE`, and `ACCENT_BRIGHT_ORANGE` are secondary accent candidates for explicit canvas guide or comparison states. Keep them out of generic chrome unless the visual role is named and tested.
+
+`DESTRUCTIVE`, `DESTRUCTIVE_STROKE`, and `DESTRUCTIVE_FILL` are for destructive labels, confirmation borders, and destructive confirmation actions. The base is `#CA3C25`; keep repeated row affordances quiet unless hovered or focused.
+
+### Components And Patterns
+
+Sidebar app-level settings and board navigation live in `src/sidebar.rs`. The sidebar should stay compact, left-anchored, and dismissible. Do not turn it into a persistent inspector unless the product flow changes.
+
+Sidebar board rows are for board switching, rename, delete affordance, active-board indication, and shortcut hints. Treat them as compact navigation rows: active rows get a left rail and quiet fill, idle rows stay transparent, shortcuts read as metadata, and destructive delete language appears only when the full row rect is hovered or focused. Normal rows paint static text; mount text-editing controls only during rename so hover/focus cannot change row geometry. Do not reuse sidebar board rows for generic lists unless the list has board-level navigation semantics.
+
+Sidebar subcards are for grouped settings inside the sidebar. Do not nest cards inside them.
+
+Quiet inline controls are for compact setting choices and binary setting values in read-heavy panels. Only the active state gets a quiet frame; inactive choices should read as available text, not separate pills. Do not use quiet inline controls for canvas toolbars where the target needs to stay visually explicit.
+
+Destructive actions use explicit destructive language and reserved destructive color in context menus and confirmations. Do not make repeated row-level delete affordances loud by default.
+
+Semantic search and library recall live in `src/search.rs` with reusable paint helpers in `src/palette.rs`. The search palette should remain an overlay workflow, not a second sidebar.
+
+Annotation and edit controls live close to the selected item in `src/canvas/render.rs`. Canvas overlays and toolbars should stay compact and avoid obscuring the reference material.
+
+Keep screenshotable debug verification probes in `src/app.rs` when they expose a broadly useful state. Keep one-off inspection probes narrow and remove them after use.
+
+### Interaction, State, And Accessibility
+
+Hover/focus states must not change row geometry, allocated row size, or stack spacing.
+
+Selected rows and surfaces use quiet fill or elevated surface treatment before louder accents. Active focus may use `ACCENT` when the interaction needs clear emphasis.
+
+Repeated row-level destructive affordances stay quiet unless hovered or focused. Confirmation actions use explicit destructive labels and destructive color.
+
+### Motion
+
+No reusable motion language is currently documented. Do not add animation as generic decoration.
+
+### Responsive And Density
+
+SnappyRef is a dense desktop app. Preserve compact controls, predictable chrome, and shortcut-first flows.
+
+Constrained surfaces such as sidebars, palettes, dialogs, and canvas toolbars should fit without text overflow, clipped focus rings, hover layout shift, or unexpected horizontal scrolling.

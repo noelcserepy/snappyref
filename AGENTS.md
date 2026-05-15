@@ -36,7 +36,9 @@ Use [use-windows](docs/skills/use-windows/SKILL.md) when checking, building, tes
 
 ## UI Work
 
-Read `DESIGN_SYSTEM.md` before planning or editing any UI.
+Use the design-system skill before planning or editing any UI, visual semantics, shared components, tokens, styling, layout, motion, or design-system behavior.
+
+Read `DESIGN_SYSTEM.md` before UI work. Treat it as the canonical visual vocabulary for this project.
 
 ## Testing Notes
 
