@@ -5035,7 +5035,7 @@ dependencies = [
 
 [[package]]
 name = "snappyref"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "arboard",
  "bytemuck",
