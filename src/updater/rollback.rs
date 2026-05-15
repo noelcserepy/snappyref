@@ -4,9 +4,9 @@
 //! `.previous` / `.old` sibling next to the live binary (ADR-0015). This
 //! module owns the inverse operation: detect that backup, restore it into
 //! place, and demote the live binary to the backup slot in the same
-//! atomic-ish swap. The CLI flag `snappyref --rollback` and the Settings
-//! Tab "Rollback to previous version" button both go through here so the
-//! observable behavior is identical regardless of entry point.
+//! atomic-ish swap. User-facing rollback is deferred for v1; this module
+//! stays as internal recovery machinery and a tested inverse of the update
+//! swap.
 //!
 //! Invariant: at every observable point during a rollback there is at
 //! least one bootable binary inside `<install_root>` — either the current
@@ -97,11 +97,9 @@ impl std::fmt::Display for RollbackError {
 
 impl std::error::Error for RollbackError {}
 
-/// Entry point for the `snappyref --rollback` CLI flag. Resolves the
-/// install root via the same path the running app uses, performs the
-/// rollback, and renders a short status message to stdout/stderr. The
-/// returned exit code matches the spec: `0` on success, non-zero on any
-/// failure (including "no backup present").
+/// Internal CLI-style entry point retained for diagnostics and tests. The
+/// shipped app does not expose a supported rollback command in v1.
+#[allow(dead_code)]
 pub fn run_cli() -> i32 {
     let install_root = match crate::updater::install_paths::resolve_install_root() {
         Ok(root) => root,

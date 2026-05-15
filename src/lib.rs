@@ -44,14 +44,6 @@ pub fn run() -> eframe::Result<()> {
 
     if std::env::args()
         .skip(1)
-        .any(|argument| argument == "--rollback")
-    {
-        let exit_code = updater::rollback::run_cli();
-        std::process::exit(exit_code);
-    }
-
-    if std::env::args()
-        .skip(1)
         .any(|argument| argument == "--image-import-prepare")
     {
         if let Err(error) = jobs::print_image_import_prepare_output_from_args() {

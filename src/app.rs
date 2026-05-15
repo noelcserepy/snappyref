@@ -2677,11 +2677,17 @@ impl SnappyRefApp {
                 false,
                 Some(format!("Downloading {percent}%")),
             ),
-            UpdateState::Ready { .. } => (
+            UpdateState::Ready { .. } if self.user_update_flow_active => (
                 "Finishing update".to_owned(),
                 false,
                 false,
                 Some("Restarting to finish update...".to_owned()),
+            ),
+            UpdateState::Ready { .. } => (
+                "Restart".to_owned(),
+                true,
+                true,
+                Some("Update ready. Restart to finish.".to_owned()),
             ),
             UpdateState::Failed => (
                 "Check for updates".to_owned(),

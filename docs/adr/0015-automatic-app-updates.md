@@ -30,10 +30,9 @@ Manual updates impose meaningful friction (visit website, download zip, quit app
 
 ### UI
 
-- An update pill appears in the sidebar near the bottom when an Available Update exists.
-- First click opens a small popover showing the new version number, a release-notes link, and `Install` / `Later` buttons.
-- During download the pill becomes a progress indicator in place; on completion it flips to `Restart`.
-- The Settings tab includes an `About / Updates` section: current version, last-checked time, manual `Check for updates`, and a `Rollback to previous version` button (visible only when a backup exists).
+- The Settings tab includes an `About / Updates` section with current version, last-checked time, manual `Check for updates`, update download/install progress, and a `Restart` action when a staged update is ready.
+- A staged update discovered on a later launch stays restartable; it must not render as an in-progress finish state unless the user-initiated update flow is actively applying it.
+- Rollback UI is deferred for v1.
 
 ### Install mechanics
 
@@ -52,8 +51,8 @@ This keeps Windows package shape and update behavior local to `snappyref.exe`. I
 
 ### Rollback
 
-- Exactly one prior version is retained as `SnappyRef.app.previous` / `snappyref.exe.old`. Each update overwrites the prior backup.
-- Rollback is exposed two ways: a CLI flag (`snappyref --rollback`) for the case where the new version cannot launch, and a `Rollback to previous version` button in the Settings tab. No automatic watchdog rollback in v1.
+- Exactly one prior version is retained as `SnappyRef.app.previous` / `snappyref.exe.old` so failed update investigations have a local recovery source. Each update overwrites the prior backup.
+- User-facing rollback is not supported in v1. No Settings rollback button and no automatic watchdog rollback.
 
 ### What is preserved across updates
 

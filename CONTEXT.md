@@ -427,11 +427,11 @@ A published app version newer than the running one, discovered by the app's back
 _Avoid_: Pending update, downloaded update, new release
 
 **Update Pill**:
-The sidebar widget that surfaces an **Available Update**. Visible only in the **Available**, **Downloading**, **Ready**, or **Failed** state; the rest of the time it is **Hidden**. Clicking an Available pill opens the **Update Popover**; clicking a Ready pill triggers the **Restart Into Update** flow.
+The legacy sidebar widget that surfaced an **Available Update** before update controls moved into Settings.
 _Avoid_: Update badge, update banner, update toast
 
 **Update Popover**:
-The small panel anchored to the **Update Pill** that shows the new version, a release-notes link, an Install button, and a Later button. Install starts the in-app download/verify/stage flow.
+The legacy panel anchored to the **Update Pill** before update controls moved into Settings.
 _Avoid_: Update modal, update dialog
 
 **Pending Update Descriptor**:
@@ -447,7 +447,7 @@ The Windows **Restart Into Update** apply path where the running `snappyref.exe`
 _Avoid_: Windows updater helper, installer
 
 **Restart Into Update**:
-The flow that runs when the user clicks Restart on a **Ready** **Update Pill**: save the **User Session**, stop worker child processes, then apply the staged update. macOS writes a **Pending Update Descriptor**, launches the **Updater Helper**, and exits. Windows writes a **Pending Update Descriptor**, launches a temporary **Windows Self-Replace** runner, and exits.
+The flow that runs when the user clicks Restart for a staged app update: save the **User Session**, stop worker child processes, then apply the staged update. macOS writes a **Pending Update Descriptor**, launches the **Updater Helper**, and exits. Windows writes a **Pending Update Descriptor**, launches a temporary **Windows Self-Replace** runner, and exits.
 _Avoid_: Update install, apply update
 
 ### Release operations

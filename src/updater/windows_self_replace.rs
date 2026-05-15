@@ -131,9 +131,14 @@ fn wait_for_swap(current_exe: &Path, staged_exe: &Path) -> Result<(), ApplyError
 pub(crate) fn perform_file_swap(current_exe: &Path, staged_exe: &Path) -> Result<(), ApplyError> {
     let backup = backup_path_for(current_exe);
     let new_slot = new_path_for(current_exe);
+    let previous_backup = previous_backup_path_for(current_exe);
 
     remove_if_exists(&new_slot).map_err(|error| ApplyError::Io {
         step: "remove stale new slot",
+        error,
+    })?;
+    recover_previous_backup(&backup, &previous_backup).map_err(|error| ApplyError::Io {
+        step: "recover previous backup slot",
         error,
     })?;
     fs::copy(staged_exe, &new_slot).map_err(|error| ApplyError::Io {
@@ -145,23 +150,33 @@ pub(crate) fn perform_file_swap(current_exe: &Path, staged_exe: &Path) -> Result
         error,
     })?;
 
-    remove_if_exists(&backup).map_err(|error| ApplyError::Io {
-        step: "remove prior backup",
-        error,
-    })?;
-    fs::rename(current_exe, &backup).map_err(|error| ApplyError::Io {
-        step: "rename current exe to backup",
-        error,
-    })?;
+    if path_exists(&backup) {
+        fs::rename(&backup, &previous_backup).map_err(|error| ApplyError::Io {
+            step: "move prior backup aside",
+            error,
+        })?;
+    }
+
+    if let Err(error) = fs::rename(current_exe, &backup) {
+        let _ = fs::rename(&previous_backup, &backup);
+        let _ = fs::remove_file(&new_slot);
+        return Err(ApplyError::Io {
+            step: "rename current exe to backup",
+            error,
+        });
+    }
 
     if let Err(error) = fs::rename(&new_slot, current_exe) {
         let _ = fs::rename(&backup, current_exe);
+        let _ = fs::rename(&previous_backup, &backup);
+        let _ = fs::remove_file(&new_slot);
         return Err(ApplyError::Io {
             step: "rename new slot to current exe",
             error,
         });
     }
 
+    let _ = fs::remove_file(&previous_backup);
     Ok(())
 }
 
@@ -174,6 +189,10 @@ fn runner_path(install_root: &Path) -> PathBuf {
 
 fn backup_path_for(current_exe: &Path) -> PathBuf {
     sibling_with_suffix(current_exe, ".old")
+}
+
+fn previous_backup_path_for(current_exe: &Path) -> PathBuf {
+    sibling_with_suffix(current_exe, ".old.replacing")
 }
 
 fn new_path_for(current_exe: &Path) -> PathBuf {
@@ -197,6 +216,21 @@ fn remove_if_exists(path: &Path) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
     }
+}
+
+fn recover_previous_backup(backup: &Path, previous_backup: &Path) -> io::Result<()> {
+    if !path_exists(previous_backup) {
+        return Ok(());
+    }
+    if path_exists(backup) {
+        remove_if_exists(previous_backup)
+    } else {
+        fs::rename(previous_backup, backup)
+    }
+}
+
+fn path_exists(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok()
 }
 
 fn sync_file(path: &Path) -> io::Result<()> {
@@ -265,6 +299,50 @@ mod tests {
 
         assert_eq!(fs::read(&current).unwrap(), b"new-exe");
         assert_eq!(fs::read(&backup).unwrap(), b"old-exe");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_swap_preserves_prior_backup_when_current_cannot_be_renamed() {
+        let dir = unique_temp_dir("preserve-backup-on-failure");
+        let current = dir.join("snappyref.exe");
+        let staged = dir.join("updates/staging-1.0.0/SnappyRef/snappyref.exe");
+        let backup = dir.join("snappyref.exe.old");
+        fs::create_dir_all(staged.parent().unwrap()).unwrap();
+        fs::write(&staged, b"new-exe").unwrap();
+        fs::write(&backup, b"older-backup").unwrap();
+
+        let error = perform_file_swap(&current, &staged).unwrap_err();
+
+        assert!(
+            error.to_string().contains("rename current exe to backup"),
+            "got {error}"
+        );
+        assert_eq!(fs::read(&backup).unwrap(), b"older-backup");
+        assert!(!dir.join("snappyref.exe.old.replacing").exists());
+        assert!(!dir.join("snappyref.exe.new").exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_swap_recovers_interrupted_prior_backup_move() {
+        let dir = unique_temp_dir("recover-prior-backup");
+        let current = dir.join("snappyref.exe");
+        let staged = dir.join("updates/staging-1.0.0/SnappyRef/snappyref.exe");
+        let backup = dir.join("snappyref.exe.old");
+        let replacing = dir.join("snappyref.exe.old.replacing");
+        fs::create_dir_all(staged.parent().unwrap()).unwrap();
+        fs::write(&current, b"old-exe").unwrap();
+        fs::write(&staged, b"new-exe").unwrap();
+        fs::write(&replacing, b"older-backup").unwrap();
+
+        perform_file_swap(&current, &staged).unwrap();
+
+        assert_eq!(fs::read(&current).unwrap(), b"new-exe");
+        assert_eq!(fs::read(&backup).unwrap(), b"old-exe");
+        assert!(!replacing.exists());
 
         let _ = fs::remove_dir_all(&dir);
     }
