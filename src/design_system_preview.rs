@@ -102,8 +102,7 @@ fn token_strip(ui: &mut egui::Ui) {
                     ("Palette", crate::theme::PALETTE_SURFACE),
                     ("Accent", crate::theme::ACCENT),
                     ("Blue guide", crate::theme::ACCENT_BLUE),
-                    ("Green guide", crate::theme::ACCENT_GREEN),
-                    ("Indexed", crate::theme::INDEXED_DOT),
+                    ("Green", crate::theme::GREEN),
                     ("Destructive", crate::theme::DESTRUCTIVE),
                 ] {
                     token_chip(ui, name, color);

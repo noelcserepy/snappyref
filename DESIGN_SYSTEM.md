@@ -61,9 +61,9 @@ Keep labels concise and chrome subordinate to the reference material.
 
 `ACCENT` is for active selection, focus, and the few states that need emphasis without adding a new hue. Do not use it for generic decoration.
 
-`ACCENT_BLUE`, `ACCENT_GREEN`, `ACCENT_ORANGE`, and `ACCENT_BRIGHT_ORANGE` are secondary accent candidates for explicit canvas guide or comparison states. Keep them out of generic chrome unless the visual role is named and tested.
+`ACCENT_BLUE`, `ACCENT_ORANGE`, and `ACCENT_BRIGHT_ORANGE` are secondary accent candidates for explicit canvas guide or comparison states. Keep them out of generic chrome unless the visual role is named and tested.
 
-`INDEXED_DOT` is a semantic-search status marker for indexed/ready search state in the palette footer. Do not use it as a generic success color or decorative green.
+`GREEN` is the only green token. Use it for green guide states and indexed/ready semantic-search status in the palette footer. Do not create a second success or decorative green.
 
 `DESTRUCTIVE`, `DESTRUCTIVE_STROKE`, and `DESTRUCTIVE_FILL` are for destructive labels, confirmation borders, and destructive confirmation actions. The base is `#CA3C25`; keep repeated row affordances quiet unless hovered or focused.
 

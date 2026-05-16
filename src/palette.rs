@@ -877,11 +877,8 @@ pub(crate) fn paint_palette_footer(
                             let dot_rect = ui
                                 .allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover())
                                 .0;
-                            ui.painter().circle_filled(
-                                dot_rect.center(),
-                                3.0,
-                                crate::theme::INDEXED_DOT,
-                            );
+                            ui.painter()
+                                .circle_filled(dot_rect.center(), 3.0, crate::theme::GREEN);
                             ui.add_sized(
                                 egui::vec2(
                                     PALETTE_FOOTER_STATUS_WIDTH - 6.0 - crate::theme::SPACE_2,
