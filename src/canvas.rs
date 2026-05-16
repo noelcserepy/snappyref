@@ -50,6 +50,10 @@ const BACKGROUND_MAX_SCREEN_STEP: f32 = 112.0;
 const BACKGROUND_MIN_LOD_LEVEL: i32 = -12;
 const BACKGROUND_MAX_LOD_LEVEL: i32 = 12;
 const IMAGE_DETAIL_PROMOTION_THRESHOLD: f32 = 0.85;
+const SETTLE_BLOCK_GRACE_SCREEN: f32 = 1.0;
+const COMPACT_NORMALIZE_ABSOLUTE_THRESHOLD: f32 = 1.0;
+const COMPACT_NORMALIZE_RELATIVE_THRESHOLD: f32 = 0.05;
+const COMPACT_NORMALIZE_OCCUPANCY_GAIN: f32 = 0.025;
 
 pub struct CanvasState {
     pan: egui::Vec2,
@@ -263,6 +267,27 @@ struct SelectedLayoutItem {
     id: i64,
     x: f32,
     y: f32,
+    width: f32,
+    height: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SettleDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+#[derive(Clone, Debug)]
+struct CompactInputItem {
+    layout: SelectedLayoutItem,
+}
+
+#[derive(Clone, Debug)]
+struct UserCompactLayout {
+    placements: Vec<(i64, egui::Pos2)>,
+    scale_factors: Vec<(i64, f32)>,
     width: f32,
     height: f32,
 }
@@ -562,6 +587,181 @@ fn vertical_layout(
     Some((placements, max_width, total_height))
 }
 
+fn directional_settle_layout(
+    items: &[SelectedLayoutItem],
+    direction: SettleDirection,
+    gap: f32,
+    cross_axis_grace: f32,
+) -> Option<Vec<(i64, egui::Pos2)>> {
+    let bounds = layout_bounds_for_items(items)?;
+    let blocking_gap = (gap - cross_axis_grace).max(0.0);
+    let mut sorted = items.to_vec();
+    sorted.sort_by(|left, right| settle_order(left, right, direction));
+
+    let mut placements = Vec::with_capacity(sorted.len());
+    let mut settled_rects = Vec::with_capacity(sorted.len());
+
+    for item in sorted {
+        let center =
+            settled_center_for_item(&item, direction, bounds, gap, blocking_gap, &settled_rects);
+        settled_rects.push(egui::Rect::from_center_size(
+            center,
+            egui::vec2(item.width, item.height),
+        ));
+        placements.push((item.id, center));
+    }
+
+    Some(placements)
+}
+
+fn layout_bounds_for_items(items: &[SelectedLayoutItem]) -> Option<egui::Rect> {
+    let mut bounds = egui::Rect::NOTHING;
+    let mut found = false;
+    for item in items {
+        let rect = egui::Rect::from_center_size(
+            egui::pos2(item.x, item.y),
+            egui::vec2(item.width, item.height),
+        );
+        if found {
+            bounds = bounds.union(rect);
+        } else {
+            bounds = rect;
+            found = true;
+        }
+    }
+    found.then_some(bounds)
+}
+
+fn settle_order(
+    left: &SelectedLayoutItem,
+    right: &SelectedLayoutItem,
+    direction: SettleDirection,
+) -> std::cmp::Ordering {
+    let left_rect = layout_item_rect(left);
+    let right_rect = layout_item_rect(right);
+    match direction {
+        SettleDirection::Right => right_rect
+            .right()
+            .total_cmp(&left_rect.right())
+            .then_with(|| right.x.total_cmp(&left.x))
+            .then_with(|| left.id.cmp(&right.id)),
+        SettleDirection::Left => left_rect
+            .left()
+            .total_cmp(&right_rect.left())
+            .then_with(|| left.x.total_cmp(&right.x))
+            .then_with(|| left.id.cmp(&right.id)),
+        SettleDirection::Down => right_rect
+            .bottom()
+            .total_cmp(&left_rect.bottom())
+            .then_with(|| right.y.total_cmp(&left.y))
+            .then_with(|| left.id.cmp(&right.id)),
+        SettleDirection::Up => left_rect
+            .top()
+            .total_cmp(&right_rect.top())
+            .then_with(|| left.y.total_cmp(&right.y))
+            .then_with(|| left.id.cmp(&right.id)),
+    }
+}
+
+fn layout_item_rect(item: &SelectedLayoutItem) -> egui::Rect {
+    egui::Rect::from_center_size(
+        egui::pos2(item.x, item.y),
+        egui::vec2(item.width, item.height),
+    )
+}
+
+fn settled_center_for_item(
+    item: &SelectedLayoutItem,
+    direction: SettleDirection,
+    bounds: egui::Rect,
+    gap: f32,
+    blocking_gap: f32,
+    settled_rects: &[egui::Rect],
+) -> egui::Pos2 {
+    let half_width = item.width * 0.5;
+    let half_height = item.height * 0.5;
+    match direction {
+        SettleDirection::Right => {
+            let mut x = bounds.right() - half_width;
+            let item_top = item.y - half_height;
+            let item_bottom = item.y + half_height;
+            for blocker in settled_rects {
+                if intervals_within_gap(
+                    item_top,
+                    item_bottom,
+                    blocker.top(),
+                    blocker.bottom(),
+                    blocking_gap,
+                ) {
+                    x = x.min(blocker.left() - gap - half_width);
+                }
+            }
+            egui::pos2(x, item.y)
+        }
+        SettleDirection::Left => {
+            let mut x = bounds.left() + half_width;
+            let item_top = item.y - half_height;
+            let item_bottom = item.y + half_height;
+            for blocker in settled_rects {
+                if intervals_within_gap(
+                    item_top,
+                    item_bottom,
+                    blocker.top(),
+                    blocker.bottom(),
+                    blocking_gap,
+                ) {
+                    x = x.max(blocker.right() + gap + half_width);
+                }
+            }
+            egui::pos2(x, item.y)
+        }
+        SettleDirection::Down => {
+            let mut y = bounds.bottom() - half_height;
+            let item_left = item.x - half_width;
+            let item_right = item.x + half_width;
+            for blocker in settled_rects {
+                if intervals_within_gap(
+                    item_left,
+                    item_right,
+                    blocker.left(),
+                    blocker.right(),
+                    blocking_gap,
+                ) {
+                    y = y.min(blocker.top() - gap - half_height);
+                }
+            }
+            egui::pos2(item.x, y)
+        }
+        SettleDirection::Up => {
+            let mut y = bounds.top() + half_height;
+            let item_left = item.x - half_width;
+            let item_right = item.x + half_width;
+            for blocker in settled_rects {
+                if intervals_within_gap(
+                    item_left,
+                    item_right,
+                    blocker.left(),
+                    blocker.right(),
+                    blocking_gap,
+                ) {
+                    y = y.max(blocker.bottom() + gap + half_height);
+                }
+            }
+            egui::pos2(item.x, y)
+        }
+    }
+}
+
+fn intervals_within_gap(
+    left_min: f32,
+    left_max: f32,
+    right_min: f32,
+    right_max: f32,
+    gap: f32,
+) -> bool {
+    left_min <= right_max + gap && right_min <= left_max + gap
+}
+
 fn rotated_visual_size(width: f32, height: f32, rotation: f32) -> egui::Vec2 {
     let sin = rotation.sin().abs();
     let cos = rotation.cos().abs();
@@ -583,6 +783,7 @@ enum PackHeuristic {
     BestArea,
 }
 
+#[derive(Clone)]
 struct CompactCandidate {
     placements: Vec<(i64, egui::Pos2)>,
     width: f32,
@@ -597,6 +798,11 @@ fn best_compact_layout(
     items: &[SelectedLayoutItem],
     gap: f32,
 ) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
+    best_compact_candidate(items, gap)
+        .map(|candidate| (candidate.placements, candidate.width, candidate.height))
+}
+
+fn best_compact_candidate(items: &[SelectedLayoutItem], gap: f32) -> Option<CompactCandidate> {
     if items.is_empty() {
         return None;
     }
@@ -633,7 +839,275 @@ fn best_compact_layout(
         }
     }
 
-    best_layout.map(|candidate| (candidate.placements, candidate.width, candidate.height))
+    best_layout
+}
+
+fn best_user_compact_layout(items: &[CompactInputItem], gap: f32) -> Option<UserCompactLayout> {
+    let baseline = compact_variant_result(
+        items,
+        vec![(1.0, ScaleCandidateKind::Original); items.len()],
+        gap,
+    )?;
+    let width_variant = compact_axis_normalized_variant(items, Axis::Width, gap);
+    let height_variant = compact_axis_normalized_variant(items, Axis::Height, gap);
+    let mut best = baseline.clone();
+
+    for candidate in [width_variant, height_variant].into_iter().flatten() {
+        if compact_normalized_variant_beats(&candidate, &best, &baseline) {
+            best = candidate;
+        }
+    }
+
+    Some(UserCompactLayout {
+        placements: best.candidate.placements,
+        scale_factors: best
+            .scale_factors
+            .into_iter()
+            .enumerate()
+            .map(|(index, factor)| (items[index].layout.id, factor))
+            .collect(),
+        width: best.candidate.width,
+        height: best.candidate.height,
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Axis {
+    Width,
+    Height,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScaleCandidateKind {
+    Original,
+    Tiny,
+    Downscale,
+    Upscale,
+}
+
+#[derive(Clone)]
+struct CompactVariantResult {
+    candidate: CompactCandidate,
+    scale_factors: Vec<f32>,
+    changed_count: usize,
+    free_changes_only: bool,
+    total_scale_delta: f32,
+    upscale_delta: f32,
+}
+
+#[derive(Clone, Debug)]
+struct SizeBucket {
+    preferred: f32,
+    members: usize,
+}
+
+fn compact_axis_normalized_variant(
+    items: &[CompactInputItem],
+    axis: Axis,
+    gap: f32,
+) -> Option<CompactVariantResult> {
+    let axis_buckets = compact_size_buckets(items, axis);
+    let other_buckets = compact_size_buckets(items, opposite_axis(axis));
+    let factors = items
+        .iter()
+        .map(|item| compact_axis_scale_factor(item, axis, &axis_buckets, &other_buckets))
+        .collect::<Vec<_>>();
+
+    if factors
+        .iter()
+        .all(|(factor, _)| (*factor - 1.0).abs() <= f32::EPSILON)
+    {
+        return None;
+    }
+
+    compact_variant_result(items, factors, gap)
+}
+
+fn compact_variant_result(
+    items: &[CompactInputItem],
+    factors: Vec<(f32, ScaleCandidateKind)>,
+    gap: f32,
+) -> Option<CompactVariantResult> {
+    let layout_items = items
+        .iter()
+        .zip(factors.iter())
+        .map(|(item, (factor, _))| SelectedLayoutItem {
+            id: item.layout.id,
+            x: item.layout.x,
+            y: item.layout.y,
+            width: item.layout.width * *factor,
+            height: item.layout.height * *factor,
+        })
+        .collect::<Vec<_>>();
+    let candidate = best_compact_candidate(&layout_items, gap)?;
+    let mut changed_count = 0;
+    let mut free_changes_only = true;
+    let mut total_scale_delta = 0.0;
+    let mut upscale_delta = 0.0;
+    let scale_factors = factors
+        .into_iter()
+        .map(|(factor, kind)| {
+            let delta = (factor - 1.0).abs();
+            if delta > 0.001 {
+                changed_count += 1;
+                if kind != ScaleCandidateKind::Tiny {
+                    free_changes_only = false;
+                    total_scale_delta += delta;
+                }
+                if kind == ScaleCandidateKind::Upscale {
+                    upscale_delta += delta;
+                }
+            }
+            factor
+        })
+        .collect::<Vec<_>>();
+
+    Some(CompactVariantResult {
+        candidate,
+        scale_factors,
+        changed_count,
+        free_changes_only,
+        total_scale_delta,
+        upscale_delta,
+    })
+}
+
+fn compact_normalized_variant_beats(
+    candidate: &CompactVariantResult,
+    best: &CompactVariantResult,
+    baseline: &CompactVariantResult,
+) -> bool {
+    if candidate.changed_count == 0 {
+        return false;
+    }
+    let earned_by_density = candidate.candidate.occupancy
+        >= baseline.candidate.occupancy + COMPACT_NORMALIZE_OCCUPANCY_GAIN;
+    let earned_by_free_cleanup = candidate.free_changes_only
+        && candidate.candidate.occupancy + 0.001 >= baseline.candidate.occupancy;
+    if !earned_by_density && !earned_by_free_cleanup {
+        return false;
+    }
+
+    candidate.candidate.occupancy > best.candidate.occupancy + 0.001
+        || ((candidate.candidate.occupancy - best.candidate.occupancy).abs() <= 0.001
+            && (candidate.changed_count < best.changed_count
+                || (candidate.changed_count == best.changed_count
+                    && (candidate.total_scale_delta < best.total_scale_delta - 0.001
+                        || ((candidate.total_scale_delta - best.total_scale_delta).abs()
+                            <= 0.001
+                            && candidate.upscale_delta < best.upscale_delta - 0.001)))))
+}
+
+fn compact_axis_scale_factor(
+    item: &CompactInputItem,
+    axis: Axis,
+    axis_buckets: &[SizeBucket],
+    other_buckets: &[SizeBucket],
+) -> (f32, ScaleCandidateKind) {
+    let dimension = compact_item_dimension(item, axis);
+    let Some(bucket) = axis_buckets
+        .iter()
+        .filter(|bucket| bucket.members >= 2)
+        .filter(|bucket| compact_dimensions_near(dimension, bucket.preferred))
+        .min_by(|left, right| {
+            (dimension - left.preferred)
+                .abs()
+                .total_cmp(&(dimension - right.preferred).abs())
+        })
+    else {
+        return (1.0, ScaleCandidateKind::Original);
+    };
+
+    if dimension <= f32::EPSILON {
+        return (1.0, ScaleCandidateKind::Original);
+    }
+    let factor = bucket.preferred / dimension;
+    if (factor - 1.0).abs() <= 0.001
+        || !compact_other_axis_remains_stable(item, opposite_axis(axis), factor, other_buckets)
+    {
+        return (1.0, ScaleCandidateKind::Original);
+    }
+    let kind = if (bucket.preferred - dimension).abs() <= COMPACT_NORMALIZE_ABSOLUTE_THRESHOLD {
+        ScaleCandidateKind::Tiny
+    } else if factor < 1.0 {
+        ScaleCandidateKind::Downscale
+    } else {
+        ScaleCandidateKind::Upscale
+    };
+    (factor, kind)
+}
+
+fn compact_other_axis_remains_stable(
+    item: &CompactInputItem,
+    other_axis: Axis,
+    factor: f32,
+    other_buckets: &[SizeBucket],
+) -> bool {
+    let original = compact_item_dimension(item, other_axis);
+    let normalized = original * factor;
+    compact_dimensions_near(original, normalized)
+        || other_buckets
+            .iter()
+            .filter(|bucket| bucket.members >= 2)
+            .any(|bucket| compact_dimensions_near(normalized, bucket.preferred))
+}
+
+fn compact_size_buckets(items: &[CompactInputItem], axis: Axis) -> Vec<SizeBucket> {
+    let mut dimensions = items
+        .iter()
+        .map(|item| compact_item_dimension(item, axis))
+        .filter(|dimension| dimension.is_finite() && *dimension > 0.0)
+        .collect::<Vec<_>>();
+    dimensions.sort_by(|left, right| left.total_cmp(right));
+
+    let mut buckets = Vec::new();
+    let mut current = Vec::new();
+    for dimension in dimensions {
+        if current
+            .last()
+            .is_some_and(|last| !compact_dimensions_near(*last, dimension))
+        {
+            buckets.push(size_bucket_from_dimensions(&current));
+            current.clear();
+        }
+        current.push(dimension);
+    }
+    if !current.is_empty() {
+        buckets.push(size_bucket_from_dimensions(&current));
+    }
+    buckets
+}
+
+fn size_bucket_from_dimensions(dimensions: &[f32]) -> SizeBucket {
+    let preferred = if dimensions.len() == 2 {
+        dimensions[1]
+    } else {
+        dimensions[dimensions.len() / 2]
+    };
+    SizeBucket {
+        preferred,
+        members: dimensions.len(),
+    }
+}
+
+fn compact_item_dimension(item: &CompactInputItem, axis: Axis) -> f32 {
+    match axis {
+        Axis::Width => item.layout.width,
+        Axis::Height => item.layout.height,
+    }
+}
+
+fn opposite_axis(axis: Axis) -> Axis {
+    match axis {
+        Axis::Width => Axis::Height,
+        Axis::Height => Axis::Width,
+    }
+}
+
+fn compact_dimensions_near(left: f32, right: f32) -> bool {
+    let difference = (left - right).abs();
+    difference <= COMPACT_NORMALIZE_ABSOLUTE_THRESHOLD
+        || difference / right.abs().max(1.0) <= COMPACT_NORMALIZE_RELATIVE_THRESHOLD
 }
 
 pub(crate) fn compact_layout_for_sizes(
@@ -1582,10 +2056,11 @@ mod tests {
     use super::{
         AnnotationDraftState, CanvasCropRequest, CanvasImage, CanvasState, CanvasTexture,
         FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, PixelCropRect,
-        SelectedLayoutItem, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
+        SelectedLayoutItem, SettleDirection, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
         TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion, TextboxResizeHandle,
         balanced_grid_layout_for_sizes, best_compact_layout, compact_layout_for_sizes,
-        horizontal_layout, rotated_visual_size, vertical_layout,
+        directional_settle_layout, horizontal_layout, layout_bounds_for_items, rotated_visual_size,
+        vertical_layout,
     };
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
@@ -3941,6 +4416,116 @@ mod tests {
     }
 
     #[test]
+    fn directional_settle_right_moves_sparse_rows_to_wall() {
+        let items = vec![
+            positioned_layout_item(1, 50.0, 50.0, 100.0, 40.0),
+            positioned_layout_item(2, 170.0, 50.0, 100.0, 40.0),
+            positioned_layout_item(3, 50.0, 160.0, 100.0, 40.0),
+        ];
+        let gap = 20.0;
+
+        let placements =
+            directional_settle_layout(&items, SettleDirection::Right, gap, 1.0).unwrap();
+
+        let top_right = placement_rect(&items, &placements, 2);
+        let top_left = placement_rect(&items, &placements, 1);
+        let bottom_lone = placement_rect(&items, &placements, 3);
+
+        assert_eq!(top_right.right(), 220.0);
+        assert_eq!(top_left.right() + gap, top_right.left());
+        assert_eq!(bottom_lone.right(), 220.0);
+    }
+
+    #[test]
+    fn directional_settle_uses_gap_expanded_cross_axis_blocking() {
+        let items = vec![
+            positioned_layout_item(1, 150.0, 50.0, 80.0, 40.0),
+            positioned_layout_item(2, 20.0, 105.0, 80.0, 40.0),
+        ];
+        let gap = 20.0;
+
+        let placements =
+            directional_settle_layout(&items, SettleDirection::Right, gap, 1.0).unwrap();
+
+        let settled_first = placement_rect(&items, &placements, 1);
+        let settled_second = placement_rect(&items, &placements, 2);
+        assert_eq!(settled_first.right(), 190.0);
+        assert_eq!(settled_second.right() + gap, settled_first.left());
+    }
+
+    #[test]
+    fn directional_settle_grace_does_not_block_rows_at_exact_gap() {
+        let items = vec![
+            positioned_layout_item(1, 150.0, 50.0, 80.0, 40.0),
+            positioned_layout_item(2, 20.0, 110.0, 80.0, 40.0),
+        ];
+        let gap = 20.0;
+
+        let placements =
+            directional_settle_layout(&items, SettleDirection::Right, gap, 1.0).unwrap();
+
+        let settled_first = placement_rect(&items, &placements, 1);
+        let settled_second = placement_rect(&items, &placements, 2);
+        assert_eq!(settled_first.right(), 190.0);
+        assert_eq!(settled_second.right(), 190.0);
+    }
+
+    #[test]
+    fn directional_settle_keeps_target_edge_fixed_and_can_shrink_opposite_edge() {
+        let items = vec![
+            positioned_layout_item(1, 50.0, 50.0, 80.0, 40.0),
+            positioned_layout_item(2, 250.0, 50.0, 80.0, 40.0),
+        ];
+        let original_bounds = layout_bounds_for_items(&items).unwrap();
+
+        let placements =
+            directional_settle_layout(&items, SettleDirection::Right, 20.0, 1.0).unwrap();
+        let settled_items = placements
+            .iter()
+            .map(|(id, center)| {
+                let item = items.iter().find(|item| item.id == *id).unwrap();
+                positioned_layout_item(*id, center.x, center.y, item.width, item.height)
+            })
+            .collect::<Vec<_>>();
+        let settled_bounds = layout_bounds_for_items(&settled_items).unwrap();
+
+        assert_eq!(settled_bounds.right(), original_bounds.right());
+        assert!(settled_bounds.left() > original_bounds.left());
+    }
+
+    #[test]
+    fn directional_settle_layout_is_idempotent() {
+        let items = vec![
+            positioned_layout_item(1, 10.0, 50.0, 100.0, 40.0),
+            positioned_layout_item(2, 170.0, 50.0, 100.0, 40.0),
+            positioned_layout_item(3, 50.0, 160.0, 100.0, 40.0),
+        ];
+        let gap = 20.0;
+        let first = directional_settle_layout(&items, SettleDirection::Right, gap, 1.0).unwrap();
+        let settled_items = first
+            .iter()
+            .map(|(id, center)| {
+                let item = items.iter().find(|item| item.id == *id).unwrap();
+                positioned_layout_item(*id, center.x, center.y, item.width, item.height)
+            })
+            .collect::<Vec<_>>();
+
+        let second =
+            directional_settle_layout(&settled_items, SettleDirection::Right, gap, 1.0).unwrap();
+
+        assert_eq!(first.len(), second.len());
+        for (first_id, first_pos) in &first {
+            let second_pos = second
+                .iter()
+                .find(|(second_id, _)| second_id == first_id)
+                .map(|(_, pos)| *pos)
+                .unwrap();
+            assert!((first_pos.x - second_pos.x).abs() < 0.001);
+            assert!((first_pos.y - second_pos.y).abs() < 0.001);
+        }
+    }
+
+    #[test]
     fn compact_layout_is_more_square_than_row_or_column_extremes() {
         let items = vec![
             layout_item(1, 180.0, 90.0),
@@ -4180,6 +4765,103 @@ mod tests {
     }
 
     #[test]
+    fn compact_arrangement_normalizes_one_world_unit_width_difference() {
+        let mut state = CanvasState::default();
+        let gap = 12.0;
+
+        eframe::egui::__run_test_ui(|ui| {
+            push_test_image(
+                ui,
+                &mut state,
+                1,
+                100,
+                100,
+                1.0,
+                eframe::egui::pos2(0.0, 0.0),
+            );
+            push_test_image(
+                ui,
+                &mut state,
+                2,
+                101,
+                100,
+                1.0,
+                eframe::egui::pos2(130.0, 0.0),
+            );
+        });
+        state.select_items(&[1, 2]);
+
+        assert_eq!(state.arrange_selected_compact(gap), 2);
+
+        let first = state
+            .document
+            .images
+            .iter()
+            .find(|image| image.record.item.id == 1)
+            .unwrap();
+        let second = state
+            .document
+            .images
+            .iter()
+            .find(|image| image.record.item.id == 2)
+            .unwrap();
+        let first_width = first.record.asset.width as f32 * first.record.item.scale;
+        let second_width = second.record.asset.width as f32 * second.record.item.scale;
+        assert!((first_width - second_width).abs() < 0.001);
+    }
+
+    #[test]
+    fn compact_arrangement_rejects_width_normalization_that_disrupts_height() {
+        let mut state = CanvasState::default();
+        let gap = 12.0;
+
+        eframe::egui::__run_test_ui(|ui| {
+            push_test_image(
+                ui,
+                &mut state,
+                1,
+                10,
+                1000,
+                1.0,
+                eframe::egui::pos2(0.0, 0.0),
+            );
+            push_test_image(
+                ui,
+                &mut state,
+                2,
+                11,
+                1000,
+                1.0,
+                eframe::egui::pos2(40.0, 0.0),
+            );
+        });
+        state.select_items(&[1, 2]);
+
+        assert_eq!(state.arrange_selected_compact(gap), 2);
+
+        let first = state
+            .document
+            .images
+            .iter()
+            .find(|image| image.record.item.id == 1)
+            .unwrap();
+        assert!((first.record.item.scale - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn compact_preview_layout_does_not_normalize_sizes() {
+        let sizes = [
+            eframe::egui::vec2(100.0, 100.0),
+            eframe::egui::vec2(101.0, 100.0),
+        ];
+
+        let placeholders = compact_layout_for_sizes(&sizes, 12.0, eframe::egui::pos2(0.0, 0.0));
+
+        assert_eq!(placeholders[0].1, sizes[0]);
+        assert_eq!(placeholders[1].1, sizes[1]);
+    }
+
+    #[test]
     fn compact_arrangement_is_idempotent_for_same_selection() {
         let mut state = CanvasState::default();
         let gap = 12.0;
@@ -4226,7 +4908,7 @@ mod tests {
 
         assert_eq!(state.arrange_selected_compact(gap), 4);
         let first_positions = selected_image_positions(&state);
-        assert_eq!(state.arrange_selected_compact(gap), 4);
+        assert_eq!(state.arrange_selected_compact(gap), 0);
         let second_positions = selected_image_positions(&state);
 
         assert_eq!(first_positions.len(), second_positions.len());
@@ -4569,10 +5251,20 @@ mod tests {
     }
 
     fn layout_item(id: i64, width: f32, height: f32) -> SelectedLayoutItem {
+        positioned_layout_item(id, 0.0, 0.0, width, height)
+    }
+
+    fn positioned_layout_item(
+        id: i64,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> SelectedLayoutItem {
         SelectedLayoutItem {
             id,
-            x: 0.0,
-            y: 0.0,
+            x,
+            y,
             width,
             height,
         }

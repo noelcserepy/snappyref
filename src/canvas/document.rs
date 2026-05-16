@@ -1369,23 +1369,45 @@ impl CanvasState {
     }
 
     pub fn arrange_selected_compact(&mut self, gap: f32) -> usize {
-        let items = self.selected_layout_items();
+        let items = self.selected_compact_input_items();
         if items.len() <= 1 {
             return items.len();
         }
 
         let current_center = self
-            .source_center_for_layout_items(&items)
+            .source_center_for_layout_items(
+                &items
+                    .iter()
+                    .map(|item| item.layout.clone())
+                    .collect::<Vec<_>>(),
+            )
             .unwrap_or(egui::Pos2::ZERO);
 
-        let Some((placements, width, height)) = super::best_compact_layout(&items, gap) else {
+        let Some(layout) = super::best_user_compact_layout(&items, gap) else {
             return 0;
         };
-        let local_center = egui::pos2(width * 0.5, height * 0.5);
-        self.apply_arrangement(
-            placements,
+        let local_center = egui::pos2(layout.width * 0.5, layout.height * 0.5);
+        self.apply_compact_arrangement(
+            layout.placements,
+            layout.scale_factors,
             current_center.to_vec2() - local_center.to_vec2(),
         )
+    }
+
+    pub fn settle_selected(&mut self, direction: super::SettleDirection, gap: f32) -> usize {
+        let items = self.selected_layout_items();
+        if items.len() <= 1 {
+            return items.len();
+        }
+
+        let cross_axis_grace =
+            super::SETTLE_BLOCK_GRACE_SCREEN / self.zoom.max(super::MIN_CANVAS_ZOOM);
+        let Some(placements) =
+            super::directional_settle_layout(&items, direction, gap, cross_axis_grace)
+        else {
+            return 0;
+        };
+        self.apply_arrangement_if_changed(placements, egui::Vec2::ZERO)
     }
 
     pub fn center_selected_placements_on(&mut self, center_world: egui::Pos2) -> usize {
@@ -1925,6 +1947,30 @@ impl CanvasState {
             .collect()
     }
 
+    fn selected_compact_input_items(&self) -> Vec<super::CompactInputItem> {
+        self.document
+            .images
+            .iter()
+            .filter(|image| self.is_selected(image.record.item.id))
+            .map(|image| {
+                let visual_size = super::rotated_visual_size(
+                    image.record.asset.width as f32 * image.record.item.scale.max(0.01),
+                    image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+                    image.record.item.rotation,
+                );
+                super::CompactInputItem {
+                    layout: SelectedLayoutItem {
+                        id: image.record.item.id,
+                        x: image.record.item.x,
+                        y: image.record.item.y,
+                        width: visual_size.x,
+                        height: visual_size.y,
+                    },
+                }
+            })
+            .collect()
+    }
+
     fn layout_items_for_item_ids(&self, item_ids: &[i64]) -> Vec<SelectedLayoutItem> {
         self.document
             .images
@@ -2007,6 +2053,82 @@ impl CanvasState {
         }
 
         arranged_ids.len()
+    }
+
+    fn apply_arrangement_if_changed(
+        &mut self,
+        placements: Vec<(i64, egui::Pos2)>,
+        offset: egui::Vec2,
+    ) -> usize {
+        let mut arranged_ids = Vec::with_capacity(placements.len());
+
+        for (item_id, local_center) in placements {
+            if let Some(image) = self
+                .document
+                .images
+                .iter_mut()
+                .find(|image| image.record.item.id == item_id)
+            {
+                let world_center = local_center + offset;
+                if (image.record.item.x - world_center.x).abs() <= 0.001
+                    && (image.record.item.y - world_center.y).abs() <= 0.001
+                {
+                    continue;
+                }
+                image.record.item.x = world_center.x;
+                image.record.item.y = world_center.y;
+                arranged_ids.push(item_id);
+            }
+        }
+
+        for item_id in &arranged_ids {
+            self.mark_dirty(*item_id);
+        }
+
+        arranged_ids.len()
+    }
+
+    fn apply_compact_arrangement(
+        &mut self,
+        placements: Vec<(i64, egui::Pos2)>,
+        scale_factors: Vec<(i64, f32)>,
+        offset: egui::Vec2,
+    ) -> usize {
+        let mut changed_ids = Vec::with_capacity(placements.len());
+
+        for (item_id, local_center) in placements {
+            if let Some(image) = self
+                .document
+                .images
+                .iter_mut()
+                .find(|image| image.record.item.id == item_id)
+            {
+                let world_center = local_center + offset;
+                let scale_factor = scale_factors
+                    .iter()
+                    .find(|(scale_item_id, _)| *scale_item_id == item_id)
+                    .map(|(_, factor)| *factor)
+                    .unwrap_or(1.0);
+                let next_scale = (image.record.item.scale * scale_factor).max(0.01);
+                let position_changed = (image.record.item.x - world_center.x).abs() > 0.001
+                    || (image.record.item.y - world_center.y).abs() > 0.001;
+                let scale_changed = (image.record.item.scale - next_scale).abs() > 0.001;
+                if !position_changed && !scale_changed {
+                    continue;
+                }
+
+                image.record.item.x = world_center.x;
+                image.record.item.y = world_center.y;
+                image.record.item.scale = next_scale;
+                changed_ids.push(item_id);
+            }
+        }
+
+        for item_id in &changed_ids {
+            self.mark_dirty(*item_id);
+        }
+
+        changed_ids.len()
     }
 
     pub fn apply_target_area_to_selected_images(&mut self, target_area: f32) -> usize {
