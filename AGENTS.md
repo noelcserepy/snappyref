@@ -8,6 +8,7 @@ Read these before normal work:
 2. `docs/adr/*.md`, if any exist.
 3. `docs/skills/app-inspection/SKILL.md`, if it exists.
 4. `docs/skills/perf-profiling/SKILL.md`, if it exists.
+5. `docs/skills/patchnotes/SKILL.md`, if it exists.
 
 ## Project Memory Maintenance
 
@@ -25,6 +26,8 @@ Use [app-inspection](docs/skills/app-inspection/SKILL.md) when inspecting the ap
 
 Use [perf-profiling](docs/skills/perf-profiling/SKILL.md) when measuring or improving startup, import, embedding, idle CPU, or memory performance.
 
+Use [patchnotes](docs/skills/patchnotes/SKILL.md) when writing user-facing SnappyRef patchnotes, release notes, changelog copy, or a release summary from PRs since the last version release.
+
 Use [use-windows](docs/skills/use-windows/SKILL.md) when checking, building, testing, or syncing SnappyRef on a real Windows machine from the Mac development checkout.
 
 ## Repo Principles
@@ -36,7 +39,9 @@ Use [use-windows](docs/skills/use-windows/SKILL.md) when checking, building, tes
 
 ## UI Work
 
-Read `DESIGN_SYSTEM.md` before planning or editing any UI.
+Use the design-system skill before planning or editing any UI, visual semantics, shared components, tokens, styling, layout, motion, or design-system behavior.
+
+Read `DESIGN_SYSTEM.md` before UI work. Treat it as the canonical visual vocabulary for this project.
 
 ## Testing Notes
 

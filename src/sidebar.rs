@@ -883,7 +883,7 @@ fn paint_sidebar_subcard(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui:
     );
     ui.scope_builder(egui::UiBuilder::new().max_rect(indent_rect), |ui| {
         egui::Frame::new()
-            .fill(egui::Color32::from_white_alpha(5))
+            .fill(crate::theme::QUIET_INSET_FILL)
             .stroke(crate::theme::stroke_subtle())
             .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_COMPACT))
             .inner_margin(egui::Margin {
@@ -1095,16 +1095,22 @@ fn paint_inline_choice_response(ui: &mut egui::Ui, label: &str, selected: bool) 
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), font, text_color);
-    let pad = egui::vec2(10.0, 5.0);
-    let size = egui::vec2((galley.size().x + pad.x * 2.0).max(32.0), 24.0);
+    let pad = egui::vec2(
+        crate::theme::QUIET_INLINE_PAD_X,
+        crate::theme::QUIET_INLINE_PAD_Y,
+    );
+    let size = egui::vec2(
+        (galley.size().x + pad.x * 2.0).max(crate::theme::QUIET_INLINE_MIN_WIDTH),
+        crate::theme::QUIET_INLINE_HEIGHT,
+    );
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
     let fill = if selected {
-        egui::Color32::from_white_alpha(12)
+        crate::theme::QUIET_INLINE_ACTIVE_FILL
     } else if response.hovered() {
-        egui::Color32::from_white_alpha(7)
+        crate::theme::QUIET_INLINE_HOVER_FILL
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -1147,14 +1153,14 @@ fn paint_number_text_field(
 
     let mut changed = false;
     let frame = egui::Frame::new()
-        .fill(egui::Color32::from_white_alpha(12))
+        .fill(crate::theme::QUIET_INLINE_ACTIVE_FILL)
         .stroke(crate::theme::stroke_subtle())
         .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_INLINE))
         .inner_margin(egui::Margin {
-            left: 10,
-            right: 10,
-            top: 4,
-            bottom: 4,
+            left: crate::theme::QUIET_INLINE_PAD_X as i8,
+            right: crate::theme::QUIET_INLINE_PAD_X as i8,
+            top: crate::theme::SPACE_1 as i8,
+            bottom: crate::theme::SPACE_1 as i8,
         });
     let response = frame
         .show(ui, |ui| {
