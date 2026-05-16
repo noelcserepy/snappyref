@@ -8,6 +8,7 @@ Read these before normal work:
 2. `docs/adr/*.md`, if any exist.
 3. `docs/skills/app-inspection/SKILL.md`, if it exists.
 4. `docs/skills/perf-profiling/SKILL.md`, if it exists.
+5. `docs/skills/patchnotes/SKILL.md`, if it exists.
 
 ## Project Memory Maintenance
 
@@ -24,6 +25,8 @@ Use `grill-with-docs` when language, boundaries, lifecycle, storage, release/upd
 Use [app-inspection](docs/skills/app-inspection/SKILL.md) when inspecting the app, verifying a UI state, capturing a screenshot, adding a temporary debug probe, or setting deterministic in-app UI state for capture.
 
 Use [perf-profiling](docs/skills/perf-profiling/SKILL.md) when measuring or improving startup, import, embedding, idle CPU, or memory performance.
+
+Use [patchnotes](docs/skills/patchnotes/SKILL.md) when writing user-facing SnappyRef patchnotes, release notes, changelog copy, or a release summary from PRs since the last version release.
 
 Use [use-windows](docs/skills/use-windows/SKILL.md) when checking, building, testing, or syncing SnappyRef on a real Windows machine from the Mac development checkout.
 
