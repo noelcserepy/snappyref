@@ -12,7 +12,7 @@ use crate::data::{
     CanvasBackground, CanvasImageLod, CanvasTextSize,
 };
 use eframe::egui;
-use interaction::handle_input;
+use interaction::{handle_input, step_mouse_wheel_zoom_animation};
 use render::{
     annotation_style_toolbar_rect, editing_textbox_toolbar_rect, paint_annotation_draft,
     paint_background, paint_canvas_items, paint_crop_marquee, paint_guide_snap_indicators,
@@ -1450,6 +1450,11 @@ pub fn show(
     suppress_input: bool,
     debug_labels: bool,
 ) -> CanvasFrameMetrics {
+    let now_seconds = ui.input(|input| input.time);
+    if step_mouse_wheel_zoom_animation(state, now_seconds) {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(8));
+    }
     let toolbar_rect = editing_textbox_toolbar_rect(ui, state, rect)
         .or_else(|| annotation_style_toolbar_rect(ui, state, rect));
     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());

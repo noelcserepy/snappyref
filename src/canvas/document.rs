@@ -368,6 +368,7 @@ impl CanvasState {
     }
 
     pub fn apply_viewport_state(&mut self, viewport: &ViewportState) {
+        self.interaction.mouse_wheel_zoom_animation = None;
         self.pan = egui::vec2(viewport.camera_pan_x, viewport.camera_pan_y);
         self.zoom = viewport.camera_zoom.clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
         self.background = viewport.canvas_background;
@@ -511,6 +512,7 @@ impl CanvasState {
             .clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
 
         let center_world = bounds.center().to_vec2();
+        self.interaction.mouse_wheel_zoom_animation = None;
         self.pan = target_rect.center() - canvas_rect.center() - center_world * self.zoom;
         true
     }
@@ -550,6 +552,12 @@ impl CanvasState {
 
     pub fn take_context_menu_request(&mut self) -> Option<super::CanvasContextMenuRequest> {
         self.interaction.pending_context_menu_request.take()
+    }
+
+    pub fn take_focus_selection_request(&mut self) -> bool {
+        let requested = self.interaction.pending_focus_selection_request;
+        self.interaction.pending_focus_selection_request = false;
+        requested
     }
 
     pub fn add_import_placeholder(

@@ -14,7 +14,8 @@ use rusqlite::{Connection, Transaction, params, params_from_iter};
 use crate::data::{
     Board, BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
     CanvasAnnotationKind, CanvasBackground, CanvasImageLod, CanvasStackItem, CanvasStrokeWidth,
-    CanvasTextSize, ImageAsset, UserSession, ViewportState, WorkspaceSettings,
+    CanvasTextSize, DEFAULT_VIEWPORT_ZOOM, ImageAsset, UserSession, ViewportState,
+    WorkspaceSettings,
 };
 
 #[derive(Clone, Debug)]
@@ -25,6 +26,7 @@ pub struct Library {
 }
 
 const USER_SESSION_PAYLOAD_VERSION: u32 = 1;
+const DEFAULT_VIEWPORT_ZOOM_SQL: &str = "0.45";
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 struct StoredUserSessionPayload {
@@ -567,8 +569,8 @@ impl Library {
                     camera_pan_y,
                     camera_zoom,
                     canvas_background
-                 ) VALUES (?1, 0, 0.0, 0.0, 1.0, 'none')",
-                params![name],
+                 ) VALUES (?1, 0, 0.0, 0.0, ?2, 'none')",
+                params![name, DEFAULT_VIEWPORT_ZOOM],
             )
             .map_err(|error| format!("failed to create board: {error}"))?;
 
@@ -669,9 +671,9 @@ impl Library {
                     camera_zoom,
                     active_board_id
                  )
-                 VALUES (1, 0.0, 0.0, 1.0, ?1)
+                 VALUES (1, 0.0, 0.0, ?2, ?1)
                  ON CONFLICT(id) DO UPDATE SET active_board_id = excluded.active_board_id",
-                params![next_active_board_id],
+                params![next_active_board_id, DEFAULT_VIEWPORT_ZOOM],
             )
             .map_err(|error| format!("failed to persist active board: {error}"))?;
 
@@ -700,9 +702,9 @@ impl Library {
                     camera_zoom,
                     active_board_id
                  )
-                 VALUES (1, 0.0, 0.0, 1.0, ?1)
+                 VALUES (1, 0.0, 0.0, ?2, ?1)
                  ON CONFLICT(id) DO UPDATE SET active_board_id = excluded.active_board_id",
-                params![board_id],
+                params![board_id, DEFAULT_VIEWPORT_ZOOM],
             )
             .map_err(|error| format!("failed to persist active board: {error}"))?;
 
@@ -2418,7 +2420,7 @@ impl Library {
         let connection = self.connection()?;
         let should_migrate_default_board_viewport = !table_exists(&connection, "boards")?;
         connection
-            .execute_batch(
+            .execute_batch(&format!(
                 "
                 PRAGMA journal_mode = WAL;
                 PRAGMA foreign_keys = ON;
@@ -2441,7 +2443,7 @@ impl Library {
                     archived      INTEGER NOT NULL DEFAULT 0,
                     camera_pan_x  REAL NOT NULL DEFAULT 0.0,
                     camera_pan_y  REAL NOT NULL DEFAULT 0.0,
-                    camera_zoom   REAL NOT NULL DEFAULT 1.0,
+                    camera_zoom   REAL NOT NULL DEFAULT {DEFAULT_VIEWPORT_ZOOM_SQL},
                     canvas_background TEXT NOT NULL DEFAULT 'none'
                 );
 
@@ -2520,7 +2522,7 @@ impl Library {
                 CREATE INDEX IF NOT EXISTS idx_asset_embeddings_model_status
                 ON asset_embeddings(model_key, status);
                 ",
-            )
+            ))
             .map_err(|error| format!("failed to initialize database schema: {error}"))?;
 
         ensure_board_items_archived_column(&connection)?;
@@ -2675,8 +2677,8 @@ fn ensure_default_board(connection: &Connection) -> Result<(), String> {
                     camera_pan_y,
                     camera_zoom,
                     canvas_background
-                 ) VALUES (1, 'My Board', 0, 0.0, 0.0, 1.0, 'none')",
-                [],
+                 ) VALUES (1, 'My Board', 0, 0.0, 0.0, ?1, 'none')",
+                params![DEFAULT_VIEWPORT_ZOOM],
             )
             .map_err(|error| format!("failed to create default board: {error}"))?;
     }
@@ -4152,6 +4154,11 @@ mod tests {
             .unwrap();
 
         let second_board = library.create_board("Second").unwrap();
+        let second_session_before_save = library.load_user_session().unwrap();
+        assert_eq!(
+            second_session_before_save.viewport.camera_zoom,
+            crate::data::DEFAULT_VIEWPORT_ZOOM
+        );
         library.set_active_board(second_board.id).unwrap();
         let second_path = library
             .store_rgba_image("second", &[0, 255, 0, 255], 1, 1)
@@ -4203,6 +4210,10 @@ mod tests {
         let reopened_first = library.load_user_session().unwrap();
         assert_eq!(reopened_first.active_board_id, first_board.id);
         assert_eq!(reopened_first.viewport.camera_pan_x, 0.0);
+        assert_eq!(
+            reopened_first.viewport.camera_zoom,
+            crate::data::DEFAULT_VIEWPORT_ZOOM
+        );
         assert_eq!(
             reopened_first.viewport.canvas_background,
             CanvasBackground::None
@@ -4371,6 +4382,11 @@ mod tests {
         let root = temp_root("snappyref-global-settings-test");
         let library = Library::initialize(root.clone()).unwrap();
         let first_board = library.list_boards().unwrap()[0].clone();
+        let initial_session = library.load_user_session().unwrap();
+        assert_eq!(
+            initial_session.viewport.camera_zoom,
+            crate::data::DEFAULT_VIEWPORT_ZOOM
+        );
         let second_board = library.create_board("Second").unwrap();
         library.set_active_board(second_board.id).unwrap();
 

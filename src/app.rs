@@ -6134,6 +6134,15 @@ impl eframe::App for SnappyRefApp {
             } else {
                 false
             };
+        if self.canvas.take_focus_selection_request() {
+            let visible_rect = self.visible_canvas_screen_rect(screen_rect);
+            if self
+                .canvas
+                .focus_selection_in_view(screen_rect, visible_rect)
+            {
+                self.status = "Focused selection".to_owned();
+            }
+        }
         if let Some(error) = self.residency.dispatch_pending_lod_requests(
             self.import_worker.as_ref(),
             &mut self.canvas,
