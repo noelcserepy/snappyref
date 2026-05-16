@@ -39,7 +39,7 @@ The board-local visual guide mode for the canvas.
 _Avoid_: Grid setting, workspace background
 
 **Guide Snapping**:
-Manual drag alignment that nudges a single placement's visual axis-aligned bounds to viewport-near placement edges, corners, centers, or layout-gap adjacency and shows alignment guides.
+Manual drag alignment that nudges a moving, resizing, or Scale Drag placement's visual axis-aligned bounds to contact-local placement edges, centers, or gap spacing targets and shows alignment guides. Gap spacing targets align opposite placement edges at the Workspace Settings image gap, while same-axis edge alignment still uses real placement visual bounds. A placement is contact-local on an axis when its opposite-edge gap spacing target is within the active snap threshold and its interval on the other axis overlaps or nearly overlaps the dragged placement.
 _Avoid_: Grid snapping, layout snapping, arrangement snapping
 
 **Scale Drag**:

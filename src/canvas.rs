@@ -271,6 +271,7 @@ struct SelectedLayoutItem {
 struct ImageScaleStart {
     item_id: i64,
     center_world: egui::Pos2,
+    base_visual_size: egui::Vec2,
     start_scale: f32,
     min_scale: f32,
 }
