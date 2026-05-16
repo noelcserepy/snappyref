@@ -1,16 +1,20 @@
 # Guide snapping
 
-SnappyRef uses **Guide Snapping** for manual placement alignment: Figma-style visual guides that nudge the dragged placement or preview group to nearby placement edges, centers, corners, and layout-gap adjacency.
+SnappyRef uses **Guide Snapping** for manual placement alignment: contact-local visual guides that nudge the moving, resizing, or preview placement bounds to nearby placement edges, centers, corners, and gap spacing targets.
 
 Guide Snapping replaces the old manual drag layout-snap behavior. The old solver tried to find good non-overlapping arrangement slots. Manual drag needs a different feel: small magnetic nudges, clear indicators, modifier override, and no surprise jumps to distant layout candidates.
 
 ## Decision
 
-- Guide Snapping aligns visual axis-aligned bounds, including the expanded bounds of rotated placements.
-- Snap targets are viewport-near placements: the visible viewport expanded by guide-snap padding, not the entire board.
-- Single-placement drag, multi-selection drag, import previews, and Asset Result search drops use the same guide-snap calculation.
+- Guide Snapping aligns visual axis-aligned dragged bounds to target edges, centers, or gap spacing targets, including rotated placements' visual bounds.
+- Resize Guide Snapping preserves the resize anchor and aspect ratio. Snap targets propose possible scales, and the nearest valid scale wins.
+- Scale Drag Guide Snapping preserves the selected placement group center and applies one uniform scale factor to every selected placement. Snap targets propose possible group scale factors; the nearest valid factor wins.
+- Gap spacing targets align opposite edges at the workspace layout gap. They do not pad every target edge, so a side-by-side gap snap can still combine with real top, center, or bottom alignment on the other axis.
+- Snap targets are contact-local placements inside the viewport-near candidate set. A placement becomes contact-local on an axis when an opposite-edge gap spacing target is within the active snap threshold and its interval on the other axis overlaps or nearly overlaps the dragged placement.
+- Contact-locality gates target generation: X contact can expose that placement's Y edge/center alignment targets, and Y contact can expose its X edge/center alignment targets. Gap spacing targets remain axis-specific, and X/Y may resolve against different placements.
+- Single-placement drag, single-placement resize, Scale Drag, multi-selection drag, import previews, and Asset Result search drops use the same guide-snap target model.
 - Edge and center alignment use normal guide lines. Corner and center intersections add small X markers.
-- Layout-gap adjacency is part of Guide Snapping because the workspace layout gap is the user's global spacing contract.
+- Gap spacing targets are part of Guide Snapping because the workspace layout gap is the user's global spacing contract.
 - Candidate competition is distance-based per axis; the smallest nudge wins.
 - Acquisition uses a small screen-space threshold, with a slightly larger release threshold for hysteresis.
 - Cmd/Ctrl temporarily disables Guide Snapping during drag.
