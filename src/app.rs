@@ -297,6 +297,13 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         )),
     },
     SupportedShortcut {
+        action: "Directional settle arrange",
+        windows: "Arrow keys",
+        mac: "Arrow keys",
+        binding: None,
+        shortcut_action: None,
+    },
+    SupportedShortcut {
         action: "Default avg area",
         windows: "Ctrl+L",
         mac: "⌘L",
@@ -4427,6 +4434,18 @@ impl SnappyRefApp {
             return;
         }
 
+        if let Some(direction) = settle_direction_pressed(ctx)
+            && self.canvas.selected_item_ids().len() > 1
+        {
+            apply_settle_arrangement(
+                &mut self.canvas,
+                direction,
+                self.settings.import_gap,
+                &mut self.status,
+            );
+            return;
+        }
+
         for shortcut in SUPPORTED_SHORTCUTS {
             let Some(shortcut_action) = shortcut.shortcut_action else {
                 continue;
@@ -6357,6 +6376,25 @@ fn delete_shortcut_pressed(ctx: &egui::Context) -> bool {
     }
 }
 
+fn settle_direction_pressed(ctx: &egui::Context) -> Option<crate::canvas::SettleDirection> {
+    ctx.input(|input| {
+        if input.modifiers != egui::Modifiers::NONE {
+            return None;
+        }
+        if input.key_pressed(egui::Key::ArrowRight) {
+            Some(crate::canvas::SettleDirection::Right)
+        } else if input.key_pressed(egui::Key::ArrowLeft) {
+            Some(crate::canvas::SettleDirection::Left)
+        } else if input.key_pressed(egui::Key::ArrowDown) {
+            Some(crate::canvas::SettleDirection::Down)
+        } else if input.key_pressed(egui::Key::ArrowUp) {
+            Some(crate::canvas::SettleDirection::Up)
+        } else {
+            None
+        }
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn platform_shortcut_label(mac: &'static str, _windows: &'static str) -> &'static str {
     mac
@@ -6510,6 +6548,27 @@ fn apply_arrangement_action(
     };
 }
 
+fn apply_settle_arrangement(
+    canvas: &mut crate::canvas::CanvasState,
+    direction: crate::canvas::SettleDirection,
+    gap: f32,
+    status: &mut String,
+) {
+    let arranged = canvas.settle_selected(direction, gap);
+    if arranged == 0 {
+        return;
+    }
+
+    let noun = if arranged == 1 { "image" } else { "images" };
+    let direction_label = match direction {
+        crate::canvas::SettleDirection::Left => "left",
+        crate::canvas::SettleDirection::Right => "right",
+        crate::canvas::SettleDirection::Up => "up",
+        crate::canvas::SettleDirection::Down => "down",
+    };
+    *status = format!("Settled {arranged} {noun} {direction_label}");
+}
+
 fn apply_default_average_area_to_selection(
     canvas: &mut crate::canvas::CanvasState,
     status: &mut String,
@@ -6546,7 +6605,7 @@ fn generated_board_name(boards: &[crate::data::Board]) -> String {
 mod tests {
     use super::{
         AppConfig, ArrangementAction, BoardSummariesCache, EmbeddingPhaseMarkers,
-        ModelLoadTimingSummary, SnappyRefApp, apply_arrangement_action,
+        ModelLoadTimingSummary, SUPPORTED_SHORTCUTS, SnappyRefApp, apply_arrangement_action,
     };
     #[cfg(feature = "semantic-search")]
     use crate::crop_flow::CropUndoEntry;
@@ -7728,6 +7787,62 @@ mod tests {
 
             assert_eq!(app.status, expected_status);
         }
+    }
+
+    #[test]
+    fn arrow_keys_apply_directional_settle_arrange() {
+        let ctx = egui::Context::default();
+        let mut app = test_app(None);
+        app.settings.import_gap = 20.0;
+
+        for (id, x, y) in [(1_i64, 10.0, 50.0), (2, 170.0, 50.0), (3, 50.0, 160.0)] {
+            let mut loaded = test_loaded_item(id, 1);
+            loaded.record.asset.width = 100;
+            loaded.record.asset.height = 40;
+            loaded.record.item.x = x;
+            loaded.record.item.y = y;
+            app.canvas.add_loaded_item(&ctx, loaded);
+        }
+        app.canvas.select_items(&[1, 2, 3]);
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::ArrowRight,
+                    physical_key: Some(egui::Key::ArrowRight),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                app.handle_selection_shortcuts(
+                    ui.ctx(),
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),
+                )
+            },
+        );
+
+        let first = app.canvas.record_for_item_id(1).unwrap();
+        let second = app.canvas.record_for_item_id(2).unwrap();
+        let third = app.canvas.record_for_item_id(3).unwrap();
+        assert_eq!(second.item.x + 50.0, 220.0);
+        assert_eq!(
+            first.item.x + 50.0 + app.settings.import_gap,
+            second.item.x - 50.0
+        );
+        assert_eq!(third.item.x + 50.0, 220.0);
+        assert_eq!(app.status, "Settled 2 images right");
+    }
+
+    #[test]
+    fn shortcuts_list_includes_directional_settle_arrange() {
+        assert!(SUPPORTED_SHORTCUTS.iter().any(|shortcut| {
+            shortcut.action == "Directional settle arrange"
+                && shortcut.windows == "Arrow keys"
+                && shortcut.mac == "Arrow keys"
+        }));
     }
 
     #[test]
