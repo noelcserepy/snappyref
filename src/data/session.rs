@@ -6,6 +6,7 @@ pub const DEFAULT_IMPORT_GAP: f32 = 0.0;
 pub const DEFAULT_CANVAS_IMAGE_MAX_SIDE: u32 = 2000;
 pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
 pub const DEFAULT_ROTATION_SNAP_DEGREES: f32 = 15.0;
+pub const DEFAULT_VIEWPORT_ZOOM: f32 = 0.45;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CanvasImageLod {
@@ -45,7 +46,7 @@ impl Default for ViewportState {
         Self {
             camera_pan_x: 0.0,
             camera_pan_y: 0.0,
-            camera_zoom: 1.0,
+            camera_zoom: DEFAULT_VIEWPORT_ZOOM,
             canvas_background: CanvasBackground::default(),
         }
     }

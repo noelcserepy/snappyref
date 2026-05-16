@@ -10,6 +10,15 @@ use super::{
 };
 use crate::data::{CanvasAnnotation, CanvasImageLod, CanvasStackItem};
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct MouseWheelZoomAnimation {
+    pub start_pan: egui::Vec2,
+    pub start_zoom: f32,
+    pub target_pan: egui::Vec2,
+    pub target_zoom: f32,
+    pub started_at_seconds: f64,
+}
+
 #[derive(Default)]
 pub(super) struct CanvasDocumentState {
     pub images: Vec<CanvasImage>,
@@ -40,11 +49,13 @@ pub(super) struct CanvasInteractionState {
     pub pending_crop: Option<CanvasCropRequest>,
     pub pending_annotation: Option<PendingAnnotation>,
     pub pending_context_menu_request: Option<CanvasContextMenuRequest>,
+    pub pending_focus_selection_request: bool,
     pub import_placeholders: Vec<ImportPlaceholder>,
     pub hover_preview_placeholders: Vec<ImportPlaceholder>,
     pub move_preview_placeholders: Vec<ImportPlaceholder>,
     pub guide_snap_indicators: Vec<super::GuideSnapIndicator>,
     pub search_drag_preview: Option<SearchDragPreview>,
+    pub mouse_wheel_zoom_animation: Option<MouseWheelZoomAnimation>,
     pub last_pointer_screen_pos: Option<egui::Pos2>,
     pub alt_pan_active: bool,
 }
