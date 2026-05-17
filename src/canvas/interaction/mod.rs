@@ -1,6 +1,7 @@
 use eframe::egui;
 
 mod annotation;
+mod crop;
 mod placement_transform;
 mod selection;
 mod textbox;
@@ -10,6 +11,7 @@ pub(super) use annotation::{
     annotation_hit_test, annotation_screen_points, annotation_screen_rect, annotation_world_rect,
     begin_annotation_drag, hit_test_annotation, pending_annotation_from_draft,
 };
+pub(super) use crop::{begin_crop, finish_crop, update_crop};
 pub(super) use placement_transform::{
     begin_image_drag_scale, begin_image_resize, begin_image_rotation, compute_resize_snap_preview,
     compute_uniform_scale_snap_preview, hit_test_image_resize_handle,
@@ -39,7 +41,7 @@ use super::ImageScaleStart;
 use super::geometry::{image_contains_screen_point, min_image_scale};
 use super::render::textbox_pointer_region;
 use super::{
-    AnnotationDraftState, CanvasHit, CanvasState, CropState, ImageTransformState,
+    AnnotationDraftState, CanvasHit, CanvasState, ImageTransformState,
     TEXTBOX_DRAG_THRESHOLD_SCREEN, TextboxPointerRegion, TextboxTransformState,
 };
 use crate::data::CanvasAnnotationKind;
@@ -198,19 +200,9 @@ pub(super) fn handle_input(
                 current_world: pointer_world,
             });
         } else if crop_key_held && let Some(item_id) = hit_test_image(state, rect, pointer_pos) {
-            if !state.can_start_crop_on_item(item_id) {
+            if !begin_crop(state, item_id, pointer_pos) {
                 return;
             }
-            state.set_single_selection(item_id);
-            state.interaction.drag_state = None;
-            state.interaction.textbox_transform_state = None;
-            state.interaction.marquee_state = None;
-            state.interaction.annotation_draft_state = None;
-            state.interaction.crop_state = Some(CropState {
-                item_id,
-                start_screen: pointer_pos,
-                current_screen: pointer_pos,
-            });
         } else if let Some(image) = state.selected_single_image().map(|image| {
             (
                 image.record.item.id,
@@ -298,11 +290,11 @@ pub(super) fn handle_input(
         }
     }
 
-    if let Some(crop_state) = &mut state.interaction.crop_state
+    if state.interaction.crop_state.is_some()
         && primary_down
         && let Some(pointer_pos) = pointer_pos
     {
-        crop_state.current_screen = pointer_pos;
+        update_crop(state, pointer_pos);
     }
 
     if primary_down
@@ -529,8 +521,7 @@ pub(super) fn handle_input(
     }
 
     if primary_released {
-        if let Some(crop_state) = state.interaction.crop_state.take() {
-            state.interaction.pending_crop = state.build_crop_request(rect, &crop_state);
+        if finish_crop(state, rect) {
         } else if let Some(draft_state) = state.interaction.annotation_draft_state.take() {
             state.interaction.pending_annotation = pending_annotation_from_draft(draft_state);
         } else if let Some(transform_state) = state.interaction.image_transform_state.take() {
