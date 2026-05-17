@@ -36,8 +36,8 @@ const BACKGROUND_DOT_ALPHA: u8 = 76;
 const BACKGROUND_GRID_ALPHA: u8 = 58;
 const BACKGROUND_LOD_FADE_BAND_SCREEN: f32 = 24.0;
 const SELECTION_BORDER_WIDTH: f32 = 1.0;
-const IMAGE_SELECTION_BORDER_COLOR: egui::Color32 = crate::theme::TEXT;
-const GUIDE_SNAP_COLOR: egui::Color32 = crate::theme::ACCENT_ORANGE;
+const IMAGE_SELECTION_BORDER_COLOR: egui::Color32 = crate::ui::theme::TEXT;
+const GUIDE_SNAP_COLOR: egui::Color32 = crate::ui::theme::ACCENT_ORANGE;
 const GUIDE_SNAP_X_RADIUS: f32 = 2.0;
 
 pub(super) fn paint_images(
@@ -383,25 +383,25 @@ fn paint_canvas_items_interleaved(
 fn paint_unloaded_placement(painter: &egui::Painter, image: &CanvasImage, image_rect: egui::Rect) {
     let (fill, stroke, label) = match &image.record.content {
         crate::data::PlacementContent::Loading { .. } => (
-            crate::theme::SURFACE,
-            egui::Stroke::new(1.0, crate::theme::BORDER_STRONG),
+            crate::ui::theme::SURFACE,
+            egui::Stroke::new(1.0, crate::ui::theme::BORDER_STRONG),
             "Loading",
         ),
         crate::data::PlacementContent::Failed { .. } => (
-            crate::theme::DESTRUCTIVE_FILL,
-            egui::Stroke::new(1.0, crate::theme::DESTRUCTIVE_STROKE),
+            crate::ui::theme::DESTRUCTIVE_FILL,
+            egui::Stroke::new(1.0, crate::ui::theme::DESTRUCTIVE_STROKE),
             "Failed",
         ),
         crate::data::PlacementContent::Loaded { .. } => (
-            crate::theme::SURFACE,
-            egui::Stroke::new(1.0, crate::theme::BORDER_STRONG),
+            crate::ui::theme::SURFACE,
+            egui::Stroke::new(1.0, crate::ui::theme::BORDER_STRONG),
             "Loading",
         ),
     };
-    painter.rect_filled(image_rect, crate::theme::RADIUS_NONE, fill);
+    painter.rect_filled(image_rect, crate::ui::theme::RADIUS_NONE, fill);
     painter.rect_stroke(
         image_rect,
-        crate::theme::RADIUS_NONE,
+        crate::ui::theme::RADIUS_NONE,
         stroke,
         egui::StrokeKind::Inside,
     );
@@ -411,7 +411,7 @@ fn paint_unloaded_placement(painter: &egui::Painter, image: &CanvasImage, image_
             egui::Align2::CENTER_CENTER,
             label,
             egui::FontId::proportional(12.0),
-            crate::theme::TEXT_MUTED,
+            crate::ui::theme::TEXT_MUTED,
         );
     }
 }
@@ -490,7 +490,7 @@ fn paint_image_overlay(
     {
         painter.rect_stroke(
             image_rect,
-            crate::theme::RADIUS_NONE,
+            crate::ui::theme::RADIUS_NONE,
             egui::Stroke::new(SELECTION_BORDER_WIDTH, IMAGE_SELECTION_BORDER_COLOR),
             egui::StrokeKind::Outside,
         );
@@ -516,11 +516,11 @@ fn paint_image_overlay(
             image.record.item.id, image.record.item.x, image.record.item.y
         );
         painter.text(
-            image_rect.min + egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2),
+            image_rect.min + egui::vec2(crate::ui::theme::SPACE_2, crate::ui::theme::SPACE_2),
             egui::Align2::LEFT_TOP,
             label,
             egui::TextStyle::Body.resolve(&painter.ctx().global_style()),
-            crate::theme::TEXT,
+            crate::ui::theme::TEXT,
         );
     }
 }
@@ -667,7 +667,7 @@ fn paint_background_dots(
     let Some(alpha) = scaled_alpha(BACKGROUND_DOT_ALPHA, layer.alpha) else {
         return;
     };
-    let base = crate::theme::TEXT_MUTED;
+    let base = crate::ui::theme::TEXT_MUTED;
     let color = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha);
     let world_step = background_world_step(layer.level);
     let mut world_x = first_lattice_at_or_before(visible_world_rect.left(), world_step);
@@ -692,7 +692,7 @@ fn paint_background_grid(
     let Some(alpha) = scaled_alpha(BACKGROUND_GRID_ALPHA, layer.alpha) else {
         return;
     };
-    let base = crate::theme::TEXT_SUBTLE;
+    let base = crate::ui::theme::TEXT_SUBTLE;
     let color = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha);
     let stroke = egui::Stroke::new(0.45, color);
     let world_step = background_world_step(layer.level);
@@ -793,7 +793,7 @@ fn snap_line_coordinate(value: f32) -> f32 {
 }
 
 pub(super) fn textbox_padding() -> egui::Vec2 {
-    egui::vec2(crate::theme::SPACE_2, crate::theme::SPACE_2)
+    egui::vec2(crate::ui::theme::SPACE_2, crate::ui::theme::SPACE_2)
 }
 
 pub(super) fn textbox_font_size(text_size: CanvasTextSize) -> f32 {
@@ -958,7 +958,7 @@ pub(super) fn textbox_required_world_height(galley_height_screen: f32, zoom: f32
 
 fn annotation_color(color: CanvasAnnotationColor) -> egui::Color32 {
     match color {
-        CanvasAnnotationColor::Default => crate::theme::TEXT,
+        CanvasAnnotationColor::Default => crate::ui::theme::TEXT,
         CanvasAnnotationColor::Coral => egui::Color32::from_rgb(0xE8, 0x89, 0x73),
         CanvasAnnotationColor::Gold => egui::Color32::from_rgb(0xE0, 0xB4, 0x56),
         CanvasAnnotationColor::Mint => egui::Color32::from_rgb(0x7A, 0xC6, 0xA5),
@@ -1068,11 +1068,11 @@ fn paint_annotation(
                 let fill_alpha = if selected || editing { 184 } else { 112 };
                 painter.rect_filled(
                     textbox_rect,
-                    crate::theme::RADIUS_CONTROL,
+                    crate::ui::theme::RADIUS_CONTROL,
                     egui::Color32::from_rgba_premultiplied(
-                        crate::theme::BACKGROUND.r(),
-                        crate::theme::BACKGROUND.g(),
-                        crate::theme::BACKGROUND.b(),
+                        crate::ui::theme::BACKGROUND.r(),
+                        crate::ui::theme::BACKGROUND.g(),
+                        crate::ui::theme::BACKGROUND.b(),
                         fill_alpha,
                     ),
                 );
@@ -1080,7 +1080,7 @@ fn paint_annotation(
             if selected || editing {
                 painter.rect_stroke(
                     textbox_rect,
-                    crate::theme::RADIUS_CONTROL,
+                    crate::ui::theme::RADIUS_CONTROL,
                     stroke,
                     egui::StrokeKind::Outside,
                 );
@@ -1142,7 +1142,7 @@ pub(super) fn paint_annotation_draft(
         text: String::new(),
         text_size: CanvasTextSize::default(),
     });
-    let stroke = crate::theme::stroke_strong();
+    let stroke = crate::ui::theme::stroke_strong();
     match draft.kind {
         CanvasAnnotationKind::Line => {
             let start = state.world_to_screen(draft.start_world, rect);
@@ -1161,7 +1161,7 @@ pub(super) fn paint_annotation_draft(
             );
             painter.rect_stroke(
                 textbox_rect,
-                crate::theme::RADIUS_CONTROL,
+                crate::ui::theme::RADIUS_CONTROL,
                 stroke,
                 egui::StrokeKind::Outside,
             );
@@ -1289,7 +1289,7 @@ fn textbox_editor_toolbar_metrics(_ui: &egui::Ui) -> TextboxEditorToolbarMetrics
         + TOOLBAR_BACKGROUND_BUTTON_WIDTH
         + TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP * 9.0;
     TextboxEditorToolbarMetrics {
-        size: egui::vec2(button_span, crate::theme::CONTROL_HEIGHT),
+        size: egui::vec2(button_span, crate::ui::theme::CONTROL_HEIGHT),
     }
 }
 
@@ -1298,7 +1298,7 @@ fn annotation_style_toolbar_metrics(_ui: &egui::Ui) -> TextboxEditorToolbarMetri
         + TOOLBAR_SWATCH_BUTTON_WIDTH * 5.0
         + TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP * 7.0;
     TextboxEditorToolbarMetrics {
-        size: egui::vec2(button_span, crate::theme::CONTROL_HEIGHT),
+        size: egui::vec2(button_span, crate::ui::theme::CONTROL_HEIGHT),
     }
 }
 
@@ -1363,22 +1363,22 @@ fn show_textbox_editor_toolbar(
                     let button = egui::Button::new(
                         egui::RichText::new(size.label())
                             .text_style(egui::TextStyle::Button)
-                            .color(crate::theme::TEXT),
+                            .color(crate::ui::theme::TEXT),
                     )
                     .fill(if selected == Some(size) {
-                        crate::theme::SURFACE_ELEVATED
+                        crate::ui::theme::SURFACE_ELEVATED
                     } else {
-                        crate::theme::SURFACE
+                        crate::ui::theme::SURFACE
                     })
                     .stroke(if selected == Some(size) {
-                        crate::theme::stroke_strong()
+                        crate::ui::theme::stroke_strong()
                     } else {
-                        crate::theme::stroke_subtle()
+                        crate::ui::theme::stroke_subtle()
                     })
-                    .corner_radius(crate::theme::RADIUS_CONTROL)
+                    .corner_radius(crate::ui::theme::RADIUS_CONTROL)
                     .min_size(egui::vec2(
                         TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
-                        crate::theme::CONTROL_HEIGHT,
+                        crate::ui::theme::CONTROL_HEIGHT,
                     ));
                     if ui.add(button).clicked() {
                         next_size = Some(size);
@@ -1394,19 +1394,19 @@ fn show_textbox_editor_toolbar(
                     egui::RichText::new("BG").text_style(egui::TextStyle::Button),
                 )
                 .fill(if background_enabled {
-                    crate::theme::SURFACE_ELEVATED
+                    crate::ui::theme::SURFACE_ELEVATED
                 } else {
-                    crate::theme::SURFACE
+                    crate::ui::theme::SURFACE
                 })
                 .stroke(if background_enabled {
-                    crate::theme::stroke_strong()
+                    crate::ui::theme::stroke_strong()
                 } else {
-                    crate::theme::stroke_subtle()
+                    crate::ui::theme::stroke_subtle()
                 })
-                .corner_radius(crate::theme::RADIUS_CONTROL)
+                .corner_radius(crate::ui::theme::RADIUS_CONTROL)
                 .min_size(egui::vec2(
                     TOOLBAR_BACKGROUND_BUTTON_WIDTH,
-                    crate::theme::CONTROL_HEIGHT,
+                    crate::ui::theme::CONTROL_HEIGHT,
                 ));
                 if ui.add(background_button).clicked() {
                     toggle_background = true;
@@ -1474,19 +1474,19 @@ pub(super) fn show_annotation_style_toolbar(
                 ] {
                     let button = egui::Button::new(width.label())
                         .fill(if selected_width == Some(width) {
-                            crate::theme::SURFACE_ELEVATED
+                            crate::ui::theme::SURFACE_ELEVATED
                         } else {
-                            crate::theme::SURFACE
+                            crate::ui::theme::SURFACE
                         })
                         .stroke(if selected_width == Some(width) {
-                            crate::theme::stroke_strong()
+                            crate::ui::theme::stroke_strong()
                         } else {
-                            crate::theme::stroke_subtle()
+                            crate::ui::theme::stroke_subtle()
                         })
-                        .corner_radius(crate::theme::RADIUS_CONTROL)
+                        .corner_radius(crate::ui::theme::RADIUS_CONTROL)
                         .min_size(egui::vec2(
                             TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
-                            crate::theme::CONTROL_HEIGHT,
+                            crate::ui::theme::CONTROL_HEIGHT,
                         ));
                     if ui.add(button).clicked() {
                         next_width = Some(width);
@@ -1518,14 +1518,14 @@ fn paint_color_swatch_button(
         egui::Button::new("")
             .fill(annotation_color(color))
             .stroke(if selected {
-                crate::theme::stroke_strong()
+                crate::ui::theme::stroke_strong()
             } else {
-                crate::theme::stroke_subtle()
+                crate::ui::theme::stroke_subtle()
             })
-            .corner_radius(crate::theme::RADIUS_CONTROL)
+            .corner_radius(crate::ui::theme::RADIUS_CONTROL)
             .min_size(egui::vec2(
                 TOOLBAR_SWATCH_BUTTON_WIDTH,
-                crate::theme::CONTROL_HEIGHT,
+                crate::ui::theme::CONTROL_HEIGHT,
             )),
     )
 }
@@ -1539,7 +1539,7 @@ pub(super) fn paint_marquee(painter: &egui::Painter, state: &CanvasState) {
     painter.rect_stroke(
         rect,
         0.0,
-        crate::theme::stroke_strong(),
+        crate::ui::theme::stroke_strong(),
         egui::StrokeKind::Outside,
     );
 }
@@ -1564,13 +1564,13 @@ pub(super) fn paint_crop_marquee(painter: &egui::Painter, rect: egui::Rect, stat
     painter.rect_stroke(
         image_rect,
         0.0,
-        crate::theme::stroke_strong(),
+        crate::ui::theme::stroke_strong(),
         egui::StrokeKind::Outside,
     );
     painter.rect_stroke(
         crop_rect,
         0.0,
-        crate::theme::stroke_strong(),
+        crate::ui::theme::stroke_strong(),
         egui::StrokeKind::Outside,
     );
 }
@@ -1604,7 +1604,7 @@ pub(super) fn paint_selection_bounds(
 
     painter.rect_stroke(
         selection_rect,
-        crate::theme::RADIUS_NONE,
+        crate::ui::theme::RADIUS_NONE,
         egui::Stroke::new(SELECTION_BORDER_WIDTH, IMAGE_SELECTION_BORDER_COLOR),
         egui::StrokeKind::Outside,
     );
@@ -1650,16 +1650,16 @@ fn paint_rotation_handle(painter: &egui::Painter, rect: egui::Rect, state: &Canv
     let Some((line_start, handle_pos)) = selected_rotation_handle_screen_pos(state, rect) else {
         return;
     };
-    painter.line_segment([line_start, handle_pos], crate::theme::stroke_strong());
+    painter.line_segment([line_start, handle_pos], crate::ui::theme::stroke_strong());
     painter.circle_filled(
         handle_pos,
         IMAGE_ROTATE_HANDLE_RADIUS_SCREEN,
-        crate::theme::SURFACE,
+        crate::ui::theme::SURFACE,
     );
     painter.circle_stroke(
         handle_pos,
         IMAGE_ROTATE_HANDLE_RADIUS_SCREEN,
-        crate::theme::stroke_strong(),
+        crate::ui::theme::stroke_strong(),
     );
 }
 
@@ -1731,17 +1731,17 @@ fn paint_import_placeholder(
         0.0,
         egui::Color32::from_rgba_premultiplied(0, 0, 0, 120),
     );
-    painter.rect_filled(placeholder_rect, 0.0, crate::theme::SURFACE_ELEVATED);
+    painter.rect_filled(placeholder_rect, 0.0, crate::ui::theme::SURFACE_ELEVATED);
     painter.rect_stroke(
         placeholder_rect,
-        crate::theme::RADIUS_NONE,
-        egui::Stroke::new(1.0, crate::theme::BORDER_STRONG),
+        crate::ui::theme::RADIUS_NONE,
+        egui::Stroke::new(1.0, crate::ui::theme::BORDER_STRONG),
         egui::StrokeKind::Outside,
     );
     if show_selection_border {
         painter.rect_stroke(
             placeholder_rect,
-            crate::theme::RADIUS_NONE,
+            crate::ui::theme::RADIUS_NONE,
             egui::Stroke::new(SELECTION_BORDER_WIDTH, IMAGE_SELECTION_BORDER_COLOR),
             egui::StrokeKind::Outside,
         );

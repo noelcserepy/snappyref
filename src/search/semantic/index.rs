@@ -1,4 +1,4 @@
-use crate::storage::{ActiveCanvasEmbedding, AssetSearchHit, Library};
+use crate::library::storage::{ActiveCanvasEmbedding, AssetSearchHit, Library};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SearchScope {
@@ -57,7 +57,7 @@ fn search_embedding_rows(
 #[cfg(test)]
 mod tests {
     use super::{SearchScope, search_embeddings_for_scope};
-    use crate::storage::Library;
+    use crate::library::storage::Library;
     use eframe::egui;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};

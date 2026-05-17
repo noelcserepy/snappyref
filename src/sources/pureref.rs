@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::import_intake::{ExternalImportSource, normalize_import_url};
+use crate::sources::import::{ExternalImportSource, normalize_import_url};
 
 const PURE_REF_IMAGE_ITEM: &str = "GraphicsImageItem";
 
@@ -96,7 +96,7 @@ fn is_supported_pureref_string_char(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::sources_from_binary;
-    use crate::import_intake::ExternalImportSource;
+    use crate::sources::import::ExternalImportSource;
 
     #[test]
     fn extracts_image_item_urls_and_paths() {

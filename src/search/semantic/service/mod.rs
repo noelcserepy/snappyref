@@ -7,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::storage::{AssetSearchHit, EmbeddingStatus, Library};
+use crate::library::storage::{AssetSearchHit, EmbeddingStatus, Library};
 
 use super::EmbedModelLoadTimingOutput;
 use super::index::{SearchScope, decode_f32_blob, search_embeddings_for_scope};
@@ -760,7 +760,7 @@ fn warm_search_embedding_cache(
 fn group_hits(
     library: &Library,
     scope: SearchScope,
-    hits: Vec<crate::storage::AssetSearchHit>,
+    hits: Vec<crate::library::storage::AssetSearchHit>,
 ) -> Result<Vec<SearchResultGroup>, String> {
     let asset_ids = hits.iter().map(|hit| hit.asset_id).collect::<Vec<_>>();
     let instances = library.board_item_instances_for_assets(&asset_ids)?;
@@ -1174,10 +1174,10 @@ mod tests {
         IndexResult, SemanticSearchConfig, SemanticSearchService, embedding_helper_grace,
         embedding_source_path, is_terminal_embedding_failure, run_index_worker_loop,
     };
-    use crate::semantic_search::DEFAULT_SEMANTIC_SEARCH_MODEL;
-    use crate::semantic_search::index::SearchScope;
-    use crate::semantic_search::model::{ModelSpec, ResizeStrategy};
-    use crate::storage::Library;
+    use crate::library::storage::Library;
+    use crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
+    use crate::search::semantic::index::SearchScope;
+    use crate::search::semantic::model::{ModelSpec, ResizeStrategy};
     use eframe::egui;
     use image::imageops::FilterType;
     use std::fs;
@@ -1404,7 +1404,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            crate::semantic_search::index::decode_f32_blob(&embedding).unwrap(),
+            crate::search::semantic::index::decode_f32_blob(&embedding).unwrap(),
             vec![1.0, 0.0]
         );
 

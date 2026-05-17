@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use crate::canvas::CanvasState;
-use crate::storage::Library;
+use crate::library::storage::Library;
 
 const MAX_EXTERNAL_CLIPBOARD_IMAGE_BYTES: usize = 200 * 1024 * 1024;
 
@@ -23,7 +23,7 @@ pub(crate) fn build_selection_copy_payload(
     canvas: &CanvasState,
     library: Option<&Library>,
 ) -> Result<Option<ClipboardCopyPayload>, String> {
-    let Some(outcome) = crate::active_board_commands::copy_selection_to_json(canvas)? else {
+    let Some(outcome) = crate::active_board::commands::copy_selection_to_json(canvas)? else {
         return Ok(None);
     };
     let external_image = external_image_for_selection(canvas, library)?;
@@ -194,7 +194,7 @@ mod tests {
     fn single_selected_placement_copies_internal_json_and_external_image() {
         let ctx = eframe::egui::Context::default();
         let root = temp_library_root("snappyref-copy-external-image");
-        let library = crate::storage::Library::initialize(root).unwrap();
+        let library = crate::library::storage::Library::initialize(root).unwrap();
         let rgba = vec![255, 0, 0, 255, 0, 255, 0, 255];
         let source = library
             .store_rgba_image("copy-source", &rgba, 2, 1)
@@ -223,7 +223,7 @@ mod tests {
         assert!(
             payload
                 .internal_json
-                .contains(crate::active_board_commands::COPY_PAYLOAD_KIND)
+                .contains(crate::active_board::commands::COPY_PAYLOAD_KIND)
         );
         assert_eq!(
             payload.external_image,
@@ -271,7 +271,7 @@ mod tests {
     fn oversized_single_placement_copies_metadata_only() {
         let ctx = eframe::egui::Context::default();
         let root = temp_library_root("snappyref-copy-oversized-image");
-        let library = crate::storage::Library::initialize(root).unwrap();
+        let library = crate::library::storage::Library::initialize(root).unwrap();
         let mut canvas = crate::canvas::CanvasState::default();
         let mut record = test_record(1, 1);
         record.asset.width = 20_000;
@@ -293,7 +293,7 @@ mod tests {
     fn unsupported_single_placement_copies_metadata_only() {
         let ctx = eframe::egui::Context::default();
         let root = temp_library_root("snappyref-copy-unsupported-image");
-        let library = crate::storage::Library::initialize(root).unwrap();
+        let library = crate::library::storage::Library::initialize(root).unwrap();
         let mut record = test_record(1, 1);
         record.asset.mime_type = "image/svg+xml".to_owned();
 

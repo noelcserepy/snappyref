@@ -3,11 +3,13 @@ use std::collections::HashSet;
 use eframe::egui;
 
 use crate::canvas::CanvasState;
-use crate::content_resolution::{ContentResolutionReservation, ContentResolutionRuntime};
 use crate::data::{
     BoardItem, BoardItemWithAsset, PlacementContent, PlacementContentIntent, PlacementLifecycle,
 };
-use crate::storage::Library;
+use crate::library::storage::Library;
+use crate::placement::content_resolution::{
+    ContentResolutionReservation, ContentResolutionRuntime,
+};
 
 const FALLBACK_IMPORT_WIDTH: u32 = 360;
 const FALLBACK_IMPORT_HEIGHT: u32 = 240;

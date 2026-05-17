@@ -2,13 +2,9 @@ mod active_board;
 mod app;
 mod canvas;
 mod data;
+mod diagnostics;
 mod jobs;
 mod library;
-#[cfg(feature = "semantic-search")]
-mod model_store;
-#[cfg(feature = "semantic-search")]
-mod palette;
-mod perf;
 mod placement;
 mod platform;
 #[cfg(feature = "semantic-search")]
@@ -16,33 +12,6 @@ mod search;
 mod sources;
 mod ui;
 pub mod updater;
-
-pub(crate) use active_board::commands as active_board_commands;
-pub(crate) use active_board::history;
-pub(crate) use active_board::load as active_board_load;
-pub(crate) use active_board::persistence as document_persistence;
-pub(crate) use active_board::switch as board_switch;
-pub(crate) use library::location as library_location;
-pub(crate) use library::residency;
-pub(crate) use library::storage;
-pub(crate) use placement::content_resolution;
-pub(crate) use placement::creation as placement_creation;
-pub(crate) use placement::lifecycle as placement_lifecycle;
-pub(crate) use platform::capture as native_capture;
-pub(crate) use platform::drop as native_drop;
-#[cfg(feature = "semantic-search")]
-pub(crate) use search::semantic as semantic_search;
-pub(crate) use sources::clipboard as clipboard_copy;
-pub(crate) use sources::crop as crop_flow;
-pub(crate) use sources::drop as drop_intake;
-pub(crate) use sources::import as import_intake;
-pub(crate) use sources::pureref as pureref_clipboard;
-pub(crate) use sources::screenshot;
-#[cfg(debug_assertions)]
-pub(crate) use ui::design_system_preview;
-pub(crate) use ui::layout as ui_layout;
-pub(crate) use ui::sidebar;
-pub(crate) use ui::theme;
 
 pub fn run() -> eframe::Result<()> {
     #[cfg(target_os = "windows")]
@@ -69,7 +38,8 @@ pub fn run() -> eframe::Result<()> {
             .strip_prefix("--semantic-embed-image=")
             .map(str::to_owned)
     }) {
-        if let Err(error) = semantic_search::print_embed_image_output(std::path::Path::new(&path)) {
+        if let Err(error) = search::semantic::print_embed_image_output(std::path::Path::new(&path))
+        {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));
@@ -81,7 +51,7 @@ pub fn run() -> eframe::Result<()> {
         .skip(1)
         .any(|argument| argument == "--semantic-embed-server")
     {
-        if let Err(error) = semantic_search::run_embed_image_server() {
+        if let Err(error) = search::semantic::run_embed_image_server() {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));
@@ -91,7 +61,10 @@ pub fn run() -> eframe::Result<()> {
 
     let config = app::AppConfig::from_env();
     if config.startup_trace_requested() {
-        if let Err(error) = config.library_root().and_then(perf::print_startup_trace) {
+        if let Err(error) = config
+            .library_root()
+            .and_then(diagnostics::perf::print_startup_trace)
+        {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));
@@ -99,7 +72,7 @@ pub fn run() -> eframe::Result<()> {
         return Ok(());
     }
     if config.perf_report_requested() {
-        if let Err(error) = perf::print_report() {
+        if let Err(error) = diagnostics::perf::print_report() {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));
@@ -107,7 +80,7 @@ pub fn run() -> eframe::Result<()> {
         return Ok(());
     }
     if let Some(path) = config.perf_decode_path() {
-        if let Err(error) = perf::print_file_decode_report(path) {
+        if let Err(error) = diagnostics::perf::print_file_decode_report(path) {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));
@@ -115,7 +88,7 @@ pub fn run() -> eframe::Result<()> {
         return Ok(());
     }
     if let Some(path) = config.perf_import_path() {
-        if let Err(error) = perf::print_file_import_report(path) {
+        if let Err(error) = diagnostics::perf::print_file_import_report(path) {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));
@@ -124,7 +97,10 @@ pub fn run() -> eframe::Result<()> {
     }
     if config.perf_embedding_lod_requested() {
         if let Err(error) = config.library_root().and_then(|library_root| {
-            perf::print_embedding_lod_report(library_root, config.perf_embedding_lod_limit())
+            diagnostics::perf::print_embedding_lod_report(
+                library_root,
+                config.perf_embedding_lod_limit(),
+            )
         }) {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
@@ -168,7 +144,7 @@ pub fn run() -> eframe::Result<()> {
         "SnappyRef",
         options,
         Box::new(|cc| {
-            theme::configure_theme(&cc.egui_ctx);
+            ui::theme::configure_theme(&cc.egui_ctx);
             cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
             egui_extras::install_image_loaders(&cc.egui_ctx);
             Ok(Box::new(app::SnappyRefApp::new(cc, config.clone())))

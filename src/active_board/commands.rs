@@ -1,10 +1,10 @@
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
+use crate::active_board::persistence::DocumentPersistence;
 use crate::canvas::CanvasState;
 use crate::data::{CanvasAnnotationKind, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize};
-use crate::document_persistence::DocumentPersistence;
-use crate::storage::Library;
+use crate::library::storage::Library;
 
 pub(crate) const COPY_PAYLOAD_KIND: &str = "snappyref-board-items";
 

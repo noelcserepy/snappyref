@@ -2,10 +2,10 @@ use eframe::egui;
 
 use crate::canvas::CanvasState;
 use crate::data::BoardItemWithAsset;
-use crate::placement_creation::{
+use crate::library::storage::Library;
+use crate::placement::creation::{
     PlacementCreationSettings, ProvisionalSourceIntent, create_provisional_placements,
 };
-use crate::storage::Library;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ProvisionalPlacementBatch {

@@ -172,15 +172,15 @@ pub(crate) fn show_sidebar(
             let shape_rect = sidebar_rect;
             let radius = egui::CornerRadius {
                 nw: 0,
-                ne: crate::theme::RADIUS_PANEL,
+                ne: crate::ui::theme::RADIUS_PANEL,
                 sw: 0,
-                se: crate::theme::RADIUS_PANEL,
+                se: crate::ui::theme::RADIUS_PANEL,
             };
             ui.painter().rect(
                 shape_rect,
                 radius,
-                crate::theme::SURFACE,
-                crate::theme::stroke_subtle(),
+                crate::ui::theme::SURFACE,
+                crate::ui::theme::stroke_subtle(),
                 egui::StrokeKind::Inside,
             );
 
@@ -190,7 +190,7 @@ pub(crate) fn show_sidebar(
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 let mut paint_contents = |ui: &mut egui::Ui| {
                     paint_sidebar_tabs(ui, sidebar_tab);
-                    ui.add_space(crate::theme::SPACE_2);
+                    ui.add_space(crate::ui::theme::SPACE_2);
                     match *sidebar_tab {
                         SidebarTab::Boards => {
                             board_action = paint_sidebar_boards(
@@ -237,7 +237,7 @@ struct SidebarOptionsOutcome {
 fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
     let bar_height = 32.0;
     let (_id, rect) = ui.allocate_space(egui::vec2(ui.available_width(), bar_height + 1.0));
-    let pad_x = crate::theme::SPACE_3;
+    let pad_x = crate::ui::theme::SPACE_3;
     let tab_rect = egui::Rect::from_min_max(egui::pos2(rect.left() + pad_x, rect.top()), rect.max);
     let tabs: [(&str, SidebarTab); 2] = [
         ("Boards", SidebarTab::Boards),
@@ -260,11 +260,11 @@ fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
             *sidebar_tab = *tab_value;
         }
         let label_color = if selected {
-            crate::theme::TEXT
+            crate::ui::theme::TEXT
         } else if response.hovered() {
-            crate::theme::TEXT_MUTED
+            crate::ui::theme::TEXT_MUTED
         } else {
-            crate::theme::TEXT_SUBTLE
+            crate::ui::theme::TEXT_SUBTLE
         };
         let font = ui.style().text_styles[&egui::TextStyle::Body].clone();
         let galley = ui
@@ -295,7 +295,7 @@ fn paint_sidebar_options(
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-                ui.add_space(crate::theme::SPACE_1);
+                ui.add_space(crate::ui::theme::SPACE_1);
                 for (index, section) in
                     sidebar_options_section_order(&about_updates.semantic_search.status)
                         .into_iter()
@@ -303,8 +303,8 @@ fn paint_sidebar_options(
                 {
                     if index > 0 {
                         ui.add_space(match section {
-                            SidebarOptionsSection::Shortcuts => crate::theme::SPACE_6,
-                            _ => crate::theme::SPACE_4,
+                            SidebarOptionsSection::Shortcuts => crate::ui::theme::SPACE_6,
+                            _ => crate::ui::theme::SPACE_4,
                         });
                     }
                     match section {
@@ -332,7 +332,7 @@ fn paint_sidebar_options(
                         }
                     }
                 }
-                ui.add_space(crate::theme::SPACE_4);
+                ui.add_space(crate::ui::theme::SPACE_4);
             });
     });
     SidebarOptionsOutcome {
@@ -360,13 +360,13 @@ struct AboutUpdatesOutcome {
 fn paint_about_updates_section(ui: &mut egui::Ui, about: &AboutUpdatesView) -> AboutUpdatesOutcome {
     let mut update_action_clicked = false;
 
-    ui.add_space(crate::theme::SPACE_2 + 2.0);
+    ui.add_space(crate::ui::theme::SPACE_2 + 2.0);
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
         ui.label(
             egui::RichText::new(format!("Version {}", about.current_version))
                 .text_style(egui::TextStyle::Body)
-                .color(crate::theme::TEXT),
+                .color(crate::ui::theme::TEXT),
         );
         ui.label(
             egui::RichText::new(format!(
@@ -374,32 +374,32 @@ fn paint_about_updates_section(ui: &mut egui::Ui, about: &AboutUpdatesView) -> A
                 format_last_checked(about.last_checked_unix_millis),
             ))
             .text_style(egui::TextStyle::Small)
-            .color(crate::theme::TEXT_SUBTLE),
+            .color(crate::ui::theme::TEXT_SUBTLE),
         );
-        ui.add_space(crate::theme::SPACE_2);
+        ui.add_space(crate::ui::theme::SPACE_2);
         if let Some(status) = &about.update_status {
             ui.label(
                 egui::RichText::new(status)
                     .text_style(egui::TextStyle::Small)
-                    .color(crate::theme::TEXT_MUTED),
+                    .color(crate::ui::theme::TEXT_MUTED),
             );
-            ui.add_space(crate::theme::SPACE_2);
+            ui.add_space(crate::ui::theme::SPACE_2);
         }
         let button_width = ui.available_width();
         let text_color = if about.update_button_primary {
-            crate::theme::BACKGROUND
+            crate::ui::theme::BACKGROUND
         } else {
-            crate::theme::TEXT
+            crate::ui::theme::TEXT
         };
         let mut update_button = egui::Button::new(
             egui::RichText::new(&about.update_button_label)
                 .text_style(egui::TextStyle::Small)
                 .color(text_color),
         )
-        .corner_radius(crate::theme::RADIUS_INLINE);
+        .corner_radius(crate::ui::theme::RADIUS_INLINE);
         if about.update_button_primary {
             update_button = update_button
-                .fill(crate::theme::ACCENT)
+                .fill(crate::ui::theme::ACCENT)
                 .stroke(egui::Stroke::NONE);
         }
         if ui
@@ -412,7 +412,7 @@ fn paint_about_updates_section(ui: &mut egui::Ui, about: &AboutUpdatesView) -> A
             update_action_clicked = true;
         }
     });
-    ui.add_space(crate::theme::SPACE_2 + 2.0);
+    ui.add_space(crate::ui::theme::SPACE_2 + 2.0);
 
     AboutUpdatesOutcome {
         update_action_clicked,
@@ -460,31 +460,31 @@ fn paint_semantic_search_settings_section(
     semantic_search: &SemanticSearchSettingsView,
 ) -> Option<SemanticSearchSettingsAction> {
     let mut action = None;
-    ui.add_space(crate::theme::SPACE_2 + 2.0);
+    ui.add_space(crate::ui::theme::SPACE_2 + 2.0);
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
         ui.label(
             egui::RichText::new("Semantic Search")
                 .text_style(egui::TextStyle::Body)
-                .color(crate::theme::TEXT),
+                .color(crate::ui::theme::TEXT),
         );
         let (status, detail) = semantic_search_status_copy(&semantic_search.status);
         ui.label(
             egui::RichText::new(status)
                 .text_style(egui::TextStyle::Small)
-                .color(crate::theme::TEXT_MUTED),
+                .color(crate::ui::theme::TEXT_MUTED),
         );
         ui.add(
             egui::Label::new(
                 egui::RichText::new(detail)
                     .text_style(egui::TextStyle::Small)
-                    .color(crate::theme::TEXT_SUBTLE),
+                    .color(crate::ui::theme::TEXT_SUBTLE),
             )
             .wrap(),
         );
-        ui.add_space(crate::theme::SPACE_2);
+        ui.add_space(crate::ui::theme::SPACE_2);
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+            ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
             match &semantic_search.status {
                 SemanticSearchSettingsStatus::Installed => {
                     if ui.add(quiet_settings_button("Remove")).clicked() {
@@ -509,7 +509,7 @@ fn paint_semantic_search_settings_section(
             }
         });
     });
-    ui.add_space(crate::theme::SPACE_2 + 2.0);
+    ui.add_space(crate::ui::theme::SPACE_2 + 2.0);
     action
 }
 
@@ -542,11 +542,11 @@ fn quiet_settings_button(label: &str) -> egui::Button<'_> {
     egui::Button::new(
         egui::RichText::new(label)
             .text_style(egui::TextStyle::Small)
-            .color(crate::theme::TEXT),
+            .color(crate::ui::theme::TEXT),
     )
-    .fill(crate::theme::SURFACE_ELEVATED)
-    .stroke(crate::theme::stroke_subtle())
-    .corner_radius(crate::theme::RADIUS_INLINE)
+    .fill(crate::ui::theme::SURFACE_ELEVATED)
+    .stroke(crate::ui::theme::stroke_subtle())
+    .corner_radius(crate::ui::theme::RADIUS_INLINE)
 }
 
 fn paint_sidebar_boards(
@@ -563,8 +563,8 @@ fn paint_sidebar_boards(
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-                ui.add_space(crate::theme::SPACE_3);
-                let indent = crate::theme::SPACE_2;
+                ui.add_space(crate::ui::theme::SPACE_3);
+                let indent = crate::ui::theme::SPACE_2;
                 ui.scope_builder(
                     egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
                         egui::pos2(ui.max_rect().left() + indent, ui.max_rect().top()),
@@ -573,7 +573,7 @@ fn paint_sidebar_boards(
                     |ui| {
                         for (index, summary) in boards.iter().enumerate() {
                             if index > 0 {
-                                ui.add_space(crate::theme::SPACE_1);
+                                ui.add_space(crate::ui::theme::SPACE_1);
                             }
                             let shortcut = board_shortcut_hint(index);
                             match paint_board_row(
@@ -603,7 +603,7 @@ fn paint_sidebar_boards(
                                 None => {}
                             }
                         }
-                        ui.add_space(crate::theme::SPACE_3);
+                        ui.add_space(crate::ui::theme::SPACE_3);
                         if paint_create_board_button(ui) {
                             board_action = Some(SidebarBoardAction::CreateBoard);
                         }
@@ -644,16 +644,16 @@ fn paint_board_row(
     });
     let hot = pointer_in_row || forced_hover || renaming;
     let fill = if active || hot {
-        crate::theme::SURFACE_ELEVATED
+        crate::ui::theme::SURFACE_ELEVATED
     } else {
         egui::Color32::TRANSPARENT
     };
     ui.painter().rect(
         rect,
-        egui::CornerRadius::same(crate::theme::RADIUS_COMPACT),
+        egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT),
         fill,
         if active {
-            crate::theme::stroke_subtle()
+            crate::ui::theme::stroke_subtle()
         } else {
             egui::Stroke::NONE
         },
@@ -661,43 +661,43 @@ fn paint_board_row(
     );
     if active {
         let rail_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.left(), rect.top() + crate::theme::SPACE_2),
-            egui::pos2(rect.left() + 2.0, rect.bottom() - crate::theme::SPACE_2),
+            egui::pos2(rect.left(), rect.top() + crate::ui::theme::SPACE_2),
+            egui::pos2(rect.left() + 2.0, rect.bottom() - crate::ui::theme::SPACE_2),
         );
         ui.painter().rect_filled(
             rail_rect,
-            egui::CornerRadius::same(crate::theme::RADIUS_MICRO),
-            crate::theme::ACCENT,
+            egui::CornerRadius::same(crate::ui::theme::RADIUS_MICRO),
+            crate::ui::theme::ACCENT,
         );
     }
 
     let swatch_size = 24.0;
     let swatch_rect = egui::Rect::from_min_size(
         egui::pos2(
-            rect.left() + crate::theme::SPACE_3,
+            rect.left() + crate::ui::theme::SPACE_3,
             rect.center().y - swatch_size * 0.5,
         ),
         egui::vec2(swatch_size, swatch_size),
     );
     ui.painter().rect_filled(
         swatch_rect,
-        egui::CornerRadius::same(crate::theme::RADIUS_INLINE),
+        egui::CornerRadius::same(crate::ui::theme::RADIUS_INLINE),
         egui::Color32::from_white_alpha(if active { 38 } else { 18 }),
     );
 
     let detail_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
     let detail_galley =
         ui.painter()
-            .layout_no_wrap(detail.to_owned(), detail_font, crate::theme::TEXT_MUTED);
+            .layout_no_wrap(detail.to_owned(), detail_font, crate::ui::theme::TEXT_MUTED);
 
-    let text_x = swatch_rect.right() + crate::theme::SPACE_2;
+    let text_x = swatch_rect.right() + crate::ui::theme::SPACE_2;
     let action_rect = egui::Rect::from_center_size(
         egui::pos2(rect.right() - 32.0, rect.center().y),
         egui::vec2(56.0, 24.0),
     );
-    let text_right = action_rect.left() - crate::theme::SPACE_2;
+    let text_right = action_rect.left() - crate::ui::theme::SPACE_2;
     let name_rect = egui::Rect::from_min_max(
-        egui::pos2(text_x, rect.top() + crate::theme::SPACE_2),
+        egui::pos2(text_x, rect.top() + crate::ui::theme::SPACE_2),
         egui::pos2(text_right.max(text_x + 24.0), rect.top() + 27.0),
     );
     let title_hit_id = ui.make_persistent_id(("board-name-hit", board_id));
@@ -724,7 +724,7 @@ fn paint_board_row(
             egui::TextEdit::singleline(&mut name_edit)
                 .id(name_edit_id)
                 .font(egui::TextStyle::Body)
-                .text_color(crate::theme::TEXT)
+                .text_color(crate::ui::theme::TEXT)
                 .frame(egui::Frame::NONE)
                 .desired_width(name_rect.width()),
         );
@@ -739,15 +739,15 @@ fn paint_board_row(
         let title_galley = ui.painter().layout_no_wrap(
             name.to_owned(),
             egui::TextStyle::Body.resolve(ui.style()),
-            crate::theme::TEXT,
+            crate::ui::theme::TEXT,
         );
         ui.painter()
-            .galley(name_rect.left_top(), title_galley, crate::theme::TEXT);
+            .galley(name_rect.left_top(), title_galley, crate::ui::theme::TEXT);
     }
 
     let detail_pos = egui::pos2(text_x, rect.top() + 28.0);
     ui.painter()
-        .galley(detail_pos, detail_galley, crate::theme::TEXT_MUTED);
+        .galley(detail_pos, detail_galley, crate::ui::theme::TEXT_MUTED);
 
     let delete_response = ui.interact(
         action_rect,
@@ -768,20 +768,21 @@ fn paint_board_row(
             egui::Align2::RIGHT_CENTER,
             "Delete",
             egui::TextStyle::Small.resolve(ui.style()),
-            crate::theme::DESTRUCTIVE,
+            crate::ui::theme::DESTRUCTIVE,
         );
     } else if let Some(shortcut) = shortcut {
         let font = ui.style().text_styles[&egui::TextStyle::Small].clone();
         let galley = ui.painter().layout_no_wrap(
             display_shortcut_label(shortcut).to_owned(),
             font,
-            crate::theme::TEXT_SUBTLE,
+            crate::ui::theme::TEXT_SUBTLE,
         );
         let pos = egui::pos2(
             action_rect.right() - galley.size().x,
             rect.center().y - galley.size().y * 0.5,
         );
-        ui.painter().galley(pos, galley, crate::theme::TEXT_SUBTLE);
+        ui.painter()
+            .galley(pos, galley, crate::ui::theme::TEXT_SUBTLE);
     }
     if delete_hot && delete_response.clicked() {
         Some(BoardRowAction::Delete)
@@ -803,12 +804,12 @@ fn paint_create_board_button(ui: &mut egui::Ui) -> bool {
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "New board")
     });
-    let dash_stroke = egui::Stroke::new(1.0, crate::theme::BORDER);
+    let dash_stroke = egui::Stroke::new(1.0, crate::ui::theme::BORDER);
     ui.painter().rect(
         rect,
-        egui::CornerRadius::same(crate::theme::RADIUS_COMPACT),
+        egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT),
         if response.hovered() {
-            crate::theme::SURFACE_ELEVATED
+            crate::ui::theme::SURFACE_ELEVATED
         } else {
             egui::Color32::from_white_alpha(4)
         },
@@ -820,14 +821,14 @@ fn paint_create_board_button(ui: &mut egui::Ui) -> bool {
     let plus_galley = ui.painter().layout_no_wrap(
         "+  New board".to_owned(),
         plus_font,
-        crate::theme::TEXT_SUBTLE,
+        crate::ui::theme::TEXT_SUBTLE,
     );
     let pos = egui::pos2(
         rect.center().x - plus_galley.size().x * 0.5,
         rect.center().y - plus_galley.size().y * 0.5 - 1.0,
     );
     ui.painter()
-        .galley(pos, plus_galley, crate::theme::TEXT_SUBTLE);
+        .galley(pos, plus_galley, crate::ui::theme::TEXT_SUBTLE);
     response.clicked()
 }
 
@@ -848,49 +849,49 @@ fn board_shortcut_hint(index: usize) -> Option<String> {
 }
 
 fn paint_sidebar_section_header(ui: &mut egui::Ui, title: &str, detail: Option<&str>) {
-    let pad = crate::theme::SPACE_3;
+    let pad = crate::ui::theme::SPACE_3;
     let indent_rect = egui::Rect::from_min_max(
         egui::pos2(ui.max_rect().left() + pad, ui.cursor().top()),
         egui::pos2(ui.max_rect().right() - pad, ui.cursor().top() + 22.0),
     );
     ui.scope_builder(egui::UiBuilder::new().max_rect(indent_rect), |ui| {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+            ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
             ui.label(
                 egui::RichText::new(title)
-                    .text_style(crate::theme::display_text_style())
-                    .color(crate::theme::TEXT),
+                    .text_style(crate::ui::theme::display_text_style())
+                    .color(crate::ui::theme::TEXT),
             );
             if let Some(detail) = detail {
-                ui.with_layout(crate::ui_layout::row_end_center_y_layout(), |ui| {
+                ui.with_layout(crate::ui::layout::row_end_center_y_layout(), |ui| {
                     ui.label(
                         egui::RichText::new(detail)
                             .text_style(egui::TextStyle::Small)
-                            .color(crate::theme::TEXT_SUBTLE),
+                            .color(crate::ui::theme::TEXT_SUBTLE),
                     );
                 });
             }
         });
     });
-    ui.add_space(22.0 + crate::theme::SPACE_2);
+    ui.add_space(22.0 + crate::ui::theme::SPACE_2);
 }
 
 fn paint_sidebar_subcard(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
-    let pad = crate::theme::SPACE_2;
+    let pad = crate::ui::theme::SPACE_2;
     let indent_rect = egui::Rect::from_min_max(
         egui::pos2(ui.max_rect().left() + pad, ui.cursor().top()),
         egui::pos2(ui.max_rect().right() - pad, ui.max_rect().bottom()),
     );
     ui.scope_builder(egui::UiBuilder::new().max_rect(indent_rect), |ui| {
         egui::Frame::new()
-            .fill(crate::theme::QUIET_INSET_FILL)
-            .stroke(crate::theme::stroke_subtle())
-            .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_COMPACT))
+            .fill(crate::ui::theme::QUIET_INSET_FILL)
+            .stroke(crate::ui::theme::stroke_subtle())
+            .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT))
             .inner_margin(egui::Margin {
-                left: crate::theme::SPACE_3 as i8,
-                right: crate::theme::SPACE_3 as i8,
-                top: crate::theme::SPACE_1 as i8,
-                bottom: crate::theme::SPACE_1 as i8,
+                left: crate::ui::theme::SPACE_3 as i8,
+                right: crate::ui::theme::SPACE_3 as i8,
+                top: crate::ui::theme::SPACE_1 as i8,
+                bottom: crate::ui::theme::SPACE_1 as i8,
             })
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
@@ -993,34 +994,34 @@ fn paint_setting_row(
     add_control: impl FnOnce(&mut egui::Ui) -> bool,
 ) -> bool {
     let mut changed = false;
-    ui.add_space(crate::theme::SPACE_2 + 2.0);
+    ui.add_space(crate::ui::theme::SPACE_2 + 2.0);
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
         ui.label(
             egui::RichText::new(title)
                 .text_style(egui::TextStyle::Body)
-                .color(crate::theme::TEXT),
+                .color(crate::ui::theme::TEXT),
         );
         ui.label(
             egui::RichText::new(detail)
                 .text_style(egui::TextStyle::Small)
-                .color(crate::theme::TEXT_SUBTLE),
+                .color(crate::ui::theme::TEXT_SUBTLE),
         );
-        ui.add_space(crate::theme::SPACE_2);
+        ui.add_space(crate::ui::theme::SPACE_2);
         changed |= add_control(ui);
     });
-    ui.add_space(crate::theme::SPACE_2 + 2.0);
+    ui.add_space(crate::ui::theme::SPACE_2 + 2.0);
     changed
 }
 
 fn paint_setting_divider(ui: &mut egui::Ui) {
     let available = ui.available_width();
-    let pad = crate::theme::SPACE_3;
+    let pad = crate::ui::theme::SPACE_3;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(available, 1.0), egui::Sense::hover());
     let from = egui::pos2(rect.left() - pad, rect.center().y);
     let to = egui::pos2(rect.right() + pad, rect.center().y);
     ui.painter()
-        .line_segment([from, to], crate::theme::stroke_subtle());
+        .line_segment([from, to], crate::ui::theme::stroke_subtle());
 }
 
 fn pointer_mode_detail(mode: crate::data::PointerMode) -> &'static str {
@@ -1038,7 +1039,7 @@ fn paint_pointer_mode_control(ui: &mut egui::Ui, mode: &mut crate::data::Pointer
     ];
 
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+        ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
         for (label, value) in segments {
             let selected = *mode == value;
             if paint_inline_choice(ui, label, selected) {
@@ -1064,7 +1065,7 @@ fn paint_background_mode_control(
     ];
 
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+        ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
         for (label, value) in segments {
             let selected = background == value;
             if paint_inline_choice(ui, label, selected) {
@@ -1087,40 +1088,40 @@ fn paint_inline_choice(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
 
 fn paint_inline_choice_response(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
     let text_color = if selected {
-        crate::theme::TEXT
+        crate::ui::theme::TEXT
     } else {
-        crate::theme::TEXT_MUTED
+        crate::ui::theme::TEXT_MUTED
     };
     let font = ui.style().text_styles[&egui::TextStyle::Button].clone();
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), font, text_color);
     let pad = egui::vec2(
-        crate::theme::QUIET_INLINE_PAD_X,
-        crate::theme::QUIET_INLINE_PAD_Y,
+        crate::ui::theme::QUIET_INLINE_PAD_X,
+        crate::ui::theme::QUIET_INLINE_PAD_Y,
     );
     let size = egui::vec2(
-        (galley.size().x + pad.x * 2.0).max(crate::theme::QUIET_INLINE_MIN_WIDTH),
-        crate::theme::QUIET_INLINE_HEIGHT,
+        (galley.size().x + pad.x * 2.0).max(crate::ui::theme::QUIET_INLINE_MIN_WIDTH),
+        crate::ui::theme::QUIET_INLINE_HEIGHT,
     );
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
     let fill = if selected {
-        crate::theme::QUIET_INLINE_ACTIVE_FILL
+        crate::ui::theme::QUIET_INLINE_ACTIVE_FILL
     } else if response.hovered() {
-        crate::theme::QUIET_INLINE_HOVER_FILL
+        crate::ui::theme::QUIET_INLINE_HOVER_FILL
     } else {
         egui::Color32::TRANSPARENT
     };
     if selected || response.hovered() {
         ui.painter().rect(
             rect,
-            egui::CornerRadius::same(crate::theme::RADIUS_INLINE),
+            egui::CornerRadius::same(crate::ui::theme::RADIUS_INLINE),
             fill,
             if selected {
-                crate::theme::stroke_subtle()
+                crate::ui::theme::stroke_subtle()
             } else {
                 egui::Stroke::NONE
             },
@@ -1128,7 +1129,7 @@ fn paint_inline_choice_response(ui: &mut egui::Ui, label: &str, selected: bool) 
         );
     }
     ui.painter().galley(
-        crate::ui_layout::centered_pos(rect, galley.size()),
+        crate::ui::layout::centered_pos(rect, galley.size()),
         galley,
         text_color,
     );
@@ -1153,29 +1154,29 @@ fn paint_number_text_field(
 
     let mut changed = false;
     let frame = egui::Frame::new()
-        .fill(crate::theme::QUIET_INLINE_ACTIVE_FILL)
-        .stroke(crate::theme::stroke_subtle())
-        .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_INLINE))
+        .fill(crate::ui::theme::QUIET_INLINE_ACTIVE_FILL)
+        .stroke(crate::ui::theme::stroke_subtle())
+        .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_INLINE))
         .inner_margin(egui::Margin {
-            left: crate::theme::QUIET_INLINE_PAD_X as i8,
-            right: crate::theme::QUIET_INLINE_PAD_X as i8,
-            top: crate::theme::SPACE_1 as i8,
-            bottom: crate::theme::SPACE_1 as i8,
+            left: crate::ui::theme::QUIET_INLINE_PAD_X as i8,
+            right: crate::ui::theme::QUIET_INLINE_PAD_X as i8,
+            top: crate::ui::theme::SPACE_1 as i8,
+            bottom: crate::ui::theme::SPACE_1 as i8,
         });
     let response = frame
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
+                ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
                 let response = ui
                     .scope(|ui| {
-                        ui.visuals_mut().selection.bg_fill = crate::theme::ACCENT;
+                        ui.visuals_mut().selection.bg_fill = crate::ui::theme::ACCENT;
                         ui.visuals_mut().selection.stroke =
-                            egui::Stroke::new(1.0, crate::theme::BACKGROUND);
+                            egui::Stroke::new(1.0, crate::ui::theme::BACKGROUND);
                         ui.add(
                             egui::TextEdit::singleline(&mut text)
                                 .id(id)
                                 .font(egui::TextStyle::Button)
-                                .text_color(crate::theme::TEXT)
+                                .text_color(crate::ui::theme::TEXT)
                                 .frame(egui::Frame::NONE)
                                 .desired_width(48.0),
                         )
@@ -1184,7 +1185,7 @@ fn paint_number_text_field(
                 ui.label(
                     egui::RichText::new(suffix)
                         .text_style(egui::TextStyle::Small)
-                        .color(crate::theme::TEXT_MUTED),
+                        .color(crate::ui::theme::TEXT_MUTED),
                 );
                 response
             })
@@ -1214,7 +1215,7 @@ fn paint_number_text_field(
 }
 
 fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
-    let pad = crate::theme::SPACE_3;
+    let pad = crate::ui::theme::SPACE_3;
     let indent_rect = egui::Rect::from_min_max(
         egui::pos2(ui.max_rect().left() + pad, ui.cursor().top()),
         egui::pos2(ui.max_rect().right() - pad, ui.max_rect().bottom()),
@@ -1223,7 +1224,7 @@ fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
         let (core_shortcuts, layout_shortcuts) = SUPPORTED_SHORTCUTS.split_at(10);
         paint_shortcut_group(ui, "Core actions", core_shortcuts);
-        ui.add_space(crate::theme::SPACE_3);
+        ui.add_space(crate::ui::theme::SPACE_3);
         paint_shortcut_group(ui, "Layout + history", layout_shortcuts);
     });
 }
@@ -1233,9 +1234,9 @@ fn paint_shortcut_group(ui: &mut egui::Ui, title: &str, shortcuts: &[SupportedSh
         egui::RichText::new(title)
             .text_style(egui::TextStyle::Small)
             .strong()
-            .color(crate::theme::TEXT_MUTED),
+            .color(crate::ui::theme::TEXT_MUTED),
     );
-    ui.add_space(crate::theme::SPACE_1);
+    ui.add_space(crate::ui::theme::SPACE_1);
     for (index, shortcut) in shortcuts.iter().enumerate() {
         if index > 0 {
             paint_shortcut_divider(ui);
@@ -1252,14 +1253,14 @@ fn paint_shortcut_row(ui: &mut egui::Ui, shortcut: &SupportedShortcut) {
 
     ui.add_space(3.0);
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = crate::theme::SPACE_2;
-        ui.with_layout(crate::ui_layout::row_end_center_y_layout(), |ui| {
+        ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
+        ui.with_layout(crate::ui::layout::row_end_center_y_layout(), |ui| {
             paint_shortcut_pill(ui, keys);
-            ui.with_layout(crate::ui_layout::row_center_y_layout(), |ui| {
+            ui.with_layout(crate::ui::layout::row_center_y_layout(), |ui| {
                 ui.label(
                     egui::RichText::new(shortcut.action)
                         .text_style(egui::TextStyle::Small)
-                        .color(crate::theme::TEXT),
+                        .color(crate::ui::theme::TEXT),
                 );
             });
         });
@@ -1273,19 +1274,21 @@ fn paint_shortcut_pill(ui: &mut egui::Ui, keys: &str) {
     if shortcut_label_uses_small_symbol_glyphs(&keys) {
         font.size += 3.0;
     }
-    let galley = ui.painter().layout_no_wrap(keys, font, crate::theme::TEXT);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(keys, font, crate::ui::theme::TEXT);
     let pad = egui::vec2(6.0, 1.0);
     let size = galley.size() + pad * 2.0;
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     ui.painter().rect(
         rect,
-        egui::CornerRadius::same(crate::theme::RADIUS_MICRO),
+        egui::CornerRadius::same(crate::ui::theme::RADIUS_MICRO),
         egui::Color32::from_white_alpha(15),
-        crate::theme::stroke_subtle(),
+        crate::ui::theme::stroke_subtle(),
         egui::StrokeKind::Inside,
     );
     ui.painter()
-        .galley(rect.min + pad, galley, crate::theme::TEXT);
+        .galley(rect.min + pad, galley, crate::ui::theme::TEXT);
 }
 
 fn paint_shortcut_divider(ui: &mut egui::Ui) {
@@ -1296,7 +1299,7 @@ fn paint_shortcut_divider(ui: &mut egui::Ui) {
             egui::pos2(rect.left(), rect.center().y),
             egui::pos2(rect.right(), rect.center().y),
         ],
-        crate::theme::stroke_subtle(),
+        crate::ui::theme::stroke_subtle(),
     );
 }
 
@@ -1325,18 +1328,18 @@ pub(crate) fn show_sidebar_hint(
     egui::Area::new(egui::Id::new("sidebar_hint"))
         .order(egui::Order::Foreground)
         .fixed_pos(egui::pos2(
-            screen_rect.left() + crate::theme::SPACE_4,
-            screen_rect.bottom() - crate::theme::SPACE_4,
+            screen_rect.left() + crate::ui::theme::SPACE_4,
+            screen_rect.bottom() - crate::ui::theme::SPACE_4,
         ))
         .anchor(
             egui::Align2::LEFT_BOTTOM,
-            egui::vec2(crate::theme::SPACE_4, -crate::theme::SPACE_4),
+            egui::vec2(crate::ui::theme::SPACE_4, -crate::ui::theme::SPACE_4),
         )
         .show(ctx, |ui| {
             egui::Frame::new()
-                .fill(crate::theme::SURFACE_ELEVATED)
-                .stroke(crate::theme::stroke_subtle())
-                .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_COMPACT))
+                .fill(crate::ui::theme::SURFACE_ELEVATED)
+                .stroke(crate::ui::theme::stroke_subtle())
+                .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT))
                 .inner_margin(egui::Margin {
                     left: 8,
                     right: 8,
@@ -1352,11 +1355,11 @@ pub(crate) fn show_sidebar_hint(
                     let galley = ui.painter().layout_no_wrap(
                         label,
                         egui::TextStyle::Small.resolve(ui.style()),
-                        crate::theme::TEXT_MUTED,
+                        crate::ui::theme::TEXT_MUTED,
                     );
                     let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
                     ui.painter()
-                        .galley(rect.min, galley, crate::theme::TEXT_MUTED);
+                        .galley(rect.min, galley, crate::ui::theme::TEXT_MUTED);
                     let hovered = ui.ctx().input(|input| {
                         input
                             .pointer

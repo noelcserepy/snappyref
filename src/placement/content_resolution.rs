@@ -6,7 +6,7 @@ use eframe::egui;
 use crate::canvas::CanvasState;
 use crate::data::BoardItemWithAsset;
 use crate::jobs::{ExistingLoadDiagnostics, ImportOrigin, ImportTrace};
-use crate::storage::Library;
+use crate::library::storage::Library;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ContentResolutionReservation {
@@ -448,7 +448,7 @@ mod tests {
     #[test]
     fn failed_import_marks_correlated_loading_placement_failed() {
         let root = temp_root("snappyref-content-resolution-failure");
-        let library = crate::storage::Library::initialize(root.clone()).unwrap();
+        let library = crate::library::storage::Library::initialize(root.clone()).unwrap();
         let loading = library
             .persist_committed_loading_placement(
                 eframe::egui::pos2(10.0, 20.0),

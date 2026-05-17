@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
-use crate::native_capture::NativeWindowCapture;
+use crate::platform::capture::NativeWindowCapture;
 
 pub struct ScreenshotCapture {
     next_path: Option<PathBuf>,

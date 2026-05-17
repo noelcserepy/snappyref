@@ -26,7 +26,7 @@ struct PendingPersistenceBatch {
 }
 
 impl DocumentPersistence {
-    pub(crate) fn queued(library: crate::storage::Library) -> Self {
+    pub(crate) fn queued(library: crate::library::storage::Library) -> Self {
         Self {
             last_saved_user_session: None,
             queue: Some(PersistenceQueue::spawn(library)),
@@ -39,7 +39,7 @@ impl DocumentPersistence {
 
     pub(crate) fn commit_canvas_changes(
         &mut self,
-        library: Option<&crate::storage::Library>,
+        library: Option<&crate::library::storage::Library>,
         canvas: &mut crate::canvas::CanvasState,
         session: crate::data::UserSession,
     ) -> Result<(), String> {
@@ -53,7 +53,7 @@ impl DocumentPersistence {
 
     pub(crate) fn commit_canvas_document_changes(
         &mut self,
-        library: Option<&crate::storage::Library>,
+        library: Option<&crate::library::storage::Library>,
         canvas: &mut crate::canvas::CanvasState,
     ) -> Result<bool, String> {
         let Some(library) = library else {
@@ -74,7 +74,7 @@ impl DocumentPersistence {
 
     pub(crate) fn save_user_session(
         &mut self,
-        library: Option<&crate::storage::Library>,
+        library: Option<&crate::library::storage::Library>,
         session: crate::data::UserSession,
     ) -> Result<(), String> {
         let Some(library) = library else {
@@ -92,7 +92,7 @@ impl DocumentPersistence {
 
     pub(crate) fn persist_user_session_if_changed(
         &mut self,
-        library: Option<&crate::storage::Library>,
+        library: Option<&crate::library::storage::Library>,
         session: crate::data::UserSession,
     ) -> Result<(), String> {
         if self.last_saved_user_session.as_ref() == Some(&session) {
@@ -125,7 +125,7 @@ impl DocumentPersistence {
 }
 
 impl PersistenceQueue {
-    fn spawn(library: crate::storage::Library) -> Self {
+    fn spawn(library: crate::library::storage::Library) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         let (error_tx, error_rx) = std::sync::mpsc::channel();
         let worker = std::thread::spawn(move || {
@@ -257,7 +257,7 @@ impl PendingPersistenceBatch {
         }
     }
 
-    fn persist(&mut self, library: &crate::storage::Library) -> Result<(), String> {
+    fn persist(&mut self, library: &crate::library::storage::Library) -> Result<(), String> {
         let mut last_error = None;
         let document_changes = std::mem::take(&mut self.document_changes);
         if document_changes.has_changes()
@@ -284,7 +284,7 @@ impl PendingPersistenceBatch {
 }
 
 fn write_canvas_document_changes(
-    library: &crate::storage::Library,
+    library: &crate::library::storage::Library,
     changes: crate::canvas::CanvasDocumentChanges,
 ) -> Result<(), String> {
     let mut last_error = None;
@@ -350,7 +350,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("snappyref-queued-session-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let library = crate::storage::Library::initialize(root.clone()).unwrap();
+        let library = crate::library::storage::Library::initialize(root.clone()).unwrap();
         let mut persistence = DocumentPersistence::queued(library.clone());
         let session = crate::data::UserSession {
             viewport: crate::data::ViewportState {
@@ -380,7 +380,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("snappyref-queued-document-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let library = crate::storage::Library::initialize(root.clone()).unwrap();
+        let library = crate::library::storage::Library::initialize(root.clone()).unwrap();
         let source = root.join("source.png");
         std::fs::write(&source, [255, 255, 255, 255]).unwrap();
         let mut record = library
@@ -421,7 +421,7 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
-        let library = crate::storage::Library::initialize(root.clone()).unwrap();
+        let library = crate::library::storage::Library::initialize(root.clone()).unwrap();
         let source = root.join("source.png");
         std::fs::write(&source, [255, 255, 255, 255]).unwrap();
         let mut record = library

@@ -5,10 +5,9 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-pub(crate) mod semantic;
-
 use crate::canvas::CanvasState;
-use crate::palette::{
+use crate::library::storage::Library;
+use crate::search::palette::{
     ImageSearchPivot, PALETTE_GRID_MAX_HEIGHT, PALETTE_WIDTH, SEARCH_DEBOUNCE_MS,
     SEARCH_OVERLAY_TOP_MARGIN, SEARCH_RESULT_PAGE_SIZE, SearchOverlayState, SearchOverlayStatus,
     paint_palette_divider, paint_palette_empty_state, paint_palette_footer,
@@ -16,18 +15,17 @@ use crate::palette::{
     search_result_grid_content_height, search_result_grid_layout, search_result_tile,
 };
 #[cfg(test)]
-use crate::semantic_search::SemanticSearchInstallProgress;
-use crate::semantic_search::{
+use crate::search::semantic::SemanticSearchInstallProgress;
+use crate::search::semantic::{
     DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, LocalModelStoreStatus,
     SearchQueryResult, SearchScope, SemanticSearchConfig, SemanticSearchInstallController,
     SemanticSearchInstallDisplay, SemanticSearchInstallSnapshot, SemanticSearchService,
     default_local_model_store_status,
 };
 #[cfg(not(test))]
-use crate::semantic_search::{
+use crate::search::semantic::{
     default_semantic_search_asset_descriptor, remove_semantic_search_assets,
 };
-use crate::storage::Library;
 
 const SEARCH_RESULT_SCROLL_ANIMATION: egui::style::ScrollAnimation = egui::style::ScrollAnimation {
     points_per_second: 3200.0,
@@ -95,7 +93,7 @@ struct SearchCacheKey {
 
 #[derive(Clone, Debug)]
 struct SearchCacheEntry {
-    results: Vec<crate::semantic_search::SearchResultGroup>,
+    results: Vec<crate::search::semantic::SearchResultGroup>,
     has_more_results: bool,
 }
 
@@ -209,7 +207,7 @@ impl SearchController {
     pub(crate) fn remove_semantic_search_assets_from_settings(&mut self, status: &mut String) {
         self.semantic_install.force_stop();
         #[cfg(not(test))]
-        match crate::library_location::resolve_data_root() {
+        match crate::library::location::resolve_data_root() {
             Ok(install_root) => {
                 let descriptor = default_semantic_search_asset_descriptor();
                 match remove_semantic_search_assets(&install_root, &descriptor) {
@@ -990,9 +988,9 @@ impl SearchController {
                 ui.set_min_width(width);
                 ui.set_max_width(width);
                 egui::Frame::new()
-                    .fill(crate::theme::PALETTE_SURFACE)
+                    .fill(crate::ui::theme::PALETTE_SURFACE)
                     .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(33)))
-                    .corner_radius(egui::CornerRadius::same(crate::theme::RADIUS_PANEL))
+                    .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_PANEL))
                     .shadow(egui::epaint::Shadow {
                         offset: [0, 12],
                         blur: 40,
@@ -1105,8 +1103,8 @@ impl SearchController {
                                         ui.set_max_width(grid_inner_width);
                                         let mut render_grid = |ui: &mut egui::Ui| {
                                             ui.spacing_mut().item_spacing = egui::vec2(
-                                                crate::theme::SPACE_2,
-                                                crate::theme::SPACE_2,
+                                                crate::ui::theme::SPACE_2,
+                                                crate::ui::theme::SPACE_2,
                                             );
                                             for (row_index, row_groups) in self
                                                 .overlay
@@ -1116,7 +1114,7 @@ impl SearchController {
                                             {
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x =
-                                                        crate::theme::SPACE_2;
+                                                        crate::ui::theme::SPACE_2;
                                                     for (column_index, group) in
                                                         row_groups.iter().enumerate()
                                                     {
@@ -1449,7 +1447,7 @@ impl SearchController {
             return;
         }
 
-        self.overlay.drag_state = Some(crate::palette::SearchResultDragState {
+        self.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
             item_ids,
             asset_ids,
             outside_overlay: false,
@@ -1525,7 +1523,7 @@ impl SearchController {
             screen_rect,
             placement_preview_config,
         );
-        self.overlay.drag_state = Some(crate::palette::SearchResultDragState {
+        self.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
             item_ids: item_ids.clone(),
             asset_ids,
             outside_overlay: true,
@@ -1537,7 +1535,7 @@ impl SearchController {
 
     fn cancel_pending_placement(&mut self, canvas: &mut CanvasState) {
         self.overlay.drag_state = None;
-        crate::placement_lifecycle::cancel_provisional_batch(canvas);
+        crate::placement::lifecycle::cancel_provisional_batch(canvas);
     }
 
     fn create_search_provisional_placements(
@@ -1552,7 +1550,7 @@ impl SearchController {
         let mut source_intents = item_ids
             .iter()
             .filter_map(|item_id| canvas.record_for_item_id(*item_id))
-            .map(crate::placement_creation::ProvisionalSourceIntent::ExistingPlacement)
+            .map(crate::placement::creation::ProvisionalSourceIntent::ExistingPlacement)
             .collect::<Vec<_>>();
 
         for asset_id in asset_ids {
@@ -1564,7 +1562,7 @@ impl SearchController {
                 .map(|group| (group.asset_width.max(1), group.asset_height.max(1)))
                 .unwrap_or((1, 1));
             source_intents.push(
-                crate::placement_creation::ProvisionalSourceIntent::ExistingAsset {
+                crate::placement::creation::ProvisionalSourceIntent::ExistingAsset {
                     asset_id: *asset_id,
                     label: format!("search-asset-{asset_id}"),
                     dimensions: (width, height),
@@ -1572,12 +1570,12 @@ impl SearchController {
             );
         }
 
-        crate::placement_lifecycle::start_provisional_batch(
+        crate::placement::lifecycle::start_provisional_batch(
             canvas,
             source_intents,
             anchor_world,
             screen_rect,
-            crate::placement_creation::PlacementCreationSettings {
+            crate::placement::creation::PlacementCreationSettings {
                 target_canvas_area: placement_preview_config.import_target_canvas_area,
                 gap: placement_preview_config.import_gap,
             },
@@ -2001,7 +1999,7 @@ fn update_search_placement_preview(
     ctx: &egui::Context,
     canvas: &mut CanvasState,
     search: &SearchController,
-    drag: &mut crate::palette::SearchResultDragState,
+    drag: &mut crate::search::palette::SearchResultDragState,
     pointer_world: egui::Pos2,
     screen_rect: egui::Rect,
     placement_preview_config: SearchPlacementPreviewConfig,
@@ -2024,7 +2022,7 @@ fn update_search_placement_preview(
     let preview_bounds = canvas.selected_bounds_world();
     if !drag.auto_fit_applied
         && let Some(bounds) = preview_bounds
-        && crate::placement_creation::fit_selection_bounds_if_needed(
+        && crate::placement::creation::fit_selection_bounds_if_needed(
             canvas,
             bounds,
             screen_rect,
@@ -2050,7 +2048,7 @@ mod tests {
     };
     use crate::canvas::CanvasState;
     use crate::data::{BoardItem, BoardItemWithAsset};
-    use crate::semantic_search::{
+    use crate::search::semantic::{
         LocalModelStoreStatus, SearchQueryResult, SearchResultGroup, SearchScope,
         SemanticSearchInstallProgress,
     };
@@ -2321,14 +2319,14 @@ mod tests {
         prefix: &str,
     ) -> (SearchController, std::path::PathBuf) {
         let root = temp_root(prefix);
-        let library = crate::storage::Library::initialize(root.join("library")).unwrap();
+        let library = crate::library::storage::Library::initialize(root.join("library")).unwrap();
         let search = SearchController {
             service: Some(
-                crate::semantic_search::SemanticSearchService::new(
+                crate::search::semantic::SemanticSearchService::new(
                     library,
-                    crate::semantic_search::SemanticSearchConfig {
+                    crate::search::semantic::SemanticSearchConfig {
                         enabled: false,
-                        model: crate::semantic_search::DEFAULT_SEMANTIC_SEARCH_MODEL,
+                        model: crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL,
                         canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
                     },
                 )
@@ -2368,7 +2366,7 @@ mod tests {
                 instance_count: 0,
             })
             .collect();
-        let mut drag = crate::palette::SearchResultDragState {
+        let mut drag = crate::search::palette::SearchResultDragState {
             item_ids: Vec::new(),
             asset_ids: vec![1, 2, 3, 4, 5],
             outside_overlay: true,
@@ -2386,7 +2384,7 @@ mod tests {
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)),
             super::SearchPlacementPreviewConfig {
                 import_target_canvas_area: 10_000.0,
-                import_gap: crate::theme::SPACE_2,
+                import_gap: crate::ui::theme::SPACE_2,
                 visible_canvas_rect: egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
                     egui::vec2(1200.0, 800.0),
@@ -2449,7 +2447,7 @@ mod tests {
             });
         }
         search.overlay.result_selection.range_to(4);
-        let mut drag = crate::palette::SearchResultDragState {
+        let mut drag = crate::search::palette::SearchResultDragState {
             item_ids: vec![100, 101, 102, 103, 104],
             asset_ids: Vec::new(),
             outside_overlay: true,
@@ -2467,7 +2465,7 @@ mod tests {
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)),
             super::SearchPlacementPreviewConfig {
                 import_target_canvas_area: 10_000.0,
-                import_gap: crate::theme::SPACE_2,
+                import_gap: crate::ui::theme::SPACE_2,
                 visible_canvas_rect: egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
                     egui::vec2(1200.0, 800.0),
@@ -2517,7 +2515,7 @@ mod tests {
                 instance_count: 0,
             })
             .collect();
-        let mut drag = crate::palette::SearchResultDragState {
+        let mut drag = crate::search::palette::SearchResultDragState {
             item_ids: Vec::new(),
             asset_ids: vec![1, 2],
             outside_overlay: true,
@@ -2528,7 +2526,7 @@ mod tests {
         let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
         let placement_preview_config = super::SearchPlacementPreviewConfig {
             import_target_canvas_area: 10_000.0,
-            import_gap: crate::theme::SPACE_2,
+            import_gap: crate::ui::theme::SPACE_2,
             visible_canvas_rect: screen_rect,
         };
 
@@ -2635,7 +2633,7 @@ mod tests {
             item_ids: Vec::new(),
             instance_count: 0,
         }];
-        search.overlay.drag_state = Some(crate::palette::SearchResultDragState {
+        search.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
             item_ids: Vec::new(),
             asset_ids: vec![1],
             outside_overlay: false,
@@ -2655,7 +2653,7 @@ mod tests {
                     egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)),
                     super::SearchPlacementPreviewConfig {
                         import_target_canvas_area: 120_000.0,
-                        import_gap: crate::theme::SPACE_2,
+                        import_gap: crate::ui::theme::SPACE_2,
                         visible_canvas_rect: egui::Rect::from_min_size(
                             egui::Pos2::ZERO,
                             egui::vec2(1200.0, 800.0),

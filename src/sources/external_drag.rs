@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use eframe::egui;
 
-use crate::import_intake::{ExternalImportSource, normalize_import_url};
+use crate::sources::import::{ExternalImportSource, normalize_import_url};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ExternalDragIntake {
@@ -16,10 +16,10 @@ pub(crate) fn hovered(ui: &egui::Ui) -> ExternalDragIntake {
         raw_hovered_files
             .into_iter()
             .filter_map(|file| source_from_hovered_file(file)),
-        crate::native_drop::hovered_paths()
+        crate::platform::native_drop::hovered_paths()
             .into_iter()
             .map(ExternalImportSource::Path),
-        crate::native_drop::hovered_url_strings()
+        crate::platform::native_drop::hovered_url_strings()
             .into_iter()
             .map(ExternalImportSource::Url),
     );
@@ -27,8 +27,8 @@ pub(crate) fn hovered(ui: &egui::Ui) -> ExternalDragIntake {
     ExternalDragIntake {
         sources,
         screen_pos: resolve_screen_pos(
-            crate::native_drop::hovered_screen_pos(),
-            crate::native_drop::cursor_screen_pos(),
+            crate::platform::native_drop::hovered_screen_pos(),
+            crate::platform::native_drop::cursor_screen_pos(),
             ui.ctx().input(|input| input.pointer.latest_pos()),
         ),
     }
@@ -40,10 +40,10 @@ pub(crate) fn take_drop(ui: &egui::Ui) -> ExternalDragIntake {
         raw_dropped_files
             .into_iter()
             .filter_map(|file| source_from_dropped_file(file)),
-        crate::native_drop::take_dropped_paths()
+        crate::platform::native_drop::take_dropped_paths()
             .into_iter()
             .map(ExternalImportSource::Path),
-        crate::native_drop::take_dropped_url_strings()
+        crate::platform::native_drop::take_dropped_url_strings()
             .into_iter()
             .map(ExternalImportSource::Url),
     );
@@ -51,8 +51,8 @@ pub(crate) fn take_drop(ui: &egui::Ui) -> ExternalDragIntake {
     ExternalDragIntake {
         sources,
         screen_pos: resolve_screen_pos(
-            crate::native_drop::take_dropped_screen_pos(),
-            crate::native_drop::cursor_screen_pos(),
+            crate::platform::native_drop::take_dropped_screen_pos(),
+            crate::platform::native_drop::cursor_screen_pos(),
             ui.ctx().input(|input| input.pointer.latest_pos()),
         ),
     }

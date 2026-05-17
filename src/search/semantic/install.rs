@@ -8,8 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use zip::ZipArchive;
 
-use crate::model_store::model_store_root;
-use crate::semantic_search::DEFAULT_SEMANTIC_SEARCH_MODEL;
+use super::model_store::model_store_root;
+use crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
 use crate::updater::{download, install_paths};
 
 const DEFAULT_SEMANTIC_SEARCH_ASSET_URL: &str = "https://github.com/noelcserepy/snappyref-dist/releases/download/semantic-search/snappyref-semantic-search.zip";

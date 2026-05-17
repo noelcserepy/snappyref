@@ -2,9 +2,9 @@ mod index;
 mod install;
 mod install_controller;
 mod model;
+mod model_store;
 mod service;
 
-pub(crate) use crate::model_store::LocalModelStoreStatus;
 pub use index::SearchScope;
 pub(crate) use install::SemanticSearchInstallProgress;
 #[cfg(not(test))]
@@ -21,6 +21,7 @@ pub use model::DEFAULT_SEMANTIC_SEARCH_MODEL;
 pub(crate) use model::{
     ImageEmbeddingTiming, ModelLoadTiming, OrtDualEncoderModel, default_local_model_store_status,
 };
+pub(crate) use model_store::LocalModelStoreStatus;
 pub use service::{
     IndexResult, SearchQueryResult, SearchResultGroup, SemanticSearchConfig, SemanticSearchService,
 };

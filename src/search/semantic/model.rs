@@ -8,7 +8,7 @@ use ndarray::{Array2, Array4};
 use ort::{ep, session::Session, value::TensorRef};
 use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
 
-use crate::model_store::{
+use super::model_store::{
     LocalModelStoreStatus, MISSING_MODEL_USER_MESSAGE, model_store_root,
     refresh_local_model_store_status,
 };
@@ -94,7 +94,7 @@ impl ModelSpec {
 /// Returns `Ok(assets)` when every required file exists and is non-empty,
 /// otherwise returns `Err` with a developer-facing description of the first
 /// missing piece. Callers that want to surface a user-facing message should
-/// inspect [`crate::model_store::classify_availability`] before calling this.
+/// inspect [`super::model_store::classify_availability`] before calling this.
 pub(crate) fn resolve_assets_in_store(
     spec: &ModelSpec,
     store_root: &Path,
@@ -140,7 +140,7 @@ fn resolve_model_assets<F>(
 where
     F: FnMut(&str),
 {
-    let install_root = crate::library_location::resolve_data_root()?;
+    let install_root = crate::library::location::resolve_data_root()?;
     let executable_dir = std::env::current_exe()
         .map_err(|error| format!("Failed to resolve current executable path: {error}"))?
         .parent()
@@ -164,7 +164,7 @@ where
 }
 
 pub(crate) fn default_local_model_store_status() -> LocalModelStoreStatus {
-    let install_root = match crate::library_location::resolve_data_root() {
+    let install_root = match crate::library::location::resolve_data_root() {
         Ok(root) => root,
         Err(error) => return LocalModelStoreStatus::Failed(error),
     };

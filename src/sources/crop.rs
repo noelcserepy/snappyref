@@ -35,7 +35,7 @@ impl CropFlow {
         &self,
         ctx: &eframe::egui::Context,
         canvas: &mut crate::canvas::CanvasState,
-        library: Option<&crate::storage::Library>,
+        library: Option<&crate::library::storage::Library>,
         import_worker: Option<&crate::jobs::ImportWorker>,
         max_texture_side: usize,
         canvas_image_max_side: u32,
@@ -79,7 +79,7 @@ impl CropFlow {
         &mut self,
         ctx: &eframe::egui::Context,
         canvas: &mut crate::canvas::CanvasState,
-        library: Option<&crate::storage::Library>,
+        library: Option<&crate::library::storage::Library>,
         cropped: crate::jobs::CroppedCanvasItem,
         _canvas_image_max_side: u32,
         semantic_search_enabled: bool,
@@ -144,7 +144,7 @@ impl CropFlow {
                 });
                 canvas.clear_crop_pending(updated_item_id);
                 let indexed_asset = (semantic_search_enabled
-                    && crate::residency::asset_mime_type_supports_raster_derivatives(
+                    && crate::library::residency::asset_mime_type_supports_raster_derivatives(
                         &asset.mime_type,
                     ))
                 .then(|| (asset.id, asset.original_path.clone()));
@@ -165,7 +165,7 @@ impl CropFlow {
         &mut self,
         ctx: &eframe::egui::Context,
         canvas: &mut crate::canvas::CanvasState,
-        library: Option<&crate::storage::Library>,
+        library: Option<&crate::library::storage::Library>,
         active_board_id: i64,
     ) -> Result<bool, String> {
         let Some(library) = library else {
@@ -241,7 +241,7 @@ mod tests {
     use crate::canvas::{CanvasCropRequest, CanvasState, PixelCropRect};
     use crate::data::{BoardItem, BoardItemWithAsset, CanvasImageLod, ImageAsset};
     use crate::jobs::{ImportOrigin, ImportWorker, ImportedPreviewTexture, LoadedCanvasItem};
-    use crate::storage::Library;
+    use crate::library::storage::Library;
 
     static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 

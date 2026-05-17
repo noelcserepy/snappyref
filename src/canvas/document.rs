@@ -237,7 +237,7 @@ impl CanvasState {
 
     pub fn warm_cached_pixels_for_item(
         &mut self,
-        library: &crate::storage::Library,
+        library: &crate::library::storage::Library,
         item_id: i64,
     ) -> Result<(), String> {
         let image = self
@@ -764,7 +764,8 @@ impl CanvasState {
         screen_rect: egui::Rect,
         gap: f32,
     ) -> Vec<(egui::Pos2, egui::Vec2)> {
-        let mut placeholders = super::compact_layout_for_sizes(sizes, gap, center_world);
+        let mut placeholders =
+            crate::placement::arrangement::compact_layout_for_sizes(sizes, gap, center_world);
         self.guide_snap_preview_placeholders(&mut placeholders, screen_rect);
         placeholders
     }
@@ -776,7 +777,8 @@ impl CanvasState {
         screen_rect: egui::Rect,
         gap: f32,
     ) -> Vec<(egui::Pos2, egui::Vec2)> {
-        let mut placeholders = super::balanced_grid_layout_for_sizes(sizes, gap, center_world);
+        let mut placeholders =
+            crate::placement::arrangement::balanced_grid_layout_for_sizes(sizes, gap, center_world);
         self.guide_snap_preview_placeholders(&mut placeholders, screen_rect);
         placeholders
     }
@@ -1311,7 +1313,8 @@ impl CanvasState {
 
         items.sort_by(|left, right| left.x.total_cmp(&right.x));
         let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
-        let Some((placements, total_width, total_height)) = super::horizontal_layout(&items, gap)
+        let Some((placements, total_width, total_height)) =
+            crate::placement::arrangement::horizontal_layout(&items, gap)
         else {
             return 0;
         };
@@ -1330,7 +1333,8 @@ impl CanvasState {
 
         items.sort_by(|left, right| left.y.total_cmp(&right.y));
         let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
-        let Some((placements, total_width, total_height)) = super::vertical_layout(&items, gap)
+        let Some((placements, total_width, total_height)) =
+            crate::placement::arrangement::vertical_layout(&items, gap)
         else {
             return 0;
         };
@@ -1356,7 +1360,8 @@ impl CanvasState {
             )
             .unwrap_or(egui::Pos2::ZERO);
 
-        let Some(layout) = super::best_user_compact_layout(&items, gap) else {
+        let Some(layout) = crate::placement::arrangement::best_user_compact_layout(&items, gap)
+        else {
             return 0;
         };
         let local_center = egui::pos2(layout.width * 0.5, layout.height * 0.5);
@@ -1367,17 +1372,24 @@ impl CanvasState {
         )
     }
 
-    pub fn settle_selected(&mut self, direction: super::SettleDirection, gap: f32) -> usize {
+    pub fn settle_selected(
+        &mut self,
+        direction: crate::placement::arrangement::SettleDirection,
+        gap: f32,
+    ) -> usize {
         let items = self.selected_layout_items();
         if items.len() <= 1 {
             return items.len();
         }
 
-        let cross_axis_grace =
-            super::SETTLE_BLOCK_GRACE_SCREEN / self.zoom.max(super::MIN_CANVAS_ZOOM);
-        let Some(placements) =
-            super::directional_settle_layout(&items, direction, gap, cross_axis_grace)
-        else {
+        let cross_axis_grace = crate::placement::arrangement::SETTLE_BLOCK_GRACE_SCREEN
+            / self.zoom.max(super::MIN_CANVAS_ZOOM);
+        let Some(placements) = crate::placement::arrangement::directional_settle_layout(
+            &items,
+            direction,
+            gap,
+            cross_axis_grace,
+        ) else {
             return 0;
         };
         self.apply_arrangement_if_changed(placements, egui::Vec2::ZERO)
@@ -1958,7 +1970,7 @@ impl CanvasState {
             .collect()
     }
 
-    fn selected_compact_input_items(&self) -> Vec<super::CompactInputItem> {
+    fn selected_compact_input_items(&self) -> Vec<crate::placement::arrangement::CompactInputItem> {
         self.document
             .images
             .iter()
@@ -1970,7 +1982,7 @@ impl CanvasState {
                     scaled_size.y,
                     image.record.item.rotation,
                 );
-                super::CompactInputItem {
+                crate::placement::arrangement::CompactInputItem {
                     layout: SelectedLayoutItem {
                         id: image.record.item.id,
                         x: image.record.item.x,

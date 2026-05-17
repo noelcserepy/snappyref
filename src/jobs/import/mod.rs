@@ -21,7 +21,7 @@ use crate::jobs::image_formats::{
     AnimatedPreview, PreviewImage, decode_image_bytes_with_max_side, decode_image_file,
     decode_image_file_with_max_side, preview_animation_from_frames, preview_image_from_rgba,
 };
-use crate::storage::Library;
+use crate::library::storage::Library;
 
 pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA;
 const URL_IMPORT_MAX_BYTES: u64 = 64 * 1024 * 1024;
@@ -3727,7 +3727,7 @@ mod tests {
         rects_overlap_with_gap,
     };
     use crate::data::CanvasImageLod;
-    use crate::storage::Library;
+    use crate::library::storage::Library;
     use image::{ColorType, ImageFormat};
     use pollster::block_on;
     use std::fs;

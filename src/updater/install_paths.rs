@@ -10,7 +10,7 @@
 //!   bundle for a specific manifest version, used by slice 6's swap step.
 //!
 //! The install-root resolution itself reuses
-//! [`crate::library_location::install_root_from_exe_path`] so plain-binary
+//! [`crate::library::location::install_root_from_exe_path`] so plain-binary
 //! and macOS `.app` bundle layouts share one source of truth. Tests pin
 //! the env-override case via [`SNAPPYREF_INSTALL_ROOT_ENV`] which lets a
 //! dev or test fixture redirect the entire updates tree to a temporary
@@ -21,7 +21,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::library_location::install_root_from_exe_path;
+use crate::library::location::install_root_from_exe_path;
 
 /// Env override consulted by [`resolve_install_root`]. Documented as a dev/test
 /// hook only; production builds rely on the exe-derived install root.

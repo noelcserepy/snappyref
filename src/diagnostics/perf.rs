@@ -7,7 +7,7 @@ struct EmbeddingSourceTiming {
     source_kind: &'static str,
     path: std::path::PathBuf,
     file_size: u64,
-    timing: crate::semantic_search::ImageEmbeddingTiming,
+    timing: crate::search::semantic::ImageEmbeddingTiming,
 }
 
 #[cfg(feature = "semantic-search")]
@@ -78,9 +78,9 @@ pub fn print_embedding_lod_report(
     library_root: &std::path::Path,
     limit: usize,
 ) -> Result<(), String> {
-    use crate::semantic_search::{DEFAULT_SEMANTIC_SEARCH_MODEL, OrtDualEncoderModel};
+    use crate::search::semantic::{DEFAULT_SEMANTIC_SEARCH_MODEL, OrtDualEncoderModel};
 
-    let library = crate::storage::Library::initialize(library_root.to_path_buf())?;
+    let library = crate::library::storage::Library::initialize(library_root.to_path_buf())?;
     let settings = library.load_user_session().unwrap_or_default().settings;
     let model =
         OrtDualEncoderModel::load_with_progress(DEFAULT_SEMANTIC_SEARCH_MODEL, |message| {
@@ -187,7 +187,7 @@ pub fn print_embedding_lod_report(
 
 #[cfg(feature = "semantic-search")]
 fn benchmark_embedding_source(
-    model: &crate::semantic_search::OrtDualEncoderModel,
+    model: &crate::search::semantic::OrtDualEncoderModel,
     asset_id: i64,
     source_kind: &'static str,
     path: std::path::PathBuf,
@@ -280,13 +280,13 @@ fn print_embedding_lod_summary(
 
 #[cfg(feature = "semantic-search")]
 fn preprocess_duration(
-    timing: crate::semantic_search::ImageEmbeddingTiming,
+    timing: crate::search::semantic::ImageEmbeddingTiming,
 ) -> std::time::Duration {
     timing.decode_rgb + timing.resize_crop + timing.tensor_prepare
 }
 
 #[cfg(feature = "semantic-search")]
-fn preprocess_ms(timing: crate::semantic_search::ImageEmbeddingTiming) -> f64 {
+fn preprocess_ms(timing: crate::search::semantic::ImageEmbeddingTiming) -> f64 {
     ms(preprocess_duration(timing))
 }
 
@@ -360,7 +360,7 @@ pub fn print_report() -> Result<(), String> {
 }
 
 pub fn print_startup_trace(library_root: &std::path::Path) -> Result<(), String> {
-    let library = crate::storage::Library::initialize(library_root.to_path_buf())?;
+    let library = crate::library::storage::Library::initialize(library_root.to_path_buf())?;
     let mut canvas = crate::canvas::CanvasState::default();
     if let Ok(session) = library.load_user_session() {
         canvas.apply_viewport_state(&session.viewport);

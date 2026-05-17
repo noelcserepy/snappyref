@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
-use crate::semantic_search::{LocalModelStoreStatus, SemanticSearchInstallProgress};
+use crate::search::semantic::{LocalModelStoreStatus, SemanticSearchInstallProgress};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SemanticSearchInstallDisplay {
@@ -151,15 +151,15 @@ fn run_semantic_search_install_worker(
     tx: mpsc::Sender<SemanticSearchInstallProgress>,
     canceled: Arc<AtomicBool>,
 ) {
-    let install_root = match crate::library_location::resolve_data_root() {
+    let install_root = match crate::library::location::resolve_data_root() {
         Ok(root) => root,
         Err(error) => {
             let _ = tx.send(SemanticSearchInstallProgress::Failed { error });
             return;
         }
     };
-    let descriptor = crate::semantic_search::default_semantic_search_asset_descriptor();
-    let _ = crate::semantic_search::install_semantic_search_asset(
+    let descriptor = crate::search::semantic::default_semantic_search_asset_descriptor();
+    let _ = crate::search::semantic::install_semantic_search_asset(
         &install_root,
         &descriptor,
         &canceled,

@@ -4,13 +4,13 @@ use std::time::Instant;
 use eframe::egui;
 
 use crate::canvas::CanvasState;
-use crate::content_resolution::{
-    FailedImportOutcome, ImportPlaceholderRemoval, LoadedImportLog, LoadedImportOutcome,
-};
 use crate::data::{BoardItemWithAsset, CanvasImageLod, WorkspaceSettings};
 use crate::jobs::{
     CanvasImageSettings, CroppedCanvasItem, ExistingLoadPriority, ImportRequest, ImportResult,
     ImportTimings, ImportTrace, ImportWorker, LoadedCanvasItem,
+};
+use crate::placement::content_resolution::{
+    FailedImportOutcome, ImportPlaceholderRemoval, LoadedImportLog, LoadedImportOutcome,
 };
 
 #[derive(Default)]

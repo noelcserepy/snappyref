@@ -1,5 +1,5 @@
 use crate::data::{BoardItemWithAsset, CanvasAnnotation, CanvasStackItem};
-use crate::storage::Library;
+use crate::library::storage::Library;
 
 #[derive(Default)]
 pub(crate) struct DocumentHistory {
@@ -161,7 +161,7 @@ mod tests {
         CanvasAnnotationColor, CanvasAnnotationKind, CanvasStackItem, CanvasStrokeWidth,
         CanvasTextSize,
     };
-    use crate::storage::Library;
+    use crate::library::storage::Library;
 
     #[test]
     fn undo_and_redo_annotation_archive_restores_document_state() {
