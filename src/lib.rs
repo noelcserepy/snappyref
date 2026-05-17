@@ -1,5 +1,6 @@
 mod active_board_commands;
 mod active_board_load;
+mod add_to_canvas;
 mod app;
 mod board_switch;
 mod canvas;

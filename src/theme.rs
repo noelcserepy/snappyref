@@ -92,7 +92,6 @@ pub const ACCENT: egui::Color32 = ACCENT_GOLD;
 pub const ACCENT_BLUE: egui::Color32 = color(0x25, 0x89, 0xBD);
 pub const GREEN: egui::Color32 = color(0x32, 0x9F, 0x5B);
 pub const ACCENT_ORANGE: egui::Color32 = color(0xD1, 0x7B, 0x0F);
-pub const ACCENT_BRIGHT_ORANGE: egui::Color32 = color(0xFA, 0x83, 0x34);
 pub const DESTRUCTIVE: egui::Color32 = DESTRUCTIVE_RED;
 pub const DESTRUCTIVE_STROKE: egui::Color32 =
     egui::Color32::from_rgba_premultiplied(119, 35, 22, 150);

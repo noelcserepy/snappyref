@@ -62,6 +62,10 @@ _Avoid_: Import pipeline, native drop bridge, placement flow
 The board-world point that records where an async batch of imported placements should land after completion. Preview placeholders may use approximate dimensions, but final batch completion compacts the loaded placements around this anchor so paste/drop intent survives URL loads, failures, and out-of-order completion.
 _Avoid_: Placeholder center, batch center, drop position
 
+**Add-to-Canvas**:
+The shared preview-first flow for adding content to the Active Board, whether the source is an external import, an existing Asset from Search, or a duplicated existing Placement. It owns preview sizing, compact preview layout, guide snapping, placeholder reservation, batch anchoring, and final selection/compaction semantics; source-specific work only materializes the Asset or Placement.
+_Avoid_: Search drop special case, import-only placement path
+
 **Dense Compact Layout**:
 The compact arrangement objective for selected placements: minimize visible holes first, then prefer a rough square when density is close. Squareness should decide only when candidate occupancy is roughly within three percentage points. Compact arrangement is placement-only: it may reorder selected placements and change their positions, but it preserves authored scale and rotation. The packed block should keep clean top and left edges; right-edge cleanliness is only a soft tie-break among near-equivalent candidates.
 _Avoid_: Perfect square layout, masonry layout

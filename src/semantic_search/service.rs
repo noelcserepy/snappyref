@@ -28,6 +28,8 @@ pub struct SearchResultGroup {
     pub asset_preview_path: Option<PathBuf>,
     #[allow(dead_code)]
     pub asset_original_path: Option<PathBuf>,
+    pub asset_width: u32,
+    pub asset_height: u32,
     #[allow(dead_code)]
     pub similarity: f32,
     pub item_ids: Vec<i64>,
@@ -773,21 +775,26 @@ fn group_hits(
             .push(instance.item_id);
     }
 
-    Ok(hits
-        .into_iter()
-        .map(|hit| {
-            let item_ids = instances_by_asset.remove(&hit.asset_id).unwrap_or_default();
-            SearchResultGroup {
-                asset_id: hit.asset_id,
-                asset_preview_path: asset_preview_paths.get(&hit.asset_id).cloned(),
-                asset_original_path: asset_original_paths.get(&hit.asset_id).cloned(),
-                similarity: hit.similarity,
-                instance_count: item_ids.len(),
-                item_ids,
-            }
-        })
-        .filter(|group| scope.includes_unplaced_assets() || !group.item_ids.is_empty())
-        .collect())
+    let mut groups = Vec::new();
+    for hit in hits {
+        let item_ids = instances_by_asset.remove(&hit.asset_id).unwrap_or_default();
+        let asset = library.load_asset(hit.asset_id)?;
+        let group = SearchResultGroup {
+            asset_id: hit.asset_id,
+            asset_preview_path: asset_preview_paths.get(&hit.asset_id).cloned(),
+            asset_original_path: asset_original_paths.get(&hit.asset_id).cloned(),
+            asset_width: asset.width,
+            asset_height: asset.height,
+            similarity: hit.similarity,
+            instance_count: item_ids.len(),
+            item_ids,
+        };
+        if scope.includes_unplaced_assets() || !group.item_ids.is_empty() {
+            groups.push(group);
+        }
+    }
+
+    Ok(groups)
 }
 
 fn text_embedding(

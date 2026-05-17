@@ -55,6 +55,7 @@ pub(super) struct CanvasInteractionState {
     pub move_preview_placeholders: Vec<ImportPlaceholder>,
     pub guide_snap_indicators: Vec<super::GuideSnapIndicator>,
     pub search_drag_preview: Option<SearchDragPreview>,
+    pub preview_movement_state: Option<super::PreviewMovementState>,
     pub mouse_wheel_zoom_animation: Option<MouseWheelZoomAnimation>,
     pub last_pointer_screen_pos: Option<egui::Pos2>,
     pub alt_pan_active: bool,

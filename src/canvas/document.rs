@@ -638,6 +638,9 @@ impl CanvasState {
 
     pub fn clear_move_preview_placeholders(&mut self) {
         self.interaction.move_preview_placeholders.clear();
+        if self.interaction.search_drag_preview.is_none() {
+            self.interaction.preview_movement_state = None;
+        }
     }
 
     pub(super) fn clear_guide_snap_indicators(&mut self) {
@@ -662,7 +665,16 @@ impl CanvasState {
             .sum()
     }
 
-    pub fn set_move_preview_placeholders(&mut self, placeholders: Vec<(egui::Pos2, egui::Vec2)>) {
+    pub fn set_move_preview_placeholders(
+        &mut self,
+        placeholders: Vec<(egui::Pos2, egui::Vec2)>,
+        now_seconds: f64,
+    ) {
+        let centers = placeholders
+            .iter()
+            .map(|(center_world, _)| *center_world)
+            .collect::<Vec<_>>();
+        self.update_preview_movement_state(centers, now_seconds);
         self.interaction.move_preview_placeholders.clear();
         self.interaction
             .move_preview_placeholders
@@ -765,6 +777,7 @@ impl CanvasState {
         item_ids: &[i64],
         desired_anchor_world: egui::Pos2,
         screen_rect: egui::Rect,
+        now_seconds: f64,
     ) {
         let Some(layout_items) = self.search_drag_layout_items_for_item_ids(item_ids) else {
             self.clear_search_drag_preview();
@@ -805,6 +818,13 @@ impl CanvasState {
             self.clear_search_drag_preview();
             return;
         }
+        self.update_preview_movement_state(
+            images
+                .iter()
+                .map(|image| egui::pos2(image.record.item.x, image.record.item.y))
+                .collect(),
+            now_seconds,
+        );
         self.interaction.search_drag_preview = Some(super::SearchDragPreview {
             images,
             drop_anchor_world,
@@ -821,6 +841,39 @@ impl CanvasState {
 
     pub fn clear_search_drag_preview(&mut self) {
         self.interaction.search_drag_preview = None;
+        if self.interaction.move_preview_placeholders.is_empty() {
+            self.interaction.preview_movement_state = None;
+        }
+    }
+
+    fn update_preview_movement_state(&mut self, centers_world: Vec<egui::Pos2>, now_seconds: f64) {
+        const MOVEMENT_EPSILON_SQ: f32 = 0.01;
+        let moved = self
+            .interaction
+            .preview_movement_state
+            .as_ref()
+            .is_none_or(|state| {
+                state.centers_world.len() != centers_world.len()
+                    || state
+                        .centers_world
+                        .iter()
+                        .zip(&centers_world)
+                        .any(|(before, after)| (*after - *before).length_sq() > MOVEMENT_EPSILON_SQ)
+            });
+        let last_movement_seconds = if moved {
+            now_seconds
+        } else {
+            self.interaction
+                .preview_movement_state
+                .as_ref()
+                .map(|state| state.last_movement_seconds)
+                .unwrap_or(now_seconds)
+        };
+        self.interaction.preview_movement_state = Some(super::PreviewMovementState {
+            centers_world,
+            last_movement_seconds,
+            moved: true,
+        });
     }
 
     fn resolve_search_drag_anchor_world(

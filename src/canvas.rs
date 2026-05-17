@@ -319,6 +319,13 @@ struct SearchDragPreview {
     snap_preview_rect_world: Option<egui::Rect>,
 }
 
+#[derive(Clone, Default)]
+struct PreviewMovementState {
+    centers_world: Vec<egui::Pos2>,
+    last_movement_seconds: f64,
+    moved: bool,
+}
+
 #[derive(Clone)]
 struct AnnotationDragState {
     annotation_ids: Vec<i64>,
@@ -2629,6 +2636,92 @@ mod tests {
             assert_eq!(placeholders.len(), 2);
             assert_eq!(bounds.left(), 50.0);
             assert_eq!(state.guide_snap_indicator_count(), 1);
+        });
+    }
+
+    #[test]
+    fn search_drag_preview_records_movement_and_guide_snap() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut state = CanvasState::default();
+            let screen_rect = eframe::egui::Rect::from_min_size(
+                eframe::egui::Pos2::ZERO,
+                eframe::egui::vec2(800.0, 600.0),
+            );
+            push_test_image(
+                ui,
+                &mut state,
+                1,
+                100,
+                100,
+                1.0,
+                eframe::egui::pos2(0.0, 0.0),
+            );
+            push_test_image(
+                ui,
+                &mut state,
+                2,
+                100,
+                100,
+                1.0,
+                eframe::egui::pos2(300.0, 0.0),
+            );
+
+            state.update_search_drag_preview(
+                &[2],
+                eframe::egui::pos2(102.0, 0.0),
+                screen_rect,
+                10.5,
+            );
+
+            assert_eq!(state.guide_snap_indicator_count(), 1);
+            assert_eq!(
+                state
+                    .interaction
+                    .preview_movement_state
+                    .as_ref()
+                    .map(|movement| movement.last_movement_seconds),
+                Some(10.5)
+            );
+        });
+    }
+
+    #[test]
+    fn clearing_unused_preview_channel_preserves_active_preview_movement() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut state = CanvasState::default();
+            let screen_rect = eframe::egui::Rect::from_min_size(
+                eframe::egui::Pos2::ZERO,
+                eframe::egui::vec2(800.0, 600.0),
+            );
+            push_test_image(
+                ui,
+                &mut state,
+                1,
+                100,
+                100,
+                1.0,
+                eframe::egui::pos2(0.0, 0.0),
+            );
+
+            state.update_search_drag_preview(
+                &[1],
+                eframe::egui::pos2(120.0, 0.0),
+                screen_rect,
+                10.5,
+            );
+            state.clear_move_preview_placeholders();
+            assert!(state.interaction.preview_movement_state.is_some());
+
+            state.clear_search_drag_preview();
+            state.set_move_preview_placeholders(
+                vec![(
+                    eframe::egui::pos2(120.0, 0.0),
+                    eframe::egui::vec2(100.0, 100.0),
+                )],
+                12.0,
+            );
+            state.clear_search_drag_preview();
+            assert!(state.interaction.preview_movement_state.is_some());
         });
     }
 

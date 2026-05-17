@@ -230,7 +230,7 @@ pub(crate) fn search_result_tile(
     canvas: &crate::canvas::CanvasState,
     group: &SearchResultGroup,
     asset_preview_cache: &mut HashMap<i64, SearchAssetPreviewEntry>,
-    lead: bool,
+    _lead: bool,
     selected: bool,
     tile_width: f32,
 ) -> egui::Response {
@@ -238,7 +238,7 @@ pub(crate) fn search_result_tile(
     let (rect, response) = ui.allocate_exact_size(total_size, egui::Sense::click_and_drag());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     let tile_radius = if selected {
-        0
+        crate::theme::RADIUS_NONE
     } else {
         crate::theme::RADIUS_COMPACT
     };
@@ -266,13 +266,12 @@ pub(crate) fn search_result_tile(
     }
 
     if selected {
-        let stroke = if lead {
-            egui::Stroke::new(2.0, crate::theme::ACCENT)
-        } else {
-            egui::Stroke::new(2.0, egui::Color32::from_white_alpha(140))
-        };
-        ui.painter()
-            .rect_stroke(preview_rect, tile_radius, stroke, egui::StrokeKind::Outside);
+        ui.painter().rect_stroke(
+            preview_rect,
+            crate::theme::RADIUS_NONE,
+            egui::Stroke::new(1.0, crate::theme::TEXT),
+            egui::StrokeKind::Outside,
+        );
     }
 
     response

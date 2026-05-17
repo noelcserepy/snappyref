@@ -1,5 +1,4 @@
 use eframe::egui;
-use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
@@ -83,14 +82,6 @@ struct ContextMenuItem {
     label: &'static str,
     shortcut: Option<&'static str>,
     enabled: bool,
-}
-
-#[derive(Default)]
-struct PendingImportBatch {
-    target_board_id: i64,
-    anchor_world: egui::Pos2,
-    pending_queue_ids: HashSet<u64>,
-    loaded_item_ids: Vec<i64>,
 }
 
 #[derive(Clone, Copy)]
@@ -1417,7 +1408,7 @@ pub struct SnappyRefApp {
     perf_scenario: Option<PerfScenarioState>,
     import_intake: ImportIntake,
     residency: ImageResidencyCoordinator,
-    pending_import_batches: Vec<PendingImportBatch>,
+    pending_import_batches: crate::add_to_canvas::AddBatchTracker,
     hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
     document_persistence: DocumentPersistence,
     pending_user_session: Option<crate::data::UserSession>,
@@ -1523,7 +1514,7 @@ impl SnappyRefApp {
                     perf_scenario: PerfScenarioState::from_config(&config).unwrap_or(None),
                     import_intake: ImportIntake::new(),
                     residency: ImageResidencyCoordinator::default(),
-                    pending_import_batches: Vec::new(),
+                    pending_import_batches: crate::add_to_canvas::AddBatchTracker::default(),
                     hover_preview_dimensions: std::collections::HashMap::new(),
                     document_persistence: DocumentPersistence::queued(library.clone()),
                     pending_user_session: None,
@@ -1738,7 +1729,7 @@ impl SnappyRefApp {
                 perf_scenario: PerfScenarioState::from_config(&config).unwrap_or(None),
                 import_intake: ImportIntake::new(),
                 residency: ImageResidencyCoordinator::default(),
-                pending_import_batches: Vec::new(),
+                pending_import_batches: crate::add_to_canvas::AddBatchTracker::default(),
                 hover_preview_dimensions: std::collections::HashMap::new(),
                 document_persistence: DocumentPersistence::default(),
                 pending_user_session: None,
@@ -2906,6 +2897,7 @@ impl SnappyRefApp {
         );
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn import_size_world(&self, width: u32, height: u32) -> egui::Vec2 {
         crate::import_intake::import_preview_size_world(
             width,
@@ -3032,7 +3024,11 @@ impl SnappyRefApp {
                 }
                 ExternalImportSource::Url(_) => (FALLBACK_WIDTH, FALLBACK_HEIGHT),
             };
-            sizes.push(self.import_size_world(width, height));
+            sizes.push(crate::add_to_canvas::preview_size_for_dimensions(
+                width,
+                height,
+                self.settings.import_target_canvas_area,
+            ));
         }
 
         let previews = self.canvas.compact_guided_preview_placeholders(
@@ -3053,55 +3049,38 @@ impl SnappyRefApp {
         const FALLBACK_WIDTH: u32 = 360;
         const FALLBACK_HEIGHT: u32 = 240;
 
-        let mut uses_approximate_dimensions = false;
         let specs = sources
             .iter()
             .map(|source| {
                 let label = crate::import_intake::import_source_label(source);
-                let dimensions = match source {
+                let (dimensions, approximate_dimensions) = match source {
                     ExternalImportSource::Path(path) => match image::image_dimensions(path) {
-                        Ok(dimensions) => dimensions,
-                        Err(_) => {
-                            uses_approximate_dimensions = true;
-                            (FALLBACK_WIDTH, FALLBACK_HEIGHT)
-                        }
+                        Ok(dimensions) => (dimensions, false),
+                        Err(_) => ((FALLBACK_WIDTH, FALLBACK_HEIGHT), true),
                     },
-                    ExternalImportSource::Url(_) => {
-                        uses_approximate_dimensions = true;
-                        (FALLBACK_WIDTH, FALLBACK_HEIGHT)
-                    }
+                    ExternalImportSource::Url(_) => ((FALLBACK_WIDTH, FALLBACK_HEIGHT), true),
                 };
-                (
+                crate::add_to_canvas::AddPreviewItem {
                     label,
-                    Some(dimensions),
-                    self.import_size_world(dimensions.0, dimensions.1),
-                )
+                    dimensions,
+                    approximate_dimensions,
+                }
             })
             .collect::<Vec<_>>();
-        let sizes = specs
-            .iter()
-            .map(|(_, _, size_world)| *size_world)
-            .collect::<Vec<_>>();
-        let centers = if uses_approximate_dimensions && sizes.len() > 1 {
-            self.canvas.balanced_guided_preview_placeholders(
-                &sizes,
-                desired_world,
-                screen_rect,
-                self.settings.import_gap,
-            )
-        } else {
-            self.canvas.compact_guided_preview_placeholders(
-                &sizes,
-                desired_world,
-                screen_rect,
-                self.settings.import_gap,
-            )
-        };
-        specs
-            .into_iter()
-            .zip(centers)
-            .map(|((label, dimensions, _), (center_world, _))| (label, dimensions, center_world))
-            .collect()
+
+        crate::add_to_canvas::plan_preview_placeholders(
+            &mut self.canvas,
+            &specs,
+            desired_world,
+            screen_rect,
+            crate::add_to_canvas::AddPreviewSettings {
+                target_canvas_area: self.settings.import_target_canvas_area,
+                gap: self.settings.import_gap,
+            },
+        )
+        .into_iter()
+        .map(|preview| (preview.label, preview.dimensions, preview.center_world))
+        .collect()
     }
 
     fn handle_dropped_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
@@ -3126,10 +3105,11 @@ impl SnappyRefApp {
         anchor_world: egui::Pos2,
         queue_ids: Vec<u64>,
     ) {
-        if queue_ids.len() <= 1 {
-            return;
-        }
-        self.register_import_batch_any_size(target_board_id, anchor_world, queue_ids);
+        self.pending_import_batches.register_multi_item_batch(
+            target_board_id,
+            anchor_world,
+            queue_ids,
+        );
     }
 
     fn register_search_import_batch(
@@ -3138,24 +3118,11 @@ impl SnappyRefApp {
         anchor_world: egui::Pos2,
         queue_ids: Vec<u64>,
     ) {
-        if queue_ids.is_empty() {
-            return;
-        }
-        self.register_import_batch_any_size(target_board_id, anchor_world, queue_ids);
-    }
-
-    fn register_import_batch_any_size(
-        &mut self,
-        target_board_id: i64,
-        anchor_world: egui::Pos2,
-        queue_ids: Vec<u64>,
-    ) {
-        self.pending_import_batches.push(PendingImportBatch {
+        self.pending_import_batches.register_any_item_batch(
             target_board_id,
             anchor_world,
-            pending_queue_ids: queue_ids.into_iter().collect(),
-            loaded_item_ids: Vec::new(),
-        });
+            queue_ids,
+        );
     }
 
     fn finish_import_queue_id_in_batches(
@@ -3164,35 +3131,15 @@ impl SnappyRefApp {
         queue_id: Option<u64>,
         loaded_item_id: Option<i64>,
     ) {
-        let Some(queue_id) = queue_id else {
-            return;
-        };
-
-        let mut completed_batches = Vec::new();
-        for batch in &mut self.pending_import_batches {
-            if !batch.pending_queue_ids.remove(&queue_id) {
-                continue;
-            }
-            if let Some(item_id) = loaded_item_id
-                && !batch.loaded_item_ids.contains(&item_id)
-            {
-                batch.loaded_item_ids.push(item_id);
-            }
-            if batch.pending_queue_ids.is_empty() {
-                completed_batches.push((
-                    batch.target_board_id,
-                    batch.anchor_world,
-                    std::mem::take(&mut batch.loaded_item_ids),
-                ));
-            }
-        }
-        self.pending_import_batches
-            .retain(|batch| !batch.pending_queue_ids.is_empty());
-
-        for (batch_board_id, anchor_world, item_ids) in completed_batches {
-            if target_board_id.is_none_or(|id| id == batch_board_id) {
-                self.finalize_completed_import_batch(batch_board_id, anchor_world, item_ids);
-            }
+        let completed_batches =
+            self.pending_import_batches
+                .finish_queue_id(target_board_id, queue_id, loaded_item_id);
+        for batch in completed_batches {
+            self.finalize_completed_import_batch(
+                batch.target_board_id,
+                batch.anchor_world,
+                batch.item_ids,
+            );
         }
     }
 
@@ -5607,71 +5554,37 @@ impl SnappyRefApp {
             .map(|item| egui::pos2(item.x, item.y))
             .collect::<Vec<_>>();
         let asset_ids = drop_request.asset_ids;
-        let mut asset_specs = Vec::with_capacity(asset_ids.len());
-        for asset_id in asset_ids {
-            let asset = match library.load_asset(asset_id) {
-                Ok(asset) => asset,
-                Err(error) => {
-                    self.status = error;
-                    return;
-                }
-            };
-            asset_specs.push(asset);
-        }
-        let asset_centers = if asset_preview_centers.len() == asset_specs.len() {
-            asset_preview_centers
-        } else {
-            let sizes = asset_specs
-                .iter()
-                .map(|asset| self.import_size_world(asset.width, asset.height))
-                .collect::<Vec<_>>();
-            self.canvas
-                .compact_guided_preview_placeholders(
-                    &sizes,
-                    drop_world,
-                    screen_rect,
-                    self.settings.import_gap,
-                )
-                .into_iter()
-                .map(|(center, _)| center)
-                .collect()
+        let asset_loads = match crate::add_to_canvas::reserve_existing_asset_placements(
+            &library,
+            &mut self.import_intake,
+            &mut self.canvas,
+            &mut layout,
+            self.active_board_id,
+            asset_ids,
+            asset_preview_centers,
+            drop_world,
+            screen_rect,
+            crate::add_to_canvas::AddPreviewSettings {
+                target_canvas_area: self.settings.import_target_canvas_area,
+                gap: self.settings.import_gap,
+            },
+        ) {
+            Ok(asset_loads) => asset_loads,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
         };
-
-        let mut asset_loads = Vec::with_capacity(asset_specs.len());
-        let mut asset_queue_ids = Vec::with_capacity(asset_specs.len());
-        for (asset_index, asset) in asset_specs.into_iter().enumerate() {
-            let placed_world = asset_centers
-                .get(asset_index)
-                .copied()
-                .unwrap_or(drop_world);
-            let reservation = self.reserve_import_at_world(
-                &mut layout,
-                asset.filename.clone(),
-                Some((asset.width, asset.height)),
-                placed_world,
-            );
-            let scale = crate::jobs::initial_import_scale(
-                asset.width,
-                asset.height,
-                true,
-                self.settings.import_target_canvas_area,
-            );
-            let record =
-                match library.create_board_item_from_asset(asset.id, placed_world, scale, 0.0, 0) {
-                    Ok(record) => record,
-                    Err(error) => {
-                        self.remove_import_reservation(reservation);
-                        self.status = error;
-                        return;
-                    }
-                };
-            asset_queue_ids.push(reservation.queue_id);
-            asset_loads.push((reservation, record));
+        let mut asset_queue_ids = Vec::with_capacity(asset_loads.len());
+        for asset_load in &asset_loads {
+            asset_queue_ids.push(asset_load.reservation.queue_id);
         }
         self.register_search_import_batch(self.active_board_id, drop_world, asset_queue_ids);
         let asset_load_count = asset_loads.len();
 
-        for (reservation, record) in asset_loads {
+        for asset_load in asset_loads {
+            let reservation = asset_load.reservation;
+            let record = asset_load.record;
             if let Some(import_worker) = &self.import_worker {
                 if let Err(error) =
                     import_worker.enqueue(crate::jobs::ImportRequest::LoadExisting {
@@ -6135,6 +6048,16 @@ impl eframe::App for SnappyRefApp {
         self.canvas.set_layout_gap(self.settings.import_gap);
         self.canvas.set_pointer_mode(self.settings.pointer_mode);
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
+        #[cfg(feature = "semantic-search")]
+        self.search.prepare_canvas_drag_preview(
+            ui.ctx(),
+            &mut self.canvas,
+            screen_rect,
+            crate::search::SearchPlacementPreviewConfig {
+                import_target_canvas_area: self.settings.import_target_canvas_area,
+                import_gap: self.settings.import_gap,
+            },
+        );
         let suppress_canvas_input = self.blocks_canvas_input(ui.ctx());
         self.frame_perf.canvas = crate::canvas::show(
             ui,
@@ -9475,6 +9398,8 @@ mod tests {
             asset_id: library_item.asset.id,
             asset_preview_path: None,
             asset_original_path: Some(library_item.asset.original_path.clone()),
+            asset_width: 1,
+            asset_height: 1,
             similarity: 0.9,
             item_ids: Vec::new(),
             instance_count: 0,
@@ -9542,6 +9467,8 @@ mod tests {
             asset_id: library_item.asset.id,
             asset_preview_path: None,
             asset_original_path: Some(library_item.asset.original_path.clone()),
+            asset_width: 1,
+            asset_height: 1,
             similarity: 0.9,
             item_ids: Vec::new(),
             instance_count: 0,
@@ -9595,6 +9522,8 @@ mod tests {
             asset_id: library_item.asset.id,
             asset_preview_path: None,
             asset_original_path: Some(library_item.asset.original_path.clone()),
+            asset_width: 1,
+            asset_height: 1,
             similarity: 0.9,
             item_ids: Vec::new(),
             instance_count: 0,
@@ -9646,6 +9575,8 @@ mod tests {
             asset_id: library_item.asset.id,
             asset_preview_path: None,
             asset_original_path: Some(library_item.asset.original_path.clone()),
+            asset_width: 1,
+            asset_height: 1,
             similarity: 0.9,
             item_ids: Vec::new(),
             instance_count: 0,
@@ -9750,6 +9681,8 @@ mod tests {
                 asset_id: first.asset.id,
                 asset_preview_path: None,
                 asset_original_path: Some(first.asset.original_path.clone()),
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.9,
                 item_ids: Vec::new(),
                 instance_count: 0,
@@ -9758,6 +9691,8 @@ mod tests {
                 asset_id: second.asset.id,
                 asset_preview_path: None,
                 asset_original_path: Some(second.asset.original_path.clone()),
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.8,
                 item_ids: Vec::new(),
                 instance_count: 0,
@@ -9778,6 +9713,100 @@ mod tests {
         harness.step();
 
         assert_eq!(harness.state().canvas.move_preview_placeholder_count(), 2);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(feature = "semantic-search")]
+    #[test]
+    fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_path() {
+        let root = temp_library_root("snappyref-library-search-known-dimensions-preview");
+        let library = Library::initialize(root.clone()).unwrap();
+        let first_path = library
+            .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
+            .unwrap();
+        let second_path = library
+            .store_rgba_image("second", &vec![180; 20 * 10 * 4], 20, 10)
+            .unwrap();
+        let first = library
+            .persist_imported_image(
+                &first_path,
+                "image/png",
+                10,
+                10,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let second = library
+            .persist_imported_image(
+                &second_path,
+                "image/png",
+                20,
+                10,
+                4,
+                egui::pos2(20.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library
+            .archive_board_items(&[first.item.id, second.item.id])
+            .unwrap();
+        let empty_board = library.create_board("Empty").unwrap();
+        library.set_active_board(empty_board.id).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.active_board_id = empty_board.id;
+        app.search.overlay.open = true;
+        app.search.overlay.scope = SearchScope::Library;
+        app.search.overlay.results = vec![
+            SearchResultGroup {
+                asset_id: first.asset.id,
+                asset_preview_path: None,
+                asset_original_path: None,
+                asset_width: first.asset.width,
+                asset_height: first.asset.height,
+                similarity: 0.9,
+                item_ids: Vec::new(),
+                instance_count: 0,
+            },
+            SearchResultGroup {
+                asset_id: second.asset.id,
+                asset_preview_path: None,
+                asset_original_path: None,
+                asset_width: second.asset.width,
+                asset_height: second.asset.height,
+                similarity: 0.8,
+                item_ids: Vec::new(),
+                instance_count: 0,
+            },
+        ];
+        app.search.overlay.result_selection.replace(0);
+        app.search.overlay.result_selection.toggle(1);
+        let mut harness = app_harness(app, |ctx, app| {
+            app.show_search_overlay(ctx, test_screen_rect());
+        });
+
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+
+        let layout = harness
+            .state()
+            .canvas
+            .move_preview_placeholder_layout_items();
+        assert_eq!(layout.len(), 2);
+        let first_size = harness
+            .state()
+            .import_size_world(first.asset.width, first.asset.height);
+        let second_size = harness
+            .state()
+            .import_size_world(second.asset.width, second.asset.height);
+        assert!(layout.iter().any(|item| {
+            (item.width - first_size.x).abs() < 0.1 && (item.height - first_size.y).abs() < 0.1
+        }));
+        assert!(layout.iter().any(|item| {
+            (item.width - second_size.x).abs() < 0.1 && (item.height - second_size.y).abs() < 0.1
+        }));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -9829,6 +9858,8 @@ mod tests {
                 asset_id: first.asset.id,
                 asset_preview_path: None,
                 asset_original_path: Some(first.asset.original_path.clone()),
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.9,
                 item_ids: Vec::new(),
                 instance_count: 0,
@@ -9837,6 +9868,8 @@ mod tests {
                 asset_id: second.asset.id,
                 asset_preview_path: None,
                 asset_original_path: Some(second.asset.original_path.clone()),
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.8,
                 item_ids: Vec::new(),
                 instance_count: 0,
@@ -9903,6 +9936,8 @@ mod tests {
                 asset_id: first.asset.id,
                 asset_preview_path: None,
                 asset_original_path: Some(first.asset.original_path.clone()),
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.9,
                 item_ids: Vec::new(),
                 instance_count: 0,
@@ -9911,6 +9946,8 @@ mod tests {
                 asset_id: second.asset.id,
                 asset_preview_path: None,
                 asset_original_path: Some(second.asset.original_path.clone()),
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.8,
                 item_ids: Vec::new(),
                 instance_count: 0,
@@ -10010,6 +10047,8 @@ mod tests {
                 asset_id: first.asset.id,
                 asset_preview_path: None,
                 asset_original_path: Some(first.asset.original_path.clone()),
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.9,
                 item_ids: Vec::new(),
                 instance_count: 0,
@@ -10018,6 +10057,8 @@ mod tests {
                 asset_id: second.asset.id,
                 asset_preview_path: None,
                 asset_original_path: Some(second.asset.original_path.clone()),
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.8,
                 item_ids: Vec::new(),
                 instance_count: 0,
@@ -10596,7 +10637,7 @@ mod tests {
             frame_perf: super::FramePerfState::default(),
             import_intake: super::ImportIntake::new(),
             residency: super::ImageResidencyCoordinator::default(),
-            pending_import_batches: Vec::new(),
+            pending_import_batches: crate::add_to_canvas::AddBatchTracker::default(),
             sidebar_open: false,
             sidebar_tab: super::SidebarTab::default(),
             pending_board_delete: None,

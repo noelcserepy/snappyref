@@ -2576,7 +2576,7 @@ mod tests {
 
         assert_eq!(snap_rect.left(), 74.0);
         assert_eq!(snap_rect.top(), -50.0);
-        assert_eq!(canvas.guide_snap_indicator_count(), 2);
+        assert_eq!(canvas.guide_snap_indicator_count(), 3);
     }
 
     #[test]
@@ -2609,7 +2609,7 @@ mod tests {
 
         assert_eq!(snap_rect.left(), 74.0);
         assert_eq!(snap_rect.top(), 74.0);
-        assert_eq!(canvas.guide_snap_indicator_count(), 2);
+        assert_eq!(canvas.guide_snap_indicator_count(), 3);
     }
 
     #[test]

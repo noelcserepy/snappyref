@@ -36,8 +36,6 @@ const SEARCH_RESULT_SCROLL_ANIMATION: egui::style::ScrollAnimation = egui::style
 };
 const SEARCH_RESULT_SCROLL_MARGIN: f32 = 12.0;
 const MAX_RECENT_SEARCHES: usize = 8;
-const FALLBACK_ASSET_PREVIEW_WIDTH: u32 = 360;
-const FALLBACK_ASSET_PREVIEW_HEIGHT: u32 = 240;
 const EMBEDDING_BACKFILL_IDLE_QUIET_MS: u64 = 750;
 
 #[derive(Clone, Copy)]
@@ -693,6 +691,46 @@ impl SearchController {
             .is_some_and(|rect| rect.contains(pointer_pos))
     }
 
+    pub(crate) fn prepare_canvas_drag_preview(
+        &mut self,
+        ctx: &egui::Context,
+        canvas: &mut CanvasState,
+        screen_rect: egui::Rect,
+        placement_preview_config: SearchPlacementPreviewConfig,
+    ) {
+        if !self.overlay.open {
+            return;
+        }
+        let pointer_pos = ctx.input(|input| input.pointer.latest_pos());
+        let Some(drag) = self.overlay.drag_state.as_mut() else {
+            return;
+        };
+        let Some(expanded_rect) = self.overlay.last_expanded_overlay_rect else {
+            return;
+        };
+
+        if !drag.outside_overlay && !drag.placement_pending {
+            drag.outside_overlay =
+                pointer_pos.is_some_and(|pos| !expanded_rect.expand(2.0).contains(pos));
+        }
+        if !drag.outside_overlay {
+            return;
+        }
+
+        if let Some(pointer_pos) = pointer_pos {
+            let pointer_world = canvas.screen_to_world(pointer_pos, screen_rect);
+            update_search_placement_preview(
+                ctx,
+                canvas,
+                drag,
+                pointer_world,
+                screen_rect,
+                placement_preview_config.import_gap,
+            );
+        }
+        ctx.request_repaint_after(Duration::from_millis(16));
+    }
+
     pub(crate) fn queue_asset_index(
         &mut self,
         asset_id: i64,
@@ -1162,29 +1200,7 @@ impl SearchController {
         if !drag_outside {
             self.overlay.last_expanded_overlay_rect = Some(overlay_rect);
         }
-        if let Some(drag) = &mut self.overlay.drag_state {
-            let expanded_rect = self
-                .overlay
-                .last_expanded_overlay_rect
-                .unwrap_or(overlay_rect);
-            if !drag.outside_overlay && !drag.placement_pending {
-                drag.outside_overlay =
-                    pointer_pos.is_some_and(|pos| !expanded_rect.expand(2.0).contains(pos));
-            }
-            if drag.outside_overlay {
-                if let Some(pointer_pos) = pointer_pos {
-                    let pointer_world = canvas.screen_to_world(pointer_pos, screen_rect);
-                    update_search_placement_preview(
-                        canvas,
-                        drag,
-                        pointer_world,
-                        screen_rect,
-                        placement_preview_config.import_gap,
-                    );
-                }
-                ctx.request_repaint_after(Duration::from_millis(16));
-            }
-        }
+        self.prepare_canvas_drag_preview(ctx, canvas, screen_rect, placement_preview_config);
         let mut drop_request = None;
         let mut cancelled_pending_placement = false;
         let cancel_pending_placement = ctx.input(|input| input.pointer.secondary_clicked());
@@ -1313,6 +1329,7 @@ impl SearchController {
             if ctx.input(|input| input.key_pressed(egui::Key::Enter)) {
                 if ctx.input(|input| input.modifiers.command) {
                     self.start_keyboard_placement_for_all_results(
+                        ctx,
                         canvas,
                         pointer_pos,
                         screen_rect,
@@ -1320,6 +1337,7 @@ impl SearchController {
                     );
                 } else {
                     self.start_keyboard_placement_for_selected_results(
+                        ctx,
                         canvas,
                         pointer_pos,
                         screen_rect,
@@ -1428,6 +1446,7 @@ impl SearchController {
 
     fn start_keyboard_placement_for_selected_results(
         &mut self,
+        ctx: &egui::Context,
         canvas: &mut CanvasState,
         pointer_pos: Option<egui::Pos2>,
         screen_rect: egui::Rect,
@@ -1438,6 +1457,7 @@ impl SearchController {
         self.start_keyboard_placement(
             item_ids,
             asset_ids,
+            ctx,
             canvas,
             pointer_pos,
             screen_rect,
@@ -1447,6 +1467,7 @@ impl SearchController {
 
     fn start_keyboard_placement_for_all_results(
         &mut self,
+        ctx: &egui::Context,
         canvas: &mut CanvasState,
         pointer_pos: Option<egui::Pos2>,
         screen_rect: egui::Rect,
@@ -1457,6 +1478,7 @@ impl SearchController {
         self.start_keyboard_placement(
             item_ids,
             asset_ids,
+            ctx,
             canvas,
             pointer_pos,
             screen_rect,
@@ -1468,6 +1490,7 @@ impl SearchController {
         &mut self,
         item_ids: Vec<i64>,
         asset_ids: Vec<i64>,
+        ctx: &egui::Context,
         canvas: &mut CanvasState,
         pointer_pos: Option<egui::Pos2>,
         screen_rect: egui::Rect,
@@ -1492,6 +1515,7 @@ impl SearchController {
             .unwrap_or_else(|| canvas.screen_to_world(screen_rect.center(), screen_rect));
         if let Some(drag) = self.overlay.drag_state.as_ref() {
             update_search_placement_preview(
+                ctx,
                 canvas,
                 drag,
                 pointer_world,
@@ -1938,16 +1962,15 @@ fn normalized_recent_searches(recent_searches: Vec<String>) -> Vec<String> {
 }
 
 fn asset_placeholder_size(group: &SearchResultGroup, target_canvas_area: f32) -> egui::Vec2 {
-    let (width, height) = group
-        .asset_original_path
-        .as_ref()
-        .and_then(|path| image::image_dimensions(path).ok())
-        .unwrap_or((FALLBACK_ASSET_PREVIEW_WIDTH, FALLBACK_ASSET_PREVIEW_HEIGHT));
-    let scale = crate::jobs::initial_import_scale(width, height, true, target_canvas_area);
-    egui::vec2(width as f32 * scale, height as f32 * scale)
+    crate::add_to_canvas::preview_size_for_dimensions(
+        group.asset_width,
+        group.asset_height,
+        target_canvas_area,
+    )
 }
 
 fn update_search_placement_preview(
+    ctx: &egui::Context,
     canvas: &mut CanvasState,
     drag: &crate::palette::SearchResultDragState,
     pointer_world: egui::Pos2,
@@ -1957,7 +1980,8 @@ fn update_search_placement_preview(
     if drag.item_ids.is_empty() {
         canvas.clear_search_drag_preview();
     } else {
-        canvas.update_search_drag_preview(&drag.item_ids, pointer_world, screen_rect);
+        let now_seconds = ctx.input(|input| input.time);
+        canvas.update_search_drag_preview(&drag.item_ids, pointer_world, screen_rect, now_seconds);
     }
 
     if drag.asset_placeholder_sizes.is_empty() {
@@ -1971,7 +1995,8 @@ fn update_search_placement_preview(
         screen_rect,
         gap,
     );
-    canvas.set_move_preview_placeholders(placeholders);
+    let now_seconds = ctx.input(|input| input.time);
+    canvas.set_move_preview_placeholders(placeholders, now_seconds);
 }
 
 #[cfg(test)]
@@ -2269,7 +2294,9 @@ mod tests {
             placement_pending: true,
         };
 
+        let ctx = egui::Context::default();
         super::update_search_placement_preview(
+            &ctx,
             &mut canvas,
             &drag,
             egui::pos2(400.0, 300.0),
@@ -2289,6 +2316,52 @@ mod tests {
     }
 
     #[test]
+    fn prepare_canvas_drag_preview_updates_placeholders_before_overlay_paint() {
+        let ctx = egui::Context::default();
+        let mut search = SearchController::default();
+        let mut canvas = CanvasState::default();
+        search.overlay.open = true;
+        search.overlay.last_expanded_overlay_rect = Some(egui::Rect::from_min_size(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(240.0, 240.0),
+        ));
+        search.overlay.drag_state = Some(crate::palette::SearchResultDragState {
+            item_ids: Vec::new(),
+            asset_ids: vec![1],
+            asset_placeholder_sizes: vec![egui::vec2(100.0, 100.0)],
+            outside_overlay: false,
+            placement_pending: false,
+        });
+
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::PointerMoved(egui::pos2(420.0, 300.0))],
+                ..Default::default()
+            },
+            |ui| {
+                search.prepare_canvas_drag_preview(
+                    ui.ctx(),
+                    &mut canvas,
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)),
+                    super::SearchPlacementPreviewConfig {
+                        import_target_canvas_area: 120_000.0,
+                        import_gap: crate::theme::SPACE_2,
+                    },
+                );
+            },
+        );
+
+        assert_eq!(canvas.move_preview_placeholder_count(), 1);
+        assert!(
+            search
+                .overlay
+                .drag_state
+                .as_ref()
+                .is_some_and(|drag| drag.outside_overlay)
+        );
+    }
+
+    #[test]
     fn toggling_search_scope_invalidates_current_results() {
         let mut search = SearchController::default();
         search.overlay.query = "boat".to_owned();
@@ -2297,6 +2370,8 @@ mod tests {
             asset_id: 10,
             asset_preview_path: None,
             asset_original_path: None,
+            asset_width: 1,
+            asset_height: 1,
             similarity: 0.9,
             item_ids: vec![101],
             instance_count: 1,
@@ -2325,6 +2400,8 @@ mod tests {
                     asset_id: 20,
                     asset_preview_path: None,
                     asset_original_path: None,
+                    asset_width: 1,
+                    asset_height: 1,
                     similarity: 0.8,
                     item_ids: vec![202],
                     instance_count: 1,
@@ -2351,6 +2428,8 @@ mod tests {
             asset_id: 10,
             asset_preview_path: None,
             asset_original_path: None,
+            asset_width: 1,
+            asset_height: 1,
             similarity: 0.9,
             item_ids: vec![101],
             instance_count: 1,
@@ -2480,6 +2559,8 @@ mod tests {
                 asset_id: index,
                 asset_preview_path: None,
                 asset_original_path: None,
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.9,
                 item_ids: vec![100 + index],
                 instance_count: 1,
@@ -2500,6 +2581,8 @@ mod tests {
                 asset_id: 10,
                 asset_preview_path: None,
                 asset_original_path: None,
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.9,
                 item_ids: vec![101, 102],
                 instance_count: 2,
@@ -2508,6 +2591,8 @@ mod tests {
                 asset_id: 11,
                 asset_preview_path: None,
                 asset_original_path: None,
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.8,
                 item_ids: vec![201],
                 instance_count: 1,
@@ -2536,6 +2621,8 @@ mod tests {
                 asset_id: 10,
                 asset_preview_path: None,
                 asset_original_path: None,
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.9,
                 item_ids: vec![101],
                 instance_count: 1,
@@ -2544,6 +2631,8 @@ mod tests {
                 asset_id: 11,
                 asset_preview_path: None,
                 asset_original_path: None,
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.8,
                 item_ids: vec![201],
                 instance_count: 1,
@@ -2562,6 +2651,8 @@ mod tests {
                 asset_id: 10,
                 asset_preview_path: None,
                 asset_original_path: None,
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.9,
                 item_ids: vec![101, 102],
                 instance_count: 2,
@@ -2570,6 +2661,8 @@ mod tests {
                 asset_id: 11,
                 asset_preview_path: None,
                 asset_original_path: None,
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.8,
                 item_ids: vec![201],
                 instance_count: 1,
@@ -2585,6 +2678,8 @@ mod tests {
                 asset_id: index as i64,
                 asset_preview_path: None,
                 asset_original_path: None,
+                asset_width: 1,
+                asset_height: 1,
                 similarity: 0.9,
                 item_ids: vec![100 + index as i64],
                 instance_count: 1,
