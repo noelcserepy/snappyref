@@ -3,6 +3,7 @@ pub(crate) mod semantic;
 
 mod backfill;
 mod controller;
+mod overlay;
 mod placement;
 mod selection;
 
