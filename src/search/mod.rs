@@ -1,9 +1,12 @@
 pub(crate) mod palette;
 pub(crate) mod semantic;
 
+mod backfill;
 mod controller;
+mod placement;
+mod selection;
 
+pub(crate) use backfill::EmbeddingBackfillIdleState;
 pub(crate) use controller::{
-    EmbeddingBackfillIdleState, SearchController, SearchDropRequest, SearchPlacementPreviewConfig,
-    SemanticPerfEvent,
+    SearchController, SearchDropRequest, SearchPlacementPreviewConfig, SemanticPerfEvent,
 };

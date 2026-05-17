@@ -1,4 +1,3 @@
-use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 #[cfg(not(test))]
@@ -19,6 +18,19 @@ use crate::jobs::image_formats::{
 };
 use crate::library::storage::Library;
 
+mod preview_texture;
+mod request;
+
+use preview_texture::build_preview_texture;
+pub use preview_texture::{ImportedPreviewTexture, NativeTextureHandle};
+pub(super) use request::ImportPriority;
+pub use request::{
+    CanvasImageSettings, CroppedCanvasItem, ExistingLoadDiagnostics, ExistingLoadPriority,
+    ExistingLoadSourceKind, FileImportPerfReport, ImportOrigin, ImportRequest, ImportResult,
+    ImportTimings, ImportTrace, ImportWorkerStats, InteractiveImportPerfReport, LoadedCanvasItem,
+    StartupPerfReport, StartupTraceEntry, WorkerInteractiveImportPerfReport,
+};
+
 pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA;
 const URL_IMPORT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const URL_IMPORT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -28,78 +40,6 @@ const IMAGE_IMPORT_HELPER_DISABLED_ENV: &str = "SNAPPYREF_DISABLE_IMAGE_IMPORT_H
 
 pub fn default_import_reference_span() -> f32 {
     DEFAULT_IMPORT_TARGET_CANVAS_AREA.sqrt()
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ImportOrigin {
-    Existing,
-    Path,
-    Clipboard,
-    Url,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ImportPriority {
-    Startup,
-    Interactive,
-    Background,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExistingLoadPriority {
-    Startup,
-    Background,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ImportTrace {
-    pub queued_at: Instant,
-    pub timings: ImportTimings,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ImportTimings {
-    pub queue_wait: Duration,
-    pub decode_or_load: Duration,
-    pub store_and_persist: Duration,
-    pub preview_prepare: Duration,
-    pub worker_total: Duration,
-    pub ui_integration: Duration,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct StartupPerfReport {
-    pub legacy_first_visible_ms: f64,
-    pub current_first_visible_ms: f64,
-    pub warm_cached_first_visible_ms: f64,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct InteractiveImportPerfReport {
-    pub legacy_interactive_import_under_backlog_ms: f64,
-    pub current_interactive_import_under_backlog_ms: f64,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct WorkerInteractiveImportPerfReport {
-    pub legacy_single_worker_ms: f64,
-    pub current_pooled_ms: f64,
-    pub current_interactive_workers: usize,
-    pub current_background_workers: usize,
-}
-
-#[derive(Clone, Debug)]
-pub struct FileImportPerfReport {
-    pub source_path: PathBuf,
-    pub source_file_size: u64,
-    pub source_width: u32,
-    pub source_height: u32,
-    pub preview_width: u32,
-    pub preview_height: u32,
-    pub canvas_cache_path: Option<PathBuf>,
-    pub canvas_cache_file_size: Option<u64>,
-    pub timings: ImportTimings,
-    pub total_ms: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -129,308 +69,9 @@ struct ImageImportPrepareOutput {
     cache_extension: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ImportWorkerStats {
-    pub queued_startup: usize,
-    pub queued_interactive: usize,
-    pub queued_background: usize,
-    pub in_flight: usize,
-}
-
-impl ImportWorkerStats {
-    pub fn has_work(self) -> bool {
-        self.queued_startup > 0
-            || self.queued_interactive > 0
-            || self.queued_background > 0
-            || self.in_flight > 0
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CanvasImageSettings {
-    pub max_side: u32,
-}
-
-impl Default for CanvasImageSettings {
-    fn default() -> Self {
-        Self {
-            max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
-        }
-    }
-}
-
 const OVERVIEW_CACHE_MAX_SIDE: u32 = 256;
 const INTERACTIVE_CROP_PREVIEW_MAX_SIDE: u32 = 1024;
 const DETAIL_CACHE_MAX_SIDE: u32 = 4096;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExistingLoadSourceKind {
-    Original,
-    Cache,
-}
-
-#[derive(Clone, Debug)]
-pub struct ExistingLoadDiagnostics {
-    pub source_kind: ExistingLoadSourceKind,
-    pub source_path: PathBuf,
-    pub source_file_size: u64,
-    pub source_width: u32,
-    pub source_height: u32,
-    pub backfilled_cache: bool,
-}
-
-#[derive(Clone, Debug)]
-pub enum ImportRequest {
-    ImportPath {
-        target_board_id: i64,
-        queue_id: u64,
-        placement_id: Option<i64>,
-        source_path: PathBuf,
-        desired_world: egui::Pos2,
-        reserved_world: Option<egui::Pos2>,
-        viewport_world: egui::Rect,
-        max_texture_side: usize,
-        canvas_image_settings: CanvasImageSettings,
-        auto_scale: bool,
-        target_canvas_area: f32,
-        import_gap: f32,
-        trace: Option<ImportTrace>,
-    },
-    ImportClipboard {
-        target_board_id: i64,
-        queue_id: u64,
-        placement_id: Option<i64>,
-        rgba: Vec<u8>,
-        width: u32,
-        height: u32,
-        desired_world: egui::Pos2,
-        reserved_world: Option<egui::Pos2>,
-        viewport_world: egui::Rect,
-        max_texture_side: usize,
-        canvas_image_settings: CanvasImageSettings,
-        auto_scale: bool,
-        target_canvas_area: f32,
-        import_gap: f32,
-        trace: Option<ImportTrace>,
-    },
-    ImportUrl {
-        target_board_id: i64,
-        queue_id: u64,
-        placement_id: Option<i64>,
-        url: String,
-        desired_world: egui::Pos2,
-        reserved_world: Option<egui::Pos2>,
-        viewport_world: egui::Rect,
-        max_texture_side: usize,
-        canvas_image_settings: CanvasImageSettings,
-        auto_scale: bool,
-        target_canvas_area: f32,
-        import_gap: f32,
-        trace: Option<ImportTrace>,
-    },
-    Crop {
-        request: crate::canvas::CanvasCropRequest,
-        max_texture_side: usize,
-        canvas_image_settings: CanvasImageSettings,
-    },
-    LoadExisting {
-        target_board_id: i64,
-        queue_id: Option<u64>,
-        record: BoardItemWithAsset,
-        max_texture_side: usize,
-        canvas_image_settings: CanvasImageSettings,
-        target_lod: CanvasImageLod,
-        priority: ExistingLoadPriority,
-        trace: Option<ImportTrace>,
-    },
-    BackfillLod {
-        record: BoardItemWithAsset,
-        canvas_image_settings: CanvasImageSettings,
-        lod: CanvasImageLod,
-    },
-}
-
-#[derive(Debug)]
-pub enum ImportResult {
-    Loaded(LoadedCanvasItem),
-    Cropped(CroppedCanvasItem),
-    CacheLodBackfilled {
-        asset_id: i64,
-        lod: CanvasImageLod,
-    },
-    CacheLodBackfillFailed {
-        asset_id: i64,
-        lod: CanvasImageLod,
-        error: String,
-    },
-    Failed {
-        target_board_id: Option<i64>,
-        queue_id: Option<u64>,
-        placement_id: Option<i64>,
-        item_id: Option<i64>,
-        context: String,
-        error: String,
-    },
-}
-
-#[derive(Clone)]
-pub enum ImportedPreviewTexture {
-    Cpu,
-    Native(Arc<NativeTextureHandle>),
-    Svg {
-        uri: String,
-        bytes: Arc<[u8]>,
-        size: [usize; 2],
-    },
-}
-
-impl fmt::Debug for ImportedPreviewTexture {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Cpu => f.write_str("Cpu"),
-            Self::Native(handle) => f.debug_tuple("Native").field(handle).finish(),
-            Self::Svg { uri, size, .. } => f
-                .debug_struct("Svg")
-                .field("uri", uri)
-                .field("size", size)
-                .finish(),
-        }
-    }
-}
-
-pub struct NativeTextureHandle {
-    texture_id: egui::TextureId,
-    size: [usize; 2],
-    cleanup: Arc<dyn Fn(egui::TextureId) + Send + Sync>,
-    _texture: Option<eframe::wgpu::Texture>,
-    view: Option<Arc<eframe::wgpu::TextureView>>,
-}
-
-impl fmt::Debug for NativeTextureHandle {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NativeTextureHandle")
-            .field("texture_id", &self.texture_id)
-            .field("size", &self.size)
-            .finish()
-    }
-}
-
-impl NativeTextureHandle {
-    fn from_registered_texture(
-        render_state: eframe::egui_wgpu::RenderState,
-        texture_id: egui::TextureId,
-        width: u32,
-        height: u32,
-        texture: eframe::wgpu::Texture,
-        view: eframe::wgpu::TextureView,
-    ) -> Self {
-        let cleanup = Arc::new(move |texture_id| {
-            render_state.renderer.write().free_texture(&texture_id);
-        });
-        Self {
-            texture_id,
-            size: [width as usize, height as usize],
-            cleanup,
-            _texture: Some(texture),
-            view: Some(Arc::new(view)),
-        }
-    }
-
-    pub fn texture_id(&self) -> egui::TextureId {
-        self.texture_id
-    }
-
-    pub fn size(&self) -> [usize; 2] {
-        self.size
-    }
-
-    pub fn create_bind_group(
-        &self,
-        device: &eframe::wgpu::Device,
-        layout: &eframe::wgpu::BindGroupLayout,
-        sampler: &eframe::wgpu::Sampler,
-    ) -> Option<eframe::wgpu::BindGroup> {
-        let view = self.view.as_ref()?;
-        Some(
-            device.create_bind_group(&eframe::wgpu::BindGroupDescriptor {
-                label: Some("snappyref_canvas_image_bind_group"),
-                layout,
-                entries: &[
-                    eframe::wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: eframe::wgpu::BindingResource::TextureView(view.as_ref()),
-                    },
-                    eframe::wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: eframe::wgpu::BindingResource::Sampler(sampler),
-                    },
-                ],
-            }),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_tests(
-        texture_id: egui::TextureId,
-        size: [usize; 2],
-        cleanup: impl Fn(egui::TextureId) + Send + Sync + 'static,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            texture_id,
-            size,
-            cleanup: Arc::new(cleanup),
-            _texture: None,
-            view: None,
-        })
-    }
-}
-
-impl Drop for NativeTextureHandle {
-    fn drop(&mut self) {
-        (self.cleanup)(self.texture_id);
-    }
-}
-
-#[derive(Debug)]
-pub struct LoadedCanvasItem {
-    pub target_board_id: i64,
-    pub queue_id: Option<u64>,
-    pub record: BoardItemWithAsset,
-    pub preview_rgba: Vec<u8>,
-    pub preview_width: u32,
-    pub preview_height: u32,
-    pub animated_preview: Option<AnimatedPreview>,
-    pub preview_texture: ImportedPreviewTexture,
-    pub loaded_lod: CanvasImageLod,
-    pub existing_load_diagnostics: Option<ExistingLoadDiagnostics>,
-    pub origin: ImportOrigin,
-    pub trace: Option<ImportTrace>,
-}
-
-#[derive(Clone, Debug)]
-pub struct CroppedCanvasItem {
-    pub item_id: i64,
-    pub stored_path: PathBuf,
-    pub width: u32,
-    pub height: u32,
-    pub file_size: u64,
-    pub preview_rgba: Vec<u8>,
-    pub preview_width: u32,
-    pub preview_height: u32,
-    pub preview_texture: ImportedPreviewTexture,
-    pub loaded_lod: CanvasImageLod,
-    pub crop_offset_local: egui::Vec2,
-}
-
-#[derive(Clone, Debug)]
-pub struct StartupTraceEntry {
-    pub record: BoardItemWithAsset,
-    pub diagnostics: ExistingLoadDiagnostics,
-    pub timings: ImportTimings,
-    pub preview_width: u32,
-    pub preview_height: u32,
-    pub startup_elapsed: Duration,
-}
 
 mod worker;
 
@@ -1842,66 +1483,6 @@ fn crop_item(
         loaded_lod: CanvasImageLod::Overview,
         crop_offset_local: request.crop_offset_local,
     })
-}
-
-fn build_preview_texture(
-    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-    preview: &crate::jobs::image_formats::PreviewImage,
-) -> Result<ImportedPreviewTexture, String> {
-    let Some(render_state) = wgpu_render_state else {
-        return Ok(ImportedPreviewTexture::Cpu);
-    };
-
-    if preview.rgba.len() != preview.width as usize * preview.height as usize * 4 {
-        return Err("preview pixel buffer did not match preview dimensions".to_owned());
-    }
-
-    let size = eframe::wgpu::Extent3d {
-        width: preview.width,
-        height: preview.height,
-        depth_or_array_layers: 1,
-    };
-    let texture = render_state
-        .device
-        .create_texture(&eframe::wgpu::TextureDescriptor {
-            label: Some("snappyref_import_preview"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: eframe::wgpu::TextureDimension::D2,
-            format: eframe::wgpu::TextureFormat::Rgba8Unorm,
-            usage: eframe::wgpu::TextureUsages::TEXTURE_BINDING
-                | eframe::wgpu::TextureUsages::COPY_DST,
-            view_formats: &[eframe::wgpu::TextureFormat::Rgba8Unorm],
-        });
-    render_state.queue.write_texture(
-        texture.as_image_copy(),
-        &preview.rgba,
-        eframe::wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4 * preview.width),
-            rows_per_image: Some(preview.height),
-        },
-        size,
-    );
-
-    let view = texture.create_view(&eframe::wgpu::TextureViewDescriptor::default());
-    let texture_id = render_state.renderer.write().register_native_texture(
-        &render_state.device,
-        &view,
-        eframe::wgpu::FilterMode::Linear,
-    );
-
-    Ok(ImportedPreviewTexture::Native(Arc::new(
-        NativeTextureHandle::from_registered_texture(
-            render_state.clone(),
-            texture_id,
-            preview.width,
-            preview.height,
-            texture,
-            view,
-        ),
-    )))
 }
 
 fn lod_max_side(canvas_image_settings: CanvasImageSettings, lod: CanvasImageLod) -> u32 {

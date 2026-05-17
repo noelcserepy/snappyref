@@ -5,6 +5,9 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
+use super::backfill::EmbeddingBackfillScheduler;
+use super::placement::{pending_placement_commit_intent, update_search_placement_preview};
+use super::selection::{PendingResultSelection, SearchSelectionMode};
 use crate::canvas::CanvasState;
 use crate::library::storage::Library;
 use crate::search::palette::{
@@ -36,7 +39,6 @@ const SEARCH_RESULT_SCROLL_ANIMATION: egui::style::ScrollAnimation = egui::style
 };
 const SEARCH_RESULT_SCROLL_MARGIN: f32 = 12.0;
 const MAX_RECENT_SEARCHES: usize = 8;
-const EMBEDDING_BACKFILL_IDLE_QUIET_MS: u64 = 750;
 
 #[derive(Clone, Copy)]
 pub(crate) struct SearchPlacementPreviewConfig {
@@ -47,13 +49,13 @@ pub(crate) struct SearchPlacementPreviewConfig {
 
 #[derive(Default)]
 pub(crate) struct SearchController {
-    service: Option<SemanticSearchService>,
+    pub(super) service: Option<SemanticSearchService>,
     pub(crate) overlay: SearchOverlayState,
-    result_cache: HashMap<SearchCacheKey, SearchCacheEntry>,
-    active_search: Option<ActiveSearchRequest>,
-    prefetch_searches: HashMap<u64, SearchCacheKey>,
-    pending_result_selection: Option<PendingResultSelection>,
-    embedding_backfill: EmbeddingBackfillScheduler,
+    pub(super) result_cache: HashMap<SearchCacheKey, SearchCacheEntry>,
+    pub(super) active_search: Option<ActiveSearchRequest>,
+    pub(super) prefetch_searches: HashMap<u64, SearchCacheKey>,
+    pub(super) pending_result_selection: Option<PendingResultSelection>,
+    pub(super) embedding_backfill: EmbeddingBackfillScheduler,
     pending_demand_embeddings: HashSet<i64>,
     completed_demand_embeddings: usize,
     next_search_request_id: u64,
@@ -84,42 +86,24 @@ pub(crate) enum SemanticPerfEvent {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-struct SearchCacheKey {
-    scope: SearchScope,
-    query: String,
-    pivot_asset_id: Option<i64>,
-    result_limit: usize,
+pub(super) struct SearchCacheKey {
+    pub(super) scope: SearchScope,
+    pub(super) query: String,
+    pub(super) pivot_asset_id: Option<i64>,
+    pub(super) result_limit: usize,
 }
 
 #[derive(Clone, Debug)]
-struct SearchCacheEntry {
-    results: Vec<crate::search::semantic::SearchResultGroup>,
-    has_more_results: bool,
+pub(super) struct SearchCacheEntry {
+    pub(super) results: Vec<crate::search::semantic::SearchResultGroup>,
+    pub(super) has_more_results: bool,
 }
 
 #[derive(Clone, Debug)]
-struct ActiveSearchRequest {
-    request_id: u64,
-    cache_key: SearchCacheKey,
-    query: String,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct PendingResultSelection {
-    index: usize,
-    mode: SearchSelectionMode,
-}
-
-#[derive(Default)]
-struct EmbeddingBackfillScheduler {
-    quiet_since: Option<Instant>,
-    in_flight: bool,
-    exhausted: bool,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct EmbeddingBackfillIdleState {
-    pub(crate) app_idle: bool,
+pub(super) struct ActiveSearchRequest {
+    pub(super) request_id: u64,
+    pub(super) cache_key: SearchCacheKey,
+    pub(super) query: String,
 }
 
 #[derive(Clone, Debug)]
@@ -128,13 +112,6 @@ pub(crate) struct SearchDropRequest {
     pub asset_ids: Vec<i64>,
     pub provisional_item_ids: Vec<i64>,
     pub screen_pos: egui::Pos2,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SearchSelectionMode {
-    Replace,
-    Toggle,
-    Range,
 }
 
 impl SearchController {
@@ -448,59 +425,13 @@ impl SearchController {
         }
     }
 
-    pub(crate) fn can_start_embedding_backfill(
-        &mut self,
-        now: Instant,
-        idle: EmbeddingBackfillIdleState,
-    ) -> bool {
-        if self.embedding_backfill.exhausted
-            || self.embedding_backfill.in_flight
-            || self.service.is_none()
-            || !idle.app_idle
-            || self.search_work_in_flight(now)
-        {
-            self.embedding_backfill.quiet_since = None;
-            return false;
-        }
-
-        let quiet_since = *self.embedding_backfill.quiet_since.get_or_insert(now);
-        now.duration_since(quiet_since) >= Duration::from_millis(EMBEDDING_BACKFILL_IDLE_QUIET_MS)
-    }
-
-    pub(crate) fn drive_embedding_backfill(
-        &mut self,
-        now: Instant,
-        idle: EmbeddingBackfillIdleState,
-    ) -> Result<bool, String> {
-        if !self.can_start_embedding_backfill(now, idle) {
-            return Ok(false);
-        }
-        let Some(service) = &self.service else {
-            return Ok(false);
-        };
-        service.enqueue_idle_backfill_step()?;
-        self.embedding_backfill.in_flight = true;
-        self.embedding_backfill.quiet_since = None;
-        Ok(true)
-    }
-
-    pub(crate) fn embedding_backfill_may_need_repaint(&self) -> bool {
-        self.service.is_some()
-            && !self.embedding_backfill.exhausted
-            && !self.embedding_backfill.in_flight
-    }
-
-    pub(crate) fn reset_embedding_backfill(&mut self) {
-        self.embedding_backfill = EmbeddingBackfillScheduler::default();
-    }
-
-    fn search_work_in_flight(&self, now: Instant) -> bool {
+    pub(super) fn search_work_in_flight(&self, now: Instant) -> bool {
         self.active_search.is_some()
             || !self.prefetch_searches.is_empty()
             || self.search_debounce_pending(now)
     }
 
-    fn search_debounce_pending(&self, now: Instant) -> bool {
+    pub(super) fn search_debounce_pending(&self, now: Instant) -> bool {
         self.overlay.last_query_edit_at.is_some_and(|changed_at| {
             self.overlay.query.trim() != self.overlay.last_submitted_query
                 && now.duration_since(changed_at) < Duration::from_millis(SEARCH_DEBOUNCE_MS as u64)
@@ -596,12 +527,6 @@ impl SearchController {
                 false
             }
         }
-    }
-
-    fn note_demand_embedding_drained_at(&mut self, now: Instant) {
-        self.embedding_backfill.quiet_since = now
-            .checked_sub(Duration::from_millis(EMBEDDING_BACKFILL_IDLE_QUIET_MS))
-            .or(Some(now));
     }
 
     fn process_search_result(&mut self, result: SearchQueryResult, canvas: &mut CanvasState) {
@@ -1399,26 +1324,6 @@ impl SearchController {
         }
     }
 
-    fn update_result_selection(&mut self, index: usize, mode: SearchSelectionMode) {
-        match mode {
-            SearchSelectionMode::Replace => {
-                self.overlay.result_selection.replace(index);
-            }
-            SearchSelectionMode::Toggle => {
-                self.overlay.result_selection.toggle(index);
-            }
-            SearchSelectionMode::Range => {
-                self.overlay.result_selection.range_to(index);
-            }
-        }
-    }
-
-    fn select_initial_result(&mut self) {
-        self.overlay
-            .result_selection
-            .select_initial(self.overlay.results.len());
-    }
-
     fn toggle_scope(&mut self) {
         self.overlay.scope = match self.overlay.scope {
             SearchScope::ThisBoard => SearchScope::Library,
@@ -1434,215 +1339,6 @@ impl SearchController {
         self.overlay.result_selection.clear();
         self.pending_result_selection = None;
         self.overlay.has_more_results = false;
-    }
-
-    fn start_result_drag(&mut self, index: usize) {
-        if !self.overlay.result_selection.contains(index) {
-            self.update_result_selection(index, SearchSelectionMode::Replace);
-        }
-
-        let item_ids = self.selected_result_item_ids();
-        let asset_ids = self.selected_unplaced_result_asset_ids();
-        if item_ids.is_empty() && asset_ids.is_empty() {
-            return;
-        }
-
-        self.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
-            item_ids,
-            asset_ids,
-            outside_overlay: false,
-            placement_pending: false,
-            auto_fit_applied: false,
-        });
-    }
-
-    fn start_keyboard_placement_for_selected_results(
-        &mut self,
-        ctx: &egui::Context,
-        canvas: &mut CanvasState,
-        pointer_pos: Option<egui::Pos2>,
-        screen_rect: egui::Rect,
-        placement_preview_config: SearchPlacementPreviewConfig,
-    ) {
-        let item_ids = self.selected_result_item_ids();
-        let asset_ids = self.selected_unplaced_result_asset_ids();
-        self.start_keyboard_placement(
-            item_ids,
-            asset_ids,
-            ctx,
-            canvas,
-            pointer_pos,
-            screen_rect,
-            placement_preview_config,
-        );
-    }
-
-    fn start_keyboard_placement_for_all_results(
-        &mut self,
-        ctx: &egui::Context,
-        canvas: &mut CanvasState,
-        pointer_pos: Option<egui::Pos2>,
-        screen_rect: egui::Rect,
-        placement_preview_config: SearchPlacementPreviewConfig,
-    ) {
-        let item_ids = self.all_result_item_ids();
-        let asset_ids = self.all_unplaced_result_asset_ids();
-        self.start_keyboard_placement(
-            item_ids,
-            asset_ids,
-            ctx,
-            canvas,
-            pointer_pos,
-            screen_rect,
-            placement_preview_config,
-        );
-    }
-
-    fn start_keyboard_placement(
-        &mut self,
-        item_ids: Vec<i64>,
-        asset_ids: Vec<i64>,
-        ctx: &egui::Context,
-        canvas: &mut CanvasState,
-        pointer_pos: Option<egui::Pos2>,
-        screen_rect: egui::Rect,
-        placement_preview_config: SearchPlacementPreviewConfig,
-    ) {
-        if item_ids.is_empty() && asset_ids.is_empty() {
-            return;
-        }
-
-        let pointer_world = pointer_pos
-            .map(|pos| canvas.screen_to_world(pos, screen_rect))
-            .unwrap_or_else(|| canvas.screen_to_world(screen_rect.center(), screen_rect));
-        self.create_search_provisional_placements(
-            canvas,
-            &item_ids,
-            &asset_ids,
-            pointer_world,
-            screen_rect,
-            placement_preview_config,
-        );
-        self.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
-            item_ids: item_ids.clone(),
-            asset_ids,
-            outside_overlay: true,
-            placement_pending: true,
-            auto_fit_applied: false,
-        });
-        let _ = ctx;
-    }
-
-    fn cancel_pending_placement(&mut self, canvas: &mut CanvasState) {
-        self.overlay.drag_state = None;
-        crate::placement::lifecycle::cancel_provisional_batch(canvas);
-    }
-
-    fn create_search_provisional_placements(
-        &self,
-        canvas: &mut CanvasState,
-        item_ids: &[i64],
-        asset_ids: &[i64],
-        anchor_world: egui::Pos2,
-        screen_rect: egui::Rect,
-        placement_preview_config: SearchPlacementPreviewConfig,
-    ) {
-        let mut source_intents = item_ids
-            .iter()
-            .filter_map(|item_id| canvas.record_for_item_id(*item_id))
-            .map(crate::placement::creation::ProvisionalSourceIntent::ExistingPlacement)
-            .collect::<Vec<_>>();
-
-        for asset_id in asset_ids {
-            let (width, height) = self
-                .overlay
-                .results
-                .iter()
-                .find(|group| group.asset_id == *asset_id)
-                .map(|group| (group.asset_width.max(1), group.asset_height.max(1)))
-                .unwrap_or((1, 1));
-            source_intents.push(
-                crate::placement::creation::ProvisionalSourceIntent::ExistingAsset {
-                    asset_id: *asset_id,
-                    label: format!("search-asset-{asset_id}"),
-                    dimensions: (width, height),
-                },
-            );
-        }
-
-        crate::placement::lifecycle::start_provisional_batch(
-            canvas,
-            source_intents,
-            anchor_world,
-            screen_rect,
-            crate::placement::creation::PlacementCreationSettings {
-                target_canvas_area: placement_preview_config.import_target_canvas_area,
-                gap: placement_preview_config.import_gap,
-            },
-        );
-    }
-
-    fn selected_result_item_ids(&self) -> Vec<i64> {
-        let item_ids = self
-            .overlay
-            .result_selection
-            .selected()
-            .iter()
-            .filter_map(|index| self.overlay.results.get(*index))
-            .filter_map(|group| group.item_ids.first().copied())
-            .collect::<Vec<_>>();
-
-        if item_ids.is_empty() {
-            self.overlay
-                .results
-                .get(self.overlay.result_selection.lead().unwrap_or(0))
-                .and_then(|group| group.item_ids.first().copied())
-                .into_iter()
-                .collect()
-        } else {
-            item_ids
-        }
-    }
-
-    fn all_result_item_ids(&self) -> Vec<i64> {
-        self.overlay
-            .results
-            .iter()
-            .filter_map(|group| group.item_ids.first().copied())
-            .collect()
-    }
-
-    fn selected_unplaced_result_asset_ids(&self) -> Vec<i64> {
-        let asset_ids = self
-            .overlay
-            .result_selection
-            .selected()
-            .iter()
-            .filter_map(|index| self.overlay.results.get(*index))
-            .filter(|group| group.item_ids.is_empty())
-            .map(|group| group.asset_id)
-            .collect::<Vec<_>>();
-
-        if asset_ids.is_empty() {
-            self.overlay
-                .results
-                .get(self.overlay.result_selection.lead().unwrap_or(0))
-                .filter(|group| group.item_ids.is_empty())
-                .map(|group| group.asset_id)
-                .into_iter()
-                .collect()
-        } else {
-            asset_ids
-        }
-    }
-
-    fn all_unplaced_result_asset_ids(&self) -> Vec<i64> {
-        self.overlay
-            .results
-            .iter()
-            .filter(|group| group.item_ids.is_empty())
-            .map(|group| group.asset_id)
-            .collect()
     }
 
     fn dismiss_image_pivot(&mut self, canvas: &mut CanvasState) {
@@ -1995,56 +1691,14 @@ fn normalized_recent_searches(recent_searches: Vec<String>) -> Vec<String> {
     normalized
 }
 
-fn update_search_placement_preview(
-    ctx: &egui::Context,
-    canvas: &mut CanvasState,
-    search: &SearchController,
-    drag: &mut crate::search::palette::SearchResultDragState,
-    pointer_world: egui::Pos2,
-    screen_rect: egui::Rect,
-    placement_preview_config: SearchPlacementPreviewConfig,
-) {
-    if !drag.placement_pending {
-        search.create_search_provisional_placements(
-            canvas,
-            &drag.item_ids,
-            &drag.asset_ids,
-            pointer_world,
-            screen_rect,
-            placement_preview_config,
-        );
-        drag.placement_pending = true;
-    } else {
-        let now_seconds = ctx.input(|input| input.time);
-        canvas.move_selected_placement_group_to_center(pointer_world, screen_rect, now_seconds);
-    }
-
-    let preview_bounds = canvas.selected_bounds_world();
-    if !drag.auto_fit_applied
-        && let Some(bounds) = preview_bounds
-        && crate::placement::creation::fit_selection_bounds_if_needed(
-            canvas,
-            bounds,
-            screen_rect,
-            placement_preview_config.visible_canvas_rect,
-        )
-    {
-        drag.auto_fit_applied = true;
-    }
-    let _ = ctx;
-}
-
-fn pending_placement_commit_intent(primary_clicked: bool, modifiers: egui::Modifiers) -> bool {
-    primary_clicked && !modifiers.alt && !modifiers.command && !modifiers.ctrl && !modifiers.shift
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::backfill::EmbeddingBackfillIdleState;
+    use super::super::placement::pending_placement_commit_intent;
+    use super::super::selection::{PendingResultSelection, SearchSelectionMode};
     use super::{
-        ActiveSearchRequest, EmbeddingBackfillIdleState, PendingResultSelection,
-        SEARCH_RESULT_PAGE_SIZE, SearchCacheEntry, SearchCacheKey, SearchController,
-        SearchIndexResult, SearchOverlayStatus, SearchSelectionMode,
-        pending_placement_commit_intent, result_is_on_bottom_row,
+        ActiveSearchRequest, SEARCH_RESULT_PAGE_SIZE, SearchCacheEntry, SearchCacheKey,
+        SearchController, SearchIndexResult, SearchOverlayStatus, result_is_on_bottom_row,
     };
     use crate::canvas::CanvasState;
     use crate::data::{BoardItem, BoardItemWithAsset};
