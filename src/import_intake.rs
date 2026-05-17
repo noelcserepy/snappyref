@@ -21,6 +21,7 @@ pub(crate) struct CanvasImportPlaceholder {
 pub(crate) struct ImportReservation {
     pub(crate) target_board_id: i64,
     pub(crate) queue_id: u64,
+    pub(crate) placement_id: Option<i64>,
     pub(crate) reserved_world: Option<egui::Pos2>,
 }
 
@@ -105,6 +106,7 @@ impl ImportIntake {
             ImportReservation {
                 target_board_id,
                 queue_id,
+                placement_id: None,
                 reserved_world: placeholder
                     .as_ref()
                     .map(|placeholder| placeholder.center_world),
@@ -218,6 +220,7 @@ pub(crate) fn import_path_request(
     crate::jobs::ImportRequest::ImportPath {
         target_board_id: reservation.target_board_id,
         queue_id: reservation.queue_id,
+        placement_id: reservation.placement_id,
         source_path,
         desired_world,
         reserved_world: reservation.reserved_world,
@@ -242,6 +245,7 @@ pub(crate) fn import_url_request(
     crate::jobs::ImportRequest::ImportUrl {
         target_board_id: reservation.target_board_id,
         queue_id: reservation.queue_id,
+        placement_id: reservation.placement_id,
         url,
         desired_world,
         reserved_world: reservation.reserved_world,
@@ -268,6 +272,7 @@ pub(crate) fn import_clipboard_request(
     crate::jobs::ImportRequest::ImportClipboard {
         target_board_id: reservation.target_board_id,
         queue_id: reservation.queue_id,
+        placement_id: reservation.placement_id,
         rgba,
         width,
         height,

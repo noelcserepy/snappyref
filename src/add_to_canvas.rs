@@ -34,6 +34,7 @@ pub(crate) struct CompletedAddBatch {
     pub(crate) item_ids: Vec<i64>,
 }
 
+#[allow(dead_code)]
 pub(crate) struct ExistingAssetPlacement {
     pub(crate) reservation: ImportReservation,
     pub(crate) record: BoardItemWithAsset,
@@ -61,6 +62,47 @@ pub(crate) fn preview_size_for_dimensions(
     let height = height.max(1);
     let scale = crate::jobs::initial_import_scale(width, height, true, target_canvas_area);
     egui::vec2(width as f32 * scale, height as f32 * scale)
+}
+
+#[allow(dead_code)]
+pub(crate) fn canvas_input_policy(placement_pending: bool) -> crate::canvas::CanvasInputPolicy {
+    if placement_pending {
+        crate::canvas::CanvasInputPolicy::ViewportOnly
+    } else {
+        crate::canvas::CanvasInputPolicy::Full
+    }
+}
+
+pub(crate) fn fit_preview_bounds_if_needed(
+    canvas: &mut CanvasState,
+    bounds: egui::Rect,
+    canvas_rect: egui::Rect,
+    visible_canvas_rect: egui::Rect,
+) -> bool {
+    canvas.zoom_out_to_fit_world_rect(
+        canvas_rect,
+        visible_canvas_rect,
+        bounds,
+        crate::canvas::FOCUS_SELECTION_PADDING_SCREEN,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn preview_placeholder_bounds(
+    placeholders: &[(egui::Pos2, egui::Vec2)],
+) -> Option<egui::Rect> {
+    let mut min = egui::pos2(f32::INFINITY, f32::INFINITY);
+    let mut max = egui::pos2(f32::NEG_INFINITY, f32::NEG_INFINITY);
+    let mut found = false;
+    for (center, size) in placeholders {
+        let half_size = *size * 0.5;
+        min.x = min.x.min(center.x - half_size.x);
+        min.y = min.y.min(center.y - half_size.y);
+        max.x = max.x.max(center.x + half_size.x);
+        max.y = max.y.max(center.y + half_size.y);
+        found = true;
+    }
+    found.then(|| egui::Rect::from_min_max(min, max))
 }
 
 pub(crate) fn plan_preview_placeholders(
@@ -98,6 +140,7 @@ pub(crate) fn plan_preview_placeholders(
         .collect()
 }
 
+#[allow(dead_code)]
 pub(crate) fn reserve_existing_asset_placements(
     library: &Library,
     import_intake: &mut ImportIntake,
@@ -251,5 +294,44 @@ impl AddBatchTracker {
             .retain(|batch| !batch.pending_queue_ids.is_empty());
 
         completed_batches
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pending_add_to_canvas_placement_keeps_viewport_navigation_available() {
+        assert_eq!(
+            super::canvas_input_policy(true),
+            crate::canvas::CanvasInputPolicy::ViewportOnly
+        );
+        assert_eq!(
+            super::canvas_input_policy(false),
+            crate::canvas::CanvasInputPolicy::Full
+        );
+    }
+
+    #[test]
+    fn oversized_add_to_canvas_preview_zooms_out_to_fit_visible_canvas() {
+        let mut canvas = crate::canvas::CanvasState::default();
+        let canvas_rect = eframe::egui::Rect::from_min_size(
+            eframe::egui::Pos2::ZERO,
+            eframe::egui::vec2(800.0, 600.0),
+        );
+        let visible_rect = canvas_rect;
+        let placeholders = vec![(
+            eframe::egui::pos2(0.0, 0.0),
+            eframe::egui::vec2(1600.0, 1200.0),
+        )];
+
+        let bounds = super::preview_placeholder_bounds(&placeholders).unwrap();
+
+        assert!(super::fit_preview_bounds_if_needed(
+            &mut canvas,
+            bounds,
+            canvas_rect,
+            visible_rect,
+        ));
+        assert!(canvas.viewport_state().camera_zoom < 1.0);
     }
 }

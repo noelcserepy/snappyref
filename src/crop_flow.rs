@@ -130,10 +130,8 @@ impl CropFlow {
         updated_item.asset_id = asset.id;
 
         let updated_item_id = updated_item.id;
-        let updated_record = crate::data::BoardItemWithAsset {
-            item: updated_item.clone(),
-            asset: asset.clone(),
-        };
+        let updated_record =
+            crate::data::BoardItemWithAsset::loaded(updated_item.clone(), asset.clone());
 
         match canvas.apply_cropped_item(ctx, cropped, asset.clone(), updated_item) {
             Ok(()) => {
@@ -308,8 +306,8 @@ mod tests {
     }
 
     fn test_record(item_id: i64, asset_id: i64, width: u32, height: u32) -> BoardItemWithAsset {
-        BoardItemWithAsset {
-            item: BoardItem {
+        BoardItemWithAsset::loaded(
+            BoardItem {
                 id: item_id,
                 asset_id,
                 x: 0.0,
@@ -319,7 +317,7 @@ mod tests {
                 z_index: 0,
                 archived: false,
             },
-            asset: ImageAsset {
+            ImageAsset {
                 id: asset_id,
                 original_path: PathBuf::from(format!("image-{asset_id}.png")),
                 filename: format!("image-{asset_id}.png"),
@@ -329,7 +327,7 @@ mod tests {
                 file_size: 0,
                 imported_at: 0,
             },
-        }
+        )
     }
 
     fn temp_library_root(label: &str) -> PathBuf {

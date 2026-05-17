@@ -167,9 +167,9 @@ impl SearchSelection {
 pub(crate) struct SearchResultDragState {
     pub item_ids: Vec<i64>,
     pub asset_ids: Vec<i64>,
-    pub asset_placeholder_sizes: Vec<egui::Vec2>,
     pub outside_overlay: bool,
     pub placement_pending: bool,
+    pub auto_fit_applied: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

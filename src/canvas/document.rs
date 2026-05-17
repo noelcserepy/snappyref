@@ -16,14 +16,14 @@ use super::render::{
 };
 use super::{
     AnimatedCanvasFrame, AnimatedCanvasImage, CanvasCropRequest, CanvasDocumentChanges,
-    CanvasImage, CanvasImagePreview, CanvasState, CropState, FOCUS_SELECTION_PADDING_SCREEN,
-    ImportPlaceholder, MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, PendingAnnotation, SelectedLayoutItem,
-    SharedRgba, TextboxLayoutCacheEntry, merge_ids,
+    CanvasImage, CanvasImagePreview, CanvasState, CanvasTexture, CropState,
+    FOCUS_SELECTION_PADDING_SCREEN, ImportPlaceholder, MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM,
+    PendingAnnotation, SelectedLayoutItem, SharedRgba, TextboxLayoutCacheEntry, merge_ids,
 };
 use crate::data::{
     BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
     CanvasAnnotationKind, CanvasBackground, CanvasImageLod, CanvasStackItem, CanvasStrokeWidth,
-    CanvasTextSize, ViewportState,
+    CanvasTextSize, PlacementLifecycle, ViewportState,
 };
 use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
 
@@ -140,6 +140,74 @@ impl CanvasState {
         self.document
             .images
             .sort_by_key(|image| image.record.item.z_index);
+    }
+
+    pub fn add_unloaded_item(&mut self, record: BoardItemWithAsset) {
+        self.document
+            .images
+            .retain(|image| image.record.item.id != record.item.id);
+        self.render.pending_image_lod_loads.remove(&record.item.id);
+        self.document.images.push(CanvasImage {
+            texture: CanvasTexture::Unloaded {
+                size: [
+                    record.visual_width.max(1.0).round() as usize,
+                    record.visual_height.max(1.0).round() as usize,
+                ],
+            },
+            loaded_lod: crate::data::CanvasImageLod::Overview,
+            animation: None,
+            record,
+        });
+        self.append_missing_stack_item(CanvasStackItem::Placement(
+            self.document.images.last().unwrap().record.item.id,
+        ));
+        self.document
+            .images
+            .sort_by_key(|image| image.record.item.z_index);
+    }
+
+    pub fn add_provisional_unloaded_item(&mut self, mut record: BoardItemWithAsset) {
+        record.lifecycle = PlacementLifecycle::Provisional;
+        self.add_unloaded_item(record);
+    }
+
+    pub fn add_provisional_reference_item(&mut self, mut record: BoardItemWithAsset) {
+        record.lifecycle = PlacementLifecycle::Provisional;
+        if self.add_reference_item(record.clone()).is_err() {
+            self.add_unloaded_item(record);
+        }
+    }
+
+    pub fn next_provisional_item_id(&self) -> i64 {
+        self.document
+            .images
+            .iter()
+            .filter_map(|image| (image.record.item.id < 0).then_some(image.record.item.id))
+            .min()
+            .unwrap_or(0)
+            - 1
+    }
+
+    pub fn remove_provisional_items(&mut self) -> Vec<i64> {
+        let ids = self
+            .document
+            .images
+            .iter()
+            .filter_map(|image| {
+                (image.record.lifecycle == PlacementLifecycle::Provisional)
+                    .then_some(image.record.item.id)
+            })
+            .collect::<Vec<_>>();
+        self.delete_items(&ids)
+    }
+
+    pub fn provisional_records_in_selection_order(&self) -> Vec<BoardItemWithAsset> {
+        self.document
+            .selected_item_ids
+            .iter()
+            .filter_map(|item_id| self.record_for_item_id(*item_id))
+            .filter(|record| record.lifecycle == PlacementLifecycle::Provisional)
+            .collect()
     }
 
     pub fn add_reference_item(&mut self, record: BoardItemWithAsset) -> Result<(), String> {
@@ -317,6 +385,8 @@ impl CanvasState {
         let image = &mut self.document.images[image_index];
         image.record.item = item;
         image.record.asset = asset;
+        image.record.visual_width = image.record.asset.width as f32;
+        image.record.visual_height = image.record.asset.height as f32;
         image.texture = texture;
         image.loaded_lod = CanvasImageLod::Working;
         image.animation = None;
@@ -359,6 +429,8 @@ impl CanvasState {
 
         image.record.item = updated_item;
         image.record.asset = asset;
+        image.record.visual_width = image.record.asset.width as f32;
+        image.record.visual_height = image.record.asset.height as f32;
         image.texture = texture;
         image.loaded_lod = loaded_lod;
         image.animation = None;
@@ -517,6 +589,33 @@ impl CanvasState {
         true
     }
 
+    pub(crate) fn zoom_out_to_fit_world_rect(
+        &mut self,
+        canvas_rect: egui::Rect,
+        target_rect: egui::Rect,
+        bounds: egui::Rect,
+        padding_screen: f32,
+    ) -> bool {
+        let padded_size = target_rect
+            .shrink(padding_screen)
+            .size()
+            .max(egui::vec2(1.0, 1.0));
+        let width_zoom = padded_size.x / bounds.width().max(1.0);
+        let height_zoom = padded_size.y / bounds.height().max(1.0);
+        let target_zoom = width_zoom
+            .min(height_zoom)
+            .clamp(MIN_CANVAS_ZOOM, self.zoom);
+        if target_zoom >= self.zoom {
+            return false;
+        }
+
+        let center_world = bounds.center().to_vec2();
+        self.interaction.mouse_wheel_zoom_animation = None;
+        self.zoom = target_zoom;
+        self.pan = target_rect.center() - canvas_rect.center() - center_world * self.zoom;
+        true
+    }
+
     pub fn selected_center_world(&self) -> Option<egui::Pos2> {
         let mut min = egui::Pos2::new(f32::INFINITY, f32::INFINITY);
         let mut max = egui::Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
@@ -636,13 +735,6 @@ impl CanvasState {
         self.interaction.hover_preview_placeholders.len()
     }
 
-    pub fn clear_move_preview_placeholders(&mut self) {
-        self.interaction.move_preview_placeholders.clear();
-        if self.interaction.search_drag_preview.is_none() {
-            self.interaction.preview_movement_state = None;
-        }
-    }
-
     pub(super) fn clear_guide_snap_indicators(&mut self) {
         self.interaction.guide_snap_indicators.clear();
     }
@@ -663,31 +755,6 @@ impl CanvasState {
             .iter()
             .map(|indicator| indicator.marks.len())
             .sum()
-    }
-
-    pub fn set_move_preview_placeholders(
-        &mut self,
-        placeholders: Vec<(egui::Pos2, egui::Vec2)>,
-        now_seconds: f64,
-    ) {
-        let centers = placeholders
-            .iter()
-            .map(|(center_world, _)| *center_world)
-            .collect::<Vec<_>>();
-        self.update_preview_movement_state(centers, now_seconds);
-        self.interaction.move_preview_placeholders.clear();
-        self.interaction
-            .move_preview_placeholders
-            .extend(
-                placeholders
-                    .into_iter()
-                    .map(|(center_world, size_world)| ImportPlaceholder {
-                        queue_id: 0,
-                        center_world,
-                        size_world,
-                        label: String::new(),
-                    }),
-            );
     }
 
     pub fn compact_guided_preview_placeholders(
@@ -749,162 +816,6 @@ impl CanvasState {
         for (center, _) in placeholders {
             *center += snap_offset;
         }
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn move_preview_placeholder_count(&self) -> usize {
-        self.interaction.move_preview_placeholders.len()
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn move_preview_placeholder_layout_items(&self) -> Vec<BoardLayoutItem> {
-        self.interaction
-            .move_preview_placeholders
-            .iter()
-            .enumerate()
-            .map(|(index, placeholder)| BoardLayoutItem {
-                id: index as i64,
-                x: placeholder.center_world.x,
-                y: placeholder.center_world.y,
-                width: placeholder.size_world.x,
-                height: placeholder.size_world.y,
-            })
-            .collect()
-    }
-
-    pub fn update_search_drag_preview(
-        &mut self,
-        item_ids: &[i64],
-        desired_anchor_world: egui::Pos2,
-        screen_rect: egui::Rect,
-        now_seconds: f64,
-    ) {
-        let Some(layout_items) = self.search_drag_layout_items_for_item_ids(item_ids) else {
-            self.clear_search_drag_preview();
-            return;
-        };
-        let Some(source_center_world) = self.source_center_for_layout_items(&layout_items) else {
-            self.clear_search_drag_preview();
-            return;
-        };
-        let Some((drop_anchor_world, snap_preview_rect_world)) = self
-            .resolve_search_drag_anchor_world(
-                item_ids,
-                &layout_items,
-                desired_anchor_world,
-                screen_rect,
-            )
-        else {
-            self.clear_search_drag_preview();
-            return;
-        };
-        let delta = drop_anchor_world - source_center_world;
-        let layout_by_id = layout_items
-            .iter()
-            .map(|item| (item.id, egui::pos2(item.x, item.y)))
-            .collect::<std::collections::HashMap<_, _>>();
-        let images = item_ids
-            .iter()
-            .filter_map(|item_id| self.image_by_item_id(*item_id).cloned())
-            .map(|mut image| {
-                if let Some(layout_pos) = layout_by_id.get(&image.record.item.id) {
-                    image.record.item.x = layout_pos.x + delta.x;
-                    image.record.item.y = layout_pos.y + delta.y;
-                }
-                image
-            })
-            .collect::<Vec<_>>();
-        if images.is_empty() {
-            self.clear_search_drag_preview();
-            return;
-        }
-        self.update_preview_movement_state(
-            images
-                .iter()
-                .map(|image| egui::pos2(image.record.item.x, image.record.item.y))
-                .collect(),
-            now_seconds,
-        );
-        self.interaction.search_drag_preview = Some(super::SearchDragPreview {
-            images,
-            drop_anchor_world,
-            snap_preview_rect_world,
-        });
-    }
-
-    pub fn take_search_drag_drop_anchor_world(&mut self) -> Option<egui::Pos2> {
-        self.interaction
-            .search_drag_preview
-            .as_ref()
-            .map(|preview| preview.drop_anchor_world)
-    }
-
-    pub fn clear_search_drag_preview(&mut self) {
-        self.interaction.search_drag_preview = None;
-        if self.interaction.move_preview_placeholders.is_empty() {
-            self.interaction.preview_movement_state = None;
-        }
-    }
-
-    fn update_preview_movement_state(&mut self, centers_world: Vec<egui::Pos2>, now_seconds: f64) {
-        const MOVEMENT_EPSILON_SQ: f32 = 0.01;
-        let moved = self
-            .interaction
-            .preview_movement_state
-            .as_ref()
-            .is_none_or(|state| {
-                state.centers_world.len() != centers_world.len()
-                    || state
-                        .centers_world
-                        .iter()
-                        .zip(&centers_world)
-                        .any(|(before, after)| (*after - *before).length_sq() > MOVEMENT_EPSILON_SQ)
-            });
-        let last_movement_seconds = if moved {
-            now_seconds
-        } else {
-            self.interaction
-                .preview_movement_state
-                .as_ref()
-                .map(|state| state.last_movement_seconds)
-                .unwrap_or(now_seconds)
-        };
-        self.interaction.preview_movement_state = Some(super::PreviewMovementState {
-            centers_world,
-            last_movement_seconds,
-            moved: true,
-        });
-    }
-
-    fn resolve_search_drag_anchor_world(
-        &mut self,
-        item_ids: &[i64],
-        items: &[SelectedLayoutItem],
-        desired_anchor_world: egui::Pos2,
-        screen_rect: egui::Rect,
-    ) -> Option<(egui::Pos2, Option<egui::Rect>)> {
-        let source_center_world = self.source_center_for_layout_items(items)?;
-        let world_delta = desired_anchor_world - source_center_world;
-        let bounds = layout_bounds_with_offset(items, world_delta)?;
-        let previously_snapped = self
-            .interaction
-            .search_drag_preview
-            .as_ref()
-            .is_some_and(|preview| preview.snap_preview_rect_world.is_some());
-        let Some(snap_result) = super::interaction::compute_guide_snap_for_rect(
-            self,
-            screen_rect,
-            bounds,
-            item_ids,
-            previously_snapped,
-        ) else {
-            self.clear_guide_snap_indicators();
-            return Some((desired_anchor_world, None));
-        };
-        let snap_rect = snap_result.rect;
-        self.set_guide_snap_indicators(snap_result.indicators);
-        let snap_offset = snap_rect.center() - bounds.center();
-        Some((desired_anchor_world + snap_offset, Some(snap_rect)))
     }
 
     pub fn take_pending_image_lod_loads(&mut self) -> Vec<(i64, CanvasImageLod)> {
@@ -1063,7 +974,10 @@ impl CanvasState {
                 self.document
                     .images
                     .iter()
-                    .find(|image| image.record.item.id == id)
+                    .find(|image| {
+                        image.record.item.id == id
+                            && image.record.lifecycle == PlacementLifecycle::Committed
+                    })
                     .map(|image| image.record.item.clone())
             })
             .collect();
@@ -1083,7 +997,7 @@ impl CanvasState {
         let stack_order = self
             .document
             .stack_order_dirty
-            .then(|| self.ordered_canvas_items_back_to_front());
+            .then(|| self.committed_canvas_items_back_to_front());
         self.document.stack_order_dirty = false;
 
         CanvasDocumentChanges {
@@ -1105,7 +1019,10 @@ impl CanvasState {
                 self.document
                     .images
                     .iter()
-                    .find(|image| image.record.item.id == *id)
+                    .find(|image| {
+                        image.record.item.id == *id
+                            && image.record.lifecycle == PlacementLifecycle::Committed
+                    })
                     .map(|image| image.record.item.clone())
             })
             .collect();
@@ -1130,7 +1047,7 @@ impl CanvasState {
             stack_order: self
                 .document
                 .stack_order_dirty
-                .then(|| self.ordered_canvas_items_back_to_front()),
+                .then(|| self.committed_canvas_items_back_to_front()),
         }
     }
 
@@ -1168,10 +1085,7 @@ impl CanvasState {
                 continue;
             }
 
-            let size = egui::vec2(
-                image.record.asset.width as f32 * image.record.item.scale.max(0.01),
-                image.record.asset.height as f32 * image.record.item.scale.max(0.01),
-            );
+            let size = image.record.scaled_visual_size();
             let image_rect = egui::Rect::from_center_size(
                 egui::pos2(image.record.item.x, image.record.item.y),
                 size,
@@ -1463,6 +1377,7 @@ impl CanvasState {
         self.apply_arrangement_if_changed(placements, egui::Vec2::ZERO)
     }
 
+    #[allow(dead_code)]
     pub fn center_selected_placements_on(&mut self, center_world: egui::Pos2) -> usize {
         let items = self.selected_layout_items();
         let Some(bounds) = layout_bounds_with_offset(&items, egui::Vec2::ZERO) else {
@@ -1772,6 +1687,18 @@ impl CanvasState {
         ordered
     }
 
+    fn committed_canvas_items_back_to_front(&self) -> Vec<CanvasStackItem> {
+        self.ordered_canvas_items_back_to_front()
+            .into_iter()
+            .filter(|item| match item {
+                CanvasStackItem::Placement(item_id) => self
+                    .image_by_item_id(*item_id)
+                    .is_some_and(|image| image.record.lifecycle == PlacementLifecycle::Committed),
+                CanvasStackItem::Annotation(_) => true,
+            })
+            .collect()
+    }
+
     fn append_missing_stack_item(&mut self, item: CanvasStackItem) {
         if !self.document.stack_order.contains(&item) {
             self.document.stack_order.push(item);
@@ -1984,9 +1911,10 @@ impl CanvasState {
             .iter()
             .filter(|image| self.is_selected(image.record.item.id))
             .map(|image| {
+                let scaled_size = image.record.scaled_visual_size();
                 let visual_size = super::rotated_visual_size(
-                    image.record.asset.width as f32 * image.record.item.scale.max(0.01),
-                    image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+                    scaled_size.x,
+                    scaled_size.y,
                     image.record.item.rotation,
                 );
                 SelectedLayoutItem {
@@ -2006,9 +1934,10 @@ impl CanvasState {
             .iter()
             .filter(|image| self.is_selected(image.record.item.id))
             .map(|image| {
+                let scaled_size = image.record.scaled_visual_size();
                 let visual_size = super::rotated_visual_size(
-                    image.record.asset.width as f32 * image.record.item.scale.max(0.01),
-                    image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+                    scaled_size.x,
+                    scaled_size.y,
                     image.record.item.rotation,
                 );
                 super::CompactInputItem {
@@ -2022,58 +1951,6 @@ impl CanvasState {
                 }
             })
             .collect()
-    }
-
-    fn layout_items_for_item_ids(&self, item_ids: &[i64]) -> Vec<SelectedLayoutItem> {
-        self.document
-            .images
-            .iter()
-            .filter(|image| item_ids.contains(&image.record.item.id))
-            .map(|image| {
-                let visual_size = super::rotated_visual_size(
-                    image.record.asset.width as f32 * image.record.item.scale.max(0.01),
-                    image.record.asset.height as f32 * image.record.item.scale.max(0.01),
-                    image.record.item.rotation,
-                );
-                SelectedLayoutItem {
-                    id: image.record.item.id,
-                    x: image.record.item.x,
-                    y: image.record.item.y,
-                    width: visual_size.x,
-                    height: visual_size.y,
-                }
-            })
-            .collect()
-    }
-
-    fn search_drag_layout_items_for_item_ids(
-        &self,
-        item_ids: &[i64],
-    ) -> Option<Vec<SelectedLayoutItem>> {
-        let mut items = self.layout_items_for_item_ids(item_ids);
-        if items.is_empty() {
-            return None;
-        }
-        if items.len() == 1 {
-            return Some(items);
-        }
-
-        let source_center = self.source_center_for_layout_items(&items)?;
-        let Some((placements, width, height)) = super::best_compact_layout(&items, self.layout_gap)
-        else {
-            return Some(items);
-        };
-        let local_center = egui::pos2(width * 0.5, height * 0.5);
-        for item in &mut items {
-            if let Some((_, placement)) = placements
-                .iter()
-                .find(|(placement_item_id, _)| *placement_item_id == item.id)
-            {
-                item.x = source_center.x + placement.x - local_center.x;
-                item.y = source_center.y + placement.y - local_center.y;
-            }
-        }
-        Some(items)
     }
 
     fn source_center_for_layout_items(&self, items: &[SelectedLayoutItem]) -> Option<egui::Pos2> {
@@ -2195,7 +2072,8 @@ impl CanvasState {
             let Some(image) = self.image_by_item_id(item_id) else {
                 continue;
             };
-            let source_area = image.record.asset.width as f32 * image.record.asset.height as f32;
+            let base_size = image.record.base_visual_size();
+            let source_area = base_size.x * base_size.y;
             if source_area <= f32::EPSILON {
                 continue;
             }

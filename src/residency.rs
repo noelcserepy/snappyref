@@ -43,6 +43,8 @@ pub(crate) struct LoadedImportOutcome {
 #[derive(Clone, Debug)]
 pub(crate) struct FailedImportOutcome {
     pub(crate) placeholder_removal: Option<ImportPlaceholderRemoval>,
+    pub(crate) placement_id: Option<i64>,
+    pub(crate) target_board_id: Option<i64>,
     pub(crate) status: String,
 }
 
@@ -131,6 +133,7 @@ impl ImageResidencyCoordinator {
             ImportResult::Failed {
                 target_board_id,
                 queue_id,
+                placement_id,
                 item_id,
                 context,
                 error,
@@ -139,6 +142,7 @@ impl ImageResidencyCoordinator {
                 active_board_id,
                 target_board_id,
                 queue_id,
+                placement_id,
                 item_id,
                 context,
                 error,
@@ -176,7 +180,9 @@ impl ImageResidencyCoordinator {
 
         if canvas
             .record_for_item_id(loaded.record.item.id)
-            .is_some_and(|current| current.item.asset_id != loaded.record.item.asset_id)
+            .is_some_and(|current| {
+                current.is_loaded() && current.item.asset_id != loaded.record.item.asset_id
+            })
         {
             return LoadedImportOutcome {
                 placeholder_removal,
@@ -234,6 +240,7 @@ impl ImageResidencyCoordinator {
         active_board_id: i64,
         target_board_id: Option<i64>,
         queue_id: Option<u64>,
+        placement_id: Option<i64>,
         item_id: Option<i64>,
         context: String,
         error: String,
@@ -248,6 +255,8 @@ impl ImageResidencyCoordinator {
         }
         FailedImportOutcome {
             placeholder_removal,
+            placement_id,
+            target_board_id,
             status: format!("{context}: {error}"),
         }
     }

@@ -23,8 +23,12 @@ The one board currently loaded for interaction.
 _Avoid_: Current canvas, open scene
 
 **Placement**:
-A board-local instance of an asset with position, scale, rotation, z-order, and archive state.
+A board-local canvas item with position, scale, rotation, z-order, archive state, and placement content state. A Placement may already reference a loaded Asset, may be loading toward an Asset, or may be in a failed content state. Asset availability changes how the Placement renders, not whether it participates in selection, movement, Guide Snapping, Stack Order, or Document History.
 _Avoid_: Board item, image, copy
+
+**Placement Content State**:
+The asset-resolution state of a Placement. Loaded Placements render their Asset; loading Placements render a placeholder of the known or fallback size while import/search work resolves; failed Placements render an error placeholder but remain normal selectable, movable canvas items.
+_Avoid_: Placeholder item, pending item, preview object
 
 **Annotation**:
 Board-local non-asset markup such as a textbox, arrow, or line.
@@ -59,11 +63,11 @@ The pre-import normalization of OS/window drag-and-drop input into external asse
 _Avoid_: Import pipeline, native drop bridge, placement flow
 
 **Import Batch Anchor**:
-The board-world point that records where an async batch of imported placements should land after completion. Preview placeholders may use approximate dimensions, but final batch completion compacts the loaded placements around this anchor so paste/drop intent survives URL loads, failures, and out-of-order completion.
+The board-world point that records where an async batch of loading Placements was initially created. Final content resolution must preserve user-authored Placement transforms when the user has moved the batch after creation.
 _Avoid_: Placeholder center, batch center, drop position
 
 **Add-to-Canvas**:
-The shared preview-first flow for adding content to the Active Board, whether the source is an external import, an existing Asset from Search, or a duplicated existing Placement. It owns preview sizing, compact preview layout, guide snapping, placeholder reservation, batch anchoring, and final selection/compaction semantics; source-specific work only materializes the Asset or Placement.
+The shared flow for adding content to the Active Board, whether the source is an external import, an existing Asset from Search, or a duplicated existing Placement. It creates normal Placements immediately, with the appropriate Placement Content State, and starts any source-specific work needed to resolve loading content. Movement, selection, Guide Snapping, Stack Order, and Document History remain Placement behavior.
 _Avoid_: Search drop special case, import-only placement path
 
 **Dense Compact Layout**:
@@ -431,8 +435,8 @@ The confirmed command that removes selected assets from boards and library searc
 _Avoid_: Permanent delete, delete file
 
 **Import Placeholder**:
-A transient board-scoped visual placeholder for in-flight import work.
-_Avoid_: Temporary item, pending asset
+Deprecated term for the visual rendering of a loading Placement. Do not model import placeholders as separate canvas items; use Placement Content State instead.
+_Avoid_: Temporary item, pending asset, placeholder item
 
 ### Asset lifecycle
 
@@ -511,7 +515,9 @@ _Avoid_: Release asset, build cache
 - A **Library** has zero or more non-archived **Assets**.
 - A **Board** belongs to exactly one **Library**.
 - An **Asset** belongs to exactly one **Library**.
-- A **Placement** belongs to exactly one **Board** and exactly one **Asset**.
+- A **Placement** belongs to exactly one **Board** and has one **Placement Content State**.
+- A loaded **Placement** references exactly one **Asset**.
+- A loading or failed **Placement** may not yet reference an **Asset**.
 - An **Asset** can have zero or more **Placements**.
 - A **Board** can have zero or more **Placements** and zero or more **Annotations**.
 - An **Annotation** belongs to exactly one **Board** and does not belong to the **Library**.

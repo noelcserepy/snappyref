@@ -14,8 +14,8 @@ use rusqlite::{Connection, Transaction, params, params_from_iter};
 use crate::data::{
     Board, BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
     CanvasAnnotationKind, CanvasBackground, CanvasImageLod, CanvasStackItem, CanvasStrokeWidth,
-    CanvasTextSize, DEFAULT_VIEWPORT_ZOOM, ImageAsset, UserSession, ViewportState,
-    WorkspaceSettings,
+    CanvasTextSize, DEFAULT_VIEWPORT_ZOOM, ImageAsset, PlacementContent, PlacementContentIntent,
+    PlacementLifecycle, UserSession, ViewportState, WorkspaceSettings,
 };
 
 #[derive(Clone, Debug)]
@@ -491,7 +491,161 @@ impl Library {
             .commit()
             .map_err(|error| format!("failed to commit transaction: {error}"))?;
 
-        Ok(BoardItemWithAsset { asset, item })
+        Ok(BoardItemWithAsset::loaded(item, asset))
+    }
+
+    pub fn persist_imported_image_resolving_placement(
+        &self,
+        board_id: i64,
+        placement_id: Option<i64>,
+        stored_path: &Path,
+        mime_type: &str,
+        width: u32,
+        height: u32,
+        file_size: u64,
+        desired_world: egui::Pos2,
+        initial_scale: f32,
+    ) -> Result<BoardItemWithAsset, String> {
+        let Some(placement_id) = placement_id else {
+            return self.persist_imported_image_to_board(
+                board_id,
+                stored_path,
+                mime_type,
+                width,
+                height,
+                file_size,
+                desired_world,
+                initial_scale,
+            );
+        };
+
+        let mut connection = self.connection()?;
+        if !board_is_non_archived(&connection, board_id)? {
+            return Err(format!(
+                "cannot import to missing or archived board {board_id}"
+            ));
+        }
+        let transaction = connection.transaction().map_err(|error| {
+            format!("failed to start placement resolution transaction: {error}")
+        })?;
+        let asset = insert_asset_row(
+            &transaction,
+            stored_path,
+            mime_type,
+            width,
+            height,
+            file_size,
+        )?;
+        let content = PlacementContent::Loaded { asset_id: asset.id };
+        let content_payload = serde_json::to_string(&content)
+            .map_err(|error| format!("failed to encode loaded placement content: {error}"))?;
+        let changed = transaction
+            .execute(
+                "UPDATE board_items
+                 SET asset_id = ?1,
+                     placement_content_state = 'loaded',
+                     placement_lifecycle = 'committed',
+                     content_resolution_intent = ?2
+                 WHERE id = ?3
+                   AND board_id = ?4
+                   AND archived = 0",
+                params![asset.id, content_payload, placement_id, board_id],
+            )
+            .map_err(|error| format!("failed to resolve placement {placement_id}: {error}"))?;
+        if changed == 0 {
+            transaction
+                .execute("DELETE FROM assets WHERE id = ?1", params![asset.id])
+                .map_err(|error| format!("failed to remove stale imported asset: {error}"))?;
+            transaction
+                .commit()
+                .map_err(|error| format!("failed to commit stale placement resolution: {error}"))?;
+            return Err(format!("placement {placement_id} no longer exists"));
+        }
+        let item = transaction
+            .query_row(
+                "SELECT id, asset_id, x, y, scale, rotation, z_index, archived
+                 FROM board_items
+                 WHERE id = ?1",
+                params![placement_id],
+                |row| {
+                    Ok(BoardItem {
+                        id: row.get(0)?,
+                        asset_id: row.get(1)?,
+                        x: row.get(2)?,
+                        y: row.get(3)?,
+                        scale: row.get(4)?,
+                        rotation: row.get(5)?,
+                        z_index: row.get(6)?,
+                        archived: row.get::<_, i64>(7)? != 0,
+                    })
+                },
+            )
+            .map_err(|error| {
+                format!("failed to load resolved placement {placement_id}: {error}")
+            })?;
+        let (visual_width, visual_height) = transaction
+            .query_row(
+                "SELECT COALESCE(visual_width, ?2), COALESCE(visual_height, ?3)
+                 FROM board_items
+                 WHERE id = ?1",
+                params![placement_id, width as f32, height as f32],
+                |row| Ok((row.get::<_, f32>(0)?, row.get::<_, f32>(1)?)),
+            )
+            .map_err(|error| {
+                format!("failed to load resolved placement size {placement_id}: {error}")
+            })?;
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit placement resolution: {error}"))?;
+
+        Ok(BoardItemWithAsset {
+            item,
+            asset,
+            content,
+            lifecycle: PlacementLifecycle::Committed,
+            visual_width,
+            visual_height,
+        })
+    }
+
+    pub fn mark_placement_failed(
+        &self,
+        board_id: i64,
+        placement_id: i64,
+        message: String,
+    ) -> Result<Option<BoardItemWithAsset>, String> {
+        let connection = self.connection()?;
+        let existing = self
+            .load_board_items_for_board_id(&connection, board_id)?
+            .into_iter()
+            .find(|record| record.item.id == placement_id);
+        let Some(mut record) = existing else {
+            return Ok(None);
+        };
+        let intent = match &record.content {
+            PlacementContent::Loading { intent, .. } => Some(intent.clone()),
+            PlacementContent::Failed { intent, .. } => intent.clone(),
+            PlacementContent::Loaded { .. } => None,
+        };
+        record.content = PlacementContent::Failed {
+            intent,
+            message,
+            recoverable: true,
+        };
+        let content_payload = serde_json::to_string(&record.content)
+            .map_err(|error| format!("failed to encode failed placement content: {error}"))?;
+        connection
+            .execute(
+                "UPDATE board_items
+                 SET placement_content_state = 'failed',
+                     content_resolution_intent = ?1
+                 WHERE id = ?2
+                   AND board_id = ?3
+                   AND archived = 0",
+                params![content_payload, placement_id, board_id],
+            )
+            .map_err(|error| format!("failed to mark placement {placement_id} failed: {error}"))?;
+        Ok(Some(record))
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -827,6 +981,128 @@ impl Library {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
+    pub fn persist_committed_loading_placement(
+        &self,
+        desired_world: egui::Pos2,
+        initial_scale: f32,
+        visual_width: f32,
+        visual_height: f32,
+        intent: PlacementContentIntent,
+        status_message: Option<String>,
+    ) -> Result<BoardItemWithAsset, String> {
+        self.persist_committed_unloaded_placement(
+            desired_world,
+            initial_scale,
+            visual_width,
+            visual_height,
+            PlacementContent::Loading {
+                intent,
+                status_message,
+            },
+        )
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn persist_committed_failed_placement(
+        &self,
+        desired_world: egui::Pos2,
+        initial_scale: f32,
+        visual_width: f32,
+        visual_height: f32,
+        intent: Option<PlacementContentIntent>,
+        message: String,
+        recoverable: bool,
+    ) -> Result<BoardItemWithAsset, String> {
+        self.persist_committed_unloaded_placement(
+            desired_world,
+            initial_scale,
+            visual_width,
+            visual_height,
+            PlacementContent::Failed {
+                intent,
+                message,
+                recoverable,
+            },
+        )
+    }
+
+    fn persist_committed_unloaded_placement(
+        &self,
+        desired_world: egui::Pos2,
+        initial_scale: f32,
+        visual_width: f32,
+        visual_height: f32,
+        content: PlacementContent,
+    ) -> Result<BoardItemWithAsset, String> {
+        let mut connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start placement transaction: {error}"))?;
+        let content_state = placement_content_state(&content);
+        let content_payload = serde_json::to_string(&content)
+            .map_err(|error| format!("failed to encode placement content: {error}"))?;
+        transaction
+            .execute(
+                "INSERT INTO board_items (
+                    board_id, asset_id, x, y, scale, rotation, z_index, archived,
+                    placement_content_state, placement_lifecycle, visual_width,
+                    visual_height, content_resolution_intent
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    active_board_id,
+                    rusqlite::types::Null,
+                    desired_world.x,
+                    desired_world.y,
+                    initial_scale,
+                    0.0_f32,
+                    0_i64,
+                    0_i64,
+                    content_state,
+                    "committed",
+                    visual_width,
+                    visual_height,
+                    content_payload,
+                ],
+            )
+            .map_err(|error| format!("failed to insert unloaded placement: {error}"))?;
+        let item_id = transaction.last_insert_rowid();
+        append_canvas_stack_item(
+            &transaction,
+            active_board_id,
+            CanvasStackItem::Placement(item_id),
+        )?;
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit placement transaction: {error}"))?;
+
+        let item = BoardItem {
+            id: item_id,
+            asset_id: 0,
+            x: desired_world.x,
+            y: desired_world.y,
+            scale: initial_scale,
+            rotation: 0.0,
+            z_index: 0,
+            archived: false,
+        };
+        let asset = BoardItemWithAsset::placeholder_asset(
+            item_id,
+            format!("placement-{item_id}-{content_state}"),
+            visual_width.max(1.0).round() as u32,
+            visual_height.max(1.0).round() as u32,
+        );
+        Ok(BoardItemWithAsset {
+            item,
+            asset,
+            content,
+            lifecycle: PlacementLifecycle::Committed,
+            visual_width,
+            visual_height,
+        })
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn load_board_items_for_board(
         &self,
         board_id: i64,
@@ -860,11 +1136,16 @@ impl Library {
                     a.width,
                     a.height,
                     a.file_size,
-                    a.imported_at
+                    a.imported_at,
+                    COALESCE(b.placement_content_state, 'loaded'),
+                    COALESCE(b.placement_lifecycle, 'committed'),
+                    b.visual_width,
+                    b.visual_height,
+                    b.content_resolution_intent
                  FROM board_items b
-                 JOIN assets a ON a.id = b.asset_id
+                 LEFT JOIN assets a ON a.id = b.asset_id
                  WHERE b.archived = 0
-                   AND a.archived = 0
+                   AND (a.id IS NULL OR a.archived = 0)
                    AND b.board_id = ?1
                  ORDER BY b.z_index ASC, b.id ASC",
             )
@@ -872,19 +1153,25 @@ impl Library {
 
         let rows = statement
             .query_map(params![board_id], |row| {
-                Ok(BoardItemWithAsset {
-                    item: BoardItem {
-                        id: row.get(0)?,
-                        asset_id: row.get(1)?,
-                        x: row.get(2)?,
-                        y: row.get(3)?,
-                        scale: row.get(4)?,
-                        rotation: row.get(5)?,
-                        z_index: row.get(6)?,
-                        archived: false,
-                    },
-                    asset: ImageAsset {
-                        id: row.get(7)?,
+                let row_asset_id = row.get::<_, Option<i64>>(1)?;
+                let item = BoardItem {
+                    id: row.get(0)?,
+                    asset_id: row_asset_id.unwrap_or(0),
+                    x: row.get(2)?,
+                    y: row.get(3)?,
+                    scale: row.get(4)?,
+                    rotation: row.get(5)?,
+                    z_index: row.get(6)?,
+                    archived: false,
+                };
+                let content_state: String = row.get(15)?;
+                let lifecycle: String = row.get(16)?;
+                let visual_width: Option<f32> = row.get(17)?;
+                let visual_height: Option<f32> = row.get(18)?;
+                let content_payload: Option<String> = row.get(19)?;
+                let asset = if let Some(asset_id) = row.get::<_, Option<i64>>(7)? {
+                    ImageAsset {
+                        id: asset_id,
                         original_path: PathBuf::from(row.get::<_, String>(8)?),
                         filename: row.get(9)?,
                         mime_type: row.get(10)?,
@@ -892,7 +1179,30 @@ impl Library {
                         height: row.get::<_, u32>(12)?,
                         file_size: row.get::<_, i64>(13)? as u64,
                         imported_at: row.get(14)?,
-                    },
+                    }
+                } else {
+                    BoardItemWithAsset::placeholder_asset(
+                        item.id,
+                        format!("placement-{}-{content_state}", item.id),
+                        visual_width.unwrap_or(256.0).max(1.0).round() as u32,
+                        visual_height.unwrap_or(256.0).max(1.0).round() as u32,
+                    )
+                };
+                let content = decode_placement_content(
+                    &content_state,
+                    content_payload.as_deref(),
+                    item.asset_id,
+                );
+                let lifecycle = decode_placement_lifecycle(&lifecycle);
+                let visual_width = visual_width.unwrap_or(asset.width as f32);
+                let visual_height = visual_height.unwrap_or(asset.height as f32);
+                Ok(BoardItemWithAsset {
+                    item,
+                    asset,
+                    content,
+                    lifecycle,
+                    visual_width,
+                    visual_height,
                 })
             })
             .map_err(|error| format!("failed to read board-items query: {error}"))?;
@@ -930,12 +1240,12 @@ impl Library {
                     b.id,
                     b.x,
                     b.y,
-                    a.width * b.scale,
-                    a.height * b.scale
+                    COALESCE(b.visual_width, a.width) * b.scale,
+                    COALESCE(b.visual_height, a.height) * b.scale
                  FROM board_items b
-                 JOIN assets a ON a.id = b.asset_id
+                 LEFT JOIN assets a ON a.id = b.asset_id
                  WHERE b.archived = 0
-                   AND a.archived = 0
+                   AND (a.id IS NULL OR a.archived = 0)
                    AND b.board_id = ?1
                  ORDER BY b.z_index ASC, b.id ASC",
             )
@@ -1197,28 +1507,27 @@ impl Library {
         for item_id in item_ids {
             let record = statement
                 .query_row(params![item_id, active_board_id], |row| {
-                    Ok(BoardItemWithAsset {
-                        item: BoardItem {
-                            id: row.get(0)?,
-                            asset_id: row.get(1)?,
-                            x: row.get(2)?,
-                            y: row.get(3)?,
-                            scale: row.get(4)?,
-                            rotation: row.get(5)?,
-                            z_index: row.get(6)?,
-                            archived: false,
-                        },
-                        asset: ImageAsset {
-                            id: row.get(7)?,
-                            original_path: PathBuf::from(row.get::<_, String>(8)?),
-                            filename: row.get(9)?,
-                            mime_type: row.get(10)?,
-                            width: row.get::<_, u32>(11)?,
-                            height: row.get::<_, u32>(12)?,
-                            file_size: row.get::<_, i64>(13)? as u64,
-                            imported_at: row.get(14)?,
-                        },
-                    })
+                    let item = BoardItem {
+                        id: row.get(0)?,
+                        asset_id: row.get(1)?,
+                        x: row.get(2)?,
+                        y: row.get(3)?,
+                        scale: row.get(4)?,
+                        rotation: row.get(5)?,
+                        z_index: row.get(6)?,
+                        archived: false,
+                    };
+                    let asset = ImageAsset {
+                        id: row.get(7)?,
+                        original_path: PathBuf::from(row.get::<_, String>(8)?),
+                        filename: row.get(9)?,
+                        mime_type: row.get(10)?,
+                        width: row.get::<_, u32>(11)?,
+                        height: row.get::<_, u32>(12)?,
+                        file_size: row.get::<_, i64>(13)? as u64,
+                        imported_at: row.get(14)?,
+                    };
+                    Ok(BoardItemWithAsset::loaded(item, asset))
                 })
                 .map_err(|error| {
                     format!("failed to load board item {item_id} for duplication: {error}")
@@ -1267,19 +1576,17 @@ impl Library {
                 active_board_id,
                 CanvasStackItem::Placement(item_id),
             )?;
-            duplicated.push(BoardItemWithAsset {
-                asset: source.asset.clone(),
-                item: BoardItem {
-                    id: item_id,
-                    asset_id: source.item.asset_id,
-                    x: source.item.x + delta.x,
-                    y: source.item.y + delta.y,
-                    scale: source.item.scale,
-                    rotation: source.item.rotation,
-                    z_index: source.item.z_index,
-                    archived: false,
-                },
-            });
+            let item = BoardItem {
+                id: item_id,
+                asset_id: source.item.asset_id,
+                x: source.item.x + delta.x,
+                y: source.item.y + delta.y,
+                scale: source.item.scale,
+                rotation: source.item.rotation,
+                z_index: source.item.z_index,
+                archived: false,
+            };
+            duplicated.push(BoardItemWithAsset::loaded(item, source.asset.clone()));
         }
 
         transaction
@@ -1333,19 +1640,17 @@ impl Library {
             CanvasStackItem::Placement(item_id),
         )?;
 
-        Ok(BoardItemWithAsset {
-            item: BoardItem {
-                id: item_id,
-                asset_id,
-                x: center_world.x,
-                y: center_world.y,
-                scale,
-                rotation,
-                z_index,
-                archived: false,
-            },
-            asset,
-        })
+        let item = BoardItem {
+            id: item_id,
+            asset_id,
+            x: center_world.x,
+            y: center_world.y,
+            scale,
+            rotation,
+            z_index,
+            archived: false,
+        };
+        Ok(BoardItemWithAsset::loaded(item, asset))
     }
 
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
@@ -2450,13 +2755,18 @@ impl Library {
                 CREATE TABLE IF NOT EXISTS board_items (
                     id        INTEGER PRIMARY KEY,
                     board_id  INTEGER NOT NULL DEFAULT 1 REFERENCES boards(id),
-                    asset_id  INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+                    asset_id  INTEGER REFERENCES assets(id) ON DELETE CASCADE,
                     x         REAL NOT NULL,
                     y         REAL NOT NULL,
                     scale     REAL NOT NULL,
                     rotation  REAL NOT NULL,
                     z_index   INTEGER NOT NULL,
-                    archived  INTEGER NOT NULL DEFAULT 0
+                    archived  INTEGER NOT NULL DEFAULT 0,
+                    placement_content_state TEXT NOT NULL DEFAULT 'loaded',
+                    placement_lifecycle TEXT NOT NULL DEFAULT 'committed',
+                    visual_width REAL,
+                    visual_height REAL,
+                    content_resolution_intent TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS user_session (
@@ -2526,6 +2836,7 @@ impl Library {
             .map_err(|error| format!("failed to initialize database schema: {error}"))?;
 
         ensure_board_items_archived_column(&connection)?;
+        ensure_board_items_placement_columns(&connection)?;
         ensure_assets_archived_column(&connection)?;
         ensure_default_board(&connection)?;
         ensure_board_items_board_id_column(&connection)?;
@@ -2642,6 +2953,54 @@ fn ensure_board_items_archived_column(connection: &Connection) -> Result<(), Str
     Ok(())
 }
 
+fn ensure_board_items_placement_columns(connection: &Connection) -> Result<(), String> {
+    ensure_column(
+        connection,
+        "board_items",
+        "placement_content_state",
+        "ALTER TABLE board_items ADD COLUMN placement_content_state TEXT NOT NULL DEFAULT 'loaded'",
+    )?;
+    ensure_column(
+        connection,
+        "board_items",
+        "placement_lifecycle",
+        "ALTER TABLE board_items ADD COLUMN placement_lifecycle TEXT NOT NULL DEFAULT 'committed'",
+    )?;
+    ensure_column(
+        connection,
+        "board_items",
+        "visual_width",
+        "ALTER TABLE board_items ADD COLUMN visual_width REAL",
+    )?;
+    ensure_column(
+        connection,
+        "board_items",
+        "visual_height",
+        "ALTER TABLE board_items ADD COLUMN visual_height REAL",
+    )?;
+    ensure_column(
+        connection,
+        "board_items",
+        "content_resolution_intent",
+        "ALTER TABLE board_items ADD COLUMN content_resolution_intent TEXT",
+    )
+}
+
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    alter_sql: &str,
+) -> Result<(), String> {
+    if table_has_column(connection, table, column)? {
+        return Ok(());
+    }
+    connection
+        .execute(alter_sql, [])
+        .map_err(|error| format!("failed to add {column} column to {table}: {error}"))?;
+    Ok(())
+}
+
 fn ensure_assets_archived_column(connection: &Connection) -> Result<(), String> {
     if table_has_column(connection, "assets", "archived")? {
         return Ok(());
@@ -2731,11 +3090,11 @@ fn load_canvas_stack_order_for_board_id(
                        AND EXISTS (
                            SELECT 1
                            FROM board_items
-                           JOIN assets ON assets.id = board_items.asset_id
+                           LEFT JOIN assets ON assets.id = board_items.asset_id
                            WHERE board_items.id = canvas_stack_items.item_id
                              AND board_items.board_id = canvas_stack_items.board_id
                              AND board_items.archived = 0
-                             AND assets.archived = 0
+                             AND (assets.id IS NULL OR assets.archived = 0)
                        )
                    )
                    OR (
@@ -3443,6 +3802,68 @@ fn insert_board_item_row(
     })
 }
 
+fn placement_content_state(content: &PlacementContent) -> &'static str {
+    match content {
+        PlacementContent::Loaded { .. } => "loaded",
+        PlacementContent::Loading { .. } => "loading",
+        PlacementContent::Failed { .. } => "failed",
+    }
+}
+
+fn decode_placement_content(state: &str, payload: Option<&str>, asset_id: i64) -> PlacementContent {
+    if let Some(payload) = payload
+        && let Ok(content) = serde_json::from_str::<PlacementContent>(payload)
+    {
+        return match content {
+            PlacementContent::Loading {
+                intent,
+                status_message,
+            } => {
+                let resumable = matches!(
+                    intent,
+                    PlacementContentIntent::ExternalPath { .. }
+                        | PlacementContentIntent::ExternalUrl { .. }
+                        | PlacementContentIntent::SearchAsset { .. }
+                );
+                if resumable {
+                    PlacementContent::Loading {
+                        intent,
+                        status_message,
+                    }
+                } else {
+                    PlacementContent::Failed {
+                        intent: Some(intent),
+                        message: "Placement content could not be resumed after restart".to_owned(),
+                        recoverable: true,
+                    }
+                }
+            }
+            other => other,
+        };
+    }
+
+    match state {
+        "loading" => PlacementContent::Failed {
+            intent: None,
+            message: "Placement content could not be resumed after restart".to_owned(),
+            recoverable: true,
+        },
+        "failed" => PlacementContent::Failed {
+            intent: None,
+            message: "Placement content failed to resolve".to_owned(),
+            recoverable: true,
+        },
+        _ => PlacementContent::Loaded { asset_id },
+    }
+}
+
+fn decode_placement_lifecycle(value: &str) -> PlacementLifecycle {
+    match value {
+        "provisional" => PlacementLifecycle::Provisional,
+        _ => PlacementLifecycle::Committed,
+    }
+}
+
 fn ensure_user_session_auto_image_scaling_column(connection: &Connection) -> Result<(), String> {
     let mut statement = connection
         .prepare("PRAGMA table_info(user_session)")
@@ -3714,7 +4135,8 @@ fn encode_f32_slice(values: &[f32]) -> Vec<u8> {
 mod tests {
     use super::{EmbeddingStatus, Library};
     use crate::data::{
-        CanvasAnnotationKind, CanvasBackground, CanvasStackItem, CanvasTextSize, UserSession,
+        CanvasAnnotationKind, CanvasBackground, CanvasStackItem, CanvasTextSize, PlacementContent,
+        PlacementContentIntent, PlacementLifecycle, UserSession,
     };
     use eframe::egui;
     use rusqlite::Connection;
@@ -3731,6 +4153,208 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    #[test]
+    fn loaded_placements_load_as_committed_loaded_content() {
+        let root = temp_root("snappyref-loaded-placement-content-test");
+        let source = root.join("source.png");
+        fs::write(&source, [255, 255, 255, 255]).unwrap();
+        let library = Library::initialize(root.clone()).unwrap();
+        let record = library
+            .persist_imported_image(&source, "image/png", 10, 20, 4, egui::pos2(3.0, 4.0), 2.0)
+            .unwrap();
+
+        let reloaded = library.load_board_items().unwrap();
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(reloaded[0].item.id, record.item.id);
+        assert_eq!(
+            reloaded[0].content,
+            PlacementContent::Loaded {
+                asset_id: record.asset.id
+            }
+        );
+        assert_eq!(reloaded[0].lifecycle, PlacementLifecycle::Committed);
+        assert_eq!(reloaded[0].visual_width, 10.0);
+        assert_eq!(reloaded[0].visual_height, 20.0);
+        assert_eq!(
+            library.load_board_layout_items().unwrap()[0],
+            crate::data::BoardLayoutItem {
+                id: record.item.id,
+                x: 3.0,
+                y: 4.0,
+                width: 20.0,
+                height: 40.0,
+            }
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn committed_loading_and_failed_placements_persist_load_and_stack() {
+        let root = temp_root("snappyref-unloaded-placement-content-test");
+        let library = Library::initialize(root.clone()).unwrap();
+        let loading = library
+            .persist_committed_loading_placement(
+                egui::pos2(12.0, 24.0),
+                2.0,
+                320.0,
+                180.0,
+                PlacementContentIntent::ExternalPath {
+                    path: "/tmp/source.png".to_owned(),
+                },
+                Some("Queued".to_owned()),
+            )
+            .unwrap();
+        let failed = library
+            .persist_committed_failed_placement(
+                egui::pos2(48.0, 96.0),
+                1.0,
+                120.0,
+                90.0,
+                Some(PlacementContentIntent::Unknown {
+                    description: "clipboard".to_owned(),
+                }),
+                "Could not read image".to_owned(),
+                true,
+            )
+            .unwrap();
+
+        let reloaded = library.load_board_items().unwrap();
+        assert_eq!(reloaded.len(), 2);
+        assert!(matches!(
+            reloaded[0].content,
+            PlacementContent::Loading { .. }
+        ));
+        assert!(matches!(
+            reloaded[1].content,
+            PlacementContent::Failed { .. }
+        ));
+        assert_eq!(reloaded[0].visual_width, 320.0);
+        assert_eq!(reloaded[1].visual_height, 90.0);
+        assert_eq!(
+            library.load_board_layout_items().unwrap(),
+            vec![
+                crate::data::BoardLayoutItem {
+                    id: loading.item.id,
+                    x: 12.0,
+                    y: 24.0,
+                    width: 640.0,
+                    height: 360.0,
+                },
+                crate::data::BoardLayoutItem {
+                    id: failed.item.id,
+                    x: 48.0,
+                    y: 96.0,
+                    width: 120.0,
+                    height: 90.0,
+                },
+            ]
+        );
+        assert_eq!(
+            library.load_canvas_stack_order().unwrap(),
+            vec![
+                CanvasStackItem::Placement(loading.item.id),
+                CanvasStackItem::Placement(failed.item.id),
+            ]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn imported_asset_resolves_existing_loading_placement_without_geometry_or_stack_changes() {
+        let root = temp_root("snappyref-resolve-loading-placement-test");
+        let source = root.join("source.png");
+        fs::write(&source, [255, 255, 255, 255]).unwrap();
+        let library = Library::initialize(root.clone()).unwrap();
+        let loading = library
+            .persist_committed_loading_placement(
+                egui::pos2(12.0, 24.0),
+                1.5,
+                320.0,
+                180.0,
+                PlacementContentIntent::ExternalPath {
+                    path: source.display().to_string(),
+                },
+                Some("Queued".to_owned()),
+            )
+            .unwrap();
+        let stack_before = library.load_canvas_stack_order().unwrap();
+
+        let loaded = library
+            .persist_imported_image_resolving_placement(
+                1,
+                Some(loading.item.id),
+                &source,
+                "image/png",
+                640,
+                480,
+                4,
+                egui::pos2(999.0, 999.0),
+                0.25,
+            )
+            .unwrap();
+
+        assert_eq!(loaded.item.id, loading.item.id);
+        assert_eq!(loaded.item.x, 12.0);
+        assert_eq!(loaded.item.y, 24.0);
+        assert_eq!(loaded.item.scale, 1.5);
+        assert_eq!(loaded.visual_width, 320.0);
+        assert_eq!(loaded.visual_height, 180.0);
+        assert!(matches!(loaded.content, PlacementContent::Loaded { .. }));
+        assert_eq!(library.load_canvas_stack_order().unwrap(), stack_before);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_failure_marks_loading_placement_failed_and_archived_completion_stays_stale() {
+        let root = temp_root("snappyref-failed-loading-placement-test");
+        let source = root.join("source.png");
+        fs::write(&source, [255, 255, 255, 255]).unwrap();
+        let library = Library::initialize(root.clone()).unwrap();
+        let loading = library
+            .persist_committed_loading_placement(
+                egui::pos2(10.0, 20.0),
+                1.0,
+                100.0,
+                80.0,
+                PlacementContentIntent::Unknown {
+                    description: "clipboard".to_owned(),
+                },
+                Some("Queued".to_owned()),
+            )
+            .unwrap();
+
+        let failed = library
+            .mark_placement_failed(1, loading.item.id, "decode failed".to_owned())
+            .unwrap()
+            .unwrap();
+        assert!(matches!(failed.content, PlacementContent::Failed { .. }));
+        assert_eq!(failed.item.x, 10.0);
+        assert_eq!(failed.visual_width, 100.0);
+
+        library.archive_board_items(&[loading.item.id]).unwrap();
+        assert!(
+            library
+                .persist_imported_image_resolving_placement(
+                    1,
+                    Some(loading.item.id),
+                    &source,
+                    "image/png",
+                    100,
+                    80,
+                    4,
+                    egui::Pos2::ZERO,
+                    1.0,
+                )
+                .is_err()
+        );
+        assert!(library.load_board_items().unwrap().is_empty());
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

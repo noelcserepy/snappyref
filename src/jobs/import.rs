@@ -191,6 +191,7 @@ pub enum ImportRequest {
     ImportPath {
         target_board_id: i64,
         queue_id: u64,
+        placement_id: Option<i64>,
         source_path: PathBuf,
         desired_world: egui::Pos2,
         reserved_world: Option<egui::Pos2>,
@@ -205,6 +206,7 @@ pub enum ImportRequest {
     ImportClipboard {
         target_board_id: i64,
         queue_id: u64,
+        placement_id: Option<i64>,
         rgba: Vec<u8>,
         width: u32,
         height: u32,
@@ -221,6 +223,7 @@ pub enum ImportRequest {
     ImportUrl {
         target_board_id: i64,
         queue_id: u64,
+        placement_id: Option<i64>,
         url: String,
         desired_world: egui::Pos2,
         reserved_world: Option<egui::Pos2>,
@@ -270,6 +273,7 @@ pub enum ImportResult {
     Failed {
         target_board_id: Option<i64>,
         queue_id: Option<u64>,
+        placement_id: Option<i64>,
         item_id: Option<i64>,
         context: String,
         error: String,
@@ -508,6 +512,7 @@ impl ImportWorker {
                         ImportRequest::ImportPath {
                             target_board_id,
                             queue_id,
+                            placement_id,
                             source_path,
                             desired_world,
                             reserved_world,
@@ -522,6 +527,7 @@ impl ImportWorker {
                             &worker_library,
                             target_board_id,
                             queue_id,
+                            placement_id,
                             source_path,
                             desired_world,
                             reserved_world,
@@ -537,6 +543,7 @@ impl ImportWorker {
                         ImportRequest::ImportClipboard {
                             target_board_id,
                             queue_id,
+                            placement_id,
                             rgba,
                             width,
                             height,
@@ -553,6 +560,7 @@ impl ImportWorker {
                             &worker_library,
                             target_board_id,
                             queue_id,
+                            placement_id,
                             rgba,
                             width,
                             height,
@@ -570,6 +578,7 @@ impl ImportWorker {
                         ImportRequest::ImportUrl {
                             target_board_id,
                             queue_id,
+                            placement_id,
                             url,
                             desired_world,
                             reserved_world,
@@ -584,6 +593,7 @@ impl ImportWorker {
                             &worker_library,
                             target_board_id,
                             queue_id,
+                            placement_id,
                             url,
                             desired_world,
                             reserved_world,
@@ -910,6 +920,7 @@ pub fn import_path_sync(
         library,
         target_board_id,
         None,
+        None,
         source_path,
         desired_world,
         None,
@@ -939,6 +950,7 @@ pub fn import_clipboard_sync(
         library,
         target_board_id,
         0,
+        None,
         rgba,
         width,
         height,
@@ -1240,6 +1252,7 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
         &library,
         1,
         None,
+        None,
         source_path.clone(),
         egui::Pos2::ZERO,
         None,
@@ -1296,6 +1309,7 @@ fn import_path_sync_traced(
     library: &Library,
     target_board_id: i64,
     queue_id: Option<u64>,
+    placement_id: Option<i64>,
     source_path: PathBuf,
     desired_world: egui::Pos2,
     reserved_world: Option<egui::Pos2>,
@@ -1319,6 +1333,7 @@ fn import_path_sync_traced(
             library,
             target_board_id,
             queue_id,
+            placement_id,
             source_path,
             desired_world,
             reserved_world,
@@ -1361,8 +1376,9 @@ fn import_path_sync_traced(
             .map_err(|error| format!("{}: {error}", source_path.display()))?;
 
         let record = library
-            .persist_imported_image_to_board(
+            .persist_imported_image_resolving_placement(
                 target_board_id,
+                placement_id,
                 &stored_path,
                 &prepared.mime_type,
                 prepared.source_width,
@@ -1440,8 +1456,9 @@ fn import_path_sync_traced(
         .map_err(|error| format!("{}: {error}", source_path.display()))?;
 
     let record = library
-        .persist_imported_image_to_board(
+        .persist_imported_image_resolving_placement(
             target_board_id,
+            placement_id,
             &stored_path,
             &decoded.mime_type,
             decoded.source_width,
@@ -1515,6 +1532,7 @@ fn import_svg_path_sync_traced(
     library: &Library,
     target_board_id: i64,
     queue_id: Option<u64>,
+    placement_id: Option<i64>,
     source_path: PathBuf,
     desired_world: egui::Pos2,
     reserved_world: Option<egui::Pos2>,
@@ -1551,8 +1569,9 @@ fn import_svg_path_sync_traced(
         .map_err(|error| format!("failed to read stored SVG metadata: {error}"))?
         .len();
     let record = library
-        .persist_imported_image_to_board(
+        .persist_imported_image_resolving_placement(
             target_board_id,
+            placement_id,
             &stored_path,
             SVG_MIME_TYPE,
             svg.width,
@@ -1593,6 +1612,7 @@ fn import_path(
     library: &Library,
     target_board_id: i64,
     queue_id: u64,
+    placement_id: Option<i64>,
     source_path: PathBuf,
     desired_world: egui::Pos2,
     reserved_world: Option<egui::Pos2>,
@@ -1609,6 +1629,7 @@ fn import_path(
         library,
         target_board_id,
         Some(queue_id),
+        placement_id,
         source_path.clone(),
         desired_world,
         reserved_world,
@@ -1625,6 +1646,7 @@ fn import_path(
         Err(error) => ImportResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
+            placement_id,
             item_id: None,
             context: source_path.display().to_string(),
             error,
@@ -1636,6 +1658,7 @@ fn import_url(
     library: &Library,
     target_board_id: i64,
     queue_id: u64,
+    placement_id: Option<i64>,
     url: String,
     desired_world: egui::Pos2,
     reserved_world: Option<egui::Pos2>,
@@ -1652,6 +1675,7 @@ fn import_url(
         library,
         target_board_id,
         Some(queue_id),
+        placement_id,
         &url,
         desired_world,
         reserved_world,
@@ -1668,6 +1692,7 @@ fn import_url(
         Err(error) => ImportResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
+            placement_id,
             item_id: None,
             context: url,
             error,
@@ -1679,6 +1704,7 @@ fn import_clipboard(
     library: &Library,
     target_board_id: i64,
     queue_id: u64,
+    placement_id: Option<i64>,
     rgba: Vec<u8>,
     width: u32,
     height: u32,
@@ -1697,6 +1723,7 @@ fn import_clipboard(
         library,
         target_board_id,
         queue_id,
+        placement_id,
         rgba,
         width,
         height,
@@ -1715,6 +1742,7 @@ fn import_clipboard(
         Err(error) => ImportResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
+            placement_id,
             item_id: None,
             context: "clipboard".to_owned(),
             error,
@@ -1732,6 +1760,7 @@ fn import_url_sync_traced(
     library: &Library,
     target_board_id: i64,
     queue_id: Option<u64>,
+    placement_id: Option<i64>,
     url: &str,
     desired_world: egui::Pos2,
     reserved_world: Option<egui::Pos2>,
@@ -1761,6 +1790,7 @@ fn import_url_sync_traced(
             library,
             target_board_id,
             queue_id,
+            placement_id,
             downloaded,
             desired_world,
             reserved_world,
@@ -1806,8 +1836,9 @@ fn import_url_sync_traced(
     let source_name = remote_image_source_name(&downloaded.url);
     let stored_path =
         library.store_original_bytes(&source_name, &decoded.extension, &downloaded.bytes)?;
-    let record = library.persist_imported_image_to_board(
+    let record = library.persist_imported_image_resolving_placement(
         target_board_id,
+        placement_id,
         &stored_path,
         &decoded.mime_type,
         decoded.source_width,
@@ -1890,6 +1921,7 @@ fn import_downloaded_svg_sync_traced(
     library: &Library,
     target_board_id: i64,
     queue_id: Option<u64>,
+    placement_id: Option<i64>,
     downloaded: DownloadedUrlImage,
     desired_world: egui::Pos2,
     reserved_world: Option<egui::Pos2>,
@@ -1923,8 +1955,9 @@ fn import_downloaded_svg_sync_traced(
     let store_started_at = Instant::now();
     let source_name = remote_image_source_name(&downloaded.url);
     let stored_path = library.store_original_bytes(&source_name, "svg", &svg.bytes)?;
-    let record = library.persist_imported_image_to_board(
+    let record = library.persist_imported_image_resolving_placement(
         target_board_id,
+        placement_id,
         &stored_path,
         SVG_MIME_TYPE,
         svg.width,
@@ -2219,6 +2252,7 @@ fn import_clipboard_sync_traced(
     library: &Library,
     target_board_id: i64,
     queue_id: u64,
+    placement_id: Option<i64>,
     rgba: Vec<u8>,
     width: u32,
     height: u32,
@@ -2255,8 +2289,9 @@ fn import_clipboard_sync_traced(
         height as f32 * initial_scale.max(0.01),
         import_gap,
     )?;
-    let record = library.persist_imported_image_to_board(
+    let record = library.persist_imported_image_resolving_placement(
         target_board_id,
+        placement_id,
         &stored_path,
         image::ImageFormat::Png.to_mime_type(),
         width,
@@ -2355,6 +2390,7 @@ pub(crate) fn load_existing(
                 return ImportResult::Failed {
                     target_board_id: Some(target_board_id),
                     queue_id,
+                    placement_id: None,
                     item_id: Some(record.item.id),
                     context: record.asset.original_path.display().to_string(),
                     error,
@@ -2383,6 +2419,7 @@ pub(crate) fn load_existing(
                         return ImportResult::Failed {
                             target_board_id: Some(target_board_id),
                             queue_id,
+                            placement_id: None,
                             item_id: Some(record.item.id),
                             context: record.asset.original_path.display().to_string(),
                             error,
@@ -2413,6 +2450,7 @@ pub(crate) fn load_existing(
         Err(error) => ImportResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id,
+            placement_id: None,
             item_id: Some(record.item.id),
             context: record.asset.original_path.display().to_string(),
             error,
@@ -2546,6 +2584,7 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
     worker.enqueue(ImportRequest::ImportClipboard {
         target_board_id: 1,
         queue_id: 1,
+        placement_id: None,
         rgba: solid_rgba(1200, 900),
         width: 1200,
         height: 900,
@@ -2631,34 +2670,33 @@ fn perf_record(
     width: u32,
     height: u32,
 ) -> BoardItemWithAsset {
-    BoardItemWithAsset {
-        item: crate::data::BoardItem {
-            id: item_id,
-            asset_id: item_id,
-            x: center.x,
-            y: center.y,
-            scale: 1.0,
-            rotation: 0.0,
-            z_index: item_id as i32,
-            archived: false,
-        },
-        asset: crate::data::ImageAsset {
-            id: item_id,
-            original_path: path.to_path_buf(),
-            filename: path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("image.png")
-                .to_owned(),
-            mime_type: "image/png".to_owned(),
-            width,
-            height,
-            file_size: std::fs::metadata(path)
-                .map(|metadata| metadata.len())
-                .unwrap_or(0),
-            imported_at: 0,
-        },
-    }
+    let item = crate::data::BoardItem {
+        id: item_id,
+        asset_id: item_id,
+        x: center.x,
+        y: center.y,
+        scale: 1.0,
+        rotation: 0.0,
+        z_index: item_id as i32,
+        archived: false,
+    };
+    let asset = crate::data::ImageAsset {
+        id: item_id,
+        original_path: path.to_path_buf(),
+        filename: path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("image.png")
+            .to_owned(),
+        mime_type: "image/png".to_owned(),
+        width,
+        height,
+        file_size: std::fs::metadata(path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0),
+        imported_at: 0,
+    };
+    BoardItemWithAsset::loaded(item, asset)
 }
 
 fn solid_rgba(width: u32, height: u32) -> Vec<u8> {
@@ -2709,6 +2747,7 @@ fn crop_item(
         return ImportResult::Failed {
             target_board_id: None,
             queue_id: None,
+            placement_id: None,
             item_id: Some(request.item_id),
             context: source_context,
             error: "SVG cropping is not supported yet".to_owned(),
@@ -2721,6 +2760,7 @@ fn crop_item(
             return ImportResult::Failed {
                 target_board_id: None,
                 queue_id: None,
+                placement_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
                 error,
@@ -2733,6 +2773,7 @@ fn crop_item(
             return ImportResult::Failed {
                 target_board_id: None,
                 queue_id: None,
+                placement_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
                 error: "failed to rebuild source image pixels for crop".to_owned(),
@@ -2767,6 +2808,7 @@ fn crop_item(
             return ImportResult::Failed {
                 target_board_id: None,
                 queue_id: None,
+                placement_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
                 error,
@@ -2781,6 +2823,7 @@ fn crop_item(
             return ImportResult::Failed {
                 target_board_id: None,
                 queue_id: None,
+                placement_id: None,
                 item_id: Some(request.item_id),
                 context: stored_path.display().to_string(),
                 error: format!("failed to read cropped image metadata: {error}"),
@@ -2801,6 +2844,7 @@ fn crop_item(
             return ImportResult::Failed {
                 target_board_id: None,
                 queue_id: None,
+                placement_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
                 error,
@@ -2814,6 +2858,7 @@ fn crop_item(
             return ImportResult::Failed {
                 target_board_id: None,
                 queue_id: None,
+                placement_id: None,
                 item_id: Some(request.item_id),
                 context: source_context,
                 error,
@@ -3803,6 +3848,7 @@ mod tests {
             &library,
             1,
             1,
+            None,
             tall_rgba,
             390,
             844,
@@ -3824,6 +3870,7 @@ mod tests {
             &library,
             1,
             2,
+            None,
             small_rgba,
             160,
             200,
@@ -3858,6 +3905,7 @@ mod tests {
             &library,
             1,
             1,
+            None,
             solid_rgba(1000, 1500),
             1000,
             1500,
@@ -3893,6 +3941,7 @@ mod tests {
             &library,
             second.id,
             1,
+            None,
             solid_rgba(160, 120),
             160,
             120,
@@ -4035,6 +4084,7 @@ mod tests {
             &library,
             1,
             1,
+            None,
             solid_rgba(200, 200),
             200,
             200,
@@ -4057,6 +4107,7 @@ mod tests {
             &library,
             1,
             2,
+            None,
             solid_rgba(200, 200),
             200,
             200,
@@ -4100,6 +4151,7 @@ mod tests {
             &library,
             1,
             2,
+            None,
             solid_rgba(100, 100),
             100,
             100,
@@ -4134,6 +4186,7 @@ mod tests {
             &library,
             1,
             2,
+            None,
             solid_rgba(100, 100),
             100,
             100,
@@ -4171,6 +4224,7 @@ mod tests {
             &library,
             1,
             Some(7),
+            None,
             &url,
             eframe::egui::Pos2::ZERO,
             None,
@@ -4229,6 +4283,7 @@ mod tests {
             &library,
             1,
             Some(9),
+            None,
             &url,
             eframe::egui::Pos2::ZERO,
             None,
@@ -4526,6 +4581,7 @@ static char * sample_xpm[] = {
         super::ImportRequest::ImportPath {
             target_board_id: 1,
             queue_id: 0,
+            placement_id: None,
             source_path,
             desired_world: eframe::egui::Pos2::ZERO,
             reserved_world: None,
@@ -4560,6 +4616,7 @@ static char * sample_xpm[] = {
                 .send(ImportResult::Failed {
                     target_board_id: None,
                     queue_id: None,
+                    placement_id: None,
                     item_id: Some(index),
                     context: format!("item-{index}"),
                     error: "synthetic".to_owned(),
@@ -4613,6 +4670,7 @@ static char * sample_xpm[] = {
             &library,
             1,
             1,
+            None,
             solid_rgba(64, 64),
             64,
             64,

@@ -93,6 +93,10 @@ pub(super) fn paint_images(
         let Some(image) = state.image_by_item_id(*item_id) else {
             continue;
         };
+        if !image.record.is_loaded() || matches!(image.texture, CanvasTexture::Unloaded { .. }) {
+            fallback_images.push(*item_id);
+            continue;
+        }
         if image.animation.is_some() {
             metrics.visible_animated_images += 1;
             if animation_active {
@@ -180,7 +184,12 @@ pub(super) fn paint_images(
         let Some(image) = state.image_by_item_id(item_id) else {
             continue;
         };
-        paint_image_mesh(painter, state, rect, image);
+        if image.record.is_loaded() {
+            paint_image_mesh(painter, state, rect, image);
+        } else {
+            let image_rect = image_screen_rect(state, rect, image);
+            paint_unloaded_placement(painter, image, image_rect);
+        }
     }
 
     metrics.build_time_ms = build_started_at.elapsed().as_secs_f64() * 1000.0;
@@ -203,26 +212,6 @@ pub(super) fn paint_images(
             continue;
         }
         paint_image_overlay(painter, state, image, image_rect, debug_labels);
-    }
-
-    if let Some(preview) = &state.interaction.search_drag_preview {
-        let show_selection_border =
-            preview_selection_border_visible(state, painter.ctx().input(|input| input.time));
-        for image in &preview.images {
-            let image_rect = image_screen_rect(state, rect, image);
-            if !image_rect.intersects(cull_rect) {
-                continue;
-            }
-            paint_image_mesh(painter, state, rect, image);
-            if show_selection_border {
-                painter.rect_stroke(
-                    image_rect,
-                    crate::theme::RADIUS_NONE,
-                    egui::Stroke::new(SELECTION_BORDER_WIDTH, IMAGE_SELECTION_BORDER_COLOR),
-                    egui::StrokeKind::Outside,
-                );
-            }
-        }
     }
 
     if let Some(delay) = next_animation_repaint {
@@ -336,6 +325,13 @@ fn paint_canvas_items_interleaved(
                 let Some(image) = state.image_by_item_id(item_id) else {
                     continue;
                 };
+                if !image.record.is_loaded()
+                    || matches!(image.texture, CanvasTexture::Unloaded { .. })
+                {
+                    paint_unloaded_placement(painter, image, image_rect);
+                    paint_image_overlay(painter, state, image, image_rect, debug_labels);
+                    continue;
+                }
                 if image.animation.is_some() {
                     metrics.visible_animated_images += 1;
                     if animation_active {
@@ -376,32 +372,48 @@ fn paint_canvas_items_interleaved(
         }
     }
 
-    if let Some(preview) = &state.interaction.search_drag_preview {
-        let show_selection_border =
-            preview_selection_border_visible(state, painter.ctx().input(|input| input.time));
-        for image in &preview.images {
-            let image_rect = image_screen_rect(state, rect, image);
-            if !image_rect.intersects(image_cull_rect) {
-                continue;
-            }
-            paint_image_mesh(painter, state, rect, image);
-            if show_selection_border {
-                painter.rect_stroke(
-                    image_rect,
-                    crate::theme::RADIUS_NONE,
-                    egui::Stroke::new(SELECTION_BORDER_WIDTH, IMAGE_SELECTION_BORDER_COLOR),
-                    egui::StrokeKind::Outside,
-                );
-            }
-        }
-    }
-
     if let Some(delay) = next_animation_repaint {
         painter.ctx().request_repaint_after(delay);
     }
 
     metrics.build_time_ms = build_started_at.elapsed().as_secs_f64() * 1000.0;
     metrics
+}
+
+fn paint_unloaded_placement(painter: &egui::Painter, image: &CanvasImage, image_rect: egui::Rect) {
+    let (fill, stroke, label) = match &image.record.content {
+        crate::data::PlacementContent::Loading { .. } => (
+            crate::theme::SURFACE,
+            egui::Stroke::new(1.0, crate::theme::BORDER_STRONG),
+            "Loading",
+        ),
+        crate::data::PlacementContent::Failed { .. } => (
+            crate::theme::DESTRUCTIVE_FILL,
+            egui::Stroke::new(1.0, crate::theme::DESTRUCTIVE_STROKE),
+            "Failed",
+        ),
+        crate::data::PlacementContent::Loaded { .. } => (
+            crate::theme::SURFACE,
+            egui::Stroke::new(1.0, crate::theme::BORDER_STRONG),
+            "Loading",
+        ),
+    };
+    painter.rect_filled(image_rect, crate::theme::RADIUS_NONE, fill);
+    painter.rect_stroke(
+        image_rect,
+        crate::theme::RADIUS_NONE,
+        stroke,
+        egui::StrokeKind::Inside,
+    );
+    if image_rect.width() >= 48.0 && image_rect.height() >= 24.0 {
+        painter.text(
+            image_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(12.0),
+            crate::theme::TEXT_MUTED,
+        );
+    }
 }
 
 fn min_repaint_delay(current: Option<Duration>, candidate: Option<Duration>) -> Option<Duration> {
@@ -447,6 +459,9 @@ fn desired_image_lod(
     item_id: i64,
 ) -> Option<CanvasImageLod> {
     let image = state.image_by_item_id(item_id)?;
+    if !image.record.is_loaded() || matches!(image.texture, CanvasTexture::Unloaded { .. }) {
+        return None;
+    }
     if image.loaded_lod < CanvasImageLod::Working {
         return Some(CanvasImageLod::Working);
     }
@@ -517,14 +532,6 @@ fn selection_border_visible(state: &CanvasState, now_seconds: f64) -> bool {
     !drag_state.moved
         || now_seconds - drag_state.last_movement_seconds
             >= super::SELECTION_BORDER_REAPPEAR_SECONDS
-}
-
-fn preview_selection_border_visible(state: &CanvasState, now_seconds: f64) -> bool {
-    let Some(movement) = &state.interaction.preview_movement_state else {
-        return false;
-    };
-    !movement.moved
-        || now_seconds - movement.last_movement_seconds >= super::SELECTION_BORDER_REAPPEAR_SECONDS
 }
 
 fn paint_image_mesh(
@@ -1573,17 +1580,6 @@ pub(super) fn paint_selection_bounds(
     rect: egui::Rect,
     state: &CanvasState,
 ) {
-    if preview_selection_border_visible(state, painter.ctx().input(|input| input.time))
-        && let Some(selection_rect) = preview_selection_screen_rect(state, rect)
-    {
-        painter.rect_stroke(
-            selection_rect,
-            crate::theme::RADIUS_NONE,
-            egui::Stroke::new(SELECTION_BORDER_WIDTH, IMAGE_SELECTION_BORDER_COLOR),
-            egui::StrokeKind::Outside,
-        );
-    }
-
     if !selection_border_visible(state, painter.ctx().input(|input| input.time)) {
         return;
     }
@@ -1613,33 +1609,6 @@ pub(super) fn paint_selection_bounds(
         egui::StrokeKind::Outside,
     );
     paint_rotation_handle(painter, rect, state);
-}
-
-fn preview_selection_screen_rect(state: &CanvasState, rect: egui::Rect) -> Option<egui::Rect> {
-    let mut selection_rect: Option<egui::Rect> = None;
-
-    if let Some(preview) = &state.interaction.search_drag_preview {
-        for image in &preview.images {
-            let image_rect = image_screen_rect(state, rect, image);
-            selection_rect = Some(match selection_rect {
-                Some(selection_rect) => selection_rect.union(image_rect),
-                None => image_rect,
-            });
-        }
-    }
-
-    for placeholder in &state.interaction.move_preview_placeholders {
-        let placeholder_rect = egui::Rect::from_center_size(
-            state.world_to_screen(placeholder.center_world, rect),
-            placeholder.size_world * state.zoom,
-        );
-        selection_rect = Some(match selection_rect {
-            Some(selection_rect) => selection_rect.union(placeholder_rect),
-            None => placeholder_rect,
-        });
-    }
-
-    selection_rect
 }
 
 pub(super) fn paint_guide_snap_indicators(
@@ -1729,20 +1698,6 @@ pub(super) fn paint_import_placeholders(
     {
         any_visible |=
             paint_import_placeholder(painter, rect, state, cull_rect, placeholder, phase, false);
-    }
-
-    let show_move_selection_border =
-        preview_selection_border_visible(state, painter.ctx().input(|input| input.time));
-    for placeholder in &state.interaction.move_preview_placeholders {
-        any_visible |= paint_import_placeholder(
-            painter,
-            rect,
-            state,
-            cull_rect,
-            placeholder,
-            phase,
-            show_move_selection_border,
-        );
     }
 
     if any_visible {
@@ -1995,99 +1950,6 @@ mod tests {
         assert!(selection_border_visible(&state, 12.6));
     }
 
-    #[test]
-    fn preview_selection_border_hides_while_movement_is_recent() {
-        let state = CanvasState {
-            interaction: crate::canvas::CanvasInteractionState {
-                preview_movement_state: Some(crate::canvas::PreviewMovementState {
-                    centers_world: vec![egui::pos2(10.0, 20.0)],
-                    last_movement_seconds: 10.5,
-                    moved: true,
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        assert!(!preview_selection_border_visible(&state, 11.0));
-        assert!(preview_selection_border_visible(&state, 12.6));
-    }
-
-    #[test]
-    fn preview_selection_border_stays_hidden_without_preview_movement_state() {
-        let state = CanvasState::default();
-
-        assert!(!preview_selection_border_visible(&state, 12.6));
-    }
-
-    #[test]
-    fn preview_selection_screen_rect_covers_search_drag_preview_batch() {
-        let state = CanvasState {
-            document: CanvasDocumentState {
-                images: vec![
-                    test_image_at(1, CanvasImageLod::Working, [100, 100], egui::pos2(0.0, 0.0)),
-                    test_image_at(
-                        2,
-                        CanvasImageLod::Working,
-                        [100, 100],
-                        egui::pos2(140.0, 0.0),
-                    ),
-                ],
-                ..Default::default()
-            },
-            interaction: crate::canvas::CanvasInteractionState {
-                search_drag_preview: Some(crate::canvas::SearchDragPreview {
-                    images: vec![
-                        test_image_at(1, CanvasImageLod::Working, [100, 100], egui::pos2(0.0, 0.0)),
-                        test_image_at(
-                            2,
-                            CanvasImageLod::Working,
-                            [100, 100],
-                            egui::pos2(140.0, 0.0),
-                        ),
-                    ],
-                    drop_anchor_world: egui::pos2(70.0, 0.0),
-                    snap_preview_rect_world: None,
-                }),
-                preview_movement_state: Some(crate::canvas::PreviewMovementState {
-                    centers_world: vec![egui::pos2(0.0, 0.0), egui::pos2(140.0, 0.0)],
-                    last_movement_seconds: 10.5,
-                    moved: true,
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let canvas_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
-
-        let selection_rect = preview_selection_screen_rect(&state, canvas_rect).unwrap();
-
-        assert_eq!(
-            selection_rect,
-            egui::Rect::from_min_max(egui::pos2(350.0, 250.0), egui::pos2(590.0, 350.0))
-        );
-    }
-
-    #[test]
-    fn preview_selection_screen_rect_covers_move_placeholders() {
-        let mut state = CanvasState::default();
-        state.set_move_preview_placeholders(
-            vec![
-                (egui::pos2(0.0, 0.0), egui::vec2(100.0, 100.0)),
-                (egui::pos2(140.0, 0.0), egui::vec2(100.0, 100.0)),
-            ],
-            10.5,
-        );
-        let canvas_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
-
-        let selection_rect = preview_selection_screen_rect(&state, canvas_rect).unwrap();
-
-        assert_eq!(
-            selection_rect,
-            egui::Rect::from_min_max(egui::pos2(350.0, 250.0), egui::pos2(590.0, 350.0))
-        );
-    }
-
     fn test_image(
         item_id: i64,
         loaded_lod: CanvasImageLod,
@@ -2103,8 +1965,8 @@ mod tests {
         center_world: egui::Pos2,
     ) -> CanvasImage {
         CanvasImage {
-            record: BoardItemWithAsset {
-                item: BoardItem {
+            record: BoardItemWithAsset::loaded(
+                BoardItem {
                     id: item_id,
                     asset_id: item_id,
                     x: center_world.x,
@@ -2114,7 +1976,7 @@ mod tests {
                     z_index: item_id as i32,
                     archived: false,
                 },
-                asset: ImageAsset {
+                ImageAsset {
                     id: item_id,
                     original_path: PathBuf::from(format!("image-{item_id}.png")),
                     filename: format!("image-{item_id}.png"),
@@ -2124,7 +1986,7 @@ mod tests {
                     file_size: 0,
                     imported_at: 0,
                 },
-            },
+            ),
             texture: CanvasTexture::Svg {
                 uri: format!("bytes://image-{item_id}.svg"),
                 bytes: std::sync::Arc::<[u8]>::from([]),

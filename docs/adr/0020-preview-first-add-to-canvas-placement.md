@@ -1,5 +1,7 @@
 # Preview-first add-to-canvas placement
 
+Status note: ADR-0026 refines this decision. Placeholder language here describes the immediate visual user contract. Committed import/search content is now represented by Placement Content State on normal or provisional Placements, not by separate placeholder canvas items.
+
 SnappyRef places new canvas content through a preview-first contract. File imports and **Asset Result** search drops first create compact guided placeholders at the intended board positions, then async completion replaces those placeholders with real **Placements** while preserving the same placement intent.
 
 This supersedes treating imports, library-result placement, and final load integration as separate placement behaviors. Users should see one interaction: the preview follows the cursor, compacts as a group, guide-snaps as a group, and final placements land where the preview promised.

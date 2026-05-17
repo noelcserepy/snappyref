@@ -104,7 +104,6 @@ pub(super) fn handle_input(
         state.interaction.marquee_state = None;
         state.interaction.crop_state = None;
         state.interaction.annotation_draft_state = None;
-        state.clear_move_preview_placeholders();
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         return;
     } else if pointer_in_canvas_rect && alt_held && !primary_down {
@@ -180,7 +179,6 @@ pub(super) fn handle_input(
                 start_world: pointer_world,
                 current_world: pointer_world,
             });
-            state.clear_move_preview_placeholders();
         } else if crop_key_held && let Some(item_id) = hit_test_image(state, rect, pointer_pos) {
             if !state.can_start_crop_on_item(item_id) {
                 return;
@@ -195,7 +193,6 @@ pub(super) fn handle_input(
                 start_screen: pointer_pos,
                 current_screen: pointer_pos,
             });
-            state.clear_move_preview_placeholders();
         } else if let Some(image) = state.selected_single_image().map(|image| {
             (
                 image.record.item.id,
@@ -280,7 +277,6 @@ pub(super) fn handle_input(
                     state.interaction.marquee_state = None;
                     state.interaction.crop_state = None;
                     state.interaction.annotation_draft_state = None;
-                    state.clear_move_preview_placeholders();
                     return;
                 }
             }
@@ -289,7 +285,6 @@ pub(super) fn handle_input(
             state.interaction.image_transform_state = None;
             state.interaction.textbox_transform_state = None;
             state.interaction.annotation_drag_state = None;
-            state.clear_move_preview_placeholders();
             if !shift_held {
                 state.clear_selection();
             }
@@ -412,9 +407,10 @@ pub(super) fn handle_input(
                     );
                     let center_world = state.screen_to_world(center_screen, rect);
                     let anchor_world = state.screen_to_world(anchor_screen, rect);
+                    let base_size = image.record.base_visual_size();
                     let base_visual_size = super::rotated_visual_size(
-                        image.record.asset.width as f32,
-                        image.record.asset.height as f32,
+                        base_size.x,
+                        base_size.y,
                         image.record.item.rotation,
                     );
                     let desired_rect = egui::Rect::from_center_size(
@@ -521,7 +517,6 @@ pub(super) fn handle_input(
         let guide_snap_disabled = ui.input(|input| guide_snap_disabled(input.modifiers));
         let snap_preview_rect = if guide_snap_disabled {
             state.clear_guide_snap_indicators();
-            state.clear_move_preview_placeholders();
             None
         } else {
             compute_drag_snap_preview(state, rect, &drag_state, world_delta)
@@ -587,11 +582,9 @@ pub(super) fn handle_input(
                     state.mark_dirty(item.id);
                 }
             }
-            state.clear_move_preview_placeholders();
             state.clear_guide_snap_indicators();
         }
         state.interaction.marquee_state = None;
-        state.clear_move_preview_placeholders();
     }
 
     if primary_released
@@ -680,6 +673,57 @@ pub(super) fn handle_input(
     }
 
     apply_canvas_navigation(ui, state, rect, pointer_pos);
+}
+
+pub(super) fn handle_viewport_navigation_input(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    input_rect: egui::Rect,
+    overlay_rect: Option<egui::Rect>,
+    state: &mut CanvasState,
+    response: &egui::Response,
+) {
+    let pointer_pos = ui.input(|i| i.pointer.latest_pos());
+    let primary_pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
+    let primary_released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
+    let primary_down = ui.input(|i| i.pointer.primary_down());
+    let alt_held = ui.input(|i| i.modifiers.alt);
+    let pointer_in_canvas_rect = pointer_pos
+        .map(|pointer_pos| {
+            input_rect.contains(pointer_pos)
+                && !overlay_rect.is_some_and(|overlay_rect| overlay_rect.contains(pointer_pos))
+        })
+        .unwrap_or(false);
+
+    if pointer_in_canvas_rect && response.dragged_by(egui::PointerButton::Middle) {
+        state.interaction.mouse_wheel_zoom_animation = None;
+        state.pan += response.drag_delta();
+        return;
+    }
+
+    if state.interaction.alt_pan_active {
+        if primary_released {
+            state.interaction.alt_pan_active = false;
+        } else if primary_down {
+            state.interaction.mouse_wheel_zoom_animation = None;
+            state.pan += response.drag_delta();
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            return;
+        }
+    } else if pointer_in_canvas_rect && primary_pressed && alt_held {
+        state.interaction.alt_pan_active = true;
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        return;
+    } else if pointer_in_canvas_rect && alt_held && !primary_down {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+
+    if pointer_in_canvas_rect {
+        state.interaction.last_pointer_screen_pos = pointer_pos;
+        if let Some(pointer_pos) = pointer_pos {
+            apply_canvas_navigation(ui, state, rect, pointer_pos);
+        }
+    }
 }
 
 fn apply_canvas_navigation(
@@ -799,7 +843,6 @@ pub(super) fn open_context_menu_at_pointer(
     state.interaction.marquee_state = None;
     state.interaction.crop_state = None;
     state.interaction.annotation_draft_state = None;
-    state.clear_move_preview_placeholders();
     state.interaction.pending_context_menu_request = Some(super::CanvasContextMenuRequest {
         screen_pos: pointer_pos,
     });
@@ -897,7 +940,6 @@ fn begin_image_resize(
     state.interaction.crop_state = None;
     state.interaction.annotation_draft_state = None;
     state.interaction.textbox_transform_state = None;
-    state.clear_move_preview_placeholders();
     state.interaction.image_transform_state = Some(ImageTransformState::Resizing {
         item_id,
         anchor_screen,
@@ -931,11 +973,14 @@ fn begin_image_drag_scale(
                 .map(|image| ImageScaleStart {
                     item_id: *item_id,
                     center_world: egui::pos2(image.record.item.x, image.record.item.y),
-                    base_visual_size: super::rotated_visual_size(
-                        image.record.asset.width as f32,
-                        image.record.asset.height as f32,
-                        image.record.item.rotation,
-                    ),
+                    base_visual_size: {
+                        let base_size = image.record.base_visual_size();
+                        super::rotated_visual_size(
+                            base_size.x,
+                            base_size.y,
+                            image.record.item.rotation,
+                        )
+                    },
                     start_scale: image.record.item.scale,
                     min_scale: min_image_scale(&image.record.asset),
                 })
@@ -950,7 +995,6 @@ fn begin_image_drag_scale(
     state.interaction.crop_state = None;
     state.interaction.annotation_draft_state = None;
     state.interaction.textbox_transform_state = None;
-    state.clear_move_preview_placeholders();
     state.interaction.image_transform_state = Some(ImageTransformState::Scaling {
         item_ids,
         pointer_start_screen: pointer_pos,
@@ -995,7 +1039,6 @@ fn begin_image_rotation(state: &mut CanvasState, rect: egui::Rect, pointer_pos: 
     state.interaction.crop_state = None;
     state.interaction.annotation_draft_state = None;
     state.interaction.textbox_transform_state = None;
-    state.clear_move_preview_placeholders();
     state.interaction.image_transform_state = Some(ImageTransformState::Rotating {
         item_ids,
         center_screen,
@@ -1063,7 +1106,6 @@ fn begin_annotation_drag(
     state.interaction.crop_state = None;
     state.interaction.annotation_draft_state = None;
     state.interaction.textbox_transform_state = None;
-    state.clear_move_preview_placeholders();
     state.interaction.annotation_drag_state = Some(AnnotationDragState {
         annotation_ids,
         pointer_start_world: state.screen_to_world(pointer_pos, rect),
@@ -1098,7 +1140,6 @@ fn begin_textbox_pending_move(
     state.interaction.marquee_state = None;
     state.interaction.crop_state = None;
     state.interaction.annotation_draft_state = None;
-    state.clear_move_preview_placeholders();
     state.interaction.textbox_transform_state = Some(TextboxTransformState::PendingMove {
         annotation_ids,
         pointer_start_world: state.screen_to_world(pointer_pos, rect),
@@ -1432,12 +1473,9 @@ pub(super) fn compute_drag_snap_preview(
     world_delta: egui::Vec2,
 ) -> Option<egui::Rect> {
     let Some(result) = compute_placement_guide_snap(state, rect, drag_state, world_delta) else {
-        state.clear_move_preview_placeholders();
         state.clear_guide_snap_indicators();
         return None;
     };
-
-    state.clear_move_preview_placeholders();
     state.set_guide_snap_indicators(result.indicators);
     Some(result.rect)
 }
@@ -1556,9 +1594,10 @@ fn guide_snap_candidate_rects(
         .iter()
         .filter(|image| !excluded_item_ids.contains(&image.record.item.id))
         .filter_map(|image| {
+            let scaled_size = image.record.scaled_visual_size();
             let visual_size = super::rotated_visual_size(
-                image.record.asset.width as f32 * image.record.item.scale.max(0.01),
-                image.record.asset.height as f32 * image.record.item.scale.max(0.01),
+                scaled_size.x,
+                scaled_size.y,
                 image.record.item.rotation,
             );
             let rect = egui::Rect::from_center_size(
@@ -2218,7 +2257,6 @@ mod tests {
         let snap_offset = snap_rect.center() - current_bounds.center();
 
         assert_eq!(snap_offset, egui::vec2(2.0, 0.0));
-        assert_eq!(canvas.move_preview_placeholder_count(), 0);
     }
 
     #[test]
@@ -2247,7 +2285,6 @@ mod tests {
         );
 
         assert!(snap_rect.is_none());
-        assert_eq!(canvas.move_preview_placeholder_count(), 0);
     }
 
     #[test]
@@ -2289,7 +2326,6 @@ mod tests {
         );
 
         assert!(snap_rect.is_none());
-        assert_eq!(canvas.move_preview_placeholder_count(), 0);
     }
 
     #[test]
@@ -2764,8 +2800,8 @@ mod tests {
             file_size: 0,
             imported_at: 0,
         };
-        let record = BoardItemWithAsset {
-            item: BoardItem {
+        let record = BoardItemWithAsset::loaded(
+            BoardItem {
                 id,
                 asset_id: id,
                 x: center_world.x,
@@ -2776,7 +2812,7 @@ mod tests {
                 archived: false,
             },
             asset,
-        };
+        );
         let rgba = vec![255; width as usize * height as usize * 4];
         canvas.add_loaded_item(
             ctx,

@@ -276,6 +276,8 @@ mod tests {
         let mut record = test_record(1, 1);
         record.asset.width = 20_000;
         record.asset.height = 20_000;
+        record.visual_width = 20_000.0;
+        record.visual_height = 20_000.0;
         canvas.add_loaded_item(&ctx, loaded_item(record, vec![255, 255, 255, 255], 1, 1));
         canvas.select_items(&[1]);
 
@@ -330,8 +332,8 @@ mod tests {
     }
 
     fn test_record(item_id: i64, asset_id: i64) -> BoardItemWithAsset {
-        BoardItemWithAsset {
-            item: BoardItem {
+        BoardItemWithAsset::loaded(
+            BoardItem {
                 id: item_id,
                 asset_id,
                 x: 0.0,
@@ -341,7 +343,7 @@ mod tests {
                 z_index: 0,
                 archived: false,
             },
-            asset: ImageAsset {
+            ImageAsset {
                 id: asset_id,
                 original_path: std::path::PathBuf::from(format!("fixture-{asset_id}.png")),
                 filename: format!("fixture-{asset_id}.png"),
@@ -351,7 +353,7 @@ mod tests {
                 file_size: 4,
                 imported_at: 0,
             },
-        }
+        )
     }
 
     fn temp_library_root(prefix: &str) -> std::path::PathBuf {

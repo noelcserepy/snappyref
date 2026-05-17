@@ -12,7 +12,9 @@ use crate::data::{
     CanvasBackground, CanvasImageLod, CanvasTextSize,
 };
 use eframe::egui;
-use interaction::{handle_input, step_mouse_wheel_zoom_animation};
+use interaction::{
+    handle_input, handle_viewport_navigation_input, step_mouse_wheel_zoom_animation,
+};
 use render::{
     annotation_style_toolbar_rect, editing_textbox_toolbar_rect, paint_annotation_draft,
     paint_background, paint_canvas_items, paint_crop_marquee, paint_guide_snap_indicators,
@@ -43,7 +45,7 @@ const TEXTBOX_EDITOR_TOOLBAR_CLEARANCE: f32 = crate::theme::SPACE_2;
 const TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN: f32 = crate::theme::SPACE_2;
 const TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP: f32 = crate::theme::SPACE_1;
 const ANNOTATION_HIT_RADIUS: f32 = 10.0;
-const FOCUS_SELECTION_PADDING_SCREEN: f32 = 48.0;
+pub(crate) const FOCUS_SELECTION_PADDING_SCREEN: f32 = 48.0;
 const BACKGROUND_BASE_WORLD_STEP: f32 = 64.0;
 const BACKGROUND_MIN_SCREEN_STEP: f32 = 40.0;
 const BACKGROUND_MAX_SCREEN_STEP: f32 = 112.0;
@@ -124,6 +126,14 @@ pub(crate) struct GuideSnapIndicator {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CanvasInputPolicy {
+    Full,
+    #[allow(dead_code)]
+    ViewportOnly,
+    Blocked,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CanvasHit {
     Placement(i64),
     Annotation(i64),
@@ -170,6 +180,9 @@ enum CanvasTexture {
         bytes: Arc<[u8]>,
         size: [usize; 2],
     },
+    Unloaded {
+        size: [usize; 2],
+    },
 }
 
 impl CanvasTexture {
@@ -178,6 +191,7 @@ impl CanvasTexture {
             Self::Managed(texture) => texture.id(),
             Self::Native(texture) => texture.texture_id(),
             Self::Svg { .. } => egui::TextureId::Managed(0),
+            Self::Unloaded { .. } => egui::TextureId::Managed(0),
         }
     }
 
@@ -186,6 +200,7 @@ impl CanvasTexture {
             Self::Managed(texture) => texture.size(),
             Self::Native(texture) => texture.size(),
             Self::Svg { size, .. } => *size,
+            Self::Unloaded { size } => *size,
         }
     }
 }
@@ -309,20 +324,6 @@ struct DragState {
     started_at_seconds: f64,
     last_movement_seconds: f64,
     last_world_delta: egui::Vec2,
-    moved: bool,
-}
-
-#[derive(Clone)]
-struct SearchDragPreview {
-    images: Vec<CanvasImage>,
-    drop_anchor_world: egui::Pos2,
-    snap_preview_rect_world: Option<egui::Rect>,
-}
-
-#[derive(Clone, Default)]
-struct PreviewMovementState {
-    centers_world: Vec<egui::Pos2>,
-    last_movement_seconds: f64,
     moved: bool,
 }
 
@@ -1929,7 +1930,7 @@ pub fn show(
     state: &mut CanvasState,
     render_state: Option<&eframe::egui_wgpu::RenderState>,
     allow_lod_promotion: bool,
-    suppress_input: bool,
+    input_policy: CanvasInputPolicy,
     debug_labels: bool,
 ) -> CanvasFrameMetrics {
     let now_seconds = ui.input(|input| input.time);
@@ -1940,13 +1941,17 @@ pub fn show(
     let toolbar_rect = editing_textbox_toolbar_rect(ui, state, rect)
         .or_else(|| annotation_style_toolbar_rect(ui, state, rect));
     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
-    if suppress_input {
-        state.interaction.drag_state = None;
-        state.interaction.marquee_state = None;
-        state.interaction.crop_state = None;
-        state.interaction.annotation_draft_state = None;
-    } else {
-        handle_input(ui, rect, input_rect, toolbar_rect, state, &response);
+    match input_policy {
+        CanvasInputPolicy::Full => {
+            handle_input(ui, rect, input_rect, toolbar_rect, state, &response);
+        }
+        CanvasInputPolicy::ViewportOnly => {
+            clear_canvas_edit_interaction(state);
+            handle_viewport_navigation_input(ui, rect, input_rect, toolbar_rect, state, &response);
+        }
+        CanvasInputPolicy::Blocked => {
+            clear_canvas_edit_interaction(state);
+        }
     }
     state.prune_cached_pixels_to_selected_items();
 
@@ -1974,6 +1979,13 @@ pub fn show(
     CanvasFrameMetrics { image_pass }
 }
 
+fn clear_canvas_edit_interaction(state: &mut CanvasState) {
+    state.interaction.drag_state = None;
+    state.interaction.marquee_state = None;
+    state.interaction.crop_state = None;
+    state.interaction.annotation_draft_state = None;
+}
+
 fn rotation_handle_key_held(ctx: &egui::Context) -> bool {
     !ctx.egui_wants_keyboard_input() && ctx.input(|input| input.key_down(egui::Key::R))
 }
@@ -1994,8 +2006,8 @@ pub fn paint_perf_report() -> PaintPerfReport {
             } else {
                 2600.0 + index as f32 * 24.0
             };
-            crate::data::BoardItemWithAsset {
-                item: crate::data::BoardItem {
+            crate::data::BoardItemWithAsset::loaded(
+                crate::data::BoardItem {
                     id: index as i64 + 1,
                     asset_id: index as i64 + 1,
                     x,
@@ -2005,7 +2017,7 @@ pub fn paint_perf_report() -> PaintPerfReport {
                     z_index: index as i32,
                     archived: false,
                 },
-                asset: crate::data::ImageAsset {
+                crate::data::ImageAsset {
                     id: index as i64 + 1,
                     original_path: std::path::PathBuf::new(),
                     filename: format!("perf-{index}.png"),
@@ -2015,7 +2027,7 @@ pub fn paint_perf_report() -> PaintPerfReport {
                     file_size: 0,
                     imported_at: 0,
                 },
-            }
+            )
         })
         .collect::<Vec<_>>();
 
@@ -2047,10 +2059,10 @@ mod tests {
         screen_rect_to_local_crop_rect,
     };
     use super::interaction::{
-        handle_textbox_primary_press, hit_test_image_resize_handle, hit_test_textbox_resize_handle,
-        image_screen_rect, moved_textbox_rect, normalized_textbox_rect,
-        open_context_menu_at_pointer, pending_annotation_from_draft, resized_image_transform,
-        resized_textbox_rect, textbox_screen_rect,
+        handle_textbox_primary_press, hit_test_canvas_item, hit_test_image_resize_handle,
+        hit_test_textbox_resize_handle, image_screen_rect, moved_textbox_rect,
+        normalized_textbox_rect, open_context_menu_at_pointer, pending_annotation_from_draft,
+        resized_image_transform, resized_textbox_rect, textbox_screen_rect,
     };
     use super::render::{
         annotation_paint_stats_for_annotations, background_lod_layers, background_screen_step,
@@ -2061,9 +2073,9 @@ mod tests {
         unified_canvas_paint_order_for_state,
     };
     use super::{
-        AnnotationDraftState, CanvasCropRequest, CanvasImage, CanvasState, CanvasTexture,
-        FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, PixelCropRect,
-        SelectedLayoutItem, SettleDirection, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
+        AnnotationDraftState, CanvasCropRequest, CanvasImage, CanvasInputPolicy, CanvasState,
+        CanvasTexture, FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM,
+        PixelCropRect, SelectedLayoutItem, SettleDirection, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
         TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion, TextboxResizeHandle,
         balanced_grid_layout_for_sizes, best_compact_layout, compact_layout_for_sizes,
         directional_settle_layout, horizontal_layout, layout_bounds_for_items, rotated_visual_size,
@@ -2072,7 +2084,7 @@ mod tests {
     use crate::data::{
         BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
         CanvasAnnotationKind, CanvasImageLod, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize,
-        ImageAsset,
+        ImageAsset, PlacementContent, PlacementContentIntent, PlacementLifecycle,
     };
     use std::{
         path::PathBuf,
@@ -2097,8 +2109,8 @@ mod tests {
             eframe::egui::TextureOptions::LINEAR,
         );
         state.document.images.push(CanvasImage {
-            record: BoardItemWithAsset {
-                item: BoardItem {
+            record: BoardItemWithAsset::loaded(
+                BoardItem {
                     id: item_id,
                     asset_id: item_id,
                     x: center.x,
@@ -2108,7 +2120,7 @@ mod tests {
                     z_index: 0,
                     archived: false,
                 },
-                asset: ImageAsset {
+                ImageAsset {
                     id: item_id,
                     original_path: PathBuf::from(format!("image-{item_id}.png")),
                     filename: format!("image-{item_id}.png"),
@@ -2118,11 +2130,46 @@ mod tests {
                     file_size: 0,
                     imported_at: 0,
                 },
-            },
+            ),
             texture: CanvasTexture::Managed(texture),
             loaded_lod: CanvasImageLod::Working,
             animation: None,
         });
+    }
+
+    #[test]
+    fn viewport_only_input_zooms_without_preview_state() {
+        let ctx = eframe::egui::Context::default();
+        let mut state = CanvasState::default();
+        state.set_pointer_mode(crate::data::PointerMode::Trackpad);
+        let screen_rect = eframe::egui::Rect::from_min_size(
+            eframe::egui::Pos2::ZERO,
+            eframe::egui::vec2(800.0, 600.0),
+        );
+
+        let _ = ctx.run_ui(
+            eframe::egui::RawInput {
+                events: vec![
+                    eframe::egui::Event::PointerMoved(screen_rect.center()),
+                    eframe::egui::Event::Zoom(0.5),
+                ],
+                ..Default::default()
+            },
+            |ui| {
+                super::show(
+                    ui,
+                    screen_rect,
+                    screen_rect,
+                    &mut state,
+                    None,
+                    false,
+                    CanvasInputPolicy::ViewportOnly,
+                    false,
+                );
+            },
+        );
+
+        assert!(state.viewport_state().camera_zoom < 1.0);
     }
 
     fn default_text_size() -> CanvasTextSize {
@@ -2138,8 +2185,8 @@ mod tests {
     }
 
     fn test_record(item_id: i64, asset_id: i64, width: u32, height: u32) -> BoardItemWithAsset {
-        BoardItemWithAsset {
-            item: BoardItem {
+        BoardItemWithAsset::loaded(
+            BoardItem {
                 id: item_id,
                 asset_id,
                 x: 0.0,
@@ -2149,7 +2196,7 @@ mod tests {
                 z_index: item_id as i32,
                 archived: false,
             },
-            asset: ImageAsset {
+            ImageAsset {
                 id: asset_id,
                 original_path: PathBuf::from(format!("image-{asset_id}.png")),
                 filename: format!("image-{asset_id}.png"),
@@ -2159,7 +2206,40 @@ mod tests {
                 file_size: 0,
                 imported_at: 0,
             },
-        }
+        )
+    }
+
+    fn unloaded_test_record(
+        item_id: i64,
+        content: PlacementContent,
+        visual_width: f32,
+        visual_height: f32,
+        scale: f32,
+        center: eframe::egui::Pos2,
+    ) -> BoardItemWithAsset {
+        let mut record = BoardItemWithAsset::loaded(
+            BoardItem {
+                id: item_id,
+                asset_id: 0,
+                x: center.x,
+                y: center.y,
+                scale,
+                rotation: 0.0,
+                z_index: item_id as i32,
+                archived: false,
+            },
+            BoardItemWithAsset::placeholder_asset(
+                item_id,
+                format!("placement-{item_id}.png"),
+                1,
+                1,
+            ),
+        );
+        record.content = content;
+        record.lifecycle = PlacementLifecycle::Committed;
+        record.visual_width = visual_width;
+        record.visual_height = visual_height;
+        record
     }
 
     fn native_loaded_item(
@@ -2517,6 +2597,118 @@ mod tests {
     }
 
     #[test]
+    fn unloaded_placements_use_visual_bounds_for_layout_hit_test_and_delete() {
+        eframe::egui::__run_test_ui(|ui| {
+            let mut state = CanvasState::default();
+            let canvas_rect = eframe::egui::Rect::from_min_size(
+                eframe::egui::Pos2::ZERO,
+                eframe::egui::vec2(800.0, 600.0),
+            );
+            let texture = ui.ctx().load_texture(
+                "unloaded-placement-test",
+                eframe::egui::ColorImage::filled([1, 1], eframe::egui::Color32::WHITE),
+                eframe::egui::TextureOptions::LINEAR,
+            );
+            state.document.images.push(CanvasImage {
+                record: unloaded_test_record(
+                    101,
+                    PlacementContent::Loading {
+                        intent: PlacementContentIntent::Unknown {
+                            description: "test".to_owned(),
+                        },
+                        status_message: None,
+                    },
+                    120.0,
+                    80.0,
+                    2.0,
+                    eframe::egui::pos2(10.0, 20.0),
+                ),
+                texture: CanvasTexture::Managed(texture),
+                loaded_lod: CanvasImageLod::Working,
+                animation: None,
+            });
+            state
+                .document
+                .stack_order
+                .push(CanvasStackItem::Placement(101));
+            state.select_items(&[101]);
+
+            let layout_items = state.selected_layout_items();
+            assert_eq!(layout_items.len(), 1);
+            assert_eq!(layout_items[0].id, 101);
+            assert_eq!(layout_items[0].x, 10.0);
+            assert_eq!(layout_items[0].y, 20.0);
+            assert_eq!(layout_items[0].width, 240.0);
+            assert_eq!(layout_items[0].height, 160.0);
+            assert_eq!(
+                state.selected_bounds_world().unwrap(),
+                eframe::egui::Rect::from_center_size(
+                    eframe::egui::pos2(10.0, 20.0),
+                    eframe::egui::vec2(240.0, 160.0),
+                )
+            );
+            assert_eq!(
+                hit_test_canvas_item(&state, canvas_rect, canvas_rect.center()),
+                Some(super::CanvasHit::Placement(101))
+            );
+            assert_eq!(state.delete_selected_images(), vec![101]);
+            assert!(state.record_for_item_id(101).is_none());
+        });
+    }
+
+    #[test]
+    fn provisional_placements_are_filtered_from_document_changes() {
+        let mut state = CanvasState::default();
+        let mut record = unloaded_test_record(
+            -1,
+            PlacementContent::Loading {
+                intent: PlacementContentIntent::SearchAsset { asset_id: 42 },
+                status_message: Some("Loading".to_owned()),
+            },
+            120.0,
+            80.0,
+            1.0,
+            eframe::egui::pos2(10.0, 20.0),
+        );
+        record.lifecycle = PlacementLifecycle::Provisional;
+        state.add_provisional_unloaded_item(record);
+        state.select_items(&[-1]);
+        state.center_selected_placements_on(eframe::egui::pos2(40.0, 60.0));
+
+        let changes = state.take_document_changes();
+
+        assert!(changes.updated_items.is_empty());
+        assert!(changes.stack_order.is_none());
+    }
+
+    #[test]
+    fn cancel_removes_provisional_placements_without_archiving_rows() {
+        let mut state = CanvasState::default();
+        let mut record = unloaded_test_record(
+            -1,
+            PlacementContent::Loading {
+                intent: PlacementContentIntent::SearchAsset { asset_id: 42 },
+                status_message: Some("Loading".to_owned()),
+            },
+            120.0,
+            80.0,
+            1.0,
+            eframe::egui::pos2(10.0, 20.0),
+        );
+        record.lifecycle = PlacementLifecycle::Provisional;
+        state.add_provisional_unloaded_item(record);
+        state.select_items(&[-1]);
+
+        let removed = state.remove_provisional_items();
+        let changes = state.take_document_changes();
+
+        assert_eq!(removed, vec![-1]);
+        assert!(state.record_for_item_id(-1).is_none());
+        assert!(changes.updated_items.is_empty());
+        assert!(changes.archived_annotation_ids.is_empty());
+    }
+
+    #[test]
     fn import_placeholders_replace_by_queue_id_and_remove_cleanly() {
         let mut state = CanvasState::default();
         state.add_import_placeholder(
@@ -2636,92 +2828,6 @@ mod tests {
             assert_eq!(placeholders.len(), 2);
             assert_eq!(bounds.left(), 50.0);
             assert_eq!(state.guide_snap_indicator_count(), 1);
-        });
-    }
-
-    #[test]
-    fn search_drag_preview_records_movement_and_guide_snap() {
-        eframe::egui::__run_test_ui(|ui| {
-            let mut state = CanvasState::default();
-            let screen_rect = eframe::egui::Rect::from_min_size(
-                eframe::egui::Pos2::ZERO,
-                eframe::egui::vec2(800.0, 600.0),
-            );
-            push_test_image(
-                ui,
-                &mut state,
-                1,
-                100,
-                100,
-                1.0,
-                eframe::egui::pos2(0.0, 0.0),
-            );
-            push_test_image(
-                ui,
-                &mut state,
-                2,
-                100,
-                100,
-                1.0,
-                eframe::egui::pos2(300.0, 0.0),
-            );
-
-            state.update_search_drag_preview(
-                &[2],
-                eframe::egui::pos2(102.0, 0.0),
-                screen_rect,
-                10.5,
-            );
-
-            assert_eq!(state.guide_snap_indicator_count(), 1);
-            assert_eq!(
-                state
-                    .interaction
-                    .preview_movement_state
-                    .as_ref()
-                    .map(|movement| movement.last_movement_seconds),
-                Some(10.5)
-            );
-        });
-    }
-
-    #[test]
-    fn clearing_unused_preview_channel_preserves_active_preview_movement() {
-        eframe::egui::__run_test_ui(|ui| {
-            let mut state = CanvasState::default();
-            let screen_rect = eframe::egui::Rect::from_min_size(
-                eframe::egui::Pos2::ZERO,
-                eframe::egui::vec2(800.0, 600.0),
-            );
-            push_test_image(
-                ui,
-                &mut state,
-                1,
-                100,
-                100,
-                1.0,
-                eframe::egui::pos2(0.0, 0.0),
-            );
-
-            state.update_search_drag_preview(
-                &[1],
-                eframe::egui::pos2(120.0, 0.0),
-                screen_rect,
-                10.5,
-            );
-            state.clear_move_preview_placeholders();
-            assert!(state.interaction.preview_movement_state.is_some());
-
-            state.clear_search_drag_preview();
-            state.set_move_preview_placeholders(
-                vec![(
-                    eframe::egui::pos2(120.0, 0.0),
-                    eframe::egui::vec2(100.0, 100.0),
-                )],
-                12.0,
-            );
-            state.clear_search_drag_preview();
-            assert!(state.interaction.preview_movement_state.is_some());
         });
     }
 

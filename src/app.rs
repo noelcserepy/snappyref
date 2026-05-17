@@ -1906,6 +1906,9 @@ impl SnappyRefApp {
             dimensions,
             desired_world,
             viewport_world,
+            crate::data::PlacementContentIntent::ExternalPath {
+                path: path.to_string_lossy().into_owned(),
+            },
         );
         let request = crate::import_intake::import_path_request(
             path.clone(),
@@ -2399,7 +2402,6 @@ impl SnappyRefApp {
         #[cfg(not(feature = "semantic-search"))]
         {
             self.canvas.clear_search_matches();
-            self.canvas.clear_search_drag_preview();
         }
         self.crop_flow.clear_undo_stack();
     }
@@ -2946,9 +2948,10 @@ impl SnappyRefApp {
         dimensions: Option<(u32, u32)>,
         desired_world: egui::Pos2,
         viewport_world: egui::Rect,
+        intent: crate::data::PlacementContentIntent,
     ) -> crate::import_intake::ImportReservation {
         let _ = viewport_world;
-        let (reservation, placeholder) = self.import_intake.reserve_import(
+        let (mut reservation, placeholder) = self.import_intake.reserve_import(
             layout,
             self.active_board_id,
             label,
@@ -2957,7 +2960,29 @@ impl SnappyRefApp {
             self.import_placement_settings(),
         );
         if let Some(placeholder) = placeholder {
-            self.add_import_placeholder_to_canvas(placeholder);
+            if let Some(record) = self.create_loading_placement(
+                placeholder.center_world,
+                placeholder.size_world,
+                intent,
+            ) {
+                self.import_intake.remove_placeholder_for_board(
+                    reservation.target_board_id,
+                    reservation.queue_id,
+                );
+                reservation.placement_id = Some(record.item.id);
+                layout.push(crate::data::BoardLayoutItem {
+                    id: record.item.id,
+                    x: record.item.x,
+                    y: record.item.y,
+                    width: record.scaled_visual_size().x,
+                    height: record.scaled_visual_size().y,
+                });
+                self.canvas.add_unloaded_item(record.clone());
+                self.canvas.select_items(&[record.item.id]);
+                self.persist_canvas_changes();
+            } else {
+                self.add_import_placeholder_to_canvas(placeholder);
+            }
         }
         reservation
     }
@@ -2968,8 +2993,9 @@ impl SnappyRefApp {
         label: String,
         dimensions: Option<(u32, u32)>,
         center_world: egui::Pos2,
+        intent: crate::data::PlacementContentIntent,
     ) -> crate::import_intake::ImportReservation {
-        let (reservation, placeholder) = self.import_intake.reserve_import_at_world(
+        let (mut reservation, placeholder) = self.import_intake.reserve_import_at_world(
             layout,
             self.active_board_id,
             label,
@@ -2978,9 +3004,57 @@ impl SnappyRefApp {
             self.import_placement_settings(),
         );
         if let Some(placeholder) = placeholder {
-            self.add_import_placeholder_to_canvas(placeholder);
+            if let Some(record) = self.create_loading_placement(
+                placeholder.center_world,
+                placeholder.size_world,
+                intent,
+            ) {
+                self.import_intake.remove_placeholder_for_board(
+                    reservation.target_board_id,
+                    reservation.queue_id,
+                );
+                reservation.placement_id = Some(record.item.id);
+                layout.push(crate::data::BoardLayoutItem {
+                    id: record.item.id,
+                    x: record.item.x,
+                    y: record.item.y,
+                    width: record.scaled_visual_size().x,
+                    height: record.scaled_visual_size().y,
+                });
+                self.canvas.add_unloaded_item(record.clone());
+                self.canvas.select_items(&[record.item.id]);
+                self.persist_canvas_changes();
+            } else {
+                self.add_import_placeholder_to_canvas(placeholder);
+            }
         }
         reservation
+    }
+
+    fn create_loading_placement(
+        &mut self,
+        center_world: egui::Pos2,
+        size_world: egui::Vec2,
+        intent: crate::data::PlacementContentIntent,
+    ) -> Option<crate::data::BoardItemWithAsset> {
+        let Some(library) = &self.library else {
+            self.status = "Storage unavailable".to_owned();
+            return None;
+        };
+        match library.persist_committed_loading_placement(
+            center_world,
+            1.0,
+            size_world.x.max(1.0),
+            size_world.y.max(1.0),
+            intent,
+            Some("Loading".to_owned()),
+        ) {
+            Ok(record) => Some(record),
+            Err(error) => {
+                self.status = error;
+                None
+            }
+        }
     }
 
     fn remove_import_reservation(&mut self, reservation: crate::import_intake::ImportReservation) {
@@ -3112,6 +3186,7 @@ impl SnappyRefApp {
         );
     }
 
+    #[allow(dead_code)]
     fn register_search_import_batch(
         &mut self,
         target_board_id: i64,
@@ -3154,12 +3229,7 @@ impl SnappyRefApp {
         }
         self.canvas.select_items(&item_ids);
         self.canvas.clear_hover_preview_placeholders();
-        self.canvas.clear_move_preview_placeholders();
-        if item_ids.len() > 1 {
-            self.canvas
-                .arrange_selected_compact(self.settings.import_gap);
-        }
-        self.canvas.center_selected_placements_on(anchor_world);
+        let _ = anchor_world;
         self.persist_canvas_changes();
     }
 
@@ -3296,6 +3366,7 @@ impl SnappyRefApp {
             Some((width, height)),
             desired_world,
             viewport_world,
+            crate::data::PlacementContentIntent::Clipboard,
         );
 
         if let Err(error) = self
@@ -3348,6 +3419,7 @@ impl SnappyRefApp {
             Some((360, 240)),
             desired_world,
             viewport_world,
+            crate::data::PlacementContentIntent::ExternalUrl { url: url.clone() },
         );
 
         if let Err(error) = self
@@ -3393,10 +3465,12 @@ impl SnappyRefApp {
 
         let previews = self.dropped_import_previews(&sources, desired_world, screen_rect);
         let mut queued_batch_ids = Vec::new();
+        let mut queued_placement_ids = Vec::new();
 
         for (source, (label, dimensions, center_world)) in sources.into_iter().zip(previews) {
+            let intent = Self::placement_content_intent_for_external_source(&source);
             let reservation =
-                self.reserve_import_at_world(&mut layout, label, dimensions, center_world);
+                self.reserve_import_at_world(&mut layout, label, dimensions, center_world, intent);
 
             let request = match &source {
                 ExternalImportSource::Path(source_path) => {
@@ -3431,6 +3505,9 @@ impl SnappyRefApp {
             }
 
             queued_batch_ids.push(reservation.queue_id);
+            if let Some(placement_id) = reservation.placement_id {
+                queued_placement_ids.push(placement_id);
+            }
             self.status = match &source {
                 ExternalImportSource::Path(path) => {
                     format!("Queued import: {}", path.display())
@@ -3438,7 +3515,23 @@ impl SnappyRefApp {
                 ExternalImportSource::Url(url) => format!("Queued URL import: {url}"),
             };
         }
+        if !queued_placement_ids.is_empty() {
+            self.canvas.select_items(&queued_placement_ids);
+        }
         self.register_import_batch(self.active_board_id, desired_world, queued_batch_ids);
+    }
+
+    fn placement_content_intent_for_external_source(
+        source: &ExternalImportSource,
+    ) -> crate::data::PlacementContentIntent {
+        match source {
+            ExternalImportSource::Path(path) => crate::data::PlacementContentIntent::ExternalPath {
+                path: path.to_string_lossy().into_owned(),
+            },
+            ExternalImportSource::Url(url) => {
+                crate::data::PlacementContentIntent::ExternalUrl { url: url.clone() }
+            }
+        }
     }
 
     fn handle_clipboard_copy(&mut self, ctx: &egui::Context) {
@@ -3726,8 +3819,17 @@ impl SnappyRefApp {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn blocks_canvas_input(&self, ctx: &egui::Context) -> bool {
-        self.context_menu_pos.is_some() || self.modal_open() || {
+        self.canvas_input_policy(ctx) != crate::canvas::CanvasInputPolicy::Full
+    }
+
+    fn canvas_input_policy(&self, ctx: &egui::Context) -> crate::canvas::CanvasInputPolicy {
+        if self.context_menu_pos.is_some() || self.modal_open() {
+            return crate::canvas::CanvasInputPolicy::Blocked;
+        }
+
+        let search_blocks_canvas = {
             #[cfg(feature = "semantic-search")]
             {
                 self.search.blocks_canvas_input(ctx)
@@ -3737,6 +3839,22 @@ impl SnappyRefApp {
                 let _ = ctx;
                 false
             }
+        };
+        if !search_blocks_canvas {
+            return crate::canvas::CanvasInputPolicy::Full;
+        }
+
+        #[cfg(feature = "semantic-search")]
+        {
+            if self.search.add_to_canvas_placement_pending() {
+                return crate::canvas::CanvasInputPolicy::Full;
+            }
+            return crate::canvas::CanvasInputPolicy::Blocked;
+        }
+
+        #[cfg(not(feature = "semantic-search"))]
+        {
+            crate::canvas::CanvasInputPolicy::Blocked
         }
     }
 
@@ -4251,6 +4369,17 @@ impl SnappyRefApp {
                 placeholder.queue_id,
             );
         }
+        if let (Some(library), Some(placement_id)) = (&self.library, outcome.placement_id) {
+            let failed_board_id = outcome.target_board_id.unwrap_or(self.active_board_id);
+            if let Ok(Some(record)) =
+                library.mark_placement_failed(failed_board_id, placement_id, outcome.status.clone())
+                && failed_board_id == self.active_board_id
+                && self.canvas.record_for_item_id(placement_id).is_some()
+            {
+                self.canvas.add_unloaded_item(record);
+                self.canvas.select_items(&[placement_id]);
+            }
+        }
         self.finish_import_queue_id_in_batches(target_board_id, queue_id, None);
         self.status = outcome.status;
     }
@@ -4718,7 +4847,7 @@ impl SnappyRefApp {
                 };
                 Some(RowChange {
                     before,
-                    after: Some(crate::data::BoardItemWithAsset { item: after, asset }),
+                    after: Some(crate::data::BoardItemWithAsset::loaded(after, asset)),
                 })
             })
             .collect::<Vec<_>>();
@@ -4990,8 +5119,8 @@ impl SnappyRefApp {
             file_size: (first.len() + second.len()) as u64,
             imported_at: 0,
         };
-        let record = crate::data::BoardItemWithAsset {
-            item: crate::data::BoardItem {
+        let record = crate::data::BoardItemWithAsset::loaded(
+            crate::data::BoardItem {
                 id: -40,
                 asset_id: -40,
                 x: 0.0,
@@ -5002,7 +5131,7 @@ impl SnappyRefApp {
                 archived: false,
             },
             asset,
-        };
+        );
         self.canvas.add_loaded_item(
             ctx,
             crate::jobs::LoadedCanvasItem {
@@ -5059,8 +5188,8 @@ impl SnappyRefApp {
             file_size: svg.len() as u64,
             imported_at: 0,
         };
-        let record = crate::data::BoardItemWithAsset {
-            item: crate::data::BoardItem {
+        let record = crate::data::BoardItemWithAsset::loaded(
+            crate::data::BoardItem {
                 id: -60,
                 asset_id: -60,
                 x: 0.0,
@@ -5071,7 +5200,7 @@ impl SnappyRefApp {
                 archived: false,
             },
             asset,
-        };
+        );
         self.canvas.add_loaded_item(
             ctx,
             crate::jobs::LoadedCanvasItem {
@@ -5219,6 +5348,9 @@ impl SnappyRefApp {
                 Some((width, height)),
                 desired_world,
                 viewport_world,
+                crate::data::PlacementContentIntent::Unknown {
+                    description: "Import verification placeholder".to_owned(),
+                },
             );
             self.status = format!("Queued debug import placeholder {}", index + 1);
         }
@@ -5256,6 +5388,7 @@ impl SnappyRefApp {
                 Some((width, height)),
                 desired_world,
                 viewport_world,
+                crate::data::PlacementContentIntent::Clipboard,
             );
             let rgba = Self::solid_rgba(width, height, color);
             let enqueue_result = self.import_worker.as_ref().and_then(|import_worker| {
@@ -5476,6 +5609,7 @@ impl SnappyRefApp {
 
     #[cfg(feature = "semantic-search")]
     fn show_search_overlay(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
+        let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         if let Some(drop_request) = self.search.show_overlay(
             ctx,
             screen_rect,
@@ -5484,6 +5618,7 @@ impl SnappyRefApp {
             crate::search::SearchPlacementPreviewConfig {
                 import_target_canvas_area: self.settings.import_target_canvas_area,
                 import_gap: self.settings.import_gap,
+                visible_canvas_rect,
             },
         ) {
             self.handle_search_drop(ctx, drop_request, screen_rect);
@@ -5512,10 +5647,12 @@ impl SnappyRefApp {
         let drop_world = self
             .canvas
             .screen_to_world(drop_request.screen_pos, screen_rect);
-        let drop_world = self
-            .canvas
-            .take_search_drag_drop_anchor_world()
-            .unwrap_or(drop_world);
+        let provisional_records = drop_request
+            .provisional_item_ids
+            .iter()
+            .filter_map(|item_id| self.canvas.record_for_item_id(*item_id))
+            .collect::<Vec<_>>();
+        let drop_world = source_center_for_records(&provisional_records).unwrap_or(drop_world);
         let source_center = self
             .source_center_for_item_ids(&drop_request.item_ids)
             .unwrap_or(drop_world);
@@ -5540,56 +5677,47 @@ impl SnappyRefApp {
             }
         }
 
-        let mut layout = match self.import_layout_snapshot() {
-            Ok(layout) => layout,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
-        let asset_preview_centers = self
-            .canvas
-            .move_preview_placeholder_layout_items()
-            .into_iter()
-            .map(|item| egui::pos2(item.x, item.y))
+        let asset_provisionals = provisional_records
+            .iter()
+            .filter(|record| drop_request.asset_ids.contains(&record.item.asset_id))
+            .cloned()
             .collect::<Vec<_>>();
-        let asset_ids = drop_request.asset_ids;
-        let asset_loads = match crate::add_to_canvas::reserve_existing_asset_placements(
-            &library,
-            &mut self.import_intake,
-            &mut self.canvas,
-            &mut layout,
-            self.active_board_id,
-            asset_ids,
-            asset_preview_centers,
-            drop_world,
-            screen_rect,
-            crate::add_to_canvas::AddPreviewSettings {
-                target_canvas_area: self.settings.import_target_canvas_area,
-                gap: self.settings.import_gap,
-            },
-        ) {
-            Ok(asset_loads) => asset_loads,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
-        let mut asset_queue_ids = Vec::with_capacity(asset_loads.len());
-        for asset_load in &asset_loads {
-            asset_queue_ids.push(asset_load.reservation.queue_id);
-        }
-        self.register_search_import_batch(self.active_board_id, drop_world, asset_queue_ids);
-        let asset_load_count = asset_loads.len();
+        let asset_load_count = asset_provisionals.len();
 
-        for asset_load in asset_loads {
-            let reservation = asset_load.reservation;
-            let record = asset_load.record;
+        for provisional in asset_provisionals {
+            let asset = match library.load_asset(provisional.item.asset_id) {
+                Ok(asset) => asset,
+                Err(error) => {
+                    self.status = error;
+                    return;
+                }
+            };
+            let scale = crate::jobs::initial_import_scale(
+                asset.width,
+                asset.height,
+                true,
+                self.settings.import_target_canvas_area,
+            );
+            let record = match library.create_board_item_from_asset(
+                provisional.item.asset_id,
+                egui::pos2(provisional.item.x, provisional.item.y),
+                scale,
+                provisional.item.rotation,
+                provisional.item.z_index,
+            ) {
+                Ok(record) => record,
+                Err(error) => {
+                    self.status = error;
+                    return;
+                }
+            };
+            added_ids.push(record.item.id);
+            self.canvas.add_unloaded_item(record.clone());
             if let Some(import_worker) = &self.import_worker {
                 if let Err(error) =
                     import_worker.enqueue(crate::jobs::ImportRequest::LoadExisting {
                         target_board_id: self.active_board_id,
-                        queue_id: Some(reservation.queue_id),
+                        queue_id: None,
                         record,
                         max_texture_side: self.max_texture_side,
                         canvas_image_settings: crate::jobs::CanvasImageSettings {
@@ -5600,12 +5728,6 @@ impl SnappyRefApp {
                         trace: None,
                     })
                 {
-                    self.remove_import_reservation(reservation);
-                    self.finish_import_queue_id_in_batches(
-                        Some(self.active_board_id),
-                        Some(reservation.queue_id),
-                        None,
-                    );
                     self.status = error;
                     return;
                 }
@@ -5613,7 +5735,7 @@ impl SnappyRefApp {
                 match crate::jobs::load_existing(
                     &library,
                     self.active_board_id,
-                    Some(reservation.queue_id),
+                    None,
                     record,
                     self.max_texture_side,
                     crate::jobs::CanvasImageSettings {
@@ -5627,12 +5749,6 @@ impl SnappyRefApp {
                         self.integrate_loaded_import(ctx, loaded);
                     }
                     crate::jobs::ImportResult::Failed { error, .. } => {
-                        self.remove_import_reservation(reservation);
-                        self.finish_import_queue_id_in_batches(
-                            Some(self.active_board_id),
-                            Some(reservation.queue_id),
-                            None,
-                        );
                         self.status = error;
                         return;
                     }
@@ -5642,44 +5758,25 @@ impl SnappyRefApp {
         }
 
         if !added_ids.is_empty() {
+            self.canvas.remove_provisional_items();
             self.canvas.select_items(&added_ids);
-            if added_ids.len() > 1 {
-                self.canvas
-                    .arrange_selected_compact(self.settings.import_gap);
-            }
             self.persist_canvas_changes();
             self.refresh_board_summaries();
         }
         let placed_count = added_ids.len() + asset_load_count;
         let noun = if placed_count == 1 { "image" } else { "images" };
         self.status = format!("Added {placed_count} search {noun}");
-        self.canvas.clear_search_drag_preview();
-        self.canvas.clear_move_preview_placeholders();
         self.search.close_overlay(Some(&mut self.canvas));
     }
 
     #[cfg(feature = "semantic-search")]
     fn source_center_for_item_ids(&self, item_ids: &[i64]) -> Option<egui::Pos2> {
-        let mut min = egui::Pos2::new(f32::INFINITY, f32::INFINITY);
-        let mut max = egui::Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
-        let mut found = false;
-
-        for item_id in item_ids {
-            let Some(record) = self.canvas.record_for_item_id(*item_id) else {
-                continue;
-            };
-            found = true;
-            let half_size = egui::vec2(
-                record.asset.width as f32 * record.item.scale.max(0.01),
-                record.asset.height as f32 * record.item.scale.max(0.01),
-            ) * 0.5;
-            min.x = min.x.min(record.item.x - half_size.x);
-            min.y = min.y.min(record.item.y - half_size.y);
-            max.x = max.x.max(record.item.x + half_size.x);
-            max.y = max.y.max(record.item.y + half_size.y);
-        }
-
-        found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))
+        source_center_for_records(
+            &item_ids
+                .iter()
+                .filter_map(|item_id| self.canvas.record_for_item_id(*item_id))
+                .collect::<Vec<_>>(),
+        )
     }
 
     fn persist_settings_if_changed(&mut self, settings_changed: bool) {
@@ -5965,6 +6062,24 @@ fn semantic_search_settings_status(
     }
 }
 
+#[cfg(feature = "semantic-search")]
+fn source_center_for_records(records: &[crate::data::BoardItemWithAsset]) -> Option<egui::Pos2> {
+    let mut min = egui::Pos2::new(f32::INFINITY, f32::INFINITY);
+    let mut max = egui::Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
+    let mut found = false;
+
+    for record in records {
+        found = true;
+        let half_size = record.scaled_visual_size() * 0.5;
+        min.x = min.x.min(record.item.x - half_size.x);
+        min.y = min.y.min(record.item.y - half_size.y);
+        max.x = max.x.max(record.item.x + half_size.x);
+        max.y = max.y.max(record.item.y + half_size.y);
+    }
+
+    found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))
+}
+
 impl eframe::App for SnappyRefApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let screen_rect = ui.ctx().viewport_rect();
@@ -6056,9 +6171,10 @@ impl eframe::App for SnappyRefApp {
             crate::search::SearchPlacementPreviewConfig {
                 import_target_canvas_area: self.settings.import_target_canvas_area,
                 import_gap: self.settings.import_gap,
+                visible_canvas_rect,
             },
         );
-        let suppress_canvas_input = self.blocks_canvas_input(ui.ctx());
+        let canvas_input_policy = self.canvas_input_policy(ui.ctx());
         self.frame_perf.canvas = crate::canvas::show(
             ui,
             screen_rect,
@@ -6066,7 +6182,7 @@ impl eframe::App for SnappyRefApp {
             &mut self.canvas,
             self.wgpu_render_state.as_ref(),
             true,
-            suppress_canvas_input,
+            canvas_input_policy,
             false,
         );
         let context_menu_just_opened =
@@ -6950,8 +7066,8 @@ mod tests {
                 file_size: 0,
                 imported_at: 0,
             };
-            let record = BoardItemWithAsset {
-                item: BoardItem {
+            let record = BoardItemWithAsset::loaded(
+                BoardItem {
                     id: *id,
                     asset_id: *id,
                     x: index as f32 * 500.0,
@@ -6962,7 +7078,7 @@ mod tests {
                     archived: false,
                 },
                 asset,
-            };
+            );
             let rgba = vec![255; (*width as usize) * (*height as usize) * 4];
             canvas.add_loaded_item(
                 &ctx,
@@ -7722,6 +7838,8 @@ mod tests {
             let mut loaded = test_loaded_item(id, 1);
             loaded.record.asset.width = 100;
             loaded.record.asset.height = 40;
+            loaded.record.visual_width = 100.0;
+            loaded.record.visual_height = 40.0;
             loaded.record.item.x = x;
             loaded.record.item.y = y;
             app.canvas.add_loaded_item(&ctx, loaded);
@@ -9106,8 +9224,8 @@ mod tests {
             file_size: 4,
             imported_at: 0,
         };
-        let record = BoardItemWithAsset {
-            item: BoardItem {
+        let record = BoardItemWithAsset::loaded(
+            BoardItem {
                 id: 1,
                 asset_id: 1,
                 x: 0.0,
@@ -9118,7 +9236,7 @@ mod tests {
                 archived: false,
             },
             asset,
-        };
+        );
         app.canvas.add_loaded_item(
             &ctx,
             LoadedCanvasItem {
@@ -9595,15 +9713,15 @@ mod tests {
 
         let active_items = library.load_board_items().unwrap();
         assert_eq!(active_items.len(), 1);
-        assert_eq!(harness.state().canvas.import_placeholder_count(), 1);
-        assert_eq!(harness.state().pending_import_batches.len(), 1);
         assert!(
             harness
                 .state()
                 .canvas
                 .record_for_item_id(active_items[0].item.id)
-                .is_none()
+                .is_some()
         );
+        assert_eq!(harness.state().canvas.import_placeholder_count(), 0);
+        assert_eq!(harness.state().pending_import_batches.len(), 0);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -9712,7 +9830,14 @@ mod tests {
         );
         harness.step();
 
-        assert_eq!(harness.state().canvas.move_preview_placeholder_count(), 2);
+        assert_eq!(
+            harness
+                .state()
+                .canvas
+                .provisional_records_in_selection_order()
+                .len(),
+            2
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -9793,7 +9918,16 @@ mod tests {
         let layout = harness
             .state()
             .canvas
-            .move_preview_placeholder_layout_items();
+            .provisional_records_in_selection_order()
+            .into_iter()
+            .map(|record| crate::data::BoardLayoutItem {
+                id: record.item.id,
+                x: record.item.x,
+                y: record.item.y,
+                width: record.scaled_visual_size().x,
+                height: record.scaled_visual_size().y,
+            })
+            .collect::<Vec<_>>();
         assert_eq!(layout.len(), 2);
         let first_size = harness
             .state()
@@ -9884,7 +10018,14 @@ mod tests {
         harness.key_press(egui::Key::Enter);
         harness.step();
 
-        assert_eq!(harness.state().canvas.move_preview_placeholder_count(), 2);
+        assert_eq!(
+            harness
+                .state()
+                .canvas
+                .provisional_records_in_selection_order()
+                .len(),
+            2
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -9990,7 +10131,14 @@ mod tests {
 
         harness.key_press(egui::Key::Enter);
         harness.step();
-        assert_eq!(harness.state().canvas.move_preview_placeholder_count(), 2);
+        assert_eq!(
+            harness
+                .state()
+                .canvas
+                .provisional_records_in_selection_order()
+                .len(),
+            2
+        );
 
         harness.hover_at(egui::pos2(900.0, 600.0));
         harness.drag_at(egui::pos2(900.0, 600.0));
@@ -10255,8 +10403,8 @@ mod tests {
                 file_size: 0,
                 imported_at: 0,
             };
-            let record = BoardItemWithAsset {
-                item: BoardItem {
+            let record = BoardItemWithAsset::loaded(
+                BoardItem {
                     id,
                     asset_id: id,
                     x,
@@ -10267,7 +10415,7 @@ mod tests {
                     archived: false,
                 },
                 asset,
-            };
+            );
             app.canvas.add_loaded_item(
                 &ctx,
                 LoadedCanvasItem {
@@ -10319,7 +10467,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_multi_file_import_batch_selects_and_compacts_real_items() {
+    fn completed_multi_file_import_batch_selects_without_mutating_geometry() {
         let ctx = egui::Context::default();
         let mut app = test_app(None);
         app.register_import_batch(app.active_board_id, egui::pos2(120.0, 80.0), vec![1, 2, 3]);
@@ -10335,8 +10483,8 @@ mod tests {
                 file_size: 4,
                 imported_at: 0,
             };
-            let record = BoardItemWithAsset {
-                item: BoardItem {
+            let record = BoardItemWithAsset::loaded(
+                BoardItem {
                     id,
                     asset_id: id,
                     x: 0.0,
@@ -10347,7 +10495,7 @@ mod tests {
                     archived: false,
                 },
                 asset,
-            };
+            );
             app.integrate_loaded_import(
                 &ctx,
                 LoadedCanvasItem {
@@ -10368,34 +10516,11 @@ mod tests {
         }
 
         assert_eq!(app.canvas.selected_item_ids(), vec![1, 2, 3]);
-        let rects = [1_i64, 2, 3]
-            .into_iter()
-            .map(|item_id| {
-                let record = app.canvas.record_for_item_id(item_id).unwrap();
-                egui::Rect::from_center_size(
-                    egui::pos2(record.item.x, record.item.y),
-                    egui::vec2(
-                        record.asset.width as f32 * record.item.scale,
-                        record.asset.height as f32 * record.item.scale,
-                    ),
-                )
-            })
-            .collect::<Vec<_>>();
-        for (index, left) in rects.iter().enumerate() {
-            for right in rects.iter().skip(index + 1) {
-                assert!(
-                    !rects_have_positive_overlap(*left, *right),
-                    "{left:?} overlaps {right:?}"
-                );
-            }
+        for item_id in [1_i64, 2, 3] {
+            let record = app.canvas.record_for_item_id(item_id).unwrap();
+            assert_eq!(record.item.x, 0.0);
+            assert_eq!(record.item.y, 0.0);
         }
-        let group_bounds = rects
-            .iter()
-            .copied()
-            .reduce(|bounds, rect| bounds.union(rect))
-            .unwrap();
-        assert!((group_bounds.center().x - 120.0).abs() < 0.1);
-        assert!((group_bounds.center().y - 80.0).abs() < 0.1);
         assert!(app.pending_import_batches.is_empty());
     }
 
@@ -10409,6 +10534,8 @@ mod tests {
         let mut third = test_loaded_item(3, app.active_board_id);
         third.record.asset.width = 140;
         third.record.asset.height = 80;
+        third.record.visual_width = 140.0;
+        third.record.visual_height = 80.0;
         third.record.item.x = 4000.0;
         third.record.item.y = -1000.0;
         app.integrate_loaded_import(&ctx, third);
@@ -10418,14 +10545,17 @@ mod tests {
         let mut first = test_loaded_item(1, app.active_board_id);
         first.record.asset.width = 90;
         first.record.asset.height = 170;
+        first.record.visual_width = 90.0;
+        first.record.visual_height = 170.0;
         first.record.item.x = -2500.0;
         first.record.item.y = 3600.0;
         app.integrate_loaded_import(&ctx, first);
 
         assert_eq!(app.canvas.selected_item_ids(), vec![3, 1]);
-        let bounds = app.canvas.selected_bounds_world().unwrap();
-        assert!((bounds.center().x - anchor.x).abs() < 0.1);
-        assert!((bounds.center().y - anchor.y).abs() < 0.1);
+        assert_eq!(app.canvas.record_for_item_id(3).unwrap().item.x, 4000.0);
+        assert_eq!(app.canvas.record_for_item_id(3).unwrap().item.y, -1000.0);
+        assert_eq!(app.canvas.record_for_item_id(1).unwrap().item.x, -2500.0);
+        assert_eq!(app.canvas.record_for_item_id(1).unwrap().item.y, 3600.0);
         assert!(app.pending_import_batches.is_empty());
     }
 
@@ -10459,6 +10589,9 @@ mod tests {
             Some((100, 80)),
             egui::Pos2::ZERO,
             test_viewport_world(),
+            crate::data::PlacementContentIntent::Unknown {
+                description: "known test import".to_owned(),
+            },
         );
         let unknown = app.reserve_import(
             &mut layout,
@@ -10466,16 +10599,21 @@ mod tests {
             None,
             egui::pos2(200.0, 0.0),
             test_viewport_world(),
+            crate::data::PlacementContentIntent::Unknown {
+                description: "unknown test import".to_owned(),
+            },
         );
 
         assert_eq!(known.target_board_id, second.id);
         assert_eq!(known.queue_id, 1);
+        assert!(known.placement_id.is_some());
         assert_eq!(known.reserved_world, Some(egui::Pos2::ZERO));
         assert_eq!(unknown.target_board_id, second.id);
         assert_eq!(unknown.queue_id, 2);
+        assert!(unknown.placement_id.is_none());
         assert_eq!(unknown.reserved_world, None);
-        assert_eq!(app.canvas.import_placeholder_count(), 1);
-        assert_eq!(layout.len(), 1);
+        assert_eq!(app.canvas.import_placeholder_count(), 0);
+        assert_eq!(layout.len(), 2);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -10734,13 +10872,6 @@ mod tests {
         harness.drop_at(to);
     }
 
-    fn rects_have_positive_overlap(left: egui::Rect, right: egui::Rect) -> bool {
-        left.left() < right.right()
-            && right.left() < left.right()
-            && left.top() < right.bottom()
-            && right.top() < left.bottom()
-    }
-
     fn temp_library_root(prefix: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "{prefix}-{}",
@@ -10775,8 +10906,8 @@ mod tests {
             file_size: 4,
             imported_at: 0,
         };
-        let record = BoardItemWithAsset {
-            item: BoardItem {
+        let record = BoardItemWithAsset::loaded(
+            BoardItem {
                 id: item_id,
                 asset_id: item_id,
                 x: 0.0,
@@ -10787,7 +10918,7 @@ mod tests {
                 archived: false,
             },
             asset,
-        };
+        );
         LoadedCanvasItem {
             target_board_id,
             queue_id: Some(item_id as u64),

@@ -15,9 +15,7 @@ pub(super) fn image_screen_size_for_record(
     record: &crate::data::BoardItemWithAsset,
     zoom: f32,
 ) -> egui::Vec2 {
-    egui::vec2(record.asset.width as f32, record.asset.height as f32)
-        * record.item.scale.max(0.01)
-        * zoom
+    record.scaled_visual_size() * zoom
 }
 
 pub(super) fn image_screen_corners_for_record(
