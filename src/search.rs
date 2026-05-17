@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
+pub(crate) mod semantic;
+
 use crate::canvas::CanvasState;
 use crate::palette::{
     ImageSearchPivot, PALETTE_GRID_MAX_HEIGHT, PALETTE_WIDTH, SEARCH_DEBOUNCE_MS,

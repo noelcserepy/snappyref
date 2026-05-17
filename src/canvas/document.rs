@@ -735,11 +735,11 @@ impl CanvasState {
         self.interaction.hover_preview_placeholders.len()
     }
 
-    pub(super) fn clear_guide_snap_indicators(&mut self) {
+    pub(crate) fn clear_guide_snap_indicators(&mut self) {
         self.interaction.guide_snap_indicators.clear();
     }
 
-    pub(super) fn set_guide_snap_indicators(&mut self, indicators: Vec<super::GuideSnapIndicator>) {
+    pub(crate) fn set_guide_snap_indicators(&mut self, indicators: Vec<super::GuideSnapIndicator>) {
         self.interaction.guide_snap_indicators = indicators;
     }
 
@@ -798,12 +798,12 @@ impl CanvasState {
             })
             .collect::<Vec<_>>();
         let Some(bounds) =
-            super::placement_movement::layout_bounds_with_offset(&items, egui::Vec2::ZERO)
+            crate::placement::movement::layout_bounds_with_offset(&items, egui::Vec2::ZERO)
         else {
             self.clear_guide_snap_indicators();
             return;
         };
-        let Some(snap_result) = super::placement_movement::compute_guide_snap_for_rect(
+        let Some(snap_result) = crate::placement::movement::compute_guide_snap_for_rect(
             self,
             screen_rect,
             bounds,
@@ -1413,7 +1413,7 @@ impl CanvasState {
         screen_rect: egui::Rect,
         now_seconds: f64,
     ) -> usize {
-        super::placement_movement::move_selected_placement_group_to_center(
+        crate::placement::movement::move_selected_placement_group_to_center(
             self,
             center_world,
             screen_rect,
@@ -1935,7 +1935,7 @@ impl CanvasState {
         )
     }
 
-    pub(super) fn selected_layout_items(&self) -> Vec<SelectedLayoutItem> {
+    pub(crate) fn selected_layout_items(&self) -> Vec<SelectedLayoutItem> {
         self.document
             .images
             .iter()

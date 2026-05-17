@@ -2,52 +2,52 @@ use eframe::egui;
 
 use super::GuideSnapIndicator;
 
-pub(super) const ACQUIRE_DISTANCE_SCREEN: f32 = 8.0;
-pub(super) const RELEASE_DISTANCE_SCREEN: f32 = 12.0;
-pub(super) const VIEWPORT_PADDING_SCREEN: f32 = 64.0;
+pub(crate) const ACQUIRE_DISTANCE_SCREEN: f32 = 8.0;
+pub(crate) const RELEASE_DISTANCE_SCREEN: f32 = 12.0;
+pub(crate) const VIEWPORT_PADDING_SCREEN: f32 = 64.0;
 const EPSILON: f32 = 0.001;
 
-pub(super) struct GuideSnapRequest<'a> {
-    pub(super) desired_rect: egui::Rect,
-    pub(super) candidates: &'a [GuideSnapCandidate],
-    pub(super) gap: f32,
-    pub(super) threshold: f32,
+pub(crate) struct GuideSnapRequest<'a> {
+    pub(crate) desired_rect: egui::Rect,
+    pub(crate) candidates: &'a [GuideSnapCandidate],
+    pub(crate) gap: f32,
+    pub(crate) threshold: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct GuideSnapCandidate {
+pub(crate) struct GuideSnapCandidate {
     visual_rect: egui::Rect,
 }
 
 impl GuideSnapCandidate {
-    pub(super) fn new(visual_rect: egui::Rect) -> Self {
+    pub(crate) fn new(visual_rect: egui::Rect) -> Self {
         Self { visual_rect }
     }
 }
 
-pub(super) struct GuideSnapResult {
-    pub(super) rect: egui::Rect,
-    pub(super) indicators: Vec<GuideSnapIndicator>,
+pub(crate) struct GuideSnapResult {
+    pub(crate) rect: egui::Rect,
+    pub(crate) indicators: Vec<GuideSnapIndicator>,
 }
 
-pub(super) struct GuideResizeSnapRequest<'a> {
-    pub(super) desired_rect: egui::Rect,
-    pub(super) anchor: egui::Pos2,
-    pub(super) base_visual_size: egui::Vec2,
-    pub(super) min_scale: f32,
-    pub(super) candidates: &'a [GuideSnapCandidate],
-    pub(super) gap: f32,
-    pub(super) threshold: f32,
+pub(crate) struct GuideResizeSnapRequest<'a> {
+    pub(crate) desired_rect: egui::Rect,
+    pub(crate) anchor: egui::Pos2,
+    pub(crate) base_visual_size: egui::Vec2,
+    pub(crate) min_scale: f32,
+    pub(crate) candidates: &'a [GuideSnapCandidate],
+    pub(crate) gap: f32,
+    pub(crate) threshold: f32,
 }
 
-pub(super) struct GuideUniformScaleSnapRequest<'a> {
-    pub(super) origin: egui::Pos2,
-    pub(super) start_rect: egui::Rect,
-    pub(super) desired_factor: f32,
-    pub(super) min_factor: f32,
-    pub(super) candidates: &'a [GuideSnapCandidate],
-    pub(super) gap: f32,
-    pub(super) threshold: f32,
+pub(crate) struct GuideUniformScaleSnapRequest<'a> {
+    pub(crate) origin: egui::Pos2,
+    pub(crate) start_rect: egui::Rect,
+    pub(crate) desired_factor: f32,
+    pub(crate) min_factor: f32,
+    pub(crate) candidates: &'a [GuideSnapCandidate],
+    pub(crate) gap: f32,
+    pub(crate) threshold: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -72,7 +72,7 @@ enum GuideSnapKind {
     GapSpacing,
 }
 
-pub(super) fn threshold_world(zoom: f32, previously_snapped: bool) -> f32 {
+pub(crate) fn threshold_world(zoom: f32, previously_snapped: bool) -> f32 {
     let threshold_screen = if previously_snapped {
         RELEASE_DISTANCE_SCREEN
     } else {
@@ -81,7 +81,7 @@ pub(super) fn threshold_world(zoom: f32, previously_snapped: bool) -> f32 {
     threshold_screen / zoom.max(0.01)
 }
 
-pub(super) fn snap_rect(request: GuideSnapRequest<'_>) -> Option<GuideSnapResult> {
+pub(crate) fn snap_rect(request: GuideSnapRequest<'_>) -> Option<GuideSnapResult> {
     if request.candidates.is_empty() {
         return None;
     }
@@ -137,7 +137,7 @@ pub(super) fn snap_rect(request: GuideSnapRequest<'_>) -> Option<GuideSnapResult
     })
 }
 
-pub(super) fn snap_resize(request: GuideResizeSnapRequest<'_>) -> Option<GuideSnapResult> {
+pub(crate) fn snap_resize(request: GuideResizeSnapRequest<'_>) -> Option<GuideSnapResult> {
     if request.candidates.is_empty() {
         return None;
     }
@@ -177,7 +177,7 @@ pub(super) fn snap_resize(request: GuideResizeSnapRequest<'_>) -> Option<GuideSn
     })
 }
 
-pub(super) fn snap_uniform_scale(
+pub(crate) fn snap_uniform_scale(
     request: GuideUniformScaleSnapRequest<'_>,
 ) -> Option<GuideSnapResult> {
     if request.candidates.is_empty() {

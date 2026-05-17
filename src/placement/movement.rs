@@ -1,8 +1,8 @@
 use eframe::egui;
 
-use super::{CanvasState, DragState, SelectedLayoutItem};
+use crate::canvas::{CanvasState, DragState, SelectedLayoutItem};
 
-pub(super) fn begin_selected_placement_drag(
+pub(crate) fn begin_selected_placement_drag(
     state: &mut CanvasState,
     pointer_world: egui::Pos2,
     now_seconds: f64,
@@ -18,7 +18,7 @@ pub(super) fn begin_selected_placement_drag(
     });
 }
 
-pub(super) fn update_selected_placement_drag(
+pub(crate) fn update_selected_placement_drag(
     state: &mut CanvasState,
     screen_rect: egui::Rect,
     pointer_world: egui::Pos2,
@@ -47,7 +47,7 @@ pub(super) fn update_selected_placement_drag(
     true
 }
 
-pub(super) fn move_selected_placement_group_to_center(
+pub(crate) fn move_selected_placement_group_to_center(
     state: &mut CanvasState,
     center_world: egui::Pos2,
     screen_rect: egui::Rect,
@@ -97,7 +97,7 @@ pub(super) fn move_selected_placement_group_to_center(
     moved
 }
 
-pub(super) fn compute_drag_snap_preview(
+pub(crate) fn compute_drag_snap_preview(
     state: &mut CanvasState,
     rect: egui::Rect,
     drag_state: &DragState,
@@ -117,7 +117,7 @@ fn compute_placement_guide_snap(
     screen_rect: egui::Rect,
     drag_state: &DragState,
     world_delta: egui::Vec2,
-) -> Option<super::guide_snap::GuideSnapResult> {
+) -> Option<crate::canvas::guide_snap::GuideSnapResult> {
     let desired_rect = layout_bounds_with_offset(&drag_state.starting_items, world_delta)?;
     let excluded_ids = drag_state
         .starting_items
@@ -133,19 +133,19 @@ fn compute_placement_guide_snap(
     )
 }
 
-pub(super) fn compute_guide_snap_for_rect(
+pub(crate) fn compute_guide_snap_for_rect(
     state: &CanvasState,
     screen_rect: egui::Rect,
     desired_rect: egui::Rect,
     excluded_ids: &[i64],
     previously_snapped: bool,
-) -> Option<super::guide_snap::GuideSnapResult> {
+) -> Option<crate::canvas::guide_snap::GuideSnapResult> {
     let candidates = guide_snap_candidate_rects(state, screen_rect, excluded_ids);
-    super::guide_snap::snap_rect(super::guide_snap::GuideSnapRequest {
+    crate::canvas::guide_snap::snap_rect(crate::canvas::guide_snap::GuideSnapRequest {
         desired_rect,
         candidates: &candidates,
         gap: state.layout_gap,
-        threshold: super::guide_snap::threshold_world(state.zoom, previously_snapped),
+        threshold: crate::canvas::guide_snap::threshold_world(state.zoom, previously_snapped),
     })
 }
 
@@ -153,7 +153,7 @@ fn guide_snap_candidate_rects(
     state: &CanvasState,
     screen_rect: egui::Rect,
     excluded_item_ids: &[i64],
-) -> Vec<super::guide_snap::GuideSnapCandidate> {
+) -> Vec<crate::canvas::guide_snap::GuideSnapCandidate> {
     let viewport = viewport_near_world_rect(state, screen_rect);
     state
         .document
@@ -162,7 +162,7 @@ fn guide_snap_candidate_rects(
         .filter(|image| !excluded_item_ids.contains(&image.record.item.id))
         .filter_map(|image| {
             let scaled_size = image.record.scaled_visual_size();
-            let visual_size = super::rotated_visual_size(
+            let visual_size = crate::canvas::rotated_visual_size(
                 scaled_size.x,
                 scaled_size.y,
                 image.record.item.rotation,
@@ -172,20 +172,20 @@ fn guide_snap_candidate_rects(
                 visual_size,
             );
             rect.intersects(viewport)
-                .then_some(super::guide_snap::GuideSnapCandidate::new(rect))
+                .then_some(crate::canvas::guide_snap::GuideSnapCandidate::new(rect))
         })
         .collect()
 }
 
 fn viewport_near_world_rect(state: &CanvasState, screen_rect: egui::Rect) -> egui::Rect {
-    let expanded = screen_rect.expand(super::guide_snap::VIEWPORT_PADDING_SCREEN);
+    let expanded = screen_rect.expand(crate::canvas::guide_snap::VIEWPORT_PADDING_SCREEN);
     egui::Rect::from_two_pos(
         state.screen_to_world(expanded.min, screen_rect),
         state.screen_to_world(expanded.max, screen_rect),
     )
 }
 
-pub(super) fn layout_bounds_with_offset(
+pub(crate) fn layout_bounds_with_offset(
     items: &[SelectedLayoutItem],
     offset: egui::Vec2,
 ) -> Option<egui::Rect> {

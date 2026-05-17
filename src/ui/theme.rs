@@ -1,6 +1,6 @@
 use eframe::egui::{self, FontData, FontDefinitions, FontFamily, FontId, TextStyle};
 
-const DM_SANS_VARIABLE: &[u8] = include_bytes!("../assets/fonts/DMSans-Variable.ttf");
+const DM_SANS_VARIABLE: &[u8] = include_bytes!("../../assets/fonts/DMSans-Variable.ttf");
 
 const SHELL_BG: egui::Color32 = color(0x0A, 0x0A, 0x0A);
 const PANEL_BG: egui::Color32 = color(0x16, 0x15, 0x14);

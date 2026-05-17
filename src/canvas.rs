@@ -2,9 +2,8 @@ use std::sync::{Arc, Mutex};
 
 mod document;
 mod geometry;
-mod guide_snap;
+pub(crate) mod guide_snap;
 mod interaction;
-mod placement_movement;
 mod render;
 mod state;
 
@@ -60,13 +59,13 @@ const COMPACT_NORMALIZE_OCCUPANCY_GAIN: f32 = 0.025;
 
 pub struct CanvasState {
     pan: egui::Vec2,
-    zoom: f32,
+    pub(crate) zoom: f32,
     background: CanvasBackground,
-    layout_gap: f32,
+    pub(crate) layout_gap: f32,
     rotation_snap_degrees: f32,
     pointer_mode: crate::data::PointerMode,
-    document: CanvasDocumentState,
-    interaction: CanvasInteractionState,
+    pub(crate) document: CanvasDocumentState,
+    pub(crate) interaction: CanvasInteractionState,
     render: CanvasRenderState,
 }
 
@@ -159,8 +158,8 @@ struct AnnotationPaintStats {
 }
 
 #[derive(Clone)]
-struct CanvasImage {
-    record: BoardItemWithAsset,
+pub(crate) struct CanvasImage {
+    pub(crate) record: BoardItemWithAsset,
     texture: CanvasTexture,
     loaded_lod: CanvasImageLod,
     animation: Option<AnimatedCanvasImage>,
@@ -279,12 +278,12 @@ fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
 "#;
 
 #[derive(Clone, Debug)]
-struct SelectedLayoutItem {
-    id: i64,
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
+pub(crate) struct SelectedLayoutItem {
+    pub(crate) id: i64,
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -318,14 +317,14 @@ struct ImageScaleStart {
 }
 
 #[derive(Clone)]
-struct DragState {
-    pointer_start_world: egui::Pos2,
-    starting_items: Vec<SelectedLayoutItem>,
-    snap_preview_rect_world: Option<egui::Rect>,
-    started_at_seconds: f64,
-    last_movement_seconds: f64,
-    last_world_delta: egui::Vec2,
-    moved: bool,
+pub(crate) struct DragState {
+    pub(crate) pointer_start_world: egui::Pos2,
+    pub(crate) starting_items: Vec<SelectedLayoutItem>,
+    pub(crate) snap_preview_rect_world: Option<egui::Rect>,
+    pub(crate) started_at_seconds: f64,
+    pub(crate) last_movement_seconds: f64,
+    pub(crate) last_world_delta: egui::Vec2,
+    pub(crate) moved: bool,
 }
 
 #[derive(Clone)]
@@ -529,11 +528,15 @@ impl CanvasState {
             last_world_delta: egui::Vec2::ZERO,
             moved: false,
         };
-        let snap_preview_rect =
-            placement_movement::compute_drag_snap_preview(self, rect, &drag_state, world_delta);
+        let snap_preview_rect = crate::placement::movement::compute_drag_snap_preview(
+            self,
+            rect,
+            &drag_state,
+            world_delta,
+        );
         let snap_offset = snap_preview_rect
             .and_then(|snap_rect| {
-                placement_movement::layout_bounds_with_offset(
+                crate::placement::movement::layout_bounds_with_offset(
                     &drag_state.starting_items,
                     world_delta,
                 )
@@ -774,7 +777,7 @@ fn intervals_within_gap(
     left_min <= right_max + gap && right_min <= left_max + gap
 }
 
-fn rotated_visual_size(width: f32, height: f32, rotation: f32) -> egui::Vec2 {
+pub(crate) fn rotated_visual_size(width: f32, height: f32, rotation: f32) -> egui::Vec2 {
     let sin = rotation.sin().abs();
     let cos = rotation.cos().abs();
     egui::vec2(width * cos + height * sin, width * sin + height * cos)

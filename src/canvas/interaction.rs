@@ -260,7 +260,7 @@ pub(super) fn handle_input(
 
                     let pointer_world = state.screen_to_world(pointer_pos, rect);
                     let now = ui.input(|input| input.time);
-                    super::placement_movement::begin_selected_placement_drag(
+                    crate::placement::movement::begin_selected_placement_drag(
                         state,
                         pointer_world,
                         now,
@@ -509,7 +509,7 @@ pub(super) fn handle_input(
         let pointer_world = state.screen_to_world(pointer_pos, rect);
         let guide_snap_disabled = ui.input(|input| guide_snap_disabled(input.modifiers));
         let now = ui.input(|input| input.time);
-        super::placement_movement::update_selected_placement_drag(
+        crate::placement::movement::update_selected_placement_drag(
             state,
             rect,
             pointer_world,
@@ -1905,7 +1905,6 @@ pub(super) fn pending_annotation_from_draft(
 
 #[cfg(test)]
 mod tests {
-    use super::super::placement_movement::{compute_drag_snap_preview, layout_bounds_with_offset};
     use super::{
         ImageTransformState, animate_mouse_wheel_zoom_around_pointer, begin_image_drag_scale,
         begin_image_rotation, compute_uniform_scale_snap_preview, image_drag_scale_factor,
@@ -1918,6 +1917,7 @@ mod tests {
         CanvasAnnotationKind, CanvasImageLod, CanvasStrokeWidth, CanvasTextSize, ImageAsset,
     };
     use crate::jobs::{ImportOrigin, ImportedPreviewTexture, LoadedCanvasItem};
+    use crate::placement::movement::{compute_drag_snap_preview, layout_bounds_with_offset};
     use eframe::egui;
     use std::path::PathBuf;
 

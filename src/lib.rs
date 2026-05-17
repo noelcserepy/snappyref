@@ -1,41 +1,48 @@
-mod active_board_commands;
-mod active_board_load;
+mod active_board;
 mod app;
-mod board_switch;
 mod canvas;
-mod clipboard_copy;
-mod content_resolution;
-mod crop_flow;
 mod data;
-#[cfg(debug_assertions)]
-mod design_system_preview;
-mod document_persistence;
-mod drop_intake;
-mod history;
-mod import_intake;
 mod jobs;
-mod library_location;
+mod library;
 #[cfg(feature = "semantic-search")]
 mod model_store;
-mod native_capture;
-mod native_drop;
 #[cfg(feature = "semantic-search")]
 mod palette;
 mod perf;
-mod placement_creation;
-mod placement_lifecycle;
-mod pureref_clipboard;
-mod residency;
-mod screenshot;
+mod placement;
+mod platform;
 #[cfg(feature = "semantic-search")]
 mod search;
-#[cfg(feature = "semantic-search")]
-mod semantic_search;
-mod sidebar;
-mod storage;
-mod theme;
-mod ui_layout;
+mod sources;
+mod ui;
 pub mod updater;
+
+pub(crate) use active_board::commands as active_board_commands;
+pub(crate) use active_board::history;
+pub(crate) use active_board::load as active_board_load;
+pub(crate) use active_board::persistence as document_persistence;
+pub(crate) use active_board::switch as board_switch;
+pub(crate) use library::location as library_location;
+pub(crate) use library::residency;
+pub(crate) use library::storage;
+pub(crate) use placement::content_resolution;
+pub(crate) use placement::creation as placement_creation;
+pub(crate) use placement::lifecycle as placement_lifecycle;
+pub(crate) use platform::capture as native_capture;
+pub(crate) use platform::drop as native_drop;
+#[cfg(feature = "semantic-search")]
+pub(crate) use search::semantic as semantic_search;
+pub(crate) use sources::clipboard as clipboard_copy;
+pub(crate) use sources::crop as crop_flow;
+pub(crate) use sources::drop as drop_intake;
+pub(crate) use sources::import as import_intake;
+pub(crate) use sources::pureref as pureref_clipboard;
+pub(crate) use sources::screenshot;
+#[cfg(debug_assertions)]
+pub(crate) use ui::design_system_preview;
+pub(crate) use ui::layout as ui_layout;
+pub(crate) use ui::sidebar;
+pub(crate) use ui::theme;
 
 pub fn run() -> eframe::Result<()> {
     #[cfg(target_os = "windows")]
