@@ -2,6 +2,7 @@ use eframe::egui;
 
 mod annotation;
 mod placement_transform;
+mod selection;
 mod textbox;
 mod viewport;
 
@@ -15,6 +16,10 @@ pub(super) use placement_transform::{
     hit_test_selected_image_rotation_handle, image_drag_scale_factor, image_resize_cursor_icon,
     image_screen_rect, resized_image_transform, rotate_vec2, rotated_image_delta,
     scaled_image_transforms, selected_image_rotation_handle_screen_pos,
+};
+pub(super) use selection::{
+    begin_marquee_selection, hit_test_canvas_item, open_context_menu_at_pointer,
+    update_marquee_selection,
 };
 pub(super) use textbox::{
     handle_textbox_primary_press, hit_test_textbox_resize_handle, moved_textbox_rect,
@@ -37,7 +42,7 @@ use super::{
     AnnotationDraftState, CanvasHit, CanvasState, CropState, ImageTransformState,
     TEXTBOX_DRAG_THRESHOLD_SCREEN, TextboxPointerRegion, TextboxTransformState,
 };
-use crate::data::{CanvasAnnotationKind, CanvasStackItem};
+use crate::data::CanvasAnnotationKind;
 
 // Suppresses drag movement (and guide snapping) for the first 90ms after
 // primary-press on a placement so click-to-select doesn't jerk the image via
@@ -289,19 +294,7 @@ pub(super) fn handle_input(
                 }
             }
         } else {
-            state.interaction.drag_state = None;
-            state.interaction.image_transform_state = None;
-            state.interaction.textbox_transform_state = None;
-            state.interaction.annotation_drag_state = None;
-            if !shift_held {
-                state.clear_selection();
-            }
-            state.interaction.marquee_state = Some(super::MarqueeState {
-                start_screen: pointer_pos,
-                current_screen: pointer_pos,
-            });
-            state.interaction.crop_state = None;
-            state.interaction.annotation_draft_state = None;
+            begin_marquee_selection(state, pointer_pos, shift_held);
         }
     }
 
@@ -609,30 +602,11 @@ pub(super) fn handle_input(
 
     if state.interaction.crop_state.is_none()
         && state.interaction.annotation_draft_state.is_none()
-        && let Some(marquee_state) = &mut state.interaction.marquee_state
+        && state.interaction.marquee_state.is_some()
         && ui.input(|i| i.pointer.primary_down())
         && let Some(pointer_pos) = pointer_pos
     {
-        marquee_state.current_screen = pointer_pos;
-        let selection_rect =
-            egui::Rect::from_two_pos(marquee_state.start_screen, marquee_state.current_screen);
-        let selected = state
-            .document
-            .images
-            .iter()
-            .filter(|image| image_screen_rect(state, rect, image).intersects(selection_rect))
-            .map(|image| image.record.item.id)
-            .collect::<Vec<_>>();
-        let selected_annotation_ids = state
-            .document
-            .annotations
-            .iter()
-            .filter(|annotation| {
-                annotation_screen_rect(state, rect, annotation).intersects(selection_rect)
-            })
-            .map(|annotation| annotation.id)
-            .collect::<Vec<_>>();
-        state.set_marquee_selection(selected, selected_annotation_ids, shift_held);
+        update_marquee_selection(state, rect, pointer_pos, shift_held);
     }
 
     if !pointer_in_canvas_rect {
@@ -669,40 +643,6 @@ pub(super) fn handle_input(
     apply_canvas_navigation(ui, state, rect, pointer_pos);
 }
 
-pub(super) fn open_context_menu_at_pointer(
-    state: &mut CanvasState,
-    rect: egui::Rect,
-    pointer_pos: egui::Pos2,
-) {
-    if let Some(hit) = hit_test_canvas_item(state, rect, pointer_pos) {
-        match hit {
-            CanvasHit::Annotation(annotation_id) => {
-                if !state.is_annotation_selected(annotation_id) {
-                    state.finish_textbox_edit();
-                    state.document.selected_item_ids.clear();
-                    state.document.selected_annotation_ids = vec![annotation_id];
-                }
-            }
-            CanvasHit::Placement(item_id) => {
-                if !state.is_selected(item_id) {
-                    state.set_single_selection(item_id);
-                }
-            }
-        }
-    }
-
-    state.interaction.drag_state = None;
-    state.interaction.annotation_drag_state = None;
-    state.interaction.image_transform_state = None;
-    state.interaction.textbox_transform_state = None;
-    state.interaction.marquee_state = None;
-    state.interaction.crop_state = None;
-    state.interaction.annotation_draft_state = None;
-    state.interaction.pending_context_menu_request = Some(super::CanvasContextMenuRequest {
-        screen_pos: pointer_pos,
-    });
-}
-
 fn drawing_annotation_kind(ui: &egui::Ui) -> Option<CanvasAnnotationKind> {
     if ui.ctx().egui_wants_keyboard_input() {
         return None;
@@ -735,35 +675,6 @@ fn hit_test_image(state: &CanvasState, rect: egui::Rect, pointer_pos: egui::Pos2
             )
         })
         .map(|image| image.record.item.id)
-}
-
-pub(super) fn hit_test_canvas_item(
-    state: &CanvasState,
-    rect: egui::Rect,
-    pointer_pos: egui::Pos2,
-) -> Option<CanvasHit> {
-    state
-        .ordered_canvas_items_back_to_front()
-        .into_iter()
-        .rev()
-        .find_map(|item| match item {
-            CanvasStackItem::Placement(item_id) => state
-                .image_by_item_id(item_id)
-                .filter(|image| {
-                    image_contains_screen_point(
-                        &image.record,
-                        pointer_pos,
-                        state.pan,
-                        state.zoom,
-                        rect.center(),
-                    )
-                })
-                .map(|_| CanvasHit::Placement(item_id)),
-            CanvasStackItem::Annotation(annotation_id) => state
-                .annotation_by_id(annotation_id)
-                .filter(|annotation| annotation_hit_test(state, rect, annotation, pointer_pos))
-                .map(|_| CanvasHit::Annotation(annotation_id)),
-        })
 }
 
 #[cfg(test)]
