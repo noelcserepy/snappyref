@@ -6,9 +6,6 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 use crate::canvas::CanvasState;
-use crate::data::{
-    BoardItem, BoardItemWithAsset, PlacementContent, PlacementContentIntent, PlacementLifecycle,
-};
 use crate::palette::{
     ImageSearchPivot, PALETTE_GRID_MAX_HEIGHT, PALETTE_WIDTH, SEARCH_DEBOUNCE_MS,
     SEARCH_OVERLAY_TOP_MARGIN, SEARCH_RESULT_PAGE_SIZE, SearchOverlayState, SearchOverlayStatus,
@@ -20,9 +17,9 @@ use crate::palette::{
 use crate::semantic_search::SemanticSearchInstallProgress;
 use crate::semantic_search::{
     DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, LocalModelStoreStatus,
-    SearchQueryResult, SearchResultGroup, SearchScope, SemanticSearchConfig,
-    SemanticSearchInstallController, SemanticSearchInstallDisplay, SemanticSearchInstallSnapshot,
-    SemanticSearchService, default_local_model_store_status,
+    SearchQueryResult, SearchScope, SemanticSearchConfig, SemanticSearchInstallController,
+    SemanticSearchInstallDisplay, SemanticSearchInstallSnapshot, SemanticSearchService,
+    default_local_model_store_status,
 };
 #[cfg(not(test))]
 use crate::semantic_search::{
@@ -694,7 +691,7 @@ impl SearchController {
             .is_some_and(|rect| rect.contains(pointer_pos))
     }
 
-    pub(crate) fn add_to_canvas_placement_pending(&self) -> bool {
+    pub(crate) fn placement_creation_pending(&self) -> bool {
         self.overlay
             .drag_state
             .as_ref()
@@ -1538,7 +1535,7 @@ impl SearchController {
 
     fn cancel_pending_placement(&mut self, canvas: &mut CanvasState) {
         self.overlay.drag_state = None;
-        canvas.remove_provisional_items();
+        crate::placement_lifecycle::cancel_provisional_batch(canvas);
     }
 
     fn create_search_provisional_placements(
@@ -1550,39 +1547,13 @@ impl SearchController {
         screen_rect: egui::Rect,
         placement_preview_config: SearchPlacementPreviewConfig,
     ) {
-        canvas.remove_provisional_items();
-        let mut provisional_ids = Vec::new();
-        let mut next_id = canvas.next_provisional_item_id();
-        let source_records = item_ids
+        let mut source_intents = item_ids
             .iter()
             .filter_map(|item_id| canvas.record_for_item_id(*item_id))
+            .map(crate::placement_creation::ProvisionalSourceIntent::ExistingPlacement)
             .collect::<Vec<_>>();
-        let source_center = source_center_for_records(&source_records).unwrap_or(anchor_world);
-        let delta = anchor_world - source_center;
 
-        for source in source_records {
-            let mut record = source.clone();
-            record.item.id = next_id;
-            record.item.x = source.item.x + delta.x;
-            record.item.y = source.item.y + delta.y;
-            record.item.z_index = next_id as i32;
-            record.lifecycle = PlacementLifecycle::Provisional;
-            canvas.add_provisional_reference_item(record);
-            provisional_ids.push(next_id);
-            next_id -= 1;
-        }
-
-        let sizes = self.asset_provisional_sizes(
-            asset_ids,
-            placement_preview_config.import_target_canvas_area,
-        );
-        let centers = canvas.compact_guided_preview_placeholders(
-            &sizes,
-            anchor_world,
-            screen_rect,
-            placement_preview_config.import_gap,
-        );
-        for (asset_id, (center_world, _size_world)) in asset_ids.iter().zip(centers) {
+        for asset_id in asset_ids {
             let (width, height) = self
                 .overlay
                 .results
@@ -1590,46 +1561,25 @@ impl SearchController {
                 .find(|group| group.asset_id == *asset_id)
                 .map(|group| (group.asset_width.max(1), group.asset_height.max(1)))
                 .unwrap_or((1, 1));
-            let scale = crate::jobs::initial_import_scale(
-                width,
-                height,
-                true,
-                placement_preview_config.import_target_canvas_area,
-            );
-            let asset = BoardItemWithAsset::placeholder_asset(
-                next_id,
-                format!("search-asset-{asset_id}"),
-                width,
-                height,
-            );
-            let record = BoardItemWithAsset {
-                item: BoardItem {
-                    id: next_id,
+            source_intents.push(
+                crate::placement_creation::ProvisionalSourceIntent::ExistingAsset {
                     asset_id: *asset_id,
-                    x: center_world.x,
-                    y: center_world.y,
-                    scale,
-                    rotation: 0.0,
-                    z_index: next_id as i32,
-                    archived: false,
+                    label: format!("search-asset-{asset_id}"),
+                    dimensions: (width, height),
                 },
-                asset,
-                content: PlacementContent::Loading {
-                    intent: PlacementContentIntent::SearchAsset {
-                        asset_id: *asset_id,
-                    },
-                    status_message: Some("Loading".to_owned()),
-                },
-                lifecycle: PlacementLifecycle::Provisional,
-                visual_width: width as f32,
-                visual_height: height as f32,
-            };
-            canvas.add_provisional_unloaded_item(record);
-            provisional_ids.push(next_id);
-            next_id -= 1;
+            );
         }
 
-        canvas.select_items(&provisional_ids);
+        crate::placement_lifecycle::start_provisional_batch(
+            canvas,
+            source_intents,
+            anchor_world,
+            screen_rect,
+            crate::placement_creation::PlacementCreationSettings {
+                target_canvas_area: placement_preview_config.import_target_canvas_area,
+                gap: placement_preview_config.import_gap,
+            },
+        );
     }
 
     fn selected_result_item_ids(&self) -> Vec<i64> {
@@ -1684,23 +1634,6 @@ impl SearchController {
         } else {
             asset_ids
         }
-    }
-
-    fn asset_provisional_sizes(
-        &self,
-        asset_ids: &[i64],
-        target_canvas_area: f32,
-    ) -> Vec<egui::Vec2> {
-        asset_ids
-            .iter()
-            .filter_map(|asset_id| {
-                self.overlay
-                    .results
-                    .iter()
-                    .find(|group| group.asset_id == *asset_id)
-            })
-            .map(|group| asset_provisional_size(group, target_canvas_area))
-            .collect()
     }
 
     fn all_unplaced_result_asset_ids(&self) -> Vec<i64> {
@@ -2062,29 +1995,6 @@ fn normalized_recent_searches(recent_searches: Vec<String>) -> Vec<String> {
     normalized
 }
 
-fn asset_provisional_size(group: &SearchResultGroup, target_canvas_area: f32) -> egui::Vec2 {
-    crate::add_to_canvas::preview_size_for_dimensions(
-        group.asset_width,
-        group.asset_height,
-        target_canvas_area,
-    )
-}
-
-fn source_center_for_records(records: &[BoardItemWithAsset]) -> Option<egui::Pos2> {
-    let mut min = egui::pos2(f32::INFINITY, f32::INFINITY);
-    let mut max = egui::pos2(f32::NEG_INFINITY, f32::NEG_INFINITY);
-    let mut found = false;
-    for record in records {
-        found = true;
-        let half_size = record.scaled_visual_size() * 0.5;
-        min.x = min.x.min(record.item.x - half_size.x);
-        min.y = min.y.min(record.item.y - half_size.y);
-        max.x = max.x.max(record.item.x + half_size.x);
-        max.y = max.y.max(record.item.y + half_size.y);
-    }
-    found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))
-}
-
 fn update_search_placement_preview(
     ctx: &egui::Context,
     canvas: &mut CanvasState,
@@ -2105,13 +2015,14 @@ fn update_search_placement_preview(
         );
         drag.placement_pending = true;
     } else {
-        canvas.center_selected_placements_on(pointer_world);
+        let now_seconds = ctx.input(|input| input.time);
+        canvas.move_selected_placement_group_to_center(pointer_world, screen_rect, now_seconds);
     }
 
     let preview_bounds = canvas.selected_bounds_world();
     if !drag.auto_fit_applied
         && let Some(bounds) = preview_bounds
-        && crate::add_to_canvas::fit_preview_bounds_if_needed(
+        && crate::placement_creation::fit_selection_bounds_if_needed(
             canvas,
             bounds,
             screen_rect,
@@ -2136,6 +2047,7 @@ mod tests {
         pending_placement_commit_intent, result_is_on_bottom_row,
     };
     use crate::canvas::CanvasState;
+    use crate::data::{BoardItem, BoardItemWithAsset};
     use crate::semantic_search::{
         LocalModelStoreStatus, SearchQueryResult, SearchResultGroup, SearchScope,
         SemanticSearchInstallProgress,
@@ -2493,6 +2405,163 @@ mod tests {
         rows.dedup();
         assert_eq!(layout.len(), 5);
         assert!(rows.len() > 1);
+    }
+
+    #[test]
+    fn search_item_drag_compacts_far_apart_source_placements() {
+        let mut canvas = CanvasState::default();
+        let mut search = SearchController::default();
+        let source_positions = [
+            egui::pos2(-800.0, -600.0),
+            egui::pos2(900.0, -420.0),
+            egui::pos2(-500.0, 350.0),
+            egui::pos2(700.0, 720.0),
+            egui::pos2(0.0, 1300.0),
+        ];
+        for (index, position) in source_positions.iter().enumerate() {
+            let item_id = 100 + index as i64;
+            let asset_id = 10 + index as i64;
+            let asset = BoardItemWithAsset::placeholder_asset(item_id, "search-result", 200, 100);
+            canvas.add_unloaded_item(BoardItemWithAsset::loaded(
+                BoardItem {
+                    id: item_id,
+                    asset_id,
+                    x: position.x,
+                    y: position.y,
+                    scale: 0.5,
+                    rotation: 0.0,
+                    z_index: index as i32,
+                    archived: false,
+                },
+                asset,
+            ));
+            search.overlay.results.push(SearchResultGroup {
+                asset_id,
+                asset_preview_path: None,
+                asset_original_path: None,
+                asset_width: 200,
+                asset_height: 100,
+                similarity: 0.9,
+                item_ids: vec![item_id],
+                instance_count: 1,
+            });
+        }
+        search.overlay.result_selection.range_to(4);
+        let mut drag = crate::palette::SearchResultDragState {
+            item_ids: vec![100, 101, 102, 103, 104],
+            asset_ids: Vec::new(),
+            outside_overlay: true,
+            placement_pending: false,
+            auto_fit_applied: false,
+        };
+
+        let ctx = egui::Context::default();
+        super::update_search_placement_preview(
+            &ctx,
+            &mut canvas,
+            &search,
+            &mut drag,
+            egui::pos2(400.0, 300.0),
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)),
+            super::SearchPlacementPreviewConfig {
+                import_target_canvas_area: 10_000.0,
+                import_gap: crate::theme::SPACE_2,
+                visible_canvas_rect: egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 800.0),
+                ),
+            },
+        );
+
+        let bounds = canvas
+            .selected_bounds_world()
+            .expect("expected provisional search placement bounds");
+        assert_eq!(canvas.provisional_records_in_selection_order().len(), 5);
+        assert!(
+            bounds.width() < 360.0 && bounds.height() < 360.0,
+            "expected compact search drag preview, got bounds {bounds:?}"
+        );
+    }
+
+    #[test]
+    fn search_drag_updates_snap_guides_after_provisional_placement_exists() {
+        let mut canvas = CanvasState::default();
+        canvas.set_layout_gap(24.0);
+        let target_asset = BoardItemWithAsset::placeholder_asset(900, "snap-target", 100, 100);
+        canvas.add_unloaded_item(BoardItemWithAsset::loaded(
+            BoardItem {
+                id: 900,
+                asset_id: 900,
+                x: 0.0,
+                y: 0.0,
+                scale: 1.0,
+                rotation: 0.0,
+                z_index: 0,
+                archived: false,
+            },
+            target_asset,
+        ));
+
+        let mut search = SearchController::default();
+        search.overlay.results = (1..=2)
+            .map(|asset_id| SearchResultGroup {
+                asset_id,
+                asset_preview_path: None,
+                asset_original_path: None,
+                asset_width: 100,
+                asset_height: 100,
+                similarity: 0.9,
+                item_ids: Vec::new(),
+                instance_count: 0,
+            })
+            .collect();
+        let mut drag = crate::palette::SearchResultDragState {
+            item_ids: Vec::new(),
+            asset_ids: vec![1, 2],
+            outside_overlay: true,
+            placement_pending: false,
+            auto_fit_applied: false,
+        };
+        let ctx = egui::Context::default();
+        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
+        let placement_preview_config = super::SearchPlacementPreviewConfig {
+            import_target_canvas_area: 10_000.0,
+            import_gap: crate::theme::SPACE_2,
+            visible_canvas_rect: screen_rect,
+        };
+
+        super::update_search_placement_preview(
+            &ctx,
+            &mut canvas,
+            &search,
+            &mut drag,
+            egui::pos2(400.0, 0.0),
+            screen_rect,
+            placement_preview_config,
+        );
+        assert_eq!(canvas.guide_snap_indicator_count(), 0);
+        let initial_bounds = canvas
+            .selected_bounds_world()
+            .expect("expected provisional search placement bounds");
+        let snap_center_x = 50.0 + 24.0 + initial_bounds.width() * 0.5 - 2.0;
+        ctx.input_mut(|input| {
+            input.time = 10.0;
+        });
+
+        super::update_search_placement_preview(
+            &ctx,
+            &mut canvas,
+            &search,
+            &mut drag,
+            egui::pos2(snap_center_x, 0.0),
+            screen_rect,
+            placement_preview_config,
+        );
+
+        assert_eq!(canvas.guide_snap_indicator_count(), 1);
+        assert!(canvas.guide_snap_mark_count() > 0);
+        assert!(!canvas.selection_border_visible_for_test(10.5));
+        assert!(canvas.selection_border_visible_for_test(12.1));
     }
 
     #[test]

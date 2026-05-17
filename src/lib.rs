@@ -1,10 +1,10 @@
 mod active_board_commands;
 mod active_board_load;
-mod add_to_canvas;
 mod app;
 mod board_switch;
 mod canvas;
 mod clipboard_copy;
+mod content_resolution;
 mod crop_flow;
 mod data;
 #[cfg(debug_assertions)]
@@ -22,6 +22,8 @@ mod native_drop;
 #[cfg(feature = "semantic-search")]
 mod palette;
 mod perf;
+mod placement_creation;
+mod placement_lifecycle;
 mod pureref_clipboard;
 mod residency;
 mod screenshot;

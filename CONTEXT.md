@@ -50,6 +50,26 @@ _Avoid_: Grid snapping, layout snapping, arrangement snapping
 A modifier primary-drag that scales the Placement under the pointer, or all selected Placements when the drag starts on a selected Placement, around the selected Placement group center.
 _Avoid_: Image zoom, canvas zoom, resize tool
 
+**Placement Movement**:
+The shared Placement transform flow for selected or newly created Placements. It owns selected Placement drag start/update state, Guide Snapping during movement, movement timestamps used by the Selection Border, and transform mutation for all Placement Content States and lifecycle states.
+_Avoid_: Search drag preview, placeholder movement, import movement path
+
+**Source Intent**:
+A pre-Placement request to create canvas content from an external file, URL, clipboard payload, Search result, existing Asset, or existing Placement. A Source Intent describes what content should be created and any source metadata needed for resolution; it is not a canvas object, has no Placement identity, and does not participate in movement, selection, Stack Order, persistence, or Document History.
+_Avoid_: PlacementDraft, pending Placement, placeholder object
+
+**Placement Creation**:
+The shared domain flow that turns Source Intents into real Placements immediately. It chooses initial visual dimensions and layout, creates Placements with the correct Placement Content State and lifecycle state, selects them when appropriate, and emits any content-resolution work for unresolved sources. After creation, Placement Movement owns movement and Content Resolution owns async loading.
+_Avoid_: Add-to-Canvas module, Search placement path, import placement path
+
+**Placement Lifecycle**:
+The shared flow for provisional-vs-committed Placement behavior. It owns starting provisional Placement batches, committing provisional Placements into durable document content, cancelling provisional Placements history-neutral, and clearing provisional state after commit/cancel. Source adapters such as Search decide user intent, but do not directly mutate provisional lifecycle state.
+_Avoid_: Search placement mode internals, provisional cleanup helper, pending draft lifecycle
+
+**Content Resolution**:
+The async content-loading flow for Placements whose content is not loaded yet. It owns runtime queue id to Placement id correlation, source-specific worker request construction, completion/failure correlation, and cleanup for pending resolution work. Content Resolution may change a Placement's content state from loading to loaded or failed, but must not change Placement geometry.
+_Avoid_: Import reservation, placeholder completion, worker-owned Placement state
+
 **Selection Border**:
 The outline that shows the current canvas selection; it hides while a placement is moving and reappears after the movement pauses or the drag ends.
 _Avoid_: Drag guide, snap outline
@@ -67,8 +87,8 @@ The board-world point that records where an async batch of loading Placements wa
 _Avoid_: Placeholder center, batch center, drop position
 
 **Add-to-Canvas**:
-The shared flow for adding content to the Active Board, whether the source is an external import, an existing Asset from Search, or a duplicated existing Placement. It creates normal Placements immediately, with the appropriate Placement Content State, and starts any source-specific work needed to resolve loading content. Movement, selection, Guide Snapping, Stack Order, and Document History remain Placement behavior.
-_Avoid_: Search drop special case, import-only placement path
+User-facing wording for commands that add content to the Active Board. Architecture should use Placement Creation for the domain flow and Source Intent for pre-Placement input. Add-to-Canvas should not become a separate deep Module name.
+_Avoid_: Placement Creation, Source Intent, PlacementDraft
 
 **Dense Compact Layout**:
 The compact arrangement objective for selected placements: minimize visible holes first, then prefer a rough square when density is close. Squareness should decide only when candidate occupancy is roughly within three percentage points. Compact arrangement is placement-only: it may reorder selected placements and change their positions, but it preserves authored scale and rotation. The packed block should keep clean top and left edges; right-edge cleanliness is only a soft tie-break among near-equivalent candidates.
@@ -438,6 +458,10 @@ _Avoid_: Permanent delete, delete file
 Deprecated term for the visual rendering of a loading Placement. Do not model import placeholders as separate canvas items; use Placement Content State instead.
 _Avoid_: Temporary item, pending asset, placeholder item
 
+**PlacementDraft**:
+Deprecated planning term. Do not introduce a domain object named PlacementDraft. Before creation, content is a Source Intent; after creation, it is a Placement in a lifecycle and content state. Any intermediate layout calculation should stay a private implementation detail of Placement Creation.
+_Avoid_: Planned Placement, provisional draft, pending Placement
+
 ### Asset lifecycle
 
 **Archived Asset**:
@@ -518,6 +542,9 @@ _Avoid_: Release asset, build cache
 - A **Placement** belongs to exactly one **Board** and has one **Placement Content State**.
 - A loaded **Placement** references exactly one **Asset**.
 - A loading or failed **Placement** may not yet reference an **Asset**.
+- A **Source Intent** is not a **Placement** and does not belong to **Stack Order** or **Document History**.
+- **Placement Creation** turns **Source Intents** into **Placements** immediately; there is no domain-level **PlacementDraft** between them.
+- **Placement Lifecycle** owns when provisional Placements become committed document content or are discarded history-neutral.
 - An **Asset** can have zero or more **Placements**.
 - A **Board** can have zero or more **Placements** and zero or more **Annotations**.
 - An **Annotation** belongs to exactly one **Board** and does not belong to the **Library**.

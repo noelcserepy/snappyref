@@ -797,13 +797,19 @@ impl CanvasState {
                 height: size.y,
             })
             .collect::<Vec<_>>();
-        let Some(bounds) = layout_bounds_with_offset(&items, egui::Vec2::ZERO) else {
+        let Some(bounds) =
+            super::placement_movement::layout_bounds_with_offset(&items, egui::Vec2::ZERO)
+        else {
             self.clear_guide_snap_indicators();
             return;
         };
-        let Some(snap_result) =
-            super::interaction::compute_guide_snap_for_rect(self, screen_rect, bounds, &[], false)
-        else {
+        let Some(snap_result) = super::placement_movement::compute_guide_snap_for_rect(
+            self,
+            screen_rect,
+            bounds,
+            &[],
+            false,
+        ) else {
             self.clear_guide_snap_indicators();
             return;
         };
@@ -1399,6 +1405,30 @@ impl CanvasState {
         }
 
         moved_ids.len()
+    }
+
+    pub fn move_selected_placement_group_to_center(
+        &mut self,
+        center_world: egui::Pos2,
+        screen_rect: egui::Rect,
+        now_seconds: f64,
+    ) -> usize {
+        super::placement_movement::move_selected_placement_group_to_center(
+            self,
+            center_world,
+            screen_rect,
+            now_seconds,
+        )
+    }
+
+    #[cfg(test)]
+    pub fn selection_border_visible_for_test(&self, now_seconds: f64) -> bool {
+        let Some(drag_state) = &self.interaction.drag_state else {
+            return true;
+        };
+        !drag_state.moved
+            || now_seconds - drag_state.last_movement_seconds
+                >= super::SELECTION_BORDER_REAPPEAR_SECONDS
     }
 
     pub fn move_selected_canvas_items_to_front(&mut self) -> bool {

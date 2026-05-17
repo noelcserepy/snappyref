@@ -17,26 +17,18 @@ pub(crate) struct CanvasImportPlaceholder {
     pub(crate) size_world: egui::Vec2,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ImportReservation {
     pub(crate) target_board_id: i64,
     pub(crate) queue_id: u64,
-    pub(crate) placement_id: Option<i64>,
     pub(crate) reserved_world: Option<egui::Pos2>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ImportPlacementSettings {
     pub(crate) import_target_canvas_area: f32,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ImportRequestConfig {
-    pub(crate) max_texture_side: usize,
-    pub(crate) canvas_image_max_side: u32,
-    pub(crate) auto_image_scaling: bool,
-    pub(crate) import_target_canvas_area: f32,
-    pub(crate) import_gap: f32,
 }
 
 #[derive(Default)]
@@ -53,6 +45,7 @@ impl ImportIntake {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn reserve_import(
         &mut self,
         layout: &mut Vec<crate::data::BoardLayoutItem>,
@@ -72,6 +65,7 @@ impl ImportIntake {
         )
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn reserve_import_at_world(
         &mut self,
         layout: &mut Vec<crate::data::BoardLayoutItem>,
@@ -106,17 +100,12 @@ impl ImportIntake {
             ImportReservation {
                 target_board_id,
                 queue_id,
-                placement_id: None,
                 reserved_world: placeholder
                     .as_ref()
                     .map(|placeholder| placeholder.center_world),
             },
             placeholder,
         )
-    }
-
-    pub(crate) fn remove_import_reservation(&mut self, reservation: ImportReservation) {
-        self.remove_placeholder_for_board(reservation.target_board_id, reservation.queue_id);
     }
 
     pub(crate) fn remove_placeholder_for_board(&mut self, board_id: i64, queue_id: u64) {
@@ -209,85 +198,6 @@ pub(crate) fn import_source_label(source: &ExternalImportSource) -> String {
     }
 }
 
-pub(crate) fn import_path_request(
-    source_path: PathBuf,
-    reservation: ImportReservation,
-    desired_world: egui::Pos2,
-    viewport_world: egui::Rect,
-    config: ImportRequestConfig,
-    trace: Option<crate::jobs::ImportTrace>,
-) -> crate::jobs::ImportRequest {
-    crate::jobs::ImportRequest::ImportPath {
-        target_board_id: reservation.target_board_id,
-        queue_id: reservation.queue_id,
-        placement_id: reservation.placement_id,
-        source_path,
-        desired_world,
-        reserved_world: reservation.reserved_world,
-        viewport_world,
-        max_texture_side: config.max_texture_side,
-        canvas_image_settings: canvas_image_settings(config),
-        auto_scale: config.auto_image_scaling,
-        target_canvas_area: config.import_target_canvas_area,
-        import_gap: config.import_gap,
-        trace,
-    }
-}
-
-pub(crate) fn import_url_request(
-    url: String,
-    reservation: ImportReservation,
-    desired_world: egui::Pos2,
-    viewport_world: egui::Rect,
-    config: ImportRequestConfig,
-    trace: Option<crate::jobs::ImportTrace>,
-) -> crate::jobs::ImportRequest {
-    crate::jobs::ImportRequest::ImportUrl {
-        target_board_id: reservation.target_board_id,
-        queue_id: reservation.queue_id,
-        placement_id: reservation.placement_id,
-        url,
-        desired_world,
-        reserved_world: reservation.reserved_world,
-        viewport_world,
-        max_texture_side: config.max_texture_side,
-        canvas_image_settings: canvas_image_settings(config),
-        auto_scale: config.auto_image_scaling,
-        target_canvas_area: config.import_target_canvas_area,
-        import_gap: config.import_gap,
-        trace,
-    }
-}
-
-pub(crate) fn import_clipboard_request(
-    rgba: Vec<u8>,
-    width: u32,
-    height: u32,
-    reservation: ImportReservation,
-    desired_world: egui::Pos2,
-    viewport_world: egui::Rect,
-    config: ImportRequestConfig,
-    trace: Option<crate::jobs::ImportTrace>,
-) -> crate::jobs::ImportRequest {
-    crate::jobs::ImportRequest::ImportClipboard {
-        target_board_id: reservation.target_board_id,
-        queue_id: reservation.queue_id,
-        placement_id: reservation.placement_id,
-        rgba,
-        width,
-        height,
-        desired_world,
-        reserved_world: reservation.reserved_world,
-        viewport_world,
-        max_texture_side: config.max_texture_side,
-        canvas_image_settings: canvas_image_settings(config),
-        auto_scale: config.auto_image_scaling,
-        target_canvas_area: config.import_target_canvas_area,
-        import_gap: config.import_gap,
-        trace,
-    }
-}
-
 fn import_size_world(
     width: u32,
     height: u32,
@@ -305,12 +215,6 @@ pub(crate) fn import_preview_size_world(
     target_canvas_area: f32,
 ) -> egui::Vec2 {
     import_size_world(width, height, true, target_canvas_area)
-}
-
-fn canvas_image_settings(config: ImportRequestConfig) -> crate::jobs::CanvasImageSettings {
-    crate::jobs::CanvasImageSettings {
-        max_side: config.canvas_image_max_side,
-    }
 }
 
 #[cfg(test)]

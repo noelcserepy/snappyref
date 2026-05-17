@@ -10,7 +10,7 @@ Target invariant:
 
 > Placement Movement owns movement for all Placements. Placement Lifecycle owns provisional-vs-committed behavior. Content Resolution owns async loading. Source modules only say what content to add.
 
-Async completion must never change Placement geometry. Add-to-Canvas chooses the initial visual frame when it creates the Placement; Content Resolution only changes content state.
+Async completion must never change Placement geometry. Placement Creation chooses the initial visual frame when it creates the Placement from Source Intents; Content Resolution only changes content state.
 
 ## Current Problem
 
@@ -211,7 +211,7 @@ The implementation can keep using `DragState`, but `DragState` should operate ov
 
 Files likely involved:
 
-- `src/add_to_canvas.rs`
+- `src/placement_creation.rs`
 - `src/import_intake.rs`
 - import worker/job code under `src/jobs/`
 - app integration in `src/app.rs`
@@ -221,7 +221,7 @@ Owns:
 - creating loading Placements when source content is not ready
 - persisting Content Resolution intents by Placement id
 - registering runtime queue ids against Placement ids
-- starting source-specific async work
+- building source-specific async worker requests
 - resolving a loading Placement into loaded content
 - marking a loading Placement failed
 - ignoring completions for deleted Placements
@@ -235,18 +235,18 @@ Does not own:
 
 ## Source Adapters
 
-### Add-to-Canvas
+### Placement Creation
 
-Add-to-Canvas should split placement creation from async registration:
+Placement Creation should split placement creation from async registration:
 
 1. Receive source intents.
-2. Build `PlacementDraft`s with initial visual dimensions and compact layout.
-3. Create loaded or loading Placements from those drafts, with lifecycle set to committed or provisional according to the source flow.
+2. Privately compute initial visual dimensions and compact layout.
+3. Create loaded or loading Placements directly from Source Intents, with lifecycle set to committed or provisional according to the source flow.
 4. Select those Placements.
 5. Emit `ContentResolutionIntent`s for unresolved content.
 6. Stop owning movement.
 
-`PlacementDraft` is only the boundary where approximate dimensions are normalized before a real Placement exists. After the draft becomes a Placement, async completion must not resize it.
+Do not introduce a `PlacementDraft` domain object. Before creation, content is a Source Intent; after creation, it is a Placement in a lifecycle and content state. Any intermediate layout planning stays private to Placement Creation. Async completion must not resize the Placement.
 
 ### Import
 
@@ -255,7 +255,6 @@ Import owns:
 - external source normalization
 - source labels
 - source resolution intents
-- worker request payloads
 - asset creation
 
 Import does not own:
@@ -263,6 +262,7 @@ Import does not own:
 - canvas movement
 - placeholder items
 - selection drag behavior
+- worker request construction for unresolved Placement content
 
 ### Search
 
@@ -270,7 +270,7 @@ Search owns:
 
 - overlay state
 - result selection
-- converting selected Asset Results or Placement Results into Add-to-Canvas source intents
+- converting selected Asset Results or Placement Results into Source Intents
 - accepting or cancelling search placement mode
 
 Search does not own:
@@ -279,7 +279,7 @@ Search does not own:
 - search-specific movement state
 - placeholder movement
 
-Search should hand selected results to Add-to-Canvas, which creates real provisional Placements. From that point, canvas movement takes over selected Placements. Search only decides whether the provisional batch is accepted or discarded.
+Search should hand selected results to Placement Creation, which creates real provisional Placements. From that point, canvas movement takes over selected Placements. Search only decides whether the provisional batch is accepted or discarded.
 
 ## Hover Rule
 
@@ -336,12 +336,12 @@ Restart behavior:
 
 ## Dimension Rule
 
-Known dimensions are used when Add-to-Canvas creates the Placement.
+Known dimensions are used when Placement Creation creates the Placement.
 
-Approximate dimensions are normalized at the draft boundary:
+Approximate dimensions are normalized inside Placement Creation:
 
 ```text
-Add-to-Canvas may choose fallback visual dimensions before creation. Content Resolution never changes Placement geometry after creation.
+Placement Creation may choose fallback visual dimensions before creation. Content Resolution never changes Placement geometry after creation.
 ```
 
 On completion, Content Resolution updates content/rendering only. It must preserve:
@@ -407,13 +407,13 @@ Tests:
 - deleting selected loading Placement removes it from the board
 - moving loading Placement mutates only Placement transform
 
-### Phase 3: Convert Add-to-Canvas Sources To Placements Plus Content Resolution
+### Phase 3: Convert Source Intents To Placements Plus Content Resolution
 
 Goal: import/search create real Placements and register async resolution work.
 
 Steps:
 
-1. Add `PlacementDraft` creation for Add-to-Canvas sources.
+1. Add Placement Creation for Source Intents.
 2. Add Content Resolution store plus runtime queue correlation.
 3. Convert external file drop to create selected loading Placements on drop.
 4. Register durable Content Resolution intents by Placement id.
@@ -439,7 +439,7 @@ Tests:
 - accepting search Asset Results commits selected Placements
 - accepting search Placement Results duplicates selected Placements
 - Guide Snapping matches selected on-board Placement drag
-- Viewport zoom/pan during search Add-to-Canvas drag matches selected Placement drag
+- Viewport zoom/pan during search Placement Creation drag matches selected Placement drag
 
 ### Phase 4: Delete Parallel Placeholder Movement Paths
 
@@ -508,8 +508,9 @@ Rules:
 
 - they use normal Placement geometry, rendering, selection, Guide Snapping, Stack Order, and movement
 - they are excluded from persistence and Document History until accepted
+- Placement Lifecycle starts, commits, cancels, and cleans up provisional batches
 - cancellation deletes them and removes or cancels any pending Content Resolution intents
-- acceptance flips them to committed and records the resulting document edit
+- acceptance commits them to durable document content and records the resulting document edit
 - async completion for a discarded provisional Placement must be ignored
 
 ### Cancellation

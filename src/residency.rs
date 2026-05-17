@@ -1,51 +1,22 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::time::Instant;
 
 use eframe::egui;
 
 use crate::canvas::CanvasState;
+use crate::content_resolution::{
+    FailedImportOutcome, ImportPlaceholderRemoval, LoadedImportLog, LoadedImportOutcome,
+};
 use crate::data::{BoardItemWithAsset, CanvasImageLod, WorkspaceSettings};
 use crate::jobs::{
-    CanvasImageSettings, CroppedCanvasItem, ExistingLoadDiagnostics, ExistingLoadPriority,
-    ImportOrigin, ImportRequest, ImportResult, ImportTimings, ImportTrace, ImportWorker,
-    LoadedCanvasItem,
+    CanvasImageSettings, CroppedCanvasItem, ExistingLoadPriority, ImportRequest, ImportResult,
+    ImportTimings, ImportTrace, ImportWorker, LoadedCanvasItem,
 };
 
 #[derive(Default)]
 pub(crate) struct ImageResidencyCoordinator {
     pending_cache_backfills: HashSet<(i64, CanvasImageLod)>,
     inflight_image_lod_loads: HashMap<i64, CanvasImageLod>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ImportPlaceholderRemoval {
-    pub(crate) target_board_id: i64,
-    pub(crate) queue_id: u64,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct LoadedImportLog {
-    pub(crate) origin: ImportOrigin,
-    pub(crate) record: BoardItemWithAsset,
-    pub(crate) diagnostics: Option<ExistingLoadDiagnostics>,
-    pub(crate) trace: Option<ImportTrace>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct LoadedImportOutcome {
-    pub(crate) placeholder_removal: Option<ImportPlaceholderRemoval>,
-    pub(crate) status: Option<String>,
-    pub(crate) indexed_asset: Option<(i64, PathBuf)>,
-    pub(crate) log: Option<LoadedImportLog>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct FailedImportOutcome {
-    pub(crate) placeholder_removal: Option<ImportPlaceholderRemoval>,
-    pub(crate) placement_id: Option<i64>,
-    pub(crate) target_board_id: Option<i64>,
-    pub(crate) status: String,
 }
 
 #[derive(Debug)]

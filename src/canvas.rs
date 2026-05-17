@@ -4,6 +4,7 @@ mod document;
 mod geometry;
 mod guide_snap;
 mod interaction;
+mod placement_movement;
 mod render;
 mod state;
 
@@ -529,11 +530,14 @@ impl CanvasState {
             moved: false,
         };
         let snap_preview_rect =
-            interaction::compute_drag_snap_preview(self, rect, &drag_state, world_delta);
+            placement_movement::compute_drag_snap_preview(self, rect, &drag_state, world_delta);
         let snap_offset = snap_preview_rect
             .and_then(|snap_rect| {
-                interaction::offset_layout_bounds(&drag_state.starting_items, world_delta)
-                    .map(|bounds| snap_rect.center() - bounds.center())
+                placement_movement::layout_bounds_with_offset(
+                    &drag_state.starting_items,
+                    world_delta,
+                )
+                .map(|bounds| snap_rect.center() - bounds.center())
             })
             .unwrap_or(egui::Vec2::ZERO);
         for item in &drag_state.starting_items {
