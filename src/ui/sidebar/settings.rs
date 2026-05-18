@@ -77,15 +77,20 @@ pub(super) fn paint_settings_section(
         },
     );
     paint_setting_divider(ui);
-    changed |= paint_setting_row(ui, "Image gap", "Gap used when placing new images.", |ui| {
-        paint_number_text_field(
-            ui,
-            "image-gap",
-            &mut settings.import_gap,
-            0.0..=128.0,
-            "units",
-        )
-    });
+    changed |= paint_setting_row(
+        ui,
+        "Placement gap",
+        "Spacing used when placing and arranging placements.",
+        |ui| {
+            paint_number_text_field(
+                ui,
+                "placement-gap",
+                &mut settings.placement_gap,
+                0.0..=128.0,
+                "units",
+            )
+        },
+    );
 
     paint_setting_divider(ui);
     let semantic_search_action = paint_semantic_search_settings_section(ui, semantic_search);

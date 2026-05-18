@@ -105,7 +105,7 @@ pub(super) fn legacy_user_session_from_row(
         window: crate::data::WindowState::default(),
         settings: WorkspaceSettings {
             auto_image_scaling: row.get::<_, i64>(0)? != 0,
-            import_gap: row.get(1)?,
+            placement_gap: row.get(1)?,
             import_target_canvas_area: row
                 .get::<_, f32>(2)
                 .ok()
@@ -174,7 +174,7 @@ impl Library {
             .prepare(
                 "SELECT
                     auto_image_scaling,
-                    import_gap,
+                    placement_gap,
                     import_target_canvas_area,
                     semantic_search_enabled,
                     canvas_image_max_side,
@@ -230,7 +230,7 @@ impl Library {
                     camera_pan_y,
                     camera_zoom,
                     auto_image_scaling,
-                    import_gap,
+                    placement_gap,
                     import_target_canvas_area,
                     canvas_background,
                     semantic_search_enabled,
@@ -249,7 +249,7 @@ impl Library {
                     camera_pan_y = excluded.camera_pan_y,
                     camera_zoom = excluded.camera_zoom,
                     auto_image_scaling = excluded.auto_image_scaling,
-                    import_gap = excluded.import_gap,
+                    placement_gap = excluded.placement_gap,
                     import_target_canvas_area = excluded.import_target_canvas_area,
                     canvas_background = excluded.canvas_background,
                     semantic_search_enabled = excluded.semantic_search_enabled,
@@ -270,7 +270,7 @@ impl Library {
                     } else {
                         0_i64
                     },
-                    session.settings.import_gap,
+                    session.settings.placement_gap,
                     session.settings.import_target_canvas_area,
                     session.viewport.canvas_background.as_str(),
                     if session.settings.semantic_search_enabled {

@@ -32,7 +32,7 @@ const MAX_RECENT_SEARCHES: usize = 8;
 #[derive(Clone, Copy)]
 pub(crate) struct SearchPlacementPreviewConfig {
     pub(crate) import_target_canvas_area: f32,
-    pub(crate) import_gap: f32,
+    pub(crate) placement_gap: f32,
     pub(crate) visible_canvas_rect: egui::Rect,
 }
 
@@ -1371,7 +1371,7 @@ mod tests {
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)),
             super::SearchPlacementPreviewConfig {
                 import_target_canvas_area: 10_000.0,
-                import_gap: crate::ui::theme::SPACE_2,
+                placement_gap: crate::ui::theme::SPACE_2,
                 visible_canvas_rect: egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
                     egui::vec2(1200.0, 800.0),
@@ -1465,7 +1465,7 @@ mod tests {
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)),
             super::SearchPlacementPreviewConfig {
                 import_target_canvas_area: 10_000.0,
-                import_gap: crate::ui::theme::SPACE_2,
+                placement_gap: crate::ui::theme::SPACE_2,
                 visible_canvas_rect: egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
                     egui::vec2(1200.0, 800.0),
@@ -1509,7 +1509,7 @@ mod tests {
     #[test]
     fn search_drag_updates_snap_guides_after_provisional_placement_exists() {
         let mut canvas = CanvasState::default();
-        canvas.set_layout_gap(24.0);
+        canvas.set_placement_gap(24.0);
         let target_asset = crate::data::ImageAsset {
             id: 900,
             original_path: std::path::PathBuf::from("snap-target"),
@@ -1555,7 +1555,7 @@ mod tests {
         let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
         let placement_preview_config = super::SearchPlacementPreviewConfig {
             import_target_canvas_area: 10_000.0,
-            import_gap: crate::ui::theme::SPACE_2,
+            placement_gap: crate::ui::theme::SPACE_2,
             visible_canvas_rect: screen_rect,
         };
 
@@ -1615,7 +1615,7 @@ mod tests {
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)),
             super::SearchPlacementPreviewConfig {
                 import_target_canvas_area: 20_000.0,
-                import_gap: 24.0,
+                placement_gap: 24.0,
                 visible_canvas_rect: egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
                     egui::vec2(800.0, 600.0),
@@ -1677,7 +1677,7 @@ mod tests {
                     egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)),
                     super::SearchPlacementPreviewConfig {
                         import_target_canvas_area: 120_000.0,
-                        import_gap: crate::ui::theme::SPACE_2,
+                        placement_gap: crate::ui::theme::SPACE_2,
                         visible_canvas_rect: egui::Rect::from_min_size(
                             egui::Pos2::ZERO,
                             egui::vec2(1200.0, 800.0),

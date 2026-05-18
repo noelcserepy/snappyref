@@ -9,12 +9,12 @@ Guide Snapping replaces the old manual drag layout-snap behavior. The old solver
 - Guide Snapping aligns visual axis-aligned dragged bounds to target edges, centers, or gap spacing targets, including rotated placements' visual bounds.
 - Resize Guide Snapping preserves the resize anchor and aspect ratio. Snap targets propose possible scales, and the nearest valid scale wins.
 - Scale Drag Guide Snapping preserves the selected placement group center and applies one uniform scale factor to every selected placement. Snap targets propose possible group scale factors; the nearest valid factor wins.
-- Gap spacing targets align opposite edges at the workspace layout gap. They do not pad every target edge, so a side-by-side gap snap can still combine with real top, center, or bottom alignment on the other axis.
+- Gap spacing targets align opposite edges at the Placement Gap. They do not pad every target edge, so a side-by-side gap snap can still combine with real top, center, or bottom alignment on the other axis.
 - Snap targets are contact-local placements inside the viewport-near candidate set. A placement becomes contact-local on an axis when an opposite-edge gap spacing target is within the active snap threshold and its interval on the other axis overlaps or nearly overlaps the dragged placement.
 - Contact-locality gates target generation: X contact can expose that placement's Y edge/center alignment targets, and Y contact can expose its X edge/center alignment targets. Gap spacing targets remain axis-specific, and X/Y may resolve against different placements.
 - Single-placement drag, single-placement resize, Scale Drag, multi-selection drag, import previews, and Asset Result search drops use the same guide-snap target model.
 - Edge and center alignment use normal guide lines. Corner and center intersections add small X markers.
-- Gap spacing targets are part of Guide Snapping because the workspace layout gap is the user's global spacing contract.
+- Gap spacing targets are part of Guide Snapping because the Placement Gap is the user's global spacing contract for Placement spacing.
 - Candidate competition is distance-based per axis; the smallest nudge wins.
 - Acquisition uses a small screen-space threshold, with a slightly larger release threshold for hysteresis.
 - Cmd/Ctrl temporarily disables Guide Snapping during drag.

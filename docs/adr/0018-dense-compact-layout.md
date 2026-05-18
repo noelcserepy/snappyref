@@ -13,7 +13,7 @@ Earlier compact layout behavior could prefer a visually square bounding box whil
 - Compact Size Normalization must earn its resize: a normalized candidate should beat the no-resize candidate only when post-pack occupancy improves meaningfully, roughly two to three percentage points. Near-equivalent candidates prefer fewer changed placements, smaller total scale deltas, and downscales over upscales.
 - Candidate squareness only decides when occupancy is roughly equivalent, within about three percentage points.
 - Right-edge cleanliness is only a weak tie-break among near-equivalent candidates; clean top and left edges matter more.
-- The configured workspace layout gap is always respected.
+- The configured Placement Gap is always respected.
 - Packing uses rotated visual placement footprints, not unrotated asset dimensions.
 - Import and search preview compaction do not run Compact Size Normalization; previews keep their expected imported sizes stable.
 - Repeated compact arrangement on the same selection should be deterministic and idempotent once no better normalization candidate exists.

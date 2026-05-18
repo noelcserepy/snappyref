@@ -1354,7 +1354,7 @@ impl SnappyRefApp {
                 #[cfg(debug_assertions)]
                 if app.sidebar_hot_preview {
                     app.settings.auto_image_scaling = false;
-                    app.settings.import_gap = 32.0;
+                    app.settings.placement_gap = 32.0;
                     app.settings.canvas_image_max_side = crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE;
                     app.canvas
                         .set_background(crate::data::CanvasBackground::Grid);
@@ -2489,7 +2489,7 @@ impl SnappyRefApp {
                 self.search.set_recent_searches(session.recent_searches);
                 self.canvas
                     .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
-                self.canvas.set_layout_gap(self.settings.import_gap);
+                self.canvas.set_placement_gap(self.settings.placement_gap);
                 self.canvas.set_pointer_mode(self.settings.pointer_mode);
                 self.update_service
                     .seed_last_check_completed_at(self.settings.last_update_check_at);
@@ -2546,7 +2546,7 @@ impl SnappyRefApp {
     fn placement_creation_settings(&self) -> crate::placement::creation::PlacementCreationSettings {
         crate::placement::creation::PlacementCreationSettings {
             target_canvas_area: self.settings.import_target_canvas_area,
-            gap: self.settings.import_gap,
+            gap: self.settings.placement_gap,
         }
     }
 
@@ -2556,7 +2556,7 @@ impl SnappyRefApp {
             canvas_image_max_side: self.settings.canvas_image_max_side,
             auto_image_scaling: true,
             import_target_canvas_area: self.settings.import_target_canvas_area,
-            import_gap: self.settings.import_gap,
+            placement_gap: self.settings.placement_gap,
         }
     }
 
@@ -2725,7 +2725,7 @@ impl SnappyRefApp {
             screen_rect,
             crate::placement::creation::PlacementCreationSettings {
                 target_canvas_area: self.settings.import_target_canvas_area,
-                gap: self.settings.import_gap,
+                gap: self.settings.placement_gap,
             },
         )
         .into_iter()
@@ -2842,7 +2842,7 @@ impl SnappyRefApp {
         self.canvas.select_placements(&placement_ids);
         let arranged = self
             .canvas
-            .arrange_selected_compact_preserving_sizes(self.settings.import_gap);
+            .arrange_selected_compact_preserving_sizes(self.settings.placement_gap);
         if arranged > 0 {
             self.status = format!("Compacted {arranged} imported images");
         }
@@ -4170,7 +4170,7 @@ impl SnappyRefApp {
             apply_settle_arrangement(
                 &mut self.canvas,
                 direction,
-                self.settings.import_gap,
+                self.settings.placement_gap,
                 &mut self.status,
             );
             return;
@@ -4246,7 +4246,7 @@ impl SnappyRefApp {
                         apply_arrangement_action(
                             &mut self.canvas,
                             action,
-                            self.settings.import_gap,
+                            self.settings.placement_gap,
                             &mut self.status,
                         );
                     }
@@ -4582,7 +4582,7 @@ impl SnappyRefApp {
             document_persistence: &mut self.document_persistence,
             user_session,
             import_worker_available: self.import_worker.is_some(),
-            import_gap: self.settings.import_gap,
+            placement_gap: self.settings.placement_gap,
             viewport_world,
         }
     }
@@ -4895,8 +4895,8 @@ impl SnappyRefApp {
         self.canvas
             .apply_viewport_state(&crate::data::ViewportState::default());
         self.canvas.clear_board_for_verification();
-        self.settings.import_gap = 24.0;
-        self.canvas.set_layout_gap(self.settings.import_gap);
+        self.settings.placement_gap = 24.0;
+        self.canvas.set_placement_gap(self.settings.placement_gap);
 
         let left_result = self.seed_import_verification_image(
             ctx,
@@ -5416,7 +5416,7 @@ impl SnappyRefApp {
             &mut self.status,
             crate::search::SearchPlacementPreviewConfig {
                 import_target_canvas_area: self.settings.import_target_canvas_area,
-                import_gap: self.settings.import_gap,
+                placement_gap: self.settings.placement_gap,
                 visible_canvas_rect,
             },
         ) {
@@ -5901,7 +5901,7 @@ impl eframe::App for SnappyRefApp {
         }
         self.canvas
             .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
-        self.canvas.set_layout_gap(self.settings.import_gap);
+        self.canvas.set_placement_gap(self.settings.placement_gap);
         self.canvas.set_pointer_mode(self.settings.pointer_mode);
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         #[cfg(feature = "semantic-search")]
@@ -5911,7 +5911,7 @@ impl eframe::App for SnappyRefApp {
             screen_rect,
             crate::search::SearchPlacementPreviewConfig {
                 import_target_canvas_area: self.settings.import_target_canvas_area,
-                import_gap: self.settings.import_gap,
+                placement_gap: self.settings.placement_gap,
                 visible_canvas_rect,
             },
         );

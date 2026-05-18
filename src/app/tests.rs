@@ -87,12 +87,12 @@ fn persist_settings_if_changed_false_skips_save() {
 }
 
 #[test]
-fn save_user_session_round_trips_import_gap() {
+fn save_user_session_round_trips_placement_gap() {
     let root = temp_library_root("snappyref-app-gap");
     let library = Library::initialize(root.clone()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.settings.auto_image_scaling = false;
-    app.settings.import_gap = 37.0;
+    app.settings.placement_gap = 37.0;
     app.settings.import_target_canvas_area = 45_000.0;
     app.settings.canvas_image_max_side = 4096;
     app.canvas
@@ -102,7 +102,7 @@ fn save_user_session_round_trips_import_gap() {
 
     let session = library.load_user_session().unwrap();
     assert!(!session.settings.auto_image_scaling);
-    assert_eq!(session.settings.import_gap, 37.0);
+    assert_eq!(session.settings.placement_gap, 37.0);
     assert_eq!(session.settings.import_target_canvas_area, 45_000.0);
     assert_eq!(session.settings.canvas_image_max_side, 4096);
     assert_eq!(
@@ -935,7 +935,7 @@ fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.settings.import_gap = 24.0;
+    app.settings.placement_gap = 24.0;
     app.canvas.add_prepared_placement_image(
         &ctx,
         PreparedPlacementImage {
@@ -1035,7 +1035,7 @@ fn duplicate_preserves_image_only_stack_order_and_places_group_at_front() {
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.settings.import_gap = 24.0;
+    app.settings.placement_gap = 24.0;
     for placement in [&back_item, &lower_selected, &upper_selected] {
         add_loaded_record(&mut app, &ctx, placement.clone());
     }
@@ -1091,7 +1091,7 @@ fn duplicate_preserves_annotation_only_stack_order_and_places_group_at_front() {
     let lower_id = annotations[1].id;
     let upper_id = annotations[2].id;
     let mut app = test_app(Some(library.clone()));
-    app.settings.import_gap = 24.0;
+    app.settings.placement_gap = 24.0;
     app.canvas.add_annotations(annotations);
     app.canvas.set_canvas_stack_order(vec![
         CanvasStackItem::Annotation(back_id),
@@ -1226,7 +1226,7 @@ fn qwe_arrange_shortcuts_apply_selected_image_layouts() {
 fn arrow_keys_apply_directional_settle_arrange() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
-    app.settings.import_gap = 20.0;
+    app.settings.placement_gap = 20.0;
 
     for (id, x, y) in [(1_i64, 10.0, 50.0), (2, 170.0, 50.0), (3, 50.0, 160.0)] {
         let mut loaded = test_loaded_item(id, 1);
@@ -1273,7 +1273,7 @@ fn arrow_keys_apply_directional_settle_arrange() {
     let third = app.canvas.placement_for_id(3).unwrap();
     assert_eq!(second.state.geometry.center.x + 50.0, 220.0);
     assert_eq!(
-        first.state.geometry.center.x + 50.0 + app.settings.import_gap,
+        first.state.geometry.center.x + 50.0 + app.settings.placement_gap,
         second.state.geometry.center.x - 50.0
     );
     assert_eq!(third.state.geometry.center.x + 50.0, 220.0);
@@ -2141,20 +2141,20 @@ fn active_board_load_applies_viewport_without_reloading_global_settings() {
     let second = library.create_board("Second").unwrap();
     library.set_active_board(second.id).unwrap();
     let mut stored_session = library.load_user_session().unwrap();
-    stored_session.settings.import_gap = 99.0;
+    stored_session.settings.placement_gap = 99.0;
     stored_session.viewport.camera_pan_x = 75.0;
     stored_session.viewport.canvas_background = crate::data::CanvasBackground::Dots;
     library.save_user_session(&stored_session).unwrap();
 
     let mut app = test_app(Some(library.clone()));
-    app.settings.import_gap = 24.0;
+    app.settings.placement_gap = 24.0;
 
     app.load_active_board();
 
     assert_eq!(app.active_board_id, second.id);
     assert_eq!(app.canvas.background(), crate::data::CanvasBackground::Dots);
     assert_eq!(app.canvas.viewport_state().camera_pan_x, 75.0);
-    assert_eq!(app.settings.import_gap, 24.0);
+    assert_eq!(app.settings.placement_gap, 24.0);
 
     let _ = fs::remove_dir_all(root);
 }

@@ -62,8 +62,11 @@ _Avoid_: Note, label
 The board-local visual guide mode for the canvas.
 _Avoid_: Grid setting, workspace background
 
+**Placement Gap**:
+The Workspace Setting that defines preferred spacing between Placements during Placement Creation, duplication, arrangement, Directional Settle Arrange, and Guide Snapping gap targets.
+
 **Guide Snapping**:
-Manual drag alignment that nudges a moving, resizing, or Scale Drag placement's visual axis-aligned bounds to contact-local placement edges, centers, or gap spacing targets and shows alignment guides. Gap spacing targets align opposite placement edges at the Workspace Settings image gap, while same-axis edge alignment still uses real placement visual bounds. A placement is contact-local on an axis when its opposite-edge gap spacing target is within the active snap threshold and its interval on the other axis overlaps or nearly overlaps the dragged placement.
+Manual drag alignment that nudges a moving, resizing, or Scale Drag placement's visual axis-aligned bounds to contact-local placement edges, centers, or gap spacing targets and shows alignment guides. Gap spacing targets align opposite placement edges at the Placement Gap, while same-axis edge alignment still uses real placement visual bounds. A placement is contact-local on an axis when its opposite-edge gap spacing target is within the active snap threshold and its interval on the other axis overlaps or nearly overlaps the dragged placement.
 _Avoid_: Grid snapping, layout snapping, arrangement snapping
 
 **Scale Drag**:
@@ -135,7 +138,7 @@ Deprecated geometry term. Use **Rect Geometry** for rectangular canvas geometry 
 _Avoid_: Selected Layout Item, layout footprint
 
 **Directional Settle Arrange**:
-An arrange command where selected Placements move as far as possible toward one edge of the current selection bounds, stopping at that edge or at the Workspace Settings image gap from already-settled selected Placements.
+An arrange command where selected Placements move as far as possible toward one edge of the current selection bounds, stopping at that edge or at the Placement Gap from already-settled selected Placements.
 _Avoid_: Edge justify, arrow-key align, gravity arrange
 
 ### Session and preferences
@@ -145,7 +148,7 @@ The persisted state that restores the user's active board, viewport, workspace s
 _Avoid_: Preferences row, app state
 
 **Workspace Settings**:
-Global user preferences that apply across boards, such as layout gap, image sizing, rotation snap, and textbox defaults.
+Global user preferences that apply across boards, such as Placement Gap, image sizing, rotation snap, and textbox defaults.
 _Avoid_: Board settings, options
 
 **Always on Top**:

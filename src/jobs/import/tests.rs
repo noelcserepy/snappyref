@@ -75,7 +75,7 @@ fn file_imports_land_in_same_area_band() {
         eframe::egui::Pos2::ZERO,
         test_viewport_world(),
         true,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
     )
     .unwrap();
     let landscape = import_path_sync(
@@ -84,7 +84,7 @@ fn file_imports_land_in_same_area_band() {
         eframe::egui::Pos2::ZERO,
         test_viewport_world(),
         true,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
     )
     .unwrap();
     let square = import_path_sync(
@@ -93,7 +93,7 @@ fn file_imports_land_in_same_area_band() {
         eframe::egui::Pos2::ZERO,
         test_viewport_world(),
         true,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
     )
     .unwrap();
     let small = import_path_sync(
@@ -102,7 +102,7 @@ fn file_imports_land_in_same_area_band() {
         eframe::egui::Pos2::ZERO,
         test_viewport_world(),
         true,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
     )
     .unwrap();
 
@@ -137,7 +137,7 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
         CanvasImageSettings::default(),
         true,
         DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
     ) {
@@ -159,7 +159,7 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
         CanvasImageSettings::default(),
         false,
         DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
     ) {
@@ -194,7 +194,7 @@ fn clipboard_import_uses_configured_target_area() {
         CanvasImageSettings::default(),
         true,
         target_area,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
     ) {
@@ -230,7 +230,7 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
         CanvasImageSettings::default(),
         false,
         DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
     ) {
@@ -445,7 +445,7 @@ fn reserved_world_is_persisted_without_worker_relayout() {
         CanvasImageSettings::default(),
         false,
         DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
     ) {
@@ -480,7 +480,7 @@ fn overlapping_reserved_world_is_preserved_when_persisting() {
         CanvasImageSettings::default(),
         false,
         DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
     ) {
@@ -516,7 +516,7 @@ fn url_import_downloads_and_persists_original_bytes() {
         CanvasImageSettings::default(),
         false,
         DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
     )
@@ -610,7 +610,7 @@ fn url_import_preserves_svg_as_vector_source() {
         CanvasImageSettings::default(),
         false,
         DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
     )
@@ -693,7 +693,7 @@ fn svg_import_preserves_vector_source_and_skips_canvas_cache() {
         eframe::egui::Pos2::ZERO,
         test_viewport_world(),
         false,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
     )
     .unwrap();
 
@@ -782,7 +782,7 @@ static char * sample_xpm[] = {
         eframe::egui::Pos2::ZERO,
         test_viewport_world(),
         false,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
     )
     .unwrap();
 
@@ -855,7 +855,7 @@ fn crop_item_rejects_svg_with_clear_error() {
         eframe::egui::Pos2::ZERO,
         test_viewport_world(),
         false,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
     )
     .unwrap();
 
@@ -909,7 +909,7 @@ fn load_existing_svg_uses_original_vector_source() {
         eframe::egui::Pos2::ZERO,
         test_viewport_world(),
         false,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
     )
     .unwrap();
 
@@ -1045,7 +1045,7 @@ fn make_import_path_request(source_path: PathBuf) -> super::ImagePreparationRequ
         canvas_image_settings: CanvasImageSettings::default(),
         auto_scale: true,
         target_canvas_area: DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-        import_gap: crate::data::DEFAULT_IMPORT_GAP,
+        placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
         trace: None,
     }
 }
@@ -1135,7 +1135,7 @@ fn traced_clipboard_import_populates_non_negative_timings() {
         CanvasImageSettings::default(),
         false,
         DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
         Some(trace),
         None,
     ) {

@@ -17,7 +17,7 @@ pub(crate) struct ActiveBoardCommandContext<'a> {
     pub(crate) document_persistence: &'a mut DocumentPersistence,
     pub(crate) user_session: crate::data::UserSession,
     pub(crate) import_worker_available: bool,
-    pub(crate) import_gap: f32,
+    pub(crate) placement_gap: f32,
     pub(crate) viewport_world: egui::Rect,
 }
 
@@ -231,7 +231,7 @@ pub(crate) fn paste_board_payload_at(
     let target_anchor_world = placement_anchor_for_payload(
         library,
         context.viewport_world,
-        context.import_gap,
+        context.placement_gap,
         payload,
         requested_anchor_world,
     )?;
@@ -310,7 +310,10 @@ pub(crate) fn duplicate_selection(
     let Some(bounds) = clipboard_payload_bounds(&payload) else {
         return Ok(None);
     };
-    let offset = egui::vec2(context.import_gap.max(12.0), context.import_gap.max(12.0));
+    let offset = egui::vec2(
+        context.placement_gap.max(12.0),
+        context.placement_gap.max(12.0),
+    );
     let mut outcome = paste_board_payload_at(context, &payload, bounds.center() + offset)?;
     outcome.status = outcome.status.replacen("Pasted", "Duplicated", 1);
     Ok(Some(outcome))
@@ -419,7 +422,7 @@ fn move_pasted_content_to_front(
 fn placement_anchor_for_payload(
     library: &Library,
     viewport_world: egui::Rect,
-    import_gap: f32,
+    placement_gap: f32,
     payload: &ClipboardBoardSelection,
     requested_anchor_world: egui::Pos2,
 ) -> Result<egui::Pos2, String> {
@@ -432,7 +435,7 @@ fn placement_anchor_for_payload(
         viewport_world,
         bounds.width(),
         bounds.height(),
-        import_gap,
+        placement_gap,
     )
 }
 

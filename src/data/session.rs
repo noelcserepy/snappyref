@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::CanvasBackground;
 
-pub const DEFAULT_IMPORT_GAP: f32 = 0.0;
+pub const DEFAULT_PLACEMENT_GAP: f32 = 0.0;
 pub const DEFAULT_CANVAS_IMAGE_MAX_SIDE: u32 = 2000;
 pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
 pub const DEFAULT_ROTATION_SNAP_DEGREES: f32 = 15.0;
@@ -81,8 +81,8 @@ impl WindowState {
 pub struct WorkspaceSettings {
     #[serde(default = "default_auto_image_scaling")]
     pub auto_image_scaling: bool,
-    #[serde(default = "default_import_gap")]
-    pub import_gap: f32,
+    #[serde(default = "default_placement_gap")]
+    pub placement_gap: f32,
     #[serde(default = "default_import_target_canvas_area")]
     pub import_target_canvas_area: f32,
     #[serde(default = "default_canvas_image_max_side")]
@@ -110,8 +110,8 @@ fn default_auto_image_scaling() -> bool {
     true
 }
 
-fn default_import_gap() -> f32 {
-    DEFAULT_IMPORT_GAP
+fn default_placement_gap() -> f32 {
+    DEFAULT_PLACEMENT_GAP
 }
 
 fn default_import_target_canvas_area() -> f32 {
@@ -134,7 +134,7 @@ impl Default for WorkspaceSettings {
     fn default() -> Self {
         Self {
             auto_image_scaling: true,
-            import_gap: DEFAULT_IMPORT_GAP,
+            placement_gap: DEFAULT_PLACEMENT_GAP,
             import_target_canvas_area: DEFAULT_IMPORT_TARGET_CANVAS_AREA,
             canvas_image_max_side: DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             semantic_search_enabled: true,
@@ -178,10 +178,10 @@ mod tests {
     }
 
     #[test]
-    fn default_image_gap_is_zero_for_new_workspaces() {
+    fn default_placement_gap_is_zero_for_new_workspaces() {
         let settings = WorkspaceSettings::default();
 
-        assert_eq!(settings.import_gap, 0.0);
+        assert_eq!(settings.placement_gap, 0.0);
     }
 }
 

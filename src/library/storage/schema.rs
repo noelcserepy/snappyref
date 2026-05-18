@@ -306,7 +306,7 @@ fn backfill_user_session_payload(connection: &Connection) -> Result<(), String> 
         .prepare(
             "SELECT
                 auto_image_scaling,
-                import_gap,
+                placement_gap,
                 import_target_canvas_area,
                 semantic_search_enabled,
                 canvas_image_max_side,
@@ -585,7 +585,7 @@ fn ensure_user_session_auto_image_scaling_column(connection: &Connection) -> Res
     Ok(())
 }
 
-fn ensure_user_session_import_gap_column(connection: &Connection) -> Result<(), String> {
+fn ensure_user_session_placement_gap_column(connection: &Connection) -> Result<(), String> {
     let mut statement = connection
         .prepare("PRAGMA table_info(user_session)")
         .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
@@ -596,16 +596,16 @@ fn ensure_user_session_import_gap_column(connection: &Connection) -> Result<(), 
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
 
-    if columns.iter().any(|column| column == "import_gap") {
+    if columns.iter().any(|column| column == "placement_gap") {
         return Ok(());
     }
 
     connection
         .execute(
-            "ALTER TABLE user_session ADD COLUMN import_gap REAL NOT NULL DEFAULT 0.0",
+            "ALTER TABLE user_session ADD COLUMN placement_gap REAL NOT NULL DEFAULT 0.0",
             [],
         )
-        .map_err(|error| format!("failed to add import_gap column to user_session: {error}"))?;
+        .map_err(|error| format!("failed to add placement_gap column to user_session: {error}"))?;
 
     Ok(())
 }
@@ -871,7 +871,7 @@ impl Library {
                     camera_pan_y  REAL NOT NULL,
                     camera_zoom   REAL NOT NULL,
                     auto_image_scaling INTEGER NOT NULL DEFAULT 1,
-                    import_gap    REAL NOT NULL DEFAULT 0.0,
+                    placement_gap    REAL NOT NULL DEFAULT 0.0,
                     import_target_canvas_area REAL NOT NULL DEFAULT 90000.0,
                     canvas_background TEXT NOT NULL DEFAULT 'none',
                     semantic_search_enabled INTEGER NOT NULL DEFAULT 1,
@@ -938,7 +938,7 @@ impl Library {
         ensure_board_items_board_id_column(&connection)?;
         ensure_board_items_asset_id_nullable(&connection)?;
         ensure_user_session_auto_image_scaling_column(&connection)?;
-        ensure_user_session_import_gap_column(&connection)?;
+        ensure_user_session_placement_gap_column(&connection)?;
         ensure_user_session_import_target_canvas_area_column(&connection)?;
         ensure_user_session_canvas_background_column(&connection)?;
         ensure_user_session_semantic_search_enabled_column(&connection)?;
