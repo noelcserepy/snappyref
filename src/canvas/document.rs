@@ -472,7 +472,7 @@ impl CanvasState {
             &preview.rgba,
             preview.width,
             preview.height,
-            crate::jobs::ImportedPreviewTexture::Cpu,
+            crate::jobs::ImagePrepPreviewTexture::Cpu,
         );
         let mut asset = request.source_asset.clone();
         asset.width = request.crop_rect.width;

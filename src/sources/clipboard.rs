@@ -357,7 +357,7 @@ mod tests {
             preview_width,
             preview_height,
             animated_preview: None,
-            preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
             loaded_lod: crate::data::CanvasImageLod::Working,
             existing_load_diagnostics: None,
             origin: crate::jobs::ImportOrigin::Existing,

@@ -443,7 +443,7 @@ fn compact_arrangement_action_uses_dense_compact_layout() {
                 preview_width: *width,
                 preview_height: *height,
                 animated_preview: None,
-                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
                 loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
@@ -534,7 +534,7 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
             preview_width: 1,
             preview_height: 1,
             animated_preview: None,
-            preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
             loaded_lod: crate::data::CanvasImageLod::Working,
             existing_load_diagnostics: None,
             origin: crate::jobs::ImportOrigin::Existing,
@@ -729,7 +729,7 @@ fn paste_preserves_mixed_selection_stack_order_and_places_group_at_front() {
                 preview_width: 1,
                 preview_height: 1,
                 animated_preview: None,
-                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
                 loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
@@ -946,7 +946,7 @@ fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
             preview_width: 1,
             preview_height: 1,
             animated_preview: None,
-            preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
             loaded_lod: crate::data::CanvasImageLod::Working,
             existing_load_diagnostics: None,
             origin: crate::jobs::ImportOrigin::Existing,
@@ -1620,7 +1620,7 @@ fn remove_from_library_context_action_waits_for_confirmation() {
             preview_width: 1,
             preview_height: 1,
             animated_preview: None,
-            preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
             loaded_lod: crate::data::CanvasImageLod::Working,
             existing_load_diagnostics: None,
             origin: crate::jobs::ImportOrigin::Existing,
@@ -1780,7 +1780,7 @@ fn delete_from_board_archives_image_placements_and_annotations() {
             preview_width: 1,
             preview_height: 1,
             animated_preview: None,
-            preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
             loaded_lod: crate::data::CanvasImageLod::Working,
             existing_load_diagnostics: None,
             origin: crate::jobs::ImportOrigin::Existing,
@@ -2659,7 +2659,7 @@ fn switching_boards_clears_selection_search_and_transient_undo() {
             preview_width: 1,
             preview_height: 1,
             animated_preview: None,
-            preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
             loaded_lod: crate::data::CanvasImageLod::Working,
             existing_load_diagnostics: None,
             origin: crate::jobs::ImportOrigin::Existing,
@@ -3033,7 +3033,7 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
     let empty_board = library.create_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.import_worker = Some(crate::jobs::ImportWorker::new(
+    app.import_worker = Some(crate::jobs::ImagePrepWorker::new(
         library.clone(),
         ctx.clone(),
         None,
@@ -3829,7 +3829,7 @@ fn search_drop_source_center_uses_image_extents() {
                 preview_width: width,
                 preview_height: 100,
                 animated_preview: None,
-                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
                 loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
@@ -3882,7 +3882,7 @@ fn completed_multi_file_import_batch_selects_and_compacts_loaded_geometry() {
                 preview_width: width,
                 preview_height: height,
                 animated_preview: None,
-                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
                 loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Path,
@@ -4148,7 +4148,7 @@ fn raw_dropped_file_enqueues_external_import() {
         .store_rgba_image("drop-source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.import_worker = Some(crate::jobs::ImportWorker::new(
+    app.import_worker = Some(crate::jobs::ImagePrepWorker::new(
         library.clone(),
         ctx.clone(),
         None,
@@ -4413,7 +4413,7 @@ fn test_loaded_item(placement_id: i64, target_board_id: i64) -> PreparedPlacemen
         preview_width: 1,
         preview_height: 1,
         animated_preview: None,
-        preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+        preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
         loaded_lod: crate::data::CanvasImageLod::Working,
         existing_load_diagnostics: None,
         origin: crate::jobs::ImportOrigin::Clipboard,
@@ -4432,7 +4432,7 @@ fn add_loaded_record(app: &mut SnappyRefApp, ctx: &egui::Context, placement: Pla
             preview_width: 1,
             preview_height: 1,
             animated_preview: None,
-            preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
             loaded_lod: crate::data::CanvasImageLod::Working,
             existing_load_diagnostics: None,
             origin: crate::jobs::ImportOrigin::Existing,

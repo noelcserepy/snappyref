@@ -5,7 +5,7 @@ use eframe::egui;
 
 use crate::canvas::CanvasState;
 use crate::data::Placement;
-use crate::jobs::{ExistingLoadDiagnostics, ImportOrigin, ImportTrace};
+use crate::jobs::{ExistingLoadDiagnostics, ImagePrepTrace, ImportOrigin};
 use crate::library::storage::Library;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -51,7 +51,7 @@ pub(crate) struct LoadedContentResolutionLog {
     pub(crate) origin: ImportOrigin,
     pub(crate) placement: Placement,
     pub(crate) diagnostics: Option<ExistingLoadDiagnostics>,
-    pub(crate) trace: Option<ImportTrace>,
+    pub(crate) trace: Option<ImagePrepTrace>,
 }
 
 #[derive(Clone, Debug)]
@@ -249,9 +249,9 @@ pub(crate) fn import_path_request(
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
     config: ContentResolutionRequestConfig,
-    trace: Option<crate::jobs::ImportTrace>,
-) -> crate::jobs::ImagePreparationRequest {
-    crate::jobs::ImagePreparationRequest::ImportPath {
+    trace: Option<crate::jobs::ImagePrepTrace>,
+) -> crate::jobs::ImagePrepRequest {
+    crate::jobs::ImagePrepRequest::ImportPath {
         target_board_id: reservation.target_board_id,
         queue_id: reservation.queue_id,
         placement_id: reservation.placement_id,
@@ -274,9 +274,9 @@ pub(crate) fn import_url_request(
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
     config: ContentResolutionRequestConfig,
-    trace: Option<crate::jobs::ImportTrace>,
-) -> crate::jobs::ImagePreparationRequest {
-    crate::jobs::ImagePreparationRequest::ImportUrl {
+    trace: Option<crate::jobs::ImagePrepTrace>,
+) -> crate::jobs::ImagePrepRequest {
+    crate::jobs::ImagePrepRequest::ImportUrl {
         target_board_id: reservation.target_board_id,
         queue_id: reservation.queue_id,
         placement_id: reservation.placement_id,
@@ -301,9 +301,9 @@ pub(crate) fn import_clipboard_request(
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
     config: ContentResolutionRequestConfig,
-    trace: Option<crate::jobs::ImportTrace>,
-) -> crate::jobs::ImagePreparationRequest {
-    crate::jobs::ImagePreparationRequest::ImportClipboard {
+    trace: Option<crate::jobs::ImagePrepTrace>,
+) -> crate::jobs::ImagePrepRequest {
+    crate::jobs::ImagePrepRequest::ImportClipboard {
         target_board_id: reservation.target_board_id,
         queue_id: reservation.queue_id,
         placement_id: reservation.placement_id,
@@ -419,7 +419,7 @@ mod tests {
         );
 
         match request {
-            crate::jobs::ImagePreparationRequest::ImportPath {
+            crate::jobs::ImagePrepRequest::ImportPath {
                 target_board_id,
                 queue_id,
                 placement_id,

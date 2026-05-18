@@ -615,10 +615,10 @@ pub(crate) fn canvas_texture_from_preview(
     preview_rgba: &[u8],
     preview_width: u32,
     preview_height: u32,
-    preview_texture: crate::jobs::ImportedPreviewTexture,
+    preview_texture: crate::jobs::ImagePrepPreviewTexture,
 ) -> CanvasTexture {
     match preview_texture {
-        crate::jobs::ImportedPreviewTexture::Cpu => CanvasTexture::Managed(ctx.load_texture(
+        crate::jobs::ImagePrepPreviewTexture::Cpu => CanvasTexture::Managed(ctx.load_texture(
             texture_name,
             egui::ColorImage::from_rgba_unmultiplied(
                 [preview_width as usize, preview_height as usize],
@@ -626,8 +626,8 @@ pub(crate) fn canvas_texture_from_preview(
             ),
             egui::TextureOptions::LINEAR,
         )),
-        crate::jobs::ImportedPreviewTexture::Native(texture) => CanvasTexture::Native(texture),
-        crate::jobs::ImportedPreviewTexture::Svg { uri, bytes, size } => {
+        crate::jobs::ImagePrepPreviewTexture::Native(texture) => CanvasTexture::Native(texture),
+        crate::jobs::ImagePrepPreviewTexture::Svg { uri, bytes, size } => {
             CanvasTexture::Svg { uri, bytes, size }
         }
     }

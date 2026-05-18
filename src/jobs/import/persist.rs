@@ -13,11 +13,11 @@ use crate::jobs::image_formats::{
 use crate::library::storage::Library;
 
 use super::arrangement::resolve_import_world;
-use super::decode::{install_prepared_canvas_cache, prepare_import_image_with_helper};
+use super::decode::{install_prepared_canvas_cache, prepare_image_with_helper};
 use super::preview_texture::build_preview_texture;
 use super::{
-    CanvasImageSettings, DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImagePreparationResult, ImportOrigin,
-    ImportTrace, ImportedPreviewTexture, PreparedPlacementImage, SVG_MIME_TYPE,
+    CanvasImageSettings, DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImagePrepPreviewTexture,
+    ImagePrepResult, ImagePrepTrace, ImportOrigin, PreparedPlacementImage, SVG_MIME_TYPE,
     animated_preview_max_side, canvas_source_image_from_rgba, is_svg_path,
     original_mime_type_is_svg, parse_svg_document, read_svg_document, stable_svg_uri_key,
 };
@@ -101,7 +101,7 @@ pub(crate) fn import_path_sync_traced(
     auto_scale: bool,
     target_canvas_area: f32,
     placement_gap: f32,
-    trace: Option<ImportTrace>,
+    trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> Result<PreparedPlacementImage, String> {
     let worker_started_at = Instant::now();
@@ -130,7 +130,7 @@ pub(crate) fn import_path_sync_traced(
 
     let decode_started_at = Instant::now();
     if let Some(prepared) =
-        prepare_import_image_with_helper(&source_path, canvas_image_settings).unwrap_or(None)
+        prepare_image_with_helper(&source_path, canvas_image_settings).unwrap_or(None)
     {
         if let Some(trace) = &mut trace {
             trace.timings.decode_or_load = decode_started_at.elapsed();
@@ -284,7 +284,7 @@ pub(crate) fn import_path_sync_traced(
         })
         .transpose()?;
     let preview_texture = if animated_preview.is_some() {
-        ImportedPreviewTexture::Cpu
+        ImagePrepPreviewTexture::Cpu
     } else {
         build_preview_texture(wgpu_render_state, &preview)?
     };
@@ -323,7 +323,7 @@ fn import_svg_path_sync_traced(
     target_canvas_area: f32,
     placement_gap: f32,
     worker_started_at: Instant,
-    mut trace: Option<ImportTrace>,
+    mut trace: Option<ImagePrepTrace>,
 ) -> Result<PreparedPlacementImage, String> {
     let decode_started_at = Instant::now();
     let svg = read_svg_document(&source_path)?;
@@ -378,7 +378,7 @@ fn import_svg_path_sync_traced(
         preview_width: svg.width,
         preview_height: svg.height,
         animated_preview: None,
-        preview_texture: ImportedPreviewTexture::Svg {
+        preview_texture: ImagePrepPreviewTexture::Svg {
             uri: format!("bytes://asset-svg-{}.svg", stable_svg_uri_key(&stored_path)),
             bytes: Arc::<[u8]>::from(svg.bytes),
             size: [svg.width as usize, svg.height as usize],
@@ -404,9 +404,9 @@ pub(crate) fn import_path(
     auto_scale: bool,
     target_canvas_area: f32,
     placement_gap: f32,
-    trace: Option<ImportTrace>,
+    trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> ImagePreparationResult {
+) -> ImagePrepResult {
     match import_path_sync_traced(
         library,
         target_board_id,
@@ -424,8 +424,8 @@ pub(crate) fn import_path(
         trace,
         wgpu_render_state,
     ) {
-        Ok(loaded) => ImagePreparationResult::Loaded(loaded),
-        Err(error) => ImagePreparationResult::Failed {
+        Ok(loaded) => ImagePrepResult::Loaded(loaded),
+        Err(error) => ImagePrepResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
             placement_id,
@@ -449,9 +449,9 @@ pub(crate) fn import_url(
     auto_scale: bool,
     target_canvas_area: f32,
     placement_gap: f32,
-    trace: Option<ImportTrace>,
+    trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> ImagePreparationResult {
+) -> ImagePrepResult {
     match import_url_sync_traced(
         library,
         target_board_id,
@@ -469,8 +469,8 @@ pub(crate) fn import_url(
         trace,
         wgpu_render_state,
     ) {
-        Ok(loaded) => ImagePreparationResult::Loaded(loaded),
-        Err(error) => ImagePreparationResult::Failed {
+        Ok(loaded) => ImagePrepResult::Loaded(loaded),
+        Err(error) => ImagePrepResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
             placement_id,
@@ -496,9 +496,9 @@ pub(crate) fn import_clipboard(
     auto_scale: bool,
     target_canvas_area: f32,
     placement_gap: f32,
-    trace: Option<ImportTrace>,
+    trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> ImagePreparationResult {
+) -> ImagePrepResult {
     match import_clipboard_sync_traced(
         library,
         target_board_id,
@@ -518,8 +518,8 @@ pub(crate) fn import_clipboard(
         trace,
         wgpu_render_state,
     ) {
-        Ok(loaded) => ImagePreparationResult::Loaded(loaded),
-        Err(error) => ImagePreparationResult::Failed {
+        Ok(loaded) => ImagePrepResult::Loaded(loaded),
+        Err(error) => ImagePrepResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
             placement_id,
@@ -549,7 +549,7 @@ pub(crate) fn import_url_sync_traced(
     auto_scale: bool,
     target_canvas_area: f32,
     placement_gap: f32,
-    trace: Option<ImportTrace>,
+    trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> Result<PreparedPlacementImage, String> {
     let worker_started_at = Instant::now();
@@ -661,7 +661,7 @@ pub(crate) fn import_url_sync_traced(
         })
         .transpose()?;
     let preview_texture = if animated_preview.is_some() {
-        ImportedPreviewTexture::Cpu
+        ImagePrepPreviewTexture::Cpu
     } else {
         build_preview_texture(
             wgpu_render_state,
@@ -709,7 +709,7 @@ fn import_downloaded_svg_sync_traced(
     target_canvas_area: f32,
     placement_gap: f32,
     worker_started_at: Instant,
-    mut trace: Option<ImportTrace>,
+    mut trace: Option<ImagePrepTrace>,
 ) -> Result<PreparedPlacementImage, String> {
     let source_label = downloaded.url.as_str().to_owned();
     let decode_started_at = Instant::now();
@@ -760,7 +760,7 @@ fn import_downloaded_svg_sync_traced(
         preview_width: svg.width,
         preview_height: svg.height,
         animated_preview: None,
-        preview_texture: ImportedPreviewTexture::Svg {
+        preview_texture: ImagePrepPreviewTexture::Svg {
             uri: format!("bytes://asset-svg-{}.svg", stable_svg_uri_key(&stored_path)),
             bytes: Arc::<[u8]>::from(svg.bytes),
             size: [svg.width as usize, svg.height as usize],
@@ -788,7 +788,7 @@ pub(crate) fn import_clipboard_sync_traced(
     auto_scale: bool,
     target_canvas_area: f32,
     placement_gap: f32,
-    trace: Option<ImportTrace>,
+    trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> Result<PreparedPlacementImage, String> {
     let worker_started_at = Instant::now();

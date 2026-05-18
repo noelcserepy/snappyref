@@ -12,7 +12,7 @@ mod preview_texture;
 mod request;
 
 use crop::crop_item;
-pub(crate) use decode::print_image_import_prepare_output_from_args;
+pub(crate) use decode::print_imageprep_output_from_args;
 use existing_load::backfill_cache_lod;
 pub use existing_load::load_canvas_snapshot_pixels;
 pub(crate) use existing_load::load_existing;
@@ -24,13 +24,13 @@ pub(super) use persist::{import_clipboard, import_path, import_path_sync_traced,
 pub use persist::{import_clipboard_sync, initial_import_scale};
 #[cfg(test)]
 use preview_texture::build_preview_texture;
-pub use preview_texture::{ImportedPreviewTexture, NativeTextureHandle};
-pub(super) use request::ImportPriority;
+pub use preview_texture::{ImagePrepPreviewTexture, NativeTextureHandle};
+pub(super) use request::ImagePrepPriority;
 pub use request::{
     CanvasImageSettings, ExistingLoadDiagnostics, ExistingLoadPriority, ExistingLoadSourceKind,
-    FileImportPerfReport, ImagePreparationRequest, ImagePreparationResult, ImportOrigin,
-    ImportTimings, ImportTrace, ImportWorkerStats, InteractiveImportPerfReport,
-    PreparedCropPreview, PreparedPlacementImage, StartupPerfReport, StartupTraceEntry,
+    FileImportPerfReport, ImagePrepRequest, ImagePrepResult, ImagePrepTimings, ImagePrepTrace,
+    ImagePrepWorkerStats, ImportOrigin, InteractiveImportPerfReport, PreparedCropPreview,
+    PreparedPlacementImage, StartupPerfReport, StartupTraceEntry,
     WorkerInteractiveImportPerfReport,
 };
 
@@ -43,8 +43,8 @@ const INTERACTIVE_CROP_PREVIEW_MAX_SIDE: u32 = 1024;
 
 mod worker;
 
-pub use worker::ImportWorker;
-use worker::ImportWorkerConfig;
+pub use worker::ImagePrepWorker;
+use worker::ImagePrepWorkerConfig;
 #[cfg(test)]
 pub(super) use worker::{RequestQueue, WorkerKind};
 

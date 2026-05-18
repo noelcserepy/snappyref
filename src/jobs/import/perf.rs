@@ -161,9 +161,9 @@ pub fn startup_trace(
     let started_at = Instant::now();
     let mut entries = Vec::with_capacity(placements.len());
     for placement in placements {
-        let trace = ImportTrace {
+        let trace = ImagePrepTrace {
             queued_at: Instant::now(),
-            timings: ImportTimings::default(),
+            timings: ImagePrepTimings::default(),
         };
         match load_existing(
             library,
@@ -176,7 +176,7 @@ pub fn startup_trace(
             Some(trace),
             None,
         ) {
-            ImagePreparationResult::Loaded(loaded) => {
+            ImagePrepResult::Loaded(loaded) => {
                 let diagnostics = loaded
                     .existing_load_diagnostics
                     .ok_or_else(|| "missing existing-load diagnostics".to_owned())?;
@@ -193,10 +193,10 @@ pub fn startup_trace(
                     startup_elapsed: started_at.elapsed(),
                 });
             }
-            ImagePreparationResult::Failed { error, .. } => return Err(error),
-            ImagePreparationResult::Cropped(_)
-            | ImagePreparationResult::CacheLodBackfilled { .. }
-            | ImagePreparationResult::CacheLodBackfillFailed { .. } => {}
+            ImagePrepResult::Failed { error, .. } => return Err(error),
+            ImagePrepResult::Cropped(_)
+            | ImagePrepResult::CacheLodBackfilled { .. }
+            | ImagePrepResult::CacheLodBackfillFailed { .. } => {}
         }
     }
     Ok(entries)
@@ -251,10 +251,10 @@ pub fn worker_interactive_import_perf_report() -> Result<WorkerInteractiveImport
     let parallelism = thread::available_parallelism()
         .map(|available| available.get())
         .unwrap_or(1);
-    let current_config = ImportWorkerConfig::for_parallelism(parallelism);
+    let current_config = ImagePrepWorkerConfig::for_parallelism(parallelism);
 
     let legacy_single_worker_ms =
-        measure_worker_interactive_import_ms(ImportWorkerConfig::legacy_single_worker())?;
+        measure_worker_interactive_import_ms(ImagePrepWorkerConfig::legacy_single_worker())?;
     let current_pooled_ms = measure_worker_interactive_import_ms(current_config)?;
 
     Ok(WorkerInteractiveImportPerfReport {
@@ -271,9 +271,9 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
     let viewport_world =
         egui::Rect::from_min_max(egui::pos2(-480.0, -320.0), egui::pos2(480.0, 320.0));
     let settings = CanvasImageSettings::default();
-    let trace = ImportTrace {
+    let trace = ImagePrepTrace {
         queued_at: Instant::now(),
-        timings: ImportTimings::default(),
+        timings: ImagePrepTimings::default(),
     };
 
     let started_at = Instant::now();
@@ -381,15 +381,15 @@ fn measure_first_visible_load_ms(
             None,
         );
         match loaded {
-            ImagePreparationResult::Loaded(loaded) => {
+            ImagePrepResult::Loaded(loaded) => {
                 if record_intersects_viewport_world(&loaded.placement, viewport_world) {
                     return Ok(started_at.elapsed().as_secs_f64() * 1000.0);
                 }
             }
-            ImagePreparationResult::Failed { error, .. } => return Err(error),
-            ImagePreparationResult::Cropped(_)
-            | ImagePreparationResult::CacheLodBackfilled { .. }
-            | ImagePreparationResult::CacheLodBackfillFailed { .. } => {}
+            ImagePrepResult::Failed { error, .. } => return Err(error),
+            ImagePrepResult::Cropped(_)
+            | ImagePrepResult::CacheLodBackfilled { .. }
+            | ImagePrepResult::CacheLodBackfillFailed { .. } => {}
         }
     }
     Ok(started_at.elapsed().as_secs_f64() * 1000.0)
@@ -427,11 +427,11 @@ fn measure_interactive_import_ms(
                 None,
                 None,
             ) {
-                ImagePreparationResult::Loaded(_) => {}
-                ImagePreparationResult::Failed { error, .. } => return Err(error),
-                ImagePreparationResult::Cropped(_)
-                | ImagePreparationResult::CacheLodBackfilled { .. }
-                | ImagePreparationResult::CacheLodBackfillFailed { .. } => {}
+                ImagePrepResult::Loaded(_) => {}
+                ImagePrepResult::Failed { error, .. } => return Err(error),
+                ImagePrepResult::Cropped(_)
+                | ImagePrepResult::CacheLodBackfilled { .. }
+                | ImagePrepResult::CacheLodBackfillFailed { .. } => {}
             }
         }
         import_clipboard_sync(
@@ -448,10 +448,10 @@ fn measure_interactive_import_ms(
     Ok(started_at.elapsed().as_secs_f64() * 1000.0)
 }
 
-fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f64, String> {
+fn measure_worker_interactive_import_ms(config: ImagePrepWorkerConfig) -> Result<f64, String> {
     let root = temp_library_root("worker-interactive-import-perf");
     let library = Library::initialize(root.clone())?;
-    let worker = ImportWorker::new_with_config(library, egui::Context::default(), None, config);
+    let worker = ImagePrepWorker::new_with_config(library, egui::Context::default(), None, config);
     let viewport_world =
         egui::Rect::from_min_max(egui::pos2(-240.0, -180.0), egui::pos2(240.0, 180.0));
 
@@ -462,7 +462,7 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
             PERF_BACKLOG_IMAGE_SIZE,
             PERF_BACKLOG_IMAGE_SIZE,
         )?;
-        worker.enqueue(ImagePreparationRequest::LoadExisting {
+        worker.enqueue(ImagePrepRequest::LoadExisting {
             target_board_id: 1,
             queue_id: None,
             placement: perf_record(
@@ -481,7 +481,7 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
     }
 
     let started_at = Instant::now();
-    worker.enqueue(ImagePreparationRequest::ImportClipboard {
+    worker.enqueue(ImagePrepRequest::ImportClipboard {
         target_board_id: 1,
         queue_id: 1,
         placement_id: None,
@@ -496,9 +496,9 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
         auto_scale: true,
         target_canvas_area: DEFAULT_IMPORT_TARGET_CANVAS_AREA,
         placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
-        trace: Some(ImportTrace {
+        trace: Some(ImagePrepTrace {
             queued_at: started_at,
-            timings: ImportTimings::default(),
+            timings: ImagePrepTimings::default(),
         }),
     })?;
 
@@ -507,13 +507,11 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
         let mut interactive_result = None;
         for result in worker.try_recv_up_to(8) {
             match result {
-                ImagePreparationResult::Loaded(loaded)
-                    if loaded.origin == ImportOrigin::Clipboard =>
-                {
+                ImagePrepResult::Loaded(loaded) if loaded.origin == ImportOrigin::Clipboard => {
                     interactive_result = Some(Ok(started_at.elapsed().as_secs_f64() * 1000.0));
                     break;
                 }
-                ImagePreparationResult::Failed { context, error, .. } if context == "clipboard" => {
+                ImagePrepResult::Failed { context, error, .. } if context == "clipboard" => {
                     interactive_result = Some(Err(error));
                     break;
                 }
