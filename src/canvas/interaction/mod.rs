@@ -405,15 +405,15 @@ pub(super) fn handle_input(
                     );
                     let center_world = state.screen_to_world(center_screen, rect);
                     let anchor_world = state.screen_to_world(anchor_screen, rect);
-                    let base_size = image.placement.base_visual_size();
-                    let base_visual_size = super::rotated_visual_size(
+                    let base_size = image.placement.base_display_size();
+                    let base_display_size = super::rotated_display_size(
                         base_size.x,
                         base_size.y,
                         image.placement.state.geometry.rotation,
                     );
                     let desired_rect = egui::Rect::from_center_size(
                         center_world,
-                        base_visual_size * scale.max(0.01),
+                        base_display_size * scale.max(0.01),
                     );
                     let guide_snap_disabled =
                         ui.input(|input| guide_snap_disabled(input.modifiers));
@@ -427,7 +427,7 @@ pub(super) fn handle_input(
                             placement_id,
                             desired_rect,
                             anchor_world,
-                            base_visual_size,
+                            base_display_size,
                             min_image_scale(
                                 image
                                     .placement
@@ -441,7 +441,7 @@ pub(super) fn handle_input(
                         .map(|snap_rect| {
                             (
                                 snap_rect.center(),
-                                (snap_rect.width() / base_visual_size.x.max(f32::EPSILON)).max(
+                                (snap_rect.width() / base_display_size.x.max(f32::EPSILON)).max(
                                     min_image_scale(
                                         image
                                             .placement

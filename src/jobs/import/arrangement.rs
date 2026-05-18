@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::data::PlacementFootprint;
+use crate::data::PlacementLayoutItem;
 use crate::library::storage::Library;
 
 #[derive(Clone, Copy, Debug)]
@@ -65,7 +65,7 @@ pub(super) fn resolve_import_world(
 }
 
 pub fn arrange_rect_with_existing_layout(
-    existing_items: &[PlacementFootprint],
+    existing_items: &[PlacementLayoutItem],
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
     item_width: f32,
@@ -89,7 +89,7 @@ pub fn arrange_rect_with_existing_layout(
 }
 
 pub fn best_arrangement_candidate_with_existing_layout(
-    existing_items: &[PlacementFootprint],
+    existing_items: &[PlacementLayoutItem],
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
     item_width: f32,
@@ -184,11 +184,11 @@ fn viewport_distance_score(candidate_center: egui::Pos2, viewport_world: egui::R
     candidate_center.distance_sq(clamped)
 }
 
-fn displayed_layout_rect(placement: &PlacementFootprint) -> LayoutRect {
-    let size = egui::vec2(placement.width.max(0.0), placement.height.max(0.0));
+fn displayed_layout_rect(placement: &PlacementLayoutItem) -> LayoutRect {
+    let size = egui::vec2(placement.width().max(0.0), placement.height().max(0.0));
     LayoutRect {
         id: placement.id,
-        rect: egui::Rect::from_center_size(placement.center, size),
+        rect: egui::Rect::from_center_size(placement.center(), size),
     }
 }
 

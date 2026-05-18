@@ -31,8 +31,16 @@ The persisted mutable state inside a Placement: id, optional asset id, Rect Geom
 _Avoid_: Board item state, item row
 
 **Rect Geometry**:
-The shared transform primitive for rectangular canvas things: center, size, scale, rotation, and z-order. Placement State uses Rect Geometry for persisted placement transforms; placement visual bounds derive from Rect Geometry plus the placement's current visual size.
-_Avoid_: Position fields, transform bag
+The canonical geometry primitive for rectangular canvas things: center, size, scale, rotation, and z-order.
+_Avoid_: Position fields, transform bag, Placement Footprint, Selected Layout Item
+
+**Placement Display Size**:
+The board-world size stored in a Placement's Rect Geometry and used to draw the Placement.
+_Avoid_: Asset size, image size, legacy visual-size field
+
+**Asset Pixel Size**:
+The intrinsic pixel dimensions of an Asset's source image.
+_Avoid_: Placement size, display size
 
 **Segment Geometry**:
 The shared primitive for line-like canvas things: start point, end point, and z-order. Line and arrow annotations use Segment Geometry instead of rectangular geometry.
@@ -75,20 +83,20 @@ The shared domain flow that turns Source Intents into real Placements immediatel
 _Avoid_: Add-to-Canvas module, Search placement path, import placement path
 
 **Placement Lifecycle**:
-The shared flow for provisional-vs-committed Placement behavior. It owns starting provisional Placement batches, committing provisional Placements into durable document content, cancelling provisional Placements history-neutral, and clearing provisional state after commit/cancel. Source adapters such as Search decide user intent, but do not directly mutate provisional lifecycle state.
+The shared flow for provisional-vs-committed Placement behavior. A canvas has at most one active provisional Placement batch. Provisional Placements are real canvas content but not durable board content; committed Placements are durable board content. Committing a provisional Placement preserves its Placement identity while assigning durable persistence identity as needed.
 _Avoid_: Search placement mode internals, provisional cleanup helper, pending draft lifecycle
 
+**Provisional Placement Selection**:
+The temporary active selection used while provisional Placements are being positioned. It may drive Placement Movement and Guide Snapping, but it is not durable user selection until the provisional Placements are committed.
+_Avoid_: Preview selection, hover selection
+
 **Content Resolution**:
-The async content-loading flow for Placements whose content is not loaded yet. It owns runtime queue id to Placement id correlation, source-specific worker request construction, completion/failure correlation, and cleanup for pending resolution work. Content Resolution may change a Placement's content state from loading to loaded or failed, but must not change Placement geometry.
+The async content-loading flow for Placements whose content is not loaded yet. It owns runtime queue id to Placement id correlation, source-specific worker request construction, completion/failure correlation, and cleanup for pending resolution work. Content Resolution may change a Placement's content state from loading to loaded or failed. When true Asset Pixel Size arrives, it may correct Placement Display Size to match the asset aspect ratio while preserving area; Placement Movement still owns authored position changes.
 _Avoid_: Import reservation, placeholder completion, worker-owned Placement state
 
 **Content Resolution Source**:
 The persisted source descriptor used to retry, finish, or fail a Placement's content resolution, such as an external path, external URL, clipboard payload, or existing Asset. It belongs to Placement Content State after a Placement exists; it is not a pre-Placement Source Intent.
 _Avoid_: Placement Content Intent, Source Intent
-
-**Placement Preview Slot**:
-A transient UI/render footprint for pre-Placement hover or verification previews. A Placement Preview Slot is not persisted, selected, stack-ordered, undoable, or part of Document History. Once content is committed to the board, it must be represented as a Placement with Placement Content State, not as a preview slot.
-_Avoid_: Import Placeholder, placeholder item, pending Placement
 
 **Selection Border**:
 The outline that shows the current canvas selection; it hides while a placement is moving and reappears after the movement pauses or the drag ends.
@@ -99,12 +107,16 @@ The board-local pan and zoom state.
 _Avoid_: Camera, view, canvas position
 
 **External Drag Intake**:
-The pre-import normalization of OS/window drag-and-drop input into external asset sources plus an optional canvas screen anchor. It merges egui and native platform payloads, de-duplicates paths and URLs, and resolves drag/drop coordinates before import preview or enqueueing.
+The normalization of OS/window drag-and-drop input into external asset sources plus an optional canvas screen anchor before Placement Creation.
 _Avoid_: Import pipeline, native drop bridge, placement flow
 
-**Import Batch Anchor**:
-The board-world point that records where an async batch of loading Placements was initially created. Final content resolution must preserve user-authored Placement transforms when the user has moved the batch after creation.
-_Avoid_: Placeholder center, batch center, drop position
+**Placement Batch Anchor**:
+The board-world point that records where a batch of new Placements was initially created.
+_Avoid_: Import Batch Anchor, placeholder center, drop position
+
+**Placement Target Area**:
+The desired board-world display area used by Placement Creation when sizing new Placements from Asset Pixel Size or source dimensions.
+_Avoid_: Import target area, image area cap
 
 **Add-to-Canvas**:
 User-facing wording for commands that add content to the Active Board. Architecture should use Placement Creation for the domain flow and Source Intent for pre-Placement input. Add-to-Canvas should not become a separate deep Module name.
@@ -119,8 +131,8 @@ The optional pre-packing resize phase of compact arrangement where selected Plac
 _Avoid_: Normalize close heights/widths, bucket resize, pre-packing resize
 
 **Placement Footprint**:
-A transient geometry input used by arrangement, preview planning, and guide-snapping calculations. A Placement Footprint may describe a real Placement or a pre-Placement preview slot, but it is not itself a domain object and must not be persisted as board content.
-_Avoid_: PlacementLayoutItem, layout item as domain object
+Deprecated geometry term. Use **Rect Geometry** for rectangular canvas geometry and keep layout-only adapter types out of domain language.
+_Avoid_: Selected Layout Item, layout footprint
 
 **Directional Settle Arrange**:
 An arrange command where selected Placements move as far as possible toward one edge of the current selection bounds, stopping at that edge or at the Workspace Settings image gap from already-settled selected Placements.
@@ -447,7 +459,7 @@ The operation that writes selected board content to the clipboard. SnappyRef alw
 _Avoid_: Export
 
 **Paste**:
-The operation that creates copied or external clipboard content on the active board using placement logic. SnappyRef-native clipboard payloads recreate board content; external image/file/PureRef clipboard payloads enter through **External Drag Intake** and async import placement, preserving the intended **Import Batch Anchor**.
+The operation that creates copied or external clipboard content on the active board using placement logic. SnappyRef-native clipboard payloads recreate board content; external image/file/PureRef clipboard payloads enter through **External Drag Intake** and preserve the intended **Placement Batch Anchor**.
 _Avoid_: Drop
 
 **PureRef Clipboard Paste**:
@@ -487,12 +499,16 @@ The confirmed command that removes selected assets from boards and library searc
 _Avoid_: Permanent delete, delete file
 
 **Import Placeholder**:
-Deprecated term for the visual rendering of a loading Placement or a pre-Placement preview. Do not model committed import placeholders as separate canvas items; use Placement Content State for committed content and **Placement Preview Slot** for transient pre-Placement previews.
+Deprecated term for the visual rendering of loading or provisional import content. Visible board content should be represented as a **Placement** with **Placement Content State** and **Placement Lifecycle**, not as a separate placeholder object.
 _Avoid_: Temporary item, pending asset, placeholder item
 
 **PlacementDraft**:
 Deprecated planning term. Do not introduce a domain object named PlacementDraft. Before creation, content is a Source Intent; after creation, it is a Placement in a lifecycle and content state. Any intermediate layout calculation should stay a private implementation detail of Placement Creation.
 _Avoid_: Planned Placement, provisional draft, pending Placement
+
+**Selected Layout Item**:
+Deprecated layout adapter term. Use **Rect Geometry** for rectangular canvas geometry and **Placement** when referring to real board content.
+_Avoid_: Placement Footprint, layout item
 
 ### Asset lifecycle
 
@@ -578,6 +594,8 @@ _Avoid_: Release asset, build cache
 - A **Source Intent** is not a **Placement** and does not belong to **Stack Order** or **Document History**.
 - **Placement Creation** turns **Source Intents** into **Placements** immediately; there is no domain-level **PlacementDraft** between them.
 - **Placement Lifecycle** owns when provisional Placements become committed document content or are discarded history-neutral.
+- Improved source facts may refine provisional **Placement** geometry, but must not replace the active provisional **Placement** batch.
+- A **Placement Display Size** should match its **Asset Pixel Size** aspect ratio while preserving display area as much as possible.
 - An **Asset** can have zero or more **Placements**.
 - A **Board** can have zero or more **Placements** and zero or more **Annotations**.
 - An **Annotation** belongs to exactly one **Board** and does not belong to the **Library**.

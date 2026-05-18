@@ -28,6 +28,12 @@ impl RectGeometry {
         vec2(self.size.x.max(1.0), self.size.y.max(1.0)) * self.scale.max(0.01)
     }
 
+    pub fn size_preserving_area_for_aspect(size: Vec2, width: u32, height: u32) -> Vec2 {
+        let aspect = width.max(1) as f32 / height.max(1) as f32;
+        let area = (size.x.max(1.0) * size.y.max(1.0)).max(1.0);
+        vec2((area * aspect).sqrt(), (area / aspect).sqrt())
+    }
+
     pub fn unrotated_bounds(self) -> Rect {
         Rect::from_center_size(self.center, self.scaled_size())
     }
@@ -35,7 +41,7 @@ impl RectGeometry {
     pub fn visual_bounds(self) -> Rect {
         Rect::from_center_size(
             self.center,
-            rotated_visual_size(self.scaled_size(), self.rotation),
+            rotated_display_size(self.scaled_size(), self.rotation),
         )
     }
 }
@@ -57,7 +63,7 @@ impl SegmentGeometry {
     }
 }
 
-pub fn rotated_visual_size(size: Vec2, rotation: f32) -> Vec2 {
+pub fn rotated_display_size(size: Vec2, rotation: f32) -> Vec2 {
     let sin = rotation.sin().abs();
     let cos = rotation.cos().abs();
     vec2(size.x * cos + size.y * sin, size.x * sin + size.y * cos)

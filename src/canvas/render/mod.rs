@@ -20,8 +20,7 @@ pub(super) use image_pass::{
     image_texture_group_count_for_records, paint_canvas_items,
 };
 pub(super) use overlays::{
-    paint_crop_marquee, paint_guide_snap_indicators, paint_marquee, paint_placement_preview_slots,
-    paint_selection_bounds,
+    paint_crop_marquee, paint_guide_snap_indicators, paint_marquee, paint_selection_bounds,
 };
 pub(super) use textbox_editor::{
     annotation_style_toolbar_rect, editing_textbox_toolbar_rect, layout_textbox_galley,
@@ -92,7 +91,7 @@ mod tests {
             interaction: crate::canvas::CanvasInteractionState {
                 drag_state: Some(crate::canvas::DragState {
                     pointer_start_world: egui::Pos2::ZERO,
-                    starting_items: vec![crate::canvas::SelectedLayoutItem::new(
+                    starting_items: vec![crate::data::PlacementLayoutItem::new(
                         1,
                         egui::pos2(0.0, 0.0),
                         egui::vec2(100.0, 100.0),

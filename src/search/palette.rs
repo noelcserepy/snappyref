@@ -165,7 +165,6 @@ impl SearchSelection {
 
 #[derive(Clone, Debug)]
 pub(crate) struct SearchResultDragState {
-    pub placement_ids: Vec<i64>,
     pub asset_ids: Vec<i64>,
     pub outside_overlay: bool,
     pub placement_pending: bool,

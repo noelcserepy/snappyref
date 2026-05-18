@@ -361,21 +361,24 @@ fn paint_unloaded_placement(
     image: &RenderedPlacement,
     image_rect: egui::Rect,
 ) {
-    let (fill, stroke, label) = match &image.placement.content {
+    let (fill, stroke, label, loading) = match &image.placement.content {
         crate::data::PlacementContent::Loading { .. } => (
             crate::ui::theme::SURFACE,
             egui::Stroke::new(1.0, crate::ui::theme::BORDER_STRONG),
             None,
+            true,
         ),
         crate::data::PlacementContent::Failed { .. } => (
             crate::ui::theme::DESTRUCTIVE_FILL,
             egui::Stroke::new(1.0, crate::ui::theme::DESTRUCTIVE_STROKE),
             Some("Failed"),
+            false,
         ),
         crate::data::PlacementContent::Loaded { .. } => (
             crate::ui::theme::SURFACE,
             egui::Stroke::new(1.0, crate::ui::theme::BORDER_STRONG),
             None,
+            false,
         ),
     };
     painter.rect_filled(image_rect, crate::ui::theme::RADIUS_NONE, fill);
@@ -397,6 +400,70 @@ fn paint_unloaded_placement(
             crate::ui::theme::TEXT_MUTED,
         );
     }
+    if loading {
+        const SHIMMER_PERIOD_SECS: f32 = 1.8;
+        const SHIMMER_PEAK_ALPHA: u8 = 40;
+        const SHIMMER_BAND_FRACTION: f32 = 0.35;
+        const SHIMMER_TILT_FRACTION: f32 = 0.25;
+
+        let time = painter.ctx().input(|input| input.time) as f32;
+        let phase = (time / SHIMMER_PERIOD_SECS).rem_euclid(1.0);
+        if let Some(shimmer) = loading_shimmer_mesh(
+            image_rect,
+            phase,
+            SHIMMER_BAND_FRACTION,
+            SHIMMER_TILT_FRACTION,
+            SHIMMER_PEAK_ALPHA,
+        ) {
+            painter.with_clip_rect(image_rect).add(shimmer);
+            painter.ctx().request_repaint();
+        }
+    }
+}
+
+fn loading_shimmer_mesh(
+    rect: egui::Rect,
+    phase: f32,
+    band_fraction: f32,
+    tilt_fraction: f32,
+    peak_alpha: u8,
+) -> Option<egui::epaint::Mesh> {
+    if rect.width() <= 1.0 || rect.height() <= 1.0 {
+        return None;
+    }
+    let band_width = (rect.width() * band_fraction).max(24.0);
+    let tilt = rect.height() * tilt_fraction;
+    let travel_start = rect.left() - band_width - tilt;
+    let travel_end = rect.right() + band_width;
+    let center_x = travel_start + phase * (travel_end - travel_start);
+    let half = band_width / 2.0;
+
+    let peak = egui::Color32::from_rgba_unmultiplied(255, 255, 255, peak_alpha);
+    let edge = egui::Color32::TRANSPARENT;
+
+    let mut mesh = egui::epaint::Mesh::default();
+    let mut push_vertex = |pos: egui::Pos2, color: egui::Color32| -> u32 {
+        let index = mesh.vertices.len() as u32;
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos,
+            uv: egui::epaint::WHITE_UV,
+            color,
+        });
+        index
+    };
+    let top = rect.top();
+    let bottom = rect.bottom();
+    let left_top = push_vertex(egui::pos2(center_x - half, top), edge);
+    let center_top = push_vertex(egui::pos2(center_x, top), peak);
+    let right_top = push_vertex(egui::pos2(center_x + half, top), edge);
+    let left_bot = push_vertex(egui::pos2(center_x - half - tilt, bottom), edge);
+    let center_bot = push_vertex(egui::pos2(center_x - tilt, bottom), peak);
+    let right_bot = push_vertex(egui::pos2(center_x + half - tilt, bottom), edge);
+    mesh.add_triangle(left_top, center_top, center_bot);
+    mesh.add_triangle(left_top, center_bot, left_bot);
+    mesh.add_triangle(center_top, right_top, right_bot);
+    mesh.add_triangle(center_top, right_bot, center_bot);
+    Some(mesh)
 }
 
 fn min_repaint_delay(current: Option<Duration>, candidate: Option<Duration>) -> Option<Duration> {

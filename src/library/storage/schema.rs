@@ -45,14 +45,14 @@ fn ensure_board_items_placement_columns(connection: &Connection) -> Result<(), S
     ensure_column(
         connection,
         "board_items",
-        "visual_width",
-        "ALTER TABLE board_items ADD COLUMN visual_width REAL",
+        "width",
+        "ALTER TABLE board_items ADD COLUMN width REAL NOT NULL DEFAULT 1.0",
     )?;
     ensure_column(
         connection,
         "board_items",
-        "visual_height",
-        "ALTER TABLE board_items ADD COLUMN visual_height REAL",
+        "height",
+        "ALTER TABLE board_items ADD COLUMN height REAL NOT NULL DEFAULT 1.0",
     )?;
     ensure_column(
         connection,
@@ -110,25 +110,23 @@ fn ensure_board_items_asset_id_nullable(connection: &Connection) -> Result<(), S
             x         REAL NOT NULL,
             y         REAL NOT NULL,
             scale     REAL NOT NULL,
+            width     REAL NOT NULL DEFAULT 1.0,
+            height    REAL NOT NULL DEFAULT 1.0,
             rotation  REAL NOT NULL,
             z_index   INTEGER NOT NULL,
             archived  INTEGER NOT NULL DEFAULT 0,
             placement_content_state TEXT NOT NULL DEFAULT 'loaded',
             placement_lifecycle TEXT NOT NULL DEFAULT 'committed',
-            visual_width REAL,
-            visual_height REAL,
             content_resolution_intent TEXT
         );
 
         INSERT INTO board_items (
-            id, board_id, asset_id, x, y, scale, rotation, z_index, archived,
-            placement_content_state, placement_lifecycle, visual_width,
-            visual_height, content_resolution_intent
+            id, board_id, asset_id, x, y, scale, width, height, rotation, z_index, archived,
+            placement_content_state, placement_lifecycle, content_resolution_intent
         )
         SELECT
-            id, board_id, asset_id, x, y, scale, rotation, z_index, archived,
-            placement_content_state, placement_lifecycle, visual_width,
-            visual_height, content_resolution_intent
+            id, board_id, asset_id, x, y, scale, 1.0, 1.0, rotation, z_index, archived,
+            placement_content_state, placement_lifecycle, content_resolution_intent
         FROM board_items_asset_required_old;
 
         DROP TABLE board_items_asset_required_old;
@@ -857,13 +855,13 @@ impl Library {
                     x         REAL NOT NULL,
                     y         REAL NOT NULL,
                     scale     REAL NOT NULL,
+                    width     REAL NOT NULL DEFAULT 1.0,
+                    height    REAL NOT NULL DEFAULT 1.0,
                     rotation  REAL NOT NULL,
                     z_index   INTEGER NOT NULL,
                     archived  INTEGER NOT NULL DEFAULT 0,
                     placement_content_state TEXT NOT NULL DEFAULT 'loaded',
                     placement_lifecycle TEXT NOT NULL DEFAULT 'committed',
-                    visual_width REAL,
-                    visual_height REAL,
                     content_resolution_intent TEXT
                 );
 

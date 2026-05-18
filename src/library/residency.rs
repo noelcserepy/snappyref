@@ -10,7 +10,7 @@ use crate::jobs::{
     ImportTimings, ImportTrace, ImportWorker, PreparedCropPreview, PreparedPlacementImage,
 };
 use crate::placement::content_resolution::{
-    ContentResolutionCleanupTicket, FailedContentResolutionOutcome, LoadedContentResolutionLog,
+    ContentResolutionTicket, FailedContentResolutionOutcome, LoadedContentResolutionLog,
     LoadedContentResolutionOutcome,
 };
 
@@ -132,12 +132,10 @@ impl ImageResidencyCoordinator {
         settings: &WorkspaceSettings,
         loaded: PreparedPlacementImage,
     ) -> LoadedContentResolutionOutcome {
-        let cleanup_ticket = loaded
-            .queue_id
-            .map(|queue_id| ContentResolutionCleanupTicket {
-                target_board_id: loaded.target_board_id,
-                queue_id,
-            });
+        let resolution_ticket = loaded.queue_id.map(|queue_id| ContentResolutionTicket {
+            target_board_id: loaded.target_board_id,
+            queue_id,
+        });
         let origin = loaded.origin;
         let loaded_lod = loaded.loaded_lod;
         let loaded_record = loaded.placement.clone();
@@ -146,7 +144,7 @@ impl ImageResidencyCoordinator {
 
         if loaded.target_board_id != active_board_id {
             return LoadedContentResolutionOutcome {
-                cleanup_ticket,
+                resolution_ticket,
                 status: Some("Imported image".to_owned()),
                 indexed_asset: None,
                 log: None,
@@ -160,7 +158,7 @@ impl ImageResidencyCoordinator {
             })
         {
             return LoadedContentResolutionOutcome {
-                cleanup_ticket,
+                resolution_ticket,
                 status: None,
                 indexed_asset: None,
                 log: None,
@@ -208,7 +206,7 @@ impl ImageResidencyCoordinator {
         );
 
         LoadedContentResolutionOutcome {
-            cleanup_ticket,
+            resolution_ticket,
             status: Some("Imported image".to_owned()),
             indexed_asset,
             log: Some(LoadedContentResolutionLog {
@@ -241,7 +239,7 @@ impl ImageResidencyCoordinator {
         context: String,
         error: String,
     ) -> FailedContentResolutionOutcome {
-        let cleanup_ticket = queue_id.map(|queue_id| ContentResolutionCleanupTicket {
+        let resolution_ticket = queue_id.map(|queue_id| ContentResolutionTicket {
             target_board_id: target_board_id.unwrap_or(active_board_id),
             queue_id,
         });
@@ -250,7 +248,7 @@ impl ImageResidencyCoordinator {
             canvas.clear_crop_pending(placement_id);
         }
         FailedContentResolutionOutcome {
-            cleanup_ticket,
+            resolution_ticket,
             placement_id,
             target_board_id,
             status: format!("{context}: {error}"),

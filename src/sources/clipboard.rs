@@ -301,7 +301,7 @@ mod tests {
             .as_mut()
             .expect("loaded placement asset")
             .height = 20_000;
-        placement.visual_size = eframe::egui::vec2(20_000.0, 20_000.0);
+        placement.state.geometry.size = eframe::egui::vec2(20_000.0, 20_000.0);
         canvas.add_prepared_placement_image(
             &ctx,
             loaded_item(placement, vec![255, 255, 255, 255], 1, 1),

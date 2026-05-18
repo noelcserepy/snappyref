@@ -1244,7 +1244,7 @@ fn arrow_keys_apply_directional_settle_arrange() {
             .as_mut()
             .expect("loaded placement asset")
             .height = 40;
-        loaded.placement.visual_size = egui::vec2(100.0, 40.0);
+        loaded.placement.state.geometry.size = egui::vec2(100.0, 40.0);
         loaded.placement.state.geometry.center.x = x;
         loaded.placement.state.geometry.center.y = y;
         app.canvas.add_prepared_placement_image(&ctx, loaded);
@@ -3189,7 +3189,6 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
             .placement_for_id(active_items[0].state.id)
             .is_some()
     );
-    assert_eq!(harness.state().canvas.placement_preview_slot_count(), 0);
     assert_eq!(harness.state().pending_import_batches.len(), 0);
 
     let _ = fs::remove_dir_all(root);
@@ -3223,8 +3222,8 @@ fn long_search_error_does_not_expand_palette_width() {
 
 #[cfg(feature = "semantic-search")]
 #[test]
-fn command_enter_library_search_results_show_pending_cursor_placeholders() {
-    let root = temp_library_root("snappyref-library-search-cmd-enter-placeholder-preview");
+fn command_enter_library_search_results_show_pending_cursor_layout_items() {
+    let root = temp_library_root("snappyref-library-search-cmd-enter-provisional-placement");
     let library = Library::initialize(root.clone()).unwrap();
     let first_path = library
         .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
@@ -3407,11 +3406,12 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
         .canvas
         .provisional_records_in_selection_order()
         .into_iter()
-        .map(|placement| crate::data::PlacementFootprint {
-            id: placement.state.id,
-            center: placement.state.geometry.center,
-            width: placement.scaled_visual_size().x,
-            height: placement.scaled_visual_size().y,
+        .map(|placement| {
+            crate::data::PlacementLayoutItem::new(
+                placement.state.id,
+                placement.state.geometry.center,
+                placement.state.geometry.scaled_size(),
+            )
         })
         .collect::<Vec<_>>();
     assert_eq!(layout.len(), 2);
@@ -3428,10 +3428,10 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
             .height,
     );
     assert!(layout.iter().any(|item| {
-        (item.width - first_size.x).abs() < 0.1 && (item.height - first_size.y).abs() < 0.1
+        (item.width() - first_size.x).abs() < 0.1 && (item.height() - first_size.y).abs() < 0.1
     }));
     assert!(layout.iter().any(|item| {
-        (item.width - second_size.x).abs() < 0.1 && (item.height - second_size.y).abs() < 0.1
+        (item.width() - second_size.x).abs() < 0.1 && (item.height() - second_size.y).abs() < 0.1
     }));
 
     let _ = fs::remove_dir_all(root);
@@ -3439,8 +3439,8 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
 
 #[cfg(feature = "semantic-search")]
 #[test]
-fn multi_select_enter_library_search_results_show_pending_cursor_placeholders() {
-    let root = temp_library_root("snappyref-library-search-multi-enter-placeholder-preview");
+fn multi_select_enter_library_search_results_show_pending_cursor_layout_items() {
+    let root = temp_library_root("snappyref-library-search-multi-enter-provisional-placement");
     let library = Library::initialize(root.clone()).unwrap();
     let first_path = library
         .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
@@ -3978,33 +3978,7 @@ fn search_drop_source_center_uses_image_extents() {
 }
 
 #[test]
-fn queued_placement_preview_slots_replace_and_cleanup_by_queue_id() {
-    let mut app = test_app(None);
-
-    app.queue_placement_preview_slot_for_board(
-        app.active_board_id,
-        7,
-        "first".to_owned(),
-        egui::pos2(10.0, 20.0),
-        300,
-        200,
-    );
-    app.queue_placement_preview_slot_for_board(
-        app.active_board_id,
-        7,
-        "second".to_owned(),
-        egui::pos2(30.0, 40.0),
-        120,
-        90,
-    );
-
-    assert_eq!(app.canvas.placement_preview_slot_count(), 1);
-    app.canvas.remove_placement_preview_slot(7);
-    assert_eq!(app.canvas.placement_preview_slot_count(), 0);
-}
-
-#[test]
-fn completed_multi_file_import_batch_selects_without_mutating_geometry() {
+fn completed_multi_file_import_batch_selects_and_compacts_loaded_geometry() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
     app.register_import_batch(app.active_board_id, egui::pos2(120.0, 80.0), vec![1, 2, 3]);
@@ -4052,16 +4026,16 @@ fn completed_multi_file_import_batch_selects_without_mutating_geometry() {
     }
 
     assert_eq!(app.canvas.selected_placement_ids(), vec![1, 2, 3]);
-    for placement_id in [1_i64, 2, 3] {
-        let placement = app.canvas.placement_for_id(placement_id).unwrap();
-        assert_eq!(placement.state.geometry.center.x, 0.0);
-        assert_eq!(placement.state.geometry.center.y, 0.0);
-    }
+    assert!([1_i64, 2, 3].iter().any(|placement_id| {
+        let placement = app.canvas.placement_for_id(*placement_id).unwrap();
+        placement.state.geometry.center.x.abs() > 0.001
+            || placement.state.geometry.center.y.abs() > 0.001
+    }));
     assert!(app.pending_import_batches.is_empty());
 }
 
 #[test]
-fn completed_import_batch_uses_original_anchor_after_out_of_order_failures() {
+fn completed_import_batch_compacts_loaded_items_after_out_of_order_failures() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
     let anchor = egui::pos2(-340.0, 210.0);
@@ -4080,7 +4054,7 @@ fn completed_import_batch_uses_original_anchor_after_out_of_order_failures() {
         .as_mut()
         .expect("loaded placement asset")
         .height = 80;
-    third.placement.visual_size = egui::vec2(140.0, 80.0);
+    third.placement.state.geometry.size = egui::vec2(140.0, 80.0);
     third.placement.state.geometry.center.x = 4000.0;
     third.placement.state.geometry.center.y = -1000.0;
     app.integrate_loaded_import(&ctx, third);
@@ -4100,51 +4074,31 @@ fn completed_import_batch_uses_original_anchor_after_out_of_order_failures() {
         .as_mut()
         .expect("loaded placement asset")
         .height = 170;
-    first.placement.visual_size = egui::vec2(90.0, 170.0);
+    first.placement.state.geometry.size = egui::vec2(90.0, 170.0);
     first.placement.state.geometry.center.x = -2500.0;
     first.placement.state.geometry.center.y = 3600.0;
     app.integrate_loaded_import(&ctx, first);
 
     assert_eq!(app.canvas.selected_placement_ids(), vec![3, 1]);
-    assert_eq!(
-        app.canvas
-            .placement_for_id(3)
-            .unwrap()
-            .state
-            .geometry
-            .center
-            .x,
-        4000.0
-    );
-    assert_eq!(
-        app.canvas
-            .placement_for_id(3)
-            .unwrap()
-            .state
-            .geometry
-            .center
-            .y,
-        -1000.0
-    );
-    assert_eq!(
-        app.canvas
-            .placement_for_id(1)
-            .unwrap()
-            .state
-            .geometry
-            .center
-            .x,
-        -2500.0
-    );
-    assert_eq!(
-        app.canvas
-            .placement_for_id(1)
-            .unwrap()
-            .state
-            .geometry
-            .center
-            .y,
-        3600.0
+    let third_center = app
+        .canvas
+        .placement_for_id(3)
+        .unwrap()
+        .state
+        .geometry
+        .center;
+    let first_center = app
+        .canvas
+        .placement_for_id(1)
+        .unwrap()
+        .state
+        .geometry
+        .center;
+    assert_ne!(third_center, egui::pos2(4000.0, -1000.0));
+    assert_ne!(first_center, egui::pos2(-2500.0, 3600.0));
+    assert!(
+        third_center.distance(first_center)
+            < egui::pos2(4000.0, -1000.0).distance(egui::pos2(-2500.0, 3600.0))
     );
     assert!(app.pending_import_batches.is_empty());
 }
@@ -4202,7 +4156,6 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
     assert_eq!(unknown.queue_id, 2);
     assert!(unknown.placement_id.is_some());
     assert_eq!(unknown.reserved_world, Some(egui::pos2(200.0, 0.0)));
-    assert_eq!(app.canvas.placement_preview_slot_count(), 0);
     assert_eq!(layout.len(), 2);
 
     let _ = fs::remove_dir_all(root);
@@ -4237,31 +4190,6 @@ fn completed_import_for_active_board_enters_active_canvas() {
 
     assert!(app.canvas.placement_for_id(42).is_some());
     assert_eq!(app.status, "Imported image");
-}
-
-#[test]
-fn queued_placement_preview_slots_are_scoped_to_their_board_across_switches() {
-    let root = temp_library_root("snappyref-placeholder-board-scope");
-    let library = Library::initialize(root.clone()).unwrap();
-    let second = library.create_board("Second").unwrap();
-    let mut app = test_app(Some(library));
-    app.active_board_id = 1;
-    app.queue_placement_preview_slot_for_board(
-        app.active_board_id,
-        9,
-        "first".to_owned(),
-        egui::pos2(10.0, 20.0),
-        100,
-        100,
-    );
-
-    app.switch_to_board(second.id);
-    assert_eq!(app.canvas.placement_preview_slot_count(), 0);
-
-    app.switch_to_board(1);
-    assert_eq!(app.canvas.placement_preview_slot_count(), 1);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -4376,7 +4304,14 @@ fn raw_dropped_file_enqueues_external_import() {
         ..Default::default()
     }];
     harness.step();
-    assert_eq!(harness.state().canvas.hover_preview_slot_count(), 1);
+    assert_eq!(
+        harness
+            .state()
+            .canvas
+            .provisional_records_in_selection_order()
+            .len(),
+        1
+    );
 
     harness.input_mut().hovered_files.clear();
     harness.input_mut().dropped_files = vec![egui::DroppedFile {
@@ -4390,7 +4325,13 @@ fn raw_dropped_file_enqueues_external_import() {
     }];
     harness.step();
 
-    assert_eq!(harness.state().canvas.hover_preview_slot_count(), 0);
+    assert!(
+        harness
+            .state()
+            .canvas
+            .provisional_records_in_selection_order()
+            .is_empty()
+    );
     assert_eq!(harness.state().content_resolution.pending_len(), 1);
     let items = library.load_placements().unwrap();
     assert_eq!(items.len(), 1);
@@ -4451,7 +4392,6 @@ fn test_app(library: Option<Library>) -> SnappyRefApp {
         #[cfg(feature = "semantic-search")]
         search: super::SearchController::default(),
         frame_perf: super::FramePerfState::default(),
-        import_intake: super::ImportIntake::new(),
         content_resolution: super::ContentResolutionRuntime::new(),
         residency: super::ImageResidencyCoordinator::default(),
         pending_import_batches: crate::placement::creation::PlacementCreationBatchTracker::default(
@@ -4468,6 +4408,7 @@ fn test_app(library: Option<Library>) -> SnappyRefApp {
         perf_scenario: None,
         hover_preview_dimensions: std::collections::HashMap::new(),
         last_hovered_external_drag: None,
+        external_hover_provisional_placement_ids: Vec::new(),
         pending_missing_drop_fallback: None,
         document_persistence: super::DocumentPersistence::default(),
         pending_user_session: None,

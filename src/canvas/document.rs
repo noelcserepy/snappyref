@@ -17,13 +17,13 @@ use super::render::{
 use super::{
     AnimatedCanvasFrame, AnimatedCanvasImage, CanvasCropRequest, CanvasDocumentChanges,
     CanvasImagePreview, CanvasState, CanvasTexture, CropState, FOCUS_SELECTION_PADDING_SCREEN,
-    MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, PendingAnnotation, PlacementPreviewSlot, RenderedPlacement,
-    SelectedLayoutItem, SharedRgba, TextboxLayoutCacheEntry, merge_ids,
+    MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, PendingAnnotation, RenderedPlacement, SharedRgba,
+    TextboxLayoutCacheEntry, merge_ids,
 };
 use crate::data::{
     CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
     CanvasImageLod, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, Placement,
-    PlacementFootprint, PlacementLifecycle, ViewportState,
+    PlacementLayoutItem, PlacementLifecycle, ViewportState,
 };
 use crate::jobs::{PreparedCropPreview, PreparedPlacementImage};
 
@@ -168,8 +168,8 @@ impl CanvasState {
         self.document.rendered_placements.push(RenderedPlacement {
             texture: CanvasTexture::Unloaded {
                 size: [
-                    placement.visual_size.x.max(1.0).round() as usize,
-                    placement.visual_size.y.max(1.0).round() as usize,
+                    placement.state.geometry.size.x.max(1.0).round() as usize,
+                    placement.state.geometry.size.y.max(1.0).round() as usize,
                 ],
             },
             loaded_lod: crate::data::CanvasImageLod::Overview,
@@ -195,16 +195,6 @@ impl CanvasState {
         self.add_unresolved_placement(placement);
     }
 
-    pub fn add_provisional_reference_item(&mut self, mut placement: Placement) {
-        placement.lifecycle = PlacementLifecycle::Provisional;
-        if self
-            .add_loaded_reference_placement(placement.clone())
-            .is_err()
-        {
-            self.add_unresolved_placement(placement);
-        }
-    }
-
     pub fn next_provisional_item_id(&self) -> i64 {
         self.document
             .rendered_placements
@@ -226,6 +216,42 @@ impl CanvasState {
             })
             .collect::<Vec<_>>();
         self.delete_placements(&ids)
+    }
+
+    pub fn commit_provisional_placements_in_place(
+        &mut self,
+        committed: Vec<(i64, Placement)>,
+    ) -> Vec<Placement> {
+        let mut committed_records = Vec::with_capacity(committed.len());
+        for (provisional_id, mut placement) in committed {
+            placement.lifecycle = PlacementLifecycle::Committed;
+            let committed_id = placement.state.id;
+            if let Some(image) = self
+                .document
+                .rendered_placements
+                .iter_mut()
+                .find(|image| image.placement.state.id == provisional_id)
+            {
+                image.placement = placement.clone();
+            }
+            if let Some(load) = self.render.pending_image_lod_loads.remove(&provisional_id) {
+                self.render
+                    .pending_image_lod_loads
+                    .insert(committed_id, load);
+            }
+            for selected_id in &mut self.document.selected_placement_ids {
+                if *selected_id == provisional_id {
+                    *selected_id = committed_id;
+                }
+            }
+            for item in &mut self.document.stack_order {
+                if *item == CanvasStackItem::Placement(provisional_id) {
+                    *item = CanvasStackItem::Placement(committed_id);
+                }
+            }
+            committed_records.push(placement);
+        }
+        committed_records
     }
 
     pub fn provisional_records_in_selection_order(&self) -> Vec<Placement> {
@@ -459,7 +485,6 @@ impl CanvasState {
 
         let image = &mut self.document.rendered_placements[image_index];
         image.placement.state = item;
-        image.placement.visual_size = egui::vec2(asset.width as f32, asset.height as f32);
         image.placement.asset = Some(asset);
         image.texture = texture;
         image.loaded_lod = CanvasImageLod::Working;
@@ -502,7 +527,6 @@ impl CanvasState {
         };
 
         image.placement.state = updated_item;
-        image.placement.visual_size = egui::vec2(asset.width as f32, asset.height as f32);
         image.placement.asset = Some(asset);
         image.texture = texture;
         image.loaded_lod = loaded_lod;
@@ -732,72 +756,10 @@ impl CanvasState {
         requested
     }
 
-    pub fn add_placement_preview_slot(
-        &mut self,
-        queue_id: u64,
-        center_world: egui::Pos2,
-        size_world: egui::Vec2,
-        label: String,
-    ) {
-        self.remove_placement_preview_slot(queue_id);
-        self.interaction
-            .placement_preview_slots
-            .push(PlacementPreviewSlot::new(
-                queue_id,
-                center_world,
-                size_world,
-                label,
-            ));
-    }
-
-    pub fn remove_placement_preview_slot(&mut self, queue_id: u64) {
-        self.interaction
-            .placement_preview_slots
-            .retain(|preview_slot| preview_slot.queue_id != queue_id);
-    }
-
-    pub fn placement_preview_slot_footprints(&self) -> Vec<PlacementFootprint> {
-        self.interaction
-            .placement_preview_slots
-            .iter()
-            .enumerate()
-            .map(|(index, preview_slot)| PlacementFootprint {
-                id: -((index as i64) + 1),
-                center: preview_slot.geometry.center,
-                width: preview_slot.geometry.size.x,
-                height: preview_slot.geometry.size.y,
-            })
-            .collect()
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn placement_preview_slot_count(&self) -> usize {
-        self.interaction.placement_preview_slots.len()
-    }
-
     pub fn has_pending_crop_work(&self) -> bool {
         self.interaction.pending_crop.is_some()
             || !self.interaction.crop_pending_placement_ids.is_empty()
             || !self.render.pending_crop_previews.is_empty()
-    }
-
-    pub fn set_hover_preview_slots(&mut self, preview_slots: Vec<(egui::Pos2, egui::Vec2)>) {
-        self.interaction.hover_preview_slots.clear();
-        self.interaction
-            .hover_preview_slots
-            .extend(preview_slots.into_iter().map(|(center_world, size_world)| {
-                PlacementPreviewSlot::new(0, center_world, size_world, String::new())
-            }));
-    }
-
-    pub fn clear_hover_preview_slots(&mut self) {
-        self.interaction.hover_preview_slots.clear();
-        self.clear_guide_snap_indicators();
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn hover_preview_slot_count(&self) -> usize {
-        self.interaction.hover_preview_slots.len()
     }
 
     pub(crate) fn clear_guide_snap_indicators(&mut self) {
@@ -822,42 +784,42 @@ impl CanvasState {
             .sum()
     }
 
-    pub fn compact_guided_preview_placeholders(
+    pub fn compact_guided_layout_for_sizes(
         &mut self,
         sizes: &[egui::Vec2],
         center_world: egui::Pos2,
         screen_rect: egui::Rect,
         gap: f32,
     ) -> Vec<(egui::Pos2, egui::Vec2)> {
-        let mut preview_slots =
+        let mut layout_items =
             crate::placement::arrangement::compact_layout_for_sizes(sizes, gap, center_world);
-        self.guide_snap_preview_placeholders(&mut preview_slots, screen_rect);
-        preview_slots
+        self.guide_snap_layout_items(&mut layout_items, screen_rect);
+        layout_items
     }
 
-    pub fn balanced_guided_preview_placeholders(
+    pub fn balanced_guided_layout_for_sizes(
         &mut self,
         sizes: &[egui::Vec2],
         center_world: egui::Pos2,
         screen_rect: egui::Rect,
         gap: f32,
     ) -> Vec<(egui::Pos2, egui::Vec2)> {
-        let mut preview_slots =
+        let mut layout_items =
             crate::placement::arrangement::balanced_grid_layout_for_sizes(sizes, gap, center_world);
-        self.guide_snap_preview_placeholders(&mut preview_slots, screen_rect);
-        preview_slots
+        self.guide_snap_layout_items(&mut layout_items, screen_rect);
+        layout_items
     }
 
-    fn guide_snap_preview_placeholders(
+    fn guide_snap_layout_items(
         &mut self,
-        preview_slots: &mut [(egui::Pos2, egui::Vec2)],
+        layout_items: &mut [(egui::Pos2, egui::Vec2)],
         screen_rect: egui::Rect,
     ) {
-        let items = preview_slots
+        let items = layout_items
             .iter()
             .enumerate()
             .map(|(index, (center, size))| {
-                SelectedLayoutItem::new(
+                PlacementLayoutItem::new(
                     -((index as i64) + 1),
                     egui::pos2(center.x, center.y),
                     egui::vec2(size.x, size.y),
@@ -886,7 +848,7 @@ impl CanvasState {
             return;
         }
         self.set_guide_snap_indicators(snap_result.indicators);
-        for (center, _) in preview_slots {
+        for (center, _) in layout_items {
             *center += snap_offset;
         }
     }
@@ -1164,7 +1126,7 @@ impl CanvasState {
                 continue;
             }
 
-            let size = image.placement.scaled_visual_size();
+            let size = image.placement.scaled_display_size();
             let image_rect = egui::Rect::from_center_size(
                 egui::pos2(
                     image.placement.state.geometry.center.x,
@@ -1442,6 +1404,27 @@ impl CanvasState {
         self.apply_compact_arrangement(
             layout.placements,
             layout.scale_factors,
+            current_center.to_vec2() - local_center.to_vec2(),
+        )
+    }
+
+    pub fn arrange_selected_compact_preserving_sizes(&mut self, gap: f32) -> usize {
+        let items = self.selected_layout_items();
+        if items.len() <= 1 {
+            return items.len();
+        }
+
+        let current_center = self
+            .source_center_for_layout_items(&items)
+            .unwrap_or(egui::Pos2::ZERO);
+        let Some((placements, width, height)) =
+            crate::placement::arrangement::best_compact_layout(&items, gap)
+        else {
+            return 0;
+        };
+        let local_center = egui::pos2(width * 0.5, height * 0.5);
+        self.apply_arrangement_if_changed(
+            placements,
             current_center.to_vec2() - local_center.to_vec2(),
         )
     }
@@ -2046,25 +2029,25 @@ impl CanvasState {
         )
     }
 
-    pub(crate) fn selected_layout_items(&self) -> Vec<SelectedLayoutItem> {
+    pub(crate) fn selected_layout_items(&self) -> Vec<PlacementLayoutItem> {
         self.document
             .rendered_placements
             .iter()
             .filter(|image| self.is_selected(image.placement.state.id))
             .map(|image| {
-                let scaled_size = image.placement.scaled_visual_size();
-                let visual_size = super::rotated_visual_size(
-                    scaled_size.x,
-                    scaled_size.y,
+                let display_size = image.placement.state.geometry.scaled_size();
+                let rotated_display_size = super::rotated_display_size(
+                    display_size.x,
+                    display_size.y,
                     image.placement.state.geometry.rotation,
                 );
-                SelectedLayoutItem::new(
+                PlacementLayoutItem::new(
                     image.placement.state.id,
                     egui::pos2(
                         image.placement.state.geometry.center.x,
                         image.placement.state.geometry.center.y,
                     ),
-                    egui::vec2(visual_size.x, visual_size.y),
+                    egui::vec2(rotated_display_size.x, rotated_display_size.y),
                 )
             })
             .collect()
@@ -2084,7 +2067,7 @@ impl CanvasState {
             .collect()
     }
 
-    fn source_center_for_layout_items(&self, items: &[SelectedLayoutItem]) -> Option<egui::Pos2> {
+    fn source_center_for_layout_items(&self, items: &[PlacementLayoutItem]) -> Option<egui::Pos2> {
         layout_bounds_with_offset(items, egui::Vec2::ZERO).map(|bounds| bounds.center())
     }
 
@@ -2209,7 +2192,7 @@ impl CanvasState {
             let Some(image) = self.rendered_placement_by_id(placement_id) else {
                 continue;
             };
-            let base_size = image.placement.base_visual_size();
+            let base_size = image.placement.base_display_size();
             let source_area = base_size.x * base_size.y;
             if source_area <= f32::EPSILON {
                 continue;
@@ -2555,7 +2538,7 @@ fn asset_mime_type_is_svg(mime_type: &str) -> bool {
 }
 
 fn layout_bounds_with_offset(
-    items: &[SelectedLayoutItem],
+    items: &[PlacementLayoutItem],
     offset: egui::Vec2,
 ) -> Option<egui::Rect> {
     let mut bounds = egui::Rect::NOTHING;

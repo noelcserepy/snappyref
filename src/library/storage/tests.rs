@@ -41,15 +41,14 @@ fn loaded_placements_load_as_committed_loaded_content() {
     );
     assert!(reloaded[0].asset.is_some());
     assert_eq!(reloaded[0].lifecycle, PlacementLifecycle::Committed);
-    assert_eq!(reloaded[0].visual_size, egui::vec2(10.0, 20.0));
+    assert_eq!(reloaded[0].state.geometry.size, egui::vec2(10.0, 20.0));
     assert_eq!(
         library.load_placement_layout_items().unwrap()[0],
-        crate::data::PlacementFootprint {
-            id: placement.state.id,
-            center: egui::pos2(3.0, 4.0),
-            width: 20.0,
-            height: 40.0,
-        }
+        crate::data::PlacementLayoutItem::new(
+            placement.state.id,
+            egui::pos2(3.0, 4.0),
+            egui::vec2(20.0, 40.0),
+        )
     );
 
     let _ = fs::remove_dir_all(root);
@@ -97,23 +96,21 @@ fn committed_loading_and_failed_placements_persist_load_and_stack() {
         PlacementContent::Failed { .. }
     ));
     assert!(reloaded[1].asset.is_none());
-    assert_eq!(reloaded[0].visual_size.x, 320.0);
-    assert_eq!(reloaded[1].visual_size.y, 90.0);
+    assert_eq!(reloaded[0].state.geometry.size.x, 320.0);
+    assert_eq!(reloaded[1].state.geometry.size.y, 90.0);
     assert_eq!(
         library.load_placement_layout_items().unwrap(),
         vec![
-            crate::data::PlacementFootprint {
-                id: loading.state.id,
-                center: egui::pos2(12.0, 24.0),
-                width: 640.0,
-                height: 360.0,
-            },
-            crate::data::PlacementFootprint {
-                id: failed.state.id,
-                center: egui::pos2(48.0, 96.0),
-                width: 120.0,
-                height: 90.0,
-            },
+            crate::data::PlacementLayoutItem::new(
+                loading.state.id,
+                egui::pos2(12.0, 24.0),
+                egui::vec2(640.0, 360.0),
+            ),
+            crate::data::PlacementLayoutItem::new(
+                failed.state.id,
+                egui::pos2(48.0, 96.0),
+                egui::vec2(120.0, 90.0),
+            ),
         ]
     );
     assert_eq!(
@@ -209,7 +206,7 @@ fn board_items_column_not_null(connection: &Connection, column: &str) -> bool {
 }
 
 #[test]
-fn imported_asset_resolves_existing_loading_placement_without_geometry_or_stack_changes() {
+fn imported_asset_resolves_existing_loading_placement_preserving_area_and_stack_order() {
     let root = temp_root("snappyref-resolve-loading-placement-test");
     let source = root.join("source.png");
     fs::write(&source, [255, 255, 255, 255]).unwrap();
@@ -246,7 +243,9 @@ fn imported_asset_resolves_existing_loading_placement_without_geometry_or_stack_
     assert_eq!(loaded.state.geometry.center.x, 12.0);
     assert_eq!(loaded.state.geometry.center.y, 24.0);
     assert_eq!(loaded.state.geometry.scale, 1.5);
-    assert_eq!(loaded.visual_size, egui::vec2(320.0, 180.0));
+    let resolved_size = loaded.state.geometry.size;
+    assert!((resolved_size.x * resolved_size.y - 320.0 * 180.0).abs() < 0.01);
+    assert!((resolved_size.x / resolved_size.y - 640.0 / 480.0).abs() < 0.001);
     assert!(matches!(loaded.content, PlacementContent::Loaded { .. }));
     assert_eq!(library.load_canvas_stack_order().unwrap(), stack_before);
 
@@ -278,7 +277,7 @@ fn import_failure_marks_loading_placement_failed_and_archived_completion_stays_s
         .unwrap();
     assert!(matches!(failed.content, PlacementContent::Failed { .. }));
     assert_eq!(failed.state.geometry.center.x, 10.0);
-    assert_eq!(failed.visual_size.x, 100.0);
+    assert_eq!(failed.state.geometry.size.x, 100.0);
 
     library.archive_placements(&[loading.state.id]).unwrap();
     assert!(

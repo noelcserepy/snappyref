@@ -39,10 +39,32 @@ impl PlacementState {
         z_index: i32,
         archived: bool,
     ) -> Self {
+        Self::with_display_size(
+            id,
+            asset_id,
+            center,
+            Vec2::ZERO,
+            scale,
+            rotation,
+            z_index,
+            archived,
+        )
+    }
+
+    pub fn with_display_size(
+        id: PlacementId,
+        asset_id: Option<AssetId>,
+        center: Pos2,
+        size: Vec2,
+        scale: f32,
+        rotation: f32,
+        z_index: i32,
+        archived: bool,
+    ) -> Self {
         Self {
             id,
             asset_id,
-            geometry: RectGeometry::new(center, Vec2::ZERO, scale, rotation, z_index),
+            geometry: RectGeometry::new(center, size, scale, rotation, z_index),
             archived,
         }
     }
@@ -88,17 +110,17 @@ pub struct Placement {
     pub asset: Option<super::ImageAsset>,
     pub content: PlacementContent,
     pub lifecycle: PlacementLifecycle,
-    pub visual_size: Vec2,
 }
 
 impl Placement {
     pub fn loaded(mut state: PlacementState, asset: super::ImageAsset) -> Self {
-        let visual_size = vec2(asset.width as f32, asset.height as f32);
         state.asset_id = Some(asset.id);
+        if state.geometry.size.x <= 0.0 || state.geometry.size.y <= 0.0 {
+            state.geometry.size = vec2(asset.width as f32, asset.height as f32);
+        }
         Self {
             content: PlacementContent::Loaded { asset_id: asset.id },
             lifecycle: PlacementLifecycle::Committed,
-            visual_size,
             state,
             asset: Some(asset),
         }
@@ -122,27 +144,69 @@ impl Placement {
         self.state.geometry.center
     }
 
-    pub fn base_visual_size(&self) -> eframe::egui::Vec2 {
-        vec2(self.visual_size.x.max(1.0), self.visual_size.y.max(1.0))
+    pub fn base_display_size(&self) -> eframe::egui::Vec2 {
+        vec2(
+            self.state.geometry.size.x.max(1.0),
+            self.state.geometry.size.y.max(1.0),
+        )
     }
 
-    pub fn scaled_visual_size(&self) -> eframe::egui::Vec2 {
-        self.base_visual_size() * self.state.geometry.scale.max(0.01)
+    pub fn scaled_display_size(&self) -> eframe::egui::Vec2 {
+        self.state.geometry.scaled_size()
     }
 
     pub fn visual_bounds(&self) -> Rect {
-        let mut geometry = self.state.geometry;
-        geometry.size = self.base_visual_size();
-        geometry.visual_bounds()
+        self.state.geometry.visual_bounds()
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct PlacementFootprint {
+pub struct PlacementLayoutItem {
     pub id: PlacementId,
-    pub center: Pos2,
-    pub width: f32,
-    pub height: f32,
+    pub geometry: RectGeometry,
+}
+
+impl PlacementLayoutItem {
+    pub fn from_rect(id: PlacementId, rect: Rect) -> Self {
+        Self {
+            id,
+            geometry: RectGeometry::from_bounds(rect, 0),
+        }
+    }
+
+    pub fn new(id: PlacementId, center: Pos2, display_size: Vec2) -> Self {
+        Self {
+            id,
+            geometry: RectGeometry::new(center, display_size, 1.0, 0.0, 0),
+        }
+    }
+
+    pub fn center(&self) -> Pos2 {
+        self.geometry.center
+    }
+
+    pub fn size(&self) -> Vec2 {
+        self.geometry.size * self.geometry.scale.max(0.01)
+    }
+
+    pub fn rect(&self) -> Rect {
+        Rect::from_center_size(self.center(), self.size())
+    }
+
+    pub fn width(&self) -> f32 {
+        self.size().x
+    }
+
+    pub fn height(&self) -> f32 {
+        self.size().y
+    }
+
+    pub fn with_size(&self, display_size: Vec2) -> Self {
+        let mut item = self.clone();
+        item.geometry.size = display_size;
+        item.geometry.scale = 1.0;
+        item
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

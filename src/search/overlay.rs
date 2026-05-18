@@ -359,34 +359,27 @@ impl SearchController {
             .as_ref()
             .is_some_and(|drag| drag.placement_pending)
             && let Some(drag) = self.overlay.drag_state.take()
-            && let Some(screen_pos) = pointer_pos
         {
             drop_request = Some(SearchDropRequest {
-                placement_ids: drag.placement_ids,
                 asset_ids: drag.asset_ids,
                 provisional_placement_ids: canvas
                     .provisional_records_in_selection_order()
                     .into_iter()
                     .map(|record| record.state.id)
                     .collect(),
-                screen_pos,
             });
             ctx.request_repaint_after(Duration::from_millis(16));
         } else if ctx.input(|input| input.pointer.any_released())
             && let Some(drag) = self.overlay.drag_state.take()
         {
-            if drag.outside_overlay
-                && let Some(screen_pos) = pointer_pos
-            {
+            if drag.outside_overlay {
                 drop_request = Some(SearchDropRequest {
-                    placement_ids: drag.placement_ids,
                     asset_ids: drag.asset_ids,
                     provisional_placement_ids: canvas
                         .provisional_records_in_selection_order()
                         .into_iter()
                         .map(|record| record.state.id)
                         .collect(),
-                    screen_pos,
                 });
             }
             ctx.request_repaint_after(Duration::from_millis(16));

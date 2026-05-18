@@ -1,175 +1,11 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use eframe::egui;
-
-use crate::data::RectGeometry;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ExternalImportSource {
     Path(PathBuf),
     Url(String),
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct PlacementPreviewSlot {
-    pub(crate) queue_id: u64,
-    pub(crate) label: String,
-    pub(crate) geometry: RectGeometry,
-}
-
-impl PlacementPreviewSlot {
-    fn new(queue_id: u64, label: String, center_world: egui::Pos2, size_world: egui::Vec2) -> Self {
-        Self {
-            queue_id,
-            label,
-            geometry: RectGeometry::new(center_world, size_world, 1.0, 0.0, 0),
-        }
-    }
-
-    pub(crate) fn center_world(&self) -> egui::Pos2 {
-        self.geometry.center
-    }
-
-    pub(crate) fn size_world(&self) -> egui::Vec2 {
-        self.geometry.size
-    }
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ImportReservation {
-    pub(crate) target_board_id: i64,
-    pub(crate) queue_id: u64,
-    pub(crate) reserved_world: Option<egui::Pos2>,
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ImportPlacementSettings {
-    pub(crate) import_target_canvas_area: f32,
-}
-
-#[derive(Default)]
-pub(crate) struct ImportIntake {
-    next_queue_id: u64,
-    preview_slots_by_board: HashMap<i64, Vec<PlacementPreviewSlot>>,
-}
-
-impl ImportIntake {
-    pub(crate) fn new() -> Self {
-        Self {
-            next_queue_id: 1,
-            preview_slots_by_board: HashMap::new(),
-        }
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn reserve_import(
-        &mut self,
-        layout: &mut Vec<crate::data::PlacementFootprint>,
-        target_board_id: i64,
-        label: String,
-        dimensions: Option<(u32, u32)>,
-        desired_world: egui::Pos2,
-        settings: ImportPlacementSettings,
-    ) -> (ImportReservation, Option<PlacementPreviewSlot>) {
-        self.reserve_import_at_world(
-            layout,
-            target_board_id,
-            label,
-            dimensions,
-            desired_world,
-            settings,
-        )
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn reserve_import_at_world(
-        &mut self,
-        layout: &mut Vec<crate::data::PlacementFootprint>,
-        target_board_id: i64,
-        label: String,
-        dimensions: Option<(u32, u32)>,
-        center_world: egui::Pos2,
-        settings: ImportPlacementSettings,
-    ) -> (ImportReservation, Option<PlacementPreviewSlot>) {
-        let queue_id = self.next_queue_id();
-        let preview_slot = dimensions.map(|(width, height)| {
-            let size_world =
-                import_preview_size_world(width, height, settings.import_target_canvas_area);
-            layout.push(crate::data::PlacementFootprint {
-                id: -((layout.len() as i64) + 1),
-                center: center_world,
-                width: size_world.x,
-                height: size_world.y,
-            });
-            let preview_slot = PlacementPreviewSlot::new(queue_id, label, center_world, size_world);
-            self.queue_preview_slot(target_board_id, preview_slot.clone());
-            preview_slot
-        });
-
-        (
-            ImportReservation {
-                target_board_id,
-                queue_id,
-                reserved_world: preview_slot
-                    .as_ref()
-                    .map(|preview_slot| preview_slot.center_world()),
-            },
-            preview_slot,
-        )
-    }
-
-    pub(crate) fn remove_preview_slot_for_board(&mut self, board_id: i64, queue_id: u64) {
-        if let Some(preview_slots) = self.preview_slots_by_board.get_mut(&board_id) {
-            preview_slots.retain(|preview_slot| preview_slot.queue_id != queue_id);
-        }
-    }
-
-    pub(crate) fn preview_slots_for_board(&self, board_id: i64) -> Vec<PlacementPreviewSlot> {
-        self.preview_slots_by_board
-            .get(&board_id)
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn queue_preview_slot_for_board(
-        &mut self,
-        board_id: i64,
-        queue_id: u64,
-        label: String,
-        center_world: egui::Pos2,
-        width: u32,
-        height: u32,
-        auto_image_scaling: bool,
-        import_target_canvas_area: f32,
-    ) -> PlacementPreviewSlot {
-        let preview_slot = PlacementPreviewSlot::new(
-            queue_id,
-            label,
-            center_world,
-            import_size_world(width, height, auto_image_scaling, import_target_canvas_area),
-        );
-        self.queue_preview_slot(board_id, preview_slot.clone());
-        preview_slot
-    }
-
-    fn next_queue_id(&mut self) -> u64 {
-        if self.next_queue_id == 0 {
-            self.next_queue_id = 1;
-        }
-        let queue_id = self.next_queue_id;
-        self.next_queue_id = self.next_queue_id.saturating_add(1);
-        queue_id
-    }
-
-    fn queue_preview_slot(&mut self, board_id: i64, preview_slot: PlacementPreviewSlot) {
-        let preview_slots = self.preview_slots_by_board.entry(board_id).or_default();
-        preview_slots.retain(|existing| existing.queue_id != preview_slot.queue_id);
-        preview_slots.push(preview_slot);
-    }
 }
 
 pub(crate) fn normalize_import_url(raw: &str) -> Option<String> {
@@ -227,53 +63,12 @@ pub(crate) fn import_preview_size_world(
 
 #[cfg(test)]
 mod tests {
-    use super::{ExternalImportSource, ImportIntake, ImportPlacementSettings, import_source_label};
+    use super::{ExternalImportSource, import_preview_size_world, import_source_label};
 
     #[test]
-    fn reserve_import_tracks_board_scoped_placeholder() {
-        let mut intake = ImportIntake::new();
-        let mut layout = Vec::new();
-
-        let (reservation, preview_slot) = intake.reserve_import(
-            &mut layout,
-            2,
-            "Alpha".to_owned(),
-            Some((100, 50)),
-            eframe::egui::pos2(10.0, 20.0),
-            ImportPlacementSettings {
-                import_target_canvas_area: crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-            },
-        );
-
-        assert_eq!(reservation.target_board_id, 2);
-        assert_eq!(reservation.queue_id, 1);
-        assert_eq!(
-            reservation.reserved_world,
-            Some(eframe::egui::pos2(10.0, 20.0))
-        );
-        assert!(preview_slot.is_some());
-        assert_eq!(intake.preview_slots_for_board(1).len(), 0);
-        assert_eq!(intake.preview_slots_for_board(2).len(), 1);
-    }
-
-    #[test]
-    fn drop_preview_placeholders_respect_import_area_when_auto_scaling_is_off() {
-        let mut intake = ImportIntake::new();
-        let mut layout = Vec::new();
-
-        let (_reservation, preview_slot) = intake.reserve_import(
-            &mut layout,
-            1,
-            "large.png".to_owned(),
-            Some((4000, 3000)),
-            eframe::egui::Pos2::ZERO,
-            ImportPlacementSettings {
-                import_target_canvas_area: 10_000.0,
-            },
-        );
-
-        let preview_slot = preview_slot.expect("known image dimensions should create a preview");
-        assert!(preview_slot.size_world().x * preview_slot.size_world().y <= 10_000.0 + 1.0);
+    fn import_preview_size_respects_import_area() {
+        let size = import_preview_size_world(4000, 3000, 10_000.0);
+        assert!(size.x * size.y <= 10_000.0 + 1.0);
     }
 
     #[test]

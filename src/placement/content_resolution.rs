@@ -41,7 +41,7 @@ pub(crate) struct ContentResolutionCompletion {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ContentResolutionCleanupTicket {
+pub(crate) struct ContentResolutionTicket {
     pub(crate) target_board_id: i64,
     pub(crate) queue_id: u64,
 }
@@ -56,7 +56,7 @@ pub(crate) struct LoadedContentResolutionLog {
 
 #[derive(Clone, Debug)]
 pub(crate) struct LoadedContentResolutionOutcome {
-    pub(crate) cleanup_ticket: Option<ContentResolutionCleanupTicket>,
+    pub(crate) resolution_ticket: Option<ContentResolutionTicket>,
     pub(crate) status: Option<String>,
     pub(crate) indexed_asset: Option<(i64, PathBuf)>,
     pub(crate) log: Option<LoadedContentResolutionLog>,
@@ -64,7 +64,7 @@ pub(crate) struct LoadedContentResolutionOutcome {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FailedContentResolutionOutcome {
-    pub(crate) cleanup_ticket: Option<ContentResolutionCleanupTicket>,
+    pub(crate) resolution_ticket: Option<ContentResolutionTicket>,
     pub(crate) placement_id: Option<i64>,
     pub(crate) target_board_id: Option<i64>,
     pub(crate) status: String,
@@ -72,7 +72,7 @@ pub(crate) struct FailedContentResolutionOutcome {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FinishedLoadedContentResolution {
-    pub(crate) cleanup_ticket: Option<ContentResolutionCleanupTicket>,
+    pub(crate) resolution_ticket: Option<ContentResolutionTicket>,
     pub(crate) batch_target_board_id: Option<i64>,
     pub(crate) batch_queue_id: Option<u64>,
     pub(crate) loaded_placement_id: Option<i64>,
@@ -83,7 +83,7 @@ pub(crate) struct FinishedLoadedContentResolution {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FinishedFailedContentResolution {
-    pub(crate) cleanup_ticket: Option<ContentResolutionCleanupTicket>,
+    pub(crate) resolution_ticket: Option<ContentResolutionTicket>,
     pub(crate) batch_target_board_id: Option<i64>,
     pub(crate) batch_queue_id: Option<u64>,
     pub(crate) status: String,
@@ -166,11 +166,11 @@ impl ContentResolutionRuntime {
         outcome: LoadedContentResolutionOutcome,
     ) -> FinishedLoadedContentResolution {
         let target_board_id = outcome
-            .cleanup_ticket
+            .resolution_ticket
             .as_ref()
             .map(|ticket| ticket.target_board_id);
         let queue_id = outcome
-            .cleanup_ticket
+            .resolution_ticket
             .as_ref()
             .map(|ticket| ticket.queue_id);
         let completion = self.resolve_completion(
@@ -179,7 +179,7 @@ impl ContentResolutionRuntime {
             outcome.log.as_ref().map(|log| log.placement.state.id),
         );
         FinishedLoadedContentResolution {
-            cleanup_ticket: outcome.cleanup_ticket,
+            resolution_ticket: outcome.resolution_ticket,
             batch_target_board_id: completion.target_board_id,
             batch_queue_id: completion.queue_id,
             loaded_placement_id: completion.placement_id,
@@ -197,11 +197,11 @@ impl ContentResolutionRuntime {
         outcome: FailedContentResolutionOutcome,
     ) -> FinishedFailedContentResolution {
         let target_board_id = outcome
-            .cleanup_ticket
+            .resolution_ticket
             .as_ref()
             .map(|ticket| ticket.target_board_id);
         let queue_id = outcome
-            .cleanup_ticket
+            .resolution_ticket
             .as_ref()
             .map(|ticket| ticket.queue_id);
         let completion = self.resolve_completion(
@@ -221,7 +221,7 @@ impl ContentResolutionRuntime {
             }
         }
         FinishedFailedContentResolution {
-            cleanup_ticket: outcome.cleanup_ticket,
+            resolution_ticket: outcome.resolution_ticket,
             batch_target_board_id: completion.target_board_id,
             batch_queue_id: completion.queue_id,
             status: outcome.status,
@@ -471,7 +471,7 @@ mod tests {
             &mut canvas,
             1,
             super::FailedContentResolutionOutcome {
-                cleanup_ticket: Some(super::ContentResolutionCleanupTicket {
+                resolution_ticket: Some(super::ContentResolutionTicket {
                     target_board_id: 1,
                     queue_id: reservation.queue_id,
                 }),

@@ -1,7 +1,6 @@
 use eframe::egui;
 
-use crate::canvas::SelectedLayoutItem;
-use crate::data::{Placement, PlacementId};
+use crate::data::{Placement, PlacementId, PlacementLayoutItem};
 
 pub(crate) const SETTLE_BLOCK_GRACE_SCREEN: f32 = 1.0;
 const COMPACT_NORMALIZE_ABSOLUTE_THRESHOLD: f32 = 1.0;
@@ -18,7 +17,7 @@ pub(crate) enum SettleDirection {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CompactInputItem {
-    pub(crate) layout: SelectedLayoutItem,
+    pub(crate) layout: PlacementLayoutItem,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -28,8 +27,8 @@ pub(crate) struct CompactInput {
 }
 
 impl CompactInput {
-    pub(crate) fn layout_item(self) -> SelectedLayoutItem {
-        SelectedLayoutItem::from_rect(self.placement_id, self.bounds)
+    pub(crate) fn layout_item(self) -> PlacementLayoutItem {
+        PlacementLayoutItem::from_rect(self.placement_id, self.bounds)
     }
 }
 
@@ -63,7 +62,7 @@ pub(crate) struct UserCompactLayout {
 }
 
 pub(crate) fn horizontal_layout(
-    items: &[SelectedLayoutItem],
+    items: &[PlacementLayoutItem],
     gap: f32,
 ) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
     if items.is_empty() {
@@ -91,7 +90,7 @@ pub(crate) fn horizontal_layout(
 }
 
 pub(crate) fn vertical_layout(
-    items: &[SelectedLayoutItem],
+    items: &[PlacementLayoutItem],
     gap: f32,
 ) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
     if items.is_empty() {
@@ -116,7 +115,7 @@ pub(crate) fn vertical_layout(
 }
 
 pub(crate) fn directional_settle_layout(
-    items: &[SelectedLayoutItem],
+    items: &[PlacementLayoutItem],
     direction: SettleDirection,
     gap: f32,
     cross_axis_grace: f32,
@@ -142,7 +141,7 @@ pub(crate) fn directional_settle_layout(
     Some(placements)
 }
 
-pub(crate) fn layout_bounds_for_items(items: &[SelectedLayoutItem]) -> Option<egui::Rect> {
+pub(crate) fn layout_bounds_for_items(items: &[PlacementLayoutItem]) -> Option<egui::Rect> {
     let mut bounds = egui::Rect::NOTHING;
     let mut found = false;
     for item in items {
@@ -158,8 +157,8 @@ pub(crate) fn layout_bounds_for_items(items: &[SelectedLayoutItem]) -> Option<eg
 }
 
 fn settle_order(
-    left: &SelectedLayoutItem,
-    right: &SelectedLayoutItem,
+    left: &PlacementLayoutItem,
+    right: &PlacementLayoutItem,
     direction: SettleDirection,
 ) -> std::cmp::Ordering {
     let left_rect = layout_item_rect(left);
@@ -188,12 +187,12 @@ fn settle_order(
     }
 }
 
-fn layout_item_rect(item: &SelectedLayoutItem) -> egui::Rect {
+fn layout_item_rect(item: &PlacementLayoutItem) -> egui::Rect {
     item.rect()
 }
 
 fn settled_center_for_item(
-    item: &SelectedLayoutItem,
+    item: &PlacementLayoutItem,
     direction: SettleDirection,
     bounds: egui::Rect,
     gap: f32,
@@ -311,14 +310,14 @@ struct CompactCandidate {
 }
 
 pub(crate) fn best_compact_layout(
-    items: &[SelectedLayoutItem],
+    items: &[PlacementLayoutItem],
     gap: f32,
 ) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
     best_compact_candidate(items, gap)
         .map(|candidate| (candidate.placements, candidate.width, candidate.height))
 }
 
-fn best_compact_candidate(items: &[SelectedLayoutItem], gap: f32) -> Option<CompactCandidate> {
+fn best_compact_candidate(items: &[PlacementLayoutItem], gap: f32) -> Option<CompactCandidate> {
     if items.is_empty() {
         return None;
     }
@@ -639,7 +638,7 @@ pub(crate) fn compact_layout_for_sizes(
         .iter()
         .enumerate()
         .map(|(index, size)| {
-            SelectedLayoutItem::new(
+            PlacementLayoutItem::new(
                 index as i64,
                 egui::pos2(0.0, 0.0),
                 egui::vec2(size.x, size.y),
@@ -721,9 +720,9 @@ pub(crate) fn balanced_grid_layout_for_sizes(
 }
 
 fn sorted_compact_items(
-    items: &[SelectedLayoutItem],
+    items: &[PlacementLayoutItem],
     sort: CompactSort,
-) -> Vec<SelectedLayoutItem> {
+) -> Vec<PlacementLayoutItem> {
     let mut sorted = items.to_vec();
     sorted.sort_by(|left, right| match sort {
         CompactSort::MaxSide => right
@@ -758,7 +757,7 @@ fn sorted_compact_items(
     sorted
 }
 
-fn compact_candidate_widths(items: &[SelectedLayoutItem], gap: f32) -> Vec<f32> {
+fn compact_candidate_widths(items: &[PlacementLayoutItem], gap: f32) -> Vec<f32> {
     let total_area = items
         .iter()
         .map(|item| (item.width() + gap) * (item.height() + gap))
@@ -794,7 +793,7 @@ fn compact_candidate_widths(items: &[SelectedLayoutItem], gap: f32) -> Vec<f32> 
 }
 
 fn maxrects_pack_layout(
-    items: &[SelectedLayoutItem],
+    items: &[PlacementLayoutItem],
     bin_width: f32,
     gap: f32,
     heuristic: PackHeuristic,
@@ -1107,7 +1106,7 @@ fn merge_adjacent_free_rects(left: PackRect, right: PackRect) -> Option<PackRect
     None
 }
 
-fn padded_item_rect(item: &SelectedLayoutItem, gap: f32) -> PackRect {
+fn padded_item_rect(item: &PlacementLayoutItem, gap: f32) -> PackRect {
     PackRect {
         x: 0.0,
         y: 0.0,
@@ -1117,7 +1116,7 @@ fn padded_item_rect(item: &SelectedLayoutItem, gap: f32) -> PackRect {
 }
 
 fn placed_bounds(
-    items: &[SelectedLayoutItem],
+    items: &[PlacementLayoutItem],
     placements: &[(i64, egui::Pos2)],
 ) -> Option<(f32, f32)> {
     let mut min_x = f32::INFINITY;
@@ -1137,7 +1136,7 @@ fn placed_bounds(
 }
 
 fn normalize_placements_to_origin(
-    items: &[SelectedLayoutItem],
+    items: &[PlacementLayoutItem],
     placements: &mut [(i64, egui::Pos2)],
 ) -> Option<()> {
     let mut min_x = f32::INFINITY;
@@ -1214,7 +1213,16 @@ mod tests {
 
     fn placement(id: PlacementId, center: egui::Pos2) -> Placement {
         Placement {
-            state: PlacementState::new(id, None, center, 2.0, 0.0, 0, false),
+            state: PlacementState::with_display_size(
+                id,
+                None,
+                center,
+                egui::vec2(20.0, 10.0),
+                2.0,
+                0.0,
+                0,
+                false,
+            ),
             asset: None,
             content: PlacementContent::Loading {
                 source: crate::data::ContentResolutionSource::Unknown {
@@ -1223,7 +1231,6 @@ mod tests {
                 status_message: None,
             },
             lifecycle: PlacementLifecycle::Provisional,
-            visual_size: egui::vec2(20.0, 10.0),
         }
     }
 

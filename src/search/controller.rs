@@ -97,10 +97,8 @@ pub(super) struct ActiveSearchRequest {
 
 #[derive(Clone, Debug)]
 pub(crate) struct SearchDropRequest {
-    pub placement_ids: Vec<i64>,
     pub asset_ids: Vec<i64>,
     pub provisional_placement_ids: Vec<i64>,
-    pub screen_pos: egui::Pos2,
 }
 
 impl SearchController {
@@ -1525,7 +1523,6 @@ mod tests {
             })
             .collect();
         let mut drag = crate::search::palette::SearchResultDragState {
-            placement_ids: Vec::new(),
             asset_ids: vec![1, 2, 3, 4, 5],
             outside_overlay: true,
             placement_pending: false,
@@ -1571,7 +1568,7 @@ mod tests {
     }
 
     #[test]
-    fn search_item_drag_compacts_far_apart_source_placements() {
+    fn board_scope_search_drag_uses_asset_sizes_for_new_placements() {
         let mut canvas = CanvasState::default();
         let mut search = SearchController::default();
         let source_positions = [
@@ -1622,8 +1619,7 @@ mod tests {
         }
         search.overlay.result_selection.range_to(4);
         let mut drag = crate::search::palette::SearchResultDragState {
-            placement_ids: vec![100, 101, 102, 103, 104],
-            asset_ids: Vec::new(),
+            asset_ids: vec![10, 11, 12, 13, 14],
             outside_overlay: true,
             placement_pending: false,
             auto_fit_applied: false,
@@ -1652,7 +1648,7 @@ mod tests {
             .expect("expected provisional search placement bounds");
         assert_eq!(canvas.provisional_records_in_selection_order().len(), 5);
         assert!(
-            bounds.width() < 360.0 && bounds.height() < 360.0,
+            bounds.width() < 360.0 && bounds.height() < 420.0,
             "expected compact search drag preview, got bounds {bounds:?}"
         );
     }
@@ -1680,7 +1676,6 @@ mod tests {
             .drag_state
             .as_ref()
             .expect("expected library search result drag");
-        assert!(drag.placement_ids.is_empty());
         assert_eq!(drag.asset_ids, vec![10]);
     }
 
@@ -1699,10 +1694,11 @@ mod tests {
             imported_at: 0,
         };
         canvas.add_unresolved_placement(Placement::loaded(
-            PlacementState::new(
+            PlacementState::with_display_size(
                 900,
                 Some(900),
                 eframe::egui::pos2(0.0, 0.0),
+                eframe::egui::vec2(100.0, 100.0),
                 1.0,
                 0.0,
                 0,
@@ -1725,7 +1721,6 @@ mod tests {
             })
             .collect();
         let mut drag = crate::search::palette::SearchResultDragState {
-            placement_ids: Vec::new(),
             asset_ids: vec![1, 2],
             outside_overlay: true,
             placement_pending: false,
@@ -1823,7 +1818,7 @@ mod tests {
     }
 
     #[test]
-    fn prepare_canvas_drag_preview_updates_placeholders_before_overlay_paint() {
+    fn prepare_canvas_drag_preview_updates_layout_items_before_overlay_paint() {
         let ctx = egui::Context::default();
         let mut search = SearchController::default();
         let mut canvas = CanvasState::default();
@@ -1843,7 +1838,6 @@ mod tests {
             instance_count: 0,
         }];
         search.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
-            placement_ids: Vec::new(),
             asset_ids: vec![1],
             outside_overlay: false,
             placement_pending: false,
@@ -2095,7 +2089,7 @@ mod tests {
     }
 
     #[test]
-    fn result_drag_uses_selected_result_first_instances() {
+    fn result_drag_uses_selected_result_assets() {
         let mut search = SearchController::default();
         search.overlay.results = vec![
             SearchResultAssetEntry {
@@ -2125,11 +2119,11 @@ mod tests {
         search.start_result_drag(1);
 
         let drag = search.overlay.drag_state.expect("expected search drag");
-        assert_eq!(drag.placement_ids, vec![101, 201]);
+        assert_eq!(drag.asset_ids, vec![10, 11]);
     }
 
     #[test]
-    fn selected_result_placement_ids_falls_back_to_lead_result() {
+    fn selected_result_asset_ids_falls_back_to_lead_result() {
         let mut search = SearchController::default();
         search.overlay.results = vec![
             SearchResultAssetEntry {
@@ -2155,11 +2149,11 @@ mod tests {
         ];
         search.overlay.result_selection.replace(1);
 
-        assert_eq!(search.selected_result_placement_ids(), vec![201]);
+        assert_eq!(search.selected_result_asset_ids(), vec![11]);
     }
 
     #[test]
-    fn all_result_placement_ids_uses_loaded_results() {
+    fn all_result_asset_ids_uses_loaded_results() {
         let mut search = SearchController::default();
         search.overlay.results = vec![
             SearchResultAssetEntry {
@@ -2184,7 +2178,7 @@ mod tests {
             },
         ];
 
-        assert_eq!(search.all_result_placement_ids(), vec![101, 201]);
+        assert_eq!(search.all_result_asset_ids(), vec![10, 11]);
     }
 
     fn search_result_groups(count: usize) -> Vec<SearchResultAssetEntry> {

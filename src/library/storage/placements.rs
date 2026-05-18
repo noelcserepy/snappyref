@@ -8,6 +8,7 @@ fn insert_placement_row(
     board_id: i64,
     asset_id: i64,
     desired_world: egui::Pos2,
+    display_size: egui::Vec2,
     initial_scale: f32,
 ) -> Result<PlacementState, String> {
     transaction
@@ -18,16 +19,20 @@ fn insert_placement_row(
                 x,
                 y,
                 scale,
+                width,
+                height,
                 rotation,
                 z_index,
                 archived
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 board_id,
                 asset_id,
                 desired_world.x,
                 desired_world.y,
                 initial_scale,
+                display_size.x.max(1.0),
+                display_size.y.max(1.0),
                 0.0_f32,
                 0_i64,
                 0_i64
@@ -35,18 +40,16 @@ fn insert_placement_row(
         )
         .map_err(|error| format!("failed to insert placement: {error}"))?;
 
-    Ok(PlacementState {
-        id: transaction.last_insert_rowid(),
-        asset_id: Some(asset_id),
-        geometry: crate::data::RectGeometry::new(
-            desired_world,
-            eframe::egui::Vec2::ZERO,
-            initial_scale,
-            0.0,
-            0,
-        ),
-        archived: false,
-    })
+    Ok(PlacementState::with_display_size(
+        transaction.last_insert_rowid(),
+        Some(asset_id),
+        desired_world,
+        display_size,
+        initial_scale,
+        0.0,
+        0,
+        false,
+    ))
 }
 
 fn placement_content_state(content: &PlacementContent) -> &'static str {
@@ -170,6 +173,7 @@ impl Library {
             board_id,
             asset.id,
             desired_world,
+            egui::vec2(width as f32, height as f32),
             initial_scale,
         )?;
         append_canvas_stack_item(&transaction, board_id, CanvasStackItem::Placement(item.id))?;
@@ -226,17 +230,41 @@ impl Library {
         let content = PlacementContent::Loaded { asset_id: asset.id };
         let content_payload = serde_json::to_string(&content)
             .map_err(|error| format!("failed to encode loaded placement content: {error}"))?;
+        let current_size = transaction
+            .query_row(
+                "SELECT width, height
+                 FROM board_items
+                 WHERE id = ?1
+                   AND board_id = ?2
+                   AND archived = 0",
+                params![placement_id, board_id],
+                |row| Ok(egui::vec2(row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|error| {
+                format!("failed to load placement {placement_id} size before resolution: {error}")
+            })?;
+        let corrected_size =
+            RectGeometry::size_preserving_area_for_aspect(current_size, width, height);
         let changed = transaction
             .execute(
                 "UPDATE board_items
                  SET asset_id = ?1,
                      placement_content_state = 'loaded',
                      placement_lifecycle = 'committed',
-                     content_resolution_intent = ?2
-                 WHERE id = ?3
-                   AND board_id = ?4
+                     content_resolution_intent = ?2,
+                     width = ?3,
+                     height = ?4
+                 WHERE id = ?5
+                   AND board_id = ?6
                    AND archived = 0",
-                params![asset.id, content_payload, placement_id, board_id],
+                params![
+                    asset.id,
+                    content_payload,
+                    corrected_size.x,
+                    corrected_size.y,
+                    placement_id,
+                    board_id
+                ],
             )
             .map_err(|error| format!("failed to resolve placement {placement_id}: {error}"))?;
         if changed == 0 {
@@ -250,35 +278,25 @@ impl Library {
         }
         let item = transaction
             .query_row(
-                "SELECT id, asset_id, x, y, scale, rotation, z_index, archived
+                "SELECT id, asset_id, x, y, width, height, scale, rotation, z_index, archived
                  FROM board_items
                  WHERE id = ?1",
                 params![placement_id],
                 |row| {
-                    Ok(PlacementState::new(
+                    Ok(PlacementState::with_display_size(
                         row.get(0)?,
                         row.get(1)?,
                         egui::pos2(row.get(2)?, row.get(3)?),
-                        row.get(4)?,
-                        row.get(5)?,
+                        egui::vec2(row.get(4)?, row.get(5)?),
                         row.get(6)?,
-                        row.get::<_, i64>(7)? != 0,
+                        row.get(7)?,
+                        row.get(8)?,
+                        row.get::<_, i64>(9)? != 0,
                     ))
                 },
             )
             .map_err(|error| {
                 format!("failed to load resolved placement {placement_id}: {error}")
-            })?;
-        let (visual_width, visual_height) = transaction
-            .query_row(
-                "SELECT COALESCE(visual_width, ?2), COALESCE(visual_height, ?3)
-                 FROM board_items
-                 WHERE id = ?1",
-                params![placement_id, width as f32, height as f32],
-                |row| Ok((row.get::<_, f32>(0)?, row.get::<_, f32>(1)?)),
-            )
-            .map_err(|error| {
-                format!("failed to load resolved placement size {placement_id}: {error}")
             })?;
         transaction
             .commit()
@@ -289,7 +307,6 @@ impl Library {
             asset: Some(asset),
             content,
             lifecycle: PlacementLifecycle::Committed,
-            visual_size: egui::vec2(visual_width, visual_height),
         })
     }
 
@@ -344,16 +361,15 @@ impl Library {
         &self,
         desired_world: egui::Pos2,
         initial_scale: f32,
-        visual_width: f32,
-        visual_height: f32,
+        display_width: f32,
+        display_height: f32,
         source: ContentResolutionSource,
         status_message: Option<String>,
     ) -> Result<Placement, String> {
         self.persist_committed_unloaded_placement(
             desired_world,
             initial_scale,
-            visual_width,
-            visual_height,
+            egui::vec2(display_width, display_height),
             PlacementContent::Loading {
                 source,
                 status_message,
@@ -366,8 +382,8 @@ impl Library {
         &self,
         desired_world: egui::Pos2,
         initial_scale: f32,
-        visual_width: f32,
-        visual_height: f32,
+        display_width: f32,
+        display_height: f32,
         source: Option<ContentResolutionSource>,
         message: String,
         recoverable: bool,
@@ -375,8 +391,7 @@ impl Library {
         self.persist_committed_unloaded_placement(
             desired_world,
             initial_scale,
-            visual_width,
-            visual_height,
+            egui::vec2(display_width, display_height),
             PlacementContent::Failed {
                 source,
                 message,
@@ -389,8 +404,7 @@ impl Library {
         &self,
         desired_world: egui::Pos2,
         initial_scale: f32,
-        visual_width: f32,
-        visual_height: f32,
+        display_size: egui::Vec2,
         content: PlacementContent,
     ) -> Result<Placement, String> {
         let mut connection = self.connection()?;
@@ -404,9 +418,8 @@ impl Library {
         transaction
             .execute(
                 "INSERT INTO board_items (
-                    board_id, asset_id, x, y, scale, rotation, z_index, archived,
-                    placement_content_state, placement_lifecycle, visual_width,
-                    visual_height, content_resolution_intent
+                    board_id, asset_id, x, y, scale, width, height, rotation, z_index, archived,
+                    placement_content_state, placement_lifecycle, content_resolution_intent
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     active_board_id,
@@ -414,13 +427,13 @@ impl Library {
                     desired_world.x,
                     desired_world.y,
                     initial_scale,
+                    display_size.x.max(1.0),
+                    display_size.y.max(1.0),
                     0.0_f32,
                     0_i64,
                     0_i64,
                     content_state,
                     "committed",
-                    visual_width,
-                    visual_height,
                     content_payload,
                 ],
             )
@@ -435,24 +448,21 @@ impl Library {
             .commit()
             .map_err(|error| format!("failed to commit placement transaction: {error}"))?;
 
-        let item = PlacementState {
-            id: item_id,
-            asset_id: None,
-            geometry: crate::data::RectGeometry::new(
-                desired_world,
-                eframe::egui::Vec2::ZERO,
-                initial_scale,
-                0.0,
-                0,
-            ),
-            archived: false,
-        };
+        let item = PlacementState::with_display_size(
+            item_id,
+            None,
+            desired_world,
+            display_size,
+            initial_scale,
+            0.0,
+            0,
+            false,
+        );
         Ok(Placement {
             state: item,
             asset: None,
             content,
             lifecycle: PlacementLifecycle::Committed,
-            visual_size: egui::vec2(visual_width, visual_height),
         })
     }
 
@@ -477,6 +487,8 @@ impl Library {
                     b.asset_id,
                     b.x,
                     b.y,
+                    b.width,
+                    b.height,
                     b.scale,
                     b.rotation,
                     b.z_index,
@@ -490,8 +502,6 @@ impl Library {
                     a.imported_at,
                     COALESCE(b.placement_content_state, 'loaded'),
                     COALESCE(b.placement_lifecycle, 'committed'),
-                    b.visual_width,
-                    b.visual_height,
                     b.content_resolution_intent
                  FROM board_items b
                  LEFT JOIN assets a ON a.id = b.asset_id
@@ -505,30 +515,29 @@ impl Library {
         let rows = statement
             .query_map(params![board_id], |row| {
                 let row_asset_id = row.get::<_, Option<i64>>(1)?;
-                let item = PlacementState::new(
+                let item = PlacementState::with_display_size(
                     row.get(0)?,
                     row_asset_id,
                     egui::pos2(row.get(2)?, row.get(3)?),
-                    row.get(4)?,
-                    row.get(5)?,
+                    egui::vec2(row.get(4)?, row.get(5)?),
                     row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
                     false,
                 );
-                let content_state: String = row.get(15)?;
-                let lifecycle: String = row.get(16)?;
-                let visual_width: Option<f32> = row.get(17)?;
-                let visual_height: Option<f32> = row.get(18)?;
+                let content_state: String = row.get(17)?;
+                let lifecycle: String = row.get(18)?;
                 let content_payload: Option<String> = row.get(19)?;
-                let asset = if let Some(asset_id) = row.get::<_, Option<i64>>(7)? {
+                let asset = if let Some(asset_id) = row.get::<_, Option<i64>>(9)? {
                     Some(ImageAsset {
                         id: asset_id,
-                        original_path: PathBuf::from(row.get::<_, String>(8)?),
-                        filename: row.get(9)?,
-                        mime_type: row.get(10)?,
-                        width: row.get::<_, u32>(11)?,
-                        height: row.get::<_, u32>(12)?,
-                        file_size: row.get::<_, i64>(13)? as u64,
-                        imported_at: row.get(14)?,
+                        original_path: PathBuf::from(row.get::<_, String>(10)?),
+                        filename: row.get(11)?,
+                        mime_type: row.get(12)?,
+                        width: row.get::<_, u32>(13)?,
+                        height: row.get::<_, u32>(14)?,
+                        file_size: row.get::<_, i64>(15)? as u64,
+                        imported_at: row.get(16)?,
                     })
                 } else {
                     None
@@ -539,16 +548,11 @@ impl Library {
                     item.asset_id.unwrap_or(0),
                 );
                 let lifecycle = decode_placement_lifecycle(&lifecycle);
-                let visual_width = visual_width
-                    .unwrap_or_else(|| asset.as_ref().map_or(256.0, |asset| asset.width as f32));
-                let visual_height = visual_height
-                    .unwrap_or_else(|| asset.as_ref().map_or(256.0, |asset| asset.height as f32));
                 Ok(Placement {
                     state: item,
                     asset,
                     content,
                     lifecycle,
-                    visual_size: egui::vec2(visual_width, visual_height),
                 })
             })
             .map_err(|error| format!("failed to read board-items query: {error}"))?;
@@ -557,7 +561,7 @@ impl Library {
             .map_err(|error| format!("failed to collect board-items: {error}"))
     }
 
-    pub fn load_placement_layout_items(&self) -> Result<Vec<PlacementFootprint>, String> {
+    pub fn load_placement_layout_items(&self) -> Result<Vec<PlacementLayoutItem>, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
         self.load_placement_layout_items_for_board_id(&connection, active_board_id)
@@ -567,7 +571,7 @@ impl Library {
     pub fn load_placement_layout_items_for_board(
         &self,
         board_id: i64,
-    ) -> Result<Vec<PlacementFootprint>, String> {
+    ) -> Result<Vec<PlacementLayoutItem>, String> {
         let connection = self.connection()?;
         if !board_is_non_archived(&connection, board_id)? {
             return Err(format!("cannot load missing or archived board {board_id}"));
@@ -579,15 +583,15 @@ impl Library {
         &self,
         connection: &Connection,
         board_id: i64,
-    ) -> Result<Vec<PlacementFootprint>, String> {
+    ) -> Result<Vec<PlacementLayoutItem>, String> {
         let mut statement = connection
             .prepare(
                 "SELECT
                     b.id,
                     b.x,
                     b.y,
-                    COALESCE(b.visual_width, a.width) * b.scale,
-                    COALESCE(b.visual_height, a.height) * b.scale
+                    b.width * b.scale,
+                    b.height * b.scale
                  FROM board_items b
                  LEFT JOIN assets a ON a.id = b.asset_id
                  WHERE b.archived = 0
@@ -599,12 +603,11 @@ impl Library {
 
         let rows = statement
             .query_map(params![board_id], |row| {
-                Ok(PlacementFootprint {
-                    id: row.get(0)?,
-                    center: egui::pos2(row.get(1)?, row.get(2)?),
-                    width: row.get(3)?,
-                    height: row.get(4)?,
-                })
+                Ok(PlacementLayoutItem::new(
+                    row.get(0)?,
+                    egui::pos2(row.get(1)?, row.get(2)?),
+                    egui::vec2(row.get(3)?, row.get(4)?),
+                ))
             })
             .map_err(|error| format!("failed to read board-layout query: {error}"))?;
 
@@ -617,11 +620,13 @@ impl Library {
         connection
             .execute(
                 "UPDATE board_items
-                 SET x = ?1, y = ?2, scale = ?3, rotation = ?4, z_index = ?5, archived = ?6
-                 WHERE id = ?7",
+                 SET x = ?1, y = ?2, width = ?3, height = ?4, scale = ?5, rotation = ?6, z_index = ?7, archived = ?8
+                 WHERE id = ?9",
                 params![
                     item.geometry.center.x,
                     item.geometry.center.y,
+                    item.geometry.size.x,
+                    item.geometry.size.y,
                     item.geometry.scale,
                     item.geometry.rotation,
                     item.geometry.z_index,
@@ -639,12 +644,14 @@ impl Library {
         connection
             .execute(
                 "UPDATE board_items
-                 SET asset_id = ?1, x = ?2, y = ?3, scale = ?4, rotation = ?5, z_index = ?6, archived = ?7
-                 WHERE id = ?8",
+                 SET asset_id = ?1, x = ?2, y = ?3, width = ?4, height = ?5, scale = ?6, rotation = ?7, z_index = ?8, archived = ?9
+                 WHERE id = ?10",
                 params![
                     item.asset_id,
                     item.geometry.center.x,
                     item.geometry.center.y,
+                    item.geometry.size.x,
+                    item.geometry.size.y,
                     item.geometry.scale,
                     item.geometry.rotation,
                     item.geometry.z_index,
@@ -728,84 +735,33 @@ impl Library {
         Ok(())
     }
 
-    pub fn duplicate_placements(
+    pub fn commit_provisional_placements(
         &self,
-        placement_ids: &[i64],
-        anchor_world: egui::Pos2,
-        source_center_world: egui::Pos2,
-    ) -> Result<Vec<Placement>, String> {
-        if placement_ids.is_empty() {
+        provisionals: &[Placement],
+    ) -> Result<Vec<(i64, Placement)>, String> {
+        if provisionals.is_empty() {
             return Ok(Vec::new());
         }
 
-        let connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let mut statement = connection
-            .prepare(
-                "SELECT
-                    b.id,
-                    b.asset_id,
-                    b.x,
-                    b.y,
-                    b.scale,
-                    b.rotation,
-                    b.z_index,
-                    a.id,
-                    a.original_path,
-                    a.filename,
-                    a.mime_type,
-                    a.width,
-                    a.height,
-                    a.file_size,
-                    a.imported_at
-                 FROM board_items b
-                 JOIN assets a ON a.id = b.asset_id
-                 WHERE b.id = ?1
-                   AND b.archived = 0
-                   AND b.board_id = ?2
-                   AND a.archived = 0",
-            )
-            .map_err(|error| format!("failed to prepare duplicate-item query: {error}"))?;
-
-        let mut source_records = Vec::new();
-        for item_id in placement_ids {
-            let record = statement
-                .query_row(params![item_id, active_board_id], |row| {
-                    let item = PlacementState::new(
-                        row.get(0)?,
-                        row.get(1)?,
-                        egui::pos2(row.get(2)?, row.get(3)?),
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                        false,
-                    );
-                    let asset = ImageAsset {
-                        id: row.get(7)?,
-                        original_path: PathBuf::from(row.get::<_, String>(8)?),
-                        filename: row.get(9)?,
-                        mime_type: row.get(10)?,
-                        width: row.get::<_, u32>(11)?,
-                        height: row.get::<_, u32>(12)?,
-                        file_size: row.get::<_, i64>(13)? as u64,
-                        imported_at: row.get(14)?,
-                    };
-                    Ok(Placement::loaded(item, asset))
-                })
-                .map_err(|error| {
-                    format!("failed to load placement {item_id} for duplication: {error}")
+        let assets = provisionals
+            .iter()
+            .map(|placement| {
+                let asset_id = placement.state.asset_id.ok_or_else(|| {
+                    format!("provisional placement {} has no asset", placement.state.id)
                 })?;
-            source_records.push(record);
-        }
+                self.load_asset(asset_id)
+                    .map(|asset| (placement.state.id, asset))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
-        let delta = anchor_world - source_center_world;
         let mut connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
         let transaction = connection
             .transaction()
-            .map_err(|error| format!("failed to start duplicate transaction: {error}"))?;
+            .map_err(|error| format!("failed to start provisional commit transaction: {error}"))?;
 
-        let mut duplicated = Vec::new();
-        for source in source_records {
+        let mut committed = Vec::with_capacity(provisionals.len());
+        for (provisional, (_, asset)) in provisionals.iter().zip(assets) {
             transaction
                 .execute(
                     "INSERT INTO board_items (
@@ -814,61 +770,128 @@ impl Library {
                         x,
                         y,
                         scale,
+                        width,
+                        height,
                         rotation,
                         z_index,
                         archived
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     params![
                         active_board_id,
-                        source
-                            .state
-                            .asset_id
-                            .ok_or_else(|| format!("placement {} has no asset", source.state.id))?,
-                        source.state.geometry.center.x + delta.x,
-                        source.state.geometry.center.y + delta.y,
-                        source.state.geometry.scale,
-                        source.state.geometry.rotation,
-                        source.state.geometry.z_index,
+                        asset.id,
+                        provisional.state.geometry.center.x,
+                        provisional.state.geometry.center.y,
+                        provisional.state.geometry.scale,
+                        provisional.state.geometry.size.x,
+                        provisional.state.geometry.size.y,
+                        provisional.state.geometry.rotation,
+                        provisional.state.geometry.z_index,
                         0_i64
                     ],
                 )
                 .map_err(|error| {
-                    format!("failed to duplicate placement {}: {error}", source.state.id)
+                    format!(
+                        "failed to commit provisional placement {}: {error}",
+                        provisional.state.id
+                    )
                 })?;
 
-            let item_id = transaction.last_insert_rowid();
-            append_canvas_stack_item(
-                &transaction,
-                active_board_id,
-                CanvasStackItem::Placement(item_id),
-            )?;
-            let item = PlacementState::new(
-                item_id,
-                source.state.asset_id,
-                egui::pos2(
-                    source.state.geometry.center.x + delta.x,
-                    source.state.geometry.center.y + delta.y,
-                ),
-                source.state.geometry.scale,
-                source.state.geometry.rotation,
-                source.state.geometry.z_index,
+            let state = PlacementState::with_display_size(
+                transaction.last_insert_rowid(),
+                Some(asset.id),
+                provisional.state.geometry.center,
+                provisional.state.geometry.size,
+                provisional.state.geometry.scale,
+                provisional.state.geometry.rotation,
+                provisional.state.geometry.z_index,
                 false,
             );
-            duplicated.push(Placement::loaded(
-                item,
-                source
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .clone(),
-            ));
+            committed.push((provisional.state.id, Placement::loaded(state, asset)));
         }
 
         transaction
             .commit()
-            .map_err(|error| format!("failed to commit duplicate transaction: {error}"))?;
+            .map_err(|error| format!("failed to commit provisional placements: {error}"))?;
 
-        Ok(duplicated)
+        Ok(committed)
+    }
+
+    pub fn commit_provisional_loading_placements(
+        &self,
+        provisionals: &[Placement],
+    ) -> Result<Vec<(i64, Placement)>, String> {
+        if provisionals.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        let transaction = connection.transaction().map_err(|error| {
+            format!("failed to start provisional loading commit transaction: {error}")
+        })?;
+
+        let mut committed = Vec::with_capacity(provisionals.len());
+        for provisional in provisionals {
+            let content_state = placement_content_state(&provisional.content);
+            let content_payload = serde_json::to_string(&provisional.content)
+                .map_err(|error| format!("failed to encode placement content: {error}"))?;
+            transaction
+                .execute(
+                    "INSERT INTO board_items (
+                        board_id,
+                        asset_id,
+                        x,
+                        y,
+                        scale,
+                        width,
+                        height,
+                        rotation,
+                        z_index,
+                        archived,
+                        placement_content_state,
+                        placement_lifecycle,
+                        content_resolution_intent
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    params![
+                        active_board_id,
+                        rusqlite::types::Null,
+                        provisional.state.geometry.center.x,
+                        provisional.state.geometry.center.y,
+                        provisional.state.geometry.scale,
+                        provisional.state.geometry.size.x,
+                        provisional.state.geometry.size.y,
+                        provisional.state.geometry.rotation,
+                        provisional.state.geometry.z_index,
+                        0_i64,
+                        content_state,
+                        "committed",
+                        content_payload,
+                    ],
+                )
+                .map_err(|error| {
+                    format!(
+                        "failed to commit provisional loading placement {}: {error}",
+                        provisional.state.id
+                    )
+                })?;
+
+            let mut placement = provisional.clone();
+            let committed_id = transaction.last_insert_rowid();
+            append_canvas_stack_item(
+                &transaction,
+                active_board_id,
+                CanvasStackItem::Placement(committed_id),
+            )?;
+            placement.state.id = committed_id;
+            placement.lifecycle = PlacementLifecycle::Committed;
+            committed.push((provisional.state.id, placement));
+        }
+
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit provisional loading placements: {error}"))?;
+
+        Ok(committed)
     }
 
     pub fn create_placement_from_asset(
@@ -891,16 +914,20 @@ impl Library {
                     x,
                     y,
                     scale,
+                    width,
+                    height,
                     rotation,
                     z_index,
                     archived
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     active_board_id,
                     asset_id,
                     center_world.x,
                     center_world.y,
                     scale,
+                    asset.width as f32,
+                    asset.height as f32,
                     rotation,
                     z_index,
                     0_i64
@@ -915,10 +942,11 @@ impl Library {
             CanvasStackItem::Placement(item_id),
         )?;
 
-        let item = PlacementState::new(
+        let item = PlacementState::with_display_size(
             item_id,
             Some(asset_id),
             center_world,
+            egui::vec2(asset.width as f32, asset.height as f32),
             scale,
             rotation,
             z_index,

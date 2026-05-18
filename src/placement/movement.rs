@@ -1,6 +1,7 @@
 use eframe::egui;
 
-use crate::canvas::{CanvasState, DragState, SelectedLayoutItem};
+use crate::canvas::{CanvasState, DragState};
+use crate::data::PlacementLayoutItem;
 
 pub(crate) fn begin_selected_placement_drag(
     state: &mut CanvasState,
@@ -161,10 +162,10 @@ fn guide_snap_candidate_rects(
         .iter()
         .filter(|image| !excluded_placement_ids.contains(&image.placement.state.id))
         .filter_map(|image| {
-            let scaled_size = image.placement.scaled_visual_size();
-            let visual_size = crate::canvas::rotated_visual_size(
-                scaled_size.x,
-                scaled_size.y,
+            let display_size = image.placement.state.geometry.scaled_size();
+            let rotated_display_size = crate::canvas::rotated_display_size(
+                display_size.x,
+                display_size.y,
                 image.placement.state.geometry.rotation,
             );
             let rect = egui::Rect::from_center_size(
@@ -172,7 +173,7 @@ fn guide_snap_candidate_rects(
                     image.placement.state.geometry.center.x,
                     image.placement.state.geometry.center.y,
                 ),
-                visual_size,
+                rotated_display_size,
             );
             rect.intersects(viewport)
                 .then_some(crate::canvas::guide_snap::GuideSnapCandidate::new(rect))
@@ -189,7 +190,7 @@ fn viewport_near_world_rect(state: &CanvasState, screen_rect: egui::Rect) -> egu
 }
 
 pub(crate) fn layout_bounds_with_offset(
-    items: &[SelectedLayoutItem],
+    items: &[PlacementLayoutItem],
     offset: egui::Vec2,
 ) -> Option<egui::Rect> {
     let mut bounds = egui::Rect::NOTHING;
@@ -211,7 +212,7 @@ pub(crate) fn layout_bounds_with_offset(
 
 fn apply_dragged_item_positions(
     state: &mut CanvasState,
-    items: &[SelectedLayoutItem],
+    items: &[PlacementLayoutItem],
     world_delta: egui::Vec2,
     snap_preview_rect: Option<egui::Rect>,
 ) -> usize {

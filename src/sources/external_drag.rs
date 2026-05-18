@@ -4,7 +4,7 @@ use eframe::egui;
 
 use crate::sources::import::{ExternalImportSource, normalize_import_url};
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct ExternalDragIntake {
     pub(crate) sources: Vec<ExternalImportSource>,
     pub(crate) screen_pos: Option<egui::Pos2>,

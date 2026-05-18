@@ -62,7 +62,7 @@ pub(crate) struct CreatedLoadingPlacement {
 }
 
 pub(crate) enum ProvisionalSourceIntent {
-    ExistingPlacement(Placement),
+    SourceIntent(SourceIntent),
     ExistingAsset {
         asset_id: i64,
         label: String,
@@ -83,7 +83,7 @@ struct PendingPlacementCreationBatch {
     loaded_placement_ids: Vec<i64>,
 }
 
-pub(crate) fn visual_size_for_dimensions(
+pub(crate) fn display_size_for_dimensions(
     width: u32,
     height: u32,
     target_canvas_area: f32,
@@ -145,13 +145,13 @@ pub(crate) fn plan_source_intent_previews(
         .iter()
         .map(|intent| {
             let (width, height) = normalized_dimensions(intent);
-            visual_size_for_dimensions(width, height, settings.target_canvas_area)
+            display_size_for_dimensions(width, height, settings.target_canvas_area)
         })
         .collect::<Vec<_>>();
     let centers = if uses_approximate_dimensions && sizes.len() > 1 {
-        canvas.balanced_guided_preview_placeholders(&sizes, anchor_world, screen_rect, settings.gap)
+        canvas.balanced_guided_layout_for_sizes(&sizes, anchor_world, screen_rect, settings.gap)
     } else {
-        canvas.compact_guided_preview_placeholders(&sizes, anchor_world, screen_rect, settings.gap)
+        canvas.compact_guided_layout_for_sizes(&sizes, anchor_world, screen_rect, settings.gap)
     };
 
     intents
@@ -169,14 +169,14 @@ pub(crate) fn create_committed_loading_placement(
     library: &Library,
     content_resolution: &mut ContentResolutionRuntime,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::data::PlacementFootprint>,
+    layout: &mut Vec<crate::data::PlacementLayoutItem>,
     target_board_id: i64,
     intent: SourceIntent,
     center_world: egui::Pos2,
     settings: PlacementCreationSettings,
 ) -> Result<CreatedLoadingPlacement, String> {
     let (width, height) = normalized_dimensions(&intent);
-    let size_world = visual_size_for_dimensions(width, height, settings.target_canvas_area);
+    let size_world = display_size_for_dimensions(width, height, settings.target_canvas_area);
     let placement = library.persist_committed_loading_placement(
         center_world,
         1.0,
@@ -188,12 +188,11 @@ pub(crate) fn create_committed_loading_placement(
     let reservation =
         content_resolution.reserve_placement(target_board_id, placement.state.id, center_world);
 
-    layout.push(crate::data::PlacementFootprint {
-        id: placement.state.id,
-        center: placement.state.geometry.center,
-        width: placement.scaled_visual_size().x,
-        height: placement.scaled_visual_size().y,
-    });
+    layout.push(crate::data::PlacementLayoutItem::new(
+        placement.state.id,
+        placement.state.geometry.center,
+        placement.state.geometry.scaled_size(),
+    ));
     canvas.add_unresolved_placement(placement.clone());
     canvas.select_placements(&[placement.state.id]);
 
@@ -207,7 +206,7 @@ pub(crate) fn create_committed_loading_placements(
     library: &Library,
     content_resolution: &mut ContentResolutionRuntime,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::data::PlacementFootprint>,
+    layout: &mut Vec<crate::data::PlacementLayoutItem>,
     target_board_id: i64,
     intents: Vec<SourceIntent>,
     anchor_world: egui::Pos2,
@@ -253,26 +252,25 @@ pub(crate) fn create_provisional_placements(
     let sizes = intents
         .iter()
         .map(|intent| match intent {
-            ProvisionalSourceIntent::ExistingPlacement(placement) => placement.scaled_visual_size(),
+            ProvisionalSourceIntent::SourceIntent(intent) => {
+                let (width, height) = normalized_dimensions(intent);
+                display_size_for_dimensions(width, height, settings.target_canvas_area)
+            }
             ProvisionalSourceIntent::ExistingAsset { dimensions, .. } => {
-                visual_size_for_dimensions(dimensions.0, dimensions.1, settings.target_canvas_area)
+                display_size_for_dimensions(dimensions.0, dimensions.1, settings.target_canvas_area)
             }
         })
         .collect::<Vec<_>>();
     let centers =
-        canvas.compact_guided_preview_placeholders(&sizes, anchor_world, screen_rect, settings.gap);
+        canvas.compact_guided_layout_for_sizes(&sizes, anchor_world, screen_rect, settings.gap);
     let mut next_id = canvas.next_provisional_item_id();
     let mut provisional_ids = Vec::with_capacity(intents.len());
 
     for (intent, (center_world, _size_world)) in intents.into_iter().zip(centers) {
         match intent {
-            ProvisionalSourceIntent::ExistingPlacement(mut placement) => {
-                placement.state.id = next_id;
-                placement.state.geometry.center.x = center_world.x;
-                placement.state.geometry.center.y = center_world.y;
-                placement.state.geometry.z_index = next_id as i32;
-                placement.lifecycle = PlacementLifecycle::Provisional;
-                canvas.add_provisional_reference_item(placement);
+            ProvisionalSourceIntent::SourceIntent(intent) => {
+                let placement = provisional_loading_record(next_id, intent, center_world, settings);
+                canvas.add_provisional_unloaded_item(placement);
             }
             ProvisionalSourceIntent::ExistingAsset {
                 asset_id,
@@ -298,6 +296,36 @@ pub(crate) fn create_provisional_placements(
     provisional_ids
 }
 
+fn provisional_loading_record(
+    placement_id: i64,
+    intent: SourceIntent,
+    center_world: egui::Pos2,
+    settings: PlacementCreationSettings,
+) -> Placement {
+    let (width, height) = normalized_dimensions(&intent);
+    let size_world = display_size_for_dimensions(width, height, settings.target_canvas_area);
+    let _ = intent.label;
+    let _ = intent.approximate_dimensions;
+    Placement {
+        state: PlacementState::with_display_size(
+            placement_id,
+            None,
+            center_world,
+            size_world,
+            1.0,
+            0.0,
+            placement_id as i32,
+            false,
+        ),
+        asset: None,
+        content: PlacementContent::Loading {
+            source: intent.content,
+            status_message: Some("Loading".to_owned()),
+        },
+        lifecycle: PlacementLifecycle::Provisional,
+    }
+}
+
 fn provisional_asset_record(
     placement_id: i64,
     asset_id: i64,
@@ -310,10 +338,11 @@ fn provisional_asset_record(
     let scale = crate::jobs::initial_import_scale(width, height, true, settings.target_canvas_area);
     let _ = label;
     Placement {
-        state: PlacementState::new(
+        state: PlacementState::with_display_size(
             placement_id,
             Some(asset_id),
             center_world,
+            egui::vec2(width as f32, height as f32),
             scale,
             0.0,
             placement_id as i32,
@@ -325,7 +354,6 @@ fn provisional_asset_record(
             status_message: Some("Loading".to_owned()),
         },
         lifecycle: PlacementLifecycle::Provisional,
-        visual_size: egui::vec2(width as f32, height as f32),
     }
 }
 
@@ -333,7 +361,7 @@ fn provisional_asset_record(
 pub(crate) fn create_existing_asset_placements(
     library: &Library,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::data::PlacementFootprint>,
+    layout: &mut Vec<crate::data::PlacementLayoutItem>,
     _target_board_id: i64,
     asset_ids: Vec<i64>,
     preferred_centers: Vec<egui::Pos2>,
@@ -378,12 +406,11 @@ pub(crate) fn create_existing_asset_placements(
                 Ok(placement) => placement,
                 Err(error) => return Err(error),
             };
-        layout.push(crate::data::PlacementFootprint {
-            id: placement.state.id,
-            center: placement.state.geometry.center,
-            width: placement.scaled_visual_size().x,
-            height: placement.scaled_visual_size().y,
-        });
+        layout.push(crate::data::PlacementLayoutItem::new(
+            placement.state.id,
+            placement.state.geometry.center,
+            placement.state.geometry.scaled_size(),
+        ));
         canvas.add_unresolved_placement(placement.clone());
         placements.push(CreatedLoadedPlacement {
             reservation: None,

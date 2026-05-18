@@ -14,7 +14,7 @@ pub use geometry::{RectGeometry, SegmentGeometry};
 pub use placement::AssetId;
 pub use placement::{
     Board, BoardSummary, CanvasStackItem, ContentResolutionSource, Placement, PlacementContent,
-    PlacementFootprint, PlacementId, PlacementLifecycle, PlacementState,
+    PlacementId, PlacementLayoutItem, PlacementLifecycle, PlacementState,
 };
 pub use session::{
     CanvasImageLod, DEFAULT_CANVAS_IMAGE_MAX_SIDE, DEFAULT_IMPORT_GAP,

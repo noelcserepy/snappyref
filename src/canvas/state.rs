@@ -5,8 +5,7 @@ use eframe::egui;
 use super::{
     AnnotationDraftState, AnnotationDragState, CanvasContextMenuRequest, CanvasCropRequest,
     CropState, DragState, ImageTransformState, MarqueeState, PendingAnnotation, PendingCropPreview,
-    PlacementPreviewSlot, RenderedPlacement, SharedRgba, TextboxLayoutCacheEntry,
-    TextboxTransformState,
+    RenderedPlacement, SharedRgba, TextboxLayoutCacheEntry, TextboxTransformState,
 };
 use crate::data::{CanvasAnnotation, CanvasImageLod, CanvasStackItem};
 
@@ -50,8 +49,6 @@ pub(crate) struct CanvasInteractionState {
     pub(super) pending_annotation: Option<PendingAnnotation>,
     pub(super) pending_context_menu_request: Option<CanvasContextMenuRequest>,
     pub(super) pending_focus_selection_request: bool,
-    pub(super) placement_preview_slots: Vec<PlacementPreviewSlot>,
-    pub(super) hover_preview_slots: Vec<PlacementPreviewSlot>,
     pub(crate) guide_snap_indicators: Vec<super::GuideSnapIndicator>,
     pub(super) mouse_wheel_zoom_animation: Option<MouseWheelZoomAnimation>,
     pub(super) last_pointer_screen_pos: Option<egui::Pos2>,

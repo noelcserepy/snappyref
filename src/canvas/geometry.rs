@@ -20,7 +20,7 @@ pub(super) fn image_screen_size_for_record(
     placement: &crate::data::Placement,
     zoom: f32,
 ) -> egui::Vec2 {
-    placement.scaled_visual_size() * zoom
+    placement.scaled_display_size() * zoom
 }
 
 pub(super) fn image_screen_corners_for_record(

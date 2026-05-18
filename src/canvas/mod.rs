@@ -9,7 +9,8 @@ mod state;
 
 use crate::data::{
     CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationGeometry, CanvasAnnotationKind,
-    CanvasBackground, CanvasImageLod, CanvasTextSize, Placement, RectGeometry, SegmentGeometry,
+    CanvasBackground, CanvasImageLod, CanvasTextSize, Placement, PlacementLayoutItem, RectGeometry,
+    SegmentGeometry,
 };
 use eframe::egui;
 use interaction::{
@@ -18,8 +19,7 @@ use interaction::{
 use render::{
     annotation_style_toolbar_rect, editing_textbox_toolbar_rect, paint_annotation_draft,
     paint_background, paint_canvas_items, paint_crop_marquee, paint_guide_snap_indicators,
-    paint_marquee, paint_placement_preview_slots, paint_selection_bounds,
-    show_annotation_style_toolbar, show_textbox_editor,
+    paint_marquee, paint_selection_bounds, show_annotation_style_toolbar, show_textbox_editor,
 };
 use state::{CanvasDocumentState, CanvasInteractionState, CanvasRenderState};
 
@@ -273,52 +273,6 @@ fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
-#[derive(Clone, Debug)]
-pub(crate) struct SelectedLayoutItem {
-    pub(crate) id: i64,
-    pub(crate) geometry: RectGeometry,
-}
-
-impl SelectedLayoutItem {
-    pub(crate) fn from_rect(id: i64, rect: egui::Rect) -> Self {
-        Self {
-            id,
-            geometry: RectGeometry::from_bounds(rect, 0),
-        }
-    }
-
-    pub(crate) fn new(id: i64, center: egui::Pos2, size: egui::Vec2) -> Self {
-        Self {
-            id,
-            geometry: RectGeometry::new(center, size, 1.0, 0.0, 0),
-        }
-    }
-
-    pub(crate) fn center(&self) -> egui::Pos2 {
-        self.geometry.center
-    }
-
-    pub(crate) fn size(&self) -> egui::Vec2 {
-        self.geometry.size * self.geometry.scale.max(0.01)
-    }
-
-    pub(crate) fn rect(&self) -> egui::Rect {
-        egui::Rect::from_center_size(self.center(), self.size())
-    }
-
-    pub(crate) fn width(&self) -> f32 {
-        self.size().x
-    }
-
-    pub(crate) fn height(&self) -> f32 {
-        self.size().y
-    }
-
-    pub(crate) fn with_size(&self, size: egui::Vec2) -> Self {
-        Self::new(self.id, self.center(), size)
-    }
-}
-
 #[derive(Clone)]
 struct ImageScaleStart {
     placement_id: i64,
@@ -330,13 +284,13 @@ impl ImageScaleStart {
     fn new(
         placement_id: i64,
         center_world: egui::Pos2,
-        base_visual_size: egui::Vec2,
+        base_display_size: egui::Vec2,
         start_scale: f32,
         min_scale: f32,
     ) -> Self {
         Self {
             placement_id,
-            geometry: RectGeometry::new(center_world, base_visual_size, start_scale, 0.0, 0),
+            geometry: RectGeometry::new(center_world, base_display_size, start_scale, 0.0, 0),
             min_scale,
         }
     }
@@ -345,7 +299,7 @@ impl ImageScaleStart {
         self.geometry.center
     }
 
-    fn base_visual_size(&self) -> egui::Vec2 {
+    fn base_display_size(&self) -> egui::Vec2 {
         self.geometry.size
     }
 
@@ -357,7 +311,7 @@ impl ImageScaleStart {
 #[derive(Clone)]
 pub(crate) struct DragState {
     pub(crate) pointer_start_world: egui::Pos2,
-    pub(crate) starting_items: Vec<SelectedLayoutItem>,
+    pub(crate) starting_items: Vec<PlacementLayoutItem>,
     pub(crate) snap_preview_rect_world: Option<egui::Rect>,
     pub(crate) started_at_seconds: f64,
     pub(crate) last_movement_seconds: f64,
@@ -458,23 +412,6 @@ struct TextboxLayoutCacheEntry {
     key: TextboxLayoutCacheKey,
     galley: Arc<egui::Galley>,
     required_world_height: f32,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct PlacementPreviewSlot {
-    queue_id: u64,
-    geometry: RectGeometry,
-    label: String,
-}
-
-impl PlacementPreviewSlot {
-    fn new(queue_id: u64, center_world: egui::Pos2, size_world: egui::Vec2, label: String) -> Self {
-        Self {
-            queue_id,
-            geometry: RectGeometry::new(center_world, size_world, 1.0, 0.0, 0),
-            label,
-        }
-    }
 }
 
 struct MarqueeState {
@@ -651,7 +588,7 @@ impl CanvasState {
     }
 }
 
-pub(crate) fn rotated_visual_size(width: f32, height: f32, rotation: f32) -> egui::Vec2 {
+pub(crate) fn rotated_display_size(width: f32, height: f32, rotation: f32) -> egui::Vec2 {
     let sin = rotation.sin().abs();
     let cos = rotation.cos().abs();
     egui::vec2(width * cos + height * sin, width * sin + height * cos)
@@ -907,7 +844,6 @@ pub fn show(
 
     painter.rect_filled(rect, 0.0, crate::ui::theme::BACKGROUND);
     paint_background(&painter, rect, state);
-    paint_placement_preview_slots(&painter, rect, state);
     let image_pass = paint_canvas_items(
         &painter,
         ui,
@@ -1022,9 +958,9 @@ mod tests {
     use super::{
         AnnotationDraftState, CanvasCropRequest, CanvasInputPolicy, CanvasState, CanvasTexture,
         FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, PixelCropRect,
-        RenderedPlacement, SelectedLayoutItem, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
+        PlacementLayoutItem, RenderedPlacement, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
         TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion, TextboxResizeHandle,
-        rotated_visual_size,
+        rotated_display_size,
     };
     use crate::data::{
         CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
@@ -1163,16 +1099,17 @@ mod tests {
     fn unloaded_test_record(
         placement_id: i64,
         content: PlacementContent,
-        visual_width: f32,
-        visual_height: f32,
+        display_width: f32,
+        display_height: f32,
         scale: f32,
         center: eframe::egui::Pos2,
     ) -> Placement {
         let mut placement = Placement {
-            state: PlacementState::new(
+            state: PlacementState::with_display_size(
                 placement_id,
                 None,
                 center,
+                eframe::egui::vec2(display_width, display_height),
                 scale,
                 0.0,
                 placement_id as i32,
@@ -1181,7 +1118,6 @@ mod tests {
             asset: None,
             content: content.clone(),
             lifecycle: PlacementLifecycle::Committed,
-            visual_size: eframe::egui::vec2(visual_width, visual_height),
         };
         placement.content = content;
         placement.lifecycle = PlacementLifecycle::Committed;
@@ -1672,62 +1608,7 @@ mod tests {
     }
 
     #[test]
-    fn placement_preview_slots_replace_by_queue_id_and_remove_cleanly() {
-        let mut state = CanvasState::default();
-        state.add_placement_preview_slot(
-            7,
-            eframe::egui::pos2(10.0, 20.0),
-            eframe::egui::vec2(100.0, 80.0),
-            "first".to_owned(),
-        );
-        state.add_placement_preview_slot(
-            7,
-            eframe::egui::pos2(30.0, 40.0),
-            eframe::egui::vec2(120.0, 90.0),
-            "updated".to_owned(),
-        );
-
-        assert_eq!(state.placement_preview_slot_count(), 1);
-        state.remove_placement_preview_slot(7);
-        assert_eq!(state.placement_preview_slot_count(), 0);
-    }
-
-    #[test]
-    fn hover_preview_slots_replace_and_clear_without_touching_queued_placeholders() {
-        let mut state = CanvasState::default();
-        state.add_placement_preview_slot(
-            1,
-            eframe::egui::pos2(0.0, 0.0),
-            eframe::egui::vec2(100.0, 80.0),
-            "queued".to_owned(),
-        );
-
-        state.set_hover_preview_slots(vec![
-            (
-                eframe::egui::pos2(10.0, 10.0),
-                eframe::egui::vec2(50.0, 50.0),
-            ),
-            (
-                eframe::egui::pos2(70.0, 10.0),
-                eframe::egui::vec2(50.0, 50.0),
-            ),
-        ]);
-        assert_eq!(state.hover_preview_slot_count(), 2);
-        assert_eq!(state.placement_preview_slot_count(), 1);
-
-        state.set_hover_preview_slots(vec![(
-            eframe::egui::pos2(20.0, 20.0),
-            eframe::egui::vec2(40.0, 40.0),
-        )]);
-        assert_eq!(state.hover_preview_slot_count(), 1);
-
-        state.clear_hover_preview_slots();
-        assert_eq!(state.hover_preview_slot_count(), 0);
-        assert_eq!(state.placement_preview_slot_count(), 1);
-    }
-
-    #[test]
-    fn clearing_hover_preview_slots_also_clears_guide_indicators() {
+    fn compact_guided_layout_for_sizes_snap_as_one_batch() {
         eframe::egui::__run_test_ui(|ui| {
             let mut state = CanvasState::default();
             push_test_image(
@@ -1740,37 +1621,7 @@ mod tests {
                 eframe::egui::pos2(0.0, 0.0),
             );
 
-            state.compact_guided_preview_placeholders(
-                &[eframe::egui::vec2(100.0, 100.0)],
-                eframe::egui::pos2(102.0, 0.0),
-                eframe::egui::Rect::from_min_size(
-                    eframe::egui::Pos2::ZERO,
-                    eframe::egui::vec2(800.0, 600.0),
-                ),
-                24.0,
-            );
-
-            assert_eq!(state.guide_snap_indicator_count(), 1);
-            state.clear_hover_preview_slots();
-            assert_eq!(state.guide_snap_indicator_count(), 0);
-        });
-    }
-
-    #[test]
-    fn compact_guided_preview_placeholders_snap_as_one_batch() {
-        eframe::egui::__run_test_ui(|ui| {
-            let mut state = CanvasState::default();
-            push_test_image(
-                ui,
-                &mut state,
-                1,
-                100,
-                100,
-                1.0,
-                eframe::egui::pos2(0.0, 0.0),
-            );
-
-            let placeholders = state.compact_guided_preview_placeholders(
+            let layout_items = state.compact_guided_layout_for_sizes(
                 &[
                     eframe::egui::vec2(100.0, 100.0),
                     eframe::egui::vec2(100.0, 100.0),
@@ -1783,12 +1634,12 @@ mod tests {
                 24.0,
             );
 
-            let bounds = placeholders
+            let bounds = layout_items
                 .iter()
                 .map(|(center, size)| eframe::egui::Rect::from_center_size(*center, *size))
                 .reduce(|left, right| left.union(right))
                 .expect("preview bounds");
-            assert_eq!(placeholders.len(), 2);
+            assert_eq!(layout_items.len(), 2);
             assert_eq!(bounds.left(), 50.0);
             assert_eq!(state.guide_snap_indicator_count(), 1);
         });
@@ -3752,10 +3603,10 @@ mod tests {
             eframe::egui::vec2(140.0, 180.0),
         ];
 
-        let placeholders = compact_layout_for_sizes(&sizes, 12.0, eframe::egui::pos2(100.0, 200.0));
+        let layout_items = compact_layout_for_sizes(&sizes, 12.0, eframe::egui::pos2(100.0, 200.0));
 
-        assert_eq!(placeholders.len(), sizes.len());
-        for (index, (_, size)) in placeholders.iter().enumerate() {
+        assert_eq!(layout_items.len(), sizes.len());
+        for (index, (_, size)) in layout_items.iter().enumerate() {
             assert_eq!(*size, sizes[index]);
         }
     }
@@ -3763,9 +3614,9 @@ mod tests {
     #[test]
     fn balanced_grid_layout_avoids_single_column_for_equal_approximate_batch() {
         let sizes = vec![eframe::egui::vec2(360.0, 240.0); 13];
-        let placeholders =
+        let layout_items =
             balanced_grid_layout_for_sizes(&sizes, 24.0, eframe::egui::pos2(100.0, 200.0));
-        let distinct_x = placeholders
+        let distinct_x = layout_items
             .iter()
             .fold(Vec::<i32>::new(), |mut values, (center, _)| {
                 let rounded = center.x.round() as i32;
@@ -3774,7 +3625,7 @@ mod tests {
                 }
                 values
             });
-        let distinct_y = placeholders
+        let distinct_y = layout_items
             .iter()
             .fold(Vec::<i32>::new(), |mut values, (center, _)| {
                 let rounded = center.y.round() as i32;
@@ -3784,7 +3635,7 @@ mod tests {
                 values
             });
 
-        assert_eq!(placeholders.len(), sizes.len());
+        assert_eq!(layout_items.len(), sizes.len());
         assert!(distinct_x.len() > 1);
         assert!(distinct_y.len() > 1);
     }
@@ -3881,7 +3732,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_arrangement_respects_rotated_placement_footprints() {
+    fn compact_arrangement_respects_rotated_placement_display_bounds() {
         let mut state = CanvasState::default();
         let gap = 12.0;
 
@@ -3927,7 +3778,7 @@ mod tests {
 
         assert!(
             rectangles_respect_gap(first_rect, second_rect, gap),
-            "rotated placement footprint should not overlap arranged neighbor"
+            "rotated placement display bounds should not overlap arranged neighbor"
         );
     }
 
@@ -4034,10 +3885,10 @@ mod tests {
             eframe::egui::vec2(101.0, 100.0),
         ];
 
-        let placeholders = compact_layout_for_sizes(&sizes, 12.0, eframe::egui::pos2(0.0, 0.0));
+        let layout_items = compact_layout_for_sizes(&sizes, 12.0, eframe::egui::pos2(0.0, 0.0));
 
-        assert_eq!(placeholders[0].1, sizes[0]);
-        assert_eq!(placeholders[1].1, sizes[1]);
+        assert_eq!(layout_items[0].1, sizes[0]);
+        assert_eq!(layout_items[1].1, sizes[1]);
     }
 
     #[test]
@@ -4415,7 +4266,7 @@ mod tests {
         assert!(state.take_context_menu_request().is_some());
     }
 
-    fn layout_item(id: i64, width: f32, height: f32) -> SelectedLayoutItem {
+    fn layout_item(id: i64, width: f32, height: f32) -> PlacementLayoutItem {
         positioned_layout_item(id, 0.0, 0.0, width, height)
     }
 
@@ -4425,8 +4276,8 @@ mod tests {
         y: f32,
         width: f32,
         height: f32,
-    ) -> SelectedLayoutItem {
-        SelectedLayoutItem::new(
+    ) -> PlacementLayoutItem {
+        PlacementLayoutItem::new(
             id,
             eframe::egui::pos2(x, y),
             eframe::egui::vec2(width, height),
@@ -4434,7 +4285,7 @@ mod tests {
     }
 
     fn center_gap_x(
-        items: &[SelectedLayoutItem],
+        items: &[PlacementLayoutItem],
         placements: &[(i64, eframe::egui::Pos2)],
         left_id: i64,
         right_id: i64,
@@ -4445,7 +4296,7 @@ mod tests {
     }
 
     fn center_gap_y(
-        items: &[SelectedLayoutItem],
+        items: &[PlacementLayoutItem],
         placements: &[(i64, eframe::egui::Pos2)],
         top_id: i64,
         bottom_id: i64,
@@ -4456,7 +4307,7 @@ mod tests {
     }
 
     fn placement_rect(
-        items: &[SelectedLayoutItem],
+        items: &[PlacementLayoutItem],
         placements: &[(i64, eframe::egui::Pos2)],
         placement_id: i64,
     ) -> eframe::egui::Rect {
@@ -4476,7 +4327,7 @@ mod tests {
         width.max(height) / width.min(height).max(1.0)
     }
 
-    fn hole_prone_items() -> Vec<SelectedLayoutItem> {
+    fn hole_prone_items() -> Vec<PlacementLayoutItem> {
         vec![
             layout_item(1, 300.0, 520.0),
             layout_item(2, 180.0, 260.0),
@@ -4500,7 +4351,7 @@ mod tests {
     }
 
     fn placement_visual_bounds_world(image: &RenderedPlacement) -> eframe::egui::Rect {
-        let visual_size = rotated_visual_size(
+        let display_size = rotated_display_size(
             image
                 .placement
                 .asset
@@ -4522,7 +4373,7 @@ mod tests {
                 image.placement.state.geometry.center.x,
                 image.placement.state.geometry.center.y,
             ),
-            visual_size,
+            display_size,
         )
     }
 

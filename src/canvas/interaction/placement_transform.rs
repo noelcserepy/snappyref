@@ -85,8 +85,8 @@ pub(crate) fn begin_image_drag_scale(
                         image.placement.state.geometry.center.y,
                     ),
                     {
-                        let base_size = image.placement.base_visual_size();
-                        super::super::rotated_visual_size(
+                        let base_size = image.placement.base_display_size();
+                        super::super::rotated_display_size(
                             base_size.x,
                             base_size.y,
                             image.placement.state.geometry.rotation,
@@ -395,7 +395,7 @@ fn scaled_image_bounds(
         let offset = item.center_world() - group_center_world;
         let center = group_center_world + offset * factor;
         let scale = (item.start_scale() * factor).max(item.min_scale);
-        let rect = egui::Rect::from_center_size(center, item.base_visual_size() * scale);
+        let rect = egui::Rect::from_center_size(center, item.base_display_size() * scale);
         if found {
             bounds = bounds.union(rect);
         } else {
@@ -442,7 +442,7 @@ pub(crate) fn compute_resize_snap_preview(
     placement_id: i64,
     desired_rect: egui::Rect,
     anchor_world: egui::Pos2,
-    base_visual_size: egui::Vec2,
+    base_display_size: egui::Vec2,
     min_scale: f32,
 ) -> Option<egui::Rect> {
     let candidates = guide_snap_candidate_rects(state, screen_rect, &[placement_id]);
@@ -450,7 +450,7 @@ pub(crate) fn compute_resize_snap_preview(
         super::super::guide_snap::snap_resize(super::super::guide_snap::GuideResizeSnapRequest {
             desired_rect,
             anchor: anchor_world,
-            base_visual_size,
+            base_display_size,
             min_scale,
             candidates: &candidates,
             gap: state.layout_gap,
@@ -515,8 +515,8 @@ fn guide_snap_candidate_rects(
         .iter()
         .filter(|image| !excluded_placement_ids.contains(&image.placement.state.id))
         .filter_map(|image| {
-            let scaled_size = image.placement.scaled_visual_size();
-            let visual_size = super::super::rotated_visual_size(
+            let scaled_size = image.placement.scaled_display_size();
+            let display_size = super::super::rotated_display_size(
                 scaled_size.x,
                 scaled_size.y,
                 image.placement.state.geometry.rotation,
@@ -526,7 +526,7 @@ fn guide_snap_candidate_rects(
                     image.placement.state.geometry.center.x,
                     image.placement.state.geometry.center.y,
                 ),
-                visual_size,
+                display_size,
             );
             rect.intersects(viewport)
                 .then_some(super::super::guide_snap::GuideSnapCandidate::new(rect))
