@@ -1,15 +1,20 @@
 mod annotation;
 mod asset;
-mod board_item;
+mod geometry;
+mod placement;
 mod session;
 
 pub use annotation::{
-    CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
-    CanvasStrokeWidth, CanvasTextSize,
+    CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationGeometry, CanvasAnnotationKind,
+    CanvasBackground, CanvasStrokeWidth, CanvasTextSize,
 };
 pub use asset::ImageAsset;
-pub use board_item::{
-    Board, BoardItem, BoardItemWithAsset, BoardLayoutItem, BoardSummary, CanvasStackItem,
+pub use geometry::{RectGeometry, SegmentGeometry};
+#[allow(unused_imports)]
+pub use placement::AssetId;
+pub use placement::{
+    Board, BoardSummary, CanvasStackItem, ContentResolutionSource, Placement, PlacementContent,
+    PlacementId, PlacementLayoutItem, PlacementLifecycle, PlacementState,
 };
 pub use session::{
     CanvasImageLod, DEFAULT_CANVAS_IMAGE_MAX_SIDE, DEFAULT_IMPORT_GAP,

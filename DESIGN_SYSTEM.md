@@ -61,7 +61,7 @@ Keep labels concise and chrome subordinate to the reference material.
 
 `ACCENT` is for active selection, focus, and the few states that need emphasis without adding a new hue. Do not use it for generic decoration.
 
-`ACCENT_BLUE`, `ACCENT_ORANGE`, and `ACCENT_BRIGHT_ORANGE` are secondary accent candidates for explicit canvas guide or comparison states. Keep them out of generic chrome unless the visual role is named and tested.
+`ACCENT_BLUE` and `ACCENT_ORANGE` are secondary accent candidates for explicit canvas guide or comparison states. Keep them out of generic chrome unless the visual role is named and tested.
 
 `GREEN` is the only green token. Use it for green guide states and indexed/ready semantic-search status in the palette footer. Do not create a second success or decorative green.
 
@@ -84,6 +84,8 @@ Destructive actions use explicit destructive language and reserved destructive c
 Semantic search and library recall live in `src/search.rs` with reusable paint helpers in `src/palette.rs`. The search palette should remain an overlay workflow, not a second sidebar.
 
 Annotation and edit controls live close to the selected item in `src/canvas/render.rs`. Canvas overlays and toolbars should stay compact and avoid obscuring the reference material.
+
+Image selection borders use the `TEXT` color, 2px stroke, square corners, and zero padding from the image bounds. Use this same border language for selected search result thumbnails in `src/palette.rs`, selected canvas Placements, canvas search-result highlights, and search drag previews in `src/canvas/render.rs`. Do not use rounded corners, expanded outlines, alternate selected colors, or thicker lead/hover variants for image selection.
 
 Keep screenshotable debug verification probes in `src/app.rs` when they expose a broadly useful state. Keep one-off inspection probes narrow and remove them after use.
 

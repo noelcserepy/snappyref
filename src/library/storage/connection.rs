@@ -1,0 +1,34 @@
+use super::*;
+
+#[derive(Clone, Debug)]
+pub struct Library {
+    pub(super) originals_dir: PathBuf,
+    pub(super) thumbs_dir: PathBuf,
+    pub(super) db_path: PathBuf,
+}
+
+impl Library {
+    pub fn initialize(root: PathBuf) -> Result<Self, String> {
+        let originals_dir = root.join("originals");
+        let thumbs_dir = root.join("thumbs");
+        let db_path = root.join("library.db");
+
+        fs::create_dir_all(&originals_dir)
+            .map_err(|error| format!("failed to create originals dir: {error}"))?;
+        fs::create_dir_all(&thumbs_dir)
+            .map_err(|error| format!("failed to create thumbs dir: {error}"))?;
+
+        let library = Self {
+            originals_dir,
+            thumbs_dir,
+            db_path,
+        };
+        library.initialize_schema()?;
+        Ok(library)
+    }
+
+    pub(super) fn connection(&self) -> Result<Connection, String> {
+        Connection::open(&self.db_path)
+            .map_err(|error| format!("failed to open library database: {error}"))
+    }
+}

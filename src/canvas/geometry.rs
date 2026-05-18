@@ -3,33 +3,36 @@ use eframe::egui;
 use super::PixelCropRect;
 
 pub(super) fn image_screen_center_for_record(
-    record: &crate::data::BoardItemWithAsset,
+    placement: &crate::data::Placement,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> egui::Pos2 {
-    screen_center + pan + egui::vec2(record.item.x, record.item.y) * zoom
+    screen_center
+        + pan
+        + egui::vec2(
+            placement.state.geometry.center.x,
+            placement.state.geometry.center.y,
+        ) * zoom
 }
 
 pub(super) fn image_screen_size_for_record(
-    record: &crate::data::BoardItemWithAsset,
+    placement: &crate::data::Placement,
     zoom: f32,
 ) -> egui::Vec2 {
-    egui::vec2(record.asset.width as f32, record.asset.height as f32)
-        * record.item.scale.max(0.01)
-        * zoom
+    placement.scaled_display_size() * zoom
 }
 
 pub(super) fn image_screen_corners_for_record(
-    record: &crate::data::BoardItemWithAsset,
+    placement: &crate::data::Placement,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> [egui::Pos2; 4] {
-    let center = image_screen_center_for_record(record, pan, zoom, screen_center);
-    let half_size = image_screen_size_for_record(record, zoom) * 0.5;
-    let sin = record.item.rotation.sin();
-    let cos = record.item.rotation.cos();
+    let center = image_screen_center_for_record(placement, pan, zoom, screen_center);
+    let half_size = image_screen_size_for_record(placement, zoom) * 0.5;
+    let sin = placement.state.geometry.rotation.sin();
+    let cos = placement.state.geometry.rotation.cos();
     let rotate = |offset: egui::Vec2| {
         egui::vec2(
             offset.x * cos - offset.y * sin,
@@ -46,14 +49,14 @@ pub(super) fn image_screen_corners_for_record(
 }
 
 pub(super) fn image_screen_rect_for_record(
-    record: &crate::data::BoardItemWithAsset,
+    placement: &crate::data::Placement,
     rect: egui::Rect,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> egui::Rect {
     let _ = rect;
-    image_screen_corners_for_record(record, pan, zoom, screen_center)
+    image_screen_corners_for_record(placement, pan, zoom, screen_center)
         .into_iter()
         .fold(egui::Rect::NOTHING, |mut bounds, corner| {
             bounds.extend_with(corner);
@@ -62,12 +65,12 @@ pub(super) fn image_screen_rect_for_record(
 }
 
 pub(super) fn image_rotation_handle_screen_pos(
-    record: &crate::data::BoardItemWithAsset,
+    placement: &crate::data::Placement,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> (egui::Pos2, egui::Pos2) {
-    let corners = image_screen_corners_for_record(record, pan, zoom, screen_center);
+    let corners = image_screen_corners_for_record(placement, pan, zoom, screen_center);
     let top_mid = corners[0].lerp(corners[1], 0.5);
     let bottom_mid = corners[3].lerp(corners[2], 0.5);
     let outward = (top_mid - bottom_mid).normalized();
@@ -82,18 +85,18 @@ pub(super) fn min_image_scale(asset: &crate::data::ImageAsset) -> f32 {
 }
 
 pub(super) fn image_contains_screen_point(
-    record: &crate::data::BoardItemWithAsset,
+    placement: &crate::data::Placement,
     pointer_pos: egui::Pos2,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> bool {
-    let center = image_screen_center_for_record(record, pan, zoom, screen_center);
+    let center = image_screen_center_for_record(placement, pan, zoom, screen_center);
     let local = pointer_pos - center;
-    let sin = (-record.item.rotation).sin();
-    let cos = (-record.item.rotation).cos();
+    let sin = (-placement.state.geometry.rotation).sin();
+    let cos = (-placement.state.geometry.rotation).cos();
     let unrotated = egui::vec2(local.x * cos - local.y * sin, local.x * sin + local.y * cos);
-    let half_size = image_screen_size_for_record(record, zoom) * 0.5;
+    let half_size = image_screen_size_for_record(placement, zoom) * 0.5;
 
     unrotated.x.abs() <= half_size.x && unrotated.y.abs() <= half_size.y
 }
@@ -172,14 +175,14 @@ pub(super) fn crop_center_offset_local(
 }
 
 pub(super) fn merge_cropped_item_fields(
-    item: &mut crate::data::BoardItem,
+    item: &mut crate::data::PlacementState,
     asset_id: i64,
     crop_offset_local: egui::Vec2,
 ) {
-    item.asset_id = asset_id;
-    let scale = item.scale.max(0.01);
-    item.x += crop_offset_local.x * scale;
-    item.y += crop_offset_local.y * scale;
+    item.asset_id = Some(asset_id);
+    let scale = item.geometry.scale.max(0.01);
+    item.geometry.center.x += crop_offset_local.x * scale;
+    item.geometry.center.y += crop_offset_local.y * scale;
 }
 
 #[cfg(test)]

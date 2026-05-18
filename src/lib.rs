@@ -1,37 +1,16 @@
-mod active_board_commands;
-mod active_board_load;
+mod active_board;
 mod app;
-mod board_switch;
 mod canvas;
-mod clipboard_copy;
-mod crop_flow;
 mod data;
-#[cfg(debug_assertions)]
-mod design_system_preview;
-mod document_persistence;
-mod drop_intake;
-mod history;
-mod import_intake;
+mod diagnostics;
 mod jobs;
-mod library_location;
-#[cfg(feature = "semantic-search")]
-mod model_store;
-mod native_capture;
-mod native_drop;
-#[cfg(feature = "semantic-search")]
-mod palette;
-mod perf;
-mod pureref_clipboard;
-mod residency;
-mod screenshot;
+mod library;
+mod placement;
+mod platform;
 #[cfg(feature = "semantic-search")]
 mod search;
-#[cfg(feature = "semantic-search")]
-mod semantic_search;
-mod sidebar;
-mod storage;
-mod theme;
-mod ui_layout;
+mod sources;
+mod ui;
 pub mod updater;
 
 pub fn run() -> eframe::Result<()> {
@@ -59,7 +38,8 @@ pub fn run() -> eframe::Result<()> {
             .strip_prefix("--semantic-embed-image=")
             .map(str::to_owned)
     }) {
-        if let Err(error) = semantic_search::print_embed_image_output(std::path::Path::new(&path)) {
+        if let Err(error) = search::semantic::print_embed_image_output(std::path::Path::new(&path))
+        {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));
@@ -71,7 +51,7 @@ pub fn run() -> eframe::Result<()> {
         .skip(1)
         .any(|argument| argument == "--semantic-embed-server")
     {
-        if let Err(error) = semantic_search::run_embed_image_server() {
+        if let Err(error) = search::semantic::run_embed_image_server() {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));
@@ -81,7 +61,10 @@ pub fn run() -> eframe::Result<()> {
 
     let config = app::AppConfig::from_env();
     if config.startup_trace_requested() {
-        if let Err(error) = config.library_root().and_then(perf::print_startup_trace) {
+        if let Err(error) = config
+            .library_root()
+            .and_then(diagnostics::perf::print_startup_trace)
+        {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));
@@ -89,7 +72,7 @@ pub fn run() -> eframe::Result<()> {
         return Ok(());
     }
     if config.perf_report_requested() {
-        if let Err(error) = perf::print_report() {
+        if let Err(error) = diagnostics::perf::print_report() {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));
@@ -97,7 +80,7 @@ pub fn run() -> eframe::Result<()> {
         return Ok(());
     }
     if let Some(path) = config.perf_decode_path() {
-        if let Err(error) = perf::print_file_decode_report(path) {
+        if let Err(error) = diagnostics::perf::print_file_decode_report(path) {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));
@@ -105,7 +88,7 @@ pub fn run() -> eframe::Result<()> {
         return Ok(());
     }
     if let Some(path) = config.perf_import_path() {
-        if let Err(error) = perf::print_file_import_report(path) {
+        if let Err(error) = diagnostics::perf::print_file_import_report(path) {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));
@@ -114,7 +97,10 @@ pub fn run() -> eframe::Result<()> {
     }
     if config.perf_embedding_lod_requested() {
         if let Err(error) = config.library_root().and_then(|library_root| {
-            perf::print_embedding_lod_report(library_root, config.perf_embedding_lod_limit())
+            diagnostics::perf::print_embedding_lod_report(
+                library_root,
+                config.perf_embedding_lod_limit(),
+            )
         }) {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
@@ -158,7 +144,7 @@ pub fn run() -> eframe::Result<()> {
         "SnappyRef",
         options,
         Box::new(|cc| {
-            theme::configure_theme(&cc.egui_ctx);
+            ui::theme::configure_theme(&cc.egui_ctx);
             cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
             egui_extras::install_image_loaders(&cc.egui_ctx);
             Ok(Box::new(app::SnappyRefApp::new(cc, config.clone())))

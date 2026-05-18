@@ -2,52 +2,52 @@ use eframe::egui;
 
 use super::GuideSnapIndicator;
 
-pub(super) const ACQUIRE_DISTANCE_SCREEN: f32 = 8.0;
-pub(super) const RELEASE_DISTANCE_SCREEN: f32 = 12.0;
-pub(super) const VIEWPORT_PADDING_SCREEN: f32 = 64.0;
+pub(crate) const ACQUIRE_DISTANCE_SCREEN: f32 = 8.0;
+pub(crate) const RELEASE_DISTANCE_SCREEN: f32 = 12.0;
+pub(crate) const VIEWPORT_PADDING_SCREEN: f32 = 64.0;
 const EPSILON: f32 = 0.001;
 
-pub(super) struct GuideSnapRequest<'a> {
-    pub(super) desired_rect: egui::Rect,
-    pub(super) candidates: &'a [GuideSnapCandidate],
-    pub(super) gap: f32,
-    pub(super) threshold: f32,
+pub(crate) struct GuideSnapRequest<'a> {
+    pub(crate) desired_rect: egui::Rect,
+    pub(crate) candidates: &'a [GuideSnapCandidate],
+    pub(crate) gap: f32,
+    pub(crate) threshold: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct GuideSnapCandidate {
+pub(crate) struct GuideSnapCandidate {
     visual_rect: egui::Rect,
 }
 
 impl GuideSnapCandidate {
-    pub(super) fn new(visual_rect: egui::Rect) -> Self {
+    pub(crate) fn new(visual_rect: egui::Rect) -> Self {
         Self { visual_rect }
     }
 }
 
-pub(super) struct GuideSnapResult {
-    pub(super) rect: egui::Rect,
-    pub(super) indicators: Vec<GuideSnapIndicator>,
+pub(crate) struct GuideSnapResult {
+    pub(crate) rect: egui::Rect,
+    pub(crate) indicators: Vec<GuideSnapIndicator>,
 }
 
-pub(super) struct GuideResizeSnapRequest<'a> {
-    pub(super) desired_rect: egui::Rect,
-    pub(super) anchor: egui::Pos2,
-    pub(super) base_visual_size: egui::Vec2,
-    pub(super) min_scale: f32,
-    pub(super) candidates: &'a [GuideSnapCandidate],
-    pub(super) gap: f32,
-    pub(super) threshold: f32,
+pub(crate) struct GuideResizeSnapRequest<'a> {
+    pub(crate) desired_rect: egui::Rect,
+    pub(crate) anchor: egui::Pos2,
+    pub(crate) base_display_size: egui::Vec2,
+    pub(crate) min_scale: f32,
+    pub(crate) candidates: &'a [GuideSnapCandidate],
+    pub(crate) gap: f32,
+    pub(crate) threshold: f32,
 }
 
-pub(super) struct GuideUniformScaleSnapRequest<'a> {
-    pub(super) origin: egui::Pos2,
-    pub(super) start_rect: egui::Rect,
-    pub(super) desired_factor: f32,
-    pub(super) min_factor: f32,
-    pub(super) candidates: &'a [GuideSnapCandidate],
-    pub(super) gap: f32,
-    pub(super) threshold: f32,
+pub(crate) struct GuideUniformScaleSnapRequest<'a> {
+    pub(crate) origin: egui::Pos2,
+    pub(crate) start_rect: egui::Rect,
+    pub(crate) desired_factor: f32,
+    pub(crate) min_factor: f32,
+    pub(crate) candidates: &'a [GuideSnapCandidate],
+    pub(crate) gap: f32,
+    pub(crate) threshold: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -72,7 +72,7 @@ enum GuideSnapKind {
     GapSpacing,
 }
 
-pub(super) fn threshold_world(zoom: f32, previously_snapped: bool) -> f32 {
+pub(crate) fn threshold_world(zoom: f32, previously_snapped: bool) -> f32 {
     let threshold_screen = if previously_snapped {
         RELEASE_DISTANCE_SCREEN
     } else {
@@ -81,25 +81,27 @@ pub(super) fn threshold_world(zoom: f32, previously_snapped: bool) -> f32 {
     threshold_screen / zoom.max(0.01)
 }
 
-pub(super) fn snap_rect(request: GuideSnapRequest<'_>) -> Option<GuideSnapResult> {
+pub(crate) fn snap_rect(request: GuideSnapRequest<'_>) -> Option<GuideSnapResult> {
     if request.candidates.is_empty() {
         return None;
     }
 
-    let best_x = best_axis_snap(
+    let x_snaps = axis_snaps(
         GuideAxis::Vertical,
         request.desired_rect,
         request.candidates,
         request.gap,
         request.threshold,
     );
-    let best_y = best_axis_snap(
+    let y_snaps = axis_snaps(
         GuideAxis::Horizontal,
         request.desired_rect,
         request.candidates,
         request.gap,
         request.threshold,
     );
+    let best_x = best_snap_for_axis(&x_snaps);
+    let best_y = best_snap_for_axis(&y_snaps);
 
     let nudge = egui::vec2(
         best_x.map(|snap| snap.nudge).unwrap_or(0.0),
@@ -110,7 +112,7 @@ pub(super) fn snap_rect(request: GuideSnapRequest<'_>) -> Option<GuideSnapResult
     }
     let snapped_rect = request.desired_rect.translate(nudge);
     let mut indicators = Vec::new();
-    if let Some(snap) = best_x {
+    for snap in co_winning_axis_snaps(&x_snaps, best_x) {
         indicators.push(guide_indicator_for_axis(
             GuideAxis::Vertical,
             snap.coord,
@@ -118,7 +120,7 @@ pub(super) fn snap_rect(request: GuideSnapRequest<'_>) -> Option<GuideSnapResult
             snapped_rect,
         ));
     }
-    if let Some(snap) = best_y {
+    for snap in co_winning_axis_snaps(&y_snaps, best_y) {
         indicators.push(guide_indicator_for_axis(
             GuideAxis::Horizontal,
             snap.coord,
@@ -135,7 +137,7 @@ pub(super) fn snap_rect(request: GuideSnapRequest<'_>) -> Option<GuideSnapResult
     })
 }
 
-pub(super) fn snap_resize(request: GuideResizeSnapRequest<'_>) -> Option<GuideSnapResult> {
+pub(crate) fn snap_resize(request: GuideResizeSnapRequest<'_>) -> Option<GuideSnapResult> {
     if request.candidates.is_empty() {
         return None;
     }
@@ -162,8 +164,12 @@ pub(super) fn snap_resize(request: GuideResizeSnapRequest<'_>) -> Option<GuideSn
     }
 
     let snap = best?;
-    let rect =
-        resize_rect_from_anchor(request.anchor, request.base_visual_size, snap.scale, handle);
+    let rect = resize_rect_from_anchor(
+        request.anchor,
+        request.base_display_size,
+        snap.scale,
+        handle,
+    );
     Some(GuideSnapResult {
         rect,
         indicators: vec![guide_indicator_for_axis(
@@ -175,7 +181,7 @@ pub(super) fn snap_resize(request: GuideResizeSnapRequest<'_>) -> Option<GuideSn
     })
 }
 
-pub(super) fn snap_uniform_scale(
+pub(crate) fn snap_uniform_scale(
     request: GuideUniformScaleSnapRequest<'_>,
 ) -> Option<GuideSnapResult> {
     if request.candidates.is_empty() {
@@ -270,23 +276,50 @@ struct ResizeHandleFromAnchor {
     y_sign: f32,
 }
 
-fn best_axis_snap(
+fn axis_snaps(
     axis: GuideAxis,
     desired_rect: egui::Rect,
     candidates: &[GuideSnapCandidate],
     gap: f32,
     threshold: f32,
-) -> Option<GuideAxisSnap> {
-    let mut best = None;
+) -> Vec<GuideAxisSnap> {
+    let mut snaps = Vec::new();
     for candidate in candidates {
         let eligibility =
             GuideContactEligibility::new(desired_rect, candidate.visual_rect, gap, threshold);
         for target in axis_snap_targets(axis, desired_rect, candidate.visual_rect, gap, eligibility)
         {
-            best = consider_axis_snap(best, target, threshold);
+            if let Some(snap) = axis_snap_for_target(target, threshold) {
+                snaps.push(snap);
+            }
         }
     }
-    best
+    snaps
+}
+
+fn best_snap_for_axis(snaps: &[GuideAxisSnap]) -> Option<GuideAxisSnap> {
+    snaps
+        .iter()
+        .min_by(|left, right| left.distance.total_cmp(&right.distance))
+        .copied()
+}
+
+fn co_winning_axis_snaps(
+    snaps: &[GuideAxisSnap],
+    best: Option<GuideAxisSnap>,
+) -> Vec<GuideAxisSnap> {
+    let Some(best) = best else {
+        return Vec::new();
+    };
+    snaps
+        .iter()
+        .copied()
+        .filter(|snap| {
+            (snap.distance - best.distance).abs() <= EPSILON
+                && (snap.nudge - best.nudge).abs() <= EPSILON
+                && snap.kind == best.kind
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -436,26 +469,19 @@ fn axis_snap_targets(
     targets
 }
 
-fn consider_axis_snap(
-    best: Option<GuideAxisSnap>,
-    target: GuideAxisTarget,
-    threshold: f32,
-) -> Option<GuideAxisSnap> {
+fn axis_snap_for_target(target: GuideAxisTarget, threshold: f32) -> Option<GuideAxisSnap> {
     let nudge = target.target_coord - target.desired_coord;
     let distance = nudge.abs();
     if distance > threshold || distance <= EPSILON {
-        return best;
+        return None;
     }
-    match best {
-        Some(best) if best.distance <= distance => Some(best),
-        _ => Some(GuideAxisSnap {
-            nudge,
-            distance,
-            coord: target.target_coord,
-            kind: target.kind,
-            candidate_rect: target.candidate_rect,
-        }),
-    }
+    Some(GuideAxisSnap {
+        nudge,
+        distance,
+        coord: target.target_coord,
+        kind: target.kind,
+        candidate_rect: target.candidate_rect,
+    })
 }
 
 fn resize_snap_targets(
@@ -573,10 +599,12 @@ fn consider_resize_snap(
 
     let scale = match target.axis {
         GuideAxis::Vertical => {
-            (target.target_coord - request.anchor.x).abs() / request.base_visual_size.x.max(EPSILON)
+            (target.target_coord - request.anchor.x).abs()
+                / request.base_display_size.x.max(EPSILON)
         }
         GuideAxis::Horizontal => {
-            (target.target_coord - request.anchor.y).abs() / request.base_visual_size.y.max(EPSILON)
+            (target.target_coord - request.anchor.y).abs()
+                / request.base_display_size.y.max(EPSILON)
         }
     };
     if scale < request.min_scale {
@@ -768,13 +796,13 @@ fn resize_handle_from_anchor(
 
 fn resize_rect_from_anchor(
     anchor: egui::Pos2,
-    base_visual_size: egui::Vec2,
+    base_display_size: egui::Vec2,
     scale: f32,
     handle: ResizeHandleFromAnchor,
 ) -> egui::Rect {
     let handle_pos = egui::pos2(
-        anchor.x + handle.x_sign * base_visual_size.x * scale,
-        anchor.y + handle.y_sign * base_visual_size.y * scale,
+        anchor.x + handle.x_sign * base_display_size.x * scale,
+        anchor.y + handle.y_sign * base_display_size.y * scale,
     );
     egui::Rect::from_two_pos(anchor, handle_pos)
 }
@@ -955,6 +983,34 @@ mod tests {
     }
 
     #[test]
+    fn rect_snap_reports_all_equal_edge_guides_for_the_chosen_nudge() {
+        let desired_rect =
+            egui::Rect::from_min_size(egui::pos2(120.0, 4.0), egui::vec2(100.0, 100.0));
+        let candidates = [GuideSnapCandidate::new(egui::Rect::from_min_size(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(100.0, 100.0),
+        ))];
+
+        let result = snap_rect(GuideSnapRequest {
+            desired_rect,
+            candidates: &candidates,
+            gap: 24.0,
+            threshold: 8.0,
+        })
+        .expect("expected gap snap plus co-winning horizontal guides");
+
+        assert_eq!(result.rect.left(), 124.0);
+        assert_eq!(result.rect.top(), 0.0);
+        assert_eq!(result.indicators.len(), 3);
+        assert!(result.indicators.iter().any(|indicator| {
+            indicator.segments == vec![(egui::pos2(0.0, 0.0), egui::pos2(224.0, 0.0))]
+        }));
+        assert!(result.indicators.iter().any(|indicator| {
+            indicator.segments == vec![(egui::pos2(0.0, 100.0), egui::pos2(224.0, 100.0))]
+        }));
+    }
+
+    #[test]
     fn uniform_scale_snap_rejects_factor_below_minimum() {
         let start_rect = egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0));
         let candidates = [GuideSnapCandidate::new(egui::Rect::from_min_size(
@@ -986,7 +1042,7 @@ mod tests {
         let result = snap_resize(GuideResizeSnapRequest {
             desired_rect,
             anchor: desired_rect.left_top(),
-            base_visual_size: egui::vec2(100.0, 100.0),
+            base_display_size: egui::vec2(100.0, 100.0),
             min_scale: 0.1,
             candidates: &candidates,
             gap: 24.0,
@@ -1010,7 +1066,7 @@ mod tests {
         let result = snap_resize(GuideResizeSnapRequest {
             desired_rect,
             anchor: desired_rect.left_top(),
-            base_visual_size: egui::vec2(100.0, 100.0),
+            base_display_size: egui::vec2(100.0, 100.0),
             min_scale: 0.1,
             candidates: &candidates,
             gap: 24.0,
@@ -1034,7 +1090,7 @@ mod tests {
         let result = snap_resize(GuideResizeSnapRequest {
             desired_rect,
             anchor: desired_rect.left_top(),
-            base_visual_size: egui::vec2(100.0, 100.0),
+            base_display_size: egui::vec2(100.0, 100.0),
             min_scale: 0.1,
             candidates: &candidates,
             gap: 24.0,
@@ -1058,7 +1114,7 @@ mod tests {
         let result = snap_resize(GuideResizeSnapRequest {
             desired_rect,
             anchor: desired_rect.left_top(),
-            base_visual_size: egui::vec2(100.0, 100.0),
+            base_display_size: egui::vec2(100.0, 100.0),
             min_scale: 0.1,
             candidates: &candidates,
             gap: 24.0,
@@ -1082,7 +1138,7 @@ mod tests {
         let result = snap_resize(GuideResizeSnapRequest {
             desired_rect,
             anchor: desired_rect.left_top(),
-            base_visual_size: egui::vec2(100.0, 100.0),
+            base_display_size: egui::vec2(100.0, 100.0),
             min_scale: 0.1,
             candidates: &candidates,
             gap: 24.0,
@@ -1103,7 +1159,7 @@ mod tests {
         let result = snap_resize(GuideResizeSnapRequest {
             desired_rect,
             anchor: desired_rect.left_top(),
-            base_visual_size: egui::vec2(1000.0, 1000.0),
+            base_display_size: egui::vec2(1000.0, 1000.0),
             min_scale: 0.024,
             candidates: &candidates,
             gap: 24.0,
@@ -1127,7 +1183,7 @@ mod tests {
         let result = snap_resize(GuideResizeSnapRequest {
             desired_rect,
             anchor: desired_rect.left_top(),
-            base_visual_size: egui::vec2(100.0, 50.0),
+            base_display_size: egui::vec2(100.0, 50.0),
             min_scale: 0.1,
             candidates: &candidates,
             gap: 24.0,

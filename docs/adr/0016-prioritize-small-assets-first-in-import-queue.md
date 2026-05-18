@@ -11,7 +11,7 @@ The `RequestQueue` orders **Interactive** imports by source byte size
 **ascending** at enqueue time, breaking ties by arrival order. Smaller asset
 files reach **Placement Visible** first inside a mixed batch.
 
-- `ImportRequest::priority_bytes()` is the sort key:
+- `ImagePreparationRequest::priority_bytes()` is the sort key:
   - `ImportPath` reads `std::fs::metadata(source_path)` for the source size.
   - `ImportClipboard` uses the in-memory RGBA byte count.
   - `ImportUrl`, `Crop`, `LoadExisting`, and `BackfillLod` report `None`,
