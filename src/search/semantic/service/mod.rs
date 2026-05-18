@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::library::storage::{AssetSearchHit, EmbeddingStatus, Library};
 
 use super::EmbedModelLoadTimingOutput;
-use super::index::{SearchScope, decode_f32_blob, search_embeddings_for_scope};
+use super::index::decode_f32_blob;
 use super::model::{EmbeddingModel, ModelLoadTiming, ModelSpec, OrtDualEncoderModel};
 
 const IMAGE_PIVOT_CANDIDATE_LIMIT: usize = 50;
@@ -32,9 +32,6 @@ pub struct SearchResultAssetEntry {
     pub asset_height: u32,
     #[allow(dead_code)]
     pub similarity: f32,
-    pub placement_ids: Vec<i64>,
-    #[allow(dead_code)]
-    pub instance_count: usize,
 }
 
 enum IndexRequest {
@@ -49,13 +46,11 @@ enum IndexRequest {
 enum SearchRequest {
     Text {
         request_id: u64,
-        scope: SearchScope,
         query: String,
         limit: usize,
     },
     ImagePivot {
         request_id: u64,
-        scope: SearchScope,
         source_asset_id: i64,
         text_query: Option<String>,
         limit: usize,
@@ -173,39 +168,35 @@ impl SemanticSearchService {
                 let (request_id, result) = match request {
                     SearchRequest::Text {
                         request_id,
-                        scope,
                         query,
                         limit,
                     } => (
                         request_id,
-                        search_with_limit_in_scope_for(
+                        search_with_limit_for(
                             &search_library,
                             search_model_key,
                             &search_state,
                             &search_index_tx,
                             &search_text_embedding_cache,
                             &worker_search_embedding_cache,
-                            scope,
                             &query,
                             limit,
                         ),
                     ),
                     SearchRequest::ImagePivot {
                         request_id,
-                        scope,
                         source_asset_id,
                         text_query,
                         limit,
                     } => (
                         request_id,
-                        search_with_image_pivot_with_limit_in_scope_for(
+                        search_with_image_pivot_with_limit_for(
                             &search_library,
                             search_model_key,
                             &search_state,
                             &search_index_tx,
                             &search_text_embedding_cache,
                             &worker_search_embedding_cache,
-                            scope,
                             source_asset_id,
                             text_query.as_deref(),
                             limit,
@@ -265,27 +256,24 @@ impl SemanticSearchService {
             .map_err(|error| format!("failed to queue embedding backfill: {error}"))
     }
 
-    pub fn enqueue_search_with_limit_in_scope(
+    pub fn enqueue_search_with_limit(
         &self,
         request_id: u64,
-        scope: SearchScope,
         query: &str,
         limit: usize,
     ) -> Result<(), String> {
         self.search_tx
             .send(SearchRequest::Text {
                 request_id,
-                scope,
                 query: query.to_owned(),
                 limit,
             })
             .map_err(|error| format!("failed to queue semantic search: {error}"))
     }
 
-    pub fn enqueue_search_with_image_pivot_with_limit_in_scope(
+    pub fn enqueue_search_with_image_pivot_with_limit(
         &self,
         request_id: u64,
-        scope: SearchScope,
         source_asset_id: i64,
         text_query: Option<&str>,
         limit: usize,
@@ -293,7 +281,6 @@ impl SemanticSearchService {
         self.search_tx
             .send(SearchRequest::ImagePivot {
                 request_id,
-                scope,
                 source_asset_id,
                 text_query: text_query.map(ToOwned::to_owned),
                 limit,
@@ -308,29 +295,13 @@ impl SemanticSearchService {
         text_query: Option<&str>,
         limit: usize,
     ) -> Result<Vec<SearchResultAssetEntry>, String> {
-        self.search_with_image_pivot_with_limit_in_scope(
-            SearchScope::ThisBoard,
-            source_asset_id,
-            text_query,
-            limit,
-        )
-    }
-
-    pub fn search_with_image_pivot_with_limit_in_scope(
-        &self,
-        scope: SearchScope,
-        source_asset_id: i64,
-        text_query: Option<&str>,
-        limit: usize,
-    ) -> Result<Vec<SearchResultAssetEntry>, String> {
-        search_with_image_pivot_with_limit_in_scope_for(
+        search_with_image_pivot_with_limit_for(
             &self.library,
             self.model_key,
             &self.model_state,
             &self.index_tx,
             &self.text_embedding_cache,
             &self.search_embedding_cache,
-            scope,
             source_asset_id,
             text_query,
             limit,
@@ -343,28 +314,18 @@ impl SemanticSearchService {
         query: &str,
         limit: usize,
     ) -> Result<Vec<SearchResultAssetEntry>, String> {
-        self.search_with_limit_in_scope(SearchScope::ThisBoard, query, limit)
-    }
-
-    pub fn search_with_limit_in_scope(
-        &self,
-        scope: SearchScope,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<SearchResultAssetEntry>, String> {
         let query = query.trim();
         if query.is_empty() {
             return Ok(Vec::new());
         }
 
-        search_with_limit_in_scope_for(
+        search_with_limit_for(
             &self.library,
             self.model_key,
             &self.model_state,
             &self.index_tx,
             &self.text_embedding_cache,
             &self.search_embedding_cache,
-            scope,
             query,
             limit,
         )
@@ -431,14 +392,13 @@ fn release_allocator_pressure() {
 #[cfg(not(target_os = "macos"))]
 fn release_allocator_pressure() {}
 
-fn search_with_image_pivot_with_limit_in_scope_for(
+fn search_with_image_pivot_with_limit_for(
     library: &Library,
     model_key: &'static str,
     model_state: &Arc<Mutex<ModelState>>,
     index_tx: &mpsc::Sender<IndexRequest>,
     text_embedding_cache: &Arc<Mutex<HashMap<String, Vec<f32>>>>,
     search_embedding_cache: &Arc<Mutex<SearchEmbeddingCache>>,
-    scope: SearchScope,
     source_asset_id: i64,
     text_query: Option<&str>,
     limit: usize,
@@ -451,7 +411,6 @@ fn search_with_image_pivot_with_limit_in_scope_for(
     let mut hits = search_assets(
         library,
         search_embedding_cache,
-        scope,
         model_key,
         &source_embedding,
         IMAGE_PIVOT_CANDIDATE_LIMIT,
@@ -479,18 +438,17 @@ fn search_with_image_pivot_with_limit_in_scope_for(
     }
 
     hits.truncate(limit);
-    let results = group_hits(library, scope, hits)?;
+    let results = group_hits(library, hits)?;
     Ok(results)
 }
 
-fn search_with_limit_in_scope_for(
+fn search_with_limit_for(
     library: &Library,
     model_key: &'static str,
     model_state: &Arc<Mutex<ModelState>>,
     index_tx: &mpsc::Sender<IndexRequest>,
     text_embedding_cache: &Arc<Mutex<HashMap<String, Vec<f32>>>>,
     search_embedding_cache: &Arc<Mutex<SearchEmbeddingCache>>,
-    scope: SearchScope,
     query: &str,
     limit: usize,
 ) -> Result<Vec<SearchResultAssetEntry>, String> {
@@ -503,12 +461,11 @@ fn search_with_limit_in_scope_for(
     let hits = search_assets(
         library,
         search_embedding_cache,
-        scope,
         model_key,
         &query_embedding,
         limit,
     )?;
-    group_hits(library, scope, hits)
+    group_hits(library, hits)
 }
 
 fn process_index_request(
@@ -605,23 +562,17 @@ fn process_index_request(
 fn search_assets(
     library: &Library,
     search_embedding_cache: &Arc<Mutex<SearchEmbeddingCache>>,
-    scope: SearchScope,
     model_key: &'static str,
     query_embedding: &[f32],
     limit: usize,
 ) -> Result<Vec<AssetSearchHit>, String> {
-    match scope {
-        SearchScope::ThisBoard => {
-            search_embeddings_for_scope(library, scope, model_key, query_embedding, limit)
-        }
-        SearchScope::Library => search_cached_library_embeddings(
-            library,
-            search_embedding_cache,
-            model_key,
-            query_embedding,
-            limit,
-        ),
-    }
+    search_cached_library_embeddings(
+        library,
+        search_embedding_cache,
+        model_key,
+        query_embedding,
+        limit,
+    )
 }
 
 fn search_cached_library_embeddings(
@@ -759,25 +710,14 @@ fn warm_search_embedding_cache(
 
 fn group_hits(
     library: &Library,
-    scope: SearchScope,
     hits: Vec<crate::library::storage::AssetSearchHit>,
 ) -> Result<Vec<SearchResultAssetEntry>, String> {
     let asset_ids = hits.iter().map(|hit| hit.asset_id).collect::<Vec<_>>();
-    let instances = library.placement_instances_for_assets(&asset_ids)?;
     let asset_preview_paths = library.asset_search_preview_paths_for_assets(&asset_ids);
     let asset_original_paths = library.asset_original_paths_for_assets(&asset_ids)?;
 
-    let mut instances_by_asset: HashMap<i64, Vec<i64>> = HashMap::new();
-    for instance in instances {
-        instances_by_asset
-            .entry(instance.asset_id)
-            .or_default()
-            .push(instance.item_id);
-    }
-
     let mut groups = Vec::new();
     for hit in hits {
-        let placement_ids = instances_by_asset.remove(&hit.asset_id).unwrap_or_default();
         let asset = library.load_asset(hit.asset_id)?;
         let group = SearchResultAssetEntry {
             asset_id: hit.asset_id,
@@ -786,12 +726,8 @@ fn group_hits(
             asset_width: asset.width,
             asset_height: asset.height,
             similarity: hit.similarity,
-            instance_count: placement_ids.len(),
-            placement_ids,
         };
-        if scope.includes_unplaced_assets() || !group.placement_ids.is_empty() {
-            groups.push(group);
-        }
+        groups.push(group);
     }
 
     Ok(groups)
@@ -1176,7 +1112,6 @@ mod tests {
     };
     use crate::library::storage::Library;
     use crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
-    use crate::search::semantic::index::SearchScope;
     use crate::search::semantic::model::{ModelSpec, ResizeStrategy};
     use eframe::egui;
     use image::imageops::FilterType;
@@ -1190,8 +1125,8 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn library_scope_image_pivot_returns_unplaced_asset_without_creating_placement() {
-        let root = temp_root("snappyref-library-scope-service-test");
+    fn image_pivot_returns_unplaced_asset_without_creating_placement() {
+        let root = temp_root("snappyref-library-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
         let source_path = library
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
@@ -1259,8 +1194,7 @@ mod tests {
         .unwrap();
 
         let results = service
-            .search_with_image_pivot_with_limit_in_scope(
-                SearchScope::Library,
+            .search_with_image_pivot_with_limit(
                 source.asset.as_ref().expect("loaded placement asset").id,
                 None,
                 5,
@@ -1287,16 +1221,14 @@ mod tests {
             results[0].asset_preview_path.as_deref(),
             Some(unplaced_preview_path.as_path())
         );
-        assert!(results[0].placement_ids.is_empty());
-        assert_eq!(results[0].instance_count, 0);
         assert_eq!(library.load_placements().unwrap().len(), 1);
 
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn this_board_scope_image_pivot_returns_active_board_placements_only() {
-        let root = temp_root("snappyref-board-scope-service-test");
+    fn image_pivot_searches_assets_across_boards() {
+        let root = temp_root("snappyref-library-wide-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
         let second_board = library.create_board("Second").unwrap();
         let source_path = library
@@ -1376,21 +1308,18 @@ mod tests {
         .unwrap();
 
         let results = service
-            .search_with_image_pivot_with_limit_in_scope(
-                SearchScope::ThisBoard,
+            .search_with_image_pivot_with_limit(
                 source.asset.as_ref().expect("loaded placement asset").id,
                 None,
                 5,
             )
             .unwrap();
 
-        assert_eq!(results.len(), 1);
+        assert_eq!(results.len(), 2);
         assert_eq!(
             results[0].asset_id,
-            active.asset.as_ref().expect("loaded placement asset").id
+            inactive.asset.as_ref().expect("loaded placement asset").id
         );
-        assert_eq!(results[0].placement_ids, vec![active.state.id]);
-        assert_eq!(results[0].instance_count, 1);
 
         let _ = fs::remove_dir_all(root);
     }

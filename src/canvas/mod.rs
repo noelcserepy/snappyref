@@ -140,9 +140,9 @@ pub struct CanvasContextMenuRequest {
     pub screen_pos: egui::Pos2,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug)]
 pub struct CanvasImagePreview {
-    pub texture_id: egui::TextureId,
     pub texture_size: egui::Vec2,
 }
 

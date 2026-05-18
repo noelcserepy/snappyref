@@ -33,8 +33,6 @@ pub(crate) struct CanvasDocumentState {
 
 #[derive(Default)]
 pub(crate) struct CanvasInteractionState {
-    pub(super) search_match_placement_ids: Vec<i64>,
-    pub(super) active_search_placement_id: Option<i64>,
     pub(super) editing_text_annotation_id: Option<i64>,
     pub(super) focus_text_editor: bool,
     pub(crate) drag_state: Option<DragState>,

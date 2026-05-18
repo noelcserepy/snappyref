@@ -276,6 +276,10 @@ _Avoid_: Startup retry, background retry
 A semantic-search query or prefetch request currently waiting for results.
 _Avoid_: Open search overlay, visible results
 
+**Image Search Pivot**:
+The Asset used as image context for an Active Search. An Image Search Pivot is asset-backed; it may originate from a selected Placement, but the Active Search does not rely on that Placement after launch.
+_Avoid_: Placement pivot, pivot placement, reverse image search object
+
 **Embedding Source**:
 The raster image data used to create a semantic-search embedding; prefer the **Working LOD** when available, with the original asset as fallback.
 _Avoid_: Search thumbnail, model image
@@ -296,29 +300,17 @@ _Avoid_: Bundled model, model cache, model resources
 A short-lived child process that decodes managed originals or canvas cache sources, generates **Canvas Image Cache** derivatives, and exits so large decoder/encoder allocator pages do not remain resident in the main app process.
 _Avoid_: Permanent image worker, renderer process
 
-**Search Scope**:
-The selected boundary that controls which search results are eligible.
-_Avoid_: Filter mode, search mode
-
-**This Board**:
-The search scope that returns placements on the active board.
-_Avoid_: Board search, current canvas
-
-**Library Scope**:
-The search scope that returns non-archived assets from the shared library, including unplaced assets.
-_Avoid_: Global search, all photos
+**Library-wide Search**:
+Semantic Search always returns non-archived Assets from the shared Library, including unplaced Assets and Assets placed on any Board.
+_Avoid_: Search Scope, This Board search, Library Scope search, board search
 
 **Asset Result**:
-A library-scope search result backed by an asset that may have no placement on the active board.
-_Avoid_: Unplaced result, library result
-
-**Placement Result**:
-A board-scope search result backed by an existing placement on the active board.
-_Avoid_: Board result, item result
+A search result backed by an Asset. Adding an Asset Result to the Active Board creates a new Placement for that Asset. Search results do not highlight or reuse existing Placements on the canvas.
+_Avoid_: Placement Result, board result, item result, search match
 
 **Search Result Asset Entry**:
-The search adapter row grouped around one Asset, with zero or more active-board Placement ids attached for This Board eligibility and placement-result actions. It is a UI/service container, not a domain object.
-_Avoid_: Search result group, item result group
+The search adapter row grouped around one Asset. It is a UI/service container, not a domain object.
+_Avoid_: Search result group, item result group, scoped result entry
 
 **Context**:
 A meaningful set of images plus optional text or metadata signals used for later retrieval.
@@ -487,8 +479,8 @@ The right-click menu for selected board content.
 _Avoid_: Popup menu, image menu
 
 **Search Using Image**:
-The command that starts image-pivot semantic search from one selected asset.
-_Avoid_: Reverse image search
+The command that starts image-pivot Semantic Search from the Asset displayed by one selected Placement. The selected Placement is only the launch source; the Active Search uses the Asset as its pivot and does not rely on the Placement afterward.
+_Avoid_: Reverse image search, placement-pivot search
 
 **Delete (from board)**:
 The command that removes selected board-local content from the active board.
@@ -608,8 +600,7 @@ _Avoid_: Release asset, build cache
 - Exactly one **Board** is the **Active Board** at a time.
 - **Active Board Load** reads the **Active Board** from the persisted **User Session**; callers must update the **Library** before invoking it.
 - During rapid **Board Switches**, the **Last Requested Board** should become the **Active Board**.
-- **This Board** search returns **Placement Results** for the **Active Board**.
-- **Library Scope** search returns **Asset Results** from the **Library**.
+- **Library-wide Search** returns **Asset Results** from the **Library**.
 - An **Existing Image Load** may start at **Overview LOD** and later receive **Promotion** to **Working LOD** or **Detail LOD**.
 - **Backfill** creates missing **Canvas Image LODs** without blocking board interaction.
 - **Import**, **Promotion**, and **Backfill** may use an **Image Preparation Helper Process** so full-resolution decoder and cache-encoder memory is released when helper work exits.
@@ -653,9 +644,9 @@ Perf corpus files should be cached locally under the private gitignored perf ass
 >
 > **Domain expert:** "No. Preserve their **Relative Stack Order**; pasted groups land at the **Front** so new content is visible."
 >
-> **Dev:** "If they press **Delete (from board)**, does the **Asset** disappear from **Library Scope** search?"
+> **Dev:** "If they press **Delete (from board)**, does the **Asset** disappear from **Library-wide Search**?"
 >
-> **Domain expert:** "No. **Delete (from board)** only removes board-local **Canvas Items** from the **Active Board**. Use **Remove from Library** when the asset should stop appearing in library search."
+> **Domain expert:** "No. **Delete (from board)** only removes board-local **Canvas Items** from the **Active Board**. Use **Remove from Library** when the asset should stop appearing in Search."
 >
 > **Dev:** "When the app restarts, should it restore the **Settings Tab**, **Viewport**, and active board?"
 >
@@ -674,7 +665,7 @@ Perf corpus files should be cached locally under the private gitignored perf ass
 - "Image" was used to mean both **Asset** and **Placement**. Use **Asset** for the shared library object and **Placement** for the board-local instance.
 - "Delete" was overloaded between removing board content and removing assets from search. Use **Delete (from board)** for board-local removal and **Remove from Library** for asset archival.
 - "Board", "canvas", "scene", "project", and "collection" can blur together. Use **Board** for the user-facing canvas workspace and reserve **Library** for the shared asset pool.
-- "Search all photos" should be called **Library Scope** search, not a board named "All Photos" or "Library".
+- "Search all photos" should be called **Library-wide Search**, not a board named "All Photos" or "Library".
 - "Annotation", "note", "textbox", and "drawing" need separation. Use **Annotation** as the umbrella term and **Textbox** for text-bearing annotations.
 - "Remove from Library" does not mean **Physical Deletion** in v1. It means **Archived Asset** behavior: removed from boards and search while files are kept for later cleanup.
 - "Move to front/back" should not be confused with one-step movement. Use **Move to Front** and **Move to Back** for absolute stack extremes; reserve "bring forward" and "send backward" for possible future one-step commands.

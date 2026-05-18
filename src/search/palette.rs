@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use crate::search::semantic::{SearchResultAssetEntry, SearchScope};
+use crate::search::semantic::SearchResultAssetEntry;
 
 pub(crate) const SEARCH_DEBOUNCE_MS: f32 = 120.0;
 pub(crate) const SEARCH_OVERLAY_TOP_MARGIN: f32 = 56.0;
@@ -38,7 +38,6 @@ pub(crate) struct SearchOverlayState {
     pub focus_requested: bool,
     pub suppress_next_outside_click: bool,
     pub image_pivot: Option<ImageSearchPivot>,
-    pub scope: SearchScope,
     pub install_action_focus_requested: bool,
 }
 
@@ -62,7 +61,6 @@ impl Default for SearchOverlayState {
             focus_requested: false,
             suppress_next_outside_click: false,
             image_pivot: None,
-            scope: SearchScope::ThisBoard,
             install_action_focus_requested: false,
         }
     }
@@ -171,10 +169,10 @@ pub(crate) struct SearchResultDragState {
     pub auto_fit_applied: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ImageSearchPivot {
     pub asset_id: i64,
-    pub item_id: i64,
+    pub asset_preview_path: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -226,7 +224,6 @@ pub(crate) fn search_result_grid_content_height(result_count: usize, columns: us
 
 pub(crate) fn search_result_tile(
     ui: &mut egui::Ui,
-    canvas: &crate::canvas::CanvasState,
     group: &SearchResultAssetEntry,
     asset_preview_cache: &mut HashMap<i64, SearchAssetPreviewEntry>,
     _lead: bool,
@@ -249,11 +246,7 @@ pub(crate) fn search_result_tile(
     ui.painter()
         .rect_filled(preview_rect, tile_radius, crate::ui::theme::SURFACE);
 
-    if let Some(item_id) = group.placement_ids.first().copied()
-        && let Some(preview) = canvas.preview_for_placement_id(item_id)
-    {
-        paint_texture_cover(ui, preview_rect, preview.texture_id, preview.texture_size);
-    } else if let Some(path) = &group.asset_preview_path {
+    if let Some(path) = &group.asset_preview_path {
         if let Some(preview) =
             search_asset_preview(ui.ctx(), group.asset_id, path, asset_preview_cache)
         {
@@ -394,7 +387,7 @@ pub(crate) fn paint_palette_input_row(
     query: &mut String,
     input_id: egui::Id,
     pivot: Option<&ImageSearchPivot>,
-    canvas: &crate::canvas::CanvasState,
+    asset_preview_cache: &mut HashMap<i64, SearchAssetPreviewEntry>,
 ) -> PaletteInputResult {
     let mut response = None;
     let mut pivot_dismissed = false;
@@ -410,7 +403,7 @@ pub(crate) fn paint_palette_input_row(
                 ui.set_min_height(KBD_PILL_SIZE.y);
                 ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
                 let placeholder = if let Some(pivot) = pivot {
-                    if paint_image_pivot_pill(ui, canvas, pivot) {
+                    if paint_image_pivot_pill(ui, pivot, asset_preview_cache) {
                         pivot_dismissed = true;
                     }
                     "Refine with a term..."
@@ -453,40 +446,10 @@ pub(crate) fn paint_palette_input_row(
     }
 }
 
-fn search_scope_label(scope: SearchScope) -> &'static str {
-    match scope {
-        SearchScope::ThisBoard => "This Board",
-        SearchScope::Library => "Library",
-    }
-}
-
-fn paint_footer_scope_toggle(ui: &mut egui::Ui, scope: SearchScope) -> bool {
-    let label = search_scope_label(scope);
-    ui.horizontal_centered(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let start = ui.cursor().min;
-        paint_kbd_pill(ui, "tab");
-        ui.add_space(6.0);
-        footer_hint_label(ui, label);
-        let rect = egui::Rect::from_min_max(start, ui.cursor().max);
-        let hovered = ui.ctx().input(|input| {
-            input
-                .pointer
-                .latest_pos()
-                .is_some_and(|pos| rect.contains(pos))
-        });
-        if hovered {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
-        hovered && ui.input(|input| input.pointer.primary_clicked())
-    })
-    .inner
-}
-
 fn paint_image_pivot_pill(
     ui: &mut egui::Ui,
-    canvas: &crate::canvas::CanvasState,
     pivot: &ImageSearchPivot,
+    asset_preview_cache: &mut HashMap<i64, SearchAssetPreviewEntry>,
 ) -> bool {
     let mut dismissed = false;
     let thumb_size = 18.0;
@@ -508,30 +471,11 @@ fn paint_image_pivot_pill(
 
                 let (thumb_rect, _) = ui
                     .allocate_exact_size(egui::vec2(thumb_size, thumb_size), egui::Sense::hover());
-                if let Some(preview) = canvas.preview_for_placement_id(pivot.item_id) {
-                    let preview_aspect = thumb_rect.width() / thumb_rect.height().max(1.0);
-                    let texture_aspect = preview.texture_size.x / preview.texture_size.y.max(1.0);
-                    let uv_rect = if texture_aspect > preview_aspect {
-                        let visible_u = preview_aspect / texture_aspect;
-                        let inset = (1.0 - visible_u) * 0.5;
-                        egui::Rect::from_min_max(
-                            egui::pos2(inset, 0.0),
-                            egui::pos2(1.0 - inset, 1.0),
-                        )
-                    } else {
-                        let visible_v = texture_aspect / preview_aspect;
-                        let inset = (1.0 - visible_v) * 0.5;
-                        egui::Rect::from_min_max(
-                            egui::pos2(0.0, inset),
-                            egui::pos2(1.0, 1.0 - inset),
-                        )
-                    };
-                    ui.painter().image(
-                        preview.texture_id,
-                        thumb_rect,
-                        uv_rect,
-                        egui::Color32::WHITE,
-                    );
+                if let Some(path) = &pivot.asset_preview_path
+                    && let Some(preview) =
+                        search_asset_preview(ui.ctx(), pivot.asset_id, path, asset_preview_cache)
+                {
+                    paint_texture_cover(ui, thumb_rect, preview.texture.id(), preview.texture_size);
                 } else {
                     ui.painter().rect_filled(
                         thumb_rect,
@@ -851,9 +795,7 @@ pub(crate) fn paint_palette_footer(
     result_count: usize,
     has_more_results: bool,
     status: &SearchOverlayStatus,
-    scope: SearchScope,
-) -> bool {
-    let mut scope_toggled = false;
+) {
     egui::Frame::new()
         .fill(egui::Color32::from_black_alpha(38))
         .inner_margin(egui::Margin {
@@ -910,8 +852,6 @@ pub(crate) fn paint_palette_footer(
                         },
                     );
                 }
-                ui.add_space(14.0);
-                scope_toggled = paint_footer_scope_toggle(ui, scope);
                 ui.with_layout(crate::ui::layout::row_end_center_y_layout(), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     if result_count == 0 {
@@ -932,7 +872,6 @@ pub(crate) fn paint_palette_footer(
                 });
             });
         });
-    scope_toggled
 }
 
 fn palette_status_text(status: &SearchOverlayStatus, idle_text: &'static str) -> String {

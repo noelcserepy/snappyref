@@ -85,7 +85,7 @@ Semantic search and library recall live in `src/search.rs` with reusable paint h
 
 Annotation and edit controls live close to the selected item in `src/canvas/render.rs`. Canvas overlays and toolbars should stay compact and avoid obscuring the reference material.
 
-Image selection borders use the `TEXT` color, 2px stroke, square corners, and zero padding from the image bounds. Use this same border language for selected search result thumbnails in `src/palette.rs`, selected canvas Placements, canvas search-result highlights, and search drag previews in `src/canvas/render.rs`. Do not use rounded corners, expanded outlines, alternate selected colors, or thicker lead/hover variants for image selection.
+Image selection borders use the `TEXT` color, 2px stroke, square corners, and zero padding from the image bounds. Use this same border language for selected search result thumbnails in `src/palette.rs`, selected canvas Placements, and search drag previews in `src/canvas/render.rs`. Search results are library-wide Asset Results and do not highlight existing canvas Placements. Do not use rounded corners, expanded outlines, alternate selected colors, or thicker lead/hover variants for image selection.
 
 Keep screenshotable debug verification probes in `src/app.rs` when they expose a broadly useful state. Keep one-off inspection probes narrow and remove them after use.
 
