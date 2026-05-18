@@ -24,9 +24,9 @@ pub(crate) struct CanvasDocumentState {
     pub(crate) images: Vec<CanvasImage>,
     pub(super) annotations: Vec<CanvasAnnotation>,
     pub(super) stack_order: Vec<CanvasStackItem>,
-    pub(super) selected_item_ids: Vec<i64>,
+    pub(super) selected_placement_ids: Vec<i64>,
     pub(super) selected_annotation_ids: Vec<i64>,
-    pub(super) dirty_item_ids: Vec<i64>,
+    pub(super) dirty_placement_ids: Vec<i64>,
     pub(super) dirty_annotation_ids: Vec<i64>,
     pub(super) pending_archived_annotation_ids: Vec<i64>,
     pub(super) stack_order_dirty: bool,
@@ -34,8 +34,8 @@ pub(crate) struct CanvasDocumentState {
 
 #[derive(Default)]
 pub(crate) struct CanvasInteractionState {
-    pub(super) search_match_item_ids: Vec<i64>,
-    pub(super) active_search_item_id: Option<i64>,
+    pub(super) search_match_placement_ids: Vec<i64>,
+    pub(super) active_search_placement_id: Option<i64>,
     pub(super) editing_text_annotation_id: Option<i64>,
     pub(super) focus_text_editor: bool,
     pub(crate) drag_state: Option<DragState>,
@@ -45,7 +45,7 @@ pub(crate) struct CanvasInteractionState {
     pub(super) marquee_state: Option<MarqueeState>,
     pub(super) crop_state: Option<CropState>,
     pub(super) annotation_draft_state: Option<AnnotationDraftState>,
-    pub(super) crop_pending_item_ids: Vec<i64>,
+    pub(super) crop_pending_placement_ids: Vec<i64>,
     pub(super) pending_crop: Option<CanvasCropRequest>,
     pub(super) pending_annotation: Option<PendingAnnotation>,
     pub(super) pending_context_menu_request: Option<CanvasContextMenuRequest>,

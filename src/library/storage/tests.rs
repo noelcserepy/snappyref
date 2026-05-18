@@ -1,7 +1,7 @@
 use super::{Library, embeddings::EmbeddingStatus};
 use crate::data::{
-    CanvasAnnotationKind, CanvasBackground, CanvasStackItem, CanvasTextSize, PlacementContent,
-    PlacementContentIntent, PlacementLifecycle, UserSession,
+    CanvasAnnotationKind, CanvasBackground, CanvasStackItem, CanvasTextSize,
+    ContentResolutionSource, PlacementContent, PlacementLifecycle, UserSession,
 };
 use eframe::egui;
 use rusqlite::Connection;
@@ -65,7 +65,7 @@ fn committed_loading_and_failed_placements_persist_load_and_stack() {
             2.0,
             320.0,
             180.0,
-            PlacementContentIntent::ExternalPath {
+            ContentResolutionSource::ExternalPath {
                 path: "/tmp/source.png".to_owned(),
             },
             Some("Queued".to_owned()),
@@ -77,7 +77,7 @@ fn committed_loading_and_failed_placements_persist_load_and_stack() {
             1.0,
             120.0,
             90.0,
-            Some(PlacementContentIntent::Unknown {
+            Some(ContentResolutionSource::Unknown {
                 description: "clipboard".to_owned(),
             }),
             "Could not read image".to_owned(),
@@ -180,7 +180,7 @@ fn legacy_board_items_asset_id_not_null_migrates_for_loading_placements() {
             1.0,
             320.0,
             180.0,
-            PlacementContentIntent::ExternalPath {
+            ContentResolutionSource::ExternalPath {
                 path: "C:/Users/Admin/Pictures/drop.png".to_owned(),
             },
             Some("Loading".to_owned()),
@@ -220,7 +220,7 @@ fn imported_asset_resolves_existing_loading_placement_without_geometry_or_stack_
             1.5,
             320.0,
             180.0,
-            PlacementContentIntent::ExternalPath {
+            ContentResolutionSource::ExternalPath {
                 path: source.display().to_string(),
             },
             Some("Queued".to_owned()),
@@ -265,7 +265,7 @@ fn import_failure_marks_loading_placement_failed_and_archived_completion_stays_s
             1.0,
             100.0,
             80.0,
-            PlacementContentIntent::Unknown {
+            ContentResolutionSource::Unknown {
                 description: "clipboard".to_owned(),
             },
             Some("Queued".to_owned()),

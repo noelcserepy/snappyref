@@ -6,7 +6,7 @@ use crate::data::{
     CanvasAnnotationKind, CanvasBackground, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize,
     ImageAsset, Placement, PlacementState,
 };
-use crate::jobs::LoadedCanvasItem;
+use crate::jobs::PreparedPlacementImage;
 use crate::library::storage::Library;
 #[cfg(feature = "semantic-search")]
 use crate::search::palette::{
@@ -14,7 +14,7 @@ use crate::search::palette::{
     search_result_tile_height,
 };
 #[cfg(feature = "semantic-search")]
-use crate::search::semantic::{LocalModelStoreStatus, SearchResultGroup, SearchScope};
+use crate::search::semantic::{LocalModelStoreStatus, SearchResultAssetEntry, SearchScope};
 #[cfg(feature = "semantic-search")]
 use crate::sources::crop::CropUndoEntry;
 use crate::ui::sidebar::{
@@ -435,9 +435,9 @@ fn compact_arrangement_action_uses_dense_compact_layout() {
             asset,
         );
         let rgba = vec![255; (*width as usize) * (*height as usize) * 4];
-        canvas.add_loaded_item(
+        canvas.add_prepared_placement_image(
             &ctx,
-            LoadedCanvasItem {
+            PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
                 record,
@@ -454,7 +454,7 @@ fn compact_arrangement_action_uses_dense_compact_layout() {
         );
     }
 
-    canvas.select_items(&fixture.iter().map(|(id, _, _)| *id).collect::<Vec<_>>());
+    canvas.select_placements(&fixture.iter().map(|(id, _, _)| *id).collect::<Vec<_>>());
     let mut status = String::new();
     apply_arrangement_action(&mut canvas, ArrangementAction::Compact, gap, &mut status);
 
@@ -526,9 +526,9 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.canvas.add_loaded_item(
+    app.canvas.add_prepared_placement_image(
         &ctx,
-        LoadedCanvasItem {
+        PreparedPlacementImage {
             target_board_id: first.id,
             queue_id: None,
             record: source_item.clone(),
@@ -583,7 +583,7 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
     );
     assert_eq!(pasted_delta, source_delta);
     assert_eq!(
-        app.canvas.selected_item_ids(),
+        app.canvas.selected_placement_ids(),
         vec![pasted_items[0].state.id]
     );
     assert_eq!(
@@ -721,9 +721,9 @@ fn paste_preserves_mixed_selection_stack_order_and_places_group_at_front() {
         .unwrap();
     let mut app = test_app(Some(library.clone()));
     for record in [&back_item, &source_item, &front_item] {
-        app.canvas.add_loaded_item(
+        app.canvas.add_prepared_placement_image(
             &ctx,
-            LoadedCanvasItem {
+            PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
                 record: record.clone(),
@@ -753,7 +753,7 @@ fn paste_preserves_mixed_selection_stack_order_and_places_group_at_front() {
     app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
         .unwrap();
 
-    let pasted_item_id = app.canvas.selected_item_ids()[0];
+    let pasted_item_id = app.canvas.selected_placement_ids()[0];
     let pasted_annotation_id = app.canvas.selected_annotation_ids()[0];
     assert_eq!(
         app.canvas.canvas_stack_order(),
@@ -819,13 +819,13 @@ fn paste_preserves_image_only_stack_order_and_places_group_at_front() {
         CanvasStackItem::Placement(front_item.state.id),
     ]);
     app.canvas
-        .select_items(&[lower_selected.state.id, upper_selected.state.id]);
+        .select_placements(&[lower_selected.state.id, upper_selected.state.id]);
 
     let payload = app.copy_selected_board_payload().unwrap();
     app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
         .unwrap();
 
-    let selected = app.canvas.selected_item_ids();
+    let selected = app.canvas.selected_placement_ids();
     let pasted_lower_id = selected[0];
     let pasted_upper_id = selected[1];
     let expected = vec![
@@ -938,9 +938,9 @@ fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
         .unwrap();
     let mut app = test_app(Some(library.clone()));
     app.settings.import_gap = 24.0;
-    app.canvas.add_loaded_item(
+    app.canvas.add_prepared_placement_image(
         &ctx,
-        LoadedCanvasItem {
+        PreparedPlacementImage {
             target_board_id: 1,
             queue_id: None,
             record: source_item.clone(),
@@ -988,7 +988,7 @@ fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
     assert_eq!(annotation_offset, item_offset);
     assert_ne!(item_offset, egui::Vec2::ZERO);
     assert_eq!(
-        app.canvas.selected_item_ids(),
+        app.canvas.selected_placement_ids(),
         vec![duplicated_item.state.id]
     );
     assert_eq!(
@@ -1047,11 +1047,11 @@ fn duplicate_preserves_image_only_stack_order_and_places_group_at_front() {
         CanvasStackItem::Placement(lower_selected.state.id),
     ]);
     app.canvas
-        .select_items(&[lower_selected.state.id, upper_selected.state.id]);
+        .select_placements(&[lower_selected.state.id, upper_selected.state.id]);
 
     app.duplicate_selection_with_gap();
 
-    let selected = app.canvas.selected_item_ids();
+    let selected = app.canvas.selected_placement_ids();
     let duplicated_lower_id = selected[0];
     let duplicated_upper_id = selected[1];
     let expected = vec![
@@ -1125,7 +1125,8 @@ fn command_a_selects_all_active_board_images_and_annotations() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
     for id in [1_i64, 2] {
-        app.canvas.add_loaded_item(&ctx, test_loaded_item(id, 1));
+        app.canvas
+            .add_prepared_placement_image(&ctx, test_loaded_item(id, 1));
     }
     app.canvas.add_annotation(crate::data::CanvasAnnotation {
         id: 10,
@@ -1183,7 +1184,7 @@ fn command_a_selects_all_active_board_images_and_annotations() {
         },
     );
 
-    assert_eq!(app.canvas.selected_item_ids(), vec![1, 2]);
+    assert_eq!(app.canvas.selected_placement_ids(), vec![1, 2]);
     assert_eq!(app.canvas.selected_annotation_ids(), vec![10, 11]);
 }
 
@@ -1197,9 +1198,10 @@ fn qwe_arrange_shortcuts_apply_selected_image_layouts() {
     ] {
         let mut app = test_app(None);
         for id in [1_i64, 2] {
-            app.canvas.add_loaded_item(&ctx, test_loaded_item(id, 1));
+            app.canvas
+                .add_prepared_placement_image(&ctx, test_loaded_item(id, 1));
         }
-        app.canvas.select_items(&[1, 2]);
+        app.canvas.select_placements(&[1, 2]);
 
         let _ = ctx.run_ui(
             egui::RawInput {
@@ -1247,9 +1249,9 @@ fn arrow_keys_apply_directional_settle_arrange() {
         loaded.record.visual_size = egui::vec2(100.0, 40.0);
         loaded.record.state.center.x = x;
         loaded.record.state.center.y = y;
-        app.canvas.add_loaded_item(&ctx, loaded);
+        app.canvas.add_prepared_placement_image(&ctx, loaded);
     }
-    app.canvas.select_items(&[1, 2, 3]);
+    app.canvas.select_placements(&[1, 2, 3]);
 
     let _ = ctx.run_ui(
         egui::RawInput {
@@ -1270,9 +1272,9 @@ fn arrow_keys_apply_directional_settle_arrange() {
         },
     );
 
-    let first = app.canvas.record_for_item_id(1).unwrap();
-    let second = app.canvas.record_for_item_id(2).unwrap();
-    let third = app.canvas.record_for_item_id(3).unwrap();
+    let first = app.canvas.placement_for_id(1).unwrap();
+    let second = app.canvas.placement_for_id(2).unwrap();
+    let third = app.canvas.placement_for_id(3).unwrap();
     assert_eq!(second.state.center.x + 50.0, 220.0);
     assert_eq!(
         first.state.center.x + 50.0 + app.settings.import_gap,
@@ -1342,7 +1344,8 @@ fn always_on_top_shortcut_toggles_workspace_setting() {
 fn copy_selection_payload_preserves_internal_json_for_mixed_selection() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
-    app.canvas.add_loaded_item(&ctx, test_loaded_item(1, 1));
+    app.canvas
+        .add_prepared_placement_image(&ctx, test_loaded_item(1, 1));
     app.canvas.add_annotation(crate::data::CanvasAnnotation {
         id: 20,
         kind: CanvasAnnotationKind::Textbox,
@@ -1388,7 +1391,8 @@ fn copy_selection_payload_preserves_internal_json_for_mixed_selection() {
 fn context_menu_items_reflect_mixed_selection_capabilities() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
-    app.canvas.add_loaded_item(&ctx, test_loaded_item(1, 1));
+    app.canvas
+        .add_prepared_placement_image(&ctx, test_loaded_item(1, 1));
     app.canvas.add_annotation(crate::data::CanvasAnnotation {
         id: 20,
         kind: CanvasAnnotationKind::Textbox,
@@ -1529,7 +1533,8 @@ fn stack_order_context_actions_are_disabled_without_canvas_item_selection() {
 fn stack_order_context_actions_are_enabled_for_image_and_annotation_selections() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
-    app.canvas.add_loaded_item(&ctx, test_loaded_item(1, 1));
+    app.canvas
+        .add_prepared_placement_image(&ctx, test_loaded_item(1, 1));
     app.canvas.add_annotation(crate::data::CanvasAnnotation {
         id: 20,
         kind: CanvasAnnotationKind::Textbox,
@@ -1572,17 +1577,19 @@ fn stack_order_context_actions_are_enabled_for_image_and_annotation_selections()
 fn image_search_context_action_requires_exactly_one_image() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
-    app.canvas.add_loaded_item(&ctx, test_loaded_item(1, 1));
-    app.canvas.add_loaded_item(&ctx, test_loaded_item(2, 1));
+    app.canvas
+        .add_prepared_placement_image(&ctx, test_loaded_item(1, 1));
+    app.canvas
+        .add_prepared_placement_image(&ctx, test_loaded_item(2, 1));
 
-    app.canvas.select_items(&[1]);
+    app.canvas.select_placements(&[1]);
     let single = app.context_menu_items();
     assert!(item_enabled(
         &single,
         super::ContextMenuAction::SearchUsingImage
     ));
 
-    app.canvas.select_items(&[1, 2]);
+    app.canvas.select_placements(&[1, 2]);
     let multiple = app.context_menu_items();
     assert!(!item_enabled(
         &multiple,
@@ -1610,9 +1617,9 @@ fn remove_from_library_context_action_waits_for_confirmation() {
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.canvas.add_loaded_item(
+    app.canvas.add_prepared_placement_image(
         &ctx,
-        LoadedCanvasItem {
+        PreparedPlacementImage {
             target_board_id: 1,
             queue_id: None,
             record: source_item.clone(),
@@ -1627,7 +1634,7 @@ fn remove_from_library_context_action_waits_for_confirmation() {
             trace: None,
         },
     );
-    app.canvas.select_items(&[source_item.state.id]);
+    app.canvas.select_placements(&[source_item.state.id]);
 
     app.handle_context_menu_action(
         super::ContextMenuAction::RemoveFromLibrary,
@@ -1693,9 +1700,9 @@ fn move_to_front_context_action_persists_canvas_stack_order() {
         .unwrap();
     let mut app = test_app(Some(library.clone()));
     app.canvas
-        .add_loaded_item(&ctx, test_loaded_item(first.state.id, 1));
+        .add_prepared_placement_image(&ctx, test_loaded_item(first.state.id, 1));
     app.canvas
-        .add_loaded_item(&ctx, test_loaded_item(second.state.id, 1));
+        .add_prepared_placement_image(&ctx, test_loaded_item(second.state.id, 1));
     app.canvas.add_annotation(annotation.clone());
     app.canvas.set_canvas_stack_order(vec![
         crate::data::CanvasStackItem::Placement(first.state.id),
@@ -1770,9 +1777,9 @@ fn delete_from_board_archives_image_placements_and_annotations() {
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.canvas.add_loaded_item(
+    app.canvas.add_prepared_placement_image(
         &ctx,
-        LoadedCanvasItem {
+        PreparedPlacementImage {
             target_board_id: 1,
             queue_id: None,
             record: source_item.clone(),
@@ -1833,8 +1840,9 @@ fn search_using_image_context_action_opens_image_pivot_search() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
     app.settings.semantic_search_enabled = true;
-    app.canvas.add_loaded_item(&ctx, test_loaded_item(42, 1));
-    app.canvas.select_items(&[42]);
+    app.canvas
+        .add_prepared_placement_image(&ctx, test_loaded_item(42, 1));
+    app.canvas.select_placements(&[42]);
 
     app.handle_context_menu_action(
         super::ContextMenuAction::SearchUsingImage,
@@ -1855,8 +1863,9 @@ fn search_using_image_context_action_survives_activation_click_outside_overlay()
     let ctx = egui::Context::default();
     let mut app = test_app(None);
     app.settings.semantic_search_enabled = true;
-    app.canvas.add_loaded_item(&ctx, test_loaded_item(42, 1));
-    app.canvas.select_items(&[42]);
+    app.canvas
+        .add_prepared_placement_image(&ctx, test_loaded_item(42, 1));
+    app.canvas.select_placements(&[42]);
 
     app.handle_context_menu_action(
         super::ContextMenuAction::SearchUsingImage,
@@ -2618,9 +2627,9 @@ fn rapid_board_switches_ignore_stale_import_completions_and_last_switch_wins() {
     app.integrate_loaded_import(&ctx, test_loaded_item(43, third.id));
 
     assert_eq!(app.active_board_id, first.id);
-    assert!(app.canvas.record_for_item_id(41).is_none());
-    assert!(app.canvas.record_for_item_id(42).is_none());
-    assert!(app.canvas.record_for_item_id(43).is_none());
+    assert!(app.canvas.placement_for_id(41).is_none());
+    assert!(app.canvas.placement_for_id(42).is_none());
+    assert!(app.canvas.placement_for_id(43).is_none());
 
     let _ = fs::remove_dir_all(root);
 }
@@ -2655,9 +2664,9 @@ fn switching_boards_clears_selection_search_and_transient_undo() {
         },
         asset,
     );
-    app.canvas.add_loaded_item(
+    app.canvas.add_prepared_placement_image(
         &ctx,
-        LoadedCanvasItem {
+        PreparedPlacementImage {
             target_board_id: 1,
             queue_id: None,
             record: record.clone(),
@@ -2672,7 +2681,7 @@ fn switching_boards_clears_selection_search_and_transient_undo() {
             trace: None,
         },
     );
-    app.canvas.select_items(&[1]);
+    app.canvas.select_placements(&[1]);
     app.search.overlay.open = true;
     app.canvas.set_search_matches(vec![1], Some(1));
     app.crop_flow.push_test_undo_entry(CropUndoEntry {
@@ -2930,7 +2939,7 @@ fn enter_places_unplaced_library_search_result_on_empty_active_board() {
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
     app.search.overlay.scope = SearchScope::Library;
-    app.search.overlay.results = vec![SearchResultGroup {
+    app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: library_item
             .asset
             .as_ref()
@@ -2948,7 +2957,7 @@ fn enter_places_unplaced_library_search_result_on_empty_active_board() {
         asset_width: 1,
         asset_height: 1,
         similarity: 0.9,
-        item_ids: Vec::new(),
+        placement_ids: Vec::new(),
         instance_count: 0,
     }];
     app.search.overlay.result_selection.replace(0);
@@ -2978,7 +2987,7 @@ fn enter_places_unplaced_library_search_result_on_empty_active_board() {
             .id
     );
     assert_eq!(
-        harness.state().canvas.selected_item_ids(),
+        harness.state().canvas.selected_placement_ids(),
         vec![active_items[0].state.id]
     );
     assert!(!harness.state().search.overlay.open);
@@ -3021,7 +3030,7 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
     app.search.overlay.scope = SearchScope::Library;
-    app.search.overlay.results = vec![SearchResultGroup {
+    app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: library_item
             .asset
             .as_ref()
@@ -3039,7 +3048,7 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
         asset_width: 1,
         asset_height: 1,
         similarity: 0.9,
-        item_ids: Vec::new(),
+        placement_ids: Vec::new(),
         instance_count: 0,
     }];
     app.search.overlay.result_selection.replace(0);
@@ -3087,7 +3096,7 @@ fn library_scope_survives_search_result_placement() {
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
     app.search.overlay.scope = SearchScope::Library;
-    app.search.overlay.results = vec![SearchResultGroup {
+    app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: library_item
             .asset
             .as_ref()
@@ -3105,7 +3114,7 @@ fn library_scope_survives_search_result_placement() {
         asset_width: 1,
         asset_height: 1,
         similarity: 0.9,
-        item_ids: Vec::new(),
+        placement_ids: Vec::new(),
         instance_count: 0,
     }];
     app.search.overlay.result_selection.replace(0);
@@ -3151,7 +3160,7 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
     app.search.overlay.scope = SearchScope::Library;
-    app.search.overlay.results = vec![SearchResultGroup {
+    app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: library_item
             .asset
             .as_ref()
@@ -3169,7 +3178,7 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
         asset_width: 1,
         asset_height: 1,
         similarity: 0.9,
-        item_ids: Vec::new(),
+        placement_ids: Vec::new(),
         instance_count: 0,
     }];
     app.search.overlay.result_selection.replace(0);
@@ -3190,7 +3199,7 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
         harness
             .state()
             .canvas
-            .record_for_item_id(active_items[0].state.id)
+            .placement_for_id(active_items[0].state.id)
             .is_some()
     );
     assert_eq!(harness.state().canvas.import_placeholder_count(), 0);
@@ -3268,7 +3277,7 @@ fn command_enter_library_search_results_show_pending_cursor_placeholders() {
     app.search.overlay.open = true;
     app.search.overlay.scope = SearchScope::Library;
     app.search.overlay.results = vec![
-        SearchResultGroup {
+        SearchResultAssetEntry {
             asset_id: first.asset.as_ref().expect("loaded placement asset").id,
             asset_preview_path: None,
             asset_original_path: Some(
@@ -3282,10 +3291,10 @@ fn command_enter_library_search_results_show_pending_cursor_placeholders() {
             asset_width: 1,
             asset_height: 1,
             similarity: 0.9,
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             instance_count: 0,
         },
-        SearchResultGroup {
+        SearchResultAssetEntry {
             asset_id: second.asset.as_ref().expect("loaded placement asset").id,
             asset_preview_path: None,
             asset_original_path: Some(
@@ -3299,7 +3308,7 @@ fn command_enter_library_search_results_show_pending_cursor_placeholders() {
             asset_width: 1,
             asset_height: 1,
             similarity: 0.8,
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             instance_count: 0,
         },
     ];
@@ -3372,17 +3381,17 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
     app.search.overlay.open = true;
     app.search.overlay.scope = SearchScope::Library;
     app.search.overlay.results = vec![
-        SearchResultGroup {
+        SearchResultAssetEntry {
             asset_id: first.asset.as_ref().expect("loaded placement asset").id,
             asset_preview_path: None,
             asset_original_path: None,
             asset_width: first.asset.as_ref().expect("loaded placement asset").width,
             asset_height: first.asset.as_ref().expect("loaded placement asset").height,
             similarity: 0.9,
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             instance_count: 0,
         },
-        SearchResultGroup {
+        SearchResultAssetEntry {
             asset_id: second.asset.as_ref().expect("loaded placement asset").id,
             asset_preview_path: None,
             asset_original_path: None,
@@ -3393,7 +3402,7 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
                 .expect("loaded placement asset")
                 .height,
             similarity: 0.8,
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             instance_count: 0,
         },
     ];
@@ -3484,7 +3493,7 @@ fn multi_select_enter_library_search_results_show_pending_cursor_placeholders() 
     app.search.overlay.open = true;
     app.search.overlay.scope = SearchScope::Library;
     app.search.overlay.results = vec![
-        SearchResultGroup {
+        SearchResultAssetEntry {
             asset_id: first.asset.as_ref().expect("loaded placement asset").id,
             asset_preview_path: None,
             asset_original_path: Some(
@@ -3498,10 +3507,10 @@ fn multi_select_enter_library_search_results_show_pending_cursor_placeholders() 
             asset_width: 1,
             asset_height: 1,
             similarity: 0.9,
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             instance_count: 0,
         },
-        SearchResultGroup {
+        SearchResultAssetEntry {
             asset_id: second.asset.as_ref().expect("loaded placement asset").id,
             asset_preview_path: None,
             asset_original_path: Some(
@@ -3515,7 +3524,7 @@ fn multi_select_enter_library_search_results_show_pending_cursor_placeholders() 
             asset_width: 1,
             asset_height: 1,
             similarity: 0.8,
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             instance_count: 0,
         },
     ];
@@ -3583,7 +3592,7 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
     app.search.overlay.open = true;
     app.search.overlay.scope = SearchScope::Library;
     app.search.overlay.results = vec![
-        SearchResultGroup {
+        SearchResultAssetEntry {
             asset_id: first.asset.as_ref().expect("loaded placement asset").id,
             asset_preview_path: None,
             asset_original_path: Some(
@@ -3597,10 +3606,10 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
             asset_width: 1,
             asset_height: 1,
             similarity: 0.9,
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             instance_count: 0,
         },
-        SearchResultGroup {
+        SearchResultAssetEntry {
             asset_id: second.asset.as_ref().expect("loaded placement asset").id,
             asset_preview_path: None,
             asset_original_path: Some(
@@ -3614,7 +3623,7 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
             asset_width: 1,
             asset_height: 1,
             similarity: 0.8,
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             instance_count: 0,
         },
     ];
@@ -3718,7 +3727,7 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
     app.search.overlay.open = true;
     app.search.overlay.scope = SearchScope::Library;
     app.search.overlay.results = vec![
-        SearchResultGroup {
+        SearchResultAssetEntry {
             asset_id: first.asset.as_ref().expect("loaded placement asset").id,
             asset_preview_path: None,
             asset_original_path: Some(
@@ -3732,10 +3741,10 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
             asset_width: 1,
             asset_height: 1,
             similarity: 0.9,
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             instance_count: 0,
         },
-        SearchResultGroup {
+        SearchResultAssetEntry {
             asset_id: second.asset.as_ref().expect("loaded placement asset").id,
             asset_preview_path: None,
             asset_original_path: Some(
@@ -3749,7 +3758,7 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
             asset_width: 1,
             asset_height: 1,
             similarity: 0.8,
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             instance_count: 0,
         },
     ];
@@ -3784,7 +3793,7 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
     ];
     expected_asset_ids.sort_unstable();
     assert_eq!(asset_ids, expected_asset_ids);
-    assert_eq!(harness.state().canvas.selected_item_ids().len(), 2);
+    assert_eq!(harness.state().canvas.selected_placement_ids().len(), 2);
     assert!(!harness.state().search.overlay.open);
 
     let _ = fs::remove_dir_all(root);
@@ -3880,7 +3889,7 @@ fn context_menu_move_to_front_routes_through_rendered_menu_row() {
         CanvasStackItem::Placement(selected_item.state.id),
         CanvasStackItem::Annotation(front_annotation.id),
     ]);
-    app.canvas.select_items(&[selected_item.state.id]);
+    app.canvas.select_placements(&[selected_item.state.id]);
     app.context_menu_pos = Some(egui::pos2(300.0, 300.0));
     let mut harness = app_harness(app, |ctx, app| {
         app.show_context_menu(ctx, test_screen_rect(), false);
@@ -3965,9 +3974,9 @@ fn search_drop_source_center_uses_image_extents() {
             },
             asset,
         );
-        app.canvas.add_loaded_item(
+        app.canvas.add_prepared_placement_image(
             &ctx,
-            LoadedCanvasItem {
+            PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
                 record,
@@ -3984,7 +3993,7 @@ fn search_drop_source_center_uses_image_extents() {
         );
     }
 
-    let center = app.source_center_for_item_ids(&[1, 2]).unwrap();
+    let center = app.source_center_for_placement_ids(&[1, 2]).unwrap();
 
     assert_eq!(center, egui::pos2(150.0, 0.0));
 }
@@ -4046,7 +4055,7 @@ fn completed_multi_file_import_batch_selects_without_mutating_geometry() {
         );
         app.integrate_loaded_import(
             &ctx,
-            LoadedCanvasItem {
+            PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: Some(id as u64),
                 record,
@@ -4063,9 +4072,9 @@ fn completed_multi_file_import_batch_selects_without_mutating_geometry() {
         );
     }
 
-    assert_eq!(app.canvas.selected_item_ids(), vec![1, 2, 3]);
+    assert_eq!(app.canvas.selected_placement_ids(), vec![1, 2, 3]);
     for item_id in [1_i64, 2, 3] {
-        let record = app.canvas.record_for_item_id(item_id).unwrap();
+        let record = app.canvas.placement_for_id(item_id).unwrap();
         assert_eq!(record.state.center.x, 0.0);
         assert_eq!(record.state.center.y, 0.0);
     }
@@ -4117,21 +4126,21 @@ fn completed_import_batch_uses_original_anchor_after_out_of_order_failures() {
     first.record.state.center.y = 3600.0;
     app.integrate_loaded_import(&ctx, first);
 
-    assert_eq!(app.canvas.selected_item_ids(), vec![3, 1]);
+    assert_eq!(app.canvas.selected_placement_ids(), vec![3, 1]);
     assert_eq!(
-        app.canvas.record_for_item_id(3).unwrap().state.center.x,
+        app.canvas.placement_for_id(3).unwrap().state.center.x,
         4000.0
     );
     assert_eq!(
-        app.canvas.record_for_item_id(3).unwrap().state.center.y,
+        app.canvas.placement_for_id(3).unwrap().state.center.y,
         -1000.0
     );
     assert_eq!(
-        app.canvas.record_for_item_id(1).unwrap().state.center.x,
+        app.canvas.placement_for_id(1).unwrap().state.center.x,
         -2500.0
     );
     assert_eq!(
-        app.canvas.record_for_item_id(1).unwrap().state.center.y,
+        app.canvas.placement_for_id(1).unwrap().state.center.y,
         3600.0
     );
     assert!(app.pending_import_batches.is_empty());
@@ -4147,8 +4156,8 @@ fn completed_inactive_board_import_batch_does_not_mutate_active_canvas() {
     app.integrate_loaded_import(&ctx, test_loaded_item(1, 1));
     app.integrate_loaded_import(&ctx, test_loaded_item(2, 1));
 
-    assert!(app.canvas.selected_item_ids().is_empty());
-    assert!(app.canvas.record_for_item_id(1).is_none());
+    assert!(app.canvas.selected_placement_ids().is_empty());
+    assert!(app.canvas.placement_for_id(1).is_none());
     assert!(app.pending_import_batches.is_empty());
 }
 
@@ -4167,7 +4176,7 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
         Some((100, 80)),
         egui::Pos2::ZERO,
         test_viewport_world(),
-        crate::data::PlacementContentIntent::Unknown {
+        crate::data::ContentResolutionSource::Unknown {
             description: "known test import".to_owned(),
         },
     );
@@ -4177,7 +4186,7 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
         None,
         egui::pos2(200.0, 0.0),
         test_viewport_world(),
-        crate::data::PlacementContentIntent::Unknown {
+        crate::data::ContentResolutionSource::Unknown {
             description: "unknown test import".to_owned(),
         },
     );
@@ -4208,7 +4217,7 @@ fn completed_import_for_inactive_board_does_not_enter_active_canvas() {
 
     app.integrate_loaded_import(&ctx, loaded);
 
-    assert!(app.canvas.record_for_item_id(41).is_none());
+    assert!(app.canvas.placement_for_id(41).is_none());
     assert_eq!(app.status, "Imported image");
 
     let _ = fs::remove_dir_all(root);
@@ -4223,7 +4232,7 @@ fn completed_import_for_active_board_enters_active_canvas() {
 
     app.integrate_loaded_import(&ctx, loaded);
 
-    assert!(app.canvas.record_for_item_id(42).is_some());
+    assert!(app.canvas.placement_for_id(42).is_some());
     assert_eq!(app.status, "Imported image");
 }
 
@@ -4560,7 +4569,7 @@ fn item_enabled(items: &[super::ContextMenuItem], action: super::ContextMenuActi
         .is_some_and(|item| item.enabled)
 }
 
-fn test_loaded_item(item_id: i64, target_board_id: i64) -> LoadedCanvasItem {
+fn test_loaded_item(item_id: i64, target_board_id: i64) -> PreparedPlacementImage {
     let asset = ImageAsset {
         id: item_id,
         original_path: PathBuf::from(format!("fixture-{item_id}.png")),
@@ -4583,7 +4592,7 @@ fn test_loaded_item(item_id: i64, target_board_id: i64) -> LoadedCanvasItem {
         },
         asset,
     );
-    LoadedCanvasItem {
+    PreparedPlacementImage {
         target_board_id,
         queue_id: Some(item_id as u64),
         record,
@@ -4600,9 +4609,9 @@ fn test_loaded_item(item_id: i64, target_board_id: i64) -> LoadedCanvasItem {
 }
 
 fn add_loaded_record(app: &mut SnappyRefApp, ctx: &egui::Context, record: Placement) {
-    app.canvas.add_loaded_item(
+    app.canvas.add_prepared_placement_image(
         ctx,
-        LoadedCanvasItem {
+        PreparedPlacementImage {
             target_board_id: 1,
             queue_id: None,
             record,

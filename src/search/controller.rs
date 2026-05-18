@@ -84,7 +84,7 @@ pub(super) struct SearchCacheKey {
 
 #[derive(Clone, Debug)]
 pub(super) struct SearchCacheEntry {
-    pub(super) results: Vec<crate::search::semantic::SearchResultGroup>,
+    pub(super) results: Vec<crate::search::semantic::SearchResultAssetEntry>,
     pub(super) has_more_results: bool,
 }
 
@@ -97,9 +97,9 @@ pub(super) struct ActiveSearchRequest {
 
 #[derive(Clone, Debug)]
 pub(crate) struct SearchDropRequest {
-    pub item_ids: Vec<i64>,
+    pub placement_ids: Vec<i64>,
     pub asset_ids: Vec<i64>,
-    pub provisional_item_ids: Vec<i64>,
+    pub provisional_placement_ids: Vec<i64>,
     pub screen_pos: egui::Pos2,
 }
 
@@ -1133,18 +1133,18 @@ impl SearchController {
     }
 
     pub(super) fn apply_search_matches(&mut self, canvas: &mut CanvasState) {
-        let item_ids = self
+        let placement_ids = self
             .overlay
             .results
             .iter()
-            .flat_map(|group| group.item_ids.iter().copied())
+            .flat_map(|group| group.placement_ids.iter().copied())
             .collect::<Vec<_>>();
         let lead_item_id = self
             .overlay
             .results
             .get(self.overlay.result_selection.lead().unwrap_or(0))
-            .and_then(|group| group.item_ids.first().copied());
-        canvas.set_search_matches(item_ids, lead_item_id);
+            .and_then(|group| group.placement_ids.first().copied());
+        canvas.set_search_matches(placement_ids, lead_item_id);
     }
 
     fn select_after_results_refresh(&mut self) {
@@ -1165,11 +1165,11 @@ impl SearchController {
 }
 
 fn selected_image_pivot(canvas: &CanvasState) -> Option<ImageSearchPivot> {
-    let selected = canvas.selected_item_ids();
+    let selected = canvas.selected_placement_ids();
     if selected.len() != 1 {
         return None;
     }
-    let record = canvas.record_for_item_id(selected[0])?;
+    let record = canvas.placement_for_id(selected[0])?;
     Some(ImageSearchPivot {
         asset_id: record.asset.as_ref().expect("loaded placement asset").id,
         item_id: record.state.id,
@@ -1207,7 +1207,7 @@ mod tests {
     use crate::canvas::CanvasState;
     use crate::data::{Placement, PlacementState};
     use crate::search::semantic::{
-        LocalModelStoreStatus, SearchQueryResult, SearchResultGroup, SearchScope,
+        LocalModelStoreStatus, SearchQueryResult, SearchResultAssetEntry, SearchScope,
         SemanticSearchInstallProgress,
     };
     use eframe::egui;
@@ -1513,19 +1513,19 @@ mod tests {
         let mut canvas = CanvasState::default();
         let mut search = SearchController::default();
         search.overlay.results = (1..=5)
-            .map(|asset_id| SearchResultGroup {
+            .map(|asset_id| SearchResultAssetEntry {
                 asset_id,
                 asset_preview_path: None,
                 asset_original_path: None,
                 asset_width: 100,
                 asset_height: 100,
                 similarity: 0.9,
-                item_ids: Vec::new(),
+                placement_ids: Vec::new(),
                 instance_count: 0,
             })
             .collect();
         let mut drag = crate::search::palette::SearchResultDragState {
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             asset_ids: vec![1, 2, 3, 4, 5],
             outside_overlay: true,
             placement_pending: false,
@@ -1589,7 +1589,7 @@ mod tests {
                 file_size: 0,
                 imported_at: 0,
             };
-            canvas.add_unloaded_item(Placement::loaded(
+            canvas.add_unresolved_placement(Placement::loaded(
                 PlacementState {
                     id: item_id,
                     asset_id: Some(asset_id),
@@ -1601,20 +1601,20 @@ mod tests {
                 },
                 asset,
             ));
-            search.overlay.results.push(SearchResultGroup {
+            search.overlay.results.push(SearchResultAssetEntry {
                 asset_id,
                 asset_preview_path: None,
                 asset_original_path: None,
                 asset_width: 200,
                 asset_height: 100,
                 similarity: 0.9,
-                item_ids: vec![item_id],
+                placement_ids: vec![item_id],
                 instance_count: 1,
             });
         }
         search.overlay.result_selection.range_to(4);
         let mut drag = crate::search::palette::SearchResultDragState {
-            item_ids: vec![100, 101, 102, 103, 104],
+            placement_ids: vec![100, 101, 102, 103, 104],
             asset_ids: Vec::new(),
             outside_overlay: true,
             placement_pending: false,
@@ -1653,14 +1653,14 @@ mod tests {
     fn library_scope_drag_places_asset_at_import_size_even_when_asset_has_board_instance() {
         let mut search = SearchController::default();
         search.overlay.scope = SearchScope::Library;
-        search.overlay.results = vec![SearchResultGroup {
+        search.overlay.results = vec![SearchResultAssetEntry {
             asset_id: 10,
             asset_preview_path: None,
             asset_original_path: None,
             asset_width: 4000,
             asset_height: 3000,
             similarity: 0.9,
-            item_ids: vec![100],
+            placement_ids: vec![100],
             instance_count: 1,
         }];
         search.overlay.result_selection.replace(0);
@@ -1672,7 +1672,7 @@ mod tests {
             .drag_state
             .as_ref()
             .expect("expected library search result drag");
-        assert!(drag.item_ids.is_empty());
+        assert!(drag.placement_ids.is_empty());
         assert_eq!(drag.asset_ids, vec![10]);
     }
 
@@ -1690,7 +1690,7 @@ mod tests {
             file_size: 0,
             imported_at: 0,
         };
-        canvas.add_unloaded_item(Placement::loaded(
+        canvas.add_unresolved_placement(Placement::loaded(
             PlacementState {
                 id: 900,
                 asset_id: Some(900),
@@ -1705,19 +1705,19 @@ mod tests {
 
         let mut search = SearchController::default();
         search.overlay.results = (1..=2)
-            .map(|asset_id| SearchResultGroup {
+            .map(|asset_id| SearchResultAssetEntry {
                 asset_id,
                 asset_preview_path: None,
                 asset_original_path: None,
                 asset_width: 100,
                 asset_height: 100,
                 similarity: 0.9,
-                item_ids: Vec::new(),
+                placement_ids: Vec::new(),
                 instance_count: 0,
             })
             .collect();
         let mut drag = crate::search::palette::SearchResultDragState {
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             asset_ids: vec![1, 2],
             outside_overlay: true,
             placement_pending: false,
@@ -1770,14 +1770,14 @@ mod tests {
         let ctx = egui::Context::default();
         let mut search = SearchController::default();
         let mut canvas = CanvasState::default();
-        search.overlay.results = vec![SearchResultGroup {
+        search.overlay.results = vec![SearchResultAssetEntry {
             asset_id: 10,
             asset_preview_path: None,
             asset_original_path: None,
             asset_width: 200,
             asset_height: 100,
             similarity: 0.9,
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             instance_count: 0,
         }];
         search.overlay.result_selection.replace(0);
@@ -1797,9 +1797,9 @@ mod tests {
             },
         );
 
-        let selected = canvas.selected_item_ids();
+        let selected = canvas.selected_placement_ids();
         assert_eq!(selected.len(), 1);
-        let record = canvas.record_for_item_id(selected[0]).unwrap();
+        let record = canvas.placement_for_id(selected[0]).unwrap();
         assert_eq!(
             record.lifecycle,
             crate::data::PlacementLifecycle::Provisional
@@ -1808,7 +1808,7 @@ mod tests {
         assert!(matches!(
             record.content,
             crate::data::PlacementContent::Loading {
-                intent: crate::data::PlacementContentIntent::SearchAsset { asset_id: 10 },
+                intent: crate::data::ContentResolutionSource::SearchAsset { asset_id: 10 },
                 ..
             }
         ));
@@ -1824,18 +1824,18 @@ mod tests {
             egui::pos2(0.0, 0.0),
             egui::vec2(240.0, 240.0),
         ));
-        search.overlay.results = vec![SearchResultGroup {
+        search.overlay.results = vec![SearchResultAssetEntry {
             asset_id: 1,
             asset_preview_path: None,
             asset_original_path: None,
             asset_width: 100,
             asset_height: 100,
             similarity: 0.9,
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             instance_count: 0,
         }];
         search.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
-            item_ids: Vec::new(),
+            placement_ids: Vec::new(),
             asset_ids: vec![1],
             outside_overlay: false,
             placement_pending: false,
@@ -1879,14 +1879,14 @@ mod tests {
         let mut search = SearchController::default();
         search.overlay.query = "boat".to_owned();
         search.overlay.last_submitted_query = "boat".to_owned();
-        search.overlay.results = vec![SearchResultGroup {
+        search.overlay.results = vec![SearchResultAssetEntry {
             asset_id: 10,
             asset_preview_path: None,
             asset_original_path: None,
             asset_width: 1,
             asset_height: 1,
             similarity: 0.9,
-            item_ids: vec![101],
+            placement_ids: vec![101],
             instance_count: 1,
         }];
 
@@ -1909,14 +1909,14 @@ mod tests {
                 result_limit: SEARCH_RESULT_PAGE_SIZE,
             },
             SearchCacheEntry {
-                results: vec![SearchResultGroup {
+                results: vec![SearchResultAssetEntry {
                     asset_id: 20,
                     asset_preview_path: None,
                     asset_original_path: None,
                     asset_width: 1,
                     asset_height: 1,
                     similarity: 0.8,
-                    item_ids: vec![202],
+                    placement_ids: vec![202],
                     instance_count: 1,
                 }],
                 has_more_results: true,
@@ -1937,14 +1937,14 @@ mod tests {
         search.overlay.open = true;
         search.overlay.query = "boat".to_owned();
         search.overlay.last_submitted_query = "boat".to_owned();
-        search.overlay.results = vec![SearchResultGroup {
+        search.overlay.results = vec![SearchResultAssetEntry {
             asset_id: 10,
             asset_preview_path: None,
             asset_original_path: None,
             asset_width: 1,
             asset_height: 1,
             similarity: 0.9,
-            item_ids: vec![101],
+            placement_ids: vec![101],
             instance_count: 1,
         }];
 
@@ -2068,14 +2068,14 @@ mod tests {
     fn initial_result_becomes_range_anchor() {
         let mut search = SearchController::default();
         search.overlay.results = (0..5)
-            .map(|index| SearchResultGroup {
+            .map(|index| SearchResultAssetEntry {
                 asset_id: index,
                 asset_preview_path: None,
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
                 similarity: 0.9,
-                item_ids: vec![100 + index],
+                placement_ids: vec![100 + index],
                 instance_count: 1,
             })
             .collect();
@@ -2090,24 +2090,24 @@ mod tests {
     fn result_drag_uses_selected_result_first_instances() {
         let mut search = SearchController::default();
         search.overlay.results = vec![
-            SearchResultGroup {
+            SearchResultAssetEntry {
                 asset_id: 10,
                 asset_preview_path: None,
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
                 similarity: 0.9,
-                item_ids: vec![101, 102],
+                placement_ids: vec![101, 102],
                 instance_count: 2,
             },
-            SearchResultGroup {
+            SearchResultAssetEntry {
                 asset_id: 11,
                 asset_preview_path: None,
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
                 similarity: 0.8,
-                item_ids: vec![201],
+                placement_ids: vec![201],
                 instance_count: 1,
             },
         ];
@@ -2117,78 +2117,78 @@ mod tests {
         search.start_result_drag(1);
 
         let drag = search.overlay.drag_state.expect("expected search drag");
-        assert_eq!(drag.item_ids, vec![101, 201]);
+        assert_eq!(drag.placement_ids, vec![101, 201]);
     }
 
     #[test]
-    fn selected_result_item_ids_falls_back_to_lead_result() {
+    fn selected_result_placement_ids_falls_back_to_lead_result() {
         let mut search = SearchController::default();
         search.overlay.results = vec![
-            SearchResultGroup {
+            SearchResultAssetEntry {
                 asset_id: 10,
                 asset_preview_path: None,
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
                 similarity: 0.9,
-                item_ids: vec![101],
+                placement_ids: vec![101],
                 instance_count: 1,
             },
-            SearchResultGroup {
+            SearchResultAssetEntry {
                 asset_id: 11,
                 asset_preview_path: None,
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
                 similarity: 0.8,
-                item_ids: vec![201],
+                placement_ids: vec![201],
                 instance_count: 1,
             },
         ];
         search.overlay.result_selection.replace(1);
 
-        assert_eq!(search.selected_result_item_ids(), vec![201]);
+        assert_eq!(search.selected_result_placement_ids(), vec![201]);
     }
 
     #[test]
-    fn all_result_item_ids_uses_loaded_results() {
+    fn all_result_placement_ids_uses_loaded_results() {
         let mut search = SearchController::default();
         search.overlay.results = vec![
-            SearchResultGroup {
+            SearchResultAssetEntry {
                 asset_id: 10,
                 asset_preview_path: None,
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
                 similarity: 0.9,
-                item_ids: vec![101, 102],
+                placement_ids: vec![101, 102],
                 instance_count: 2,
             },
-            SearchResultGroup {
+            SearchResultAssetEntry {
                 asset_id: 11,
                 asset_preview_path: None,
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
                 similarity: 0.8,
-                item_ids: vec![201],
+                placement_ids: vec![201],
                 instance_count: 1,
             },
         ];
 
-        assert_eq!(search.all_result_item_ids(), vec![101, 201]);
+        assert_eq!(search.all_result_placement_ids(), vec![101, 201]);
     }
 
-    fn search_result_groups(count: usize) -> Vec<SearchResultGroup> {
+    fn search_result_groups(count: usize) -> Vec<SearchResultAssetEntry> {
         (0..count)
-            .map(|index| SearchResultGroup {
+            .map(|index| SearchResultAssetEntry {
                 asset_id: index as i64,
                 asset_preview_path: None,
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
                 similarity: 0.9,
-                item_ids: vec![100 + index as i64],
+                placement_ids: vec![100 + index as i64],
                 instance_count: 1,
             })
             .collect()

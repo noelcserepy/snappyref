@@ -66,13 +66,13 @@ pub(crate) fn paint_selection_bounds(
     }
 
     if state.document.selected_annotation_ids.is_empty()
-        && state.document.selected_item_ids.len() <= 1
+        && state.document.selected_placement_ids.len() <= 1
     {
         paint_rotation_handle(painter, rect, state);
         return;
     }
 
-    if state.document.selected_item_ids.is_empty()
+    if state.document.selected_placement_ids.is_empty()
         && let Some(annotation) = state.selected_annotation()
         && annotation.kind == CanvasAnnotationKind::Textbox
     {

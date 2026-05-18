@@ -22,7 +22,7 @@ pub struct SemanticSearchConfig {
 }
 
 #[derive(Clone, Debug)]
-pub struct SearchResultGroup {
+pub struct SearchResultAssetEntry {
     #[allow(dead_code)]
     pub asset_id: i64,
     pub asset_preview_path: Option<PathBuf>,
@@ -32,7 +32,7 @@ pub struct SearchResultGroup {
     pub asset_height: u32,
     #[allow(dead_code)]
     pub similarity: f32,
-    pub item_ids: Vec<i64>,
+    pub placement_ids: Vec<i64>,
     #[allow(dead_code)]
     pub instance_count: usize,
 }
@@ -91,7 +91,7 @@ pub enum IndexResult {
 pub enum SearchQueryResult {
     Completed {
         request_id: u64,
-        results: Vec<SearchResultGroup>,
+        results: Vec<SearchResultAssetEntry>,
     },
     Failed {
         request_id: u64,
@@ -307,7 +307,7 @@ impl SemanticSearchService {
         source_asset_id: i64,
         text_query: Option<&str>,
         limit: usize,
-    ) -> Result<Vec<SearchResultGroup>, String> {
+    ) -> Result<Vec<SearchResultAssetEntry>, String> {
         self.search_with_image_pivot_with_limit_in_scope(
             SearchScope::ThisBoard,
             source_asset_id,
@@ -322,7 +322,7 @@ impl SemanticSearchService {
         source_asset_id: i64,
         text_query: Option<&str>,
         limit: usize,
-    ) -> Result<Vec<SearchResultGroup>, String> {
+    ) -> Result<Vec<SearchResultAssetEntry>, String> {
         search_with_image_pivot_with_limit_in_scope_for(
             &self.library,
             self.model_key,
@@ -342,7 +342,7 @@ impl SemanticSearchService {
         &self,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<SearchResultGroup>, String> {
+    ) -> Result<Vec<SearchResultAssetEntry>, String> {
         self.search_with_limit_in_scope(SearchScope::ThisBoard, query, limit)
     }
 
@@ -351,7 +351,7 @@ impl SemanticSearchService {
         scope: SearchScope,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<SearchResultGroup>, String> {
+    ) -> Result<Vec<SearchResultAssetEntry>, String> {
         let query = query.trim();
         if query.is_empty() {
             return Ok(Vec::new());
@@ -442,7 +442,7 @@ fn search_with_image_pivot_with_limit_in_scope_for(
     source_asset_id: i64,
     text_query: Option<&str>,
     limit: usize,
-) -> Result<Vec<SearchResultGroup>, String> {
+) -> Result<Vec<SearchResultAssetEntry>, String> {
     let source_blob = library
         .load_asset_embedding(source_asset_id, model_key)?
         .ok_or_else(|| "Source image not indexed yet".to_owned())?;
@@ -493,7 +493,7 @@ fn search_with_limit_in_scope_for(
     scope: SearchScope,
     query: &str,
     limit: usize,
-) -> Result<Vec<SearchResultGroup>, String> {
+) -> Result<Vec<SearchResultAssetEntry>, String> {
     let query = query.trim();
     if query.is_empty() {
         return Ok(Vec::new());
@@ -761,7 +761,7 @@ fn group_hits(
     library: &Library,
     scope: SearchScope,
     hits: Vec<crate::library::storage::AssetSearchHit>,
-) -> Result<Vec<SearchResultGroup>, String> {
+) -> Result<Vec<SearchResultAssetEntry>, String> {
     let asset_ids = hits.iter().map(|hit| hit.asset_id).collect::<Vec<_>>();
     let instances = library.placement_instances_for_assets(&asset_ids)?;
     let asset_preview_paths = library.asset_search_preview_paths_for_assets(&asset_ids);
@@ -777,19 +777,19 @@ fn group_hits(
 
     let mut groups = Vec::new();
     for hit in hits {
-        let item_ids = instances_by_asset.remove(&hit.asset_id).unwrap_or_default();
+        let placement_ids = instances_by_asset.remove(&hit.asset_id).unwrap_or_default();
         let asset = library.load_asset(hit.asset_id)?;
-        let group = SearchResultGroup {
+        let group = SearchResultAssetEntry {
             asset_id: hit.asset_id,
             asset_preview_path: asset_preview_paths.get(&hit.asset_id).cloned(),
             asset_original_path: asset_original_paths.get(&hit.asset_id).cloned(),
             asset_width: asset.width,
             asset_height: asset.height,
             similarity: hit.similarity,
-            instance_count: item_ids.len(),
-            item_ids,
+            instance_count: placement_ids.len(),
+            placement_ids,
         };
-        if scope.includes_unplaced_assets() || !group.item_ids.is_empty() {
+        if scope.includes_unplaced_assets() || !group.placement_ids.is_empty() {
             groups.push(group);
         }
     }
@@ -1287,7 +1287,7 @@ mod tests {
             results[0].asset_preview_path.as_deref(),
             Some(unplaced_preview_path.as_path())
         );
-        assert!(results[0].item_ids.is_empty());
+        assert!(results[0].placement_ids.is_empty());
         assert_eq!(results[0].instance_count, 0);
         assert_eq!(library.load_placements().unwrap().len(), 1);
 
@@ -1389,7 +1389,7 @@ mod tests {
             results[0].asset_id,
             active.asset.as_ref().expect("loaded placement asset").id
         );
-        assert_eq!(results[0].item_ids, vec![active.state.id]);
+        assert_eq!(results[0].placement_ids, vec![active.state.id]);
         assert_eq!(results[0].instance_count, 1);
 
         let _ = fs::remove_dir_all(root);

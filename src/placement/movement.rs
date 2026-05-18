@@ -152,14 +152,14 @@ pub(crate) fn compute_guide_snap_for_rect(
 fn guide_snap_candidate_rects(
     state: &CanvasState,
     screen_rect: egui::Rect,
-    excluded_item_ids: &[i64],
+    excluded_placement_ids: &[i64],
 ) -> Vec<crate::canvas::guide_snap::GuideSnapCandidate> {
     let viewport = viewport_near_world_rect(state, screen_rect);
     state
         .document
         .images
         .iter()
-        .filter(|image| !excluded_item_ids.contains(&image.record.state.id))
+        .filter(|image| !excluded_placement_ids.contains(&image.record.state.id))
         .filter_map(|image| {
             let scaled_size = image.record.scaled_visual_size();
             let visual_size = crate::canvas::rotated_visual_size(

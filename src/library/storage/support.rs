@@ -13,8 +13,8 @@ pub(super) use rusqlite::{Connection, Transaction, params, params_from_iter};
 
 pub(super) use crate::data::{
     Board, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
-    CanvasImageLod, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, DEFAULT_VIEWPORT_ZOOM,
-    ImageAsset, Placement, PlacementContent, PlacementContentIntent, PlacementLayoutItem,
+    CanvasImageLod, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, ContentResolutionSource,
+    DEFAULT_VIEWPORT_ZOOM, ImageAsset, Placement, PlacementContent, PlacementLayoutItem,
     PlacementLifecycle, PlacementState, UserSession, ViewportState, WorkspaceSettings,
 };
 

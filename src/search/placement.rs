@@ -11,14 +11,14 @@ impl SearchController {
             self.update_result_selection(index, SearchSelectionMode::Replace);
         }
 
-        let item_ids = self.selected_result_item_ids();
+        let placement_ids = self.selected_result_placement_ids();
         let asset_ids = self.selected_unplaced_result_asset_ids();
-        if item_ids.is_empty() && asset_ids.is_empty() {
+        if placement_ids.is_empty() && asset_ids.is_empty() {
             return;
         }
 
         self.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
-            item_ids,
+            placement_ids,
             asset_ids,
             outside_overlay: false,
             placement_pending: false,
@@ -34,10 +34,10 @@ impl SearchController {
         screen_rect: egui::Rect,
         placement_preview_config: SearchPlacementPreviewConfig,
     ) {
-        let item_ids = self.selected_result_item_ids();
+        let placement_ids = self.selected_result_placement_ids();
         let asset_ids = self.selected_unplaced_result_asset_ids();
         self.start_keyboard_placement(
-            item_ids,
+            placement_ids,
             asset_ids,
             ctx,
             canvas,
@@ -55,10 +55,10 @@ impl SearchController {
         screen_rect: egui::Rect,
         placement_preview_config: SearchPlacementPreviewConfig,
     ) {
-        let item_ids = self.all_result_item_ids();
+        let placement_ids = self.all_result_placement_ids();
         let asset_ids = self.all_unplaced_result_asset_ids();
         self.start_keyboard_placement(
-            item_ids,
+            placement_ids,
             asset_ids,
             ctx,
             canvas,
@@ -70,7 +70,7 @@ impl SearchController {
 
     fn start_keyboard_placement(
         &mut self,
-        item_ids: Vec<i64>,
+        placement_ids: Vec<i64>,
         asset_ids: Vec<i64>,
         ctx: &egui::Context,
         canvas: &mut CanvasState,
@@ -78,7 +78,7 @@ impl SearchController {
         screen_rect: egui::Rect,
         placement_preview_config: SearchPlacementPreviewConfig,
     ) {
-        if item_ids.is_empty() && asset_ids.is_empty() {
+        if placement_ids.is_empty() && asset_ids.is_empty() {
             return;
         }
 
@@ -87,14 +87,14 @@ impl SearchController {
             .unwrap_or_else(|| canvas.screen_to_world(screen_rect.center(), screen_rect));
         self.create_search_provisional_placements(
             canvas,
-            &item_ids,
+            &placement_ids,
             &asset_ids,
             pointer_world,
             screen_rect,
             placement_preview_config,
         );
         self.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
-            item_ids: item_ids.clone(),
+            placement_ids: placement_ids.clone(),
             asset_ids,
             outside_overlay: true,
             placement_pending: true,
@@ -111,15 +111,15 @@ impl SearchController {
     fn create_search_provisional_placements(
         &self,
         canvas: &mut CanvasState,
-        item_ids: &[i64],
+        placement_ids: &[i64],
         asset_ids: &[i64],
         anchor_world: egui::Pos2,
         screen_rect: egui::Rect,
         placement_preview_config: SearchPlacementPreviewConfig,
     ) {
-        let mut source_intents = item_ids
+        let mut source_intents = placement_ids
             .iter()
-            .filter_map(|item_id| canvas.record_for_item_id(*item_id))
+            .filter_map(|item_id| canvas.placement_for_id(*item_id))
             .map(crate::placement::creation::ProvisionalSourceIntent::ExistingPlacement)
             .collect::<Vec<_>>();
 
@@ -152,33 +152,33 @@ impl SearchController {
         );
     }
 
-    pub(super) fn selected_result_item_ids(&self) -> Vec<i64> {
+    pub(super) fn selected_result_placement_ids(&self) -> Vec<i64> {
         if self.overlay.scope == crate::search::semantic::SearchScope::Library {
             return Vec::new();
         }
 
-        let item_ids = self
+        let placement_ids = self
             .overlay
             .result_selection
             .selected()
             .iter()
             .filter_map(|index| self.overlay.results.get(*index))
-            .filter_map(|group| group.item_ids.first().copied())
+            .filter_map(|group| group.placement_ids.first().copied())
             .collect::<Vec<_>>();
 
-        if item_ids.is_empty() {
+        if placement_ids.is_empty() {
             self.overlay
                 .results
                 .get(self.overlay.result_selection.lead().unwrap_or(0))
-                .and_then(|group| group.item_ids.first().copied())
+                .and_then(|group| group.placement_ids.first().copied())
                 .into_iter()
                 .collect()
         } else {
-            item_ids
+            placement_ids
         }
     }
 
-    pub(super) fn all_result_item_ids(&self) -> Vec<i64> {
+    pub(super) fn all_result_placement_ids(&self) -> Vec<i64> {
         if self.overlay.scope == crate::search::semantic::SearchScope::Library {
             return Vec::new();
         }
@@ -186,7 +186,7 @@ impl SearchController {
         self.overlay
             .results
             .iter()
-            .filter_map(|group| group.item_ids.first().copied())
+            .filter_map(|group| group.placement_ids.first().copied())
             .collect()
     }
 
@@ -219,7 +219,7 @@ impl SearchController {
             .selected()
             .iter()
             .filter_map(|index| self.overlay.results.get(*index))
-            .filter(|group| group.item_ids.is_empty())
+            .filter(|group| group.placement_ids.is_empty())
             .map(|group| group.asset_id)
             .collect::<Vec<_>>();
 
@@ -227,7 +227,7 @@ impl SearchController {
             self.overlay
                 .results
                 .get(self.overlay.result_selection.lead().unwrap_or(0))
-                .filter(|group| group.item_ids.is_empty())
+                .filter(|group| group.placement_ids.is_empty())
                 .map(|group| group.asset_id)
                 .into_iter()
                 .collect()
@@ -249,7 +249,7 @@ impl SearchController {
         self.overlay
             .results
             .iter()
-            .filter(|group| group.item_ids.is_empty())
+            .filter(|group| group.placement_ids.is_empty())
             .map(|group| group.asset_id)
             .collect()
     }
@@ -267,7 +267,7 @@ pub(super) fn update_search_placement_preview(
     if !drag.placement_pending {
         search.create_search_provisional_placements(
             canvas,
-            &drag.item_ids,
+            &drag.placement_ids,
             &drag.asset_ids,
             pointer_world,
             screen_rect,

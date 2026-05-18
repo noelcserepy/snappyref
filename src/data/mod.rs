@@ -11,7 +11,7 @@ pub use asset::ImageAsset;
 #[allow(unused_imports)]
 pub use placement::AssetId;
 pub use placement::{
-    Board, BoardSummary, CanvasStackItem, Placement, PlacementContent, PlacementContentIntent,
+    Board, BoardSummary, CanvasStackItem, ContentResolutionSource, Placement, PlacementContent,
     PlacementId, PlacementLayoutItem, PlacementLifecycle, PlacementState,
 };
 pub use session::{

@@ -23,7 +23,8 @@ pub(crate) use model::{
 };
 pub(crate) use model_store::LocalModelStoreStatus;
 pub use service::{
-    IndexResult, SearchQueryResult, SearchResultGroup, SemanticSearchConfig, SemanticSearchService,
+    IndexResult, SearchQueryResult, SearchResultAssetEntry, SemanticSearchConfig,
+    SemanticSearchService,
 };
 
 #[derive(serde::Serialize)]

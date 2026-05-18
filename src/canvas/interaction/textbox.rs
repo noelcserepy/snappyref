@@ -13,7 +13,7 @@ fn begin_textbox_pending_move(
     annotation: &CanvasAnnotation,
     pointer_pos: egui::Pos2,
 ) {
-    state.document.selected_item_ids.clear();
+    state.document.selected_placement_ids.clear();
     if !state.is_annotation_selected(annotation.id) {
         state.document.selected_annotation_ids = vec![annotation.id];
     }
@@ -65,7 +65,7 @@ pub(crate) fn handle_textbox_primary_press(
                 return true;
             }
             let world_rect = textbox_world_rect(annotation);
-            state.document.selected_item_ids.clear();
+            state.document.selected_placement_ids.clear();
             state.document.selected_annotation_ids = vec![annotation.id];
             state.interaction.drag_state = None;
             state.interaction.image_transform_state = None;

@@ -59,7 +59,7 @@ impl CropFlow {
                 canvas.clear_crop_pending(item_id);
                 return Err(error);
             }
-            if let Err(error) = import_worker.enqueue(crate::jobs::ImportRequest::Crop {
+            if let Err(error) = import_worker.enqueue(crate::jobs::ImagePreparationRequest::Crop {
                 request,
                 max_texture_side,
                 canvas_image_settings: crate::jobs::CanvasImageSettings {
@@ -80,7 +80,7 @@ impl CropFlow {
         ctx: &eframe::egui::Context,
         canvas: &mut crate::canvas::CanvasState,
         library: Option<&crate::library::storage::Library>,
-        cropped: crate::jobs::CroppedCanvasItem,
+        cropped: crate::jobs::PreparedCropPreview,
         _canvas_image_max_side: u32,
         semantic_search_enabled: bool,
     ) -> Result<CroppedImageIntegration, String> {
@@ -191,9 +191,9 @@ impl CropFlow {
             canvas.evict_cached_asset(entry.removed_asset_id);
         }
 
-        canvas.add_loaded_item(
+        canvas.add_prepared_placement_image(
             ctx,
-            crate::jobs::LoadedCanvasItem {
+            crate::jobs::PreparedPlacementImage {
                 target_board_id: active_board_id,
                 queue_id: None,
                 preview_width: entry.previous_preview_width,
@@ -239,7 +239,7 @@ mod tests {
     use super::CropFlow;
     use crate::canvas::{CanvasCropRequest, CanvasState, PixelCropRect};
     use crate::data::{CanvasImageLod, ImageAsset, Placement, PlacementState};
-    use crate::jobs::{ImportOrigin, ImportWorker, ImportedPreviewTexture, LoadedCanvasItem};
+    use crate::jobs::{ImportOrigin, ImportWorker, ImportedPreviewTexture, PreparedPlacementImage};
     use crate::library::storage::Library;
 
     static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -262,9 +262,9 @@ mod tests {
         let preview_rgba = (0..16)
             .flat_map(|index| [index, 0, 0, 255])
             .collect::<Vec<_>>();
-        canvas.add_loaded_item(
+        canvas.add_prepared_placement_image(
             &ctx,
-            LoadedCanvasItem {
+            PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
                 record: record.clone(),
@@ -301,7 +301,7 @@ mod tests {
             canvas.preview_for_item_id(42).unwrap().texture_size,
             egui::vec2(2.0, 2.0)
         );
-        let record = canvas.record_for_item_id(42).unwrap();
+        let record = canvas.placement_for_id(42).unwrap();
         assert_eq!(
             (
                 record.asset.as_ref().expect("loaded placement asset").width,

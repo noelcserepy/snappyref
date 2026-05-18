@@ -10,10 +10,12 @@ use crate::active_board::commands::{
 };
 use crate::active_board::history::{DocumentHistory, HistoryAction, HistoryDirection, RowChange};
 use crate::active_board::persistence::DocumentPersistence;
-use crate::library::residency::{ImageResidencyCoordinator, ImportResultResidencyOutcome};
+use crate::library::residency::{
+    ImagePreparationResultResidencyOutcome, ImageResidencyCoordinator,
+};
 use crate::placement::content_resolution::{
     ContentResolutionRequestConfig, ContentResolutionReservation, ContentResolutionRuntime,
-    FailedImportOutcome, LoadedImportOutcome,
+    FailedContentResolutionOutcome, LoadedContentResolutionOutcome,
 };
 #[cfg(feature = "semantic-search")]
 use crate::search::SearchController;
@@ -1635,7 +1637,7 @@ impl SnappyRefApp {
             dimensions,
             desired_world,
             viewport_world,
-            crate::data::PlacementContentIntent::ExternalPath {
+            crate::data::ContentResolutionSource::ExternalPath {
                 path: path.to_string_lossy().into_owned(),
             },
         );
@@ -2599,7 +2601,7 @@ impl SnappyRefApp {
         }
     }
 
-    fn remove_import_placeholder_for_board(&mut self, board_id: i64, queue_id: u64) {
+    fn clear_content_resolution_preview_for_board(&mut self, board_id: i64, queue_id: u64) {
         self.import_intake
             .remove_placeholder_for_board(board_id, queue_id);
         if board_id == self.active_board_id {
@@ -2607,7 +2609,7 @@ impl SnappyRefApp {
         }
     }
 
-    fn restore_active_board_import_placeholders(&mut self) {
+    fn restore_active_board_import_previews(&mut self) {
         for placeholder in self
             .import_intake
             .placeholders_for_board(self.active_board_id)
@@ -2678,7 +2680,7 @@ impl SnappyRefApp {
         dimensions: Option<(u32, u32)>,
         desired_world: egui::Pos2,
         viewport_world: egui::Rect,
-        intent: crate::data::PlacementContentIntent,
+        intent: crate::data::ContentResolutionSource,
     ) -> ContentResolutionReservation {
         let _ = viewport_world;
         self.create_committed_loading_import(
@@ -2904,7 +2906,7 @@ impl SnappyRefApp {
             self.finalize_completed_import_batch(
                 batch.target_board_id,
                 batch.anchor_world,
-                batch.item_ids,
+                batch.placement_ids,
             );
         }
     }
@@ -2913,12 +2915,12 @@ impl SnappyRefApp {
         &mut self,
         target_board_id: i64,
         anchor_world: egui::Pos2,
-        item_ids: Vec<i64>,
+        placement_ids: Vec<i64>,
     ) {
-        if item_ids.is_empty() || target_board_id != self.active_board_id {
+        if placement_ids.is_empty() || target_board_id != self.active_board_id {
             return;
         }
-        self.canvas.select_items(&item_ids);
+        self.canvas.select_placements(&placement_ids);
         self.canvas.clear_hover_preview_placeholders();
         let _ = anchor_world;
         self.persist_canvas_changes();
@@ -3057,7 +3059,7 @@ impl SnappyRefApp {
             Some((width, height)),
             desired_world,
             viewport_world,
-            crate::data::PlacementContentIntent::Clipboard,
+            crate::data::ContentResolutionSource::Clipboard,
         );
 
         if let Err(error) = self
@@ -3112,7 +3114,7 @@ impl SnappyRefApp {
             Some((360, 240)),
             desired_world,
             viewport_world,
-            crate::data::PlacementContentIntent::ExternalUrl { url: url.clone() },
+            crate::data::ContentResolutionSource::ExternalUrl { url: url.clone() },
         );
 
         if let Err(error) = self
@@ -3234,20 +3236,22 @@ impl SnappyRefApp {
             };
         }
         if !queued_placement_ids.is_empty() {
-            self.canvas.select_items(&queued_placement_ids);
+            self.canvas.select_placements(&queued_placement_ids);
         }
         self.register_import_batch(self.active_board_id, desired_world, queued_batch_ids);
     }
 
     fn placement_content_intent_for_external_source(
         source: &ExternalImportSource,
-    ) -> crate::data::PlacementContentIntent {
+    ) -> crate::data::ContentResolutionSource {
         match source {
-            ExternalImportSource::Path(path) => crate::data::PlacementContentIntent::ExternalPath {
-                path: path.to_string_lossy().into_owned(),
-            },
+            ExternalImportSource::Path(path) => {
+                crate::data::ContentResolutionSource::ExternalPath {
+                    path: path.to_string_lossy().into_owned(),
+                }
+            }
             ExternalImportSource::Url(url) => {
-                crate::data::PlacementContentIntent::ExternalUrl { url: url.clone() }
+                crate::data::ContentResolutionSource::ExternalUrl { url: url.clone() }
             }
         }
     }
@@ -3305,7 +3309,7 @@ impl SnappyRefApp {
     }
 
     fn context_menu_items(&self) -> Vec<ContextMenuItem> {
-        let selected_item_count = self.canvas.selected_item_ids().len();
+        let selected_item_count = self.canvas.selected_placement_ids().len();
         let selected_annotation_count = self.canvas.selected_annotation_ids().len();
         let has_selection = selected_item_count > 0 || selected_annotation_count > 0;
         let has_selected_image = selected_item_count > 0;
@@ -3453,8 +3457,8 @@ impl SnappyRefApp {
 
     fn request_selected_assets_library_remove(&mut self) {
         let mut asset_ids = Vec::new();
-        for item_id in self.canvas.selected_item_ids() {
-            if let Some(record) = self.canvas.record_for_item_id(item_id)
+        for item_id in self.canvas.selected_placement_ids() {
+            if let Some(record) = self.canvas.placement_for_id(item_id)
                 && !asset_ids.contains(&record.asset.as_ref().expect("loaded placement asset").id)
             {
                 asset_ids.push(record.asset.as_ref().expect("loaded placement asset").id);
@@ -3759,9 +3763,9 @@ impl SnappyRefApp {
     ) {
         let placement_changes = self
             .canvas
-            .selected_item_ids()
+            .selected_placement_ids()
             .into_iter()
-            .filter_map(|item_id| self.canvas.record_for_item_id(item_id))
+            .filter_map(|item_id| self.canvas.placement_for_id(item_id))
             .map(|record| RowChange {
                 before: None,
                 after: Some(record),
@@ -3844,29 +3848,29 @@ impl SnappyRefApp {
     fn apply_import_result_residency_outcome(
         &mut self,
         ctx: &egui::Context,
-        outcome: ImportResultResidencyOutcome,
+        outcome: ImagePreparationResultResidencyOutcome,
     ) {
         match outcome {
-            ImportResultResidencyOutcome::Loaded(outcome) => {
+            ImagePreparationResultResidencyOutcome::Loaded(outcome) => {
                 self.apply_loaded_import_outcome(outcome);
             }
-            ImportResultResidencyOutcome::Cropped(cropped) => {
+            ImagePreparationResultResidencyOutcome::Cropped(cropped) => {
                 self.integrate_cropped_import_result(ctx, cropped);
             }
-            ImportResultResidencyOutcome::Failed(outcome) => {
+            ImagePreparationResultResidencyOutcome::Failed(outcome) => {
                 self.apply_failed_import_outcome(outcome);
             }
-            ImportResultResidencyOutcome::Status(Some(status)) => {
+            ImagePreparationResultResidencyOutcome::Status(Some(status)) => {
                 self.status = status;
             }
-            ImportResultResidencyOutcome::Status(None) => {}
+            ImagePreparationResultResidencyOutcome::Status(None) => {}
         }
     }
 
     fn integrate_cropped_import_result(
         &mut self,
         ctx: &egui::Context,
-        cropped: crate::jobs::CroppedCanvasItem,
+        cropped: crate::jobs::PreparedCropPreview,
     ) {
         let ui_integration_started_at = Instant::now();
         match self.crop_flow.integrate_cropped_result(
@@ -3916,7 +3920,7 @@ impl SnappyRefApp {
     fn integrate_loaded_import(
         &mut self,
         ctx: &egui::Context,
-        loaded: crate::jobs::LoadedCanvasItem,
+        loaded: crate::jobs::PreparedPlacementImage,
     ) {
         let outcome = self.residency.integrate_loaded_import(
             ctx,
@@ -3929,14 +3933,14 @@ impl SnappyRefApp {
         self.apply_loaded_import_outcome(outcome);
     }
 
-    fn apply_loaded_import_outcome(&mut self, outcome: LoadedImportOutcome) {
+    fn apply_loaded_import_outcome(&mut self, outcome: LoadedContentResolutionOutcome) {
         let finished = self.content_resolution.finish_loaded_import(outcome);
-        let placeholder_queue_id = finished.placeholder_removal.map(|placeholder| {
-            self.remove_import_placeholder_for_board(
-                placeholder.target_board_id,
-                placeholder.queue_id,
+        let cleanup_queue_id = finished.cleanup_ticket.map(|ticket| {
+            self.clear_content_resolution_preview_for_board(
+                ticket.target_board_id,
+                ticket.queue_id,
             );
-            placeholder.queue_id
+            ticket.queue_id
         });
         let perf_import_origin = finished.log.as_ref().map(|log| log.origin);
         let perf_counts_as_import = perf_import_origin.is_some_and(|origin| {
@@ -3974,7 +3978,7 @@ impl SnappyRefApp {
         if let Some(log) = finished.log {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
                 scenario.visible_imports += 1;
-                let metadata = placeholder_queue_id
+                let metadata = cleanup_queue_id
                     .and_then(|queue_id| scenario.asset_by_queue_id.get(&queue_id).cloned());
                 if let Some(metadata) = &metadata {
                     scenario.asset_by_asset_id.insert(
@@ -4017,7 +4021,7 @@ impl SnappyRefApp {
                         "file": source_file,
                         "animated": animated,
                         "bytes": bytes,
-                        "queue_id": placeholder_queue_id,
+                        "queue_id": cleanup_queue_id,
                     }),
                 );
                 if scenario.visible_imports >= scenario.expected_imports
@@ -4073,17 +4077,17 @@ impl SnappyRefApp {
         }
     }
 
-    fn apply_failed_import_outcome(&mut self, outcome: FailedImportOutcome) {
+    fn apply_failed_import_outcome(&mut self, outcome: FailedContentResolutionOutcome) {
         let finished = self.content_resolution.finish_failed_import(
             self.library.as_ref(),
             &mut self.canvas,
             self.active_board_id,
             outcome,
         );
-        if let Some(placeholder) = finished.placeholder_removal {
-            self.remove_import_placeholder_for_board(
-                placeholder.target_board_id,
-                placeholder.queue_id,
+        if let Some(ticket) = finished.cleanup_ticket {
+            self.clear_content_resolution_preview_for_board(
+                ticket.target_board_id,
+                ticket.queue_id,
             );
         }
         self.finish_import_queue_id_in_batches(
@@ -4221,7 +4225,7 @@ impl SnappyRefApp {
         }
 
         if let Some(direction) = settle_direction_pressed(ctx)
-            && self.canvas.selected_item_ids().len() > 1
+            && self.canvas.selected_placement_ids().len() > 1
         {
             apply_settle_arrangement(
                 &mut self.canvas,
@@ -4298,7 +4302,7 @@ impl SnappyRefApp {
                     self.set_always_on_top(ctx, !self.settings.always_on_top);
                 }
                 SupportedShortcutAction::Arrange(action) => {
-                    if self.canvas.selected_item_ids().len() > 1 {
+                    if self.canvas.selected_placement_ids().len() > 1 {
                         apply_arrangement_action(
                             &mut self.canvas,
                             action,
@@ -4314,7 +4318,7 @@ impl SnappyRefApp {
                     apply_default_average_area_to_selection(&mut self.canvas, &mut self.status);
                 }
                 SupportedShortcutAction::AverageSelectionArea => {
-                    if self.canvas.selected_item_ids().len() < 2 {
+                    if self.canvas.selected_placement_ids().len() < 2 {
                         self.status = "Select 2 or more images to average their area".to_owned();
                         continue;
                     }
@@ -4543,7 +4547,7 @@ impl SnappyRefApp {
         let current_annotations = library.load_canvas_annotations().unwrap_or_default();
         let current_stack_order = library.load_canvas_stack_order().ok();
         let placement_changes = changes
-            .updated_items
+            .updated_placements
             .into_iter()
             .filter_map(|after| {
                 let before = current_items
@@ -4646,9 +4650,9 @@ impl SnappyRefApp {
     fn delete_selected_items_from_board(&mut self, screen_rect: egui::Rect) {
         let before_items = self
             .canvas
-            .selected_item_ids()
+            .selected_placement_ids()
             .into_iter()
-            .filter_map(|item_id| self.canvas.record_for_item_id(item_id))
+            .filter_map(|item_id| self.canvas.placement_for_id(item_id))
             .collect::<Vec<_>>();
         let before_annotations = self
             .canvas
@@ -4781,9 +4785,9 @@ impl SnappyRefApp {
             1.0,
         )?;
         let item_id = record.state.id;
-        self.canvas.add_loaded_item(
+        self.canvas.add_prepared_placement_image(
             ctx,
-            crate::jobs::LoadedCanvasItem {
+            crate::jobs::PreparedPlacementImage {
                 target_board_id: self.active_board_id,
                 queue_id: None,
                 record,
@@ -4807,7 +4811,7 @@ impl SnappyRefApp {
             .apply_viewport_state(&crate::data::ViewportState::default());
         match self.seed_import_verification_existing_anchor(ctx) {
             Ok(item_id) => {
-                self.canvas.select_items(&[item_id]);
+                self.canvas.select_placements(&[item_id]);
                 let _ = self.canvas.set_image_rotation(item_id, 30_f32.to_radians());
                 self.status = "Added rotated debug image".to_owned();
             }
@@ -4845,9 +4849,9 @@ impl SnappyRefApp {
             },
             asset,
         );
-        self.canvas.add_loaded_item(
+        self.canvas.add_prepared_placement_image(
             ctx,
-            crate::jobs::LoadedCanvasItem {
+            crate::jobs::PreparedPlacementImage {
                 target_board_id: self.active_board_id,
                 queue_id: None,
                 record,
@@ -4875,7 +4879,7 @@ impl SnappyRefApp {
                 trace: None,
             },
         );
-        self.canvas.select_items(&[-40]);
+        self.canvas.select_placements(&[-40]);
         self.canvas.set_animation_time_override_seconds(Some(0.13));
         self.status = "Added animated GIF debug image".to_owned();
     }
@@ -4913,9 +4917,9 @@ impl SnappyRefApp {
             },
             asset,
         );
-        self.canvas.add_loaded_item(
+        self.canvas.add_prepared_placement_image(
             ctx,
-            crate::jobs::LoadedCanvasItem {
+            crate::jobs::PreparedPlacementImage {
                 target_board_id: self.active_board_id,
                 queue_id: None,
                 record,
@@ -4934,7 +4938,7 @@ impl SnappyRefApp {
                 trace: None,
             },
         );
-        self.canvas.select_items(&[-60]);
+        self.canvas.select_placements(&[-60]);
         self.status = "Added SVG debug image".to_owned();
     }
 
@@ -4973,7 +4977,7 @@ impl SnappyRefApp {
 
         match (left_result, top_result, moving_result) {
             (Ok(_), Ok(_), Ok(item_id)) => {
-                self.canvas.select_items(&[item_id]);
+                self.canvas.select_placements(&[item_id]);
                 let screen_rect =
                     egui::Rect::from_min_size(egui::Pos2::ZERO, STARTUP_VIEWPORT_SIZE);
                 if self
@@ -5060,7 +5064,7 @@ impl SnappyRefApp {
                 Some((width, height)),
                 desired_world,
                 viewport_world,
-                crate::data::PlacementContentIntent::Unknown {
+                crate::data::ContentResolutionSource::Unknown {
                     description: "Import verification placeholder".to_owned(),
                 },
             );
@@ -5100,7 +5104,7 @@ impl SnappyRefApp {
                 Some((width, height)),
                 desired_world,
                 viewport_world,
-                crate::data::PlacementContentIntent::Clipboard,
+                crate::data::ContentResolutionSource::Clipboard,
             );
             let rgba = Self::solid_rgba(width, height, color);
             let enqueue_result = self.import_worker.as_ref().and_then(|import_worker| {
@@ -5205,7 +5209,7 @@ impl SnappyRefApp {
             [188, 146, 255, 255],
         ) {
             Ok(item_id) => {
-                self.canvas.select_items(&[item_id]);
+                self.canvas.select_placements(&[item_id]);
                 if let Some(payload) = self.copy_selected_board_payload()
                     && let Err(error) =
                         self.paste_board_payload_at(&payload, egui::pos2(360.0, 140.0))
@@ -5245,7 +5249,7 @@ impl SnappyRefApp {
             Some((width, height)),
             desired_world,
             viewport_world,
-            crate::data::PlacementContentIntent::Clipboard,
+            crate::data::ContentResolutionSource::Clipboard,
         );
         let rgba = Self::solid_rgba(width, height, color);
         if let Err(error) = self
@@ -5522,7 +5526,7 @@ impl SnappyRefApp {
         drop_request: crate::search::SearchDropRequest,
         screen_rect: egui::Rect,
     ) {
-        if drop_request.item_ids.is_empty() && drop_request.asset_ids.is_empty() {
+        if drop_request.placement_ids.is_empty() && drop_request.asset_ids.is_empty() {
             return;
         }
 
@@ -5539,9 +5543,9 @@ impl SnappyRefApp {
             &library,
             &mut self.canvas,
             crate::placement::lifecycle::CommitSearchProvisionalRequest {
-                item_ids: drop_request.item_ids,
+                placement_ids: drop_request.placement_ids,
                 asset_ids: drop_request.asset_ids,
-                provisional_item_ids: drop_request.provisional_item_ids,
+                provisional_placement_ids: drop_request.provisional_placement_ids,
                 fallback_world,
             },
             placement_settings,
@@ -5556,7 +5560,7 @@ impl SnappyRefApp {
         for record in &committed.load_existing_records {
             if let Some(import_worker) = &self.import_worker {
                 if let Err(error) =
-                    import_worker.enqueue(crate::jobs::ImportRequest::LoadExisting {
+                    import_worker.enqueue(crate::jobs::ImagePreparationRequest::LoadExisting {
                         target_board_id: self.active_board_id,
                         queue_id: None,
                         record: record.clone(),
@@ -5586,10 +5590,10 @@ impl SnappyRefApp {
                     None,
                     self.wgpu_render_state.as_ref(),
                 ) {
-                    crate::jobs::ImportResult::Loaded(loaded) => {
+                    crate::jobs::ImagePreparationResult::Loaded(loaded) => {
                         self.integrate_loaded_import(ctx, loaded);
                     }
-                    crate::jobs::ImportResult::Failed { error, .. } => {
+                    crate::jobs::ImagePreparationResult::Failed { error, .. } => {
                         self.status = error;
                         return;
                     }
@@ -5598,7 +5602,7 @@ impl SnappyRefApp {
             }
         }
 
-        if !committed.added_item_ids.is_empty() {
+        if !committed.added_placement_ids.is_empty() {
             self.persist_canvas_changes();
             self.refresh_board_summaries();
         }
@@ -5610,11 +5614,11 @@ impl SnappyRefApp {
 
     #[cfg(feature = "semantic-search")]
     #[cfg_attr(not(test), allow(dead_code))]
-    fn source_center_for_item_ids(&self, item_ids: &[i64]) -> Option<egui::Pos2> {
+    fn source_center_for_placement_ids(&self, placement_ids: &[i64]) -> Option<egui::Pos2> {
         source_center_for_records(
-            &item_ids
+            &placement_ids
                 .iter()
-                .filter_map(|item_id| self.canvas.record_for_item_id(*item_id))
+                .filter_map(|item_id| self.canvas.placement_for_id(*item_id))
                 .collect::<Vec<_>>(),
         )
     }
@@ -6195,8 +6199,8 @@ impl crate::active_board::load::ActiveBoardLoadHost for SnappyRefApp {
         SnappyRefApp::load_session_viewport(self);
     }
 
-    fn restore_active_board_import_placeholders(&mut self) {
-        SnappyRefApp::restore_active_board_import_placeholders(self);
+    fn restore_active_board_import_previews(&mut self) {
+        SnappyRefApp::restore_active_board_import_previews(self);
     }
 
     fn enqueue_active_board_existing_items(&mut self) {

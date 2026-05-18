@@ -6,8 +6,8 @@ use crate::library::storage::Library;
 
 use super::preview_texture::build_preview_texture;
 use super::{
-    CanvasImageSettings, CroppedCanvasItem, INTERACTIVE_CROP_PREVIEW_MAX_SIDE, ImportResult,
-    animated_preview_max_side, original_mime_type_is_svg,
+    CanvasImageSettings, INTERACTIVE_CROP_PREVIEW_MAX_SIDE, ImagePreparationResult,
+    PreparedCropPreview, animated_preview_max_side, original_mime_type_is_svg,
 };
 
 pub(super) fn crop_item(
@@ -16,10 +16,10 @@ pub(super) fn crop_item(
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> ImportResult {
+) -> ImagePreparationResult {
     let source_context = request.source_asset.original_path.display().to_string();
     if original_mime_type_is_svg(&request.source_asset.mime_type) {
-        return ImportResult::Failed {
+        return ImagePreparationResult::Failed {
             target_board_id: None,
             queue_id: None,
             placement_id: None,
@@ -32,7 +32,7 @@ pub(super) fn crop_item(
     let decoded = match decode_image_file(&request.source_asset.original_path) {
         Ok(decoded) => decoded,
         Err(error) => {
-            return ImportResult::Failed {
+            return ImagePreparationResult::Failed {
                 target_board_id: None,
                 queue_id: None,
                 placement_id: None,
@@ -45,7 +45,7 @@ pub(super) fn crop_item(
     let image = match RgbaImage::from_vec(decoded.width, decoded.height, decoded.rgba) {
         Some(image) => image,
         None => {
-            return ImportResult::Failed {
+            return ImagePreparationResult::Failed {
                 target_board_id: None,
                 queue_id: None,
                 placement_id: None,
@@ -80,7 +80,7 @@ pub(super) fn crop_item(
     ) {
         Ok(path) => path,
         Err(error) => {
-            return ImportResult::Failed {
+            return ImagePreparationResult::Failed {
                 target_board_id: None,
                 queue_id: None,
                 placement_id: None,
@@ -95,7 +95,7 @@ pub(super) fn crop_item(
         Ok(metadata) => metadata.len(),
         Err(error) => {
             let _ = std::fs::remove_file(&stored_path);
-            return ImportResult::Failed {
+            return ImagePreparationResult::Failed {
                 target_board_id: None,
                 queue_id: None,
                 placement_id: None,
@@ -116,7 +116,7 @@ pub(super) fn crop_item(
         Ok(preview) => preview,
         Err(error) => {
             let _ = std::fs::remove_file(&stored_path);
-            return ImportResult::Failed {
+            return ImagePreparationResult::Failed {
                 target_board_id: None,
                 queue_id: None,
                 placement_id: None,
@@ -130,7 +130,7 @@ pub(super) fn crop_item(
         Ok(preview_texture) => preview_texture,
         Err(error) => {
             let _ = std::fs::remove_file(&stored_path);
-            return ImportResult::Failed {
+            return ImagePreparationResult::Failed {
                 target_board_id: None,
                 queue_id: None,
                 placement_id: None,
@@ -140,7 +140,7 @@ pub(super) fn crop_item(
             };
         }
     };
-    ImportResult::Cropped(CroppedCanvasItem {
+    ImagePreparationResult::Cropped(PreparedCropPreview {
         item_id: request.item_id,
         stored_path,
         width,

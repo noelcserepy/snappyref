@@ -36,18 +36,18 @@ pub enum PlacementContent {
         asset_id: i64,
     },
     Loading {
-        intent: PlacementContentIntent,
+        intent: ContentResolutionSource,
         status_message: Option<String>,
     },
     Failed {
-        intent: Option<PlacementContentIntent>,
+        intent: Option<ContentResolutionSource>,
         message: String,
         recoverable: bool,
     },
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
-pub enum PlacementContentIntent {
+pub enum ContentResolutionSource {
     ExternalPath { path: String },
     ExternalUrl { url: String },
     Clipboard,

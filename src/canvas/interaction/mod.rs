@@ -252,7 +252,7 @@ pub(super) fn handle_input(
                         if state.interaction.editing_text_annotation_id.is_some() {
                             state.finish_textbox_edit();
                         }
-                        state.document.selected_item_ids.clear();
+                        state.document.selected_placement_ids.clear();
                         state.document.selected_annotation_ids = vec![annotation_id];
                         begin_annotation_drag(state, rect, annotation_id, pointer_pos);
                         state.interaction.image_transform_state = None;
@@ -451,14 +451,14 @@ pub(super) fn handle_input(
                 pointer_start_screen,
                 group_center_world,
                 starting_items,
-                item_ids,
+                placement_ids,
                 ..
             } => {
                 let raw_factor = image_drag_scale_factor(pointer_start_screen, pointer_pos);
                 let factor = compute_uniform_scale_snap_preview(
                     state,
                     rect,
-                    &item_ids,
+                    &placement_ids,
                     group_center_world,
                     &starting_items,
                     raw_factor,
@@ -475,7 +475,7 @@ pub(super) fn handle_input(
                 }
             }
             ImageTransformState::Rotating {
-                item_ids: _,
+                placement_ids: _,
                 center_screen,
                 center_world,
                 start_pointer_angle,
@@ -536,13 +536,13 @@ pub(super) fn handle_input(
         } else if let Some(transform_state) = state.interaction.image_transform_state.take() {
             match transform_state {
                 ImageTransformState::Resizing { item_id, .. } => state.mark_dirty(item_id),
-                ImageTransformState::Scaling { item_ids, .. } => {
-                    for item_id in item_ids {
+                ImageTransformState::Scaling { placement_ids, .. } => {
+                    for item_id in placement_ids {
                         state.mark_dirty(item_id);
                     }
                 }
-                ImageTransformState::Rotating { item_ids, .. } => {
-                    for item_id in item_ids {
+                ImageTransformState::Rotating { placement_ids, .. } => {
+                    for item_id in placement_ids {
                         state.mark_dirty(item_id);
                     }
                 }
@@ -690,7 +690,7 @@ mod tests {
         CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
         CanvasStrokeWidth, CanvasTextSize, ImageAsset, Placement, PlacementState,
     };
-    use crate::jobs::{ImportOrigin, ImportedPreviewTexture, LoadedCanvasItem};
+    use crate::jobs::{ImportOrigin, ImportedPreviewTexture, PreparedPlacementImage};
     use crate::placement::movement::{compute_drag_snap_preview, layout_bounds_with_offset};
     use eframe::egui;
     use std::path::PathBuf;
@@ -701,7 +701,7 @@ mod tests {
         let mut canvas = CanvasState::default();
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 80);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(120.0, 0.0), 100, 80);
-        canvas.select_items(&[1, 2]);
+        canvas.select_placements(&[1, 2]);
         let screen_rect = test_screen_rect();
         let selection_rect = canvas.selection_screen_rect(screen_rect).unwrap();
 
@@ -747,7 +747,7 @@ mod tests {
         let mut canvas = CanvasState::default();
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 80);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(120.0, 0.0), 100, 80);
-        canvas.select_items(&[1, 2]);
+        canvas.select_placements(&[1, 2]);
         let _ = canvas.set_image_rotation(1, std::f32::consts::FRAC_PI_2);
         let _ = canvas.set_image_rotation(2, std::f32::consts::FRAC_PI_2);
         let screen_rect = test_screen_rect();
@@ -770,7 +770,7 @@ mod tests {
         let mut canvas = CanvasState::default();
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 80);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(120.0, 0.0), 100, 80);
-        canvas.select_items(&[1, 2]);
+        canvas.select_placements(&[1, 2]);
         let screen_rect = test_screen_rect();
         let (_, handle_pos) =
             selected_image_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
@@ -780,10 +780,10 @@ mod tests {
         assert!(matches!(
             canvas.interaction.image_transform_state,
             Some(ImageTransformState::Rotating {
-                ref item_ids,
+                ref placement_ids,
                 ref starting_items,
                 ..
-            }) if item_ids == &vec![1, 2] && starting_items.len() == 2
+            }) if placement_ids == &vec![1, 2] && starting_items.len() == 2
         ));
     }
 
@@ -833,18 +833,18 @@ mod tests {
         let mut canvas = CanvasState::default();
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(-100.0, 0.0), 100, 80);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(100.0, 0.0), 100, 80);
-        canvas.select_items(&[1, 2]);
+        canvas.select_placements(&[1, 2]);
 
         begin_image_drag_scale(&mut canvas, test_screen_rect(), 1, egui::pos2(380.0, 360.0));
 
         assert!(matches!(
             canvas.interaction.image_transform_state,
             Some(ImageTransformState::Scaling {
-                ref item_ids,
+                ref placement_ids,
                 group_center_world,
                 ref starting_items,
                 ..
-            }) if item_ids == &vec![1, 2]
+            }) if placement_ids == &vec![1, 2]
                 && group_center_world == egui::pos2(0.0, 0.0)
                 && starting_items.len() == 2
         ));
@@ -857,7 +857,7 @@ mod tests {
         canvas.set_layout_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(174.0, 0.0), 100, 100);
-        canvas.select_items(&[1]);
+        canvas.select_placements(&[1]);
 
         let starting_items = vec![super::ImageScaleStart {
             item_id: 1,
@@ -888,7 +888,7 @@ mod tests {
         canvas.set_layout_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 180, 140);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(0.0, 0.0), 180, 140);
-        canvas.select_items(&[2]);
+        canvas.select_placements(&[2]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -921,7 +921,7 @@ mod tests {
         let mut canvas = CanvasState::default();
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 180, 140);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(0.0, 0.0), 180, 140);
-        canvas.select_items(&[2]);
+        canvas.select_placements(&[2]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -962,7 +962,7 @@ mod tests {
             background_enabled: false,
             archived: false,
         });
-        canvas.select_items(&[2]);
+        canvas.select_placements(&[2]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -991,7 +991,7 @@ mod tests {
         canvas.set_layout_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
-        canvas.select_items(&[2]);
+        canvas.select_placements(&[2]);
 
         let rect = test_screen_rect();
         let mut drag_state = DragState {
@@ -1023,7 +1023,7 @@ mod tests {
         canvas.set_layout_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
-        canvas.select_items(&[2]);
+        canvas.select_placements(&[2]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -1052,7 +1052,7 @@ mod tests {
         canvas.set_layout_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
-        canvas.select_items(&[2]);
+        canvas.select_placements(&[2]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -1082,7 +1082,7 @@ mod tests {
         canvas.set_layout_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
-        canvas.select_items(&[2]);
+        canvas.select_placements(&[2]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -1116,7 +1116,7 @@ mod tests {
         canvas.set_layout_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(160.0, 200.0), 100, 140);
-        canvas.select_items(&[2]);
+        canvas.select_placements(&[2]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -1145,7 +1145,7 @@ mod tests {
         canvas.set_layout_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(200.0, 300.0), 100, 100);
-        canvas.select_items(&[2]);
+        canvas.select_placements(&[2]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -1175,7 +1175,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(124.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 3, egui::pos2(0.0, 260.0), 100, 100);
-        canvas.select_items(&[2]);
+        canvas.select_placements(&[2]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -1211,7 +1211,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(0.0, 124.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 3, egui::pos2(260.0, 0.0), 100, 100);
-        canvas.select_items(&[2]);
+        canvas.select_placements(&[2]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -1246,7 +1246,7 @@ mod tests {
         canvas.set_layout_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 8.0), 100, 100);
-        canvas.select_items(&[2]);
+        canvas.select_placements(&[2]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -1279,7 +1279,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 124.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(124.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 3, egui::pos2(130.0, 130.0), 100, 100);
-        canvas.select_items(&[3]);
+        canvas.select_placements(&[3]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -1311,7 +1311,7 @@ mod tests {
         canvas.set_layout_gap(0.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(160.0, 0.0), 100, 140);
-        canvas.select_items(&[2]);
+        canvas.select_placements(&[2]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -1346,7 +1346,7 @@ mod tests {
         let mut canvas = CanvasState::default();
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(7.0, 100.0), 60, 100);
-        canvas.select_items(&[2]);
+        canvas.select_placements(&[2]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -1378,7 +1378,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(210.0, -40.0), 80, 80);
         add_test_image(&mut canvas, &ctx, 3, egui::pos2(320.0, 60.0), 60, 100);
-        canvas.select_items(&[2, 3]);
+        canvas.select_placements(&[2, 3]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -1413,7 +1413,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(170.0, 90.0), 80, 80);
         add_test_image(&mut canvas, &ctx, 3, egui::pos2(280.0, 190.0), 60, 100);
-        canvas.select_items(&[2, 3]);
+        canvas.select_placements(&[2, 3]);
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
@@ -1469,9 +1469,9 @@ mod tests {
             asset,
         );
         let rgba = vec![255; width as usize * height as usize * 4];
-        canvas.add_loaded_item(
+        canvas.add_prepared_placement_image(
             ctx,
-            LoadedCanvasItem {
+            PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
                 record,

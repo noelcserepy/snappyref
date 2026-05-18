@@ -126,7 +126,7 @@ pub struct ExistingLoadDiagnostics {
 }
 
 #[derive(Clone, Debug)]
-pub enum ImportRequest {
+pub enum ImagePreparationRequest {
     ImportPath {
         target_board_id: i64,
         queue_id: u64,
@@ -197,9 +197,9 @@ pub enum ImportRequest {
 }
 
 #[derive(Debug)]
-pub enum ImportResult {
-    Loaded(LoadedCanvasItem),
-    Cropped(CroppedCanvasItem),
+pub enum ImagePreparationResult {
+    Loaded(PreparedPlacementImage),
+    Cropped(PreparedCropPreview),
     CacheLodBackfilled {
         asset_id: i64,
         lod: CanvasImageLod,
@@ -220,7 +220,7 @@ pub enum ImportResult {
 }
 
 #[derive(Debug)]
-pub struct LoadedCanvasItem {
+pub struct PreparedPlacementImage {
     pub target_board_id: i64,
     pub queue_id: Option<u64>,
     pub record: Placement,
@@ -236,7 +236,7 @@ pub struct LoadedCanvasItem {
 }
 
 #[derive(Clone, Debug)]
-pub struct CroppedCanvasItem {
+pub struct PreparedCropPreview {
     pub item_id: i64,
     pub stored_path: PathBuf,
     pub width: u32,

@@ -217,16 +217,16 @@ impl PendingPersistenceBatch {
     }
 
     fn merge_document_changes(&mut self, changes: crate::canvas::CanvasDocumentChanges) {
-        for item in changes.updated_items {
+        for item in changes.updated_placements {
             if let Some(existing) = self
                 .document_changes
-                .updated_items
+                .updated_placements
                 .iter_mut()
                 .find(|existing| existing.id == item.id)
             {
                 *existing = item;
             } else {
-                self.document_changes.updated_items.push(item);
+                self.document_changes.updated_placements.push(item);
             }
         }
         for annotation in changes.updated_annotations {
@@ -294,7 +294,7 @@ fn write_canvas_document_changes(
         last_error = Some(error);
     }
 
-    for item in changes.updated_items {
+    for item in changes.updated_placements {
         if let Err(error) = library.update_placement_state(&item) {
             last_error = Some(error);
         }
@@ -397,7 +397,7 @@ mod tests {
         record.state.center.x = 42.0;
         record.state.center.y = 64.0;
         let changes = crate::canvas::CanvasDocumentChanges {
-            updated_items: vec![record.state.clone()],
+            updated_placements: vec![record.state.clone()],
             ..Default::default()
         };
         let mut persistence = DocumentPersistence::queued(library.clone());
@@ -440,7 +440,7 @@ mod tests {
         record.state.center.x = 10.0;
         persistence
             .enqueue_canvas_document_changes_for_test(crate::canvas::CanvasDocumentChanges {
-                updated_items: vec![record.state.clone()],
+                updated_placements: vec![record.state.clone()],
                 ..Default::default()
             })
             .unwrap();
@@ -448,7 +448,7 @@ mod tests {
         record.state.center.y = 40.0;
         persistence
             .enqueue_canvas_document_changes_for_test(crate::canvas::CanvasDocumentChanges {
-                updated_items: vec![record.state.clone()],
+                updated_placements: vec![record.state.clone()],
                 ..Default::default()
             })
             .unwrap();

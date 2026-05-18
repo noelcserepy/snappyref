@@ -38,8 +38,8 @@ fn external_image_for_selection(
     canvas: &CanvasState,
     library: Option<&Library>,
 ) -> Result<Option<ExternalClipboardImage>, String> {
-    let selected_item_ids = canvas.selected_item_ids();
-    if selected_item_ids.len() != 1 || !canvas.selected_annotation_ids().is_empty() {
+    let selected_placement_ids = canvas.selected_placement_ids();
+    if selected_placement_ids.len() != 1 || !canvas.selected_annotation_ids().is_empty() {
         return Ok(None);
     }
 
@@ -47,7 +47,7 @@ fn external_image_for_selection(
         return Ok(None);
     };
     let record = canvas
-        .record_for_item_id(selected_item_ids[0])
+        .placement_for_id(selected_placement_ids[0])
         .ok_or_else(|| "missing selected placement".to_owned())?;
     let byte_len = external_image_byte_len(
         record.asset.as_ref().expect("loaded placement asset").width,
@@ -223,8 +223,8 @@ mod tests {
             .unwrap();
         let item_id = record.state.id;
         let mut canvas = crate::canvas::CanvasState::default();
-        canvas.add_loaded_item(&ctx, loaded_item(record, rgba.clone(), 2, 1));
-        canvas.select_items(&[item_id]);
+        canvas.add_prepared_placement_image(&ctx, loaded_item(record, rgba.clone(), 2, 1));
+        canvas.select_placements(&[item_id]);
 
         let payload = build_selection_copy_payload(&canvas, Some(&library))
             .unwrap()
@@ -250,7 +250,7 @@ mod tests {
     fn mixed_selection_copies_metadata_only() {
         let ctx = eframe::egui::Context::default();
         let mut canvas = crate::canvas::CanvasState::default();
-        canvas.add_loaded_item(
+        canvas.add_prepared_placement_image(
             &ctx,
             loaded_item(test_record(1, 1), vec![255, 255, 255, 255], 1, 1),
         );
@@ -292,8 +292,11 @@ mod tests {
             .expect("loaded placement asset")
             .height = 20_000;
         record.visual_size = eframe::egui::vec2(20_000.0, 20_000.0);
-        canvas.add_loaded_item(&ctx, loaded_item(record, vec![255, 255, 255, 255], 1, 1));
-        canvas.select_items(&[1]);
+        canvas.add_prepared_placement_image(
+            &ctx,
+            loaded_item(record, vec![255, 255, 255, 255], 1, 1),
+        );
+        canvas.select_placements(&[1]);
 
         let payload = build_selection_copy_payload(&canvas, Some(&library))
             .unwrap()
@@ -316,8 +319,11 @@ mod tests {
             .mime_type = "image/svg+xml".to_owned();
 
         let mut canvas = crate::canvas::CanvasState::default();
-        canvas.add_loaded_item(&ctx, loaded_item(record, vec![255, 255, 255, 255], 1, 1));
-        canvas.select_items(&[1]);
+        canvas.add_prepared_placement_image(
+            &ctx,
+            loaded_item(record, vec![255, 255, 255, 255], 1, 1),
+        );
+        canvas.select_placements(&[1]);
 
         let payload = build_selection_copy_payload(&canvas, Some(&library))
             .unwrap()
@@ -332,8 +338,8 @@ mod tests {
         preview_rgba: Vec<u8>,
         preview_width: u32,
         preview_height: u32,
-    ) -> crate::jobs::LoadedCanvasItem {
-        crate::jobs::LoadedCanvasItem {
+    ) -> crate::jobs::PreparedPlacementImage {
+        crate::jobs::PreparedPlacementImage {
             target_board_id: 1,
             queue_id: None,
             record,

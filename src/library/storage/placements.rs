@@ -65,9 +65,9 @@ fn decode_placement_content(state: &str, payload: Option<&str>, asset_id: i64) -
             } => {
                 let resumable = matches!(
                     intent,
-                    PlacementContentIntent::ExternalPath { .. }
-                        | PlacementContentIntent::ExternalUrl { .. }
-                        | PlacementContentIntent::SearchAsset { .. }
+                    ContentResolutionSource::ExternalPath { .. }
+                        | ContentResolutionSource::ExternalUrl { .. }
+                        | ContentResolutionSource::SearchAsset { .. }
                 );
                 if resumable {
                     PlacementContent::Loading {
@@ -343,7 +343,7 @@ impl Library {
         initial_scale: f32,
         visual_width: f32,
         visual_height: f32,
-        intent: PlacementContentIntent,
+        intent: ContentResolutionSource,
         status_message: Option<String>,
     ) -> Result<Placement, String> {
         self.persist_committed_unloaded_placement(
@@ -365,7 +365,7 @@ impl Library {
         initial_scale: f32,
         visual_width: f32,
         visual_height: f32,
-        intent: Option<PlacementContentIntent>,
+        intent: Option<ContentResolutionSource>,
         message: String,
         recoverable: bool,
     ) -> Result<Placement, String> {
@@ -651,8 +651,8 @@ impl Library {
         Ok(())
     }
 
-    pub fn archive_placements(&self, item_ids: &[i64]) -> Result<(), String> {
-        if item_ids.is_empty() {
+    pub fn archive_placements(&self, placement_ids: &[i64]) -> Result<(), String> {
+        if placement_ids.is_empty() {
             return Ok(());
         }
 
@@ -661,7 +661,7 @@ impl Library {
             .transaction()
             .map_err(|error| format!("failed to start archive transaction: {error}"))?;
 
-        for item_id in item_ids {
+        for item_id in placement_ids {
             transaction
                 .execute(
                     "UPDATE board_items SET archived = 1 WHERE id = ?1",
@@ -687,8 +687,8 @@ impl Library {
         Ok(())
     }
 
-    pub fn restore_placements(&self, item_ids: &[i64]) -> Result<(), String> {
-        if item_ids.is_empty() {
+    pub fn restore_placements(&self, placement_ids: &[i64]) -> Result<(), String> {
+        if placement_ids.is_empty() {
             return Ok(());
         }
 
@@ -698,7 +698,7 @@ impl Library {
             .transaction()
             .map_err(|error| format!("failed to start restore transaction: {error}"))?;
 
-        for item_id in item_ids {
+        for item_id in placement_ids {
             transaction
                 .execute(
                     "UPDATE board_items
@@ -724,11 +724,11 @@ impl Library {
 
     pub fn duplicate_placements(
         &self,
-        item_ids: &[i64],
+        placement_ids: &[i64],
         anchor_world: egui::Pos2,
         source_center_world: egui::Pos2,
     ) -> Result<Vec<Placement>, String> {
-        if item_ids.is_empty() {
+        if placement_ids.is_empty() {
             return Ok(Vec::new());
         }
 
@@ -762,7 +762,7 @@ impl Library {
             .map_err(|error| format!("failed to prepare duplicate-item query: {error}"))?;
 
         let mut source_records = Vec::new();
-        for item_id in item_ids {
+        for item_id in placement_ids {
             let record = statement
                 .query_row(params![item_id, active_board_id], |row| {
                     let item = PlacementState {

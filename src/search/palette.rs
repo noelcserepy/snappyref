@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use crate::search::semantic::{SearchResultGroup, SearchScope};
+use crate::search::semantic::{SearchResultAssetEntry, SearchScope};
 
 pub(crate) const SEARCH_DEBOUNCE_MS: f32 = 120.0;
 pub(crate) const SEARCH_OVERLAY_TOP_MARGIN: f32 = 56.0;
@@ -30,7 +30,7 @@ pub(crate) struct SearchOverlayState {
     pub active_recent_search_index: usize,
     pub drag_state: Option<SearchResultDragState>,
     pub last_expanded_overlay_rect: Option<egui::Rect>,
-    pub results: Vec<SearchResultGroup>,
+    pub results: Vec<SearchResultAssetEntry>,
     pub asset_preview_cache: HashMap<i64, SearchAssetPreviewEntry>,
     pub result_limit: usize,
     pub has_more_results: bool,
@@ -165,7 +165,7 @@ impl SearchSelection {
 
 #[derive(Clone, Debug)]
 pub(crate) struct SearchResultDragState {
-    pub item_ids: Vec<i64>,
+    pub placement_ids: Vec<i64>,
     pub asset_ids: Vec<i64>,
     pub outside_overlay: bool,
     pub placement_pending: bool,
@@ -228,7 +228,7 @@ pub(crate) fn search_result_grid_content_height(result_count: usize, columns: us
 pub(crate) fn search_result_tile(
     ui: &mut egui::Ui,
     canvas: &crate::canvas::CanvasState,
-    group: &SearchResultGroup,
+    group: &SearchResultAssetEntry,
     asset_preview_cache: &mut HashMap<i64, SearchAssetPreviewEntry>,
     _lead: bool,
     selected: bool,
@@ -250,7 +250,7 @@ pub(crate) fn search_result_tile(
     ui.painter()
         .rect_filled(preview_rect, tile_radius, crate::ui::theme::SURFACE);
 
-    if let Some(item_id) = group.item_ids.first().copied()
+    if let Some(item_id) = group.placement_ids.first().copied()
         && let Some(preview) = canvas.preview_for_item_id(item_id)
     {
         paint_texture_cover(ui, preview_rect, preview.texture_id, preview.texture_size);

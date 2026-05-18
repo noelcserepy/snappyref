@@ -265,7 +265,7 @@ fn paint_canvas_items_interleaved(
         .unwrap_or_else(|| painter.ctx().input(|input| input.time as f32));
     let pointer_hover_pos = painter.ctx().input(|input| input.pointer.hover_pos());
     let mut next_animation_repaint = None;
-    let mut visible_item_ids = Vec::new();
+    let mut visible_placement_ids = Vec::new();
 
     for item in state.ordered_canvas_items_back_to_front() {
         match item {
@@ -279,7 +279,7 @@ fn paint_canvas_items_interleaved(
                 }
                 metrics.visible_images += 1;
                 metrics.fallback_images += 1;
-                visible_item_ids.push(item_id);
+                visible_placement_ids.push(item_id);
 
                 let animation_active = state.is_selected(item_id)
                     || pointer_hover_pos.is_some_and(|pos| image_rect.contains(pos));
@@ -337,7 +337,7 @@ fn paint_canvas_items_interleaved(
     }
 
     if allow_lod_promotion {
-        let promotion_requests = visible_item_ids
+        let promotion_requests = visible_placement_ids
             .iter()
             .filter_map(|item_id| {
                 desired_image_lod(state, rect, *item_id).map(|lod| (*item_id, lod))
@@ -464,7 +464,7 @@ fn paint_image_overlay(
 ) {
     if state
         .interaction
-        .search_match_item_ids
+        .search_match_placement_ids
         .contains(&image.record.state.id)
     {
         painter.rect_stroke(

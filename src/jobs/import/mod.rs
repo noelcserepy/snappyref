@@ -27,10 +27,11 @@ use preview_texture::build_preview_texture;
 pub use preview_texture::{ImportedPreviewTexture, NativeTextureHandle};
 pub(super) use request::ImportPriority;
 pub use request::{
-    CanvasImageSettings, CroppedCanvasItem, ExistingLoadDiagnostics, ExistingLoadPriority,
-    ExistingLoadSourceKind, FileImportPerfReport, ImportOrigin, ImportRequest, ImportResult,
-    ImportTimings, ImportTrace, ImportWorkerStats, InteractiveImportPerfReport, LoadedCanvasItem,
-    StartupPerfReport, StartupTraceEntry, WorkerInteractiveImportPerfReport,
+    CanvasImageSettings, ExistingLoadDiagnostics, ExistingLoadPriority, ExistingLoadSourceKind,
+    FileImportPerfReport, ImagePreparationRequest, ImagePreparationResult, ImportOrigin,
+    ImportTimings, ImportTrace, ImportWorkerStats, InteractiveImportPerfReport,
+    PreparedCropPreview, PreparedPlacementImage, StartupPerfReport, StartupTraceEntry,
+    WorkerInteractiveImportPerfReport,
 };
 
 pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA;

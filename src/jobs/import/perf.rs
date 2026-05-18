@@ -176,7 +176,7 @@ pub fn startup_trace(
             Some(trace),
             None,
         ) {
-            ImportResult::Loaded(loaded) => {
+            ImagePreparationResult::Loaded(loaded) => {
                 let diagnostics = loaded
                     .existing_load_diagnostics
                     .ok_or_else(|| "missing existing-load diagnostics".to_owned())?;
@@ -193,10 +193,10 @@ pub fn startup_trace(
                     startup_elapsed: started_at.elapsed(),
                 });
             }
-            ImportResult::Failed { error, .. } => return Err(error),
-            ImportResult::Cropped(_)
-            | ImportResult::CacheLodBackfilled { .. }
-            | ImportResult::CacheLodBackfillFailed { .. } => {}
+            ImagePreparationResult::Failed { error, .. } => return Err(error),
+            ImagePreparationResult::Cropped(_)
+            | ImagePreparationResult::CacheLodBackfilled { .. }
+            | ImagePreparationResult::CacheLodBackfillFailed { .. } => {}
         }
     }
     Ok(entries)
@@ -381,15 +381,15 @@ fn measure_first_visible_load_ms(
             None,
         );
         match loaded {
-            ImportResult::Loaded(loaded) => {
+            ImagePreparationResult::Loaded(loaded) => {
                 if record_intersects_viewport_world(&loaded.record, viewport_world) {
                     return Ok(started_at.elapsed().as_secs_f64() * 1000.0);
                 }
             }
-            ImportResult::Failed { error, .. } => return Err(error),
-            ImportResult::Cropped(_)
-            | ImportResult::CacheLodBackfilled { .. }
-            | ImportResult::CacheLodBackfillFailed { .. } => {}
+            ImagePreparationResult::Failed { error, .. } => return Err(error),
+            ImagePreparationResult::Cropped(_)
+            | ImagePreparationResult::CacheLodBackfilled { .. }
+            | ImagePreparationResult::CacheLodBackfillFailed { .. } => {}
         }
     }
     Ok(started_at.elapsed().as_secs_f64() * 1000.0)
@@ -427,11 +427,11 @@ fn measure_interactive_import_ms(
                 None,
                 None,
             ) {
-                ImportResult::Loaded(_) => {}
-                ImportResult::Failed { error, .. } => return Err(error),
-                ImportResult::Cropped(_)
-                | ImportResult::CacheLodBackfilled { .. }
-                | ImportResult::CacheLodBackfillFailed { .. } => {}
+                ImagePreparationResult::Loaded(_) => {}
+                ImagePreparationResult::Failed { error, .. } => return Err(error),
+                ImagePreparationResult::Cropped(_)
+                | ImagePreparationResult::CacheLodBackfilled { .. }
+                | ImagePreparationResult::CacheLodBackfillFailed { .. } => {}
             }
         }
         import_clipboard_sync(
@@ -462,7 +462,7 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
             PERF_BACKLOG_IMAGE_SIZE,
             PERF_BACKLOG_IMAGE_SIZE,
         )?;
-        worker.enqueue(ImportRequest::LoadExisting {
+        worker.enqueue(ImagePreparationRequest::LoadExisting {
             target_board_id: 1,
             queue_id: None,
             record: perf_record(
@@ -481,7 +481,7 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
     }
 
     let started_at = Instant::now();
-    worker.enqueue(ImportRequest::ImportClipboard {
+    worker.enqueue(ImagePreparationRequest::ImportClipboard {
         target_board_id: 1,
         queue_id: 1,
         placement_id: None,
@@ -507,11 +507,13 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
         let mut interactive_result = None;
         for result in worker.try_recv_up_to(8) {
             match result {
-                ImportResult::Loaded(loaded) if loaded.origin == ImportOrigin::Clipboard => {
+                ImagePreparationResult::Loaded(loaded)
+                    if loaded.origin == ImportOrigin::Clipboard =>
+                {
                     interactive_result = Some(Ok(started_at.elapsed().as_secs_f64() * 1000.0));
                     break;
                 }
-                ImportResult::Failed { context, error, .. } if context == "clipboard" => {
+                ImagePreparationResult::Failed { context, error, .. } if context == "clipboard" => {
                     interactive_result = Some(Err(error));
                     break;
                 }

@@ -6,11 +6,12 @@ use eframe::egui;
 use crate::canvas::CanvasState;
 use crate::data::{CanvasImageLod, Placement, WorkspaceSettings};
 use crate::jobs::{
-    CanvasImageSettings, CroppedCanvasItem, ExistingLoadPriority, ImportRequest, ImportResult,
-    ImportTimings, ImportTrace, ImportWorker, LoadedCanvasItem,
+    CanvasImageSettings, ExistingLoadPriority, ImagePreparationRequest, ImagePreparationResult,
+    ImportTimings, ImportTrace, ImportWorker, PreparedCropPreview, PreparedPlacementImage,
 };
 use crate::placement::content_resolution::{
-    FailedImportOutcome, ImportPlaceholderRemoval, LoadedImportLog, LoadedImportOutcome,
+    ContentResolutionCleanupTicket, FailedContentResolutionOutcome, LoadedContentResolutionLog,
+    LoadedContentResolutionOutcome,
 };
 
 #[derive(Default)]
@@ -20,10 +21,10 @@ pub(crate) struct ImageResidencyCoordinator {
 }
 
 #[derive(Debug)]
-pub(crate) enum ImportResultResidencyOutcome {
-    Loaded(LoadedImportOutcome),
-    Cropped(CroppedCanvasItem),
-    Failed(FailedImportOutcome),
+pub(crate) enum ImagePreparationResultResidencyOutcome {
+    Loaded(LoadedContentResolutionOutcome),
+    Cropped(PreparedCropPreview),
+    Failed(FailedContentResolutionOutcome),
     Status(Option<String>),
 }
 
@@ -42,7 +43,7 @@ impl ImageResidencyCoordinator {
         let (canvas_image_settings, target_lod) = startup_existing_image_load_settings(settings);
         for record in records {
             let item_id = record.state.id;
-            import_worker.enqueue(ImportRequest::LoadExisting {
+            import_worker.enqueue(ImagePreparationRequest::LoadExisting {
                 target_board_id: active_board_id,
                 queue_id: None,
                 record,
@@ -75,11 +76,11 @@ impl ImageResidencyCoordinator {
         import_worker: Option<&ImportWorker>,
         active_board_id: i64,
         settings: &WorkspaceSettings,
-        result: ImportResult,
-    ) -> ImportResultResidencyOutcome {
+        result: ImagePreparationResult,
+    ) -> ImagePreparationResultResidencyOutcome {
         match result {
-            ImportResult::Loaded(loaded) => {
-                ImportResultResidencyOutcome::Loaded(self.integrate_loaded_import(
+            ImagePreparationResult::Loaded(loaded) => {
+                ImagePreparationResultResidencyOutcome::Loaded(self.integrate_loaded_import(
                     ctx,
                     canvas,
                     import_worker,
@@ -88,27 +89,29 @@ impl ImageResidencyCoordinator {
                     loaded,
                 ))
             }
-            ImportResult::Cropped(cropped) => ImportResultResidencyOutcome::Cropped(cropped),
-            ImportResult::CacheLodBackfilled { asset_id, lod } => {
-                let status = self.note_backfill_completed(asset_id, lod, None);
-                ImportResultResidencyOutcome::Status(status)
+            ImagePreparationResult::Cropped(cropped) => {
+                ImagePreparationResultResidencyOutcome::Cropped(cropped)
             }
-            ImportResult::CacheLodBackfillFailed {
+            ImagePreparationResult::CacheLodBackfilled { asset_id, lod } => {
+                let status = self.note_backfill_completed(asset_id, lod, None);
+                ImagePreparationResultResidencyOutcome::Status(status)
+            }
+            ImagePreparationResult::CacheLodBackfillFailed {
                 asset_id,
                 lod,
                 error,
             } => {
                 let status = self.note_backfill_completed(asset_id, lod, Some(error));
-                ImportResultResidencyOutcome::Status(status)
+                ImagePreparationResultResidencyOutcome::Status(status)
             }
-            ImportResult::Failed {
+            ImagePreparationResult::Failed {
                 target_board_id,
                 queue_id,
                 placement_id,
                 item_id,
                 context,
                 error,
-            } => ImportResultResidencyOutcome::Failed(self.integrate_failed_import(
+            } => ImagePreparationResultResidencyOutcome::Failed(self.integrate_failed_import(
                 canvas,
                 active_board_id,
                 target_board_id,
@@ -128,12 +131,14 @@ impl ImageResidencyCoordinator {
         import_worker: Option<&ImportWorker>,
         active_board_id: i64,
         settings: &WorkspaceSettings,
-        loaded: LoadedCanvasItem,
-    ) -> LoadedImportOutcome {
-        let placeholder_removal = loaded.queue_id.map(|queue_id| ImportPlaceholderRemoval {
-            target_board_id: loaded.target_board_id,
-            queue_id,
-        });
+        loaded: PreparedPlacementImage,
+    ) -> LoadedContentResolutionOutcome {
+        let cleanup_ticket = loaded
+            .queue_id
+            .map(|queue_id| ContentResolutionCleanupTicket {
+                target_board_id: loaded.target_board_id,
+                queue_id,
+            });
         let origin = loaded.origin;
         let loaded_lod = loaded.loaded_lod;
         let loaded_record = loaded.record.clone();
@@ -141,8 +146,8 @@ impl ImageResidencyCoordinator {
         self.note_loaded_item(loaded.record.state.id);
 
         if loaded.target_board_id != active_board_id {
-            return LoadedImportOutcome {
-                placeholder_removal,
+            return LoadedContentResolutionOutcome {
+                cleanup_ticket,
                 status: Some("Imported image".to_owned()),
                 indexed_asset: None,
                 log: None,
@@ -150,13 +155,13 @@ impl ImageResidencyCoordinator {
         }
 
         if canvas
-            .record_for_item_id(loaded.record.state.id)
+            .placement_for_id(loaded.record.state.id)
             .is_some_and(|current| {
                 current.is_loaded() && current.state.asset_id != loaded.record.state.asset_id
             })
         {
-            return LoadedImportOutcome {
-                placeholder_removal,
+            return LoadedContentResolutionOutcome {
+                cleanup_ticket,
                 status: None,
                 indexed_asset: None,
                 log: None,
@@ -192,7 +197,7 @@ impl ImageResidencyCoordinator {
 
         let mut trace = loaded.trace;
         let ui_integration_started_at = Instant::now();
-        canvas.add_loaded_item(ctx, loaded);
+        canvas.add_prepared_placement_image(ctx, loaded);
         if let Some(trace) = &mut trace {
             trace.timings.ui_integration = ui_integration_started_at.elapsed();
         }
@@ -203,11 +208,11 @@ impl ImageResidencyCoordinator {
             loaded_lod,
         );
 
-        LoadedImportOutcome {
-            placeholder_removal,
+        LoadedContentResolutionOutcome {
+            cleanup_ticket,
             status: Some("Imported image".to_owned()),
             indexed_asset,
-            log: Some(LoadedImportLog {
+            log: Some(LoadedContentResolutionLog {
                 origin,
                 record: loaded_record,
                 diagnostics: existing_load_diagnostics,
@@ -233,8 +238,8 @@ impl ImageResidencyCoordinator {
         item_id: Option<i64>,
         context: String,
         error: String,
-    ) -> FailedImportOutcome {
-        let placeholder_removal = queue_id.map(|queue_id| ImportPlaceholderRemoval {
+    ) -> FailedContentResolutionOutcome {
+        let cleanup_ticket = queue_id.map(|queue_id| ContentResolutionCleanupTicket {
             target_board_id: target_board_id.unwrap_or(active_board_id),
             queue_id,
         });
@@ -242,8 +247,8 @@ impl ImageResidencyCoordinator {
         if let Some(item_id) = item_id {
             canvas.clear_crop_pending(item_id);
         }
-        FailedImportOutcome {
-            placeholder_removal,
+        FailedContentResolutionOutcome {
+            cleanup_ticket,
             placement_id,
             target_board_id,
             status: format!("{context}: {error}"),
@@ -276,7 +281,7 @@ impl ImageResidencyCoordinator {
         )) {
             return None;
         }
-        if let Err(error) = import_worker.enqueue(ImportRequest::BackfillLod {
+        if let Err(error) = import_worker.enqueue(ImagePreparationRequest::BackfillLod {
             record: record.clone(),
             canvas_image_settings: canvas_image_settings(settings),
             lod,
@@ -332,11 +337,11 @@ impl ImageResidencyCoordinator {
             {
                 continue;
             }
-            let Some(record) = canvas.record_for_item_id(item_id) else {
+            let Some(record) = canvas.placement_for_id(item_id) else {
                 continue;
             };
             self.inflight_image_lod_loads.insert(item_id, target_lod);
-            if let Err(error) = import_worker.enqueue(ImportRequest::LoadExisting {
+            if let Err(error) = import_worker.enqueue(ImagePreparationRequest::LoadExisting {
                 target_board_id: active_board_id,
                 queue_id: None,
                 record,

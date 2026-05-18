@@ -16,8 +16,8 @@ use super::arrangement::resolve_import_world;
 use super::decode::{install_prepared_canvas_cache, prepare_import_image_with_helper};
 use super::preview_texture::build_preview_texture;
 use super::{
-    CanvasImageSettings, DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImportOrigin, ImportResult,
-    ImportTrace, ImportedPreviewTexture, LoadedCanvasItem, SVG_MIME_TYPE,
+    CanvasImageSettings, DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImagePreparationResult, ImportOrigin,
+    ImportTrace, ImportedPreviewTexture, PreparedPlacementImage, SVG_MIME_TYPE,
     animated_preview_max_side, canvas_source_image_from_rgba, is_svg_path,
     original_mime_type_is_svg, parse_svg_document, read_svg_document, stable_svg_uri_key,
 };
@@ -34,7 +34,7 @@ pub fn import_path_sync(
     viewport_world: egui::Rect,
     auto_scale: bool,
     import_gap: f32,
-) -> Result<LoadedCanvasItem, String> {
+) -> Result<PreparedPlacementImage, String> {
     let target_board_id = library.load_user_session()?.active_board_id;
     import_path_sync_traced(
         library,
@@ -64,7 +64,7 @@ pub fn import_clipboard_sync(
     viewport_world: egui::Rect,
     auto_scale: bool,
     import_gap: f32,
-) -> Result<LoadedCanvasItem, String> {
+) -> Result<PreparedPlacementImage, String> {
     let target_board_id = library.load_user_session()?.active_board_id;
     import_clipboard_sync_traced(
         library,
@@ -103,7 +103,7 @@ pub(crate) fn import_path_sync_traced(
     import_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> Result<LoadedCanvasItem, String> {
+) -> Result<PreparedPlacementImage, String> {
     let worker_started_at = Instant::now();
     let mut trace = trace;
     if let Some(trace) = &mut trace {
@@ -192,7 +192,7 @@ pub(crate) fn import_path_sync_traced(
             trace.timings.worker_total = worker_started_at.elapsed();
         }
 
-        return Ok(LoadedCanvasItem {
+        return Ok(PreparedPlacementImage {
             target_board_id,
             queue_id,
             record,
@@ -294,7 +294,7 @@ pub(crate) fn import_path_sync_traced(
         trace.timings.worker_total = worker_started_at.elapsed();
     }
 
-    Ok(LoadedCanvasItem {
+    Ok(PreparedPlacementImage {
         target_board_id,
         queue_id,
         record,
@@ -324,7 +324,7 @@ fn import_svg_path_sync_traced(
     import_gap: f32,
     worker_started_at: Instant,
     mut trace: Option<ImportTrace>,
-) -> Result<LoadedCanvasItem, String> {
+) -> Result<PreparedPlacementImage, String> {
     let decode_started_at = Instant::now();
     let svg = read_svg_document(&source_path)?;
     if let Some(trace) = &mut trace {
@@ -370,7 +370,7 @@ fn import_svg_path_sync_traced(
         trace.timings.worker_total = worker_started_at.elapsed();
     }
 
-    Ok(LoadedCanvasItem {
+    Ok(PreparedPlacementImage {
         target_board_id,
         queue_id,
         record,
@@ -406,7 +406,7 @@ pub(crate) fn import_path(
     import_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> ImportResult {
+) -> ImagePreparationResult {
     match import_path_sync_traced(
         library,
         target_board_id,
@@ -424,8 +424,8 @@ pub(crate) fn import_path(
         trace,
         wgpu_render_state,
     ) {
-        Ok(loaded) => ImportResult::Loaded(loaded),
-        Err(error) => ImportResult::Failed {
+        Ok(loaded) => ImagePreparationResult::Loaded(loaded),
+        Err(error) => ImagePreparationResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
             placement_id,
@@ -452,7 +452,7 @@ pub(crate) fn import_url(
     import_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> ImportResult {
+) -> ImagePreparationResult {
     match import_url_sync_traced(
         library,
         target_board_id,
@@ -470,8 +470,8 @@ pub(crate) fn import_url(
         trace,
         wgpu_render_state,
     ) {
-        Ok(loaded) => ImportResult::Loaded(loaded),
-        Err(error) => ImportResult::Failed {
+        Ok(loaded) => ImagePreparationResult::Loaded(loaded),
+        Err(error) => ImagePreparationResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
             placement_id,
@@ -500,7 +500,7 @@ pub(crate) fn import_clipboard(
     import_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> ImportResult {
+) -> ImagePreparationResult {
     match import_clipboard_sync_traced(
         library,
         target_board_id,
@@ -520,8 +520,8 @@ pub(crate) fn import_clipboard(
         trace,
         wgpu_render_state,
     ) {
-        Ok(loaded) => ImportResult::Loaded(loaded),
-        Err(error) => ImportResult::Failed {
+        Ok(loaded) => ImagePreparationResult::Loaded(loaded),
+        Err(error) => ImagePreparationResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
             placement_id,
@@ -554,7 +554,7 @@ pub(crate) fn import_url_sync_traced(
     import_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> Result<LoadedCanvasItem, String> {
+) -> Result<PreparedPlacementImage, String> {
     let worker_started_at = Instant::now();
     let mut trace = trace;
     if let Some(trace) = &mut trace {
@@ -683,7 +683,7 @@ pub(crate) fn import_url_sync_traced(
         trace.timings.worker_total = worker_started_at.elapsed();
     }
 
-    Ok(LoadedCanvasItem {
+    Ok(PreparedPlacementImage {
         target_board_id,
         queue_id,
         record,
@@ -713,7 +713,7 @@ fn import_downloaded_svg_sync_traced(
     import_gap: f32,
     worker_started_at: Instant,
     mut trace: Option<ImportTrace>,
-) -> Result<LoadedCanvasItem, String> {
+) -> Result<PreparedPlacementImage, String> {
     let source_label = downloaded.url.as_str().to_owned();
     let decode_started_at = Instant::now();
     let svg =
@@ -755,7 +755,7 @@ fn import_downloaded_svg_sync_traced(
         trace.timings.worker_total = worker_started_at.elapsed();
     }
 
-    Ok(LoadedCanvasItem {
+    Ok(PreparedPlacementImage {
         target_board_id,
         queue_id,
         record,
@@ -793,7 +793,7 @@ pub(crate) fn import_clipboard_sync_traced(
     import_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> Result<LoadedCanvasItem, String> {
+) -> Result<PreparedPlacementImage, String> {
     let worker_started_at = Instant::now();
     let mut trace = trace;
     if let Some(trace) = &mut trace {
@@ -850,7 +850,7 @@ pub(crate) fn import_clipboard_sync_traced(
         trace.timings.worker_total = worker_started_at.elapsed();
     }
 
-    Ok(LoadedCanvasItem {
+    Ok(PreparedPlacementImage {
         target_board_id,
         queue_id: Some(queue_id),
         record,

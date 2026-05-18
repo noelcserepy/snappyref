@@ -41,13 +41,13 @@ pub(crate) struct ContentResolutionCompletion {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ImportPlaceholderRemoval {
+pub(crate) struct ContentResolutionCleanupTicket {
     pub(crate) target_board_id: i64,
     pub(crate) queue_id: u64,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct LoadedImportLog {
+pub(crate) struct LoadedContentResolutionLog {
     pub(crate) origin: ImportOrigin,
     pub(crate) record: Placement,
     pub(crate) diagnostics: Option<ExistingLoadDiagnostics>,
@@ -55,35 +55,35 @@ pub(crate) struct LoadedImportLog {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct LoadedImportOutcome {
-    pub(crate) placeholder_removal: Option<ImportPlaceholderRemoval>,
+pub(crate) struct LoadedContentResolutionOutcome {
+    pub(crate) cleanup_ticket: Option<ContentResolutionCleanupTicket>,
     pub(crate) status: Option<String>,
     pub(crate) indexed_asset: Option<(i64, PathBuf)>,
-    pub(crate) log: Option<LoadedImportLog>,
+    pub(crate) log: Option<LoadedContentResolutionLog>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct FailedImportOutcome {
-    pub(crate) placeholder_removal: Option<ImportPlaceholderRemoval>,
+pub(crate) struct FailedContentResolutionOutcome {
+    pub(crate) cleanup_ticket: Option<ContentResolutionCleanupTicket>,
     pub(crate) placement_id: Option<i64>,
     pub(crate) target_board_id: Option<i64>,
     pub(crate) status: String,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct FinishedLoadedImport {
-    pub(crate) placeholder_removal: Option<ImportPlaceholderRemoval>,
+pub(crate) struct FinishedLoadedContentResolution {
+    pub(crate) cleanup_ticket: Option<ContentResolutionCleanupTicket>,
     pub(crate) batch_target_board_id: Option<i64>,
     pub(crate) batch_queue_id: Option<u64>,
     pub(crate) loaded_placement_id: Option<i64>,
     pub(crate) status: Option<String>,
     pub(crate) indexed_asset: Option<(i64, PathBuf)>,
-    pub(crate) log: Option<LoadedImportLog>,
+    pub(crate) log: Option<LoadedContentResolutionLog>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct FinishedFailedImport {
-    pub(crate) placeholder_removal: Option<ImportPlaceholderRemoval>,
+pub(crate) struct FinishedFailedContentResolution {
+    pub(crate) cleanup_ticket: Option<ContentResolutionCleanupTicket>,
     pub(crate) batch_target_board_id: Option<i64>,
     pub(crate) batch_queue_id: Option<u64>,
     pub(crate) status: String,
@@ -163,23 +163,23 @@ impl ContentResolutionRuntime {
 
     pub(crate) fn finish_loaded_import(
         &mut self,
-        outcome: LoadedImportOutcome,
-    ) -> FinishedLoadedImport {
+        outcome: LoadedContentResolutionOutcome,
+    ) -> FinishedLoadedContentResolution {
         let target_board_id = outcome
-            .placeholder_removal
+            .cleanup_ticket
             .as_ref()
-            .map(|placeholder| placeholder.target_board_id);
+            .map(|ticket| ticket.target_board_id);
         let queue_id = outcome
-            .placeholder_removal
+            .cleanup_ticket
             .as_ref()
-            .map(|placeholder| placeholder.queue_id);
+            .map(|ticket| ticket.queue_id);
         let completion = self.resolve_completion(
             queue_id,
             target_board_id,
             outcome.log.as_ref().map(|log| log.record.state.id),
         );
-        FinishedLoadedImport {
-            placeholder_removal: outcome.placeholder_removal,
+        FinishedLoadedContentResolution {
+            cleanup_ticket: outcome.cleanup_ticket,
             batch_target_board_id: completion.target_board_id,
             batch_queue_id: completion.queue_id,
             loaded_placement_id: completion.placement_id,
@@ -194,16 +194,16 @@ impl ContentResolutionRuntime {
         library: Option<&Library>,
         canvas: &mut CanvasState,
         active_board_id: i64,
-        outcome: FailedImportOutcome,
-    ) -> FinishedFailedImport {
+        outcome: FailedContentResolutionOutcome,
+    ) -> FinishedFailedContentResolution {
         let target_board_id = outcome
-            .placeholder_removal
+            .cleanup_ticket
             .as_ref()
-            .map(|placeholder| placeholder.target_board_id);
+            .map(|ticket| ticket.target_board_id);
         let queue_id = outcome
-            .placeholder_removal
+            .cleanup_ticket
             .as_ref()
-            .map(|placeholder| placeholder.queue_id);
+            .map(|ticket| ticket.queue_id);
         let completion = self.resolve_completion(
             queue_id,
             target_board_id.or(outcome.target_board_id),
@@ -214,14 +214,14 @@ impl ContentResolutionRuntime {
             if let Ok(Some(record)) =
                 library.mark_placement_failed(failed_board_id, placement_id, outcome.status.clone())
                 && failed_board_id == active_board_id
-                && canvas.record_for_item_id(placement_id).is_some()
+                && canvas.placement_for_id(placement_id).is_some()
             {
-                canvas.add_unloaded_item(record);
-                canvas.select_items(&[placement_id]);
+                canvas.add_unresolved_placement(record);
+                canvas.select_placements(&[placement_id]);
             }
         }
-        FinishedFailedImport {
-            placeholder_removal: outcome.placeholder_removal,
+        FinishedFailedContentResolution {
+            cleanup_ticket: outcome.cleanup_ticket,
             batch_target_board_id: completion.target_board_id,
             batch_queue_id: completion.queue_id,
             status: outcome.status,
@@ -250,8 +250,8 @@ pub(crate) fn import_path_request(
     viewport_world: egui::Rect,
     config: ContentResolutionRequestConfig,
     trace: Option<crate::jobs::ImportTrace>,
-) -> crate::jobs::ImportRequest {
-    crate::jobs::ImportRequest::ImportPath {
+) -> crate::jobs::ImagePreparationRequest {
+    crate::jobs::ImagePreparationRequest::ImportPath {
         target_board_id: reservation.target_board_id,
         queue_id: reservation.queue_id,
         placement_id: reservation.placement_id,
@@ -275,8 +275,8 @@ pub(crate) fn import_url_request(
     viewport_world: egui::Rect,
     config: ContentResolutionRequestConfig,
     trace: Option<crate::jobs::ImportTrace>,
-) -> crate::jobs::ImportRequest {
-    crate::jobs::ImportRequest::ImportUrl {
+) -> crate::jobs::ImagePreparationRequest {
+    crate::jobs::ImagePreparationRequest::ImportUrl {
         target_board_id: reservation.target_board_id,
         queue_id: reservation.queue_id,
         placement_id: reservation.placement_id,
@@ -302,8 +302,8 @@ pub(crate) fn import_clipboard_request(
     viewport_world: egui::Rect,
     config: ContentResolutionRequestConfig,
     trace: Option<crate::jobs::ImportTrace>,
-) -> crate::jobs::ImportRequest {
-    crate::jobs::ImportRequest::ImportClipboard {
+) -> crate::jobs::ImagePreparationRequest {
+    crate::jobs::ImagePreparationRequest::ImportClipboard {
         target_board_id: reservation.target_board_id,
         queue_id: reservation.queue_id,
         placement_id: reservation.placement_id,
@@ -419,7 +419,7 @@ mod tests {
         );
 
         match request {
-            crate::jobs::ImportRequest::ImportPath {
+            crate::jobs::ImagePreparationRequest::ImportPath {
                 target_board_id,
                 queue_id,
                 placement_id,
@@ -455,14 +455,14 @@ mod tests {
                 1.0,
                 100.0,
                 80.0,
-                crate::data::PlacementContentIntent::Unknown {
+                crate::data::ContentResolutionSource::Unknown {
                     description: "test".to_owned(),
                 },
                 Some("Queued".to_owned()),
             )
             .unwrap();
         let mut canvas = crate::canvas::CanvasState::default();
-        canvas.add_unloaded_item(loading.clone());
+        canvas.add_unresolved_placement(loading.clone());
         let mut runtime = super::ContentResolutionRuntime::new();
         let reservation = runtime.reserve_placement(1, loading.state.id, eframe::egui::Pos2::ZERO);
 
@@ -470,8 +470,8 @@ mod tests {
             Some(&library),
             &mut canvas,
             1,
-            super::FailedImportOutcome {
-                placeholder_removal: Some(super::ImportPlaceholderRemoval {
+            super::FailedContentResolutionOutcome {
+                cleanup_ticket: Some(super::ContentResolutionCleanupTicket {
                     target_board_id: 1,
                     queue_id: reservation.queue_id,
                 }),
@@ -493,7 +493,7 @@ mod tests {
             stored.content,
             crate::data::PlacementContent::Failed { .. }
         ));
-        let canvas_record = canvas.record_for_item_id(loading.state.id).unwrap();
+        let canvas_record = canvas.placement_for_id(loading.state.id).unwrap();
         assert!(matches!(
             canvas_record.content,
             crate::data::PlacementContent::Failed { .. }

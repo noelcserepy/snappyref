@@ -4,7 +4,7 @@ use eframe::egui;
 
 use crate::canvas::CanvasState;
 use crate::data::{
-    Placement, PlacementContent, PlacementContentIntent, PlacementLifecycle, PlacementState,
+    ContentResolutionSource, Placement, PlacementContent, PlacementLifecycle, PlacementState,
 };
 use crate::library::storage::Library;
 use crate::placement::content_resolution::{
@@ -19,7 +19,7 @@ pub(crate) struct SourceIntent {
     pub(crate) label: String,
     pub(crate) dimensions: Option<(u32, u32)>,
     pub(crate) approximate_dimensions: bool,
-    pub(crate) content: PlacementContentIntent,
+    pub(crate) content: ContentResolutionSource,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -40,7 +40,7 @@ pub(crate) struct PlacementCreationSettings {
 pub(crate) struct CompletedPlacementCreationBatch {
     pub(crate) target_board_id: i64,
     pub(crate) anchor_world: egui::Pos2,
-    pub(crate) item_ids: Vec<i64>,
+    pub(crate) placement_ids: Vec<i64>,
 }
 
 #[allow(dead_code)]
@@ -73,7 +73,7 @@ struct PendingPlacementCreationBatch {
     target_board_id: i64,
     anchor_world: egui::Pos2,
     pending_queue_ids: HashSet<u64>,
-    loaded_item_ids: Vec<i64>,
+    loaded_placement_ids: Vec<i64>,
 }
 
 pub(crate) fn visual_size_for_dimensions(
@@ -187,8 +187,8 @@ pub(crate) fn create_committed_loading_placement(
         width: record.scaled_visual_size().x,
         height: record.scaled_visual_size().y,
     });
-    canvas.add_unloaded_item(record.clone());
-    canvas.select_items(&[record.state.id]);
+    canvas.add_unresolved_placement(record.clone());
+    canvas.select_placements(&[record.state.id]);
 
     Ok(CreatedLoadingPlacement {
         reservation,
@@ -222,11 +222,11 @@ pub(crate) fn create_committed_loading_placements(
             settings,
         )?);
     }
-    let item_ids = created
+    let placement_ids = created
         .iter()
         .map(|created| created.record.state.id)
         .collect::<Vec<_>>();
-    canvas.select_items(&item_ids);
+    canvas.select_placements(&placement_ids);
     Ok(created)
 }
 
@@ -287,7 +287,7 @@ pub(crate) fn create_provisional_placements(
         next_id -= 1;
     }
 
-    canvas.select_items(&provisional_ids);
+    canvas.select_placements(&provisional_ids);
     provisional_ids
 }
 
@@ -314,7 +314,7 @@ fn provisional_asset_record(
         },
         asset: None,
         content: PlacementContent::Loading {
-            intent: PlacementContentIntent::SearchAsset { asset_id },
+            intent: ContentResolutionSource::SearchAsset { asset_id },
             status_message: Some("Loading".to_owned()),
         },
         lifecycle: PlacementLifecycle::Provisional,
@@ -348,7 +348,7 @@ pub(crate) fn create_existing_asset_placements(
                 label: asset.filename.clone(),
                 dimensions: Some((asset.width, asset.height)),
                 approximate_dimensions: false,
-                content: PlacementContentIntent::SearchAsset { asset_id: asset.id },
+                content: ContentResolutionSource::SearchAsset { asset_id: asset.id },
             })
             .collect::<Vec<_>>();
         plan_source_intent_previews(canvas, &source_intents, anchor_world, screen_rect, settings)
@@ -377,7 +377,7 @@ pub(crate) fn create_existing_asset_placements(
             width: record.scaled_visual_size().x,
             height: record.scaled_visual_size().y,
         });
-        canvas.add_unloaded_item(record.clone());
+        canvas.add_unresolved_placement(record.clone());
         placements.push(CreatedLoadedPlacement {
             reservation: None,
             record,
@@ -423,7 +423,7 @@ impl PlacementCreationBatchTracker {
             target_board_id,
             anchor_world,
             pending_queue_ids: queue_ids.into_iter().collect(),
-            loaded_item_ids: Vec::new(),
+            loaded_placement_ids: Vec::new(),
         });
     }
 
@@ -443,9 +443,9 @@ impl PlacementCreationBatchTracker {
                 continue;
             }
             if let Some(item_id) = loaded_item_id
-                && !batch.loaded_item_ids.contains(&item_id)
+                && !batch.loaded_placement_ids.contains(&item_id)
             {
-                batch.loaded_item_ids.push(item_id);
+                batch.loaded_placement_ids.push(item_id);
             }
             if batch.pending_queue_ids.is_empty()
                 && target_board_id.is_none_or(|id| id == batch.target_board_id)
@@ -453,7 +453,7 @@ impl PlacementCreationBatchTracker {
                 completed_batches.push(CompletedPlacementCreationBatch {
                     target_board_id: batch.target_board_id,
                     anchor_world: batch.anchor_world,
-                    item_ids: std::mem::take(&mut batch.loaded_item_ids),
+                    placement_ids: std::mem::take(&mut batch.loaded_placement_ids),
                 });
             }
         }

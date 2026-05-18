@@ -91,12 +91,12 @@ pub(crate) fn copy_selection_to_json(
 pub(crate) fn copy_selected_board_payload(canvas: &CanvasState) -> Option<ClipboardBoardSelection> {
     let source_bounds = canvas.selected_world_bounds()?;
     let mut items = Vec::new();
-    let mut item_ids = Vec::new();
-    for item_id in canvas.selected_item_ids() {
-        let record = canvas.record_for_item_id(item_id)?;
+    let mut placement_ids = Vec::new();
+    for item_id in canvas.selected_placement_ids() {
+        let record = canvas.placement_for_id(item_id)?;
         let asset = record.asset.as_ref()?;
         let asset_id = record.state.asset_id?;
-        item_ids.push(item_id);
+        placement_ids.push(item_id);
         items.push(ClipboardPlacementState {
             asset_id,
             center_x: record.state.center.x,
@@ -132,7 +132,7 @@ pub(crate) fn copy_selected_board_payload(canvas: &CanvasState) -> Option<Clipbo
         .canvas_stack_order()
         .into_iter()
         .filter_map(|item| match item {
-            CanvasStackItem::Placement(item_id) => item_ids
+            CanvasStackItem::Placement(item_id) => placement_ids
                 .iter()
                 .position(|id| *id == item_id)
                 .map(|index| ClipboardStackEntry {
@@ -195,7 +195,7 @@ pub(crate) fn paste_board_payload_at(
     let delta = target_anchor_world - source_center;
     let mut needs_existing_reload = false;
 
-    let mut pasted_item_ids = Vec::new();
+    let mut pasted_placement_ids = Vec::new();
     for item in &payload.items {
         let record = library.create_placement_from_asset(
             item.asset_id,
@@ -204,8 +204,8 @@ pub(crate) fn paste_board_payload_at(
             item.rotation,
             item.z_index,
         )?;
-        pasted_item_ids.push(record.state.id);
-        if let Err(error) = context.canvas.add_reference_item(record) {
+        pasted_placement_ids.push(record.state.id);
+        if let Err(error) = context.canvas.add_loaded_reference_placement(record) {
             if context.import_worker_available {
                 needs_existing_reload = true;
             } else {
@@ -240,15 +240,15 @@ pub(crate) fn paste_board_payload_at(
 
     context
         .canvas
-        .select_content(&pasted_item_ids, &pasted_annotation_ids);
+        .select_content(&pasted_placement_ids, &pasted_annotation_ids);
     move_pasted_content_to_front(
         context.canvas,
-        &pasted_item_ids,
+        &pasted_placement_ids,
         &pasted_annotation_ids,
         payload,
     );
     commit_document_changes(context)?;
-    let count = pasted_item_ids.len() + pasted_annotation_ids.len();
+    let count = pasted_placement_ids.len() + pasted_annotation_ids.len();
     let noun = if count == 1 { "item" } else { "items" };
     Ok(PasteCommandOutcome {
         status: format!("Pasted {count} {noun}"),
@@ -331,7 +331,7 @@ pub(crate) fn move_selected_to_back(
 
 fn move_pasted_content_to_front(
     canvas: &mut CanvasState,
-    pasted_item_ids: &[i64],
+    pasted_placement_ids: &[i64],
     pasted_annotation_ids: &[i64],
     payload: &ClipboardBoardSelection,
 ) {
@@ -339,7 +339,7 @@ fn move_pasted_content_to_front(
     for entry in &payload.stack_order {
         match entry.kind.as_str() {
             "placement" => {
-                if let Some(item_id) = pasted_item_ids.get(entry.index) {
+                if let Some(item_id) = pasted_placement_ids.get(entry.index) {
                     pasted_stack_order.push(CanvasStackItem::Placement(*item_id));
                 }
             }
@@ -351,8 +351,8 @@ fn move_pasted_content_to_front(
             _ => {}
         }
     }
-    if pasted_stack_order.len() != pasted_item_ids.len() + pasted_annotation_ids.len() {
-        pasted_stack_order = pasted_item_ids
+    if pasted_stack_order.len() != pasted_placement_ids.len() + pasted_annotation_ids.len() {
+        pasted_stack_order = pasted_placement_ids
             .iter()
             .copied()
             .map(CanvasStackItem::Placement)

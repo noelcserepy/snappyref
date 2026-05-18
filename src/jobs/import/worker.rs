@@ -9,13 +9,14 @@ use eframe::egui;
 use crate::library::storage::Library;
 
 use super::{
-    ExistingLoadPriority, ImportPriority, ImportRequest, ImportResult, ImportWorkerStats,
-    backfill_cache_lod, crop_item, import_clipboard, import_path, import_url, load_existing,
+    ExistingLoadPriority, ImagePreparationRequest, ImagePreparationResult, ImportPriority,
+    ImportWorkerStats, backfill_cache_lod, crop_item, import_clipboard, import_path, import_url,
+    load_existing,
 };
 
 pub struct ImportWorker {
     pub(super) queue: Arc<RequestQueue>,
-    pub(super) receiver: Receiver<ImportResult>,
+    pub(super) receiver: Receiver<ImagePreparationResult>,
     pub(super) workers: Vec<JoinHandle<()>>,
 }
 
@@ -26,9 +27,9 @@ pub(crate) struct RequestQueue {
 
 #[derive(Default)]
 struct RequestQueueState {
-    startup: VecDeque<ImportRequest>,
-    interactive: VecDeque<ImportRequest>,
-    background: VecDeque<ImportRequest>,
+    startup: VecDeque<ImagePreparationRequest>,
+    interactive: VecDeque<ImagePreparationRequest>,
+    background: VecDeque<ImagePreparationRequest>,
     in_flight: usize,
     shutting_down: bool,
 }
@@ -70,7 +71,7 @@ impl ImportWorker {
         wgpu_render_state: Option<eframe::egui_wgpu::RenderState>,
         config: ImportWorkerConfig,
     ) -> Self {
-        let (result_tx, result_rx) = mpsc::channel::<ImportResult>();
+        let (result_tx, result_rx) = mpsc::channel::<ImagePreparationResult>();
         let queue = Arc::new(RequestQueue::default());
         let mut workers = Vec::with_capacity(config.total_workers());
 
@@ -83,7 +84,7 @@ impl ImportWorker {
             workers.push(thread::spawn(move || {
                 while let Some(request) = worker_queue.pop(kind) {
                     let result = match request {
-                        ImportRequest::ImportPath {
+                        ImagePreparationRequest::ImportPath {
                             target_board_id,
                             queue_id,
                             placement_id,
@@ -114,7 +115,7 @@ impl ImportWorker {
                             trace,
                             worker_render_state.as_ref(),
                         ),
-                        ImportRequest::ImportClipboard {
+                        ImagePreparationRequest::ImportClipboard {
                             target_board_id,
                             queue_id,
                             placement_id,
@@ -149,7 +150,7 @@ impl ImportWorker {
                             trace,
                             worker_render_state.as_ref(),
                         ),
-                        ImportRequest::ImportUrl {
+                        ImagePreparationRequest::ImportUrl {
                             target_board_id,
                             queue_id,
                             placement_id,
@@ -180,7 +181,7 @@ impl ImportWorker {
                             trace,
                             worker_render_state.as_ref(),
                         ),
-                        ImportRequest::Crop {
+                        ImagePreparationRequest::Crop {
                             request,
                             max_texture_side,
                             canvas_image_settings,
@@ -191,7 +192,7 @@ impl ImportWorker {
                             canvas_image_settings,
                             worker_render_state.as_ref(),
                         ),
-                        ImportRequest::LoadExisting {
+                        ImagePreparationRequest::LoadExisting {
                             target_board_id,
                             queue_id,
                             record,
@@ -211,7 +212,7 @@ impl ImportWorker {
                             trace,
                             worker_render_state.as_ref(),
                         ),
-                        ImportRequest::BackfillLod {
+                        ImagePreparationRequest::BackfillLod {
                             record,
                             canvas_image_settings,
                             lod,
@@ -236,11 +237,11 @@ impl ImportWorker {
         }
     }
 
-    pub fn enqueue(&self, request: ImportRequest) -> Result<(), String> {
+    pub fn enqueue(&self, request: ImagePreparationRequest) -> Result<(), String> {
         self.queue.push(request)
     }
 
-    pub fn try_recv_up_to(&self, limit: usize) -> Vec<ImportResult> {
+    pub fn try_recv_up_to(&self, limit: usize) -> Vec<ImagePreparationResult> {
         self.receiver.try_iter().take(limit).collect()
     }
 
@@ -259,7 +260,7 @@ impl Default for RequestQueue {
 }
 
 impl RequestQueue {
-    pub(super) fn push(&self, request: ImportRequest) -> Result<(), String> {
+    pub(super) fn push(&self, request: ImagePreparationRequest) -> Result<(), String> {
         let mut state = self.state.lock().expect("request queue poisoned");
         if state.shutting_down {
             return Err("import worker is shutting down".to_owned());
@@ -276,7 +277,7 @@ impl RequestQueue {
     }
 
     #[cfg(test)]
-    pub(super) fn try_pop_one(&self, kind: WorkerKind) -> Option<ImportRequest> {
+    pub(super) fn try_pop_one(&self, kind: WorkerKind) -> Option<ImagePreparationRequest> {
         let mut state = self.state.lock().expect("request queue poisoned");
         match kind {
             WorkerKind::General | WorkerKind::Interactive => state
@@ -297,7 +298,7 @@ impl RequestQueue {
         }
     }
 
-    fn pop(&self, kind: WorkerKind) -> Option<ImportRequest> {
+    fn pop(&self, kind: WorkerKind) -> Option<ImagePreparationRequest> {
         let mut state = self.state.lock().expect("request queue poisoned");
         loop {
             if state.shutting_down {
@@ -417,18 +418,18 @@ impl Drop for ImportWorker {
     }
 }
 
-impl ImportRequest {
+impl ImagePreparationRequest {
     fn priority(&self) -> ImportPriority {
         match self {
-            ImportRequest::LoadExisting { priority, .. } => match priority {
+            ImagePreparationRequest::LoadExisting { priority, .. } => match priority {
                 ExistingLoadPriority::Startup => ImportPriority::Startup,
                 ExistingLoadPriority::Background => ImportPriority::Background,
             },
-            ImportRequest::BackfillLod { .. } => ImportPriority::Background,
-            ImportRequest::ImportPath { .. }
-            | ImportRequest::ImportClipboard { .. }
-            | ImportRequest::ImportUrl { .. }
-            | ImportRequest::Crop { .. } => ImportPriority::Interactive,
+            ImagePreparationRequest::BackfillLod { .. } => ImportPriority::Background,
+            ImagePreparationRequest::ImportPath { .. }
+            | ImagePreparationRequest::ImportClipboard { .. }
+            | ImagePreparationRequest::ImportUrl { .. }
+            | ImagePreparationRequest::Crop { .. } => ImportPriority::Interactive,
         }
     }
 
@@ -439,14 +440,16 @@ impl ImportRequest {
     /// in mixed-batch import ordering (`Crop`, `LoadExisting`, `BackfillLod`).
     fn priority_bytes(&self) -> Option<u64> {
         match self {
-            ImportRequest::ImportPath { source_path, .. } => std::fs::metadata(source_path)
-                .ok()
-                .map(|metadata| metadata.len()),
-            ImportRequest::ImportClipboard { rgba, .. } => Some(rgba.len() as u64),
-            ImportRequest::ImportUrl { .. }
-            | ImportRequest::Crop { .. }
-            | ImportRequest::LoadExisting { .. }
-            | ImportRequest::BackfillLod { .. } => None,
+            ImagePreparationRequest::ImportPath { source_path, .. } => {
+                std::fs::metadata(source_path)
+                    .ok()
+                    .map(|metadata| metadata.len())
+            }
+            ImagePreparationRequest::ImportClipboard { rgba, .. } => Some(rgba.len() as u64),
+            ImagePreparationRequest::ImportUrl { .. }
+            | ImagePreparationRequest::Crop { .. }
+            | ImagePreparationRequest::LoadExisting { .. }
+            | ImagePreparationRequest::BackfillLod { .. } => None,
         }
     }
 }
@@ -457,8 +460,8 @@ impl ImportRequest {
 /// arrival order, so canvas-placement reservations made at enqueue time stay
 /// laid out as the user dropped them.
 fn insert_interactive_sorted_by_bytes(
-    interactive: &mut VecDeque<ImportRequest>,
-    request: ImportRequest,
+    interactive: &mut VecDeque<ImagePreparationRequest>,
+    request: ImagePreparationRequest,
 ) {
     // `None` sorts to the back so we never starve known-small assets when a
     // size cannot be measured (e.g. a URL import whose payload size is not

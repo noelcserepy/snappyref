@@ -1223,7 +1223,7 @@ mod tests {
             },
             asset: None,
             content: PlacementContent::Loading {
-                intent: crate::data::PlacementContentIntent::Unknown {
+                intent: crate::data::ContentResolutionSource::Unknown {
                     description: "test".to_owned(),
                 },
                 status_message: None,

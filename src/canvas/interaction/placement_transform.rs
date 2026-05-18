@@ -37,8 +37,8 @@ pub(crate) fn begin_image_resize(
     let start_scale = image.record.state.scale;
 
     state.finish_textbox_edit();
-    state.document.selected_item_ids.clear();
-    state.document.selected_item_ids.push(item_id);
+    state.document.selected_placement_ids.clear();
+    state.document.selected_placement_ids.push(item_id);
     state.document.selected_annotation_ids.clear();
     state.interaction.drag_state = None;
     state.interaction.annotation_drag_state = None;
@@ -63,15 +63,17 @@ pub(crate) fn begin_image_drag_scale(
     if !state.is_selected(hit_item_id) {
         state.set_single_selection(hit_item_id);
     }
-    let item_ids = selected_existing_image_ids(state);
-    if item_ids.is_empty() {
+    let placement_ids = selected_existing_image_ids(state);
+    if placement_ids.is_empty() {
         return;
     }
-    let Some(selection_rect) = selected_image_screen_rect_for_items(state, rect, &item_ids) else {
+    let Some(selection_rect) =
+        selected_image_screen_rect_for_placements(state, rect, &placement_ids)
+    else {
         return;
     };
     let group_center_world = state.screen_to_world(selection_rect.center(), rect);
-    let starting_items = item_ids
+    let starting_items = placement_ids
         .iter()
         .filter_map(|item_id| {
             state
@@ -107,7 +109,7 @@ pub(crate) fn begin_image_drag_scale(
     state.interaction.annotation_draft_state = None;
     state.interaction.textbox_transform_state = None;
     state.interaction.image_transform_state = Some(ImageTransformState::Scaling {
-        item_ids,
+        placement_ids,
         pointer_start_screen: pointer_pos,
         group_center_world,
         starting_items,
@@ -119,8 +121,8 @@ pub(crate) fn begin_image_rotation(
     rect: egui::Rect,
     pointer_pos: egui::Pos2,
 ) {
-    let item_ids = selected_existing_image_ids(state);
-    if item_ids.is_empty() {
+    let placement_ids = selected_existing_image_ids(state);
+    if placement_ids.is_empty() {
         return;
     }
     let Some(selection_rect) = selected_image_rotation_screen_rect(state, rect) else {
@@ -134,7 +136,7 @@ pub(crate) fn begin_image_rotation(
     } else {
         start_pointer_delta.angle()
     };
-    let starting_items = item_ids
+    let starting_items = placement_ids
         .iter()
         .filter_map(|item_id| {
             state.image_by_item_id(*item_id).map(|image| {
@@ -155,7 +157,7 @@ pub(crate) fn begin_image_rotation(
     state.interaction.annotation_draft_state = None;
     state.interaction.textbox_transform_state = None;
     state.interaction.image_transform_state = Some(ImageTransformState::Rotating {
-        item_ids,
+        placement_ids,
         center_screen,
         center_world,
         start_pointer_angle,
@@ -163,12 +165,12 @@ pub(crate) fn begin_image_rotation(
     });
 }
 
-fn selected_image_screen_rect_for_items(
+fn selected_image_screen_rect_for_placements(
     state: &CanvasState,
     rect: egui::Rect,
-    item_ids: &[i64],
+    placement_ids: &[i64],
 ) -> Option<egui::Rect> {
-    item_ids
+    placement_ids
         .iter()
         .filter_map(|item_id| state.image_by_item_id(*item_id))
         .map(|image| image_screen_rect(state, rect, image))
@@ -253,7 +255,7 @@ fn selected_image_rotation_screen_rect(
 fn selected_existing_image_ids(state: &CanvasState) -> Vec<i64> {
     state
         .document
-        .selected_item_ids
+        .selected_placement_ids
         .iter()
         .copied()
         .filter(|item_id| state.image_by_item_id(*item_id).is_some())
@@ -264,7 +266,7 @@ fn selected_group_rotation_angle(state: &CanvasState) -> Option<f32> {
     let mut sin_sum = 0.0_f32;
     let mut cos_sum = 0.0_f32;
     let mut count = 0_usize;
-    for item_id in &state.document.selected_item_ids {
+    for item_id in &state.document.selected_placement_ids {
         let Some(image) = state.image_by_item_id(*item_id) else {
             continue;
         };
@@ -457,7 +459,7 @@ pub(crate) fn compute_resize_snap_preview(
 pub(crate) fn compute_uniform_scale_snap_preview(
     state: &mut CanvasState,
     screen_rect: egui::Rect,
-    item_ids: &[i64],
+    placement_ids: &[i64],
     group_center_world: egui::Pos2,
     starting_items: &[ImageScaleStart],
     desired_factor: f32,
@@ -467,7 +469,7 @@ pub(crate) fn compute_uniform_scale_snap_preview(
         .iter()
         .map(|item| item.min_scale / item.start_scale.max(f32::EPSILON))
         .fold(0.0, f32::max);
-    let candidates = guide_snap_candidate_rects(state, screen_rect, item_ids);
+    let candidates = guide_snap_candidate_rects(state, screen_rect, placement_ids);
     let Some(result) = super::super::guide_snap::snap_uniform_scale(
         super::super::guide_snap::GuideUniformScaleSnapRequest {
             origin: group_center_world,
@@ -496,14 +498,14 @@ pub(crate) fn compute_uniform_scale_snap_preview(
 fn guide_snap_candidate_rects(
     state: &CanvasState,
     screen_rect: egui::Rect,
-    excluded_item_ids: &[i64],
+    excluded_placement_ids: &[i64],
 ) -> Vec<super::super::guide_snap::GuideSnapCandidate> {
     let viewport = viewport_near_world_rect(state, screen_rect);
     state
         .document
         .images
         .iter()
-        .filter(|image| !excluded_item_ids.contains(&image.record.state.id))
+        .filter(|image| !excluded_placement_ids.contains(&image.record.state.id))
         .filter_map(|image| {
             let scaled_size = image.record.scaled_visual_size();
             let visual_size = super::super::rotated_visual_size(

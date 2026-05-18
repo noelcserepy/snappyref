@@ -25,7 +25,7 @@ use crate::data::{
     CanvasImageLod, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, Placement,
     PlacementLayoutItem, PlacementLifecycle, ViewportState,
 };
-use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
+use crate::jobs::{PreparedCropPreview, PreparedPlacementImage};
 
 #[derive(Clone, Copy)]
 enum StackOrderMove {
@@ -96,7 +96,11 @@ fn scale_ceil(value: u32, target: u32, source: u32) -> u32 {
 }
 
 impl CanvasState {
-    pub fn add_loaded_item(&mut self, ctx: &egui::Context, loaded: LoadedCanvasItem) {
+    pub fn add_prepared_placement_image(
+        &mut self,
+        ctx: &egui::Context,
+        loaded: PreparedPlacementImage,
+    ) {
         let animation = loaded.animated_preview.map(|animated| AnimatedCanvasImage {
             frames: animated
                 .frames
@@ -148,7 +152,7 @@ impl CanvasState {
             .sort_by_key(|image| image.record.state.z_index);
     }
 
-    pub fn add_unloaded_item(&mut self, record: Placement) {
+    pub fn add_unresolved_placement(&mut self, record: Placement) {
         self.document
             .images
             .retain(|image| image.record.state.id != record.state.id);
@@ -174,13 +178,13 @@ impl CanvasState {
 
     pub fn add_provisional_unloaded_item(&mut self, mut record: Placement) {
         record.lifecycle = PlacementLifecycle::Provisional;
-        self.add_unloaded_item(record);
+        self.add_unresolved_placement(record);
     }
 
     pub fn add_provisional_reference_item(&mut self, mut record: Placement) {
         record.lifecycle = PlacementLifecycle::Provisional;
-        if self.add_reference_item(record.clone()).is_err() {
-            self.add_unloaded_item(record);
+        if self.add_loaded_reference_placement(record.clone()).is_err() {
+            self.add_unresolved_placement(record);
         }
     }
 
@@ -194,7 +198,7 @@ impl CanvasState {
             - 1
     }
 
-    pub fn remove_provisional_items(&mut self) -> Vec<i64> {
+    pub fn remove_provisional_placements(&mut self) -> Vec<i64> {
         let ids = self
             .document
             .images
@@ -204,19 +208,19 @@ impl CanvasState {
                     .then_some(image.record.state.id)
             })
             .collect::<Vec<_>>();
-        self.delete_items(&ids)
+        self.delete_placements(&ids)
     }
 
     pub fn provisional_records_in_selection_order(&self) -> Vec<Placement> {
         self.document
-            .selected_item_ids
+            .selected_placement_ids
             .iter()
-            .filter_map(|item_id| self.record_for_item_id(*item_id))
+            .filter_map(|item_id| self.placement_for_id(*item_id))
             .filter(|record| record.lifecycle == PlacementLifecycle::Provisional)
             .collect()
     }
 
-    pub fn add_reference_item(&mut self, record: Placement) -> Result<(), String> {
+    pub fn add_loaded_reference_placement(&mut self, record: Placement) -> Result<(), String> {
         let source = self
             .document
             .images
@@ -350,7 +354,7 @@ impl CanvasState {
 
     pub fn projected_cropped_item(
         &self,
-        cropped: &CroppedCanvasItem,
+        cropped: &PreparedCropPreview,
     ) -> Result<crate::data::PlacementState, String> {
         let source_item =
             if let Some(preview) = self.render.pending_crop_previews.get(&cropped.item_id) {
@@ -444,13 +448,13 @@ impl CanvasState {
     pub fn apply_cropped_item(
         &mut self,
         ctx: &egui::Context,
-        cropped: CroppedCanvasItem,
+        cropped: PreparedCropPreview,
         asset: crate::data::ImageAsset,
         updated_item: crate::data::PlacementState,
     ) -> Result<(), String> {
         let item_id = cropped.item_id;
         let loaded_lod = cropped.loaded_lod;
-        let should_cache_pixels = self.document.selected_item_ids.contains(&item_id);
+        let should_cache_pixels = self.document.selected_placement_ids.contains(&item_id);
         let texture = canvas_texture_from_preview(
             ctx,
             format!("asset-{}-item-{}", asset.id, item_id),
@@ -527,18 +531,18 @@ impl CanvasState {
     }
 
     pub fn has_image_selection(&self) -> bool {
-        !self.document.selected_item_ids.is_empty()
+        !self.document.selected_placement_ids.is_empty()
     }
 
-    pub fn selected_item_ids(&self) -> Vec<i64> {
-        self.document.selected_item_ids.clone()
+    pub fn selected_placement_ids(&self) -> Vec<i64> {
+        self.document.selected_placement_ids.clone()
     }
 
     pub fn selected_annotation_ids(&self) -> Vec<i64> {
         self.document.selected_annotation_ids.clone()
     }
 
-    pub fn all_item_ids(&self) -> Vec<i64> {
+    pub fn all_placement_ids(&self) -> Vec<i64> {
         self.document
             .images
             .iter()
@@ -562,7 +566,7 @@ impl CanvasState {
             .cloned()
     }
 
-    pub fn record_for_item_id(&self, item_id: i64) -> Option<Placement> {
+    pub fn placement_for_id(&self, item_id: i64) -> Option<Placement> {
         self.document
             .images
             .iter()
@@ -599,15 +603,15 @@ impl CanvasState {
     }
 
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
-    pub fn set_search_matches(&mut self, item_ids: Vec<i64>, active_item_id: Option<i64>) {
-        self.interaction.search_match_item_ids = item_ids;
-        self.interaction.active_search_item_id = active_item_id;
+    pub fn set_search_matches(&mut self, placement_ids: Vec<i64>, active_item_id: Option<i64>) {
+        self.interaction.search_match_placement_ids = placement_ids;
+        self.interaction.active_search_placement_id = active_item_id;
     }
 
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn clear_search_matches(&mut self) {
-        self.interaction.search_match_item_ids.clear();
-        self.interaction.active_search_item_id = None;
+        self.interaction.search_match_placement_ids.clear();
+        self.interaction.active_search_placement_id = None;
     }
 
     pub fn focus_selection_in_view(
@@ -750,7 +754,7 @@ impl CanvasState {
 
     pub fn has_pending_crop_work(&self) -> bool {
         self.interaction.pending_crop.is_some()
-            || !self.interaction.crop_pending_item_ids.is_empty()
+            || !self.interaction.crop_pending_placement_ids.is_empty()
             || !self.render.pending_crop_previews.is_empty()
     }
 
@@ -876,8 +880,12 @@ impl CanvasState {
     }
 
     pub fn mark_crop_pending(&mut self, item_id: i64) {
-        if !self.interaction.crop_pending_item_ids.contains(&item_id) {
-            self.interaction.crop_pending_item_ids.push(item_id);
+        if !self
+            .interaction
+            .crop_pending_placement_ids
+            .contains(&item_id)
+        {
+            self.interaction.crop_pending_placement_ids.push(item_id);
         }
     }
 
@@ -892,7 +900,7 @@ impl CanvasState {
             *image = preview.image;
         }
         self.interaction
-            .crop_pending_item_ids
+            .crop_pending_placement_ids
             .retain(|pending_id| *pending_id != item_id);
     }
 
@@ -911,7 +919,7 @@ impl CanvasState {
             .iter()
             .filter(|image| {
                 self.document
-                    .selected_item_ids
+                    .selected_placement_ids
                     .contains(&image.record.state.id)
             })
             .filter_map(|image| image.record.asset.as_ref().map(|asset| asset.id))
@@ -942,7 +950,7 @@ impl CanvasState {
             self.document.selected_annotation_ids = vec![annotation_id];
             self.interaction.editing_text_annotation_id = Some(annotation_id);
             self.interaction.focus_text_editor = true;
-            self.document.selected_item_ids.clear();
+            self.document.selected_placement_ids.clear();
             self.interaction.image_transform_state = None;
             self.interaction.textbox_transform_state = None;
             self.interaction.annotation_drag_state = None;
@@ -973,7 +981,7 @@ impl CanvasState {
             return;
         };
         if record.state.archived {
-            self.delete_items(&[record.state.id]);
+            self.delete_placements(&[record.state.id]);
             return;
         }
         if let Some(image) = self.image_by_item_id_mut(record.state.id) {
@@ -982,7 +990,7 @@ impl CanvasState {
                 .images
                 .sort_by_key(|image| image.record.state.z_index);
         } else {
-            let _ = self.add_reference_item(record);
+            let _ = self.add_loaded_reference_placement(record);
         }
     }
 
@@ -1007,9 +1015,9 @@ impl CanvasState {
         self.document.images.clear();
         self.document.annotations.clear();
         self.document.stack_order.clear();
-        self.document.selected_item_ids.clear();
+        self.document.selected_placement_ids.clear();
         self.document.selected_annotation_ids.clear();
-        self.document.dirty_item_ids.clear();
+        self.document.dirty_placement_ids.clear();
         self.document.dirty_annotation_ids.clear();
         self.document.pending_archived_annotation_ids.clear();
         self.document.stack_order_dirty = false;
@@ -1020,8 +1028,8 @@ impl CanvasState {
     }
 
     pub fn take_document_changes(&mut self) -> CanvasDocumentChanges {
-        let dirty_ids = std::mem::take(&mut self.document.dirty_item_ids);
-        let updated_items = dirty_ids
+        let dirty_ids = std::mem::take(&mut self.document.dirty_placement_ids);
+        let updated_placements = dirty_ids
             .into_iter()
             .filter_map(|id| {
                 self.document
@@ -1054,7 +1062,7 @@ impl CanvasState {
         self.document.stack_order_dirty = false;
 
         CanvasDocumentChanges {
-            updated_items,
+            updated_placements,
             updated_annotations,
             archived_annotation_ids: std::mem::take(
                 &mut self.document.pending_archived_annotation_ids,
@@ -1064,9 +1072,9 @@ impl CanvasState {
     }
 
     pub fn pending_document_changes_preview(&self) -> CanvasDocumentChanges {
-        let updated_items = self
+        let updated_placements = self
             .document
-            .dirty_item_ids
+            .dirty_placement_ids
             .iter()
             .filter_map(|id| {
                 self.document
@@ -1094,7 +1102,7 @@ impl CanvasState {
             .collect();
 
         CanvasDocumentChanges {
-            updated_items,
+            updated_placements,
             updated_annotations,
             archived_annotation_ids: self.document.pending_archived_annotation_ids.clone(),
             stack_order: self
@@ -1283,9 +1291,9 @@ impl CanvasState {
     }
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub fn select_items(&mut self, item_ids: &[i64]) {
+    pub fn select_placements(&mut self, placement_ids: &[i64]) {
         self.finish_textbox_edit();
-        self.document.selected_item_ids = item_ids
+        self.document.selected_placement_ids = placement_ids
             .iter()
             .copied()
             .filter(|item_id| {
@@ -1303,9 +1311,9 @@ impl CanvasState {
         self.prune_cached_pixels_to_selected_items();
     }
 
-    pub fn select_content(&mut self, item_ids: &[i64], annotation_ids: &[i64]) {
+    pub fn select_content(&mut self, placement_ids: &[i64], annotation_ids: &[i64]) {
         self.finish_textbox_edit();
-        self.document.selected_item_ids = item_ids
+        self.document.selected_placement_ids = placement_ids
             .iter()
             .copied()
             .filter(|item_id| {
@@ -1333,15 +1341,15 @@ impl CanvasState {
     }
 
     pub fn select_all_content(&mut self) {
-        let item_ids = self.all_item_ids();
+        let placement_ids = self.all_placement_ids();
         let annotation_ids = self.all_annotation_ids();
-        self.select_content(&item_ids, &annotation_ids);
+        self.select_content(&placement_ids, &annotation_ids);
     }
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn select_single_annotation(&mut self, annotation_id: i64) {
         self.finish_textbox_edit();
-        self.document.selected_item_ids.clear();
+        self.document.selected_placement_ids.clear();
         self.document.selected_annotation_ids = vec![annotation_id];
         self.interaction.editing_text_annotation_id = None;
         self.interaction.image_transform_state = None;
@@ -1498,8 +1506,8 @@ impl CanvasState {
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn delete_selected_images(&mut self) -> Vec<i64> {
-        let selected_ids = self.document.selected_item_ids.clone();
-        self.delete_items(&selected_ids)
+        let selected_ids = self.document.selected_placement_ids.clone();
+        self.delete_placements(&selected_ids)
     }
 
     pub fn delete_selected_annotations(&mut self) -> Vec<i64> {
@@ -1514,27 +1522,27 @@ impl CanvasState {
     }
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub fn delete_items(&mut self, item_ids: &[i64]) -> Vec<i64> {
-        if item_ids.is_empty() {
+    pub fn delete_placements(&mut self, placement_ids: &[i64]) -> Vec<i64> {
+        if placement_ids.is_empty() {
             return Vec::new();
         }
 
         let mut removed_ids = Vec::new();
         self.document.images.retain(|image| {
-            let keep = !item_ids.contains(&image.record.state.id);
+            let keep = !placement_ids.contains(&image.record.state.id);
             if !keep {
                 removed_ids.push(image.record.state.id);
             }
             keep
         });
         self.document
-            .selected_item_ids
+            .selected_placement_ids
             .retain(|item_id| !removed_ids.contains(item_id));
         self.document.stack_order.retain(|item| {
             !matches!(item, CanvasStackItem::Placement(item_id) if removed_ids.contains(item_id))
         });
         self.document
-            .dirty_item_ids
+            .dirty_placement_ids
             .retain(|item_id| !removed_ids.contains(item_id));
         self.interaction.drag_state = None;
         self.interaction.image_transform_state = None;
@@ -1544,7 +1552,7 @@ impl CanvasState {
         self.interaction.crop_state = None;
         self.interaction.annotation_draft_state = None;
         self.interaction
-            .crop_pending_item_ids
+            .crop_pending_placement_ids
             .retain(|item_id| !removed_ids.contains(item_id));
         self.render
             .pending_image_lod_loads
@@ -1559,7 +1567,7 @@ impl CanvasState {
             return Vec::new();
         }
 
-        let item_ids = self
+        let placement_ids = self
             .document
             .images
             .iter()
@@ -1575,11 +1583,11 @@ impl CanvasState {
             })
             .map(|image| image.record.state.id)
             .collect::<Vec<_>>();
-        self.delete_items(&item_ids)
+        self.delete_placements(&placement_ids)
     }
 
     pub(super) fn is_selected(&self, item_id: i64) -> bool {
-        self.document.selected_item_ids.contains(&item_id)
+        self.document.selected_placement_ids.contains(&item_id)
     }
 
     pub(super) fn request_image_lod_load(&mut self, item_id: i64, lod: CanvasImageLod) {
@@ -1599,8 +1607,8 @@ impl CanvasState {
 
     pub(super) fn set_single_selection(&mut self, item_id: i64) {
         self.finish_textbox_edit();
-        self.document.selected_item_ids.clear();
-        self.document.selected_item_ids.push(item_id);
+        self.document.selected_placement_ids.clear();
+        self.document.selected_placement_ids.push(item_id);
         self.document.selected_annotation_ids.clear();
         self.interaction.editing_text_annotation_id = None;
         self.interaction.image_transform_state = None;
@@ -1611,8 +1619,8 @@ impl CanvasState {
 
     pub(super) fn add_to_selection(&mut self, item_id: i64) {
         self.finish_textbox_edit();
-        if !self.document.selected_item_ids.contains(&item_id) {
-            self.document.selected_item_ids.push(item_id);
+        if !self.document.selected_placement_ids.contains(&item_id) {
+            self.document.selected_placement_ids.push(item_id);
         }
         self.interaction.image_transform_state = None;
         self.interaction.textbox_transform_state = None;
@@ -1637,7 +1645,7 @@ impl CanvasState {
 
     pub(super) fn clear_selection(&mut self) {
         self.finish_textbox_edit();
-        self.document.selected_item_ids.clear();
+        self.document.selected_placement_ids.clear();
         self.document.selected_annotation_ids.clear();
         self.interaction.editing_text_annotation_id = None;
         self.interaction.image_transform_state = None;
@@ -1648,15 +1656,15 @@ impl CanvasState {
 
     pub(super) fn set_marquee_selection(
         &mut self,
-        item_ids: Vec<i64>,
+        placement_ids: Vec<i64>,
         annotation_ids: Vec<i64>,
         additive: bool,
     ) {
         self.finish_textbox_edit();
-        self.document.selected_item_ids = if additive {
-            merge_ids(&self.document.selected_item_ids, &item_ids)
+        self.document.selected_placement_ids = if additive {
+            merge_ids(&self.document.selected_placement_ids, &placement_ids)
         } else {
-            item_ids
+            placement_ids
         };
         self.document.selected_annotation_ids = if additive {
             merge_ids(&self.document.selected_annotation_ids, &annotation_ids)
@@ -1671,8 +1679,8 @@ impl CanvasState {
     }
 
     pub(super) fn mark_dirty(&mut self, item_id: i64) {
-        if item_id > 0 && !self.document.dirty_item_ids.contains(&item_id) {
-            self.document.dirty_item_ids.push(item_id);
+        if item_id > 0 && !self.document.dirty_placement_ids.contains(&item_id) {
+            self.document.dirty_placement_ids.push(item_id);
         }
     }
 
@@ -1854,7 +1862,7 @@ impl CanvasState {
 
     fn selected_canvas_stack_items(&self) -> Vec<CanvasStackItem> {
         self.document
-            .selected_item_ids
+            .selected_placement_ids
             .iter()
             .copied()
             .map(CanvasStackItem::Placement)
@@ -2155,7 +2163,7 @@ impl CanvasState {
             return 0;
         }
 
-        let selected_ids = self.document.selected_item_ids.clone();
+        let selected_ids = self.document.selected_placement_ids.clone();
         let mut changed = 0;
         for item_id in selected_ids {
             let Some(image) = self.image_by_item_id(item_id) else {
@@ -2205,8 +2213,8 @@ impl CanvasState {
     }
 
     pub(super) fn selected_single_image(&self) -> Option<&CanvasImage> {
-        (self.document.selected_item_ids.len() == 1)
-            .then(|| self.image_by_item_id(self.document.selected_item_ids[0]))
+        (self.document.selected_placement_ids.len() == 1)
+            .then(|| self.image_by_item_id(self.document.selected_placement_ids[0]))
             .flatten()
     }
 
@@ -2316,7 +2324,10 @@ impl CanvasState {
     }
 
     pub(super) fn can_start_crop_on_item(&self, item_id: i64) -> bool {
-        !self.interaction.crop_pending_item_ids.contains(&item_id)
+        !self
+            .interaction
+            .crop_pending_placement_ids
+            .contains(&item_id)
             && self.image_by_item_id(item_id).is_some_and(|image| {
                 !asset_mime_type_is_svg(
                     &image

@@ -1,5 +1,5 @@
 use super::{
-    CanvasImageSettings, DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImportResult, ImportTimings,
+    CanvasImageSettings, DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImagePreparationResult, ImportTimings,
     ImportTrace, ImportWorker, ImportWorkerConfig, ImportedPreviewTexture, arrange_rect_world,
     build_preview_texture, crop_item, file_import_perf_report, import_clipboard, import_path_sync,
     import_url_sync_traced, initial_import_scale, load_existing, rects_overlap_with_gap,
@@ -141,7 +141,7 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
         None,
         None,
     ) {
-        ImportResult::Loaded(loaded) => loaded,
+        ImagePreparationResult::Loaded(loaded) => loaded,
         other => panic!("expected loaded tall clipboard image, got {other:?}"),
     };
     let small = match import_clipboard(
@@ -163,7 +163,7 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
         None,
         None,
     ) {
-        ImportResult::Loaded(loaded) => loaded,
+        ImagePreparationResult::Loaded(loaded) => loaded,
         other => panic!("expected loaded small clipboard image, got {other:?}"),
     };
 
@@ -198,7 +198,7 @@ fn clipboard_import_uses_configured_target_area() {
         None,
         None,
     ) {
-        ImportResult::Loaded(loaded) => loaded,
+        ImagePreparationResult::Loaded(loaded) => loaded,
         other => panic!("expected loaded clipboard image, got {other:?}"),
     };
 
@@ -234,7 +234,7 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
         None,
         None,
     ) {
-        ImportResult::Loaded(loaded) => loaded,
+        ImagePreparationResult::Loaded(loaded) => loaded,
         other => panic!("expected target-board clipboard import to load, got {other:?}"),
     };
 
@@ -376,7 +376,7 @@ fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
         None,
         None,
     ) {
-        ImportResult::Loaded(loaded) => loaded,
+        ImagePreparationResult::Loaded(loaded) => loaded,
         other => panic!("expected first loaded image, got {other:?}"),
     };
 
@@ -399,7 +399,7 @@ fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
         None,
         None,
     ) {
-        ImportResult::Loaded(loaded) => loaded,
+        ImagePreparationResult::Loaded(loaded) => loaded,
         other => panic!("expected second loaded image, got {other:?}"),
     };
 
@@ -443,7 +443,7 @@ fn reserved_world_is_persisted_without_worker_relayout() {
         None,
         None,
     ) {
-        ImportResult::Loaded(loaded) => loaded,
+        ImagePreparationResult::Loaded(loaded) => loaded,
         other => panic!("expected reserved clipboard import to load, got {other:?}"),
     };
 
@@ -478,7 +478,7 @@ fn overlapping_reserved_world_is_preserved_when_persisting() {
         None,
         None,
     ) {
-        ImportResult::Loaded(loaded) => loaded,
+        ImagePreparationResult::Loaded(loaded) => loaded,
         other => {
             panic!("expected overlapping reserved clipboard import to load, got {other:?}")
         }
@@ -877,7 +877,7 @@ fn crop_item_rejects_svg_with_clear_error() {
     );
 
     match result {
-        ImportResult::Failed { item_id, error, .. } => {
+        ImagePreparationResult::Failed { item_id, error, .. } => {
             assert_eq!(item_id, Some(loaded.record.state.id));
             assert_eq!(error, "SVG cropping is not supported yet");
         }
@@ -914,7 +914,7 @@ fn load_existing_svg_uses_original_vector_source() {
         None,
         None,
     ) {
-        ImportResult::Loaded(loaded) => loaded,
+        ImagePreparationResult::Loaded(loaded) => loaded,
         other => panic!("expected SVG existing load, got {other:?}"),
     };
 
@@ -1022,8 +1022,8 @@ fn interactive_import_queue_breaks_ties_by_arrival_order() {
     let _ = fs::remove_dir_all(root);
 }
 
-fn make_import_path_request(source_path: PathBuf) -> super::ImportRequest {
-    super::ImportRequest::ImportPath {
+fn make_import_path_request(source_path: PathBuf) -> super::ImagePreparationRequest {
+    super::ImagePreparationRequest::ImportPath {
         target_board_id: 1,
         queue_id: 0,
         placement_id: None,
@@ -1040,9 +1040,9 @@ fn make_import_path_request(source_path: PathBuf) -> super::ImportRequest {
     }
 }
 
-fn import_path_source(request: &super::ImportRequest) -> PathBuf {
+fn import_path_source(request: &super::ImagePreparationRequest) -> PathBuf {
     match request {
-        super::ImportRequest::ImportPath { source_path, .. } => source_path.clone(),
+        super::ImagePreparationRequest::ImportPath { source_path, .. } => source_path.clone(),
         other => panic!("expected ImportPath, got {other:?}"),
     }
 }
@@ -1058,7 +1058,7 @@ fn import_worker_drains_ready_results_in_capped_batches() {
 
     for index in 0..5 {
         result_tx
-            .send(ImportResult::Failed {
+            .send(ImagePreparationResult::Failed {
                 target_board_id: None,
                 queue_id: None,
                 placement_id: None,
@@ -1130,7 +1130,7 @@ fn traced_clipboard_import_populates_non_negative_timings() {
         Some(trace),
         None,
     ) {
-        ImportResult::Loaded(loaded) => loaded,
+        ImagePreparationResult::Loaded(loaded) => loaded,
         other => panic!("expected traced clipboard import to load, got {other:?}"),
     };
 
@@ -1235,7 +1235,7 @@ fn load_existing_backfills_versioned_canvas_cache_and_prefers_it_on_second_load(
         None,
         None,
     ) {
-        ImportResult::Loaded(loaded) => loaded,
+        ImagePreparationResult::Loaded(loaded) => loaded,
         other => panic!("expected first load_existing to succeed, got {other:?}"),
     };
     let cache_path = library
@@ -1268,7 +1268,7 @@ fn load_existing_backfills_versioned_canvas_cache_and_prefers_it_on_second_load(
         None,
         None,
     ) {
-        ImportResult::Loaded(loaded) => loaded,
+        ImagePreparationResult::Loaded(loaded) => loaded,
         other => {
             panic!("expected second load_existing to use versioned canvas cache, got {other:?}")
         }
@@ -1314,7 +1314,7 @@ fn load_existing_preserves_animated_webp_in_downscale_mode() {
         None,
         None,
     ) {
-        ImportResult::Loaded(loaded) => loaded,
+        ImagePreparationResult::Loaded(loaded) => loaded,
         other => panic!("expected animated WebP load_existing to succeed, got {other:?}"),
     };
 
@@ -1376,7 +1376,7 @@ fn load_existing_backfills_new_cache_when_canvas_max_side_changes() {
         None,
         None,
     ) {
-        ImportResult::Loaded(_) => {}
+        ImagePreparationResult::Loaded(_) => {}
         other => panic!("expected first cache backfill to succeed, got {other:?}"),
     }
     let first_cache = library
@@ -1406,7 +1406,7 @@ fn load_existing_backfills_new_cache_when_canvas_max_side_changes() {
         None,
         None,
     ) {
-        ImportResult::Loaded(loaded) => loaded,
+        ImagePreparationResult::Loaded(loaded) => loaded,
         other => panic!("expected second cache backfill to succeed, got {other:?}"),
     };
     assert_eq!(second.preview_width, 1000);
@@ -1472,7 +1472,7 @@ fn downscale_mode_ignores_legacy_thumb_cache_paths() {
         None,
         None,
     ) {
-        ImportResult::Failed { .. } => {}
+        ImagePreparationResult::Failed { .. } => {}
         other => panic!("expected legacy thumb path to be ignored, got {other:?}"),
     }
 
@@ -1520,7 +1520,7 @@ fn crop_redecodes_original_path_and_preserves_exact_pixels() {
         CanvasImageSettings::default(),
         None,
     ) {
-        ImportResult::Cropped(cropped) => cropped,
+        ImagePreparationResult::Cropped(cropped) => cropped,
         other => panic!("expected cropped result, got {other:?}"),
     };
     let decoded = crate::jobs::image_formats::decode_image_file(&cropped.stored_path).unwrap();
@@ -1617,7 +1617,7 @@ fn solid_png_bytes(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
     bytes
 }
 
-fn displayed_area(loaded: &super::LoadedCanvasItem) -> f32 {
+fn displayed_area(loaded: &super::PreparedPlacementImage) -> f32 {
     loaded
         .record
         .asset

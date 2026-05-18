@@ -15,7 +15,7 @@ pub(crate) fn open_context_menu_at_pointer(
             CanvasHit::Annotation(annotation_id) => {
                 if !state.is_annotation_selected(annotation_id) {
                     state.finish_textbox_edit();
-                    state.document.selected_item_ids.clear();
+                    state.document.selected_placement_ids.clear();
                     state.document.selected_annotation_ids = vec![annotation_id];
                 }
             }

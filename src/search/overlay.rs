@@ -362,9 +362,9 @@ impl SearchController {
             && let Some(screen_pos) = pointer_pos
         {
             drop_request = Some(SearchDropRequest {
-                item_ids: drag.item_ids,
+                placement_ids: drag.placement_ids,
                 asset_ids: drag.asset_ids,
-                provisional_item_ids: canvas
+                provisional_placement_ids: canvas
                     .provisional_records_in_selection_order()
                     .into_iter()
                     .map(|record| record.state.id)
@@ -379,9 +379,9 @@ impl SearchController {
                 && let Some(screen_pos) = pointer_pos
             {
                 drop_request = Some(SearchDropRequest {
-                    item_ids: drag.item_ids,
+                    placement_ids: drag.placement_ids,
                     asset_ids: drag.asset_ids,
-                    provisional_item_ids: canvas
+                    provisional_placement_ids: canvas
                         .provisional_records_in_selection_order()
                         .into_iter()
                         .map(|record| record.state.id)

@@ -9,26 +9,26 @@ use crate::placement::creation::{
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ProvisionalPlacementBatch {
-    pub(crate) item_ids: Vec<i64>,
+    pub(crate) placement_ids: Vec<i64>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct CommitSearchProvisionalRequest {
-    pub(crate) item_ids: Vec<i64>,
+    pub(crate) placement_ids: Vec<i64>,
     pub(crate) asset_ids: Vec<i64>,
-    pub(crate) provisional_item_ids: Vec<i64>,
+    pub(crate) provisional_placement_ids: Vec<i64>,
     pub(crate) fallback_world: egui::Pos2,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct CommittedSearchProvisionalBatch {
-    pub(crate) added_item_ids: Vec<i64>,
+    pub(crate) added_placement_ids: Vec<i64>,
     pub(crate) load_existing_records: Vec<Placement>,
 }
 
 impl CommittedSearchProvisionalBatch {
     pub(crate) fn placed_count(&self) -> usize {
-        self.added_item_ids.len()
+        self.added_placement_ids.len()
     }
 }
 
@@ -41,7 +41,7 @@ pub(crate) fn start_provisional_batch(
 ) -> ProvisionalPlacementBatch {
     cancel_provisional_batch(canvas);
     ProvisionalPlacementBatch {
-        item_ids: create_provisional_placements(
+        placement_ids: create_provisional_placements(
             canvas,
             intents,
             anchor_world,
@@ -52,7 +52,7 @@ pub(crate) fn start_provisional_batch(
 }
 
 pub(crate) fn cancel_provisional_batch(canvas: &mut CanvasState) -> Vec<i64> {
-    canvas.remove_provisional_items()
+    canvas.remove_provisional_placements()
 }
 
 pub(crate) fn commit_search_provisional_batch(
@@ -61,44 +61,45 @@ pub(crate) fn commit_search_provisional_batch(
     request: CommitSearchProvisionalRequest,
     settings: PlacementCreationSettings,
 ) -> Result<CommittedSearchProvisionalBatch, String> {
-    if request.item_ids.is_empty() && request.asset_ids.is_empty() {
+    if request.placement_ids.is_empty() && request.asset_ids.is_empty() {
         return Ok(CommittedSearchProvisionalBatch {
-            added_item_ids: Vec::new(),
+            added_placement_ids: Vec::new(),
             load_existing_records: Vec::new(),
         });
     }
 
     let provisional_records = request
-        .provisional_item_ids
+        .provisional_placement_ids
         .iter()
-        .filter_map(|item_id| canvas.record_for_item_id(*item_id))
+        .filter_map(|item_id| canvas.placement_for_id(*item_id))
         .collect::<Vec<_>>();
     let drop_world =
         source_center_for_records(&provisional_records).unwrap_or(request.fallback_world);
     let source_center = source_center_for_records(
         &request
-            .item_ids
+            .placement_ids
             .iter()
-            .filter_map(|item_id| canvas.record_for_item_id(*item_id))
+            .filter_map(|item_id| canvas.placement_for_id(*item_id))
             .collect::<Vec<_>>(),
     )
     .unwrap_or(drop_world);
 
-    let duplicated = library.duplicate_placements(&request.item_ids, drop_world, source_center)?;
+    let duplicated =
+        library.duplicate_placements(&request.placement_ids, drop_world, source_center)?;
     let item_provisionals = provisional_records
         .iter()
-        .take(request.item_ids.len())
+        .take(request.placement_ids.len())
         .collect::<Vec<_>>();
 
-    let mut added_item_ids = Vec::new();
+    let mut added_placement_ids = Vec::new();
     for (index, mut record) in duplicated.into_iter().enumerate() {
         if let Some(provisional) = item_provisionals.get(index) {
             record.state.center.x = provisional.state.center.x;
             record.state.center.y = provisional.state.center.y;
             library.update_placement_state(&record.state)?;
         }
-        added_item_ids.push(record.state.id);
-        canvas.add_reference_item(record)?;
+        added_placement_ids.push(record.state.id);
+        canvas.add_loaded_reference_placement(record)?;
     }
 
     let asset_provisionals = provisional_records
@@ -133,18 +134,18 @@ pub(crate) fn commit_search_provisional_batch(
             provisional.state.rotation,
             provisional.state.z_index,
         )?;
-        added_item_ids.push(record.state.id);
-        canvas.add_unloaded_item(record.clone());
+        added_placement_ids.push(record.state.id);
+        canvas.add_unresolved_placement(record.clone());
         load_existing_records.push(record);
     }
 
-    if !added_item_ids.is_empty() {
+    if !added_placement_ids.is_empty() {
         cancel_provisional_batch(canvas);
-        canvas.select_items(&added_item_ids);
+        canvas.select_placements(&added_placement_ids);
     }
 
     Ok(CommittedSearchProvisionalBatch {
-        added_item_ids,
+        added_placement_ids,
         load_existing_records,
     })
 }
@@ -200,8 +201,8 @@ mod tests {
             },
         );
 
-        assert_eq!(batch.item_ids.len(), 1);
-        assert_eq!(canvas.selected_item_ids(), batch.item_ids);
+        assert_eq!(batch.placement_ids.len(), 1);
+        assert_eq!(canvas.selected_placement_ids(), batch.placement_ids);
         assert_eq!(canvas.provisional_records_in_selection_order().len(), 1);
     }
 
@@ -225,7 +226,7 @@ mod tests {
 
         let removed = cancel_provisional_batch(&mut canvas);
 
-        assert_eq!(removed, batch.item_ids);
+        assert_eq!(removed, batch.placement_ids);
         assert!(canvas.provisional_records_in_selection_order().is_empty());
         assert!(!canvas.take_document_changes().has_changes());
     }
@@ -260,9 +261,9 @@ mod tests {
             &library,
             &mut canvas,
             CommitSearchProvisionalRequest {
-                item_ids: Vec::new(),
+                placement_ids: Vec::new(),
                 asset_ids: vec![source.asset.as_ref().expect("loaded placement asset").id],
-                provisional_item_ids: provisional.item_ids,
+                provisional_placement_ids: provisional.placement_ids,
                 fallback_world: egui::Pos2::ZERO,
             },
             PlacementCreationSettings {
@@ -272,14 +273,17 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(committed.added_item_ids.len(), 1);
+        assert_eq!(committed.added_placement_ids.len(), 1);
         assert_eq!(committed.load_existing_records.len(), 1);
         assert!(canvas.provisional_records_in_selection_order().is_empty());
         let record = canvas
-            .record_for_item_id(committed.added_item_ids[0])
+            .placement_for_id(committed.added_placement_ids[0])
             .unwrap();
         assert_eq!(record.lifecycle, crate::data::PlacementLifecycle::Committed);
-        assert_eq!(canvas.selected_item_ids(), committed.added_item_ids);
+        assert_eq!(
+            canvas.selected_placement_ids(),
+            committed.added_placement_ids
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

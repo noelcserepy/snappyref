@@ -14,8 +14,8 @@ use crate::library::storage::Library;
 use super::decode::{install_prepared_canvas_cache, prepare_import_image_with_helper};
 use super::preview_texture::build_preview_texture;
 use super::{
-    CanvasImageSettings, ExistingLoadDiagnostics, ExistingLoadSourceKind, ImportOrigin,
-    ImportResult, ImportTrace, ImportedPreviewTexture, LoadedCanvasItem,
+    CanvasImageSettings, ExistingLoadDiagnostics, ExistingLoadSourceKind, ImagePreparationResult,
+    ImportOrigin, ImportTrace, ImportedPreviewTexture, PreparedPlacementImage,
     canvas_source_image_from_rgba, original_mime_type_is_svg,
     original_mime_type_supports_animation, read_svg_document, stable_svg_uri_key,
 };
@@ -33,7 +33,7 @@ pub(crate) fn load_existing(
     target_lod: CanvasImageLod,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> ImportResult {
+) -> ImagePreparationResult {
     let worker_started_at = Instant::now();
     let mut trace = trace;
     if let Some(trace) = &mut trace {
@@ -60,7 +60,7 @@ pub(crate) fn load_existing(
                     trace.timings.decode_or_load = decode_started_at.elapsed();
                     trace.timings.worker_total = worker_started_at.elapsed();
                 }
-                return ImportResult::Loaded(LoadedCanvasItem {
+                return ImagePreparationResult::Loaded(PreparedPlacementImage {
                     target_board_id,
                     queue_id,
                     preview_rgba: Vec::new(),
@@ -96,7 +96,7 @@ pub(crate) fn load_existing(
                 });
             }
             Err(error) => {
-                return ImportResult::Failed {
+                return ImagePreparationResult::Failed {
                     target_board_id: Some(target_board_id),
                     queue_id,
                     placement_id: None,
@@ -131,7 +131,7 @@ pub(crate) fn load_existing(
                 match build_preview_texture(wgpu_render_state, &preview) {
                     Ok(preview_texture) => preview_texture,
                     Err(error) => {
-                        return ImportResult::Failed {
+                        return ImagePreparationResult::Failed {
                             target_board_id: Some(target_board_id),
                             queue_id,
                             placement_id: None,
@@ -153,7 +153,7 @@ pub(crate) fn load_existing(
                 trace.timings.preview_prepare = preview_started_at.elapsed();
                 trace.timings.worker_total = worker_started_at.elapsed();
             }
-            ImportResult::Loaded(LoadedCanvasItem {
+            ImagePreparationResult::Loaded(PreparedPlacementImage {
                 target_board_id,
                 queue_id,
                 record,
@@ -168,7 +168,7 @@ pub(crate) fn load_existing(
                 trace,
             })
         }
-        Err(error) => ImportResult::Failed {
+        Err(error) => ImagePreparationResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id,
             placement_id: None,
@@ -578,14 +578,14 @@ pub(super) fn backfill_cache_lod(
     record: Placement,
     canvas_image_settings: CanvasImageSettings,
     lod: CanvasImageLod,
-) -> ImportResult {
+) -> ImagePreparationResult {
     let lod_settings = lod_settings(canvas_image_settings, lod);
     match backfill_canvas_image_cache(library, &record, lod_settings, lod) {
-        Ok(_) => ImportResult::CacheLodBackfilled {
+        Ok(_) => ImagePreparationResult::CacheLodBackfilled {
             asset_id: record.asset.as_ref().expect("loaded placement asset").id,
             lod,
         },
-        Err(error) => ImportResult::CacheLodBackfillFailed {
+        Err(error) => ImagePreparationResult::CacheLodBackfillFailed {
             asset_id: record.asset.as_ref().expect("loaded placement asset").id,
             lod,
             error,

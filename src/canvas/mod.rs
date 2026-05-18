@@ -100,7 +100,7 @@ pub struct CanvasFrameMetrics {
 
 #[derive(Clone, Debug, Default)]
 pub struct CanvasDocumentChanges {
-    pub updated_items: Vec<crate::data::PlacementState>,
+    pub updated_placements: Vec<crate::data::PlacementState>,
     pub updated_annotations: Vec<CanvasAnnotation>,
     pub archived_annotation_ids: Vec<i64>,
     pub stack_order: Option<Vec<crate::data::CanvasStackItem>>,
@@ -108,7 +108,7 @@ pub struct CanvasDocumentChanges {
 
 impl CanvasDocumentChanges {
     pub fn has_changes(&self) -> bool {
-        !self.updated_items.is_empty()
+        !self.updated_placements.is_empty()
             || !self.updated_annotations.is_empty()
             || !self.archived_annotation_ids.is_empty()
             || self.stack_order.is_some()
@@ -319,13 +319,13 @@ enum ImageTransformState {
         start_scale: f32,
     },
     Scaling {
-        item_ids: Vec<i64>,
+        placement_ids: Vec<i64>,
         pointer_start_screen: egui::Pos2,
         group_center_world: egui::Pos2,
         starting_items: Vec<ImageScaleStart>,
     },
     Rotating {
-        item_ids: Vec<i64>,
+        placement_ids: Vec<i64>,
         center_screen: egui::Pos2,
         center_world: egui::Pos2,
         start_pointer_angle: f32,
@@ -910,8 +910,8 @@ mod tests {
     };
     use crate::data::{
         CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
-        CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, ImageAsset, Placement,
-        PlacementContent, PlacementContentIntent, PlacementLifecycle, PlacementState,
+        CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, ContentResolutionSource, ImageAsset,
+        Placement, PlacementContent, PlacementLifecycle, PlacementState,
     };
     use crate::placement::arrangement::{
         SettleDirection, balanced_grid_layout_for_sizes, best_compact_layout,
@@ -1070,8 +1070,8 @@ mod tests {
     fn native_loaded_item(
         record: Placement,
         texture: Arc<crate::jobs::NativeTextureHandle>,
-    ) -> crate::jobs::LoadedCanvasItem {
-        crate::jobs::LoadedCanvasItem {
+    ) -> crate::jobs::PreparedPlacementImage {
+        crate::jobs::PreparedPlacementImage {
             target_board_id: 1,
             queue_id: None,
             preview_rgba: vec![
@@ -1103,10 +1103,10 @@ mod tests {
     fn animated_loaded_item(
         _ui: &eframe::egui::Ui,
         record: Placement,
-    ) -> crate::jobs::LoadedCanvasItem {
+    ) -> crate::jobs::PreparedPlacementImage {
         let first_frame = vec![0, 0, 255, 255];
         let second_frame = vec![0, 255, 0, 255];
-        crate::jobs::LoadedCanvasItem {
+        crate::jobs::PreparedPlacementImage {
             target_board_id: 1,
             queue_id: None,
             preview_rgba: first_frame.clone(),
@@ -1152,14 +1152,16 @@ mod tests {
         );
         let first = test_record(1, 1, 4, 4);
 
-        state.add_loaded_item(&ctx, native_loaded_item(first, handle.clone()));
-        state.add_reference_item(test_record(2, 1, 4, 4)).unwrap();
+        state.add_prepared_placement_image(&ctx, native_loaded_item(first, handle.clone()));
+        state
+            .add_loaded_reference_placement(test_record(2, 1, 4, 4))
+            .unwrap();
         drop(handle);
 
-        state.delete_items(&[1]);
+        state.delete_placements(&[1]);
         assert_eq!(cleanup_count.load(Ordering::SeqCst), 0);
 
-        state.delete_items(&[2]);
+        state.delete_placements(&[2]);
         assert_eq!(cleanup_count.load(Ordering::SeqCst), 1);
     }
 
@@ -1190,17 +1192,19 @@ mod tests {
             },
         );
 
-        state.add_loaded_item(
+        state.add_prepared_placement_image(
             &ctx,
             native_loaded_item(test_record(1, 1, 4, 4), old_texture.clone()),
         );
-        state.add_reference_item(test_record(2, 1, 4, 4)).unwrap();
+        state
+            .add_loaded_reference_placement(test_record(2, 1, 4, 4))
+            .unwrap();
         drop(old_texture);
 
         state
             .apply_cropped_item(
                 &ctx,
-                crate::jobs::CroppedCanvasItem {
+                crate::jobs::PreparedCropPreview {
                     item_id: 1,
                     stored_path: PathBuf::from("crop.png"),
                     width: 2,
@@ -1241,11 +1245,11 @@ mod tests {
         assert_eq!(old_cleanup.load(Ordering::SeqCst), 0);
         assert_eq!(new_cleanup.load(Ordering::SeqCst), 0);
 
-        state.delete_items(&[2]);
+        state.delete_placements(&[2]);
         assert_eq!(old_cleanup.load(Ordering::SeqCst), 1);
         assert_eq!(new_cleanup.load(Ordering::SeqCst), 0);
 
-        state.delete_items(&[1]);
+        state.delete_placements(&[1]);
         assert_eq!(new_cleanup.load(Ordering::SeqCst), 1);
     }
 
@@ -1254,9 +1258,14 @@ mod tests {
         let mut state = CanvasState::default();
 
         eframe::egui::__run_test_ui(|ui| {
-            state.add_loaded_item(ui.ctx(), animated_loaded_item(ui, test_record(1, 1, 1, 1)));
+            state.add_prepared_placement_image(
+                ui.ctx(),
+                animated_loaded_item(ui, test_record(1, 1, 1, 1)),
+            );
         });
-        state.add_reference_item(test_record(2, 1, 1, 1)).unwrap();
+        state
+            .add_loaded_reference_placement(test_record(2, 1, 1, 1))
+            .unwrap();
 
         assert!(state.document.images[1].animation.is_some());
         assert_eq!(
@@ -1264,7 +1273,7 @@ mod tests {
             &[0, 255, 0, 255]
         );
 
-        state.delete_items(&[1]);
+        state.delete_placements(&[1]);
 
         assert_eq!(
             state.advance_animated_image(2, 0.25).unwrap().0.as_ref(),
@@ -1419,7 +1428,7 @@ mod tests {
                 1.0,
                 eframe::egui::pos2(260.0, 180.0),
             );
-            state.select_items(&[1, 2]);
+            state.select_placements(&[1, 2]);
 
             assert!(state.focus_selection_in_view(canvas_rect, target_rect));
 
@@ -1449,7 +1458,7 @@ mod tests {
                 record: unloaded_test_record(
                     101,
                     PlacementContent::Loading {
-                        intent: PlacementContentIntent::Unknown {
+                        intent: ContentResolutionSource::Unknown {
                             description: "test".to_owned(),
                         },
                         status_message: None,
@@ -1467,7 +1476,7 @@ mod tests {
                 .document
                 .stack_order
                 .push(CanvasStackItem::Placement(101));
-            state.select_items(&[101]);
+            state.select_placements(&[101]);
 
             let layout_items = state.selected_layout_items();
             assert_eq!(layout_items.len(), 1);
@@ -1488,7 +1497,7 @@ mod tests {
                 Some(super::CanvasHit::Placement(101))
             );
             assert_eq!(state.delete_selected_images(), vec![101]);
-            assert!(state.record_for_item_id(101).is_none());
+            assert!(state.placement_for_id(101).is_none());
         });
     }
 
@@ -1498,7 +1507,7 @@ mod tests {
         let mut record = unloaded_test_record(
             -1,
             PlacementContent::Loading {
-                intent: PlacementContentIntent::SearchAsset { asset_id: 42 },
+                intent: ContentResolutionSource::SearchAsset { asset_id: 42 },
                 status_message: Some("Loading".to_owned()),
             },
             120.0,
@@ -1508,12 +1517,12 @@ mod tests {
         );
         record.lifecycle = PlacementLifecycle::Provisional;
         state.add_provisional_unloaded_item(record);
-        state.select_items(&[-1]);
+        state.select_placements(&[-1]);
         state.center_selected_placements_on(eframe::egui::pos2(40.0, 60.0));
 
         let changes = state.take_document_changes();
 
-        assert!(changes.updated_items.is_empty());
+        assert!(changes.updated_placements.is_empty());
         assert!(changes.stack_order.is_none());
     }
 
@@ -1523,7 +1532,7 @@ mod tests {
         let mut record = unloaded_test_record(
             -1,
             PlacementContent::Loading {
-                intent: PlacementContentIntent::SearchAsset { asset_id: 42 },
+                intent: ContentResolutionSource::SearchAsset { asset_id: 42 },
                 status_message: Some("Loading".to_owned()),
             },
             120.0,
@@ -1533,14 +1542,14 @@ mod tests {
         );
         record.lifecycle = PlacementLifecycle::Provisional;
         state.add_provisional_unloaded_item(record);
-        state.select_items(&[-1]);
+        state.select_placements(&[-1]);
 
-        let removed = state.remove_provisional_items();
+        let removed = state.remove_provisional_placements();
         let changes = state.take_document_changes();
 
         assert_eq!(removed, vec![-1]);
-        assert!(state.record_for_item_id(-1).is_none());
-        assert!(changes.updated_items.is_empty());
+        assert!(state.placement_for_id(-1).is_none());
+        assert!(changes.updated_placements.is_empty());
         assert!(changes.archived_annotation_ids.is_empty());
     }
 
@@ -2216,7 +2225,7 @@ mod tests {
                 1.0,
                 eframe::egui::pos2(360.0, 120.0),
             );
-            state.select_items(&[31, 32]);
+            state.select_placements(&[31, 32]);
 
             let changed = state.apply_target_area_to_selected_images(90_000.0);
 
@@ -2264,7 +2273,7 @@ mod tests {
                 1.0,
                 eframe::egui::pos2(320.0, 120.0),
             );
-            state.select_items(&[41, 42]);
+            state.select_placements(&[41, 42]);
 
             let average_area = state.average_selected_image_area().unwrap();
 
@@ -2879,7 +2888,7 @@ mod tests {
 
         state.set_marquee_selection(Vec::new(), vec![12], false);
 
-        assert!(state.document.selected_item_ids.is_empty());
+        assert!(state.document.selected_placement_ids.is_empty());
         assert_eq!(state.document.selected_annotation_ids, vec![12]);
     }
 
@@ -3089,9 +3098,9 @@ mod tests {
         let source_rgba = (0..16)
             .flat_map(|index| [index, 0, 0, 255])
             .collect::<Vec<_>>();
-        state.add_loaded_item(
+        state.add_prepared_placement_image(
             &ctx,
-            crate::jobs::LoadedCanvasItem {
+            crate::jobs::PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
                 record,
@@ -3129,7 +3138,7 @@ mod tests {
 
         let preview = state.preview_for_item_id(42).unwrap();
         assert_eq!(preview.texture_size, eframe::egui::vec2(2.0, 2.0));
-        let record = state.record_for_item_id(42).unwrap();
+        let record = state.placement_for_id(42).unwrap();
         assert_eq!(
             (
                 record.asset.as_ref().expect("loaded placement asset").width,
@@ -3163,9 +3172,9 @@ mod tests {
         let record = test_record(42, 42, 8, 8);
         let source_rgba = vec![255; 4 * 4 * 4];
         let shared_rgba = super::SharedRgba::from(source_rgba.clone());
-        state.add_loaded_item(
+        state.add_prepared_placement_image(
             &ctx,
-            crate::jobs::LoadedCanvasItem {
+            crate::jobs::PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
                 record,
@@ -3212,9 +3221,9 @@ mod tests {
         let ctx = eframe::egui::Context::default();
         let mut state = super::CanvasState::default();
 
-        state.add_loaded_item(
+        state.add_prepared_placement_image(
             &ctx,
-            crate::jobs::LoadedCanvasItem {
+            crate::jobs::PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
                 record: test_record(42, 42, 8, 8),
@@ -3238,9 +3247,9 @@ mod tests {
         let ctx = eframe::egui::Context::default();
         let mut state = super::CanvasState::default();
 
-        state.add_loaded_item(
+        state.add_prepared_placement_image(
             &ctx,
-            crate::jobs::LoadedCanvasItem {
+            crate::jobs::PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
                 record: test_record(42, 42, 8, 8),
@@ -3271,9 +3280,9 @@ mod tests {
         let ctx = eframe::egui::Context::default();
         let mut state = super::CanvasState::default();
         let record = test_record(42, 42, 8, 8);
-        state.add_loaded_item(
+        state.add_prepared_placement_image(
             &ctx,
-            crate::jobs::LoadedCanvasItem {
+            crate::jobs::PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
                 record,
@@ -3306,7 +3315,7 @@ mod tests {
             crop_offset_local: eframe::egui::vec2(2.0, 2.0),
         };
         state.apply_pending_crop_preview(&ctx, &request).unwrap();
-        let cropped = crate::jobs::CroppedCanvasItem {
+        let cropped = crate::jobs::PreparedCropPreview {
             item_id: 42,
             stored_path: std::path::PathBuf::from("cropped.png"),
             width: 4,
@@ -3330,7 +3339,7 @@ mod tests {
             .apply_cropped_item(&ctx, cropped, asset, updated_item)
             .unwrap();
 
-        let record = state.record_for_item_id(42).unwrap();
+        let record = state.placement_for_id(42).unwrap();
         assert_eq!(record.state.asset_id, Some(99));
         assert_eq!((record.state.center.x, record.state.center.y), (2.0, 2.0));
     }
@@ -3813,7 +3822,7 @@ mod tests {
             );
         });
         assert!(state.set_image_rotation(1, std::f32::consts::FRAC_PI_2));
-        state.select_items(&[1, 2]);
+        state.select_placements(&[1, 2]);
 
         assert_eq!(state.arrange_selected_compact(gap), 2);
 
@@ -3863,7 +3872,7 @@ mod tests {
                 eframe::egui::pos2(130.0, 0.0),
             );
         });
-        state.select_items(&[1, 2]);
+        state.select_placements(&[1, 2]);
 
         assert_eq!(state.arrange_selected_compact(gap), 2);
 
@@ -3921,7 +3930,7 @@ mod tests {
                 eframe::egui::pos2(40.0, 0.0),
             );
         });
-        state.select_items(&[1, 2]);
+        state.select_placements(&[1, 2]);
 
         assert_eq!(state.arrange_selected_compact(gap), 2);
 
@@ -3990,7 +3999,7 @@ mod tests {
                 eframe::egui::pos2(460.0, 80.0),
             );
         });
-        state.select_items(&[1, 2, 3, 4]);
+        state.select_placements(&[1, 2, 3, 4]);
 
         assert_eq!(state.arrange_selected_compact(gap), 4);
         let first_positions = selected_image_positions(&state);
@@ -4036,7 +4045,7 @@ mod tests {
                 eframe::egui::pos2(100.0, 0.0),
             );
         });
-        state.select_items(&[1]);
+        state.select_placements(&[1]);
 
         open_context_menu_at_pointer(
             &mut state,
@@ -4044,7 +4053,7 @@ mod tests {
             rect.center() + eframe::egui::vec2(100.0, 0.0),
         );
 
-        assert_eq!(state.selected_item_ids(), vec![2]);
+        assert_eq!(state.selected_placement_ids(), vec![2]);
         assert!(state.take_context_menu_request().is_some());
     }
 
@@ -4072,7 +4081,7 @@ mod tests {
             background_enabled: false,
             archived: false,
         });
-        state.select_items(&[1]);
+        state.select_placements(&[1]);
 
         open_context_menu_at_pointer(
             &mut state,
@@ -4080,7 +4089,7 @@ mod tests {
             rect.center() + eframe::egui::vec2(120.0, 20.0),
         );
 
-        assert!(state.selected_item_ids().is_empty());
+        assert!(state.selected_placement_ids().is_empty());
         assert_eq!(state.selected_annotation_ids(), vec![20]);
         assert!(state.take_context_menu_request().is_some());
     }
@@ -4116,7 +4125,7 @@ mod tests {
 
         open_context_menu_at_pointer(&mut state, rect, rect.center());
 
-        assert_eq!(state.selected_item_ids(), vec![1]);
+        assert_eq!(state.selected_placement_ids(), vec![1]);
         assert!(state.selected_annotation_ids().is_empty());
         assert!(state.take_context_menu_request().is_some());
     }
@@ -4298,7 +4307,7 @@ mod tests {
         assert!(state.move_selected_canvas_items_to_front());
         open_context_menu_at_pointer(&mut state, rect, rect.center());
 
-        assert!(state.selected_item_ids().is_empty());
+        assert!(state.selected_placement_ids().is_empty());
         assert_eq!(state.selected_annotation_ids(), vec![20]);
         assert!(state.take_context_menu_request().is_some());
     }
@@ -4331,7 +4340,7 @@ mod tests {
 
         open_context_menu_at_pointer(&mut state, rect, rect.center());
 
-        assert_eq!(state.selected_item_ids(), vec![1]);
+        assert_eq!(state.selected_placement_ids(), vec![1]);
         assert_eq!(state.selected_annotation_ids(), vec![20]);
         assert!(state.take_context_menu_request().is_some());
     }

@@ -74,6 +74,10 @@ _Avoid_: Search placement mode internals, provisional cleanup helper, pending dr
 The async content-loading flow for Placements whose content is not loaded yet. It owns runtime queue id to Placement id correlation, source-specific worker request construction, completion/failure correlation, and cleanup for pending resolution work. Content Resolution may change a Placement's content state from loading to loaded or failed, but must not change Placement geometry.
 _Avoid_: Import reservation, placeholder completion, worker-owned Placement state
 
+**Content Resolution Source**:
+The persisted source descriptor used to retry, finish, or fail a Placement's content resolution, such as an external path, external URL, clipboard payload, or existing Asset. It belongs to Placement Content State after a Placement exists; it is not a pre-Placement Source Intent.
+_Avoid_: Placement Content Intent, Source Intent
+
 **Selection Border**:
 The outline that shows the current canvas selection; it hides while a placement is moving and reappears after the movement pauses or the drag ends.
 _Avoid_: Drag guide, snap outline
@@ -283,6 +287,10 @@ _Avoid_: Unplaced result, library result
 **Placement Result**:
 A board-scope search result backed by an existing placement on the active board.
 _Avoid_: Board result, item result
+
+**Search Result Asset Entry**:
+The search adapter row grouped around one Asset, with zero or more active-board Placement ids attached for This Board eligibility and placement-result actions. It is a UI/service container, not a domain object.
+_Avoid_: Search result group, item result group
 
 **Context**:
 A meaningful set of images plus optional text or metadata signals used for later retrieval.
@@ -546,6 +554,7 @@ _Avoid_: Release asset, build cache
 - A **Placement** belongs to exactly one **Board** and has one **Placement Content State**.
 - A loaded **Placement** references exactly one **Asset**.
 - A loading or failed **Placement** may not yet reference an **Asset**.
+- A **Content Resolution Source** belongs to a loading or failed **Placement Content State**; a **Source Intent** exists only before **Placement Creation**.
 - A **Source Intent** is not a **Placement** and does not belong to **Stack Order** or **Document History**.
 - **Placement Creation** turns **Source Intents** into **Placements** immediately; there is no domain-level **PlacementDraft** between them.
 - **Placement Lifecycle** owns when provisional Placements become committed document content or are discarded history-neutral.
@@ -580,6 +589,7 @@ _Avoid_: Release asset, build cache
 - A **Crop Preview** may use a **Canvas Pixel Snapshot** before the final cropped **Asset** exists.
 - **Delete (from board)** removes **Placements** and **Annotations** from the **Active Board** but does not remove **Assets** from the **Library**.
 - **Remove from Library** archives **Assets** and removes their **Placements** across all **Boards**.
+- Storage table and column names such as `board_items`, `item_id`, and `content_resolution_intent` are legacy persistence vocabulary. Keep them inside storage/migration adapters and translate to **Placement**, **PlacementId**, and **Content Resolution Source** at domain boundaries. Use `item_id` in domain code only when the union is truly a **Canvas Item**.
 
 ## Perf Corpus
 
