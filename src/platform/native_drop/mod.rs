@@ -949,13 +949,13 @@ mod platform {
             this: *mut IDropTarget,
             data_object: *const c_void,
             key_state: u32,
-            point: POINTL,
+            point: *const POINTL,
             effect: *mut u32,
         ) -> HRESULT,
         DragOver: unsafe extern "system" fn(
             this: *mut IDropTarget,
             key_state: u32,
-            point: POINTL,
+            point: *const POINTL,
             effect: *mut u32,
         ) -> HRESULT,
         DragLeave: unsafe extern "system" fn(this: *mut IDropTarget) -> HRESULT,
@@ -963,7 +963,7 @@ mod platform {
             this: *mut IDropTarget,
             data_object: *const c_void,
             key_state: u32,
-            point: POINTL,
+            point: *const POINTL,
             effect: *mut u32,
         ) -> HRESULT,
     }
@@ -1063,13 +1063,13 @@ mod platform {
             this: *mut IDropTarget,
             data_object: *const c_void,
             _key_state: u32,
-            point: POINTL,
+            point: *const POINTL,
             effect: *mut u32,
         ) -> HRESULT {
             let data = unsafe { Self::from_interface(this) };
             let payload = unsafe { extract_drop_payload(data_object) };
             data.hovered_is_valid = !payload.is_empty();
-            let pos = unsafe { client_point(data.hwnd, point) };
+            let pos = unsafe { client_point_from_ptr(data.hwnd, point) };
             data.cursor_effect = if data.hovered_is_valid {
                 state()
                     .lock()
@@ -1088,15 +1088,16 @@ mod platform {
         unsafe extern "system" fn drag_over(
             this: *mut IDropTarget,
             _key_state: u32,
-            point: POINTL,
+            point: *const POINTL,
             effect: *mut u32,
         ) -> HRESULT {
             let data = unsafe { Self::from_interface(this) };
+            let pos = unsafe { client_point_from_ptr(data.hwnd, point) };
             if data.hovered_is_valid {
                 state()
                     .lock()
                     .expect("native drop state mutex poisoned")
-                    .set_hovered_pos(unsafe { client_point(data.hwnd, point) });
+                    .set_hovered_pos(pos);
             }
             unsafe {
                 *effect = data.cursor_effect;
@@ -1121,16 +1122,17 @@ mod platform {
             this: *mut IDropTarget,
             data_object: *const c_void,
             _key_state: u32,
-            point: POINTL,
+            point: *const POINTL,
             effect: *mut u32,
         ) -> HRESULT {
             let data = unsafe { Self::from_interface(this) };
             let payload = unsafe { extract_drop_payload(data_object) };
+            let pos = unsafe { client_point_from_ptr(data.hwnd, point) };
             if !payload.is_empty() {
                 state()
                     .lock()
                     .expect("native drop state mutex poisoned")
-                    .set_dropped(payload, unsafe { client_point(data.hwnd, point) });
+                    .set_dropped(payload, pos);
                 unsafe {
                     *effect = DROPEFFECT_COPY;
                 }
@@ -1147,6 +1149,11 @@ mod platform {
         unsafe fn from_interface<'a, InterfaceT>(this: *mut InterfaceT) -> &'a mut DropTargetData {
             unsafe { &mut *(this as *mut DropTargetData) }
         }
+    }
+
+    unsafe fn client_point_from_ptr(hwnd: HWND, point: *const POINTL) -> Option<egui::Pos2> {
+        let point = unsafe { point.as_ref()? };
+        unsafe { client_point(hwnd, *point) }
     }
 
     unsafe fn client_point(hwnd: HWND, point: POINTL) -> Option<egui::Pos2> {
@@ -1187,7 +1194,7 @@ mod platform {
     unsafe fn append_paths(data_object: *const c_void, paths: &mut Vec<std::path::PathBuf>) {
         let _ = unsafe {
             with_hglobal_data(data_object, CF_HDROP, |hglobal, _pointer, _size| {
-                unsafe { append_hdrop_paths(hglobal as HDROP, paths) };
+                append_hdrop_paths(hglobal as HDROP, paths);
             })
         };
     }

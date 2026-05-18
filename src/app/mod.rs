@@ -479,11 +479,13 @@ enum VerificationMode {
     ContextMenu,
     ImportPlaceholders,
     ImportLoaded,
+    ImportMatrix,
     BackgroundGrid,
     BackgroundDots,
     BackgroundTransition,
     ActiveBoardChip,
     SemanticSearchFirstLaunchPrompt,
+    SemanticSearchInstall,
     BoardDeleteConfirmation,
     LibraryRemoveConfirmation,
     DesignSystemPreview,
@@ -644,6 +646,11 @@ impl AppConfig {
                 {
                     verification_mode = Some(VerificationMode::ImportLoaded);
                 }
+            } else if cfg!(debug_assertions) && argument == "--verify-import-matrix" {
+                #[cfg(debug_assertions)]
+                {
+                    verification_mode = Some(VerificationMode::ImportMatrix);
+                }
             } else if cfg!(debug_assertions) && argument == "--verify-background-grid" {
                 #[cfg(debug_assertions)]
                 {
@@ -670,6 +677,13 @@ impl AppConfig {
                 #[cfg(all(debug_assertions, feature = "semantic-search"))]
                 {
                     verification_mode = Some(VerificationMode::SemanticSearchFirstLaunchPrompt);
+                }
+            } else if cfg!(all(debug_assertions, feature = "semantic-search"))
+                && argument == "--verify-semantic-search-install"
+            {
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                {
+                    verification_mode = Some(VerificationMode::SemanticSearchInstall);
                 }
             } else if cfg!(debug_assertions) && argument == "--verify-board-delete-confirmation" {
                 #[cfg(debug_assertions)]
@@ -852,6 +866,14 @@ impl AppConfig {
         )
     }
 
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    fn verify_semantic_search_install_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(VerificationMode::SemanticSearchInstall)
+        )
+    }
+
     #[cfg(debug_assertions)]
     fn verify_import_placeholders_on_start(&self) -> bool {
         matches!(
@@ -863,6 +885,11 @@ impl AppConfig {
     #[cfg(debug_assertions)]
     fn verify_import_loaded_on_start(&self) -> bool {
         matches!(self.verification_mode, Some(VerificationMode::ImportLoaded))
+    }
+
+    #[cfg(debug_assertions)]
+    fn verify_import_matrix_on_start(&self) -> bool {
+        matches!(self.verification_mode, Some(VerificationMode::ImportMatrix))
     }
 
     #[cfg(debug_assertions)]
@@ -892,6 +919,7 @@ impl AppConfig {
                         | VerificationMode::ContextMenu
                         | VerificationMode::ImportPlaceholders
                         | VerificationMode::ImportLoaded
+                        | VerificationMode::ImportMatrix
                         | VerificationMode::BackgroundGrid
                         | VerificationMode::BackgroundDots
                         | VerificationMode::BackgroundTransition
@@ -1087,6 +1115,8 @@ pub struct SnappyRefApp {
     residency: ImageResidencyCoordinator,
     pending_import_batches: crate::placement::creation::PlacementCreationBatchTracker,
     hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
+    last_hovered_external_drag: Option<crate::sources::external_drag::ExternalDragIntake>,
+    pending_missing_drop_fallback: Option<crate::sources::external_drag::ExternalDragIntake>,
     document_persistence: DocumentPersistence,
     pending_user_session: Option<crate::data::UserSession>,
     pending_user_session_save_at: Option<Instant>,
@@ -1195,6 +1225,8 @@ impl SnappyRefApp {
                     pending_import_batches:
                         crate::placement::creation::PlacementCreationBatchTracker::default(),
                     hover_preview_dimensions: std::collections::HashMap::new(),
+                    last_hovered_external_drag: None,
+                    pending_missing_drop_fallback: None,
                     document_persistence: DocumentPersistence::queued(library.clone()),
                     pending_user_session: None,
                     pending_user_session_save_at: None,
@@ -1313,6 +1345,10 @@ impl SnappyRefApp {
                     app.seed_import_verification_loaded(&cc.egui_ctx);
                 }
                 #[cfg(debug_assertions)]
+                if config.verify_import_matrix_on_start() {
+                    app.seed_import_verification_matrix(&cc.egui_ctx);
+                }
+                #[cfg(debug_assertions)]
                 if let Some(mode) = config.background_verification_mode() {
                     app.seed_background_verification(mode);
                 }
@@ -1322,6 +1358,14 @@ impl SnappyRefApp {
                     app.search.set_local_model_store_status_for_verification(
                         crate::search::semantic::LocalModelStoreStatus::Missing,
                     );
+                }
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                if config.verify_semantic_search_install_on_start() {
+                    app.settings.semantic_search_first_launch_prompt_seen = false;
+                    app.search.set_local_model_store_status_for_verification(
+                        crate::search::semantic::LocalModelStoreStatus::Missing,
+                    );
+                    app.enable_semantic_search_from_first_launch_prompt(&cc.egui_ctx);
                 }
                 #[cfg(debug_assertions)]
                 if let Some(query) = config.verification_search_query().map(ToOwned::to_owned) {
@@ -1414,6 +1458,8 @@ impl SnappyRefApp {
                 pending_import_batches:
                     crate::placement::creation::PlacementCreationBatchTracker::default(),
                 hover_preview_dimensions: std::collections::HashMap::new(),
+                last_hovered_external_drag: None,
+                pending_missing_drop_fallback: None,
                 document_persistence: DocumentPersistence::default(),
                 pending_user_session: None,
                 pending_user_session_save_at: None,
@@ -2692,12 +2738,15 @@ impl SnappyRefApp {
 
     fn handle_hovered_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
         let hover_intake = crate::sources::external_drag::hovered(ui);
-        let hovered_sources = hover_intake.sources;
+        let hovered_sources = hover_intake.sources.clone();
         if hovered_sources.is_empty() {
+            self.pending_missing_drop_fallback = self.last_hovered_external_drag.take();
             self.canvas.clear_hover_preview_placeholders();
             self.hover_preview_dimensions.clear();
             return;
         }
+        self.last_hovered_external_drag = Some(hover_intake.clone());
+        self.pending_missing_drop_fallback = None;
 
         let hovered_paths = hovered_sources
             .iter()
@@ -2789,14 +2838,30 @@ impl SnappyRefApp {
         }
 
         let drop_intake = crate::sources::external_drag::take_drop(ui);
-        let dropped_sources = drop_intake.sources;
+        let (dropped_sources, drop_screen_pos) = if drop_intake.sources.is_empty() {
+            let Some(fallback) = self.take_missing_drop_event_fallback() else {
+                return;
+            };
+            (fallback.sources, fallback.screen_pos)
+        } else {
+            self.last_hovered_external_drag = None;
+            self.pending_missing_drop_fallback = None;
+            (drop_intake.sources, drop_intake.screen_pos)
+        };
         if dropped_sources.is_empty() {
             return;
         }
 
-        let desired_world =
-            self.preferred_import_world_with_pointer(screen_rect, drop_intake.screen_pos);
+        let desired_world = self.preferred_import_world_with_pointer(screen_rect, drop_screen_pos);
         self.enqueue_external_import_sources(dropped_sources, screen_rect, desired_world);
+    }
+
+    fn take_missing_drop_event_fallback(
+        &mut self,
+    ) -> Option<crate::sources::external_drag::ExternalDragIntake> {
+        self.pending_missing_drop_fallback
+            .take()
+            .filter(|fallback| !fallback.sources.is_empty())
     }
 
     fn register_import_batch(
@@ -5057,9 +5122,182 @@ impl SnappyRefApp {
     }
 
     #[cfg(debug_assertions)]
+    fn seed_import_verification_matrix(&mut self, ctx: &egui::Context) {
+        self.canvas
+            .apply_viewport_state(&crate::data::ViewportState::default());
+        self.canvas.clear_board_for_verification();
+        self.settings.semantic_search_first_launch_prompt_seen = true;
+        if self.import_worker.is_none() {
+            self.status = "Import worker unavailable".to_owned();
+            return;
+        }
+
+        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, STARTUP_VIEWPORT_SIZE);
+        let viewport_world = self.startup_viewport_world_rect();
+
+        let drop_path = match Self::write_import_verification_png(
+            "snappyref-verify-drop.png",
+            220,
+            150,
+            [231, 94, 66, 255],
+        ) {
+            Ok(path) => path,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
+        let clipboard_path = match Self::write_import_verification_png(
+            "snappyref-verify-clipboard-path.png",
+            150,
+            210,
+            [70, 142, 255, 255],
+        ) {
+            Ok(path) => path,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
+
+        self.enqueue_external_import_sources(
+            vec![ExternalImportSource::Path(drop_path)],
+            screen_rect,
+            egui::pos2(-280.0, -140.0),
+        );
+        self.enqueue_external_import_sources(
+            vec![ExternalImportSource::Path(clipboard_path)],
+            screen_rect,
+            egui::pos2(0.0, -140.0),
+        );
+
+        if !self.enqueue_debug_clipboard_image_import(
+            180,
+            180,
+            [73, 179, 122, 255],
+            egui::pos2(280.0, -140.0),
+            viewport_world,
+        ) {
+            return;
+        }
+
+        if let Some(url) = std::env::var("SNAPPYREF_VERIFY_IMPORT_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        {
+            let _ =
+                self.handle_clipboard_url_import_at(screen_rect, &url, egui::pos2(-140.0, 140.0));
+        }
+
+        match self.seed_import_verification_image(
+            ctx,
+            "verify-internal-paste-source",
+            egui::pos2(140.0, 140.0),
+            170,
+            130,
+            [188, 146, 255, 255],
+        ) {
+            Ok(item_id) => {
+                self.canvas.select_items(&[item_id]);
+                if let Some(payload) = self.copy_selected_board_payload()
+                    && let Err(error) =
+                        self.paste_board_payload_at(&payload, egui::pos2(360.0, 140.0))
+                {
+                    self.status = error;
+                    return;
+                }
+            }
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        }
+
+        self.status = "Queued debug import matrix".to_owned();
+    }
+
+    #[cfg(debug_assertions)]
+    fn enqueue_debug_clipboard_image_import(
+        &mut self,
+        width: u32,
+        height: u32,
+        color: [u8; 4],
+        desired_world: egui::Pos2,
+        viewport_world: egui::Rect,
+    ) -> bool {
+        let mut layout = match self.import_layout_snapshot() {
+            Ok(layout) => layout,
+            Err(error) => {
+                self.status = error;
+                return false;
+            }
+        };
+        let reservation = self.reserve_import(
+            &mut layout,
+            "Clipboard image".to_owned(),
+            Some((width, height)),
+            desired_world,
+            viewport_world,
+            crate::data::PlacementContentIntent::Clipboard,
+        );
+        let rgba = Self::solid_rgba(width, height, color);
+        if let Err(error) = self
+            .import_worker
+            .as_ref()
+            .expect("checked import worker")
+            .enqueue(
+                crate::placement::content_resolution::import_clipboard_request(
+                    rgba,
+                    width,
+                    height,
+                    reservation,
+                    desired_world,
+                    viewport_world,
+                    self.import_request_config(),
+                    None,
+                ),
+            )
+        {
+            self.remove_import_reservation(reservation);
+            self.status = error;
+            return false;
+        }
+        true
+    }
+
+    #[cfg(debug_assertions)]
+    fn write_import_verification_png(
+        name: &str,
+        width: u32,
+        height: u32,
+        color: [u8; 4],
+    ) -> Result<std::path::PathBuf, String> {
+        let path = std::env::temp_dir().join(name);
+        let rgba = Self::solid_rgba(width, height, color);
+        image::save_buffer_with_format(
+            &path,
+            &rgba,
+            width,
+            height,
+            image::ColorType::Rgba8,
+            image::ImageFormat::Png,
+        )
+        .map_err(|error| {
+            format!(
+                "failed to write debug import PNG {}: {error}",
+                path.display()
+            )
+        })?;
+        Ok(path)
+    }
+
+    #[cfg(debug_assertions)]
     fn verification_imports_settled(&self) -> bool {
-        !matches!(self.verification_mode, Some(VerificationMode::ImportLoaded))
-            || self.canvas.import_placeholder_count() == 0
+        match self.verification_mode {
+            Some(VerificationMode::ImportLoaded) => self.canvas.import_placeholder_count() == 0,
+            Some(VerificationMode::ImportMatrix) => self.content_resolution.pending_len() == 0,
+            _ => true,
+        }
     }
 
     #[cfg(not(debug_assertions))]
@@ -5981,6 +6219,7 @@ fn restart_launch_args() -> Vec<String> {
     filtered
 }
 
+#[cfg(target_os = "macos")]
 fn platform_shortcut_label(mac: &'static str, _windows: &'static str) -> &'static str {
     mac
 }

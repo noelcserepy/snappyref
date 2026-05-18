@@ -62,6 +62,96 @@ fn ensure_board_items_placement_columns(connection: &Connection) -> Result<(), S
     )
 }
 
+fn ensure_board_items_asset_id_nullable(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(board_items)")
+        .map_err(|error| format!("failed to inspect board_items schema: {error}"))?;
+    let mut rows = statement
+        .query([])
+        .map_err(|error| format!("failed to read board_items schema: {error}"))?;
+    let mut asset_id_is_not_null = false;
+    while let Some(row) = rows
+        .next()
+        .map_err(|error| format!("failed to read board_items schema row: {error}"))?
+    {
+        let name: String = row
+            .get(1)
+            .map_err(|error| format!("failed to read board_items column name: {error}"))?;
+        if name == "asset_id" {
+            let not_null: i64 = row.get(3).map_err(|error| {
+                format!("failed to read board_items asset_id nullability: {error}")
+            })?;
+            asset_id_is_not_null = not_null != 0;
+            break;
+        }
+    }
+    drop(rows);
+    drop(statement);
+
+    if !asset_id_is_not_null {
+        return Ok(());
+    }
+
+    connection
+        .execute_batch("PRAGMA foreign_keys = OFF")
+        .map_err(|error| {
+            format!("failed to disable foreign keys for board_items migration: {error}")
+        })?;
+    let migration_result = connection.execute_batch(
+        "
+        BEGIN;
+
+        ALTER TABLE board_items RENAME TO board_items_asset_required_old;
+
+        CREATE TABLE board_items (
+            id        INTEGER PRIMARY KEY,
+            board_id  INTEGER NOT NULL DEFAULT 1 REFERENCES boards(id),
+            asset_id  INTEGER REFERENCES assets(id) ON DELETE CASCADE,
+            x         REAL NOT NULL,
+            y         REAL NOT NULL,
+            scale     REAL NOT NULL,
+            rotation  REAL NOT NULL,
+            z_index   INTEGER NOT NULL,
+            archived  INTEGER NOT NULL DEFAULT 0,
+            placement_content_state TEXT NOT NULL DEFAULT 'loaded',
+            placement_lifecycle TEXT NOT NULL DEFAULT 'committed',
+            visual_width REAL,
+            visual_height REAL,
+            content_resolution_intent TEXT
+        );
+
+        INSERT INTO board_items (
+            id, board_id, asset_id, x, y, scale, rotation, z_index, archived,
+            placement_content_state, placement_lifecycle, visual_width,
+            visual_height, content_resolution_intent
+        )
+        SELECT
+            id, board_id, asset_id, x, y, scale, rotation, z_index, archived,
+            placement_content_state, placement_lifecycle, visual_width,
+            visual_height, content_resolution_intent
+        FROM board_items_asset_required_old;
+
+        DROP TABLE board_items_asset_required_old;
+
+        COMMIT;
+        ",
+    );
+    if let Err(error) = migration_result {
+        let _ = connection.execute_batch("ROLLBACK");
+        let _ = connection.execute_batch("PRAGMA foreign_keys = ON");
+        return Err(format!(
+            "failed to migrate board_items asset_id nullability: {error}"
+        ));
+    }
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .map_err(|error| {
+            format!("failed to re-enable foreign keys after board_items migration: {error}")
+        })?;
+
+    Ok(())
+}
+
 fn ensure_column(
     connection: &Connection,
     table: &str,
@@ -848,6 +938,7 @@ impl Library {
         ensure_assets_archived_column(&connection)?;
         ensure_default_board(&connection)?;
         ensure_board_items_board_id_column(&connection)?;
+        ensure_board_items_asset_id_nullable(&connection)?;
         ensure_user_session_auto_image_scaling_column(&connection)?;
         ensure_user_session_import_gap_column(&connection)?;
         ensure_user_session_import_target_canvas_area_column(&connection)?;

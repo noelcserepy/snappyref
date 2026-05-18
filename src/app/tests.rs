@@ -4107,6 +4107,87 @@ fn import_requests_preserve_import_area_cap_when_auto_scaling_setting_is_off() {
     assert!(config.auto_image_scaling);
 }
 
+#[test]
+fn raw_dropped_file_enqueues_external_import() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-raw-file-drop");
+    let library = Library::initialize(root.clone()).unwrap();
+    let source_path = library
+        .store_rgba_image("drop-source", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.import_worker = Some(crate::jobs::ImportWorker::new(
+        library.clone(),
+        ctx.clone(),
+        None,
+    ));
+    let mut harness = app_harness(app, |ctx, app| {
+        egui::Area::new(egui::Id::new("drop-test-surface"))
+            .fixed_pos(egui::Pos2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_min_size(test_screen_rect().size());
+                app.handle_hovered_files(ui, test_screen_rect());
+                app.handle_dropped_files(ui, test_screen_rect());
+            });
+    });
+    let drop_pos = egui::pos2(900.0, 600.0);
+
+    harness.hover_at(drop_pos);
+    harness.input_mut().hovered_files = vec![egui::HoveredFile {
+        path: Some(source_path.clone()),
+        ..Default::default()
+    }];
+    harness.step();
+    assert_eq!(harness.state().canvas.hover_preview_placeholder_count(), 1);
+
+    harness.input_mut().hovered_files.clear();
+    harness.input_mut().dropped_files = vec![egui::DroppedFile {
+        path: Some(source_path.clone()),
+        name: source_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("drop-source.png")
+            .to_owned(),
+        ..Default::default()
+    }];
+    harness.step();
+
+    assert_eq!(harness.state().canvas.hover_preview_placeholder_count(), 0);
+    assert_eq!(harness.state().content_resolution.pending_len(), 1);
+    let items = library.load_board_items().unwrap();
+    assert_eq!(items.len(), 1);
+    let screen_rect = test_screen_rect();
+    let record = &items[0];
+    let expected_world = harness
+        .state()
+        .canvas
+        .screen_to_world(drop_pos, screen_rect);
+    assert!(egui::pos2(record.item.x, record.item.y).distance(expected_world) < 1.0);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn missing_drop_event_fallback_is_single_use_after_hover_ends() {
+    let mut app = test_app(None);
+    let hover_pos = egui::pos2(320.0, 240.0);
+    let source = crate::sources::import::ExternalImportSource::Path(std::path::PathBuf::from(
+        "C:/Users/Admin/Pictures/drop.png",
+    ));
+    app.pending_missing_drop_fallback = Some(crate::sources::external_drag::ExternalDragIntake {
+        sources: vec![source.clone()],
+        screen_pos: Some(hover_pos),
+    });
+
+    let fallback = app
+        .take_missing_drop_event_fallback()
+        .expect("hover-end fallback should be available once");
+
+    assert_eq!(fallback.sources, vec![source]);
+    assert_eq!(fallback.screen_pos, Some(hover_pos));
+    assert!(app.take_missing_drop_event_fallback().is_none());
+}
+
 fn test_app(library: Option<Library>) -> SnappyRefApp {
     let mut app = SnappyRefApp {
         canvas: crate::canvas::CanvasState::default(),
@@ -4141,6 +4222,8 @@ fn test_app(library: Option<Library>) -> SnappyRefApp {
         perf_log: None,
         perf_scenario: None,
         hover_preview_dimensions: std::collections::HashMap::new(),
+        last_hovered_external_drag: None,
+        pending_missing_drop_fallback: None,
         document_persistence: super::DocumentPersistence::default(),
         pending_user_session: None,
         pending_user_session_save_at: None,

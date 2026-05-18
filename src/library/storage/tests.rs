@@ -129,6 +129,87 @@ fn committed_loading_and_failed_placements_persist_load_and_stack() {
 }
 
 #[test]
+fn legacy_board_items_asset_id_not_null_migrates_for_loading_placements() {
+    let root = temp_root("snappyref-board-item-asset-nullability-test");
+    let db_path = root.join("library.db");
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE assets (
+                id INTEGER PRIMARY KEY,
+                original_path TEXT NOT NULL UNIQUE,
+                filename TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                width INTEGER NOT NULL,
+                height INTEGER NOT NULL,
+                file_size INTEGER NOT NULL,
+                imported_at INTEGER NOT NULL
+            );
+            CREATE TABLE board_items (
+                id INTEGER PRIMARY KEY,
+                asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+                x REAL NOT NULL,
+                y REAL NOT NULL,
+                scale REAL NOT NULL,
+                rotation REAL NOT NULL,
+                z_index INTEGER NOT NULL,
+                archived INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE user_session (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                camera_pan_x REAL NOT NULL,
+                camera_pan_y REAL NOT NULL,
+                camera_zoom REAL NOT NULL
+            );
+            INSERT INTO user_session (id, camera_pan_x, camera_pan_y, camera_zoom)
+            VALUES (1, 0.0, 0.0, 1.0);
+            ",
+        )
+        .unwrap();
+    drop(connection);
+
+    let library = Library::initialize(root.clone()).unwrap();
+    let migrated = Connection::open(&db_path).unwrap();
+    let not_null = board_items_column_not_null(&migrated, "asset_id");
+    drop(migrated);
+
+    assert!(!not_null);
+    let loading = library
+        .persist_committed_loading_placement(
+            egui::pos2(12.0, 24.0),
+            1.0,
+            320.0,
+            180.0,
+            PlacementContentIntent::ExternalPath {
+                path: "C:/Users/Admin/Pictures/drop.png".to_owned(),
+            },
+            Some("Loading".to_owned()),
+        )
+        .unwrap();
+
+    assert_eq!(loading.item.asset_id, 0);
+    assert!(matches!(loading.content, PlacementContent::Loading { .. }));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+fn board_items_column_not_null(connection: &Connection, column: &str) -> bool {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(board_items)")
+        .unwrap();
+    let mut rows = statement.query([]).unwrap();
+    while let Some(row) = rows.next().unwrap() {
+        let name: String = row.get(1).unwrap();
+        if name == column {
+            let not_null: i64 = row.get(3).unwrap();
+            return not_null != 0;
+        }
+    }
+    panic!("missing board_items column {column}");
+}
+
+#[test]
 fn imported_asset_resolves_existing_loading_placement_without_geometry_or_stack_changes() {
     let root = temp_root("snappyref-resolve-loading-placement-test");
     let source = root.join("source.png");

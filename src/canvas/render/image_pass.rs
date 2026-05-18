@@ -361,17 +361,17 @@ fn paint_unloaded_placement(painter: &egui::Painter, image: &CanvasImage, image_
         crate::data::PlacementContent::Loading { .. } => (
             crate::ui::theme::SURFACE,
             egui::Stroke::new(1.0, crate::ui::theme::BORDER_STRONG),
-            "Loading",
+            None,
         ),
         crate::data::PlacementContent::Failed { .. } => (
             crate::ui::theme::DESTRUCTIVE_FILL,
             egui::Stroke::new(1.0, crate::ui::theme::DESTRUCTIVE_STROKE),
-            "Failed",
+            Some("Failed"),
         ),
         crate::data::PlacementContent::Loaded { .. } => (
             crate::ui::theme::SURFACE,
             egui::Stroke::new(1.0, crate::ui::theme::BORDER_STRONG),
-            "Loading",
+            None,
         ),
     };
     painter.rect_filled(image_rect, crate::ui::theme::RADIUS_NONE, fill);
@@ -381,7 +381,10 @@ fn paint_unloaded_placement(painter: &egui::Painter, image: &CanvasImage, image_
         stroke,
         egui::StrokeKind::Inside,
     );
-    if image_rect.width() >= 48.0 && image_rect.height() >= 24.0 {
+    if let Some(label) = label
+        && image_rect.width() >= 48.0
+        && image_rect.height() >= 24.0
+    {
         painter.text(
             image_rect.center(),
             egui::Align2::CENTER_CENTER,
