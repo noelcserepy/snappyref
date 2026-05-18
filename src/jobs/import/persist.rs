@@ -33,7 +33,7 @@ pub fn import_path_sync(
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
     auto_scale: bool,
-    import_gap: f32,
+    placement_gap: f32,
 ) -> Result<PreparedPlacementImage, String> {
     let target_board_id = library.load_user_session()?.active_board_id;
     import_path_sync_traced(
@@ -49,7 +49,7 @@ pub fn import_path_sync(
         CanvasImageSettings::default(),
         auto_scale,
         DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-        import_gap,
+        placement_gap,
         None,
         None,
     )
@@ -63,7 +63,7 @@ pub fn import_clipboard_sync(
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
     auto_scale: bool,
-    import_gap: f32,
+    placement_gap: f32,
 ) -> Result<PreparedPlacementImage, String> {
     let target_board_id = library.load_user_session()?.active_board_id;
     import_clipboard_sync_traced(
@@ -81,7 +81,7 @@ pub fn import_clipboard_sync(
         CanvasImageSettings::default(),
         auto_scale,
         DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-        import_gap,
+        placement_gap,
         None,
         None,
     )
@@ -100,7 +100,7 @@ pub(crate) fn import_path_sync_traced(
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
     target_canvas_area: f32,
-    import_gap: f32,
+    placement_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> Result<PreparedPlacementImage, String> {
@@ -122,7 +122,7 @@ pub(crate) fn import_path_sync_traced(
             viewport_world,
             auto_scale,
             target_canvas_area,
-            import_gap,
+            placement_gap,
             worker_started_at,
             trace,
         );
@@ -149,7 +149,7 @@ pub(crate) fn import_path_sync_traced(
             viewport_world,
             prepared.source_width as f32 * initial_scale.max(0.01),
             prepared.source_height as f32 * initial_scale.max(0.01),
-            import_gap,
+            placement_gap,
         )?;
 
         let store_started_at = Instant::now();
@@ -229,7 +229,7 @@ pub(crate) fn import_path_sync_traced(
         viewport_world,
         decoded.source_width as f32 * initial_scale.max(0.01),
         decoded.source_height as f32 * initial_scale.max(0.01),
-        import_gap,
+        placement_gap,
     )?;
 
     let store_started_at = Instant::now();
@@ -321,7 +321,7 @@ fn import_svg_path_sync_traced(
     viewport_world: egui::Rect,
     auto_scale: bool,
     target_canvas_area: f32,
-    import_gap: f32,
+    placement_gap: f32,
     worker_started_at: Instant,
     mut trace: Option<ImportTrace>,
 ) -> Result<PreparedPlacementImage, String> {
@@ -340,7 +340,7 @@ fn import_svg_path_sync_traced(
         viewport_world,
         svg.width as f32 * initial_scale.max(0.01),
         svg.height as f32 * initial_scale.max(0.01),
-        import_gap,
+        placement_gap,
     )?;
 
     let store_started_at = Instant::now();
@@ -403,7 +403,7 @@ pub(crate) fn import_path(
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
     target_canvas_area: f32,
-    import_gap: f32,
+    placement_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> ImagePreparationResult {
@@ -420,7 +420,7 @@ pub(crate) fn import_path(
         canvas_image_settings,
         auto_scale,
         target_canvas_area,
-        import_gap,
+        placement_gap,
         trace,
         wgpu_render_state,
     ) {
@@ -448,7 +448,7 @@ pub(crate) fn import_url(
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
     target_canvas_area: f32,
-    import_gap: f32,
+    placement_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> ImagePreparationResult {
@@ -465,7 +465,7 @@ pub(crate) fn import_url(
         canvas_image_settings,
         auto_scale,
         target_canvas_area,
-        import_gap,
+        placement_gap,
         trace,
         wgpu_render_state,
     ) {
@@ -495,7 +495,7 @@ pub(crate) fn import_clipboard(
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
     target_canvas_area: f32,
-    import_gap: f32,
+    placement_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> ImagePreparationResult {
@@ -514,7 +514,7 @@ pub(crate) fn import_clipboard(
         canvas_image_settings,
         auto_scale,
         target_canvas_area,
-        import_gap,
+        placement_gap,
         trace,
         wgpu_render_state,
     ) {
@@ -548,7 +548,7 @@ pub(crate) fn import_url_sync_traced(
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
     target_canvas_area: f32,
-    import_gap: f32,
+    placement_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> Result<PreparedPlacementImage, String> {
@@ -576,7 +576,7 @@ pub(crate) fn import_url_sync_traced(
             viewport_world,
             auto_scale,
             target_canvas_area,
-            import_gap,
+            placement_gap,
             worker_started_at,
             trace,
         );
@@ -608,7 +608,7 @@ pub(crate) fn import_url_sync_traced(
         viewport_world,
         decoded.source_width as f32 * initial_scale.max(0.01),
         decoded.source_height as f32 * initial_scale.max(0.01),
-        import_gap,
+        placement_gap,
     )?;
 
     let store_started_at = Instant::now();
@@ -707,7 +707,7 @@ fn import_downloaded_svg_sync_traced(
     viewport_world: egui::Rect,
     auto_scale: bool,
     target_canvas_area: f32,
-    import_gap: f32,
+    placement_gap: f32,
     worker_started_at: Instant,
     mut trace: Option<ImportTrace>,
 ) -> Result<PreparedPlacementImage, String> {
@@ -728,7 +728,7 @@ fn import_downloaded_svg_sync_traced(
         viewport_world,
         svg.width as f32 * initial_scale.max(0.01),
         svg.height as f32 * initial_scale.max(0.01),
-        import_gap,
+        placement_gap,
     )?;
 
     let store_started_at = Instant::now();
@@ -787,7 +787,7 @@ pub(crate) fn import_clipboard_sync_traced(
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
     target_canvas_area: f32,
-    import_gap: f32,
+    placement_gap: f32,
     trace: Option<ImportTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> Result<PreparedPlacementImage, String> {
@@ -811,7 +811,7 @@ pub(crate) fn import_clipboard_sync_traced(
         viewport_world,
         width as f32 * initial_scale.max(0.01),
         height as f32 * initial_scale.max(0.01),
-        import_gap,
+        placement_gap,
     )?;
     let placement = library.persist_imported_image_resolving_placement(
         target_board_id,

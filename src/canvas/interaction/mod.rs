@@ -865,7 +865,7 @@ mod tests {
     fn image_drag_scale_snap_preview_returns_snapped_factor() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        canvas.set_layout_gap(24.0);
+        canvas.set_placement_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(174.0, 0.0), 100, 100);
         canvas.select_placements(&[1]);
@@ -896,7 +896,7 @@ mod tests {
     fn drag_snap_preview_acquires_nearby_placement_target() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        canvas.set_layout_gap(24.0);
+        canvas.set_placement_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 180, 140);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(0.0, 0.0), 180, 140);
         canvas.select_placements(&[2]);
@@ -997,7 +997,7 @@ mod tests {
     fn drag_snap_preview_uses_larger_release_threshold_after_acquiring() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        canvas.set_layout_gap(24.0);
+        canvas.set_placement_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
         canvas.select_placements(&[2]);
@@ -1029,7 +1029,7 @@ mod tests {
     fn single_placement_guide_snapping_ignores_targets_outside_guide_threshold() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        canvas.set_layout_gap(24.0);
+        canvas.set_placement_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
         canvas.select_placements(&[2]);
@@ -1055,10 +1055,10 @@ mod tests {
     }
 
     #[test]
-    fn single_placement_guide_snapping_acquires_layout_gap_adjacency() {
+    fn single_placement_guide_snapping_acquires_placement_gap_adjacency() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        canvas.set_layout_gap(24.0);
+        canvas.set_placement_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
         canvas.select_placements(&[2]);
@@ -1088,7 +1088,7 @@ mod tests {
     fn single_placement_guide_snapping_records_indicator() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        canvas.set_layout_gap(24.0);
+        canvas.set_placement_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
         canvas.select_placements(&[2]);
@@ -1122,7 +1122,7 @@ mod tests {
     fn nonzero_gap_guide_snapping_does_not_acquire_target_image_border() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        canvas.set_layout_gap(24.0);
+        canvas.set_placement_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(160.0, 200.0), 100, 140);
         canvas.select_placements(&[2]);
@@ -1151,7 +1151,7 @@ mod tests {
     fn distant_edge_alignment_does_not_snap_without_contact() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        canvas.set_layout_gap(24.0);
+        canvas.set_placement_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(200.0, 300.0), 100, 100);
         canvas.select_placements(&[2]);
@@ -1180,7 +1180,7 @@ mod tests {
     fn vertically_distant_candidate_does_not_contribute_horizontal_gap_snap() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        canvas.set_layout_gap(24.0);
+        canvas.set_placement_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(124.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 3, egui::pos2(0.0, 260.0), 100, 100);
@@ -1216,7 +1216,7 @@ mod tests {
     fn horizontally_distant_candidate_does_not_contribute_vertical_gap_snap() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        canvas.set_layout_gap(24.0);
+        canvas.set_placement_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(0.0, 124.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 3, egui::pos2(260.0, 0.0), 100, 100);
@@ -1252,7 +1252,7 @@ mod tests {
     fn gap_spacing_can_combine_with_real_edge_alignment() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        canvas.set_layout_gap(24.0);
+        canvas.set_placement_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 8.0), 100, 100);
         canvas.select_placements(&[2]);
@@ -1284,7 +1284,7 @@ mod tests {
     fn gap_spacing_can_snap_into_corner_from_different_targets() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        canvas.set_layout_gap(24.0);
+        canvas.set_placement_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 124.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(124.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 3, egui::pos2(130.0, 130.0), 100, 100);
@@ -1317,7 +1317,7 @@ mod tests {
     fn guide_snapping_marks_all_edge_points_on_the_guide_line() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        canvas.set_layout_gap(0.0);
+        canvas.set_placement_gap(0.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(160.0, 0.0), 100, 140);
         canvas.select_placements(&[2]);

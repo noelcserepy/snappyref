@@ -296,9 +296,14 @@ fn quiet_settings(ui: &mut egui::Ui) {
             },
         );
         divider(ui);
-        setting_row(ui, "Image gap", "Gap used when placing new images.", |ui| {
-            number_field_sample(ui, "24", "units");
-        });
+        setting_row(
+            ui,
+            "Placement gap",
+            "Spacing used when placing and arranging placements.",
+            |ui| {
+                number_field_sample(ui, "24", "units");
+            },
+        );
     });
 }
 

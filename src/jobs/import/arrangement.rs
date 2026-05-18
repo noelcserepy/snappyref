@@ -26,7 +26,7 @@ pub fn arrange_rect_world(
     viewport_world: egui::Rect,
     item_width: f32,
     item_height: f32,
-    import_gap: f32,
+    placement_gap: f32,
 ) -> Result<egui::Pos2, String> {
     let existing_items = library.load_placement_layout_items()?;
     Ok(arrange_rect_with_existing_layout(
@@ -35,7 +35,7 @@ pub fn arrange_rect_world(
         viewport_world,
         item_width,
         item_height,
-        import_gap,
+        placement_gap,
     ))
 }
 
@@ -47,7 +47,7 @@ pub(super) fn resolve_import_world(
     viewport_world: egui::Rect,
     item_width: f32,
     item_height: f32,
-    import_gap: f32,
+    placement_gap: f32,
 ) -> Result<egui::Pos2, String> {
     if let Some(reserved_world) = reserved_world {
         return Ok(reserved_world);
@@ -60,7 +60,7 @@ pub(super) fn resolve_import_world(
         viewport_world,
         item_width,
         item_height,
-        import_gap,
+        placement_gap,
     ))
 }
 
@@ -70,7 +70,7 @@ pub fn arrange_rect_with_existing_layout(
     viewport_world: egui::Rect,
     item_width: f32,
     item_height: f32,
-    import_gap: f32,
+    placement_gap: f32,
 ) -> egui::Pos2 {
     if existing_items.is_empty() {
         return desired_world;
@@ -82,7 +82,7 @@ pub fn arrange_rect_with_existing_layout(
         viewport_world,
         item_width,
         item_height,
-        import_gap,
+        placement_gap,
     )
     .map(|candidate| candidate.center)
     .unwrap_or(desired_world)
@@ -94,7 +94,7 @@ pub fn best_arrangement_candidate_with_existing_layout(
     viewport_world: egui::Rect,
     item_width: f32,
     item_height: f32,
-    import_gap: f32,
+    placement_gap: f32,
 ) -> Option<ArrangementCandidate> {
     let new_rect = egui::Rect::from_center_size(
         desired_world,
@@ -123,11 +123,11 @@ pub fn best_arrangement_candidate_with_existing_layout(
     for existing in &existing_rects {
         for candidate_rect in [
             egui::Rect::from_min_size(
-                egui::pos2(existing.rect.right() + import_gap, existing.rect.top()),
+                egui::pos2(existing.rect.right() + placement_gap, existing.rect.top()),
                 new_rect.size(),
             ),
             egui::Rect::from_min_size(
-                egui::pos2(existing.rect.left(), existing.rect.bottom() + import_gap),
+                egui::pos2(existing.rect.left(), existing.rect.bottom() + placement_gap),
                 new_rect.size(),
             ),
         ] {
@@ -137,7 +137,7 @@ pub fn best_arrangement_candidate_with_existing_layout(
             };
             generation_index += 1;
 
-            if candidate_overlaps_any(candidate_rect, &existing_rects, import_gap) {
+            if candidate_overlaps_any(candidate_rect, &existing_rects, placement_gap) {
                 continue;
             }
 

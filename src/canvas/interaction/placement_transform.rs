@@ -453,7 +453,7 @@ pub(crate) fn compute_resize_snap_preview(
             base_display_size,
             min_scale,
             candidates: &candidates,
-            gap: state.layout_gap,
+            gap: state.placement_gap,
             threshold: super::super::guide_snap::threshold_world(state.zoom, false),
         })
     else {
@@ -485,7 +485,7 @@ pub(crate) fn compute_uniform_scale_snap_preview(
             desired_factor,
             min_factor,
             candidates: &candidates,
-            gap: state.layout_gap,
+            gap: state.placement_gap,
             threshold: super::super::guide_snap::threshold_world(state.zoom, false),
         },
     ) else {

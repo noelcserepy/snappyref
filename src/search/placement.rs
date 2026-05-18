@@ -132,7 +132,7 @@ impl SearchController {
             screen_rect,
             crate::placement::creation::PlacementCreationSettings {
                 target_canvas_area: placement_preview_config.import_target_canvas_area,
-                gap: placement_preview_config.import_gap,
+                gap: placement_preview_config.placement_gap,
             },
         );
     }

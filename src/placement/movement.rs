@@ -145,7 +145,7 @@ pub(crate) fn compute_guide_snap_for_rect(
     crate::canvas::guide_snap::snap_rect(crate::canvas::guide_snap::GuideSnapRequest {
         desired_rect,
         candidates: &candidates,
-        gap: state.layout_gap,
+        gap: state.placement_gap,
         threshold: crate::canvas::guide_snap::threshold_world(state.zoom, previously_snapped),
     })
 }

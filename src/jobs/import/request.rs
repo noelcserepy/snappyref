@@ -139,7 +139,7 @@ pub enum ImagePreparationRequest {
         canvas_image_settings: CanvasImageSettings,
         auto_scale: bool,
         target_canvas_area: f32,
-        import_gap: f32,
+        placement_gap: f32,
         trace: Option<ImportTrace>,
     },
     ImportClipboard {
@@ -156,7 +156,7 @@ pub enum ImagePreparationRequest {
         canvas_image_settings: CanvasImageSettings,
         auto_scale: bool,
         target_canvas_area: f32,
-        import_gap: f32,
+        placement_gap: f32,
         trace: Option<ImportTrace>,
     },
     ImportUrl {
@@ -171,7 +171,7 @@ pub enum ImagePreparationRequest {
         canvas_image_settings: CanvasImageSettings,
         auto_scale: bool,
         target_canvas_area: f32,
-        import_gap: f32,
+        placement_gap: f32,
         trace: Option<ImportTrace>,
     },
     Crop {

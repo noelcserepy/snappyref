@@ -336,7 +336,7 @@ fn update_preservation_smoke() {
     session.viewport.camera_zoom = 1.75;
     session.viewport.canvas_background = CanvasBackground::Grid;
     session.settings.auto_image_scaling = false;
-    session.settings.import_gap = 36.0;
+    session.settings.placement_gap = 36.0;
     session.settings.import_target_canvas_area = 54_321.0;
     session.settings.semantic_search_enabled = false;
     session.settings.canvas_image_max_side = 4096;
@@ -379,7 +379,7 @@ fn update_preservation_smoke() {
         CanvasBackground::Grid
     );
     assert!(!reloaded_session.settings.auto_image_scaling);
-    assert_eq!(reloaded_session.settings.import_gap, 36.0);
+    assert_eq!(reloaded_session.settings.placement_gap, 36.0);
     assert_eq!(
         reloaded_session.settings.import_target_canvas_area,
         54_321.0
@@ -499,7 +499,7 @@ fn existing_single_canvas_data_migrates_to_my_board() {
                 camera_pan_y REAL NOT NULL,
                 camera_zoom REAL NOT NULL,
                 auto_image_scaling INTEGER NOT NULL DEFAULT 1,
-                import_gap REAL NOT NULL DEFAULT 24.0,
+                placement_gap REAL NOT NULL DEFAULT 24.0,
                 canvas_background TEXT NOT NULL DEFAULT 'none',
                 semantic_search_enabled INTEGER NOT NULL DEFAULT 1,
                 canvas_image_mode TEXT NOT NULL DEFAULT 'downscale',
@@ -517,7 +517,7 @@ fn existing_single_canvas_data_migrates_to_my_board() {
                 id, kind, start_x, start_y, end_x, end_y, text, text_size, stroke_width, color, background_enabled, archived
             ) VALUES (31, 'textbox', 1.0, 2.0, 101.0, 52.0, 'note', 'l', 's', 'sky', 1, 0);
             INSERT INTO user_session (
-                id, camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, import_gap,
+                id, camera_pan_x, camera_pan_y, camera_zoom, auto_image_scaling, placement_gap,
                 canvas_background, semantic_search_enabled, canvas_image_mode,
                 canvas_image_max_side, rotation_snap_degrees, default_textbox_background
             ) VALUES (1, 44.0, 55.0, 1.25, 0, 37.0, 'grid', 0, 'original', 4096, 30.0, 1);
@@ -1047,7 +1047,7 @@ fn workspace_settings_remain_global_across_active_boards() {
 
     let mut session = library.load_user_session().unwrap();
     session.settings.auto_image_scaling = false;
-    session.settings.import_gap = 48.0;
+    session.settings.placement_gap = 48.0;
     session.settings.import_target_canvas_area = 45_000.0;
     session.settings.semantic_search_enabled = false;
     session.settings.semantic_search_first_launch_prompt_seen = true;
@@ -1063,7 +1063,7 @@ fn workspace_settings_remain_global_across_active_boards() {
 
     assert_eq!(reopened.active_board_id, first_board.id);
     assert!(!reopened.settings.auto_image_scaling);
-    assert_eq!(reopened.settings.import_gap, 48.0);
+    assert_eq!(reopened.settings.placement_gap, 48.0);
     assert_eq!(reopened.settings.import_target_canvas_area, 45_000.0);
     assert!(!reopened.settings.semantic_search_enabled);
     assert!(reopened.settings.semantic_search_first_launch_prompt_seen);
@@ -1080,7 +1080,7 @@ fn workspace_settings_remain_global_across_active_boards() {
         second_reopened.viewport.canvas_background,
         CanvasBackground::Grid
     );
-    assert_eq!(second_reopened.settings.import_gap, 48.0);
+    assert_eq!(second_reopened.settings.placement_gap, 48.0);
     assert_eq!(second_reopened.settings.import_target_canvas_area, 45_000.0);
 
     drop(library);
@@ -1110,7 +1110,7 @@ fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
 
     let mut session = library.load_user_session().unwrap();
     session.settings.auto_image_scaling = false;
-    session.settings.import_gap = 48.0;
+    session.settings.placement_gap = 48.0;
     session.settings.import_target_canvas_area = 45_000.0;
     session.settings.semantic_search_enabled = false;
     session.settings.canvas_image_max_side = 4096;
@@ -1126,7 +1126,7 @@ fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
         .execute(
             "UPDATE user_session
              SET auto_image_scaling = 1,
-                 import_gap = 12.0,
+                 placement_gap = 12.0,
                  import_target_canvas_area = 12.0,
                  semantic_search_enabled = 1,
                  canvas_image_max_side = 100,
@@ -1144,7 +1144,7 @@ fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
     let reloaded = library.load_user_session().unwrap();
 
     assert!(!reloaded.settings.auto_image_scaling);
-    assert_eq!(reloaded.settings.import_gap, 48.0);
+    assert_eq!(reloaded.settings.placement_gap, 48.0);
     assert_eq!(reloaded.settings.import_target_canvas_area, 45_000.0);
     assert!(!reloaded.settings.semantic_search_enabled);
     assert_eq!(reloaded.settings.canvas_image_max_side, 4096);
@@ -1170,7 +1170,7 @@ fn existing_legacy_user_session_columns_backfill_payload() {
                 camera_pan_y REAL NOT NULL,
                 camera_zoom REAL NOT NULL,
                 auto_image_scaling INTEGER NOT NULL DEFAULT 1,
-                import_gap REAL NOT NULL DEFAULT 24.0,
+                placement_gap REAL NOT NULL DEFAULT 24.0,
                 import_target_canvas_area REAL NOT NULL DEFAULT 90000.0,
                 canvas_background TEXT NOT NULL DEFAULT 'none',
                 semantic_search_enabled INTEGER NOT NULL DEFAULT 1,
@@ -1189,7 +1189,7 @@ fn existing_legacy_user_session_columns_backfill_payload() {
                 camera_pan_y,
                 camera_zoom,
                 auto_image_scaling,
-                import_gap,
+                placement_gap,
                 import_target_canvas_area,
                 canvas_background,
                 semantic_search_enabled,
@@ -1230,7 +1230,7 @@ fn existing_legacy_user_session_columns_backfill_payload() {
     assert_eq!(session.viewport.camera_zoom, 1.5);
     assert_eq!(session.viewport.canvas_background, CanvasBackground::Grid);
     assert!(!session.settings.auto_image_scaling);
-    assert_eq!(session.settings.import_gap, 48.0);
+    assert_eq!(session.settings.placement_gap, 48.0);
     assert_eq!(session.settings.import_target_canvas_area, 45_000.0);
     assert!(!session.settings.semantic_search_enabled);
     assert_eq!(session.settings.canvas_image_max_side, 4096);
@@ -1252,7 +1252,7 @@ fn existing_legacy_user_session_columns_backfill_payload() {
     connection
         .execute(
             "UPDATE user_session
-             SET import_gap = 12.0,
+             SET placement_gap = 12.0,
                  sidebar_open = 0,
                  sidebar_tab = 'settings'
              WHERE id = 1",
@@ -1263,7 +1263,7 @@ fn existing_legacy_user_session_columns_backfill_payload() {
 
     let library = Library::initialize(root.clone()).unwrap();
     let reloaded = library.load_user_session().unwrap();
-    assert_eq!(reloaded.settings.import_gap, 48.0);
+    assert_eq!(reloaded.settings.placement_gap, 48.0);
     assert!(reloaded.sidebar_open);
     assert_eq!(reloaded.sidebar_tab, "boards");
 
@@ -1307,7 +1307,10 @@ fn existing_user_session_rows_migrate_to_default_preferences() {
     assert_eq!(session.viewport.camera_pan_y, 20.0);
     assert_eq!(session.viewport.camera_zoom, 1.5);
     assert!(session.settings.auto_image_scaling);
-    assert_eq!(session.settings.import_gap, crate::data::DEFAULT_IMPORT_GAP);
+    assert_eq!(
+        session.settings.placement_gap,
+        crate::data::DEFAULT_PLACEMENT_GAP
+    );
     assert_eq!(
         session.settings.import_target_canvas_area,
         crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA

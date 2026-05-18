@@ -290,7 +290,7 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
         settings,
         true,
         DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-        crate::data::DEFAULT_IMPORT_GAP,
+        crate::data::DEFAULT_PLACEMENT_GAP,
         Some(trace),
         None,
     );
@@ -412,7 +412,7 @@ fn measure_interactive_import_ms(
             egui::Pos2::ZERO,
             viewport_world,
             true,
-            crate::data::DEFAULT_IMPORT_GAP,
+            crate::data::DEFAULT_PLACEMENT_GAP,
         )?;
     } else {
         for placement in backlog {
@@ -442,7 +442,7 @@ fn measure_interactive_import_ms(
             egui::Pos2::ZERO,
             viewport_world,
             true,
-            crate::data::DEFAULT_IMPORT_GAP,
+            crate::data::DEFAULT_PLACEMENT_GAP,
         )?;
     }
     Ok(started_at.elapsed().as_secs_f64() * 1000.0)
@@ -495,7 +495,7 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
         canvas_image_settings: CanvasImageSettings::default(),
         auto_scale: true,
         target_canvas_area: DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-        import_gap: crate::data::DEFAULT_IMPORT_GAP,
+        placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
         trace: Some(ImportTrace {
             queued_at: started_at,
             timings: ImportTimings::default(),

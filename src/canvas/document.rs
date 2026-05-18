@@ -555,8 +555,8 @@ impl CanvasState {
         self.pointer_mode
     }
 
-    pub fn set_layout_gap(&mut self, gap: f32) {
-        self.layout_gap = gap.max(0.0);
+    pub fn set_placement_gap(&mut self, gap: f32) {
+        self.placement_gap = gap.max(0.0);
     }
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
