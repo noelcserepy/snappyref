@@ -1171,8 +1171,8 @@ fn selected_image_pivot(canvas: &CanvasState) -> Option<ImageSearchPivot> {
     }
     let record = canvas.record_for_item_id(selected[0])?;
     Some(ImageSearchPivot {
-        asset_id: record.asset.id,
-        item_id: record.item.id,
+        asset_id: record.asset.as_ref().expect("loaded placement asset").id,
+        item_id: record.state.id,
     })
 }
 
@@ -1205,7 +1205,7 @@ mod tests {
         SearchController, SearchIndexResult, SearchOverlayStatus, result_is_on_bottom_row,
     };
     use crate::canvas::CanvasState;
-    use crate::data::{BoardItem, BoardItemWithAsset};
+    use crate::data::{Placement, PlacementState};
     use crate::search::semantic::{
         LocalModelStoreStatus, SearchQueryResult, SearchResultGroup, SearchScope,
         SemanticSearchInstallProgress,
@@ -1553,7 +1553,7 @@ mod tests {
         let layout = canvas
             .provisional_records_in_selection_order()
             .into_iter()
-            .map(|record| (record.item.x, record.item.y))
+            .map(|record| (record.state.center.x, record.state.center.y))
             .collect::<Vec<_>>();
         let mut rows = layout
             .iter()
@@ -1579,13 +1579,21 @@ mod tests {
         for (index, position) in source_positions.iter().enumerate() {
             let item_id = 100 + index as i64;
             let asset_id = 10 + index as i64;
-            let asset = BoardItemWithAsset::placeholder_asset(item_id, "search-result", 200, 100);
-            canvas.add_unloaded_item(BoardItemWithAsset::loaded(
-                BoardItem {
+            let asset = crate::data::ImageAsset {
+                id: asset_id,
+                original_path: std::path::PathBuf::from("search-result"),
+                filename: "search-result".to_owned(),
+                mime_type: "image/png".to_owned(),
+                width: 200,
+                height: 100,
+                file_size: 0,
+                imported_at: 0,
+            };
+            canvas.add_unloaded_item(Placement::loaded(
+                PlacementState {
                     id: item_id,
-                    asset_id,
-                    x: position.x,
-                    y: position.y,
+                    asset_id: Some(asset_id),
+                    center: *position,
                     scale: 0.5,
                     rotation: 0.0,
                     z_index: index as i32,
@@ -1642,16 +1650,51 @@ mod tests {
     }
 
     #[test]
+    fn library_scope_drag_places_asset_at_import_size_even_when_asset_has_board_instance() {
+        let mut search = SearchController::default();
+        search.overlay.scope = SearchScope::Library;
+        search.overlay.results = vec![SearchResultGroup {
+            asset_id: 10,
+            asset_preview_path: None,
+            asset_original_path: None,
+            asset_width: 4000,
+            asset_height: 3000,
+            similarity: 0.9,
+            item_ids: vec![100],
+            instance_count: 1,
+        }];
+        search.overlay.result_selection.replace(0);
+
+        search.start_result_drag(0);
+
+        let drag = search
+            .overlay
+            .drag_state
+            .as_ref()
+            .expect("expected library search result drag");
+        assert!(drag.item_ids.is_empty());
+        assert_eq!(drag.asset_ids, vec![10]);
+    }
+
+    #[test]
     fn search_drag_updates_snap_guides_after_provisional_placement_exists() {
         let mut canvas = CanvasState::default();
         canvas.set_layout_gap(24.0);
-        let target_asset = BoardItemWithAsset::placeholder_asset(900, "snap-target", 100, 100);
-        canvas.add_unloaded_item(BoardItemWithAsset::loaded(
-            BoardItem {
+        let target_asset = crate::data::ImageAsset {
+            id: 900,
+            original_path: std::path::PathBuf::from("snap-target"),
+            filename: "snap-target".to_owned(),
+            mime_type: "image/png".to_owned(),
+            width: 100,
+            height: 100,
+            file_size: 0,
+            imported_at: 0,
+        };
+        canvas.add_unloaded_item(Placement::loaded(
+            PlacementState {
                 id: 900,
-                asset_id: 900,
-                x: 0.0,
-                y: 0.0,
+                asset_id: Some(900),
+                center: eframe::egui::pos2(0.0, 0.0),
                 scale: 1.0,
                 rotation: 0.0,
                 z_index: 0,
@@ -1761,7 +1804,7 @@ mod tests {
             record.lifecycle,
             crate::data::PlacementLifecycle::Provisional
         );
-        assert_eq!(record.item.asset_id, 10);
+        assert_eq!(record.state.asset_id, Some(10));
         assert!(matches!(
             record.content,
             crate::data::PlacementContent::Loading {

@@ -12,10 +12,10 @@ pub(super) use image::{ColorType, ExtendedColorType, ImageEncoder, ImageFormat};
 pub(super) use rusqlite::{Connection, Transaction, params, params_from_iter};
 
 pub(super) use crate::data::{
-    Board, BoardItem, BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
-    CanvasAnnotationKind, CanvasBackground, CanvasImageLod, CanvasStackItem, CanvasStrokeWidth,
-    CanvasTextSize, DEFAULT_VIEWPORT_ZOOM, ImageAsset, PlacementContent, PlacementContentIntent,
-    PlacementLifecycle, UserSession, ViewportState, WorkspaceSettings,
+    Board, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
+    CanvasImageLod, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, DEFAULT_VIEWPORT_ZOOM,
+    ImageAsset, Placement, PlacementContent, PlacementContentIntent, PlacementLayoutItem,
+    PlacementLifecycle, PlacementState, UserSession, ViewportState, WorkspaceSettings,
 };
 
 pub(super) fn unix_timestamp_seconds() -> i64 {

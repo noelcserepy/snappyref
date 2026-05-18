@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use crate::data::{BoardItemWithAsset, CanvasImageLod};
+use crate::data::{CanvasImageLod, Placement};
 
 use super::preview_texture::ImportedPreviewTexture;
 
@@ -182,7 +182,7 @@ pub enum ImportRequest {
     LoadExisting {
         target_board_id: i64,
         queue_id: Option<u64>,
-        record: BoardItemWithAsset,
+        record: Placement,
         max_texture_side: usize,
         canvas_image_settings: CanvasImageSettings,
         target_lod: CanvasImageLod,
@@ -190,7 +190,7 @@ pub enum ImportRequest {
         trace: Option<ImportTrace>,
     },
     BackfillLod {
-        record: BoardItemWithAsset,
+        record: Placement,
         canvas_image_settings: CanvasImageSettings,
         lod: CanvasImageLod,
     },
@@ -223,7 +223,7 @@ pub enum ImportResult {
 pub struct LoadedCanvasItem {
     pub target_board_id: i64,
     pub queue_id: Option<u64>,
-    pub record: BoardItemWithAsset,
+    pub record: Placement,
     pub preview_rgba: Vec<u8>,
     pub preview_width: u32,
     pub preview_height: u32,
@@ -252,7 +252,7 @@ pub struct CroppedCanvasItem {
 
 #[derive(Clone, Debug)]
 pub struct StartupTraceEntry {
-    pub record: BoardItemWithAsset,
+    pub record: Placement,
     pub diagnostics: ExistingLoadDiagnostics,
     pub timings: ImportTimings,
     pub preview_width: u32,

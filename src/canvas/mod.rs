@@ -8,8 +8,8 @@ mod render;
 mod state;
 
 use crate::data::{
-    BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind,
-    CanvasBackground, CanvasImageLod, CanvasTextSize,
+    CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
+    CanvasImageLod, CanvasTextSize, Placement,
 };
 use eframe::egui;
 use interaction::{
@@ -100,7 +100,7 @@ pub struct CanvasFrameMetrics {
 
 #[derive(Clone, Debug, Default)]
 pub struct CanvasDocumentChanges {
-    pub updated_items: Vec<crate::data::BoardItem>,
+    pub updated_items: Vec<crate::data::PlacementState>,
     pub updated_annotations: Vec<CanvasAnnotation>,
     pub archived_annotation_ids: Vec<i64>,
     pub stack_order: Option<Vec<crate::data::CanvasStackItem>>,
@@ -155,7 +155,7 @@ struct AnnotationPaintStats {
 
 #[derive(Clone)]
 pub(crate) struct CanvasImage {
-    pub(crate) record: BoardItemWithAsset,
+    pub(crate) record: Placement,
     texture: CanvasTexture,
     loaded_lod: CanvasImageLod,
     animation: Option<AnimatedCanvasImage>,
@@ -523,10 +523,10 @@ impl CanvasState {
                 .document
                 .images
                 .iter_mut()
-                .find(|image| image.record.item.id == item.id)
+                .find(|image| image.record.state.id == item.id)
             {
-                image.record.item.x = item.x + world_delta.x + snap_offset.x;
-                image.record.item.y = item.y + world_delta.y + snap_offset.y;
+                image.record.state.center.x = item.x + world_delta.x + snap_offset.x;
+                image.record.state.center.y = item.y + world_delta.y + snap_offset.y;
             }
         }
         snap_preview_rect.is_some()
@@ -836,12 +836,11 @@ pub fn paint_perf_report() -> PaintPerfReport {
             } else {
                 2600.0 + index as f32 * 24.0
             };
-            crate::data::BoardItemWithAsset::loaded(
-                crate::data::BoardItem {
+            crate::data::Placement::loaded(
+                crate::data::PlacementState {
                     id: index as i64 + 1,
-                    asset_id: index as i64 + 1,
-                    x,
-                    y,
+                    asset_id: Some(index as i64 + 1),
+                    center: egui::pos2(x, y),
                     scale: 1.0,
                     rotation: 0.0,
                     z_index: index as i32,
@@ -910,9 +909,9 @@ mod tests {
         rotated_visual_size,
     };
     use crate::data::{
-        BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
-        CanvasAnnotationKind, CanvasImageLod, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize,
-        ImageAsset, PlacementContent, PlacementContentIntent, PlacementLifecycle,
+        CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
+        CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, ImageAsset, Placement,
+        PlacementContent, PlacementContentIntent, PlacementLifecycle, PlacementState,
     };
     use crate::placement::arrangement::{
         SettleDirection, balanced_grid_layout_for_sizes, best_compact_layout,
@@ -942,12 +941,11 @@ mod tests {
             eframe::egui::TextureOptions::LINEAR,
         );
         state.document.images.push(CanvasImage {
-            record: BoardItemWithAsset::loaded(
-                BoardItem {
+            record: Placement::loaded(
+                PlacementState {
                     id: item_id,
-                    asset_id: item_id,
-                    x: center.x,
-                    y: center.y,
+                    asset_id: Some(item_id),
+                    center: eframe::egui::pos2(center.x, center.y),
                     scale,
                     rotation: 0.0,
                     z_index: 0,
@@ -1017,13 +1015,12 @@ mod tests {
         CanvasStrokeWidth::default()
     }
 
-    fn test_record(item_id: i64, asset_id: i64, width: u32, height: u32) -> BoardItemWithAsset {
-        BoardItemWithAsset::loaded(
-            BoardItem {
+    fn test_record(item_id: i64, asset_id: i64, width: u32, height: u32) -> Placement {
+        Placement::loaded(
+            PlacementState {
                 id: item_id,
-                asset_id,
-                x: 0.0,
-                y: 0.0,
+                asset_id: Some(asset_id),
+                center: eframe::egui::Pos2::ZERO,
                 scale: 1.0,
                 rotation: 0.0,
                 z_index: item_id as i32,
@@ -1049,42 +1046,50 @@ mod tests {
         visual_height: f32,
         scale: f32,
         center: eframe::egui::Pos2,
-    ) -> BoardItemWithAsset {
-        let mut record = BoardItemWithAsset::loaded(
-            BoardItem {
+    ) -> Placement {
+        let mut record = Placement {
+            state: PlacementState {
                 id: item_id,
-                asset_id: 0,
-                x: center.x,
-                y: center.y,
+                asset_id: None,
+                center,
                 scale,
                 rotation: 0.0,
                 z_index: item_id as i32,
                 archived: false,
             },
-            BoardItemWithAsset::placeholder_asset(
-                item_id,
-                format!("placement-{item_id}.png"),
-                1,
-                1,
-            ),
-        );
+            asset: None,
+            content: content.clone(),
+            lifecycle: PlacementLifecycle::Committed,
+            visual_size: eframe::egui::vec2(visual_width, visual_height),
+        };
         record.content = content;
         record.lifecycle = PlacementLifecycle::Committed;
-        record.visual_width = visual_width;
-        record.visual_height = visual_height;
         record
     }
 
     fn native_loaded_item(
-        record: BoardItemWithAsset,
+        record: Placement,
         texture: Arc<crate::jobs::NativeTextureHandle>,
     ) -> crate::jobs::LoadedCanvasItem {
         crate::jobs::LoadedCanvasItem {
             target_board_id: 1,
             queue_id: None,
-            preview_rgba: vec![255; record.asset.width as usize * record.asset.height as usize * 4],
-            preview_width: record.asset.width,
-            preview_height: record.asset.height,
+            preview_rgba: vec![
+                255;
+                record.asset.as_ref().expect("loaded placement asset").width as usize
+                    * record
+                        .asset
+                        .as_ref()
+                        .expect("loaded placement asset")
+                        .height as usize
+                    * 4
+            ],
+            preview_width: record.asset.as_ref().expect("loaded placement asset").width,
+            preview_height: record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .height,
             animated_preview: None,
             preview_texture: crate::jobs::ImportedPreviewTexture::Native(texture),
             loaded_lod: CanvasImageLod::Working,
@@ -1097,7 +1102,7 @@ mod tests {
 
     fn animated_loaded_item(
         _ui: &eframe::egui::Ui,
-        record: BoardItemWithAsset,
+        record: Placement,
     ) -> crate::jobs::LoadedCanvasItem {
         let first_frame = vec![0, 0, 255, 255];
         let second_frame = vec![0, 255, 0, 255];
@@ -1220,11 +1225,10 @@ mod tests {
                     file_size: 0,
                     imported_at: 0,
                 },
-                BoardItem {
+                PlacementState {
                     id: 1,
-                    asset_id: 2,
-                    x: 0.0,
-                    y: 0.0,
+                    asset_id: Some(2),
+                    center: eframe::egui::pos2(0.0, 0.0),
                     scale: 1.0,
                     rotation: 0.0,
                     z_index: 1,
@@ -1271,7 +1275,7 @@ mod tests {
                 .document
                 .images
                 .iter()
-                .any(|image| image.record.item.id == 2 && image.animation.is_some())
+                .any(|image| image.record.state.id == 2 && image.animation.is_some())
         );
     }
 
@@ -1289,11 +1293,10 @@ mod tests {
         assert_eq!(crop_rect.width, 100);
         assert_eq!(crop_rect.height, 80);
 
-        let item = BoardItem {
+        let item = PlacementState {
             id: 1,
-            asset_id: 1,
-            x: 200.0,
-            y: 120.0,
+            asset_id: Some(1),
+            center: eframe::egui::pos2(200.0, 120.0),
             scale: 2.0,
             rotation: 0.0,
             z_index: 0,
@@ -1317,9 +1320,9 @@ mod tests {
         let mut merged_item = item.clone();
         merge_cropped_item_fields(&mut merged_item, 2, crop_offset_local);
 
-        assert_eq!(merged_item.asset_id, 2);
-        assert_eq!(merged_item.x, 150.0);
-        assert_eq!(merged_item.y, 110.0);
+        assert_eq!(merged_item.asset_id, Some(2));
+        assert_eq!(merged_item.center.x, 150.0);
+        assert_eq!(merged_item.center.y, 110.0);
     }
 
     #[test]
@@ -2220,10 +2223,20 @@ mod tests {
             assert_eq!(changed, 2);
             for item_id in [31, 32] {
                 let image = state.image_by_item_id(item_id).unwrap();
-                let area = image.record.asset.width as f32
-                    * image.record.asset.height as f32
-                    * image.record.item.scale
-                    * image.record.item.scale;
+                let area = image
+                    .record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .width as f32
+                    * image
+                        .record
+                        .asset
+                        .as_ref()
+                        .expect("loaded placement asset")
+                        .height as f32
+                    * image.record.state.scale
+                    * image.record.state.scale;
                 assert!((area - 90_000.0).abs() < 0.1);
             }
         });
@@ -3002,11 +3015,10 @@ mod tests {
 
     #[test]
     fn merge_only_updates_crop_owned_item_fields() {
-        let mut item = BoardItem {
+        let mut item = PlacementState {
             id: 7,
-            asset_id: 2,
-            x: 12.0,
-            y: 18.0,
+            asset_id: Some(2),
+            center: eframe::egui::pos2(12.0, 18.0),
             scale: 1.5,
             rotation: 0.25,
             z_index: 9,
@@ -3015,9 +3027,9 @@ mod tests {
 
         merge_cropped_item_fields(&mut item, 11, eframe::egui::vec2(80.0, 96.0));
 
-        assert_eq!(item.asset_id, 11);
-        assert_eq!(item.x, 132.0);
-        assert_eq!(item.y, 162.0);
+        assert_eq!(item.asset_id, Some(11));
+        assert_eq!(item.center.x, 132.0);
+        assert_eq!(item.center.y, 162.0);
         assert_eq!(item.scale, 1.5);
         assert_eq!(item.rotation, 0.25);
         assert_eq!(item.z_index, 9);
@@ -3050,7 +3062,11 @@ mod tests {
     fn crop_guard_rejects_svg_items() {
         let mut state = super::CanvasState::default();
         let mut record = test_record(42, 42, 4, 4);
-        record.asset.mime_type = "image/svg+xml".to_owned();
+        record
+            .asset
+            .as_mut()
+            .expect("loaded placement asset")
+            .mime_type = "image/svg+xml".to_owned();
         state.document.images.push(CanvasImage {
             record,
             texture: CanvasTexture::Svg {
@@ -3097,7 +3113,9 @@ mod tests {
 
         let request = CanvasCropRequest {
             item_id: 42,
-            source_asset: test_record(42, 42, 8, 8).asset,
+            source_asset: test_record(42, 42, 8, 8)
+                .asset
+                .expect("loaded placement asset"),
             crop_rect: PixelCropRect {
                 x: 2,
                 y: 2,
@@ -3112,11 +3130,29 @@ mod tests {
         let preview = state.preview_for_item_id(42).unwrap();
         assert_eq!(preview.texture_size, eframe::egui::vec2(2.0, 2.0));
         let record = state.record_for_item_id(42).unwrap();
-        assert_eq!((record.asset.width, record.asset.height), (4, 4));
-        assert_eq!((record.item.x, record.item.y), (2.0, 2.0));
+        assert_eq!(
+            (
+                record.asset.as_ref().expect("loaded placement asset").width,
+                record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .height
+            ),
+            (4, 4)
+        );
+        assert_eq!((record.state.center.x, record.state.center.y), (2.0, 2.0));
 
         let original = state.snapshot_item_image(42).unwrap();
-        assert_eq!(original.0.asset.width, 8);
+        assert_eq!(
+            original
+                .0
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .width,
+            8
+        );
         assert_eq!(original.1.as_ref(), source_rgba);
     }
 
@@ -3151,7 +3187,9 @@ mod tests {
 
         let request = CanvasCropRequest {
             item_id: 42,
-            source_asset: test_record(42, 42, 8, 8).asset,
+            source_asset: test_record(42, 42, 8, 8)
+                .asset
+                .expect("loaded placement asset"),
             crop_rect: PixelCropRect {
                 x: 2,
                 y: 2,
@@ -3256,7 +3294,9 @@ mod tests {
             .insert(42, vec![255; 4 * 4 * 4].into());
         let request = CanvasCropRequest {
             item_id: 42,
-            source_asset: test_record(42, 42, 8, 8).asset,
+            source_asset: test_record(42, 42, 8, 8)
+                .asset
+                .expect("loaded placement asset"),
             crop_rect: PixelCropRect {
                 x: 2,
                 y: 2,
@@ -3280,17 +3320,19 @@ mod tests {
             crop_offset_local: eframe::egui::vec2(2.0, 2.0),
         };
         let mut updated_item = state.projected_cropped_item(&cropped).unwrap();
-        let mut asset = test_record(42, 99, 4, 4).asset;
+        let mut asset = test_record(42, 99, 4, 4)
+            .asset
+            .expect("loaded placement asset");
         asset.original_path = std::path::PathBuf::from("cropped.png");
-        updated_item.asset_id = asset.id;
+        updated_item.asset_id = Some(asset.id);
 
         state
             .apply_cropped_item(&ctx, cropped, asset, updated_item)
             .unwrap();
 
         let record = state.record_for_item_id(42).unwrap();
-        assert_eq!(record.item.asset_id, 99);
-        assert_eq!((record.item.x, record.item.y), (2.0, 2.0));
+        assert_eq!(record.state.asset_id, Some(99));
+        assert_eq!((record.state.center.x, record.state.center.y), (2.0, 2.0));
     }
 
     #[test]
@@ -3779,13 +3821,13 @@ mod tests {
             .document
             .images
             .iter()
-            .find(|image| image.record.item.id == 1)
+            .find(|image| image.record.state.id == 1)
             .unwrap();
         let second = state
             .document
             .images
             .iter()
-            .find(|image| image.record.item.id == 2)
+            .find(|image| image.record.state.id == 2)
             .unwrap();
         let first_rect = placement_visual_bounds_world(first);
         let second_rect = placement_visual_bounds_world(second);
@@ -3829,16 +3871,28 @@ mod tests {
             .document
             .images
             .iter()
-            .find(|image| image.record.item.id == 1)
+            .find(|image| image.record.state.id == 1)
             .unwrap();
         let second = state
             .document
             .images
             .iter()
-            .find(|image| image.record.item.id == 2)
+            .find(|image| image.record.state.id == 2)
             .unwrap();
-        let first_width = first.record.asset.width as f32 * first.record.item.scale;
-        let second_width = second.record.asset.width as f32 * second.record.item.scale;
+        let first_width = first
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .width as f32
+            * first.record.state.scale;
+        let second_width = second
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .width as f32
+            * second.record.state.scale;
         assert!((first_width - second_width).abs() < 0.001);
     }
 
@@ -3875,9 +3929,9 @@ mod tests {
             .document
             .images
             .iter()
-            .find(|image| image.record.item.id == 1)
+            .find(|image| image.record.state.id == 1)
             .unwrap();
-        assert!((first.record.item.scale - 1.0).abs() < 0.001);
+        assert!((first.record.state.scale - 1.0).abs() < 0.001);
     }
 
     #[test]
@@ -4367,12 +4421,24 @@ mod tests {
 
     fn placement_visual_bounds_world(image: &CanvasImage) -> eframe::egui::Rect {
         let visual_size = rotated_visual_size(
-            image.record.asset.width as f32 * image.record.item.scale.max(0.01),
-            image.record.asset.height as f32 * image.record.item.scale.max(0.01),
-            image.record.item.rotation,
+            image
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .width as f32
+                * image.record.state.scale.max(0.01),
+            image
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .height as f32
+                * image.record.state.scale.max(0.01),
+            image.record.state.rotation,
         );
         eframe::egui::Rect::from_center_size(
-            eframe::egui::pos2(image.record.item.x, image.record.item.y),
+            eframe::egui::pos2(image.record.state.center.x, image.record.state.center.y),
             visual_size,
         )
     }
@@ -4382,11 +4448,11 @@ mod tests {
             .document
             .images
             .iter()
-            .filter(|image| state.is_selected(image.record.item.id))
+            .filter(|image| state.is_selected(image.record.state.id))
             .map(|image| {
                 (
-                    image.record.item.id,
-                    eframe::egui::pos2(image.record.item.x, image.record.item.y),
+                    image.record.state.id,
+                    eframe::egui::pos2(image.record.state.center.x, image.record.state.center.y),
                 )
             })
             .collect::<Vec<_>>();

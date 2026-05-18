@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::data::BoardItemWithAsset;
+use crate::data::Placement;
 use crate::jobs::image_formats::{PreviewImage, preview_image_from_rgba};
 use eframe::egui;
 
@@ -47,23 +47,20 @@ use worker::ImportWorkerConfig;
 #[cfg(test)]
 pub(super) use worker::{RequestQueue, WorkerKind};
 
-pub fn sort_records_by_viewport_proximity(
-    records: &mut [BoardItemWithAsset],
-    viewport_world: egui::Rect,
-) {
+pub fn sort_records_by_viewport_proximity(records: &mut [Placement], viewport_world: egui::Rect) {
     records.sort_by(|left, right| {
         record_viewport_distance_sq(left, viewport_world)
             .total_cmp(&record_viewport_distance_sq(right, viewport_world))
             .then_with(|| {
-                left.item
+                left.state
                     .z_index
-                    .cmp(&right.item.z_index)
-                    .then_with(|| left.item.id.cmp(&right.item.id))
+                    .cmp(&right.state.z_index)
+                    .then_with(|| left.state.id.cmp(&right.state.id))
             })
     });
 }
 
-fn record_viewport_distance_sq(record: &BoardItemWithAsset, viewport_world: egui::Rect) -> f32 {
+fn record_viewport_distance_sq(record: &Placement, viewport_world: egui::Rect) -> f32 {
     let rect = record_world_rect(record);
     if rect.intersects(viewport_world) {
         return 0.0;
@@ -80,17 +77,23 @@ fn record_viewport_distance_sq(record: &BoardItemWithAsset, viewport_world: egui
     center.distance_sq(clamped)
 }
 
-fn record_intersects_viewport_world(
-    record: &BoardItemWithAsset,
-    viewport_world: egui::Rect,
-) -> bool {
+fn record_intersects_viewport_world(record: &Placement, viewport_world: egui::Rect) -> bool {
     record_world_rect(record).intersects(viewport_world)
 }
 
-fn record_world_rect(record: &BoardItemWithAsset) -> egui::Rect {
-    let size = egui::vec2(record.asset.width as f32, record.asset.height as f32)
-        * record.item.scale.max(0.01);
-    egui::Rect::from_center_size(egui::pos2(record.item.x, record.item.y), size)
+fn record_world_rect(record: &Placement) -> egui::Rect {
+    let size = egui::vec2(
+        record.asset.as_ref().expect("loaded placement asset").width as f32,
+        record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .height as f32,
+    ) * record.state.scale.max(0.01);
+    egui::Rect::from_center_size(
+        egui::pos2(record.state.center.x, record.state.center.y),
+        size,
+    )
 }
 
 pub(super) fn original_mime_type_supports_animation(mime_type: &str) -> bool {

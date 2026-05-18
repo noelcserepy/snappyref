@@ -49,7 +49,14 @@ fn external_image_for_selection(
     let record = canvas
         .record_for_item_id(selected_item_ids[0])
         .ok_or_else(|| "missing selected placement".to_owned())?;
-    let byte_len = external_image_byte_len(record.asset.width, record.asset.height)?;
+    let byte_len = external_image_byte_len(
+        record.asset.as_ref().expect("loaded placement asset").width,
+        record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .height,
+    )?;
     if byte_len > MAX_EXTERNAL_CLIPBOARD_IMAGE_BYTES {
         return Ok(None);
     }
@@ -57,8 +64,12 @@ fn external_image_for_selection(
     let Ok((rgba, width, height)) = crate::jobs::load_canvas_snapshot_pixels(
         library,
         &record,
-        record.asset.width,
-        record.asset.height,
+        record.asset.as_ref().expect("loaded placement asset").width,
+        record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .height,
     ) else {
         return Ok(None);
     };
@@ -188,7 +199,7 @@ fn append_internal_text(_text: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::build_selection_copy_payload;
-    use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
+    use crate::data::{ImageAsset, Placement, PlacementState};
 
     #[test]
     fn single_selected_placement_copies_internal_json_and_external_image() {
@@ -210,7 +221,7 @@ mod tests {
                 1.0,
             )
             .unwrap();
-        let item_id = record.item.id;
+        let item_id = record.state.id;
         let mut canvas = crate::canvas::CanvasState::default();
         canvas.add_loaded_item(&ctx, loaded_item(record, rgba.clone(), 2, 1));
         canvas.select_items(&[item_id]);
@@ -274,10 +285,13 @@ mod tests {
         let library = crate::library::storage::Library::initialize(root).unwrap();
         let mut canvas = crate::canvas::CanvasState::default();
         let mut record = test_record(1, 1);
-        record.asset.width = 20_000;
-        record.asset.height = 20_000;
-        record.visual_width = 20_000.0;
-        record.visual_height = 20_000.0;
+        record.asset.as_mut().expect("loaded placement asset").width = 20_000;
+        record
+            .asset
+            .as_mut()
+            .expect("loaded placement asset")
+            .height = 20_000;
+        record.visual_size = eframe::egui::vec2(20_000.0, 20_000.0);
         canvas.add_loaded_item(&ctx, loaded_item(record, vec![255, 255, 255, 255], 1, 1));
         canvas.select_items(&[1]);
 
@@ -295,7 +309,11 @@ mod tests {
         let root = temp_library_root("snappyref-copy-unsupported-image");
         let library = crate::library::storage::Library::initialize(root).unwrap();
         let mut record = test_record(1, 1);
-        record.asset.mime_type = "image/svg+xml".to_owned();
+        record
+            .asset
+            .as_mut()
+            .expect("loaded placement asset")
+            .mime_type = "image/svg+xml".to_owned();
 
         let mut canvas = crate::canvas::CanvasState::default();
         canvas.add_loaded_item(&ctx, loaded_item(record, vec![255, 255, 255, 255], 1, 1));
@@ -310,7 +328,7 @@ mod tests {
     }
 
     fn loaded_item(
-        record: BoardItemWithAsset,
+        record: Placement,
         preview_rgba: Vec<u8>,
         preview_width: u32,
         preview_height: u32,
@@ -331,13 +349,12 @@ mod tests {
         }
     }
 
-    fn test_record(item_id: i64, asset_id: i64) -> BoardItemWithAsset {
-        BoardItemWithAsset::loaded(
-            BoardItem {
+    fn test_record(item_id: i64, asset_id: i64) -> Placement {
+        Placement::loaded(
+            PlacementState {
                 id: item_id,
-                asset_id,
-                x: 0.0,
-                y: 0.0,
+                asset_id: Some(asset_id),
+                center: eframe::egui::Pos2::ZERO,
                 scale: 1.0,
                 rotation: 0.0,
                 z_index: 0,

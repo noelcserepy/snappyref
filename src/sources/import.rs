@@ -48,7 +48,7 @@ impl ImportIntake {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn reserve_import(
         &mut self,
-        layout: &mut Vec<crate::data::BoardLayoutItem>,
+        layout: &mut Vec<crate::data::PlacementLayoutItem>,
         target_board_id: i64,
         label: String,
         dimensions: Option<(u32, u32)>,
@@ -68,7 +68,7 @@ impl ImportIntake {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn reserve_import_at_world(
         &mut self,
-        layout: &mut Vec<crate::data::BoardLayoutItem>,
+        layout: &mut Vec<crate::data::PlacementLayoutItem>,
         target_board_id: i64,
         label: String,
         dimensions: Option<(u32, u32)>,
@@ -79,10 +79,9 @@ impl ImportIntake {
         let placeholder = dimensions.map(|(width, height)| {
             let size_world =
                 import_preview_size_world(width, height, settings.import_target_canvas_area);
-            layout.push(crate::data::BoardLayoutItem {
+            layout.push(crate::data::PlacementLayoutItem {
                 id: -((layout.len() as i64) + 1),
-                x: center_world.x,
-                y: center_world.y,
+                center: center_world,
                 width: size_world.x,
                 height: size_world.y,
             });

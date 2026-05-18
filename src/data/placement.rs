@@ -1,3 +1,8 @@
+use eframe::egui::{Pos2, Rect, Vec2, vec2};
+
+pub type PlacementId = i64;
+pub type AssetId = i64;
+
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Board {
@@ -15,11 +20,10 @@ pub struct BoardSummary {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
-pub struct BoardItem {
-    pub id: i64,
-    pub asset_id: i64,
-    pub x: f32,
-    pub y: f32,
+pub struct PlacementState {
+    pub id: PlacementId,
+    pub asset_id: Option<AssetId>,
+    pub center: Pos2,
     pub scale: f32,
     pub rotation: f32,
     pub z_index: i32,
@@ -59,45 +63,24 @@ pub enum PlacementLifecycle {
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Debug)]
-pub struct BoardItemWithAsset {
-    pub item: BoardItem,
-    pub asset: super::ImageAsset,
+pub struct Placement {
+    pub state: PlacementState,
+    pub asset: Option<super::ImageAsset>,
     pub content: PlacementContent,
     pub lifecycle: PlacementLifecycle,
-    pub visual_width: f32,
-    pub visual_height: f32,
+    pub visual_size: Vec2,
 }
 
-impl BoardItemWithAsset {
-    pub fn loaded(item: BoardItem, asset: super::ImageAsset) -> Self {
-        let visual_width = asset.width as f32;
-        let visual_height = asset.height as f32;
+impl Placement {
+    pub fn loaded(mut state: PlacementState, asset: super::ImageAsset) -> Self {
+        let visual_size = vec2(asset.width as f32, asset.height as f32);
+        state.asset_id = Some(asset.id);
         Self {
             content: PlacementContent::Loaded { asset_id: asset.id },
             lifecycle: PlacementLifecycle::Committed,
-            visual_width,
-            visual_height,
-            item,
-            asset,
-        }
-    }
-
-    pub fn placeholder_asset(
-        item_id: i64,
-        filename: impl Into<String>,
-        width: u32,
-        height: u32,
-    ) -> super::ImageAsset {
-        let filename = filename.into();
-        super::ImageAsset {
-            id: 0_i64.saturating_sub(item_id.abs()),
-            original_path: std::path::PathBuf::from(&filename),
-            filename,
-            mime_type: "application/x-snappyref-placeholder".to_owned(),
-            width,
-            height,
-            file_size: 0,
-            imported_at: 0,
+            visual_size,
+            state,
+            asset: Some(asset),
         }
     }
 
@@ -105,22 +88,50 @@ impl BoardItemWithAsset {
         matches!(self.content, PlacementContent::Loaded { .. })
     }
 
+    pub fn id(&self) -> PlacementId {
+        self.state.id
+    }
+
+    #[allow(dead_code)]
+    pub fn asset_id(&self) -> Option<AssetId> {
+        self.state.asset_id
+    }
+
+    #[allow(dead_code)]
+    pub fn center(&self) -> Pos2 {
+        self.state.center
+    }
+
     pub fn base_visual_size(&self) -> eframe::egui::Vec2 {
-        eframe::egui::vec2(self.visual_width.max(1.0), self.visual_height.max(1.0))
+        vec2(self.visual_size.x.max(1.0), self.visual_size.y.max(1.0))
     }
 
     pub fn scaled_visual_size(&self) -> eframe::egui::Vec2 {
-        self.base_visual_size() * self.item.scale.max(0.01)
+        self.base_visual_size() * self.state.scale.max(0.01)
+    }
+
+    pub fn visual_bounds(&self) -> Rect {
+        let size = rotated_visual_size(
+            self.scaled_visual_size().x,
+            self.scaled_visual_size().y,
+            self.state.rotation,
+        );
+        Rect::from_center_size(self.state.center, size)
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct BoardLayoutItem {
-    pub id: i64,
-    pub x: f32,
-    pub y: f32,
+pub struct PlacementLayoutItem {
+    pub id: PlacementId,
+    pub center: Pos2,
     pub width: f32,
     pub height: f32,
+}
+
+fn rotated_visual_size(width: f32, height: f32, rotation: f32) -> Vec2 {
+    let sin = rotation.sin().abs();
+    let cos = rotation.cos().abs();
+    vec2(width * cos + height * sin, width * sin + height * cos)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

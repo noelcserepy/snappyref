@@ -205,7 +205,7 @@ pub(super) fn handle_input(
             }
         } else if let Some(image) = state.selected_single_image().map(|image| {
             (
-                image.record.item.id,
+                image.record.state.id,
                 hit_test_image_resize_handle(state, rect, image, pointer_pos),
             )
         }) && let (item_id, Some(handle)) = image
@@ -392,7 +392,7 @@ pub(super) fn handle_input(
             } => {
                 if let Some(image) = state.image_by_item_id(item_id).cloned() {
                     let (center_screen, scale) = resized_image_transform(
-                        &image.record.asset,
+                        image.record.asset.as_ref().expect("loaded placement asset"),
                         start_scale,
                         anchor_screen,
                         start_handle_screen,
@@ -404,7 +404,7 @@ pub(super) fn handle_input(
                     let base_visual_size = super::rotated_visual_size(
                         base_size.x,
                         base_size.y,
-                        image.record.item.rotation,
+                        image.record.state.rotation,
                     );
                     let desired_rect = egui::Rect::from_center_size(
                         center_world,
@@ -423,15 +423,24 @@ pub(super) fn handle_input(
                             desired_rect,
                             anchor_world,
                             base_visual_size,
-                            min_image_scale(&image.record.asset),
+                            min_image_scale(
+                                image.record.asset.as_ref().expect("loaded placement asset"),
+                            ),
                         )
                     };
                     let (center_world, scale) = snap_result
                         .map(|snap_rect| {
                             (
                                 snap_rect.center(),
-                                (snap_rect.width() / base_visual_size.x.max(f32::EPSILON))
-                                    .max(min_image_scale(&image.record.asset)),
+                                (snap_rect.width() / base_visual_size.x.max(f32::EPSILON)).max(
+                                    min_image_scale(
+                                        image
+                                            .record
+                                            .asset
+                                            .as_ref()
+                                            .expect("loaded placement asset"),
+                                    ),
+                                ),
                             )
                         })
                         .unwrap_or((center_world, scale));
@@ -665,7 +674,7 @@ fn hit_test_image(state: &CanvasState, rect: egui::Rect, pointer_pos: egui::Pos2
                 rect.center(),
             )
         })
-        .map(|image| image.record.item.id)
+        .map(|image| image.record.state.id)
 }
 
 #[cfg(test)]
@@ -678,8 +687,8 @@ mod tests {
     };
     use crate::canvas::{CanvasState, DragState};
     use crate::data::{
-        BoardItem, BoardItemWithAsset, CanvasAnnotation, CanvasAnnotationColor,
-        CanvasAnnotationKind, CanvasImageLod, CanvasStrokeWidth, CanvasTextSize, ImageAsset,
+        CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
+        CanvasStrokeWidth, CanvasTextSize, ImageAsset, Placement, PlacementState,
     };
     use crate::jobs::{ImportOrigin, ImportedPreviewTexture, LoadedCanvasItem};
     use crate::placement::movement::{compute_drag_snap_preview, layout_bounds_with_offset};
@@ -1447,12 +1456,11 @@ mod tests {
             file_size: 0,
             imported_at: 0,
         };
-        let record = BoardItemWithAsset::loaded(
-            BoardItem {
+        let record = Placement::loaded(
+            PlacementState {
                 id,
-                asset_id: id,
-                x: center_world.x,
-                y: center_world.y,
+                asset_id: Some(id),
+                center: eframe::egui::pos2(center_world.x, center_world.y),
                 scale: 1.0,
                 rotation: 0.0,
                 z_index: 0,

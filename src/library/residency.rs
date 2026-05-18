@@ -4,7 +4,7 @@ use std::time::Instant;
 use eframe::egui;
 
 use crate::canvas::CanvasState;
-use crate::data::{BoardItemWithAsset, CanvasImageLod, WorkspaceSettings};
+use crate::data::{CanvasImageLod, Placement, WorkspaceSettings};
 use crate::jobs::{
     CanvasImageSettings, CroppedCanvasItem, ExistingLoadPriority, ImportRequest, ImportResult,
     ImportTimings, ImportTrace, ImportWorker, LoadedCanvasItem,
@@ -31,7 +31,7 @@ impl ImageResidencyCoordinator {
     pub(crate) fn queue_startup_existing_loads(
         &mut self,
         import_worker: &ImportWorker,
-        mut records: Vec<BoardItemWithAsset>,
+        mut records: Vec<Placement>,
         viewport_world: eframe::egui::Rect,
         active_board_id: i64,
         settings: &WorkspaceSettings,
@@ -41,7 +41,7 @@ impl ImageResidencyCoordinator {
         crate::jobs::sort_records_by_viewport_proximity(&mut records, viewport_world);
         let (canvas_image_settings, target_lod) = startup_existing_image_load_settings(settings);
         for record in records {
-            let item_id = record.item.id;
+            let item_id = record.state.id;
             import_worker.enqueue(ImportRequest::LoadExisting {
                 target_board_id: active_board_id,
                 queue_id: None,
@@ -138,7 +138,7 @@ impl ImageResidencyCoordinator {
         let loaded_lod = loaded.loaded_lod;
         let loaded_record = loaded.record.clone();
         let existing_load_diagnostics = loaded.existing_load_diagnostics.clone();
-        self.note_loaded_item(loaded.record.item.id);
+        self.note_loaded_item(loaded.record.state.id);
 
         if loaded.target_board_id != active_board_id {
             return LoadedImportOutcome {
@@ -150,9 +150,9 @@ impl ImageResidencyCoordinator {
         }
 
         if canvas
-            .record_for_item_id(loaded.record.item.id)
+            .record_for_item_id(loaded.record.state.id)
             .is_some_and(|current| {
-                current.is_loaded() && current.item.asset_id != loaded.record.item.asset_id
+                current.is_loaded() && current.state.asset_id != loaded.record.state.asset_id
             })
         {
             return LoadedImportOutcome {
@@ -164,11 +164,29 @@ impl ImageResidencyCoordinator {
         }
 
         let indexed_asset = (settings.semantic_search_enabled
-            && asset_mime_type_supports_raster_derivatives(&loaded.record.asset.mime_type))
+            && asset_mime_type_supports_raster_derivatives(
+                &loaded
+                    .record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .mime_type,
+            ))
         .then(|| {
             (
-                loaded.record.asset.id,
-                loaded.record.asset.original_path.clone(),
+                loaded
+                    .record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .id,
+                loaded
+                    .record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .original_path
+                    .clone(),
             )
         });
 
@@ -245,14 +263,17 @@ impl ImageResidencyCoordinator {
     pub(crate) fn queue_backfill(
         &mut self,
         import_worker: Option<&ImportWorker>,
-        record: &BoardItemWithAsset,
+        record: &Placement,
         settings: &WorkspaceSettings,
         lod: CanvasImageLod,
     ) -> Option<String> {
         let Some(import_worker) = import_worker else {
             return None;
         };
-        if !self.pending_cache_backfills.insert((record.asset.id, lod)) {
+        if !self.pending_cache_backfills.insert((
+            record.asset.as_ref().expect("loaded placement asset").id,
+            lod,
+        )) {
             return None;
         }
         if let Err(error) = import_worker.enqueue(ImportRequest::BackfillLod {
@@ -260,7 +281,10 @@ impl ImageResidencyCoordinator {
             canvas_image_settings: canvas_image_settings(settings),
             lod,
         }) {
-            self.pending_cache_backfills.remove(&(record.asset.id, lod));
+            self.pending_cache_backfills.remove(&(
+                record.asset.as_ref().expect("loaded placement asset").id,
+                lod,
+            ));
             return Some(error);
         }
         None
@@ -269,12 +293,18 @@ impl ImageResidencyCoordinator {
     pub(crate) fn queue_overview_backfill_after_working_load(
         &mut self,
         import_worker: Option<&ImportWorker>,
-        record: &BoardItemWithAsset,
+        record: &Placement,
         settings: &WorkspaceSettings,
         loaded_lod: CanvasImageLod,
     ) -> Option<String> {
         if loaded_lod != CanvasImageLod::Working
-            || !asset_mime_type_supports_raster_derivatives(&record.asset.mime_type)
+            || !asset_mime_type_supports_raster_derivatives(
+                &record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .mime_type,
+            )
         {
             return None;
         }

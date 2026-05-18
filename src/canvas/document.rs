@@ -21,9 +21,9 @@ use super::{
     PendingAnnotation, SelectedLayoutItem, SharedRgba, TextboxLayoutCacheEntry, merge_ids,
 };
 use crate::data::{
-    BoardItemWithAsset, BoardLayoutItem, CanvasAnnotation, CanvasAnnotationColor,
-    CanvasAnnotationKind, CanvasBackground, CanvasImageLod, CanvasStackItem, CanvasStrokeWidth,
-    CanvasTextSize, PlacementLifecycle, ViewportState,
+    CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
+    CanvasImageLod, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, Placement,
+    PlacementLayoutItem, PlacementLifecycle, ViewportState,
 };
 use crate::jobs::{CroppedCanvasItem, LoadedCanvasItem};
 
@@ -114,7 +114,13 @@ impl CanvasState {
             ctx,
             format!(
                 "asset-{}-item-{}",
-                loaded.record.asset.id, loaded.record.item.id
+                loaded
+                    .record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .id,
+                loaded.record.state.id
             ),
             &loaded.preview_rgba,
             loaded.preview_width,
@@ -124,10 +130,10 @@ impl CanvasState {
 
         self.document
             .images
-            .retain(|image| image.record.item.id != loaded.record.item.id);
+            .retain(|image| image.record.state.id != loaded.record.state.id);
         self.render
             .pending_image_lod_loads
-            .remove(&loaded.record.item.id);
+            .remove(&loaded.record.state.id);
         self.document.images.push(CanvasImage {
             record: loaded.record,
             texture,
@@ -135,23 +141,23 @@ impl CanvasState {
             animation,
         });
         self.append_missing_stack_item(CanvasStackItem::Placement(
-            self.document.images.last().unwrap().record.item.id,
+            self.document.images.last().unwrap().record.state.id,
         ));
         self.document
             .images
-            .sort_by_key(|image| image.record.item.z_index);
+            .sort_by_key(|image| image.record.state.z_index);
     }
 
-    pub fn add_unloaded_item(&mut self, record: BoardItemWithAsset) {
+    pub fn add_unloaded_item(&mut self, record: Placement) {
         self.document
             .images
-            .retain(|image| image.record.item.id != record.item.id);
-        self.render.pending_image_lod_loads.remove(&record.item.id);
+            .retain(|image| image.record.state.id != record.state.id);
+        self.render.pending_image_lod_loads.remove(&record.state.id);
         self.document.images.push(CanvasImage {
             texture: CanvasTexture::Unloaded {
                 size: [
-                    record.visual_width.max(1.0).round() as usize,
-                    record.visual_height.max(1.0).round() as usize,
+                    record.visual_size.x.max(1.0).round() as usize,
+                    record.visual_size.y.max(1.0).round() as usize,
                 ],
             },
             loaded_lod: crate::data::CanvasImageLod::Overview,
@@ -159,19 +165,19 @@ impl CanvasState {
             record,
         });
         self.append_missing_stack_item(CanvasStackItem::Placement(
-            self.document.images.last().unwrap().record.item.id,
+            self.document.images.last().unwrap().record.state.id,
         ));
         self.document
             .images
-            .sort_by_key(|image| image.record.item.z_index);
+            .sort_by_key(|image| image.record.state.z_index);
     }
 
-    pub fn add_provisional_unloaded_item(&mut self, mut record: BoardItemWithAsset) {
+    pub fn add_provisional_unloaded_item(&mut self, mut record: Placement) {
         record.lifecycle = PlacementLifecycle::Provisional;
         self.add_unloaded_item(record);
     }
 
-    pub fn add_provisional_reference_item(&mut self, mut record: BoardItemWithAsset) {
+    pub fn add_provisional_reference_item(&mut self, mut record: Placement) {
         record.lifecycle = PlacementLifecycle::Provisional;
         if self.add_reference_item(record.clone()).is_err() {
             self.add_unloaded_item(record);
@@ -182,7 +188,7 @@ impl CanvasState {
         self.document
             .images
             .iter()
-            .filter_map(|image| (image.record.item.id < 0).then_some(image.record.item.id))
+            .filter_map(|image| (image.record.state.id < 0).then_some(image.record.state.id))
             .min()
             .unwrap_or(0)
             - 1
@@ -195,13 +201,13 @@ impl CanvasState {
             .iter()
             .filter_map(|image| {
                 (image.record.lifecycle == PlacementLifecycle::Provisional)
-                    .then_some(image.record.item.id)
+                    .then_some(image.record.state.id)
             })
             .collect::<Vec<_>>();
         self.delete_items(&ids)
     }
 
-    pub fn provisional_records_in_selection_order(&self) -> Vec<BoardItemWithAsset> {
+    pub fn provisional_records_in_selection_order(&self) -> Vec<Placement> {
         self.document
             .selected_item_ids
             .iter()
@@ -210,13 +216,26 @@ impl CanvasState {
             .collect()
     }
 
-    pub fn add_reference_item(&mut self, record: BoardItemWithAsset) -> Result<(), String> {
+    pub fn add_reference_item(&mut self, record: Placement) -> Result<(), String> {
         let source = self
             .document
             .images
             .iter()
-            .find(|image| image.record.asset.id == record.asset.id)
-            .ok_or_else(|| format!("missing source texture for asset {}", record.asset.id))?;
+            .find(|image| {
+                image
+                    .record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .id
+                    == record.asset.as_ref().expect("loaded placement asset").id
+            })
+            .ok_or_else(|| {
+                format!(
+                    "missing source texture for asset {}",
+                    record.asset.as_ref().expect("loaded placement asset").id
+                )
+            })?;
         let texture = source.texture.clone();
         let animation = source.animation.clone();
 
@@ -227,11 +246,11 @@ impl CanvasState {
             animation,
         });
         self.append_missing_stack_item(CanvasStackItem::Placement(
-            self.document.images.last().unwrap().record.item.id,
+            self.document.images.last().unwrap().record.state.id,
         ));
         self.document
             .images
-            .sort_by_key(|image| image.record.item.z_index);
+            .sort_by_key(|image| image.record.state.z_index);
         Ok(())
     }
 
@@ -251,7 +270,14 @@ impl CanvasState {
         if self
             .render
             .asset_rgba_cache
-            .get(&image.record.asset.id)
+            .get(
+                &image
+                    .record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .id,
+            )
             .is_some_and(|rgba| rgba.len() == expected_len)
         {
             return Ok(());
@@ -267,16 +293,17 @@ impl CanvasState {
         if loaded_width as usize != width || loaded_height as usize != height {
             return Err("cached canvas pixels did not match texture size".to_owned());
         }
-        self.render
-            .asset_rgba_cache
-            .insert(record.asset.id, SharedRgba::from(rgba));
+        self.render.asset_rgba_cache.insert(
+            record.asset.as_ref().expect("loaded placement asset").id,
+            SharedRgba::from(rgba),
+        );
         Ok(())
     }
 
     pub fn snapshot_item_image(
         &self,
         item_id: i64,
-    ) -> Result<(BoardItemWithAsset, SharedRgba, u32, u32), String> {
+    ) -> Result<(Placement, SharedRgba, u32, u32), String> {
         if let Some(preview) = self.render.pending_crop_previews.get(&item_id) {
             let [width, height] = preview.image.texture.size();
             return Ok((
@@ -293,9 +320,26 @@ impl CanvasState {
         let rgba = self
             .render
             .asset_rgba_cache
-            .get(&image.record.asset.id)
+            .get(
+                &image
+                    .record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .id,
+            )
             .cloned()
-            .ok_or_else(|| format!("missing cached pixels for asset {}", image.record.asset.id))?;
+            .ok_or_else(|| {
+                format!(
+                    "missing cached pixels for asset {}",
+                    image
+                        .record
+                        .asset
+                        .as_ref()
+                        .expect("loaded placement asset")
+                        .id
+                )
+            })?;
         Ok((
             image.record.clone(),
             rgba,
@@ -307,19 +351,21 @@ impl CanvasState {
     pub fn projected_cropped_item(
         &self,
         cropped: &CroppedCanvasItem,
-    ) -> Result<crate::data::BoardItem, String> {
+    ) -> Result<crate::data::PlacementState, String> {
         let source_item =
             if let Some(preview) = self.render.pending_crop_previews.get(&cropped.item_id) {
-                preview.image.record.item.clone()
+                preview.image.record.state.clone()
             } else {
                 let Some(image) = self.image_by_item_id(cropped.item_id) else {
                     return Err(format!("missing canvas item {}", cropped.item_id));
                 };
-                image.record.item.clone()
+                image.record.state.clone()
             };
 
         let mut item = source_item;
-        let asset_id = item.asset_id;
+        let asset_id = item
+            .asset_id
+            .ok_or_else(|| format!("placement {} has no asset", item.id))?;
         merge_cropped_item_fields(&mut item, asset_id, cropped.crop_offset_local);
         Ok(item)
     }
@@ -333,7 +379,7 @@ impl CanvasState {
             .document
             .images
             .iter()
-            .position(|image| image.record.item.id == request.item_id)
+            .position(|image| image.record.state.id == request.item_id)
             .ok_or_else(|| format!("missing canvas item {}", request.item_id))?;
         let original_image = self.document.images[image_index].clone();
         let source_rgba = self
@@ -378,15 +424,16 @@ impl CanvasState {
         let mut asset = request.source_asset.clone();
         asset.width = request.crop_rect.width;
         asset.height = request.crop_rect.height;
-        let mut item = original_image.record.item.clone();
-        let asset_id = item.asset_id;
+        let mut item = original_image.record.state.clone();
+        let asset_id = item
+            .asset_id
+            .ok_or_else(|| format!("placement {} has no asset", item.id))?;
         merge_cropped_item_fields(&mut item, asset_id, request.crop_offset_local);
 
         let image = &mut self.document.images[image_index];
-        image.record.item = item;
-        image.record.asset = asset;
-        image.record.visual_width = image.record.asset.width as f32;
-        image.record.visual_height = image.record.asset.height as f32;
+        image.record.state = item;
+        image.record.visual_size = egui::vec2(asset.width as f32, asset.height as f32);
+        image.record.asset = Some(asset);
         image.texture = texture;
         image.loaded_lod = CanvasImageLod::Working;
         image.animation = None;
@@ -399,7 +446,7 @@ impl CanvasState {
         ctx: &egui::Context,
         cropped: CroppedCanvasItem,
         asset: crate::data::ImageAsset,
-        updated_item: crate::data::BoardItem,
+        updated_item: crate::data::PlacementState,
     ) -> Result<(), String> {
         let item_id = cropped.item_id;
         let loaded_lod = cropped.loaded_lod;
@@ -422,15 +469,14 @@ impl CanvasState {
             .document
             .images
             .iter_mut()
-            .find(|image| image.record.item.id == item_id)
+            .find(|image| image.record.state.id == item_id)
         else {
             return Err(format!("missing canvas item {}", item_id));
         };
 
-        image.record.item = updated_item;
-        image.record.asset = asset;
-        image.record.visual_width = image.record.asset.width as f32;
-        image.record.visual_height = image.record.asset.height as f32;
+        image.record.state = updated_item;
+        image.record.visual_size = egui::vec2(asset.width as f32, asset.height as f32);
+        image.record.asset = Some(asset);
         image.texture = texture;
         image.loaded_lod = loaded_lod;
         image.animation = None;
@@ -496,7 +542,7 @@ impl CanvasState {
         self.document
             .images
             .iter()
-            .map(|image| image.record.item.id)
+            .map(|image| image.record.state.id)
             .collect()
     }
 
@@ -516,11 +562,11 @@ impl CanvasState {
             .cloned()
     }
 
-    pub fn record_for_item_id(&self, item_id: i64) -> Option<BoardItemWithAsset> {
+    pub fn record_for_item_id(&self, item_id: i64) -> Option<Placement> {
         self.document
             .images
             .iter()
-            .find(|image| image.record.item.id == item_id)
+            .find(|image| image.record.state.id == item_id)
             .map(|image| image.record.clone())
     }
 
@@ -622,15 +668,15 @@ impl CanvasState {
         let mut found = false;
 
         for image in &self.document.images {
-            if !self.is_selected(image.record.item.id) {
+            if !self.is_selected(image.record.state.id) {
                 continue;
             }
 
             found = true;
-            min.x = min.x.min(image.record.item.x);
-            min.y = min.y.min(image.record.item.y);
-            max.x = max.x.max(image.record.item.x);
-            max.y = max.y.max(image.record.item.y);
+            min.x = min.x.min(image.record.state.center.x);
+            min.y = min.y.min(image.record.state.center.y);
+            max.x = max.x.max(image.record.state.center.x);
+            max.y = max.y.max(image.record.state.center.y);
         }
 
         found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))
@@ -683,15 +729,14 @@ impl CanvasState {
             .retain(|placeholder| placeholder.queue_id != queue_id);
     }
 
-    pub fn import_placeholder_layout_items(&self) -> Vec<BoardLayoutItem> {
+    pub fn import_placeholder_layout_items(&self) -> Vec<PlacementLayoutItem> {
         self.interaction
             .import_placeholders
             .iter()
             .enumerate()
-            .map(|(index, placeholder)| BoardLayoutItem {
+            .map(|(index, placeholder)| PlacementLayoutItem {
                 id: -((index as i64) + 1),
-                x: placeholder.center_world.x,
-                y: placeholder.center_world.y,
+                center: placeholder.center_world,
                 width: placeholder.size_world.x,
                 height: placeholder.size_world.y,
             })
@@ -842,7 +887,7 @@ impl CanvasState {
                 .document
                 .images
                 .iter_mut()
-                .find(|image| image.record.item.id == item_id)
+                .find(|image| image.record.state.id == item_id)
         {
             *image = preview.image;
         }
@@ -867,9 +912,9 @@ impl CanvasState {
             .filter(|image| {
                 self.document
                     .selected_item_ids
-                    .contains(&image.record.item.id)
+                    .contains(&image.record.state.id)
             })
-            .map(|image| image.record.asset.id)
+            .filter_map(|image| image.record.asset.as_ref().map(|asset| asset.id))
             .collect::<Vec<_>>();
         self.render
             .asset_rgba_cache
@@ -923,19 +968,19 @@ impl CanvasState {
         }
     }
 
-    pub fn apply_placement_history_state(&mut self, record: Option<BoardItemWithAsset>) {
+    pub fn apply_placement_history_state(&mut self, record: Option<Placement>) {
         let Some(record) = record else {
             return;
         };
-        if record.item.archived {
-            self.delete_items(&[record.item.id]);
+        if record.state.archived {
+            self.delete_items(&[record.state.id]);
             return;
         }
-        if let Some(image) = self.image_by_item_id_mut(record.item.id) {
+        if let Some(image) = self.image_by_item_id_mut(record.state.id) {
             image.record = record;
             self.document
                 .images
-                .sort_by_key(|image| image.record.item.z_index);
+                .sort_by_key(|image| image.record.state.z_index);
         } else {
             let _ = self.add_reference_item(record);
         }
@@ -983,10 +1028,10 @@ impl CanvasState {
                     .images
                     .iter()
                     .find(|image| {
-                        image.record.item.id == id
+                        image.record.state.id == id
                             && image.record.lifecycle == PlacementLifecycle::Committed
                     })
-                    .map(|image| image.record.item.clone())
+                    .map(|image| image.record.state.clone())
             })
             .collect();
 
@@ -1028,10 +1073,10 @@ impl CanvasState {
                     .images
                     .iter()
                     .find(|image| {
-                        image.record.item.id == *id
+                        image.record.state.id == *id
                             && image.record.lifecycle == PlacementLifecycle::Committed
                     })
-                    .map(|image| image.record.item.clone())
+                    .map(|image| image.record.state.clone())
             })
             .collect();
 
@@ -1063,7 +1108,7 @@ impl CanvasState {
         let mut selected_rect: Option<egui::Rect> = None;
 
         for image in &self.document.images {
-            if !self.is_selected(image.record.item.id) {
+            if !self.is_selected(image.record.state.id) {
                 continue;
             }
 
@@ -1089,13 +1134,13 @@ impl CanvasState {
         let mut selected_rect: Option<egui::Rect> = None;
 
         for image in &self.document.images {
-            if !self.is_selected(image.record.item.id) {
+            if !self.is_selected(image.record.state.id) {
                 continue;
             }
 
             let size = image.record.scaled_visual_size();
             let image_rect = egui::Rect::from_center_size(
-                egui::pos2(image.record.item.x, image.record.item.y),
+                egui::pos2(image.record.state.center.x, image.record.state.center.y),
                 size,
             );
             selected_rect = Some(match selected_rect {
@@ -1247,7 +1292,7 @@ impl CanvasState {
                 self.document
                     .images
                     .iter()
-                    .any(|image| image.record.item.id == *item_id)
+                    .any(|image| image.record.state.id == *item_id)
             })
             .collect();
         self.document.selected_annotation_ids.clear();
@@ -1267,7 +1312,7 @@ impl CanvasState {
                 self.document
                     .images
                     .iter()
-                    .any(|image| image.record.item.id == *item_id)
+                    .any(|image| image.record.state.id == *item_id)
             })
             .collect();
         self.document.selected_annotation_ids = annotation_ids
@@ -1406,8 +1451,8 @@ impl CanvasState {
 
         for item in items {
             if let Some(image) = self.image_by_item_id_mut(item.id) {
-                image.record.item.x += delta.x;
-                image.record.item.y += delta.y;
+                image.record.state.center.x += delta.x;
+                image.record.state.center.y += delta.y;
                 moved_ids.push(item.id);
             }
         }
@@ -1476,9 +1521,9 @@ impl CanvasState {
 
         let mut removed_ids = Vec::new();
         self.document.images.retain(|image| {
-            let keep = !item_ids.contains(&image.record.item.id);
+            let keep = !item_ids.contains(&image.record.state.id);
             if !keep {
-                removed_ids.push(image.record.item.id);
+                removed_ids.push(image.record.state.id);
             }
             keep
         });
@@ -1518,8 +1563,17 @@ impl CanvasState {
             .document
             .images
             .iter()
-            .filter(|image| asset_ids.contains(&image.record.asset.id))
-            .map(|image| image.record.item.id)
+            .filter(|image| {
+                asset_ids.contains(
+                    &image
+                        .record
+                        .asset
+                        .as_ref()
+                        .expect("loaded placement asset")
+                        .id,
+                )
+            })
+            .map(|image| image.record.state.id)
             .collect::<Vec<_>>();
         self.delete_items(&item_ids)
     }
@@ -1715,7 +1769,7 @@ impl CanvasState {
             }
         }
         for image in &self.document.images {
-            let item = CanvasStackItem::Placement(image.record.item.id);
+            let item = CanvasStackItem::Placement(image.record.state.id);
             if !ordered.contains(&item) {
                 ordered.push(item);
             }
@@ -1753,7 +1807,7 @@ impl CanvasState {
                 .document
                 .images
                 .iter()
-                .any(|image| image.record.item.id == item_id),
+                .any(|image| image.record.state.id == item_id),
             CanvasStackItem::Annotation(annotation_id) => self
                 .document
                 .annotations
@@ -1951,18 +2005,18 @@ impl CanvasState {
         self.document
             .images
             .iter()
-            .filter(|image| self.is_selected(image.record.item.id))
+            .filter(|image| self.is_selected(image.record.state.id))
             .map(|image| {
                 let scaled_size = image.record.scaled_visual_size();
                 let visual_size = super::rotated_visual_size(
                     scaled_size.x,
                     scaled_size.y,
-                    image.record.item.rotation,
+                    image.record.state.rotation,
                 );
                 SelectedLayoutItem {
-                    id: image.record.item.id,
-                    x: image.record.item.x,
-                    y: image.record.item.y,
+                    id: image.record.state.id,
+                    x: image.record.state.center.x,
+                    y: image.record.state.center.y,
                     width: visual_size.x,
                     height: visual_size.y,
                 }
@@ -1974,22 +2028,11 @@ impl CanvasState {
         self.document
             .images
             .iter()
-            .filter(|image| self.is_selected(image.record.item.id))
+            .filter(|image| self.is_selected(image.record.state.id))
             .map(|image| {
-                let scaled_size = image.record.scaled_visual_size();
-                let visual_size = super::rotated_visual_size(
-                    scaled_size.x,
-                    scaled_size.y,
-                    image.record.item.rotation,
-                );
+                let input = image.record.compact_input();
                 crate::placement::arrangement::CompactInputItem {
-                    layout: SelectedLayoutItem {
-                        id: image.record.item.id,
-                        x: image.record.item.x,
-                        y: image.record.item.y,
-                        width: visual_size.x,
-                        height: visual_size.y,
-                    },
+                    layout: input.layout_item(),
                 }
             })
             .collect()
@@ -2011,11 +2054,11 @@ impl CanvasState {
                 .document
                 .images
                 .iter_mut()
-                .find(|image| image.record.item.id == item_id)
+                .find(|image| image.record.state.id == item_id)
             {
                 let world_center = local_center + offset;
-                image.record.item.x = world_center.x;
-                image.record.item.y = world_center.y;
+                image.record.state.center.x = world_center.x;
+                image.record.state.center.y = world_center.y;
                 arranged_ids.push(item_id);
             }
         }
@@ -2039,16 +2082,16 @@ impl CanvasState {
                 .document
                 .images
                 .iter_mut()
-                .find(|image| image.record.item.id == item_id)
+                .find(|image| image.record.state.id == item_id)
             {
                 let world_center = local_center + offset;
-                if (image.record.item.x - world_center.x).abs() <= 0.001
-                    && (image.record.item.y - world_center.y).abs() <= 0.001
+                if (image.record.state.center.x - world_center.x).abs() <= 0.001
+                    && (image.record.state.center.y - world_center.y).abs() <= 0.001
                 {
                     continue;
                 }
-                image.record.item.x = world_center.x;
-                image.record.item.y = world_center.y;
+                image.record.state.center.x = world_center.x;
+                image.record.state.center.y = world_center.y;
                 arranged_ids.push(item_id);
             }
         }
@@ -2073,7 +2116,7 @@ impl CanvasState {
                 .document
                 .images
                 .iter_mut()
-                .find(|image| image.record.item.id == item_id)
+                .find(|image| image.record.state.id == item_id)
             {
                 let world_center = local_center + offset;
                 let scale_factor = scale_factors
@@ -2081,17 +2124,21 @@ impl CanvasState {
                     .find(|(scale_item_id, _)| *scale_item_id == item_id)
                     .map(|(_, factor)| *factor)
                     .unwrap_or(1.0);
-                let next_scale = (image.record.item.scale * scale_factor).max(0.01);
-                let position_changed = (image.record.item.x - world_center.x).abs() > 0.001
-                    || (image.record.item.y - world_center.y).abs() > 0.001;
-                let scale_changed = (image.record.item.scale - next_scale).abs() > 0.001;
+                let next_scale = (image.record.state.scale * scale_factor).max(0.01);
+                let position_changed = (image.record.state.center.x - world_center.x).abs() > 0.001
+                    || (image.record.state.center.y - world_center.y).abs() > 0.001;
+                let scale_changed = (image.record.state.scale - next_scale).abs() > 0.001;
                 if !position_changed && !scale_changed {
                     continue;
                 }
 
-                image.record.item.x = world_center.x;
-                image.record.item.y = world_center.y;
-                image.record.item.scale = next_scale;
+                image
+                    .record
+                    .apply_compact_output(crate::placement::arrangement::CompactOutput {
+                        placement_id: item_id,
+                        center: world_center,
+                    });
+                image.record.state.scale = next_scale;
                 changed_ids.push(item_id);
             }
         }
@@ -2147,14 +2194,14 @@ impl CanvasState {
         self.document
             .images
             .iter()
-            .find(|image| image.record.item.id == item_id)
+            .find(|image| image.record.state.id == item_id)
     }
 
     pub(super) fn image_by_item_id_mut(&mut self, item_id: i64) -> Option<&mut CanvasImage> {
         self.document
             .images
             .iter_mut()
-            .find(|image| image.record.item.id == item_id)
+            .find(|image| image.record.state.id == item_id)
     }
 
     pub(super) fn selected_single_image(&self) -> Option<&CanvasImage> {
@@ -2222,19 +2269,47 @@ impl CanvasState {
         let local_rect = screen_rect_to_local_crop_rect(
             clamped_screen_rect,
             image_rect,
-            image.record.asset.width,
-            image.record.asset.height,
+            image
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .width,
+            image
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .height,
         )?;
         let crop_rect = pixel_crop_rect_from_local(
             local_rect,
-            image.record.asset.width,
-            image.record.asset.height,
+            image
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .width,
+            image
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .height,
         )?;
-        let crop_offset_local = crop_center_offset_local(&image.record.asset, local_rect);
+        let crop_offset_local = crop_center_offset_local(
+            image.record.asset.as_ref().expect("loaded placement asset"),
+            local_rect,
+        );
 
         Some(CanvasCropRequest {
-            item_id: image.record.item.id,
-            source_asset: image.record.asset.clone(),
+            item_id: image.record.state.id,
+            source_asset: image
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .clone(),
             crop_rect,
             crop_offset_local,
         })
@@ -2242,21 +2317,29 @@ impl CanvasState {
 
     pub(super) fn can_start_crop_on_item(&self, item_id: i64) -> bool {
         !self.interaction.crop_pending_item_ids.contains(&item_id)
-            && self
-                .image_by_item_id(item_id)
-                .is_some_and(|image| !asset_mime_type_is_svg(&image.record.asset.mime_type))
+            && self.image_by_item_id(item_id).is_some_and(|image| {
+                !asset_mime_type_is_svg(
+                    &image
+                        .record
+                        .asset
+                        .as_ref()
+                        .expect("loaded placement asset")
+                        .mime_type,
+                )
+            })
     }
 
     pub(super) fn set_image_scale(&mut self, item_id: i64, scale: f32) -> bool {
         let Some(image) = self.image_by_item_id_mut(item_id) else {
             return false;
         };
-        let min_scale = min_image_scale(&image.record.asset);
+        let min_scale =
+            min_image_scale(image.record.asset.as_ref().expect("loaded placement asset"));
         let normalized = scale.max(min_scale);
-        if (image.record.item.scale - normalized).abs() <= f32::EPSILON {
+        if (image.record.state.scale - normalized).abs() <= f32::EPSILON {
             return false;
         }
-        image.record.item.scale = normalized;
+        image.record.state.scale = normalized;
         true
     }
 
@@ -2269,18 +2352,19 @@ impl CanvasState {
         let Some(image) = self.image_by_item_id_mut(item_id) else {
             return false;
         };
-        let min_scale = min_image_scale(&image.record.asset);
+        let min_scale =
+            min_image_scale(image.record.asset.as_ref().expect("loaded placement asset"));
         let normalized_scale = scale.max(min_scale);
-        let position_changed = (image.record.item.x - center.x).abs() > f32::EPSILON
-            || (image.record.item.y - center.y).abs() > f32::EPSILON;
-        let scale_changed = (image.record.item.scale - normalized_scale).abs() > f32::EPSILON;
+        let position_changed = (image.record.state.center.x - center.x).abs() > f32::EPSILON
+            || (image.record.state.center.y - center.y).abs() > f32::EPSILON;
+        let scale_changed = (image.record.state.scale - normalized_scale).abs() > f32::EPSILON;
         if !position_changed && !scale_changed {
             return false;
         }
 
-        image.record.item.x = center.x;
-        image.record.item.y = center.y;
-        image.record.item.scale = normalized_scale;
+        image.record.state.center.x = center.x;
+        image.record.state.center.y = center.y;
+        image.record.state.scale = normalized_scale;
         true
     }
 
@@ -2288,10 +2372,10 @@ impl CanvasState {
         let Some(image) = self.image_by_item_id_mut(item_id) else {
             return false;
         };
-        if (image.record.item.rotation - rotation).abs() <= f32::EPSILON {
+        if (image.record.state.rotation - rotation).abs() <= f32::EPSILON {
             return false;
         }
-        image.record.item.rotation = rotation;
+        image.record.state.rotation = rotation;
         true
     }
 
@@ -2304,16 +2388,16 @@ impl CanvasState {
         let Some(image) = self.image_by_item_id_mut(item_id) else {
             return false;
         };
-        let position_changed = (image.record.item.x - center.x).abs() > f32::EPSILON
-            || (image.record.item.y - center.y).abs() > f32::EPSILON;
-        let rotation_changed = (image.record.item.rotation - rotation).abs() > f32::EPSILON;
+        let position_changed = (image.record.state.center.x - center.x).abs() > f32::EPSILON
+            || (image.record.state.center.y - center.y).abs() > f32::EPSILON;
+        let rotation_changed = (image.record.state.rotation - rotation).abs() > f32::EPSILON;
         if !position_changed && !rotation_changed {
             return false;
         }
 
-        image.record.item.x = center.x;
-        image.record.item.y = center.y;
-        image.record.item.rotation = rotation;
+        image.record.state.center.x = center.x;
+        image.record.state.center.y = center.y;
+        image.record.state.rotation = rotation;
         true
     }
 

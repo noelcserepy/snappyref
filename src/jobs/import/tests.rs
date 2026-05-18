@@ -109,7 +109,7 @@ fn file_imports_land_in_same_area_band() {
     assert!((displayed_area(&portrait) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
     assert!((displayed_area(&landscape) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
     assert!((displayed_area(&square) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
-    assert_eq!(small.record.item.scale, 1.0);
+    assert_eq!(small.record.state.scale, 1.0);
 
     let _ = fs::remove_dir_all(root);
 }
@@ -168,7 +168,7 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
     };
 
     assert!((displayed_area(&tall) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
-    assert_eq!(small.record.item.scale, 1.0);
+    assert_eq!(small.record.state.scale, 1.0);
 
     let _ = fs::remove_dir_all(root);
 }
@@ -212,7 +212,7 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
     let root = temp_library_root("clipboard-import-target-board");
     let library = Library::initialize(root.clone()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
-    seed_board_item(&library, 1, 42.0, 24.0, 160, 120, 1.0);
+    seed_placement(&library, 1, 42.0, 24.0, 160, 120, 1.0);
     let second = library.create_board("Second").unwrap();
 
     let loaded = match import_clipboard(
@@ -239,14 +239,14 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
     };
 
     assert_eq!(loaded.target_board_id, second.id);
-    assert_eq!(loaded.record.item.x, 42.0);
-    assert_eq!(loaded.record.item.y, 24.0);
+    assert_eq!(loaded.record.state.center.x, 42.0);
+    assert_eq!(loaded.record.state.center.y, 24.0);
     assert_eq!(
-        library.load_board_items_for_board(first.id).unwrap().len(),
+        library.load_placements_for_board(first.id).unwrap().len(),
         1
     );
     assert_eq!(
-        library.load_board_items_for_board(second.id).unwrap().len(),
+        library.load_placements_for_board(second.id).unwrap().len(),
         1
     );
 
@@ -270,7 +270,7 @@ fn empty_board_placement_uses_requested_anchor() {
 fn deterministic_candidate_order_prefers_right_before_below_on_tie() {
     let root = temp_library_root("placement-order");
     let library = Library::initialize(root.clone()).unwrap();
-    seed_board_item(&library, 1, 0.0, 0.0, 100, 100, 1.0);
+    seed_placement(&library, 1, 0.0, 0.0, 100, 100, 1.0);
 
     let arranged = arrange_rect_world(
         &library,
@@ -290,8 +290,8 @@ fn deterministic_candidate_order_prefers_right_before_below_on_tie() {
 fn blocked_right_side_candidate_falls_through_to_valid_lower_slot() {
     let root = temp_library_root("placement-blocked-right");
     let library = Library::initialize(root.clone()).unwrap();
-    seed_board_item(&library, 1, 0.0, 0.0, 100, 100, 1.0);
-    seed_board_item(&library, 2, 112.0, 0.0, 100, 100, 1.0);
+    seed_placement(&library, 1, 0.0, 0.0, 100, 100, 1.0);
+    seed_placement(&library, 2, 112.0, 0.0, 100, 100, 1.0);
 
     let arranged = arrange_rect_world(
         &library,
@@ -311,7 +311,7 @@ fn blocked_right_side_candidate_falls_through_to_valid_lower_slot() {
 fn square_scoring_beats_anchor_distance_for_adjacent_imports() {
     let root = temp_library_root("placement-square-scoring");
     let library = Library::initialize(root.clone()).unwrap();
-    seed_board_item(&library, 1, 0.0, 0.0, 240, 80, 1.0);
+    seed_placement(&library, 1, 0.0, 0.0, 240, 80, 1.0);
 
     let arranged = arrange_rect_world(
         &library,
@@ -331,7 +331,7 @@ fn square_scoring_beats_anchor_distance_for_adjacent_imports() {
 fn viewport_bounding_prefers_on_screen_candidate() {
     let root = temp_library_root("placement-viewport-bounded");
     let library = Library::initialize(root.clone()).unwrap();
-    seed_board_item(&library, 1, 0.0, 0.0, 240, 80, 1.0);
+    seed_placement(&library, 1, 0.0, 0.0, 240, 80, 1.0);
     let viewport = eframe::egui::Rect::from_min_max(
         eframe::egui::pos2(100.0, -60.0),
         eframe::egui::pos2(260.0, 60.0),
@@ -404,11 +404,11 @@ fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
     };
 
     let first_rect = eframe::egui::Rect::from_center_size(
-        eframe::egui::pos2(first.record.item.x, first.record.item.y),
+        eframe::egui::pos2(first.record.state.center.x, first.record.state.center.y),
         eframe::egui::vec2(200.0, 200.0),
     );
     let second_rect = eframe::egui::Rect::from_center_size(
-        eframe::egui::pos2(second.record.item.x, second.record.item.y),
+        eframe::egui::pos2(second.record.state.center.x, second.record.state.center.y),
         eframe::egui::vec2(200.0, 200.0),
     );
 
@@ -421,7 +421,7 @@ fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
 fn reserved_world_is_persisted_without_worker_relayout() {
     let root = temp_library_root("placement-reserved-world");
     let library = Library::initialize(root.clone()).unwrap();
-    seed_board_item(&library, 1, 0.0, 0.0, 100, 100, 1.0);
+    seed_placement(&library, 1, 0.0, 0.0, 100, 100, 1.0);
     let reserved_world = eframe::egui::pos2(240.0, 36.0);
 
     let loaded = match import_clipboard(
@@ -447,8 +447,8 @@ fn reserved_world_is_persisted_without_worker_relayout() {
         other => panic!("expected reserved clipboard import to load, got {other:?}"),
     };
 
-    assert_eq!(loaded.record.item.x, reserved_world.x);
-    assert_eq!(loaded.record.item.y, reserved_world.y);
+    assert_eq!(loaded.record.state.center.x, reserved_world.x);
+    assert_eq!(loaded.record.state.center.y, reserved_world.y);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -456,7 +456,7 @@ fn reserved_world_is_persisted_without_worker_relayout() {
 fn overlapping_reserved_world_is_preserved_when_persisting() {
     let root = temp_library_root("placement-preserved-reserved-world");
     let library = Library::initialize(root.clone()).unwrap();
-    seed_board_item(&library, 1, 0.0, 0.0, 100, 100, 1.0);
+    seed_placement(&library, 1, 0.0, 0.0, 100, 100, 1.0);
     let reserved_world = eframe::egui::Pos2::ZERO;
 
     let loaded = match import_clipboard(
@@ -484,8 +484,8 @@ fn overlapping_reserved_world_is_preserved_when_persisting() {
         }
     };
 
-    assert_eq!(loaded.record.item.x, reserved_world.x);
-    assert_eq!(loaded.record.item.y, reserved_world.y);
+    assert_eq!(loaded.record.state.center.x, reserved_world.x);
+    assert_eq!(loaded.record.state.center.y, reserved_world.y);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -518,13 +518,39 @@ fn url_import_downloads_and_persists_original_bytes() {
 
     server.join().unwrap();
 
-    assert_eq!(loaded.record.asset.mime_type, "image/png");
-    assert_eq!(loaded.record.asset.width, 64);
-    assert_eq!(loaded.record.asset.height, 48);
     assert_eq!(
         loaded
             .record
             .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .mime_type,
+        "image/png"
+    );
+    assert_eq!(
+        loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .width,
+        64
+    );
+    assert_eq!(
+        loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .height,
+        48
+    );
+    assert_eq!(
+        loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
             .original_path
             .extension()
             .and_then(|value| value.to_str()),
@@ -534,13 +560,23 @@ fn url_import_downloads_and_persists_original_bytes() {
         loaded
             .record
             .asset
+            .as_ref()
+            .expect("loaded placement asset")
             .original_path
             .file_name()
             .and_then(|value| value.to_str())
             .is_some_and(|name| name.ends_with("test-image.png"))
     );
     assert_eq!(
-        fs::read(&loaded.record.asset.original_path).unwrap(),
+        fs::read(
+            &loaded
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .original_path
+        )
+        .unwrap(),
         png_bytes
     );
 
@@ -577,21 +613,61 @@ fn url_import_preserves_svg_as_vector_source() {
     server.join().unwrap();
 
     assert_eq!(loaded.origin, super::ImportOrigin::Url);
-    assert_eq!(loaded.record.asset.mime_type, "image/svg+xml");
-    assert_eq!(loaded.record.asset.width, 128);
-    assert_eq!(loaded.record.asset.height, 96);
+    assert_eq!(
+        loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .mime_type,
+        "image/svg+xml"
+    );
+    assert_eq!(
+        loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .width,
+        128
+    );
+    assert_eq!(
+        loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .height,
+        96
+    );
     assert!(loaded.preview_rgba.is_empty());
     assert!(matches!(
         loaded.preview_texture,
         ImportedPreviewTexture::Svg { .. }
     ));
     assert_eq!(
-        fs::read(&loaded.record.asset.original_path).unwrap(),
+        fs::read(
+            &loaded
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .original_path
+        )
+        .unwrap(),
         svg_bytes
     );
     assert!(
         library
-            .canvas_image_cache_path(loaded.record.asset.id, 2000)
+            .canvas_image_cache_path(
+                loaded
+                    .record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .id,
+                2000
+            )
             .is_none()
     );
 
@@ -615,21 +691,61 @@ fn svg_import_preserves_vector_source_and_skips_canvas_cache() {
     )
     .unwrap();
 
-    assert_eq!(loaded.record.asset.mime_type, "image/svg+xml");
-    assert_eq!(loaded.record.asset.width, 320);
-    assert_eq!(loaded.record.asset.height, 180);
+    assert_eq!(
+        loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .mime_type,
+        "image/svg+xml"
+    );
+    assert_eq!(
+        loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .width,
+        320
+    );
+    assert_eq!(
+        loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .height,
+        180
+    );
     assert!(loaded.preview_rgba.is_empty());
     assert!(matches!(
         loaded.preview_texture,
         ImportedPreviewTexture::Svg { .. }
     ));
     assert_eq!(
-        fs::read_to_string(&loaded.record.asset.original_path).unwrap(),
+        fs::read_to_string(
+            &loaded
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .original_path
+        )
+        .unwrap(),
         fs::read_to_string(&svg_path).unwrap()
     );
     assert!(
         library
-            .canvas_image_cache_path(loaded.record.asset.id, 2000)
+            .canvas_image_cache_path(
+                loaded
+                    .record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .id,
+                2000
+            )
             .is_none()
     );
 
@@ -664,17 +780,57 @@ static char * sample_xpm[] = {
     )
     .unwrap();
 
-    assert_eq!(loaded.record.asset.mime_type, "image/x-xpixmap");
-    assert_eq!(loaded.record.asset.width, 2);
-    assert_eq!(loaded.record.asset.height, 2);
+    assert_eq!(
+        loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .mime_type,
+        "image/x-xpixmap"
+    );
+    assert_eq!(
+        loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .width,
+        2
+    );
+    assert_eq!(
+        loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .height,
+        2
+    );
     assert_eq!(loaded.preview_rgba.len(), 2 * 2 * 4);
     assert_eq!(
-        fs::read(&loaded.record.asset.original_path).unwrap(),
+        fs::read(
+            &loaded
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .original_path
+        )
+        .unwrap(),
         fs::read(source).unwrap()
     );
     assert!(
         library
-            .canvas_image_cache_path(loaded.record.asset.id, 2000)
+            .canvas_image_cache_path(
+                loaded
+                    .record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .id,
+                2000
+            )
             .is_some()
     );
 
@@ -700,8 +856,13 @@ fn crop_item_rejects_svg_with_clear_error() {
     let result = crop_item(
         &library,
         crate::canvas::CanvasCropRequest {
-            item_id: loaded.record.item.id,
-            source_asset: loaded.record.asset.clone(),
+            item_id: loaded.record.state.id,
+            source_asset: loaded
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .clone(),
             crop_rect: crate::canvas::PixelCropRect {
                 x: 0,
                 y: 0,
@@ -717,7 +878,7 @@ fn crop_item_rejects_svg_with_clear_error() {
 
     match result {
         ImportResult::Failed { item_id, error, .. } => {
-            assert_eq!(item_id, Some(loaded.record.item.id));
+            assert_eq!(item_id, Some(loaded.record.state.id));
             assert_eq!(error, "SVG cropping is not supported yet");
         }
         other => panic!("expected SVG crop failure, got {other:?}"),
@@ -767,7 +928,15 @@ fn load_existing_svg_uses_original_vector_source() {
     ));
     assert!(
         library
-            .canvas_image_cache_path(loaded.record.asset.id, 2000)
+            .canvas_image_cache_path(
+                loaded
+                    .record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .id,
+                2000
+            )
             .is_none()
     );
 
@@ -1048,7 +1217,10 @@ fn load_existing_backfills_versioned_canvas_cache_and_prefers_it_on_second_load(
     let settings = downscaled_canvas_settings(2000);
     assert!(
         library
-            .canvas_image_cache_path(record.asset.id, settings.max_side)
+            .canvas_image_cache_path(
+                record.asset.as_ref().expect("loaded placement asset").id,
+                settings.max_side
+            )
             .is_none()
     );
 
@@ -1067,13 +1239,23 @@ fn load_existing_backfills_versioned_canvas_cache_and_prefers_it_on_second_load(
         other => panic!("expected first load_existing to succeed, got {other:?}"),
     };
     let cache_path = library
-        .canvas_image_cache_path(record.asset.id, settings.max_side)
+        .canvas_image_cache_path(
+            record.asset.as_ref().expect("loaded placement asset").id,
+            settings.max_side,
+        )
         .unwrap();
     assert!(cache_path.is_file());
     assert_eq!(first.preview_width, 2000);
     assert_eq!(first.preview_height, 1500);
 
-    fs::remove_file(&record.asset.original_path).unwrap();
+    fs::remove_file(
+        &record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .original_path,
+    )
+    .unwrap();
 
     let second = match load_existing(
         &library,
@@ -1168,12 +1350,18 @@ fn load_existing_backfills_new_cache_when_canvas_max_side_changes() {
     let second_settings = downscaled_canvas_settings(1000);
     assert!(
         library
-            .canvas_image_cache_path(record.asset.id, first_settings.max_side)
+            .canvas_image_cache_path(
+                record.asset.as_ref().expect("loaded placement asset").id,
+                first_settings.max_side
+            )
             .is_none()
     );
     assert!(
         library
-            .canvas_image_cache_path(record.asset.id, second_settings.max_side)
+            .canvas_image_cache_path(
+                record.asset.as_ref().expect("loaded placement asset").id,
+                second_settings.max_side
+            )
             .is_none()
     );
 
@@ -1192,12 +1380,18 @@ fn load_existing_backfills_new_cache_when_canvas_max_side_changes() {
         other => panic!("expected first cache backfill to succeed, got {other:?}"),
     }
     let first_cache = library
-        .canvas_image_cache_path(record.asset.id, first_settings.max_side)
+        .canvas_image_cache_path(
+            record.asset.as_ref().expect("loaded placement asset").id,
+            first_settings.max_side,
+        )
         .unwrap();
     assert!(first_cache.is_file());
     assert!(
         library
-            .canvas_image_cache_path(record.asset.id, second_settings.max_side)
+            .canvas_image_cache_path(
+                record.asset.as_ref().expect("loaded placement asset").id,
+                second_settings.max_side
+            )
             .is_none()
     );
 
@@ -1218,7 +1412,10 @@ fn load_existing_backfills_new_cache_when_canvas_max_side_changes() {
     assert_eq!(second.preview_width, 1000);
     assert_eq!(second.preview_height, 750);
     let second_cache = library
-        .canvas_image_cache_path(record.asset.id, second_settings.max_side)
+        .canvas_image_cache_path(
+            record.asset.as_ref().expect("loaded placement asset").id,
+            second_settings.max_side,
+        )
         .unwrap();
     assert_ne!(first_cache, second_cache);
     assert!(second_cache.is_file());
@@ -1244,7 +1441,8 @@ fn downscale_mode_ignores_legacy_thumb_cache_paths() {
         )
         .unwrap();
 
-    let legacy_thumb_path = library.asset_thumb_path(record.asset.id);
+    let legacy_thumb_path =
+        library.asset_thumb_path(record.asset.as_ref().expect("loaded placement asset").id);
     image::save_buffer_with_format(
         &legacy_thumb_path,
         &solid_rgba(64, 64),
@@ -1254,7 +1452,14 @@ fn downscale_mode_ignores_legacy_thumb_cache_paths() {
         ImageFormat::Png,
     )
     .unwrap();
-    fs::remove_file(&record.asset.original_path).unwrap();
+    fs::remove_file(
+        &record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .original_path,
+    )
+    .unwrap();
 
     match load_existing(
         &library,
@@ -1413,10 +1618,20 @@ fn solid_png_bytes(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
 }
 
 fn displayed_area(loaded: &super::LoadedCanvasItem) -> f32 {
-    loaded.record.asset.width as f32
-        * loaded.record.asset.height as f32
-        * loaded.record.item.scale
-        * loaded.record.item.scale
+    loaded
+        .record
+        .asset
+        .as_ref()
+        .expect("loaded placement asset")
+        .width as f32
+        * loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .height as f32
+        * loaded.record.state.scale
+        * loaded.record.state.scale
 }
 
 fn test_viewport_world() -> eframe::egui::Rect {
@@ -1426,15 +1641,7 @@ fn test_viewport_world() -> eframe::egui::Rect {
     )
 }
 
-fn seed_board_item(
-    library: &Library,
-    id: i64,
-    x: f32,
-    y: f32,
-    width: u32,
-    height: u32,
-    scale: f32,
-) {
+fn seed_placement(library: &Library, id: i64, x: f32, y: f32, width: u32, height: u32, scale: f32) {
     let stored_path = library
         .store_rgba_image(
             &format!("seed-{id}"),
@@ -1455,7 +1662,7 @@ fn seed_board_item(
             scale,
         )
         .unwrap();
-    assert_eq!(record.item.id, id);
+    assert_eq!(record.state.id, id);
 }
 
 fn test_render_state() -> Option<eframe::egui_wgpu::RenderState> {

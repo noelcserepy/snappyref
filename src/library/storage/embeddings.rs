@@ -572,7 +572,7 @@ impl Library {
     }
 
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
-    pub fn board_item_instances_for_assets(
+    pub fn placement_instances_for_assets(
         &self,
         asset_ids: &[i64],
     ) -> Result<Vec<BoardSearchInstance>, String> {

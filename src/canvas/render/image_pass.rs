@@ -36,7 +36,7 @@ pub(crate) fn paint_images(
             let image_rect = image_screen_rect(state, rect, image);
             image_rect
                 .intersects(cull_rect)
-                .then_some((image.record.item.id, image_rect))
+                .then_some((image.record.state.id, image_rect))
         })
         .collect::<Vec<_>>();
     metrics.visible_images = visible_images.len();
@@ -90,7 +90,7 @@ pub(crate) fn paint_images(
 
         let native_eligible = matches!(image.texture, CanvasTexture::Native(_))
             && image.animation.is_none()
-            && image.record.item.rotation.abs() <= 0.0001;
+            && image.record.state.rotation.abs() <= 0.0001;
         if native_eligible {
             native_images.push((*item_id, *image_rect));
         } else {
@@ -234,7 +234,7 @@ fn canvas_stack_matches_existing_layering(state: &CanvasState) -> bool {
         .document
         .images
         .iter()
-        .map(|image| CanvasStackItem::Placement(image.record.item.id))
+        .map(|image| CanvasStackItem::Placement(image.record.state.id))
         .chain(
             state
                 .document
@@ -465,7 +465,7 @@ fn paint_image_overlay(
     if state
         .interaction
         .search_match_item_ids
-        .contains(&image.record.item.id)
+        .contains(&image.record.state.id)
     {
         painter.rect_stroke(
             image_rect,
@@ -474,7 +474,7 @@ fn paint_image_overlay(
             egui::StrokeKind::Outside,
         );
     }
-    if state.is_selected(image.record.item.id)
+    if state.is_selected(image.record.state.id)
         && selection_border_visible(state, painter.ctx().input(|input| input.time))
     {
         let corners = image_screen_corners_for_record(
@@ -492,7 +492,7 @@ fn paint_image_overlay(
     if debug_labels {
         let label = format!(
             "#{}  ({:.0}, {:.0})",
-            image.record.item.id, image.record.item.x, image.record.item.y
+            image.record.state.id, image.record.state.center.x, image.record.state.center.y
         );
         painter.text(
             image_rect.min + egui::vec2(crate::ui::theme::SPACE_2, crate::ui::theme::SPACE_2),
@@ -573,7 +573,7 @@ pub(crate) fn canvas_texture_from_preview(
 }
 
 pub(crate) fn image_paint_stats_for_records(
-    records: &[crate::data::BoardItemWithAsset],
+    records: &[crate::data::Placement],
     rect: egui::Rect,
     pan: egui::Vec2,
     zoom: f32,
@@ -592,7 +592,7 @@ pub(crate) fn image_paint_stats_for_records(
 }
 
 pub(crate) fn image_texture_group_count_for_records(
-    records: &[crate::data::BoardItemWithAsset],
+    records: &[crate::data::Placement],
     rect: egui::Rect,
     pan: egui::Vec2,
     zoom: f32,
@@ -605,9 +605,9 @@ pub(crate) fn image_texture_group_count_for_records(
         if !image_rect.intersects(cull_rect) {
             continue;
         }
-        if previous_asset_id != Some(record.asset.id) {
+        if previous_asset_id != Some(record.asset.as_ref().expect("loaded placement asset").id) {
             groups += 1;
-            previous_asset_id = Some(record.asset.id);
+            previous_asset_id = Some(record.asset.as_ref().expect("loaded placement asset").id);
         }
     }
     groups

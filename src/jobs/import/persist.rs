@@ -174,7 +174,7 @@ pub(crate) fn import_path_sync_traced(
         let preview_started_at = Instant::now();
         install_prepared_canvas_cache(
             library,
-            record.asset.id,
+            record.asset.as_ref().expect("loaded placement asset").id,
             canvas_image_settings.max_side,
             CanvasImageLod::Working,
             &prepared,
@@ -259,7 +259,7 @@ pub(crate) fn import_path_sync_traced(
         canvas_image_settings,
     )?;
     let _ = library.store_canvas_image_cache(
-        record.asset.id,
+        record.asset.as_ref().expect("loaded placement asset").id,
         canvas_image_settings.max_side,
         &canvas_source.rgba,
         canvas_source.width,
@@ -639,7 +639,7 @@ pub(crate) fn import_url_sync_traced(
         canvas_image_settings,
     )?;
     let _ = library.store_canvas_image_cache(
-        record.asset.id,
+        record.asset.as_ref().expect("loaded placement asset").id,
         canvas_image_settings.max_side,
         &canvas_source.rgba,
         canvas_source.width,
@@ -831,7 +831,7 @@ pub(crate) fn import_clipboard_sync_traced(
     let preview_started_at = Instant::now();
     let canvas_source = canvas_source_image_from_rgba(width, height, &rgba, canvas_image_settings)?;
     let _ = library.store_canvas_image_cache(
-        record.asset.id,
+        record.asset.as_ref().expect("loaded placement asset").id,
         canvas_image_settings.max_side,
         &canvas_source.rgba,
         canvas_source.width,

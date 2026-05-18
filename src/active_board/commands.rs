@@ -35,7 +35,7 @@ pub(crate) struct ClipboardBoardSelection {
     pub(crate) kind: String,
     pub(crate) source_center_x: f32,
     pub(crate) source_center_y: f32,
-    pub(crate) items: Vec<ClipboardBoardItem>,
+    pub(crate) items: Vec<ClipboardPlacementState>,
     pub(crate) annotations: Vec<ClipboardAnnotation>,
     #[serde(default)]
     pub(crate) stack_order: Vec<ClipboardStackEntry>,
@@ -48,10 +48,10 @@ pub(crate) struct ClipboardStackEntry {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct ClipboardBoardItem {
+pub(crate) struct ClipboardPlacementState {
     asset_id: i64,
-    x: f32,
-    y: f32,
+    center_x: f32,
+    center_y: f32,
     scale: f32,
     rotation: f32,
     z_index: i32,
@@ -94,16 +94,18 @@ pub(crate) fn copy_selected_board_payload(canvas: &CanvasState) -> Option<Clipbo
     let mut item_ids = Vec::new();
     for item_id in canvas.selected_item_ids() {
         let record = canvas.record_for_item_id(item_id)?;
+        let asset = record.asset.as_ref()?;
+        let asset_id = record.state.asset_id?;
         item_ids.push(item_id);
-        items.push(ClipboardBoardItem {
-            asset_id: record.item.asset_id,
-            x: record.item.x,
-            y: record.item.y,
-            scale: record.item.scale,
-            rotation: record.item.rotation,
-            z_index: record.item.z_index,
-            width: record.asset.width,
-            height: record.asset.height,
+        items.push(ClipboardPlacementState {
+            asset_id,
+            center_x: record.state.center.x,
+            center_y: record.state.center.y,
+            scale: record.state.scale,
+            rotation: record.state.rotation,
+            z_index: record.state.z_index,
+            width: asset.width,
+            height: asset.height,
         });
     }
 
@@ -195,14 +197,14 @@ pub(crate) fn paste_board_payload_at(
 
     let mut pasted_item_ids = Vec::new();
     for item in &payload.items {
-        let record = library.create_board_item_from_asset(
+        let record = library.create_placement_from_asset(
             item.asset_id,
-            egui::pos2(item.x + delta.x, item.y + delta.y),
+            egui::pos2(item.center_x + delta.x, item.center_y + delta.y),
             item.scale,
             item.rotation,
             item.z_index,
         )?;
-        pasted_item_ids.push(record.item.id);
+        pasted_item_ids.push(record.state.id);
         if let Err(error) = context.canvas.add_reference_item(record) {
             if context.import_worker_available {
                 needs_existing_reload = true;
@@ -295,7 +297,7 @@ pub(crate) fn delete_selected_from_board(
     }
 
     if let Some(library) = context.library {
-        library.archive_board_items(&archived_ids)?;
+        library.archive_placements(&archived_ids)?;
     }
     let noun = if archived_ids.len() == 1 {
         "image"
@@ -397,7 +399,7 @@ pub(crate) fn clipboard_payload_bounds(payload: &ClipboardBoardSelection) -> Opt
             item.width as f32 * item.scale.max(0.01),
             item.height as f32 * item.scale.max(0.01),
         );
-        let rect = egui::Rect::from_center_size(egui::pos2(item.x, item.y), size);
+        let rect = egui::Rect::from_center_size(egui::pos2(item.center_x, item.center_y), size);
         bounds = Some(match bounds {
             Some(existing) => existing.union(rect),
             None => rect,

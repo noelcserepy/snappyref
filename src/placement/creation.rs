@@ -4,7 +4,7 @@ use eframe::egui;
 
 use crate::canvas::CanvasState;
 use crate::data::{
-    BoardItem, BoardItemWithAsset, PlacementContent, PlacementContentIntent, PlacementLifecycle,
+    Placement, PlacementContent, PlacementContentIntent, PlacementLifecycle, PlacementState,
 };
 use crate::library::storage::Library;
 use crate::placement::content_resolution::{
@@ -46,16 +46,16 @@ pub(crate) struct CompletedPlacementCreationBatch {
 #[allow(dead_code)]
 pub(crate) struct CreatedLoadedPlacement {
     pub(crate) reservation: Option<ContentResolutionReservation>,
-    pub(crate) record: BoardItemWithAsset,
+    pub(crate) record: Placement,
 }
 
 pub(crate) struct CreatedLoadingPlacement {
     pub(crate) reservation: ContentResolutionReservation,
-    pub(crate) record: BoardItemWithAsset,
+    pub(crate) record: Placement,
 }
 
 pub(crate) enum ProvisionalSourceIntent {
-    ExistingPlacement(BoardItemWithAsset),
+    ExistingPlacement(Placement),
     ExistingAsset {
         asset_id: i64,
         label: String,
@@ -162,7 +162,7 @@ pub(crate) fn create_committed_loading_placement(
     library: &Library,
     content_resolution: &mut ContentResolutionRuntime,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::data::BoardLayoutItem>,
+    layout: &mut Vec<crate::data::PlacementLayoutItem>,
     target_board_id: i64,
     intent: SourceIntent,
     center_world: egui::Pos2,
@@ -179,17 +179,16 @@ pub(crate) fn create_committed_loading_placement(
         Some("Loading".to_owned()),
     )?;
     let reservation =
-        content_resolution.reserve_placement(target_board_id, record.item.id, center_world);
+        content_resolution.reserve_placement(target_board_id, record.state.id, center_world);
 
-    layout.push(crate::data::BoardLayoutItem {
-        id: record.item.id,
-        x: record.item.x,
-        y: record.item.y,
+    layout.push(crate::data::PlacementLayoutItem {
+        id: record.state.id,
+        center: record.state.center,
         width: record.scaled_visual_size().x,
         height: record.scaled_visual_size().y,
     });
     canvas.add_unloaded_item(record.clone());
-    canvas.select_items(&[record.item.id]);
+    canvas.select_items(&[record.state.id]);
 
     Ok(CreatedLoadingPlacement {
         reservation,
@@ -201,7 +200,7 @@ pub(crate) fn create_committed_loading_placements(
     library: &Library,
     content_resolution: &mut ContentResolutionRuntime,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::data::BoardLayoutItem>,
+    layout: &mut Vec<crate::data::PlacementLayoutItem>,
     target_board_id: i64,
     intents: Vec<SourceIntent>,
     anchor_world: egui::Pos2,
@@ -225,7 +224,7 @@ pub(crate) fn create_committed_loading_placements(
     }
     let item_ids = created
         .iter()
-        .map(|created| created.record.item.id)
+        .map(|created| created.record.state.id)
         .collect::<Vec<_>>();
     canvas.select_items(&item_ids);
     Ok(created)
@@ -261,10 +260,10 @@ pub(crate) fn create_provisional_placements(
     for (intent, (center_world, _size_world)) in intents.into_iter().zip(centers) {
         match intent {
             ProvisionalSourceIntent::ExistingPlacement(mut record) => {
-                record.item.id = next_id;
-                record.item.x = center_world.x;
-                record.item.y = center_world.y;
-                record.item.z_index = next_id as i32;
+                record.state.id = next_id;
+                record.state.center.x = center_world.x;
+                record.state.center.y = center_world.y;
+                record.state.z_index = next_id as i32;
                 record.lifecycle = PlacementLifecycle::Provisional;
                 canvas.add_provisional_reference_item(record);
             }
@@ -299,29 +298,27 @@ fn provisional_asset_record(
     dimensions: (u32, u32),
     center_world: egui::Pos2,
     settings: PlacementCreationSettings,
-) -> BoardItemWithAsset {
+) -> Placement {
     let (width, height) = (dimensions.0.max(1), dimensions.1.max(1));
     let scale = crate::jobs::initial_import_scale(width, height, true, settings.target_canvas_area);
-    let asset = BoardItemWithAsset::placeholder_asset(item_id, label, width, height);
-    BoardItemWithAsset {
-        item: BoardItem {
+    let _ = label;
+    Placement {
+        state: PlacementState {
             id: item_id,
-            asset_id,
-            x: center_world.x,
-            y: center_world.y,
+            asset_id: Some(asset_id),
+            center: center_world,
             scale,
             rotation: 0.0,
             z_index: item_id as i32,
             archived: false,
         },
-        asset,
+        asset: None,
         content: PlacementContent::Loading {
             intent: PlacementContentIntent::SearchAsset { asset_id },
             status_message: Some("Loading".to_owned()),
         },
         lifecycle: PlacementLifecycle::Provisional,
-        visual_width: width as f32,
-        visual_height: height as f32,
+        visual_size: egui::vec2(width as f32, height as f32),
     }
 }
 
@@ -329,7 +326,7 @@ fn provisional_asset_record(
 pub(crate) fn create_existing_asset_placements(
     library: &Library,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::data::BoardLayoutItem>,
+    layout: &mut Vec<crate::data::PlacementLayoutItem>,
     _target_board_id: i64,
     asset_ids: Vec<i64>,
     preferred_centers: Vec<egui::Pos2>,
@@ -370,14 +367,13 @@ pub(crate) fn create_existing_asset_placements(
             settings.target_canvas_area,
         );
         let record =
-            match library.create_board_item_from_asset(asset.id, center_world, scale, 0.0, 0) {
+            match library.create_placement_from_asset(asset.id, center_world, scale, 0.0, 0) {
                 Ok(record) => record,
                 Err(error) => return Err(error),
             };
-        layout.push(crate::data::BoardLayoutItem {
-            id: record.item.id,
-            x: record.item.x,
-            y: record.item.y,
+        layout.push(crate::data::PlacementLayoutItem {
+            id: record.state.id,
+            center: record.state.center,
             width: record.scaled_visual_size().x,
             height: record.scaled_visual_size().y,
         });

@@ -1,4 +1,4 @@
-use crate::data::{BoardItemWithAsset, CanvasAnnotation, CanvasStackItem};
+use crate::data::{CanvasAnnotation, CanvasStackItem, Placement};
 use crate::library::storage::Library;
 
 #[derive(Default)]
@@ -10,7 +10,7 @@ pub(crate) struct DocumentHistory {
 #[derive(Clone, Debug)]
 pub(crate) struct HistoryAction {
     pub(crate) label: String,
-    pub(crate) placements: Vec<RowChange<BoardItemWithAsset>>,
+    pub(crate) placements: Vec<RowChange<Placement>>,
     pub(crate) annotations: Vec<RowChange<CanvasAnnotation>>,
     pub(crate) stack_order: Option<RowChange<Vec<CanvasStackItem>>>,
 }
@@ -102,7 +102,7 @@ fn apply_history_action(
 
 fn apply_placement_change(
     library: &Library,
-    change: &RowChange<BoardItemWithAsset>,
+    change: &RowChange<Placement>,
     direction: HistoryDirection,
 ) -> Result<(), String> {
     let target = match direction {
@@ -116,13 +116,13 @@ fn apply_placement_change(
     let Some(item) = target.or(fallback) else {
         return Ok(());
     };
-    if item.item.archived {
-        library.archive_board_items(&[item.item.id])
+    if item.state.archived {
+        library.archive_placements(&[item.state.id])
     } else if target.is_none() {
-        library.archive_board_items(&[item.item.id])
+        library.archive_placements(&[item.state.id])
     } else {
-        library.restore_board_items(&[item.item.id])?;
-        library.update_board_item_document_state(&item.item)
+        library.restore_placements(&[item.state.id])?;
+        library.update_placement_document_state(&item.state)
     }
 }
 
@@ -252,7 +252,7 @@ mod tests {
             )
             .unwrap();
         let mut archived = record.clone();
-        archived.item.archived = true;
+        archived.state.archived = true;
         let mut history = DocumentHistory::default();
 
         history
@@ -269,26 +269,26 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(library.load_board_items().unwrap().is_empty());
+        assert!(library.load_placements().unwrap().is_empty());
 
         assert_eq!(
             history.undo(&library).unwrap().map(|applied| applied.label),
             Some("Delete image".to_owned())
         );
-        let restored = library.load_board_items().unwrap();
+        let restored = library.load_placements().unwrap();
         assert_eq!(restored.len(), 1);
-        assert_eq!(restored[0].item.id, record.item.id);
-        assert_eq!(restored[0].item.x, 10.0);
+        assert_eq!(restored[0].state.id, record.state.id);
+        assert_eq!(restored[0].state.center.x, 10.0);
         assert_eq!(
             library.load_canvas_stack_order().unwrap(),
-            vec![CanvasStackItem::Placement(record.item.id)]
+            vec![CanvasStackItem::Placement(record.state.id)]
         );
 
         assert_eq!(
             history.redo(&library).unwrap().map(|applied| applied.label),
             Some("Delete image".to_owned())
         );
-        assert!(library.load_board_items().unwrap().is_empty());
+        assert!(library.load_placements().unwrap().is_empty());
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -318,15 +318,21 @@ mod tests {
             )
             .unwrap();
         let second = library
-            .create_board_item_from_asset(first.asset.id, egui::pos2(30.0, 40.0), 1.0, 0.0, 0)
+            .create_placement_from_asset(
+                first.asset.as_ref().expect("loaded placement asset").id,
+                egui::pos2(30.0, 40.0),
+                1.0,
+                0.0,
+                0,
+            )
             .unwrap();
         let before = vec![
-            CanvasStackItem::Placement(first.item.id),
-            CanvasStackItem::Placement(second.item.id),
+            CanvasStackItem::Placement(first.state.id),
+            CanvasStackItem::Placement(second.state.id),
         ];
         let after = vec![
-            CanvasStackItem::Placement(second.item.id),
-            CanvasStackItem::Placement(first.item.id),
+            CanvasStackItem::Placement(second.state.id),
+            CanvasStackItem::Placement(first.state.id),
         ];
         library.save_canvas_stack_order(&before).unwrap();
         let mut history = DocumentHistory::default();

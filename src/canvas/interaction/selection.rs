@@ -105,7 +105,7 @@ pub(crate) fn update_marquee_selection(
         .images
         .iter()
         .filter(|image| image_screen_rect(state, rect, image).intersects(selection_rect))
-        .map(|image| image.record.item.id)
+        .map(|image| image.record.state.id)
         .collect::<Vec<_>>();
     let selected_annotation_ids = state
         .document

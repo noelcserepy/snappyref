@@ -3,13 +3,13 @@ use super::boards::{active_board_id, board_is_non_archived};
 use super::stack_order::append_canvas_stack_item;
 use super::*;
 
-fn insert_board_item_row(
+fn insert_placement_row(
     transaction: &Transaction<'_>,
     board_id: i64,
     asset_id: i64,
     desired_world: egui::Pos2,
     initial_scale: f32,
-) -> Result<BoardItem, String> {
+) -> Result<PlacementState, String> {
     transaction
         .execute(
             "INSERT INTO board_items (
@@ -33,13 +33,12 @@ fn insert_board_item_row(
                 0_i64
             ],
         )
-        .map_err(|error| format!("failed to insert board item: {error}"))?;
+        .map_err(|error| format!("failed to insert placement: {error}"))?;
 
-    Ok(BoardItem {
+    Ok(PlacementState {
         id: transaction.last_insert_rowid(),
-        asset_id,
-        x: desired_world.x,
-        y: desired_world.y,
+        asset_id: Some(asset_id),
+        center: desired_world,
         scale: initial_scale,
         rotation: 0.0,
         z_index: 0,
@@ -119,7 +118,7 @@ impl Library {
         file_size: u64,
         desired_world: egui::Pos2,
         initial_scale: f32,
-    ) -> Result<BoardItemWithAsset, String> {
+    ) -> Result<Placement, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
         self.persist_imported_image_to_board(
@@ -144,7 +143,7 @@ impl Library {
         file_size: u64,
         desired_world: egui::Pos2,
         initial_scale: f32,
-    ) -> Result<BoardItemWithAsset, String> {
+    ) -> Result<Placement, String> {
         let mut connection = self.connection()?;
         if !board_is_non_archived(&connection, board_id)? {
             return Err(format!(
@@ -163,7 +162,7 @@ impl Library {
             height,
             file_size,
         )?;
-        let item = insert_board_item_row(
+        let item = insert_placement_row(
             &transaction,
             board_id,
             asset.id,
@@ -176,7 +175,7 @@ impl Library {
             .commit()
             .map_err(|error| format!("failed to commit transaction: {error}"))?;
 
-        Ok(BoardItemWithAsset::loaded(item, asset))
+        Ok(Placement::loaded(item, asset))
     }
 
     pub fn persist_imported_image_resolving_placement(
@@ -190,7 +189,7 @@ impl Library {
         file_size: u64,
         desired_world: egui::Pos2,
         initial_scale: f32,
-    ) -> Result<BoardItemWithAsset, String> {
+    ) -> Result<Placement, String> {
         let Some(placement_id) = placement_id else {
             return self.persist_imported_image_to_board(
                 board_id,
@@ -253,11 +252,10 @@ impl Library {
                  WHERE id = ?1",
                 params![placement_id],
                 |row| {
-                    Ok(BoardItem {
+                    Ok(PlacementState {
                         id: row.get(0)?,
                         asset_id: row.get(1)?,
-                        x: row.get(2)?,
-                        y: row.get(3)?,
+                        center: egui::pos2(row.get(2)?, row.get(3)?),
                         scale: row.get(4)?,
                         rotation: row.get(5)?,
                         z_index: row.get(6)?,
@@ -283,13 +281,12 @@ impl Library {
             .commit()
             .map_err(|error| format!("failed to commit placement resolution: {error}"))?;
 
-        Ok(BoardItemWithAsset {
-            item,
-            asset,
+        Ok(Placement {
+            state: item,
+            asset: Some(asset),
             content,
             lifecycle: PlacementLifecycle::Committed,
-            visual_width,
-            visual_height,
+            visual_size: egui::vec2(visual_width, visual_height),
         })
     }
 
@@ -298,12 +295,12 @@ impl Library {
         board_id: i64,
         placement_id: i64,
         message: String,
-    ) -> Result<Option<BoardItemWithAsset>, String> {
+    ) -> Result<Option<Placement>, String> {
         let connection = self.connection()?;
         let existing = self
-            .load_board_items_for_board_id(&connection, board_id)?
+            .load_placements_for_board_id(&connection, board_id)?
             .into_iter()
-            .find(|record| record.item.id == placement_id);
+            .find(|record| record.state.id == placement_id);
         let Some(mut record) = existing else {
             return Ok(None);
         };
@@ -333,10 +330,10 @@ impl Library {
         Ok(Some(record))
     }
 
-    pub fn load_board_items(&self) -> Result<Vec<BoardItemWithAsset>, String> {
+    pub fn load_placements(&self) -> Result<Vec<Placement>, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
-        self.load_board_items_for_board_id(&connection, active_board_id)
+        self.load_placements_for_board_id(&connection, active_board_id)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -348,7 +345,7 @@ impl Library {
         visual_height: f32,
         intent: PlacementContentIntent,
         status_message: Option<String>,
-    ) -> Result<BoardItemWithAsset, String> {
+    ) -> Result<Placement, String> {
         self.persist_committed_unloaded_placement(
             desired_world,
             initial_scale,
@@ -371,7 +368,7 @@ impl Library {
         intent: Option<PlacementContentIntent>,
         message: String,
         recoverable: bool,
-    ) -> Result<BoardItemWithAsset, String> {
+    ) -> Result<Placement, String> {
         self.persist_committed_unloaded_placement(
             desired_world,
             initial_scale,
@@ -392,7 +389,7 @@ impl Library {
         visual_width: f32,
         visual_height: f32,
         content: PlacementContent,
-    ) -> Result<BoardItemWithAsset, String> {
+    ) -> Result<Placement, String> {
         let mut connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
         let transaction = connection
@@ -435,49 +432,38 @@ impl Library {
             .commit()
             .map_err(|error| format!("failed to commit placement transaction: {error}"))?;
 
-        let item = BoardItem {
+        let item = PlacementState {
             id: item_id,
-            asset_id: 0,
-            x: desired_world.x,
-            y: desired_world.y,
+            asset_id: None,
+            center: desired_world,
             scale: initial_scale,
             rotation: 0.0,
             z_index: 0,
             archived: false,
         };
-        let asset = BoardItemWithAsset::placeholder_asset(
-            item_id,
-            format!("placement-{item_id}-{content_state}"),
-            visual_width.max(1.0).round() as u32,
-            visual_height.max(1.0).round() as u32,
-        );
-        Ok(BoardItemWithAsset {
-            item,
-            asset,
+        Ok(Placement {
+            state: item,
+            asset: None,
             content,
             lifecycle: PlacementLifecycle::Committed,
-            visual_width,
-            visual_height,
+            visual_size: egui::vec2(visual_width, visual_height),
         })
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn load_board_items_for_board(
-        &self,
-        board_id: i64,
-    ) -> Result<Vec<BoardItemWithAsset>, String> {
+    pub fn load_placements_for_board(&self, board_id: i64) -> Result<Vec<Placement>, String> {
         let connection = self.connection()?;
         if !board_is_non_archived(&connection, board_id)? {
             return Err(format!("cannot load missing or archived board {board_id}"));
         }
-        self.load_board_items_for_board_id(&connection, board_id)
+        self.load_placements_for_board_id(&connection, board_id)
     }
 
-    fn load_board_items_for_board_id(
+    fn load_placements_for_board_id(
         &self,
         connection: &Connection,
         board_id: i64,
-    ) -> Result<Vec<BoardItemWithAsset>, String> {
+    ) -> Result<Vec<Placement>, String> {
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -513,11 +499,10 @@ impl Library {
         let rows = statement
             .query_map(params![board_id], |row| {
                 let row_asset_id = row.get::<_, Option<i64>>(1)?;
-                let item = BoardItem {
+                let item = PlacementState {
                     id: row.get(0)?,
-                    asset_id: row_asset_id.unwrap_or(0),
-                    x: row.get(2)?,
-                    y: row.get(3)?,
+                    asset_id: row_asset_id,
+                    center: egui::pos2(row.get(2)?, row.get(3)?),
                     scale: row.get(4)?,
                     rotation: row.get(5)?,
                     z_index: row.get(6)?,
@@ -529,7 +514,7 @@ impl Library {
                 let visual_height: Option<f32> = row.get(18)?;
                 let content_payload: Option<String> = row.get(19)?;
                 let asset = if let Some(asset_id) = row.get::<_, Option<i64>>(7)? {
-                    ImageAsset {
+                    Some(ImageAsset {
                         id: asset_id,
                         original_path: PathBuf::from(row.get::<_, String>(8)?),
                         filename: row.get(9)?,
@@ -538,30 +523,26 @@ impl Library {
                         height: row.get::<_, u32>(12)?,
                         file_size: row.get::<_, i64>(13)? as u64,
                         imported_at: row.get(14)?,
-                    }
+                    })
                 } else {
-                    BoardItemWithAsset::placeholder_asset(
-                        item.id,
-                        format!("placement-{}-{content_state}", item.id),
-                        visual_width.unwrap_or(256.0).max(1.0).round() as u32,
-                        visual_height.unwrap_or(256.0).max(1.0).round() as u32,
-                    )
+                    None
                 };
                 let content = decode_placement_content(
                     &content_state,
                     content_payload.as_deref(),
-                    item.asset_id,
+                    item.asset_id.unwrap_or(0),
                 );
                 let lifecycle = decode_placement_lifecycle(&lifecycle);
-                let visual_width = visual_width.unwrap_or(asset.width as f32);
-                let visual_height = visual_height.unwrap_or(asset.height as f32);
-                Ok(BoardItemWithAsset {
-                    item,
+                let visual_width = visual_width
+                    .unwrap_or_else(|| asset.as_ref().map_or(256.0, |asset| asset.width as f32));
+                let visual_height = visual_height
+                    .unwrap_or_else(|| asset.as_ref().map_or(256.0, |asset| asset.height as f32));
+                Ok(Placement {
+                    state: item,
                     asset,
                     content,
                     lifecycle,
-                    visual_width,
-                    visual_height,
+                    visual_size: egui::vec2(visual_width, visual_height),
                 })
             })
             .map_err(|error| format!("failed to read board-items query: {error}"))?;
@@ -570,29 +551,29 @@ impl Library {
             .map_err(|error| format!("failed to collect board-items: {error}"))
     }
 
-    pub fn load_board_layout_items(&self) -> Result<Vec<BoardLayoutItem>, String> {
+    pub fn load_placement_layout_items(&self) -> Result<Vec<PlacementLayoutItem>, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
-        self.load_board_layout_items_for_board_id(&connection, active_board_id)
+        self.load_placement_layout_items_for_board_id(&connection, active_board_id)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn load_board_layout_items_for_board(
+    pub fn load_placement_layout_items_for_board(
         &self,
         board_id: i64,
-    ) -> Result<Vec<BoardLayoutItem>, String> {
+    ) -> Result<Vec<PlacementLayoutItem>, String> {
         let connection = self.connection()?;
         if !board_is_non_archived(&connection, board_id)? {
             return Err(format!("cannot load missing or archived board {board_id}"));
         }
-        self.load_board_layout_items_for_board_id(&connection, board_id)
+        self.load_placement_layout_items_for_board_id(&connection, board_id)
     }
 
-    fn load_board_layout_items_for_board_id(
+    fn load_placement_layout_items_for_board_id(
         &self,
         connection: &Connection,
         board_id: i64,
-    ) -> Result<Vec<BoardLayoutItem>, String> {
+    ) -> Result<Vec<PlacementLayoutItem>, String> {
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -612,10 +593,9 @@ impl Library {
 
         let rows = statement
             .query_map(params![board_id], |row| {
-                Ok(BoardLayoutItem {
+                Ok(PlacementLayoutItem {
                     id: row.get(0)?,
-                    x: row.get(1)?,
-                    y: row.get(2)?,
+                    center: egui::pos2(row.get(1)?, row.get(2)?),
                     width: row.get(3)?,
                     height: row.get(4)?,
                 })
@@ -626,7 +606,7 @@ impl Library {
             .map_err(|error| format!("failed to collect board-layout items: {error}"))
     }
 
-    pub fn update_board_item(&self, item: &BoardItem) -> Result<(), String> {
+    pub fn update_placement_state(&self, item: &PlacementState) -> Result<(), String> {
         let connection = self.connection()?;
         connection
             .execute(
@@ -634,8 +614,8 @@ impl Library {
                  SET x = ?1, y = ?2, scale = ?3, rotation = ?4, z_index = ?5, archived = ?6
                  WHERE id = ?7",
                 params![
-                    item.x,
-                    item.y,
+                    item.center.x,
+                    item.center.y,
                     item.scale,
                     item.rotation,
                     item.z_index,
@@ -643,12 +623,12 @@ impl Library {
                     item.id,
                 ],
             )
-            .map_err(|error| format!("failed to update board item: {error}"))?;
+            .map_err(|error| format!("failed to update placement: {error}"))?;
 
         Ok(())
     }
 
-    pub fn update_board_item_document_state(&self, item: &BoardItem) -> Result<(), String> {
+    pub fn update_placement_document_state(&self, item: &PlacementState) -> Result<(), String> {
         let connection = self.connection()?;
         connection
             .execute(
@@ -657,8 +637,8 @@ impl Library {
                  WHERE id = ?8",
                 params![
                     item.asset_id,
-                    item.x,
-                    item.y,
+                    item.center.x,
+                    item.center.y,
                     item.scale,
                     item.rotation,
                     item.z_index,
@@ -666,12 +646,12 @@ impl Library {
                     item.id,
                 ],
             )
-            .map_err(|error| format!("failed to update board item document state: {error}"))?;
+            .map_err(|error| format!("failed to update placement document state: {error}"))?;
 
         Ok(())
     }
 
-    pub fn archive_board_items(&self, item_ids: &[i64]) -> Result<(), String> {
+    pub fn archive_placements(&self, item_ids: &[i64]) -> Result<(), String> {
         if item_ids.is_empty() {
             return Ok(());
         }
@@ -687,7 +667,7 @@ impl Library {
                     "UPDATE board_items SET archived = 1 WHERE id = ?1",
                     params![item_id],
                 )
-                .map_err(|error| format!("failed to archive board item {item_id}: {error}"))?;
+                .map_err(|error| format!("failed to archive placement {item_id}: {error}"))?;
             transaction
                 .execute(
                     "DELETE FROM canvas_stack_items
@@ -696,7 +676,7 @@ impl Library {
                     params![item_id],
                 )
                 .map_err(|error| {
-                    format!("failed to remove board item {item_id} from canvas stack: {error}")
+                    format!("failed to remove placement {item_id} from canvas stack: {error}")
                 })?;
         }
 
@@ -707,7 +687,7 @@ impl Library {
         Ok(())
     }
 
-    pub fn restore_board_items(&self, item_ids: &[i64]) -> Result<(), String> {
+    pub fn restore_placements(&self, item_ids: &[i64]) -> Result<(), String> {
         if item_ids.is_empty() {
             return Ok(());
         }
@@ -727,7 +707,7 @@ impl Library {
                        AND board_id = ?2",
                     params![item_id, active_board_id],
                 )
-                .map_err(|error| format!("failed to restore board item {item_id}: {error}"))?;
+                .map_err(|error| format!("failed to restore placement {item_id}: {error}"))?;
             append_canvas_stack_item(
                 &transaction,
                 active_board_id,
@@ -742,12 +722,12 @@ impl Library {
         Ok(())
     }
 
-    pub fn duplicate_board_items(
+    pub fn duplicate_placements(
         &self,
         item_ids: &[i64],
         anchor_world: egui::Pos2,
         source_center_world: egui::Pos2,
-    ) -> Result<Vec<BoardItemWithAsset>, String> {
+    ) -> Result<Vec<Placement>, String> {
         if item_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -785,11 +765,10 @@ impl Library {
         for item_id in item_ids {
             let record = statement
                 .query_row(params![item_id, active_board_id], |row| {
-                    let item = BoardItem {
+                    let item = PlacementState {
                         id: row.get(0)?,
                         asset_id: row.get(1)?,
-                        x: row.get(2)?,
-                        y: row.get(3)?,
+                        center: egui::pos2(row.get(2)?, row.get(3)?),
                         scale: row.get(4)?,
                         rotation: row.get(5)?,
                         z_index: row.get(6)?,
@@ -805,10 +784,10 @@ impl Library {
                         file_size: row.get::<_, i64>(13)? as u64,
                         imported_at: row.get(14)?,
                     };
-                    Ok(BoardItemWithAsset::loaded(item, asset))
+                    Ok(Placement::loaded(item, asset))
                 })
                 .map_err(|error| {
-                    format!("failed to load board item {item_id} for duplication: {error}")
+                    format!("failed to load placement {item_id} for duplication: {error}")
                 })?;
             source_records.push(record);
         }
@@ -835,17 +814,20 @@ impl Library {
                      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         active_board_id,
-                        source.item.asset_id,
-                        source.item.x + delta.x,
-                        source.item.y + delta.y,
-                        source.item.scale,
-                        source.item.rotation,
-                        source.item.z_index,
+                        source
+                            .state
+                            .asset_id
+                            .ok_or_else(|| format!("placement {} has no asset", source.state.id))?,
+                        source.state.center.x + delta.x,
+                        source.state.center.y + delta.y,
+                        source.state.scale,
+                        source.state.rotation,
+                        source.state.z_index,
                         0_i64
                     ],
                 )
                 .map_err(|error| {
-                    format!("failed to duplicate board item {}: {error}", source.item.id)
+                    format!("failed to duplicate placement {}: {error}", source.state.id)
                 })?;
 
             let item_id = transaction.last_insert_rowid();
@@ -854,17 +836,26 @@ impl Library {
                 active_board_id,
                 CanvasStackItem::Placement(item_id),
             )?;
-            let item = BoardItem {
+            let item = PlacementState {
                 id: item_id,
-                asset_id: source.item.asset_id,
-                x: source.item.x + delta.x,
-                y: source.item.y + delta.y,
-                scale: source.item.scale,
-                rotation: source.item.rotation,
-                z_index: source.item.z_index,
+                asset_id: source.state.asset_id,
+                center: egui::pos2(
+                    source.state.center.x + delta.x,
+                    source.state.center.y + delta.y,
+                ),
+                scale: source.state.scale,
+                rotation: source.state.rotation,
+                z_index: source.state.z_index,
                 archived: false,
             };
-            duplicated.push(BoardItemWithAsset::loaded(item, source.asset.clone()));
+            duplicated.push(Placement::loaded(
+                item,
+                source
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .clone(),
+            ));
         }
 
         transaction
@@ -874,14 +865,14 @@ impl Library {
         Ok(duplicated)
     }
 
-    pub fn create_board_item_from_asset(
+    pub fn create_placement_from_asset(
         &self,
         asset_id: i64,
         center_world: egui::Pos2,
         scale: f32,
         rotation: f32,
         z_index: i32,
-    ) -> Result<BoardItemWithAsset, String> {
+    ) -> Result<Placement, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
         let asset = self.load_asset(asset_id)?;
@@ -909,7 +900,7 @@ impl Library {
                     0_i64
                 ],
             )
-            .map_err(|error| format!("failed to create pasted board item: {error}"))?;
+            .map_err(|error| format!("failed to create pasted placement: {error}"))?;
 
         let item_id = connection.last_insert_rowid();
         append_canvas_stack_item(
@@ -918,16 +909,15 @@ impl Library {
             CanvasStackItem::Placement(item_id),
         )?;
 
-        let item = BoardItem {
+        let item = PlacementState {
             id: item_id,
-            asset_id,
-            x: center_world.x,
-            y: center_world.y,
+            asset_id: Some(asset_id),
+            center: center_world,
             scale,
             rotation,
             z_index,
             archived: false,
         };
-        Ok(BoardItemWithAsset::loaded(item, asset))
+        Ok(Placement::loaded(item, asset))
     }
 }

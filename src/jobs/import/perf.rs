@@ -4,7 +4,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
 
-use crate::data::{BoardItemWithAsset, CanvasImageLod};
+use crate::data::{CanvasImageLod, Placement};
 use crate::library::storage::Library;
 
 use super::*;
@@ -156,7 +156,7 @@ pub fn startup_trace(
     viewport_world: egui::Rect,
     canvas_image_settings: CanvasImageSettings,
 ) -> Result<Vec<StartupTraceEntry>, String> {
-    let mut records = library.load_board_items()?;
+    let mut records = library.load_placements()?;
     sort_records_by_viewport_proximity(&mut records, viewport_world);
     let started_at = Instant::now();
     let mut entries = Vec::with_capacity(records.len());
@@ -307,21 +307,45 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
         .trace
         .map(|trace| trace.timings)
         .ok_or_else(|| "missing import trace".to_owned())?;
-    let canvas_cache_path =
-        library.canvas_image_cache_path(loaded.record.asset.id, settings.max_side);
+    let canvas_cache_path = library.canvas_image_cache_path(
+        loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .id,
+        settings.max_side,
+    );
     let canvas_cache_file_size = canvas_cache_path
         .as_ref()
         .and_then(|path| std::fs::metadata(path).ok())
         .map(|metadata| metadata.len());
     let source_file_size = std::fs::metadata(&source_path)
         .map(|metadata| metadata.len())
-        .unwrap_or(loaded.record.asset.file_size);
+        .unwrap_or(
+            loaded
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .file_size,
+        );
 
     let report = FileImportPerfReport {
         source_path,
         source_file_size,
-        source_width: loaded.record.asset.width,
-        source_height: loaded.record.asset.height,
+        source_width: loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .width,
+        source_height: loaded
+            .record
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .height,
         preview_width: loaded.preview_width,
         preview_height: loaded.preview_height,
         canvas_cache_path,
@@ -336,7 +360,7 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
 
 fn measure_first_visible_load_ms(
     library: &Library,
-    mut records: Vec<BoardItemWithAsset>,
+    mut records: Vec<Placement>,
     viewport_world: egui::Rect,
     prioritize: bool,
 ) -> Result<f64, String> {
@@ -373,7 +397,7 @@ fn measure_first_visible_load_ms(
 
 fn measure_interactive_import_ms(
     library: &Library,
-    backlog: &[BoardItemWithAsset],
+    backlog: &[Placement],
     viewport_world: egui::Rect,
     clipboard_rgba: Vec<u8>,
     prioritize: bool,
@@ -515,12 +539,11 @@ fn perf_record(
     center: egui::Pos2,
     width: u32,
     height: u32,
-) -> BoardItemWithAsset {
-    let item = crate::data::BoardItem {
+) -> Placement {
+    let item = crate::data::PlacementState {
         id: item_id,
-        asset_id: item_id,
-        x: center.x,
-        y: center.y,
+        asset_id: Some(item_id),
+        center,
         scale: 1.0,
         rotation: 0.0,
         z_index: item_id as i32,
@@ -542,7 +565,7 @@ fn perf_record(
             .unwrap_or(0),
         imported_at: 0,
     };
-    BoardItemWithAsset::loaded(item, asset)
+    Placement::loaded(item, asset)
 }
 
 fn solid_rgba(width: u32, height: u32) -> Vec<u8> {

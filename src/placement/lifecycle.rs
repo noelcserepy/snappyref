@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::canvas::CanvasState;
-use crate::data::BoardItemWithAsset;
+use crate::data::Placement;
 use crate::library::storage::Library;
 use crate::placement::creation::{
     PlacementCreationSettings, ProvisionalSourceIntent, create_provisional_placements,
@@ -23,7 +23,7 @@ pub(crate) struct CommitSearchProvisionalRequest {
 #[derive(Clone, Debug)]
 pub(crate) struct CommittedSearchProvisionalBatch {
     pub(crate) added_item_ids: Vec<i64>,
-    pub(crate) load_existing_records: Vec<BoardItemWithAsset>,
+    pub(crate) load_existing_records: Vec<Placement>,
 }
 
 impl CommittedSearchProvisionalBatch {
@@ -84,7 +84,7 @@ pub(crate) fn commit_search_provisional_batch(
     )
     .unwrap_or(drop_world);
 
-    let duplicated = library.duplicate_board_items(&request.item_ids, drop_world, source_center)?;
+    let duplicated = library.duplicate_placements(&request.item_ids, drop_world, source_center)?;
     let item_provisionals = provisional_records
         .iter()
         .take(request.item_ids.len())
@@ -93,36 +93,47 @@ pub(crate) fn commit_search_provisional_batch(
     let mut added_item_ids = Vec::new();
     for (index, mut record) in duplicated.into_iter().enumerate() {
         if let Some(provisional) = item_provisionals.get(index) {
-            record.item.x = provisional.item.x;
-            record.item.y = provisional.item.y;
-            library.update_board_item(&record.item)?;
+            record.state.center.x = provisional.state.center.x;
+            record.state.center.y = provisional.state.center.y;
+            library.update_placement_state(&record.state)?;
         }
-        added_item_ids.push(record.item.id);
+        added_item_ids.push(record.state.id);
         canvas.add_reference_item(record)?;
     }
 
     let asset_provisionals = provisional_records
         .iter()
-        .filter(|record| request.asset_ids.contains(&record.item.asset_id))
+        .filter(|record| {
+            record
+                .state
+                .asset_id
+                .is_some_and(|asset_id| request.asset_ids.contains(&asset_id))
+        })
         .cloned()
         .collect::<Vec<_>>();
     let mut load_existing_records = Vec::with_capacity(asset_provisionals.len());
     for provisional in asset_provisionals {
-        let asset = library.load_asset(provisional.item.asset_id)?;
+        let asset_id = provisional.state.asset_id.ok_or_else(|| {
+            format!(
+                "provisional placement {} has no asset",
+                provisional.state.id
+            )
+        })?;
+        let asset = library.load_asset(asset_id)?;
         let scale = crate::jobs::initial_import_scale(
             asset.width,
             asset.height,
             true,
             settings.target_canvas_area,
         );
-        let record = library.create_board_item_from_asset(
-            provisional.item.asset_id,
-            egui::pos2(provisional.item.x, provisional.item.y),
+        let record = library.create_placement_from_asset(
+            asset_id,
+            provisional.state.center,
             scale,
-            provisional.item.rotation,
-            provisional.item.z_index,
+            provisional.state.rotation,
+            provisional.state.z_index,
         )?;
-        added_item_ids.push(record.item.id);
+        added_item_ids.push(record.state.id);
         canvas.add_unloaded_item(record.clone());
         load_existing_records.push(record);
     }
@@ -138,7 +149,7 @@ pub(crate) fn commit_search_provisional_batch(
     })
 }
 
-fn source_center_for_records(records: &[BoardItemWithAsset]) -> Option<egui::Pos2> {
+fn source_center_for_records(records: &[Placement]) -> Option<egui::Pos2> {
     let mut min = egui::Pos2::new(f32::INFINITY, f32::INFINITY);
     let mut max = egui::Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
     let mut found = false;
@@ -146,10 +157,10 @@ fn source_center_for_records(records: &[BoardItemWithAsset]) -> Option<egui::Pos
     for record in records {
         found = true;
         let half_size = record.scaled_visual_size() * 0.5;
-        min.x = min.x.min(record.item.x - half_size.x);
-        min.y = min.y.min(record.item.y - half_size.y);
-        max.x = max.x.max(record.item.x + half_size.x);
-        max.y = max.y.max(record.item.y + half_size.y);
+        min.x = min.x.min(record.state.center.x - half_size.x);
+        min.y = min.y.min(record.state.center.y - half_size.y);
+        max.x = max.x.max(record.state.center.x + half_size.x);
+        max.y = max.y.max(record.state.center.y + half_size.y);
     }
 
     found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))
@@ -233,7 +244,7 @@ mod tests {
         let provisional = start_provisional_batch(
             &mut canvas,
             vec![ProvisionalSourceIntent::ExistingAsset {
-                asset_id: source.asset.id,
+                asset_id: source.asset.as_ref().expect("loaded placement asset").id,
                 label: "source".to_owned(),
                 dimensions: (1, 1),
             }],
@@ -250,7 +261,7 @@ mod tests {
             &mut canvas,
             CommitSearchProvisionalRequest {
                 item_ids: Vec::new(),
-                asset_ids: vec![source.asset.id],
+                asset_ids: vec![source.asset.as_ref().expect("loaded placement asset").id],
                 provisional_item_ids: provisional.item_ids,
                 fallback_world: egui::Pos2::ZERO,
             },

@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::data::BoardLayoutItem;
+use crate::data::PlacementLayoutItem;
 use crate::library::storage::Library;
 
 #[derive(Clone, Copy, Debug)]
@@ -28,7 +28,7 @@ pub fn arrange_rect_world(
     item_height: f32,
     import_gap: f32,
 ) -> Result<egui::Pos2, String> {
-    let existing_items = library.load_board_layout_items()?;
+    let existing_items = library.load_placement_layout_items()?;
     Ok(arrange_rect_with_existing_layout(
         &existing_items,
         desired_world,
@@ -53,7 +53,7 @@ pub(super) fn resolve_import_world(
         return Ok(reserved_world);
     }
 
-    let existing_items = library.load_board_layout_items_for_board(target_board_id)?;
+    let existing_items = library.load_placement_layout_items_for_board(target_board_id)?;
     Ok(arrange_rect_with_existing_layout(
         &existing_items,
         desired_world,
@@ -65,7 +65,7 @@ pub(super) fn resolve_import_world(
 }
 
 pub fn arrange_rect_with_existing_layout(
-    existing_items: &[BoardLayoutItem],
+    existing_items: &[PlacementLayoutItem],
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
     item_width: f32,
@@ -89,7 +89,7 @@ pub fn arrange_rect_with_existing_layout(
 }
 
 pub fn best_arrangement_candidate_with_existing_layout(
-    existing_items: &[BoardLayoutItem],
+    existing_items: &[PlacementLayoutItem],
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
     item_width: f32,
@@ -184,11 +184,11 @@ fn viewport_distance_score(candidate_center: egui::Pos2, viewport_world: egui::R
     candidate_center.distance_sq(clamped)
 }
 
-fn displayed_layout_rect(record: &BoardLayoutItem) -> LayoutRect {
+fn displayed_layout_rect(record: &PlacementLayoutItem) -> LayoutRect {
     let size = egui::vec2(record.width.max(0.0), record.height.max(0.0));
     LayoutRect {
         id: record.id,
-        rect: egui::Rect::from_center_size(egui::pos2(record.x, record.y), size),
+        rect: egui::Rect::from_center_size(record.center, size),
     }
 }
 

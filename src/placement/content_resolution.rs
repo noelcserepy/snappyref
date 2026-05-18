@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use crate::canvas::CanvasState;
-use crate::data::BoardItemWithAsset;
+use crate::data::Placement;
 use crate::jobs::{ExistingLoadDiagnostics, ImportOrigin, ImportTrace};
 use crate::library::storage::Library;
 
@@ -49,7 +49,7 @@ pub(crate) struct ImportPlaceholderRemoval {
 #[derive(Clone, Debug)]
 pub(crate) struct LoadedImportLog {
     pub(crate) origin: ImportOrigin,
-    pub(crate) record: BoardItemWithAsset,
+    pub(crate) record: Placement,
     pub(crate) diagnostics: Option<ExistingLoadDiagnostics>,
     pub(crate) trace: Option<ImportTrace>,
 }
@@ -176,7 +176,7 @@ impl ContentResolutionRuntime {
         let completion = self.resolve_completion(
             queue_id,
             target_board_id,
-            outcome.log.as_ref().map(|log| log.record.item.id),
+            outcome.log.as_ref().map(|log| log.record.state.id),
         );
         FinishedLoadedImport {
             placeholder_removal: outcome.placeholder_removal,
@@ -464,7 +464,7 @@ mod tests {
         let mut canvas = crate::canvas::CanvasState::default();
         canvas.add_unloaded_item(loading.clone());
         let mut runtime = super::ContentResolutionRuntime::new();
-        let reservation = runtime.reserve_placement(1, loading.item.id, eframe::egui::Pos2::ZERO);
+        let reservation = runtime.reserve_placement(1, loading.state.id, eframe::egui::Pos2::ZERO);
 
         let finished = runtime.finish_failed_import(
             Some(&library),
@@ -484,16 +484,16 @@ mod tests {
         assert_eq!(finished.batch_target_board_id, Some(1));
         assert_eq!(finished.batch_queue_id, Some(reservation.queue_id));
         let stored = library
-            .load_board_items()
+            .load_placements()
             .unwrap()
             .into_iter()
-            .find(|record| record.item.id == loading.item.id)
+            .find(|record| record.state.id == loading.state.id)
             .unwrap();
         assert!(matches!(
             stored.content,
             crate::data::PlacementContent::Failed { .. }
         ));
-        let canvas_record = canvas.record_for_item_id(loading.item.id).unwrap();
+        let canvas_record = canvas.record_for_item_id(loading.state.id).unwrap();
         assert!(matches!(
             canvas_record.content,
             crate::data::PlacementContent::Failed { .. }

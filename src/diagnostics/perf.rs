@@ -387,9 +387,19 @@ pub fn print_startup_trace(library_root: &std::path::Path) -> Result<(), String>
         println!(
             "startup_item startup_ms={:.2} item_id={} asset_id={} file={} source_kind={:?} source_mb={:.2} backfilled_cache={} source_dims={}x{} preview_dims={}x{} decode_ms={:.2} preview_ms={:.2} worker_ms={:.2} source={}",
             entry.startup_elapsed.as_secs_f64() * 1000.0,
-            entry.record.item.id,
-            entry.record.asset.id,
-            entry.record.asset.filename,
+            entry.record.state.id,
+            entry
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .id,
+            entry
+                .record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .filename,
             entry.diagnostics.source_kind,
             entry.diagnostics.source_file_size as f64 / 1024.0 / 1024.0,
             entry.diagnostics.backfilled_cache,

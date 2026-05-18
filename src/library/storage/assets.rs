@@ -53,7 +53,7 @@ pub(super) fn insert_asset_row(
 }
 
 impl Library {
-    pub fn create_asset_and_relink_board_item(
+    pub fn create_asset_and_relink_placement(
         &self,
         item_id: i64,
         stored_path: &Path,
@@ -83,7 +83,7 @@ impl Library {
                  WHERE id = ?4",
                 params![asset.id, desired_world.x, desired_world.y, item_id],
             )
-            .map_err(|error| format!("failed to relink board item {item_id}: {error}"))?;
+            .map_err(|error| format!("failed to relink placement {item_id}: {error}"))?;
 
         transaction
             .commit()
@@ -92,9 +92,9 @@ impl Library {
         Ok(asset)
     }
 
-    pub fn restore_board_item_and_maybe_remove_asset(
+    pub fn restore_placement_and_maybe_remove_asset(
         &self,
-        item: &BoardItem,
+        item: &PlacementState,
         removed_asset_id: i64,
     ) -> Result<Option<PathBuf>, String> {
         let mut connection = self.connection()?;
@@ -109,8 +109,8 @@ impl Library {
                  WHERE id = ?8",
                 params![
                     item.asset_id,
-                    item.x,
-                    item.y,
+                    item.center.x,
+                    item.center.y,
                     item.scale,
                     item.rotation,
                     item.z_index,
@@ -118,7 +118,7 @@ impl Library {
                     item.id,
                 ],
             )
-            .map_err(|error| format!("failed to restore board item {}: {error}", item.id))?;
+            .map_err(|error| format!("failed to restore placement {}: {error}", item.id))?;
 
         let removed_asset_path = transaction
             .query_row(

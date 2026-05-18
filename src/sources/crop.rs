@@ -2,7 +2,7 @@ const MAX_CROP_UNDO_ENTRIES: usize = 32;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CropUndoEntry {
-    pub(crate) previous_record: crate::data::BoardItemWithAsset,
+    pub(crate) previous_record: crate::data::Placement,
     pub(crate) previous_rgba: crate::canvas::SharedRgba,
     pub(crate) previous_preview_width: u32,
     pub(crate) previous_preview_height: u32,
@@ -11,8 +11,8 @@ pub(crate) struct CropUndoEntry {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CroppedImageIntegration {
-    pub(crate) updated_record: crate::data::BoardItemWithAsset,
-    pub(crate) previous_record: crate::data::BoardItemWithAsset,
+    pub(crate) updated_record: crate::data::Placement,
+    pub(crate) previous_record: crate::data::Placement,
     pub(crate) indexed_asset: Option<(i64, std::path::PathBuf)>,
 }
 
@@ -110,14 +110,14 @@ impl CropFlow {
             }
         };
 
-        let asset = match library.create_asset_and_relink_board_item(
+        let asset = match library.create_asset_and_relink_placement(
             updated_item.id,
             &stored_path,
             image::ImageFormat::Png.to_mime_type(),
             cropped.width,
             cropped.height,
             cropped.file_size,
-            eframe::egui::pos2(updated_item.x, updated_item.y),
+            updated_item.center,
         ) {
             Ok(asset) => asset,
             Err(error) => {
@@ -127,11 +127,10 @@ impl CropFlow {
             }
         };
 
-        updated_item.asset_id = asset.id;
+        updated_item.asset_id = Some(asset.id);
 
         let updated_item_id = updated_item.id;
-        let updated_record =
-            crate::data::BoardItemWithAsset::loaded(updated_item.clone(), asset.clone());
+        let updated_record = crate::data::Placement::loaded(updated_item.clone(), asset.clone());
 
         match canvas.apply_cropped_item(ctx, cropped, asset.clone(), updated_item) {
             Ok(()) => {
@@ -175,8 +174,8 @@ impl CropFlow {
             return Ok(false);
         };
 
-        let removed_path = match library.restore_board_item_and_maybe_remove_asset(
-            &entry.previous_record.item,
+        let removed_path = match library.restore_placement_and_maybe_remove_asset(
+            &entry.previous_record.state,
             entry.removed_asset_id,
         ) {
             Ok(path) => path,
@@ -239,7 +238,7 @@ mod tests {
 
     use super::CropFlow;
     use crate::canvas::{CanvasCropRequest, CanvasState, PixelCropRect};
-    use crate::data::{BoardItem, BoardItemWithAsset, CanvasImageLod, ImageAsset};
+    use crate::data::{CanvasImageLod, ImageAsset, Placement, PlacementState};
     use crate::jobs::{ImportOrigin, ImportWorker, ImportedPreviewTexture, LoadedCanvasItem};
     use crate::library::storage::Library;
 
@@ -255,7 +254,11 @@ mod tests {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
         let mut record = test_record(42, 42, 8, 8);
-        record.asset.original_path = source_path.clone();
+        record
+            .asset
+            .as_mut()
+            .expect("loaded placement asset")
+            .original_path = source_path.clone();
         let preview_rgba = (0..16)
             .flat_map(|index| [index, 0, 0, 255])
             .collect::<Vec<_>>();
@@ -278,7 +281,7 @@ mod tests {
         );
         canvas.set_pending_crop_for_test(CanvasCropRequest {
             item_id: 42,
-            source_asset: record.asset,
+            source_asset: record.asset.clone().expect("loaded placement asset"),
             crop_rect: PixelCropRect {
                 x: 2,
                 y: 2,
@@ -299,19 +302,28 @@ mod tests {
             egui::vec2(2.0, 2.0)
         );
         let record = canvas.record_for_item_id(42).unwrap();
-        assert_eq!((record.asset.width, record.asset.height), (4, 4));
-        assert_eq!((record.item.x, record.item.y), (2.0, 2.0));
+        assert_eq!(
+            (
+                record.asset.as_ref().expect("loaded placement asset").width,
+                record
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .height
+            ),
+            (4, 4)
+        );
+        assert_eq!((record.state.center.x, record.state.center.y), (2.0, 2.0));
 
         let _ = std::fs::remove_dir_all(root);
     }
 
-    fn test_record(item_id: i64, asset_id: i64, width: u32, height: u32) -> BoardItemWithAsset {
-        BoardItemWithAsset::loaded(
-            BoardItem {
+    fn test_record(item_id: i64, asset_id: i64, width: u32, height: u32) -> Placement {
+        Placement::loaded(
+            PlacementState {
                 id: item_id,
-                asset_id,
-                x: 0.0,
-                y: 0.0,
+                asset_id: Some(asset_id),
+                center: eframe::egui::Pos2::ZERO,
                 scale: 1.0,
                 rotation: 0.0,
                 z_index: 0,

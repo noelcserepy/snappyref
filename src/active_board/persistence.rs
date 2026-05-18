@@ -295,7 +295,7 @@ fn write_canvas_document_changes(
     }
 
     for item in changes.updated_items {
-        if let Err(error) = library.update_board_item(&item) {
+        if let Err(error) = library.update_placement_state(&item) {
             last_error = Some(error);
         }
     }
@@ -394,10 +394,10 @@ mod tests {
                 1.0,
             )
             .unwrap();
-        record.item.x = 42.0;
-        record.item.y = 64.0;
+        record.state.center.x = 42.0;
+        record.state.center.y = 64.0;
         let changes = crate::canvas::CanvasDocumentChanges {
-            updated_items: vec![record.item.clone()],
+            updated_items: vec![record.state.clone()],
             ..Default::default()
         };
         let mut persistence = DocumentPersistence::queued(library.clone());
@@ -407,9 +407,9 @@ mod tests {
             .unwrap();
         persistence.flush().unwrap();
 
-        let stored = library.load_board_items().unwrap();
-        assert_eq!(stored[0].item.x, 42.0);
-        assert_eq!(stored[0].item.y, 64.0);
+        let stored = library.load_placements().unwrap();
+        assert_eq!(stored[0].state.center.x, 42.0);
+        assert_eq!(stored[0].state.center.y, 64.0);
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -437,26 +437,26 @@ mod tests {
             .unwrap();
         let mut persistence = DocumentPersistence::queued(library.clone());
 
-        record.item.x = 10.0;
+        record.state.center.x = 10.0;
         persistence
             .enqueue_canvas_document_changes_for_test(crate::canvas::CanvasDocumentChanges {
-                updated_items: vec![record.item.clone()],
+                updated_items: vec![record.state.clone()],
                 ..Default::default()
             })
             .unwrap();
-        record.item.x = 30.0;
-        record.item.y = 40.0;
+        record.state.center.x = 30.0;
+        record.state.center.y = 40.0;
         persistence
             .enqueue_canvas_document_changes_for_test(crate::canvas::CanvasDocumentChanges {
-                updated_items: vec![record.item.clone()],
+                updated_items: vec![record.state.clone()],
                 ..Default::default()
             })
             .unwrap();
         persistence.flush().unwrap();
 
-        let stored = library.load_board_items().unwrap();
-        assert_eq!(stored[0].item.x, 30.0);
-        assert_eq!(stored[0].item.y, 40.0);
+        let stored = library.load_placements().unwrap();
+        assert_eq!(stored[0].state.center.x, 30.0);
+        assert_eq!(stored[0].state.center.y, 40.0);
 
         let _ = std::fs::remove_dir_all(root);
     }

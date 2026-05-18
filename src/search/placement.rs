@@ -153,6 +153,10 @@ impl SearchController {
     }
 
     pub(super) fn selected_result_item_ids(&self) -> Vec<i64> {
+        if self.overlay.scope == crate::search::semantic::SearchScope::Library {
+            return Vec::new();
+        }
+
         let item_ids = self
             .overlay
             .result_selection
@@ -175,6 +179,10 @@ impl SearchController {
     }
 
     pub(super) fn all_result_item_ids(&self) -> Vec<i64> {
+        if self.overlay.scope == crate::search::semantic::SearchScope::Library {
+            return Vec::new();
+        }
+
         self.overlay
             .results
             .iter()
@@ -183,6 +191,28 @@ impl SearchController {
     }
 
     fn selected_unplaced_result_asset_ids(&self) -> Vec<i64> {
+        if self.overlay.scope == crate::search::semantic::SearchScope::Library {
+            let asset_ids = self
+                .overlay
+                .result_selection
+                .selected()
+                .iter()
+                .filter_map(|index| self.overlay.results.get(*index))
+                .map(|group| group.asset_id)
+                .collect::<Vec<_>>();
+
+            return if asset_ids.is_empty() {
+                self.overlay
+                    .results
+                    .get(self.overlay.result_selection.lead().unwrap_or(0))
+                    .map(|group| group.asset_id)
+                    .into_iter()
+                    .collect()
+            } else {
+                asset_ids
+            };
+        }
+
         let asset_ids = self
             .overlay
             .result_selection
@@ -207,6 +237,15 @@ impl SearchController {
     }
 
     fn all_unplaced_result_asset_ids(&self) -> Vec<i64> {
+        if self.overlay.scope == crate::search::semantic::SearchScope::Library {
+            return self
+                .overlay
+                .results
+                .iter()
+                .map(|group| group.asset_id)
+                .collect();
+        }
+
         self.overlay
             .results
             .iter()

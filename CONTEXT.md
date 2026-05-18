@@ -23,8 +23,12 @@ The one board currently loaded for interaction.
 _Avoid_: Current canvas, open scene
 
 **Placement**:
-A board-local canvas item with position, scale, rotation, z-order, archive state, and placement content state. A Placement may already reference a loaded Asset, may be loading toward an Asset, or may be in a failed content state. Asset availability changes how the Placement renders, not whether it participates in selection, movement, Guide Snapping, Stack Order, or Document History.
+A board-local canvas item with position, scale, rotation, z-order, archive state, and placement content state. A Placement stores board-local mutable state separately from the library Asset it displays. The asset link is an optional `asset_id`; two Placements may point at the same Asset, and loading or failed Placements may have no loaded Asset object yet. Asset availability changes how the Placement renders, not whether it participates in selection, movement, Guide Snapping, Stack Order, or Document History.
 _Avoid_: Board item, image, copy
+
+**Placement State**:
+The persisted mutable state inside a Placement: id, optional asset id, center, scale, rotation, z-order, and archive flag. Placement State is not a separate board object.
+_Avoid_: Board item state, item row
 
 **Placement Content State**:
 The asset-resolution state of a Placement. Loaded Placements render their Asset; loading Placements render a placeholder of the known or fallback size while import/search work resolves; failed Placements render an error placeholder but remain normal selectable, movable canvas items.

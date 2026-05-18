@@ -34,7 +34,7 @@ pub(crate) fn begin_image_resize(
     );
     let start_handle_screen = image_resize_handle_screen_pos(corners, handle);
     let anchor_screen = image_resize_anchor_screen_pos(corners, handle);
-    let start_scale = image.record.item.scale;
+    let start_scale = image.record.state.scale;
 
     state.finish_textbox_edit();
     state.document.selected_item_ids.clear();
@@ -78,17 +78,22 @@ pub(crate) fn begin_image_drag_scale(
                 .image_by_item_id(*item_id)
                 .map(|image| ImageScaleStart {
                     item_id: *item_id,
-                    center_world: egui::pos2(image.record.item.x, image.record.item.y),
+                    center_world: egui::pos2(
+                        image.record.state.center.x,
+                        image.record.state.center.y,
+                    ),
                     base_visual_size: {
                         let base_size = image.record.base_visual_size();
                         super::super::rotated_visual_size(
                             base_size.x,
                             base_size.y,
-                            image.record.item.rotation,
+                            image.record.state.rotation,
                         )
                     },
-                    start_scale: image.record.item.scale,
-                    min_scale: min_image_scale(&image.record.asset),
+                    start_scale: image.record.state.scale,
+                    min_scale: min_image_scale(
+                        image.record.asset.as_ref().expect("loaded placement asset"),
+                    ),
                 })
         })
         .collect::<Vec<_>>();
@@ -135,8 +140,8 @@ pub(crate) fn begin_image_rotation(
             state.image_by_item_id(*item_id).map(|image| {
                 (
                     *item_id,
-                    egui::pos2(image.record.item.x, image.record.item.y),
-                    image.record.item.rotation,
+                    egui::pos2(image.record.state.center.x, image.record.state.center.y),
+                    image.record.state.rotation,
                 )
             })
         })
@@ -263,8 +268,8 @@ fn selected_group_rotation_angle(state: &CanvasState) -> Option<f32> {
         let Some(image) = state.image_by_item_id(*item_id) else {
             continue;
         };
-        sin_sum += image.record.item.rotation.sin();
-        cos_sum += image.record.item.rotation.cos();
+        sin_sum += image.record.state.rotation.sin();
+        cos_sum += image.record.state.rotation.cos();
         count += 1;
     }
     (count > 0).then(|| sin_sum.atan2(cos_sum))
@@ -498,16 +503,16 @@ fn guide_snap_candidate_rects(
         .document
         .images
         .iter()
-        .filter(|image| !excluded_item_ids.contains(&image.record.item.id))
+        .filter(|image| !excluded_item_ids.contains(&image.record.state.id))
         .filter_map(|image| {
             let scaled_size = image.record.scaled_visual_size();
             let visual_size = super::super::rotated_visual_size(
                 scaled_size.x,
                 scaled_size.y,
-                image.record.item.rotation,
+                image.record.state.rotation,
             );
             let rect = egui::Rect::from_center_size(
-                egui::pos2(image.record.item.x, image.record.item.y),
+                egui::pos2(image.record.state.center.x, image.record.state.center.y),
                 visual_size,
             );
             rect.intersects(viewport)

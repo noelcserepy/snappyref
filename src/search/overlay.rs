@@ -367,7 +367,7 @@ impl SearchController {
                 provisional_item_ids: canvas
                     .provisional_records_in_selection_order()
                     .into_iter()
-                    .map(|record| record.item.id)
+                    .map(|record| record.state.id)
                     .collect(),
                 screen_pos,
             });
@@ -384,7 +384,7 @@ impl SearchController {
                     provisional_item_ids: canvas
                         .provisional_records_in_selection_order()
                         .into_iter()
-                        .map(|record| record.item.id)
+                        .map(|record| record.state.id)
                         .collect(),
                     screen_pos,
                 });

@@ -41,7 +41,7 @@ mod tests {
         CanvasDocumentState, CanvasImage, CanvasImageLod, CanvasRenderState, CanvasState,
         CanvasTexture,
     };
-    use crate::data::{BoardItem, BoardItemWithAsset, ImageAsset};
+    use crate::data::{ImageAsset, Placement, PlacementState};
     use eframe::egui;
     use std::path::PathBuf;
 
@@ -129,12 +129,11 @@ mod tests {
         center_world: egui::Pos2,
     ) -> CanvasImage {
         CanvasImage {
-            record: BoardItemWithAsset::loaded(
-                BoardItem {
+            record: Placement::loaded(
+                PlacementState {
                     id: item_id,
-                    asset_id: item_id,
-                    x: center_world.x,
-                    y: center_world.y,
+                    asset_id: Some(item_id),
+                    center: eframe::egui::pos2(center_world.x, center_world.y),
                     scale: 1.0,
                     rotation: 0.0,
                     z_index: item_id as i32,

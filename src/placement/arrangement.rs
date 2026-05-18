@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use crate::canvas::SelectedLayoutItem;
+use crate::data::{Placement, PlacementId};
 
 pub(crate) const SETTLE_BLOCK_GRACE_SCREEN: f32 = 1.0;
 const COMPACT_NORMALIZE_ABSOLUTE_THRESHOLD: f32 = 1.0;
@@ -18,6 +19,45 @@ pub(crate) enum SettleDirection {
 #[derive(Clone, Debug)]
 pub(crate) struct CompactInputItem {
     pub(crate) layout: SelectedLayoutItem,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CompactInput {
+    pub(crate) placement_id: PlacementId,
+    pub(crate) bounds: egui::Rect,
+}
+
+impl CompactInput {
+    pub(crate) fn layout_item(self) -> SelectedLayoutItem {
+        SelectedLayoutItem {
+            id: self.placement_id,
+            x: self.bounds.center().x,
+            y: self.bounds.center().y,
+            width: self.bounds.width(),
+            height: self.bounds.height(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CompactOutput {
+    pub(crate) placement_id: PlacementId,
+    pub(crate) center: egui::Pos2,
+}
+
+impl Placement {
+    pub(crate) fn compact_input(&self) -> CompactInput {
+        CompactInput {
+            placement_id: self.id(),
+            bounds: self.visual_bounds(),
+        }
+    }
+
+    pub(crate) fn apply_compact_output(&mut self, output: CompactOutput) {
+        if output.placement_id == self.id() {
+            self.state.center = output.center;
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1163,6 +1203,63 @@ fn compact_candidate_better(candidate: &CompactCandidate, best: &CompactCandidat
                             .abs()
                             < 0.001
                             && candidate.area < best.area - 0.001)))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::{PlacementContent, PlacementLifecycle, PlacementState};
+
+    fn placement(id: PlacementId, center: egui::Pos2) -> Placement {
+        Placement {
+            state: PlacementState {
+                id,
+                asset_id: None,
+                center,
+                scale: 2.0,
+                rotation: 0.0,
+                z_index: 0,
+                archived: false,
+            },
+            asset: None,
+            content: PlacementContent::Loading {
+                intent: crate::data::PlacementContentIntent::Unknown {
+                    description: "test".to_owned(),
+                },
+                status_message: None,
+            },
+            lifecycle: PlacementLifecycle::Provisional,
+            visual_size: egui::vec2(20.0, 10.0),
+        }
+    }
+
+    #[test]
+    fn compact_input_is_ephemeral_geometry_for_a_placement() {
+        let record = placement(7, egui::pos2(50.0, 30.0));
+
+        let input = record.compact_input();
+
+        assert_eq!(input.placement_id, 7);
+        assert_eq!(input.bounds.center(), egui::pos2(50.0, 30.0));
+        assert_eq!(input.bounds.size(), egui::vec2(40.0, 20.0));
+    }
+
+    #[test]
+    fn compact_output_applies_only_to_matching_placement() {
+        let mut record = placement(7, egui::pos2(50.0, 30.0));
+
+        record.apply_compact_output(CompactOutput {
+            placement_id: 8,
+            center: egui::pos2(10.0, 10.0),
+        });
+        assert_eq!(record.state.center, egui::pos2(50.0, 30.0));
+
+        record.apply_compact_output(CompactOutput {
+            placement_id: 7,
+            center: egui::pos2(10.0, 10.0),
+        });
+        assert_eq!(record.state.center, egui::pos2(10.0, 10.0));
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

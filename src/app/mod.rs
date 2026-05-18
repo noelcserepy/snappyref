@@ -1493,7 +1493,7 @@ impl SnappyRefApp {
             Err(error) => self.status = error,
         }
 
-        match library.load_board_items() {
+        match library.load_placements() {
             Ok(records) => {
                 let viewport_world = self.startup_viewport_world_rect();
                 if let Err(error) = self.residency.queue_startup_existing_loads(
@@ -1616,7 +1616,7 @@ impl SnappyRefApp {
     fn enqueue_perf_entry(
         &mut self,
         entry: &PerfCorpusEntry,
-        layout: &mut Vec<crate::data::BoardLayoutItem>,
+        layout: &mut Vec<crate::data::PlacementLayoutItem>,
         desired_world: egui::Pos2,
         viewport_world: egui::Rect,
     ) -> Result<(), String> {
@@ -2661,9 +2661,9 @@ impl SnappyRefApp {
         })
     }
 
-    fn import_layout_snapshot(&self) -> Result<Vec<crate::data::BoardLayoutItem>, String> {
+    fn import_layout_snapshot(&self) -> Result<Vec<crate::data::PlacementLayoutItem>, String> {
         let mut layout = if let Some(library) = &self.library {
-            library.load_board_layout_items()?
+            library.load_placement_layout_items()?
         } else {
             Vec::new()
         };
@@ -2673,7 +2673,7 @@ impl SnappyRefApp {
 
     fn reserve_import(
         &mut self,
-        layout: &mut Vec<crate::data::BoardLayoutItem>,
+        layout: &mut Vec<crate::data::PlacementLayoutItem>,
         label: String,
         dimensions: Option<(u32, u32)>,
         desired_world: egui::Pos2,
@@ -2695,7 +2695,7 @@ impl SnappyRefApp {
 
     fn create_committed_loading_import(
         &mut self,
-        layout: &mut Vec<crate::data::BoardLayoutItem>,
+        layout: &mut Vec<crate::data::PlacementLayoutItem>,
         intent: crate::placement::creation::SourceIntent,
         center_world: egui::Pos2,
     ) -> ContentResolutionReservation {
@@ -3225,7 +3225,7 @@ impl SnappyRefApp {
             }
 
             queued_batch_ids.push(reservation.queue_id);
-            queued_placement_ids.push(created.record.item.id);
+            queued_placement_ids.push(created.record.state.id);
             self.status = match &source {
                 ExternalImportSource::Path(path) => {
                     format!("Queued import: {}", path.display())
@@ -3455,9 +3455,9 @@ impl SnappyRefApp {
         let mut asset_ids = Vec::new();
         for item_id in self.canvas.selected_item_ids() {
             if let Some(record) = self.canvas.record_for_item_id(item_id)
-                && !asset_ids.contains(&record.asset.id)
+                && !asset_ids.contains(&record.asset.as_ref().expect("loaded placement asset").id)
             {
-                asset_ids.push(record.asset.id);
+                asset_ids.push(record.asset.as_ref().expect("loaded placement asset").id);
             }
         }
 
@@ -3880,7 +3880,7 @@ impl SnappyRefApp {
             Ok(integration) => {
                 let ui_integration_ms = ui_integration_started_at.elapsed().as_secs_f64() * 1000.0;
                 self.residency
-                    .note_loaded_item(integration.updated_record.item.id);
+                    .note_loaded_item(integration.updated_record.state.id);
                 self.document_history.record_applied(HistoryAction {
                     label: "Crop image".to_owned(),
                     placements: vec![RowChange {
@@ -3959,7 +3959,7 @@ impl SnappyRefApp {
         );
         if perf_counts_as_import
             && let Some(log) = finished.log.as_ref()
-            && log.record.item.archived == false
+            && log.record.state.archived == false
         {
             self.document_history.record_applied(HistoryAction {
                 label: "Import image".to_owned(),
@@ -3977,9 +3977,14 @@ impl SnappyRefApp {
                 let metadata = placeholder_queue_id
                     .and_then(|queue_id| scenario.asset_by_queue_id.get(&queue_id).cloned());
                 if let Some(metadata) = &metadata {
-                    scenario
-                        .asset_by_asset_id
-                        .insert(log.record.asset.id, metadata.clone());
+                    scenario.asset_by_asset_id.insert(
+                        log.record
+                            .asset
+                            .as_ref()
+                            .expect("loaded placement asset")
+                            .id,
+                        metadata.clone(),
+                    );
                 }
                 let (format_value, source_file, animated, bytes) = match &metadata {
                     Some(meta) => (
@@ -4004,10 +4009,10 @@ impl SnappyRefApp {
                     "placement_visible",
                     serde_json::json!({
                         "visible": scenario.visible_imports,
-                        "asset_id": log.record.asset.id,
-                        "item_id": log.record.item.id,
-                        "mime_type": log.record.asset.mime_type,
-                        "filename": log.record.asset.filename,
+                        "asset_id": log.record.asset.as_ref().expect("loaded placement asset").id,
+                        "item_id": log.record.state.id,
+                        "mime_type": log.record.asset.as_ref().expect("loaded placement asset").mime_type,
+                        "filename": log.record.asset.as_ref().expect("loaded placement asset").filename,
                         "format": format_value,
                         "file": source_file,
                         "animated": animated,
@@ -4163,11 +4168,11 @@ impl SnappyRefApp {
             }
             .or_else(|| match direction {
                 HistoryDirection::Forward => change.before.clone().map(|mut record| {
-                    record.item.archived = true;
+                    record.state.archived = true;
                     record
                 }),
                 HistoryDirection::Backward => change.after.clone().map(|mut record| {
-                    record.item.archived = true;
+                    record.state.archived = true;
                     record
                 }),
             });
@@ -4534,7 +4539,7 @@ impl SnappyRefApp {
             return;
         }
 
-        let current_items = library.load_board_items().unwrap_or_default();
+        let current_items = library.load_placements().unwrap_or_default();
         let current_annotations = library.load_canvas_annotations().unwrap_or_default();
         let current_stack_order = library.load_canvas_stack_order().ok();
         let placement_changes = changes
@@ -4543,16 +4548,20 @@ impl SnappyRefApp {
             .filter_map(|after| {
                 let before = current_items
                     .iter()
-                    .find(|record| record.item.id == after.id)
+                    .find(|record| record.state.id == after.id)
                     .cloned();
                 let asset = if let Some(before) = &before {
-                    before.asset.clone()
+                    before
+                        .asset
+                        .as_ref()
+                        .expect("loaded placement asset")
+                        .clone()
                 } else {
-                    library.load_asset(after.asset_id).ok()?
+                    library.load_asset(after.asset_id?).ok()?
                 };
                 Some(RowChange {
                     before,
-                    after: Some(crate::data::BoardItemWithAsset::loaded(after, asset)),
+                    after: Some(crate::data::Placement::loaded(after, asset)),
                 })
             })
             .collect::<Vec<_>>();
@@ -4656,7 +4665,7 @@ impl SnappyRefApp {
                     .into_iter()
                     .map(|record| {
                         let mut archived = record.clone();
-                        archived.item.archived = true;
+                        archived.state.archived = true;
                         RowChange {
                             before: Some(record),
                             after: Some(archived),
@@ -4771,7 +4780,7 @@ impl SnappyRefApp {
             center_world,
             1.0,
         )?;
-        let item_id = record.item.id;
+        let item_id = record.state.id;
         self.canvas.add_loaded_item(
             ctx,
             crate::jobs::LoadedCanvasItem {
@@ -4824,12 +4833,11 @@ impl SnappyRefApp {
             file_size: (first.len() + second.len()) as u64,
             imported_at: 0,
         };
-        let record = crate::data::BoardItemWithAsset::loaded(
-            crate::data::BoardItem {
+        let record = crate::data::Placement::loaded(
+            crate::data::PlacementState {
                 id: -40,
-                asset_id: -40,
-                x: 0.0,
-                y: 0.0,
+                asset_id: Some(-40),
+                center: egui::Pos2::ZERO,
                 scale: 1.0,
                 rotation: 0.0,
                 z_index: 0,
@@ -4893,12 +4901,11 @@ impl SnappyRefApp {
             file_size: svg.len() as u64,
             imported_at: 0,
         };
-        let record = crate::data::BoardItemWithAsset::loaded(
-            crate::data::BoardItem {
+        let record = crate::data::Placement::loaded(
+            crate::data::PlacementState {
                 id: -60,
-                asset_id: -60,
-                x: 0.0,
-                y: 0.0,
+                asset_id: Some(-60),
+                center: egui::Pos2::ZERO,
                 scale: 1.5,
                 rotation: 0.0,
                 z_index: 0,
@@ -5674,7 +5681,7 @@ impl SnappyRefApp {
     fn log_loaded_timing(
         &mut self,
         origin: crate::jobs::ImportOrigin,
-        record: Option<&crate::data::BoardItemWithAsset>,
+        record: Option<&crate::data::Placement>,
         diagnostics: Option<&crate::jobs::ExistingLoadDiagnostics>,
         trace: Option<crate::jobs::ImportTrace>,
     ) {
@@ -5713,7 +5720,13 @@ impl SnappyRefApp {
                 let asset = record.map(|record| {
                     format!(
                         " item_id={} asset_id={} file={}",
-                        record.item.id, record.asset.id, record.asset.filename
+                        record.state.id,
+                        record.asset.as_ref().expect("loaded placement asset").id,
+                        record
+                            .asset
+                            .as_ref()
+                            .expect("loaded placement asset")
+                            .filename
                     )
                 });
                 let source = diagnostics.map(|diagnostics| {
@@ -5754,18 +5767,21 @@ impl SnappyRefApp {
         }
     }
 
-    fn log_cropped_timing(
-        &mut self,
-        record: &crate::data::BoardItemWithAsset,
-        ui_integration_ms: f64,
-    ) {
+    fn log_cropped_timing(&mut self, record: &crate::data::Placement, ui_integration_ms: f64) {
         if self.perf_log.is_none() {
             return;
         }
 
         eprintln!(
             "[perf] crop_integrated item_id={} asset_id={} file={} ui_ms={:.2}",
-            record.item.id, record.asset.id, record.asset.filename, ui_integration_ms
+            record.state.id,
+            record.asset.as_ref().expect("loaded placement asset").id,
+            record
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .filename,
+            ui_integration_ms
         );
     }
 }
@@ -5887,7 +5903,7 @@ fn semantic_search_settings_status(
 
 #[cfg(feature = "semantic-search")]
 #[cfg_attr(not(test), allow(dead_code))]
-fn source_center_for_records(records: &[crate::data::BoardItemWithAsset]) -> Option<egui::Pos2> {
+fn source_center_for_records(records: &[crate::data::Placement]) -> Option<egui::Pos2> {
     let mut min = egui::Pos2::new(f32::INFINITY, f32::INFINITY);
     let mut max = egui::Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
     let mut found = false;
@@ -5895,10 +5911,10 @@ fn source_center_for_records(records: &[crate::data::BoardItemWithAsset]) -> Opt
     for record in records {
         found = true;
         let half_size = record.scaled_visual_size() * 0.5;
-        min.x = min.x.min(record.item.x - half_size.x);
-        min.y = min.y.min(record.item.y - half_size.y);
-        max.x = max.x.max(record.item.x + half_size.x);
-        max.y = max.y.max(record.item.y + half_size.y);
+        min.x = min.x.min(record.state.center.x - half_size.x);
+        min.y = min.y.min(record.state.center.y - half_size.y);
+        max.x = max.x.max(record.state.center.x + half_size.x);
+        max.y = max.y.max(record.state.center.y + half_size.y);
     }
 
     found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))
