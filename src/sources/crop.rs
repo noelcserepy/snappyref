@@ -36,7 +36,7 @@ impl CropFlow {
         ctx: &eframe::egui::Context,
         canvas: &mut crate::canvas::CanvasState,
         library: Option<&crate::library::storage::Library>,
-        import_worker: Option<&crate::jobs::ImportWorker>,
+        import_worker: Option<&crate::jobs::ImagePrepWorker>,
         max_texture_side: usize,
         canvas_image_max_side: u32,
     ) -> Result<bool, String> {
@@ -59,7 +59,7 @@ impl CropFlow {
                 canvas.clear_crop_pending(placement_id);
                 return Err(error);
             }
-            if let Err(error) = import_worker.enqueue(crate::jobs::ImagePreparationRequest::Crop {
+            if let Err(error) = import_worker.enqueue(crate::jobs::ImagePrepRequest::Crop {
                 request,
                 max_texture_side,
                 canvas_image_settings: crate::jobs::CanvasImageSettings {
@@ -201,7 +201,7 @@ impl CropFlow {
                 placement: entry.previous_record,
                 preview_rgba: entry.previous_rgba.to_vec(),
                 animated_preview: None,
-                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
                 loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
@@ -239,7 +239,9 @@ mod tests {
     use super::CropFlow;
     use crate::canvas::{CanvasCropRequest, CanvasState, PixelCropRect};
     use crate::data::{CanvasImageLod, ImageAsset, Placement, PlacementState};
-    use crate::jobs::{ImportOrigin, ImportWorker, ImportedPreviewTexture, PreparedPlacementImage};
+    use crate::jobs::{
+        ImagePrepPreviewTexture, ImagePrepWorker, ImportOrigin, PreparedPlacementImage,
+    };
     use crate::library::storage::Library;
 
     static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -272,7 +274,7 @@ mod tests {
                 preview_width: 4,
                 preview_height: 4,
                 animated_preview: None,
-                preview_texture: ImportedPreviewTexture::Cpu,
+                preview_texture: ImagePrepPreviewTexture::Cpu,
                 loaded_lod: CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: ImportOrigin::Existing,
@@ -290,7 +292,7 @@ mod tests {
             },
             crop_offset_local: egui::vec2(2.0, 2.0),
         });
-        let worker = ImportWorker::new(library.clone(), ctx.clone(), None);
+        let worker = ImagePrepWorker::new(library.clone(), ctx.clone(), None);
 
         let enqueued = CropFlow::default()
             .enqueue_pending_requests(&ctx, &mut canvas, Some(&library), Some(&worker), 4096, 2000)

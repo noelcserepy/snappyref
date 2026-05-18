@@ -4,7 +4,7 @@ use std::sync::Arc;
 use eframe::egui;
 
 #[derive(Clone)]
-pub enum ImportedPreviewTexture {
+pub enum ImagePrepPreviewTexture {
     Cpu,
     Native(Arc<NativeTextureHandle>),
     Svg {
@@ -14,7 +14,7 @@ pub enum ImportedPreviewTexture {
     },
 }
 
-impl fmt::Debug for ImportedPreviewTexture {
+impl fmt::Debug for ImagePrepPreviewTexture {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Cpu => f.write_str("Cpu"),
@@ -124,9 +124,9 @@ impl Drop for NativeTextureHandle {
 pub(super) fn build_preview_texture(
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
     preview: &crate::jobs::image_formats::PreviewImage,
-) -> Result<ImportedPreviewTexture, String> {
+) -> Result<ImagePrepPreviewTexture, String> {
     let Some(render_state) = wgpu_render_state else {
-        return Ok(ImportedPreviewTexture::Cpu);
+        return Ok(ImagePrepPreviewTexture::Cpu);
     };
 
     if preview.rgba.len() != preview.width as usize * preview.height as usize * 4 {
@@ -169,7 +169,7 @@ pub(super) fn build_preview_texture(
         eframe::wgpu::FilterMode::Linear,
     );
 
-    Ok(ImportedPreviewTexture::Native(Arc::new(
+    Ok(ImagePrepPreviewTexture::Native(Arc::new(
         NativeTextureHandle::from_registered_texture(
             render_state.clone(),
             texture_id,

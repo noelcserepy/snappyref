@@ -22,9 +22,9 @@ pub fn run() -> eframe::Result<()> {
 
     if std::env::args()
         .skip(1)
-        .any(|argument| argument == "--image-import-prepare")
+        .any(|argument| argument == "--imageprep")
     {
-        if let Err(error) = jobs::print_image_import_prepare_output_from_args() {
+        if let Err(error) = jobs::print_imageprep_output_from_args() {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));

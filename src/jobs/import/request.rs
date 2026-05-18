@@ -5,7 +5,7 @@ use eframe::egui;
 
 use crate::data::{CanvasImageLod, Placement};
 
-use super::preview_texture::ImportedPreviewTexture;
+use super::preview_texture::ImagePrepPreviewTexture;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImportOrigin {
@@ -16,7 +16,7 @@ pub enum ImportOrigin {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ImportPriority {
+pub(crate) enum ImagePrepPriority {
     Startup,
     Interactive,
     Background,
@@ -29,13 +29,13 @@ pub enum ExistingLoadPriority {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct ImportTrace {
+pub struct ImagePrepTrace {
     pub queued_at: Instant,
-    pub timings: ImportTimings,
+    pub timings: ImagePrepTimings,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ImportTimings {
+pub struct ImagePrepTimings {
     pub queue_wait: Duration,
     pub decode_or_load: Duration,
     pub store_and_persist: Duration,
@@ -75,19 +75,19 @@ pub struct FileImportPerfReport {
     pub preview_height: u32,
     pub canvas_cache_path: Option<PathBuf>,
     pub canvas_cache_file_size: Option<u64>,
-    pub timings: ImportTimings,
+    pub timings: ImagePrepTimings,
     pub total_ms: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ImportWorkerStats {
+pub struct ImagePrepWorkerStats {
     pub queued_startup: usize,
     pub queued_interactive: usize,
     pub queued_background: usize,
     pub in_flight: usize,
 }
 
-impl ImportWorkerStats {
+impl ImagePrepWorkerStats {
     pub fn has_work(self) -> bool {
         self.queued_startup > 0
             || self.queued_interactive > 0
@@ -126,7 +126,7 @@ pub struct ExistingLoadDiagnostics {
 }
 
 #[derive(Clone, Debug)]
-pub enum ImagePreparationRequest {
+pub enum ImagePrepRequest {
     ImportPath {
         target_board_id: i64,
         queue_id: u64,
@@ -140,7 +140,7 @@ pub enum ImagePreparationRequest {
         auto_scale: bool,
         target_canvas_area: f32,
         placement_gap: f32,
-        trace: Option<ImportTrace>,
+        trace: Option<ImagePrepTrace>,
     },
     ImportClipboard {
         target_board_id: i64,
@@ -157,7 +157,7 @@ pub enum ImagePreparationRequest {
         auto_scale: bool,
         target_canvas_area: f32,
         placement_gap: f32,
-        trace: Option<ImportTrace>,
+        trace: Option<ImagePrepTrace>,
     },
     ImportUrl {
         target_board_id: i64,
@@ -172,7 +172,7 @@ pub enum ImagePreparationRequest {
         auto_scale: bool,
         target_canvas_area: f32,
         placement_gap: f32,
-        trace: Option<ImportTrace>,
+        trace: Option<ImagePrepTrace>,
     },
     Crop {
         request: crate::canvas::CanvasCropRequest,
@@ -187,7 +187,7 @@ pub enum ImagePreparationRequest {
         canvas_image_settings: CanvasImageSettings,
         target_lod: CanvasImageLod,
         priority: ExistingLoadPriority,
-        trace: Option<ImportTrace>,
+        trace: Option<ImagePrepTrace>,
     },
     BackfillLod {
         placement: Placement,
@@ -197,7 +197,7 @@ pub enum ImagePreparationRequest {
 }
 
 #[derive(Debug)]
-pub enum ImagePreparationResult {
+pub enum ImagePrepResult {
     Loaded(PreparedPlacementImage),
     Cropped(PreparedCropPreview),
     CacheLodBackfilled {
@@ -227,11 +227,11 @@ pub struct PreparedPlacementImage {
     pub preview_width: u32,
     pub preview_height: u32,
     pub animated_preview: Option<crate::jobs::image_formats::AnimatedPreview>,
-    pub preview_texture: ImportedPreviewTexture,
+    pub preview_texture: ImagePrepPreviewTexture,
     pub loaded_lod: CanvasImageLod,
     pub existing_load_diagnostics: Option<ExistingLoadDiagnostics>,
     pub origin: ImportOrigin,
-    pub trace: Option<ImportTrace>,
+    pub trace: Option<ImagePrepTrace>,
 }
 
 #[derive(Clone, Debug)]
@@ -244,7 +244,7 @@ pub struct PreparedCropPreview {
     pub preview_rgba: Vec<u8>,
     pub preview_width: u32,
     pub preview_height: u32,
-    pub preview_texture: ImportedPreviewTexture,
+    pub preview_texture: ImagePrepPreviewTexture,
     pub loaded_lod: CanvasImageLod,
     pub crop_offset_local: egui::Vec2,
 }
@@ -253,7 +253,7 @@ pub struct PreparedCropPreview {
 pub struct StartupTraceEntry {
     pub placement: Placement,
     pub diagnostics: ExistingLoadDiagnostics,
-    pub timings: ImportTimings,
+    pub timings: ImagePrepTimings,
     pub preview_width: u32,
     pub preview_height: u32,
     pub startup_elapsed: Duration,

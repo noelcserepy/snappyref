@@ -299,7 +299,11 @@ _Avoid_: Helper keep-alive forever, model cache TTL
 The on-disk directory at `<data_root>/models/` that holds the semantic search model files, kept outside the app bundle and beside `library/` so it survives app updates and reinstalls. `data_root` is the portable install folder when that folder is writable; protected installs fall back to the user's app-data directory.
 _Avoid_: Bundled model, model cache, model resources
 
-**Image Preparation Helper Process**:
+**ImagePrep Worker**:
+The in-app ImagePrep queue and worker pool. It accepts **ImagePrep Requests** for external image imports, existing image loads, crop previews, and **Canvas Image LOD** backfill. It may delegate heavy decode/cache work to an **ImagePrep Helper Process**.
+_Avoid_: Import worker when the work is not import-specific, permanent image worker
+
+**ImagePrep Helper Process**:
 A short-lived child process that decodes managed originals or canvas cache sources, generates **Canvas Image Cache** derivatives, and exits so large decoder/encoder allocator pages do not remain resident in the main app process.
 _Avoid_: Permanent image worker, renderer process
 
@@ -390,11 +394,11 @@ The later post-tail measurement window where the app should remain near-zero CPU
 _Avoid_: Settled idle, idle tail
 
 **Quiescent Memory**:
-The retained memory footprint measured during **Quiescent Idle**, after import, embedding, backfill, and the immediate post-idle tail have drained. Refers to the main process only; **Embedding Helper Process** and **Image Preparation Helper Process** have exited by this window.
+The retained memory footprint measured during **Quiescent Idle**, after import, embedding, backfill, and the immediate post-idle tail have drained. Refers to the main process only; **Embedding Helper Process** and **ImagePrep Helper Process** have exited by this window.
 _Avoid_: Peak memory, import memory
 
 **Process Tree Peak Memory**:
-The peak summed RSS, across one perf sampling tick, of the main app process plus every helper process descended from it (most importantly the **Embedding Helper Process** and **Image Preparation Helper Process**) during active work. Complements **Quiescent Memory**: a faster pipeline that simply shifts allocations into a helper improves **Quiescent Memory** while raising this number.
+The peak summed RSS, across one perf sampling tick, of the main app process plus every helper process descended from it (most importantly the **Embedding Helper Process** and **ImagePrep Helper Process**) during active work. Complements **Quiescent Memory**: a faster pipeline that simply shifts allocations into a helper improves **Quiescent Memory** while raising this number.
 _Avoid_: Peak RSS, idle peak
 
 **Time to Quiescent**:
@@ -606,7 +610,7 @@ _Avoid_: Release asset, build cache
 - **Library-wide Search** returns **Asset Results** from the **Library**.
 - An **Existing Image Load** may start at **Overview LOD** and later receive **Promotion** to **Working LOD** or **Detail LOD**.
 - **Backfill** creates missing **Canvas Image LODs** without blocking board interaction.
-- **Import**, **Promotion**, and **Backfill** may use an **Image Preparation Helper Process** so full-resolution decoder and cache-encoder memory is released when helper work exits.
+- **Import**, **Promotion**, and **Backfill** may use an **ImagePrep Helper Process** so full-resolution decoder and cache-encoder memory is released when helper work exits.
 - An animated placement can be visible without being an **Active Animated Image**; visible-but-inactive animated placements draw their current frame without advancing animation.
 - **Placement Visible** can happen before **Import Settled** because embeddings and cache work may still be running after a placement is usable.
 - **Demand Embedding** may use an **Embedding Helper Process** so the main app process does not retain semantic model RSS after embedding work drains.
@@ -616,7 +620,7 @@ _Avoid_: Release asset, build cache
 - **Settled Idle** is a work-queue state; low CPU and stable memory are performance targets measured after the app reaches **Settled Idle**.
 - **Idle Tail** explains short post-idle cleanup or CPU accounting decay; **Quiescent Idle** is the steady-state CPU target window.
 - **Quiescent Memory** is the steady retained-memory target; optimize it before optimizing **Time to Idle** so faster pipelines do not hide retained memory growth.
-- **Process Tree Peak Memory** must be reported alongside **Quiescent Memory** because optimizing **Quiescent Memory** by shifting allocations into an **Embedding Helper Process** or **Image Preparation Helper Process** can raise **Process Tree Peak Memory** without changing the main-process number.
+- **Process Tree Peak Memory** must be reported alongside **Quiescent Memory** because optimizing **Quiescent Memory** by shifting allocations into an **Embedding Helper Process** or **ImagePrep Helper Process** can raise **Process Tree Peak Memory** without changing the main-process number.
 - A **Canvas Pixel Snapshot** is warmed on demand for selected placements and should not exist for every loaded placement.
 - A **Crop Preview** may use a **Canvas Pixel Snapshot** before the final cropped **Asset** exists.
 - **Delete (from board)** removes **Placements** and **Annotations** from the **Active Board** but does not remove **Assets** from the **Library**.

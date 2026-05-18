@@ -10,9 +10,7 @@ use crate::active_board::commands::{
 };
 use crate::active_board::history::{DocumentHistory, HistoryAction, HistoryDirection, RowChange};
 use crate::active_board::persistence::DocumentPersistence;
-use crate::library::residency::{
-    ImagePreparationResultResidencyOutcome, ImageResidencyCoordinator,
-};
+use crate::library::residency::{ImagePrepResultResidencyOutcome, ImageResidencyCoordinator};
 use crate::placement::content_resolution::{
     ContentResolutionRequestConfig, ContentResolutionReservation, ContentResolutionRuntime,
     FailedContentResolutionOutcome, LoadedContentResolutionOutcome,
@@ -338,7 +336,7 @@ impl PerfScenarioState {
 
     fn write_summary(
         &mut self,
-        worker_stats: crate::jobs::ImportWorkerStats,
+        worker_stats: crate::jobs::ImagePrepWorkerStats,
         image_pass: crate::canvas::ImagePassMetrics,
     ) {
         let summary = serde_json::json!({
@@ -1068,7 +1066,7 @@ pub struct SnappyRefApp {
     window_capture: Option<crate::platform::capture::NativeWindowCapture>,
     wgpu_render_state: Option<eframe::egui_wgpu::RenderState>,
     library: Option<crate::library::storage::Library>,
-    import_worker: Option<crate::jobs::ImportWorker>,
+    import_worker: Option<crate::jobs::ImagePrepWorker>,
     active_board_id: i64,
     window_state: crate::data::WindowState,
     persist_window_state: bool,
@@ -1154,7 +1152,7 @@ impl SnappyRefApp {
 
         match library {
             Ok(library) => {
-                let import_worker = crate::jobs::ImportWorker::new(
+                let import_worker = crate::jobs::ImagePrepWorker::new(
                     library.clone(),
                     cc.egui_ctx.clone(),
                     cc.wgpu_render_state.clone(),
@@ -1611,9 +1609,9 @@ impl SnappyRefApp {
             desired_world,
             viewport_world,
             self.import_request_config(),
-            self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
+            self.perf_log.as_ref().map(|_| crate::jobs::ImagePrepTrace {
                 queued_at: Instant::now(),
-                timings: crate::jobs::ImportTimings::default(),
+                timings: crate::jobs::ImagePrepTimings::default(),
             }),
         );
         if let Err(error) = self
@@ -1828,7 +1826,7 @@ impl SnappyRefApp {
         let worker_stats = self
             .import_worker
             .as_ref()
-            .map(crate::jobs::ImportWorker::stats)
+            .map(crate::jobs::ImagePrepWorker::stats)
             .unwrap_or_default();
         let embedding_idle = {
             #[cfg(feature = "semantic-search")]
@@ -1907,7 +1905,7 @@ impl SnappyRefApp {
         let worker_stats = self
             .import_worker
             .as_ref()
-            .map(crate::jobs::ImportWorker::stats)
+            .map(crate::jobs::ImagePrepWorker::stats)
             .unwrap_or_default();
         let embedding_idle = {
             #[cfg(feature = "semantic-search")]
@@ -2407,7 +2405,7 @@ impl SnappyRefApp {
         // 2. Save the User Session so the new app can restore it.
         self.save_active_board_before_transition();
 
-        // 3. Stop worker child processes. ImportWorker's queue + thread
+        // 3. Stop worker child processes. ImagePrepWorker's queue + thread
         // shutdown runs in its Drop impl; the embedding helper's stdin
         // child process is killed by EmbeddingHelperClient::drop, which
         // fires when the SearchController is dropped or rebuilt.
@@ -2560,10 +2558,10 @@ impl SnappyRefApp {
         }
     }
 
-    fn import_trace(&self) -> Option<crate::jobs::ImportTrace> {
-        self.perf_log.as_ref().map(|_| crate::jobs::ImportTrace {
+    fn import_trace(&self) -> Option<crate::jobs::ImagePrepTrace> {
+        self.perf_log.as_ref().map(|_| crate::jobs::ImagePrepTrace {
             queued_at: Instant::now(),
-            timings: crate::jobs::ImportTimings::default(),
+            timings: crate::jobs::ImagePrepTimings::default(),
         })
     }
 
@@ -3799,22 +3797,22 @@ impl SnappyRefApp {
     fn apply_import_result_residency_outcome(
         &mut self,
         ctx: &egui::Context,
-        outcome: ImagePreparationResultResidencyOutcome,
+        outcome: ImagePrepResultResidencyOutcome,
     ) {
         match outcome {
-            ImagePreparationResultResidencyOutcome::Loaded(outcome) => {
+            ImagePrepResultResidencyOutcome::Loaded(outcome) => {
                 self.apply_loaded_import_outcome(outcome);
             }
-            ImagePreparationResultResidencyOutcome::Cropped(cropped) => {
+            ImagePrepResultResidencyOutcome::Cropped(cropped) => {
                 self.integrate_cropped_import_result(ctx, cropped);
             }
-            ImagePreparationResultResidencyOutcome::Failed(outcome) => {
+            ImagePrepResultResidencyOutcome::Failed(outcome) => {
                 self.apply_failed_import_outcome(outcome);
             }
-            ImagePreparationResultResidencyOutcome::Status(Some(status)) => {
+            ImagePrepResultResidencyOutcome::Status(Some(status)) => {
                 self.status = status;
             }
-            ImagePreparationResultResidencyOutcome::Status(None) => {}
+            ImagePrepResultResidencyOutcome::Status(None) => {}
         }
     }
 
@@ -4735,7 +4733,7 @@ impl SnappyRefApp {
                 preview_width: width,
                 preview_height: height,
                 animated_preview: None,
-                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
                 loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
@@ -4817,7 +4815,7 @@ impl SnappyRefApp {
                     width,
                     height,
                 }),
-                preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
+                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
                 loaded_lod: crate::data::CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Existing,
@@ -4875,7 +4873,7 @@ impl SnappyRefApp {
                 preview_width: width,
                 preview_height: height,
                 animated_preview: None,
-                preview_texture: crate::jobs::ImportedPreviewTexture::Svg {
+                preview_texture: crate::jobs::ImagePrepPreviewTexture::Svg {
                     uri: "bytes://verify-svg.svg".to_owned(),
                     bytes: std::sync::Arc::<[u8]>::from(svg),
                     size: [width as usize, height as usize],
@@ -5463,7 +5461,7 @@ impl SnappyRefApp {
         for placement in &committed.load_existing_records {
             if let Some(import_worker) = &self.import_worker {
                 if let Err(error) =
-                    import_worker.enqueue(crate::jobs::ImagePreparationRequest::LoadExisting {
+                    import_worker.enqueue(crate::jobs::ImagePrepRequest::LoadExisting {
                         target_board_id: self.active_board_id,
                         queue_id: None,
                         placement: placement.clone(),
@@ -5493,10 +5491,10 @@ impl SnappyRefApp {
                     None,
                     self.wgpu_render_state.as_ref(),
                 ) {
-                    crate::jobs::ImagePreparationResult::Loaded(loaded) => {
+                    crate::jobs::ImagePrepResult::Loaded(loaded) => {
                         self.integrate_loaded_import(ctx, loaded);
                     }
-                    crate::jobs::ImagePreparationResult::Failed { error, .. } => {
+                    crate::jobs::ImagePrepResult::Failed { error, .. } => {
                         self.status = error;
                         return;
                     }
@@ -5593,13 +5591,13 @@ impl SnappyRefApp {
         origin: crate::jobs::ImportOrigin,
         placement: Option<&crate::data::Placement>,
         diagnostics: Option<&crate::jobs::ExistingLoadDiagnostics>,
-        trace: Option<crate::jobs::ImportTrace>,
+        trace: Option<crate::jobs::ImagePrepTrace>,
     ) {
         let Some(perf_log) = &mut self.perf_log else {
             return;
         };
 
-        let format_trace = |trace: crate::jobs::ImportTrace| {
+        let format_trace = |trace: crate::jobs::ImagePrepTrace| {
             format!(
                 " total_ms={:.2} queue_ms={:.2} decode_ms={:.2} store_ms={:.2} preview_ms={:.2} worker_ms={:.2} ui_ms={:.2}",
                 trace.queued_at.elapsed().as_secs_f64() * 1000.0,

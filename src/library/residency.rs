@@ -6,8 +6,8 @@ use eframe::egui;
 use crate::canvas::CanvasState;
 use crate::data::{CanvasImageLod, Placement, WorkspaceSettings};
 use crate::jobs::{
-    CanvasImageSettings, ExistingLoadPriority, ImagePreparationRequest, ImagePreparationResult,
-    ImportTimings, ImportTrace, ImportWorker, PreparedCropPreview, PreparedPlacementImage,
+    CanvasImageSettings, ExistingLoadPriority, ImagePrepRequest, ImagePrepResult, ImagePrepTimings,
+    ImagePrepTrace, ImagePrepWorker, PreparedCropPreview, PreparedPlacementImage,
 };
 use crate::placement::content_resolution::{
     ContentResolutionTicket, FailedContentResolutionOutcome, LoadedContentResolutionLog,
@@ -21,7 +21,7 @@ pub(crate) struct ImageResidencyCoordinator {
 }
 
 #[derive(Debug)]
-pub(crate) enum ImagePreparationResultResidencyOutcome {
+pub(crate) enum ImagePrepResultResidencyOutcome {
     Loaded(LoadedContentResolutionOutcome),
     Cropped(PreparedCropPreview),
     Failed(FailedContentResolutionOutcome),
@@ -31,7 +31,7 @@ pub(crate) enum ImagePreparationResultResidencyOutcome {
 impl ImageResidencyCoordinator {
     pub(crate) fn queue_startup_existing_loads(
         &mut self,
-        import_worker: &ImportWorker,
+        import_worker: &ImagePrepWorker,
         mut placements: Vec<Placement>,
         viewport_world: eframe::egui::Rect,
         active_board_id: i64,
@@ -43,7 +43,7 @@ impl ImageResidencyCoordinator {
         let (canvas_image_settings, target_lod) = startup_existing_image_load_settings(settings);
         for placement in placements {
             let placement_id = placement.state.id;
-            import_worker.enqueue(ImagePreparationRequest::LoadExisting {
+            import_worker.enqueue(ImagePrepRequest::LoadExisting {
                 target_board_id: active_board_id,
                 queue_id: None,
                 placement,
@@ -51,9 +51,9 @@ impl ImageResidencyCoordinator {
                 canvas_image_settings,
                 target_lod,
                 priority: ExistingLoadPriority::Startup,
-                trace: trace_enabled.then(|| ImportTrace {
+                trace: trace_enabled.then(|| ImagePrepTrace {
                     queued_at: Instant::now(),
-                    timings: ImportTimings::default(),
+                    timings: ImagePrepTimings::default(),
                 }),
             })?;
             self.inflight_image_lod_loads
@@ -74,14 +74,14 @@ impl ImageResidencyCoordinator {
         &mut self,
         ctx: &egui::Context,
         canvas: &mut CanvasState,
-        import_worker: Option<&ImportWorker>,
+        import_worker: Option<&ImagePrepWorker>,
         active_board_id: i64,
         settings: &WorkspaceSettings,
-        result: ImagePreparationResult,
-    ) -> ImagePreparationResultResidencyOutcome {
+        result: ImagePrepResult,
+    ) -> ImagePrepResultResidencyOutcome {
         match result {
-            ImagePreparationResult::Loaded(loaded) => {
-                ImagePreparationResultResidencyOutcome::Loaded(self.integrate_loaded_import(
+            ImagePrepResult::Loaded(loaded) => {
+                ImagePrepResultResidencyOutcome::Loaded(self.integrate_loaded_import(
                     ctx,
                     canvas,
                     import_worker,
@@ -90,28 +90,26 @@ impl ImageResidencyCoordinator {
                     loaded,
                 ))
             }
-            ImagePreparationResult::Cropped(cropped) => {
-                ImagePreparationResultResidencyOutcome::Cropped(cropped)
-            }
-            ImagePreparationResult::CacheLodBackfilled { asset_id, lod } => {
+            ImagePrepResult::Cropped(cropped) => ImagePrepResultResidencyOutcome::Cropped(cropped),
+            ImagePrepResult::CacheLodBackfilled { asset_id, lod } => {
                 let status = self.note_backfill_completed(asset_id, lod, None);
-                ImagePreparationResultResidencyOutcome::Status(status)
+                ImagePrepResultResidencyOutcome::Status(status)
             }
-            ImagePreparationResult::CacheLodBackfillFailed {
+            ImagePrepResult::CacheLodBackfillFailed {
                 asset_id,
                 lod,
                 error,
             } => {
                 let status = self.note_backfill_completed(asset_id, lod, Some(error));
-                ImagePreparationResultResidencyOutcome::Status(status)
+                ImagePrepResultResidencyOutcome::Status(status)
             }
-            ImagePreparationResult::Failed {
+            ImagePrepResult::Failed {
                 target_board_id,
                 queue_id,
                 placement_id,
                 context,
                 error,
-            } => ImagePreparationResultResidencyOutcome::Failed(self.integrate_failed_import(
+            } => ImagePrepResultResidencyOutcome::Failed(self.integrate_failed_import(
                 canvas,
                 active_board_id,
                 target_board_id,
@@ -127,7 +125,7 @@ impl ImageResidencyCoordinator {
         &mut self,
         ctx: &egui::Context,
         canvas: &mut CanvasState,
-        import_worker: Option<&ImportWorker>,
+        import_worker: Option<&ImagePrepWorker>,
         active_board_id: i64,
         settings: &WorkspaceSettings,
         loaded: PreparedPlacementImage,
@@ -267,7 +265,7 @@ impl ImageResidencyCoordinator {
 
     pub(crate) fn queue_backfill(
         &mut self,
-        import_worker: Option<&ImportWorker>,
+        import_worker: Option<&ImagePrepWorker>,
         placement: &Placement,
         settings: &WorkspaceSettings,
         lod: CanvasImageLod,
@@ -281,7 +279,7 @@ impl ImageResidencyCoordinator {
         )) {
             return None;
         }
-        if let Err(error) = import_worker.enqueue(ImagePreparationRequest::BackfillLod {
+        if let Err(error) = import_worker.enqueue(ImagePrepRequest::BackfillLod {
             placement: placement.clone(),
             canvas_image_settings: canvas_image_settings(settings),
             lod,
@@ -297,7 +295,7 @@ impl ImageResidencyCoordinator {
 
     pub(crate) fn queue_overview_backfill_after_working_load(
         &mut self,
-        import_worker: Option<&ImportWorker>,
+        import_worker: Option<&ImagePrepWorker>,
         placement: &Placement,
         settings: &WorkspaceSettings,
         loaded_lod: CanvasImageLod,
@@ -318,7 +316,7 @@ impl ImageResidencyCoordinator {
 
     pub(crate) fn dispatch_pending_lod_requests(
         &mut self,
-        import_worker: Option<&ImportWorker>,
+        import_worker: Option<&ImagePrepWorker>,
         canvas: &mut CanvasState,
         active_board_id: i64,
         settings: &WorkspaceSettings,
@@ -342,7 +340,7 @@ impl ImageResidencyCoordinator {
             };
             self.inflight_image_lod_loads
                 .insert(placement_id, target_lod);
-            if let Err(error) = import_worker.enqueue(ImagePreparationRequest::LoadExisting {
+            if let Err(error) = import_worker.enqueue(ImagePrepRequest::LoadExisting {
                 target_board_id: active_board_id,
                 queue_id: None,
                 placement,

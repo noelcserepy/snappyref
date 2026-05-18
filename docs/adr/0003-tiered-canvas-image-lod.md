@@ -7,10 +7,10 @@ This keeps startup and board switching fast for image-heavy boards without givin
 ## Decision
 
 - Keep **Canvas Image Cache** generation off the UI thread.
-- Use an **Image Preparation Helper Process** for path import, promotion, and backfill cache generation that needs to decode or encode large raster images.
+- Use an **ImagePrep Helper Process** for path import, promotion, and backfill cache generation that needs to decode or encode large raster images.
 - The helper returns only the downscaled LOD pixels needed by the main app plus a disposable cache file to install under the asset's cache path.
 - The helper is intentionally short-lived: when the import or LOD job completes, the process exits and releases decoder/encoder allocator memory and CPU activity back to the OS.
-- Keep the image preparation helper per-file instead of burst-scoped for now. A May 2026 burst-scoped prototype reused one helper per import worker until the import/LOD queue drained, then exited it. The measured latency win was too small to justify the extra protocol and lifecycle complexity.
+- Keep the **ImagePrep Helper Process** per-file instead of burst-scoped for now. A May 2026 burst-scoped prototype reused one helper per **ImagePrep Worker** until the import/LOD queue drained, then exited it. The measured latency win was too small to justify the extra protocol and lifecycle complexity.
 - Animated image imports may fall back to the in-process path when animation frames are needed for playback.
 
 ## Consequences

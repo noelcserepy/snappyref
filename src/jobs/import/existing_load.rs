@@ -11,11 +11,11 @@ use crate::jobs::image_formats::{
 };
 use crate::library::storage::Library;
 
-use super::decode::{install_prepared_canvas_cache, prepare_import_image_with_helper};
+use super::decode::{install_prepared_canvas_cache, prepare_image_with_helper};
 use super::preview_texture::build_preview_texture;
 use super::{
-    CanvasImageSettings, ExistingLoadDiagnostics, ExistingLoadSourceKind, ImagePreparationResult,
-    ImportOrigin, ImportTrace, ImportedPreviewTexture, PreparedPlacementImage,
+    CanvasImageSettings, ExistingLoadDiagnostics, ExistingLoadSourceKind, ImagePrepPreviewTexture,
+    ImagePrepResult, ImagePrepTrace, ImportOrigin, PreparedPlacementImage,
     canvas_source_image_from_rgba, original_mime_type_is_svg,
     original_mime_type_supports_animation, read_svg_document, stable_svg_uri_key,
 };
@@ -31,9 +31,9 @@ pub(crate) fn load_existing(
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     target_lod: CanvasImageLod,
-    trace: Option<ImportTrace>,
+    trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> ImagePreparationResult {
+) -> ImagePrepResult {
     let worker_started_at = Instant::now();
     let mut trace = trace;
     if let Some(trace) = &mut trace {
@@ -60,13 +60,13 @@ pub(crate) fn load_existing(
                     trace.timings.decode_or_load = decode_started_at.elapsed();
                     trace.timings.worker_total = worker_started_at.elapsed();
                 }
-                return ImagePreparationResult::Loaded(PreparedPlacementImage {
+                return ImagePrepResult::Loaded(PreparedPlacementImage {
                     target_board_id,
                     queue_id,
                     preview_rgba: Vec::new(),
                     preview_width: svg.width,
                     preview_height: svg.height,
-                    preview_texture: ImportedPreviewTexture::Svg {
+                    preview_texture: ImagePrepPreviewTexture::Svg {
                         uri: format!(
                             "bytes://asset-svg-{}.svg",
                             stable_svg_uri_key(
@@ -100,7 +100,7 @@ pub(crate) fn load_existing(
                 });
             }
             Err(error) => {
-                return ImagePreparationResult::Failed {
+                return ImagePrepResult::Failed {
                     target_board_id: Some(target_board_id),
                     queue_id,
                     placement_id: Some(placement.state.id),
@@ -129,12 +129,12 @@ pub(crate) fn load_existing(
         Ok((preview, animated_preview, diagnostics)) => {
             let decode_or_load = decode_started_at.elapsed();
             let preview_texture = if animated_preview.is_some() {
-                ImportedPreviewTexture::Cpu
+                ImagePrepPreviewTexture::Cpu
             } else {
                 match build_preview_texture(wgpu_render_state, &preview) {
                     Ok(preview_texture) => preview_texture,
                     Err(error) => {
-                        return ImagePreparationResult::Failed {
+                        return ImagePrepResult::Failed {
                             target_board_id: Some(target_board_id),
                             queue_id,
                             placement_id: Some(placement.state.id),
@@ -155,7 +155,7 @@ pub(crate) fn load_existing(
                 trace.timings.preview_prepare = preview_started_at.elapsed();
                 trace.timings.worker_total = worker_started_at.elapsed();
             }
-            ImagePreparationResult::Loaded(PreparedPlacementImage {
+            ImagePrepResult::Loaded(PreparedPlacementImage {
                 target_board_id,
                 queue_id,
                 placement,
@@ -170,7 +170,7 @@ pub(crate) fn load_existing(
                 trace,
             })
         }
-        Err(error) => ImagePreparationResult::Failed {
+        Err(error) => ImagePrepResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id,
             placement_id: Some(placement.state.id),
@@ -485,7 +485,7 @@ fn backfill_canvas_image_cache(
                     .clone()
             });
     if let Some(prepared) =
-        prepare_import_image_with_helper(&decode_path, canvas_image_settings).unwrap_or(None)
+        prepare_image_with_helper(&decode_path, canvas_image_settings).unwrap_or(None)
     {
         let source_path = install_prepared_canvas_cache(
             library,
@@ -580,14 +580,14 @@ pub(super) fn backfill_cache_lod(
     placement: Placement,
     canvas_image_settings: CanvasImageSettings,
     lod: CanvasImageLod,
-) -> ImagePreparationResult {
+) -> ImagePrepResult {
     let lod_settings = lod_settings(canvas_image_settings, lod);
     match backfill_canvas_image_cache(library, &placement, lod_settings, lod) {
-        Ok(_) => ImagePreparationResult::CacheLodBackfilled {
+        Ok(_) => ImagePrepResult::CacheLodBackfilled {
             asset_id: placement.asset.as_ref().expect("loaded placement asset").id,
             lod,
         },
-        Err(error) => ImagePreparationResult::CacheLodBackfillFailed {
+        Err(error) => ImagePrepResult::CacheLodBackfillFailed {
             asset_id: placement.asset.as_ref().expect("loaded placement asset").id,
             lod,
             error,

@@ -701,7 +701,7 @@ mod tests {
         CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
         CanvasStrokeWidth, CanvasTextSize, ImageAsset, Placement, PlacementState,
     };
-    use crate::jobs::{ImportOrigin, ImportedPreviewTexture, PreparedPlacementImage};
+    use crate::jobs::{ImagePrepPreviewTexture, ImportOrigin, PreparedPlacementImage};
     use crate::placement::movement::{compute_drag_snap_preview, layout_bounds_with_offset};
     use eframe::egui;
     use std::path::PathBuf;
@@ -1488,7 +1488,7 @@ mod tests {
                 preview_width: width,
                 preview_height: height,
                 animated_preview: None,
-                preview_texture: ImportedPreviewTexture::Cpu,
+                preview_texture: ImagePrepPreviewTexture::Cpu,
                 loaded_lod: CanvasImageLod::Working,
                 existing_load_diagnostics: None,
                 origin: ImportOrigin::Existing,
