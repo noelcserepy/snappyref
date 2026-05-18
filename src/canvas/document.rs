@@ -621,12 +621,11 @@ impl CanvasState {
             .map(|image| image.placement.clone())
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn preview_for_placement_id(&self, placement_id: i64) -> Option<CanvasImagePreview> {
         let image = self.rendered_placement_by_id(placement_id)?;
         let [width, height] = image.texture.size();
         Some(CanvasImagePreview {
-            texture_id: image.texture.id(),
             texture_size: egui::vec2(width as f32, height as f32),
         })
     }
@@ -647,18 +646,6 @@ impl CanvasState {
         self.render.textbox_layout_cache.clear();
         self.render.pending_image_lod_loads.clear();
         self.render.animation_time_override_seconds = None;
-    }
-
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
-    pub fn set_search_matches(&mut self, placement_ids: Vec<i64>, active_item_id: Option<i64>) {
-        self.interaction.search_match_placement_ids = placement_ids;
-        self.interaction.active_search_placement_id = active_item_id;
-    }
-
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
-    pub fn clear_search_matches(&mut self) {
-        self.interaction.search_match_placement_ids.clear();
-        self.interaction.active_search_placement_id = None;
     }
 
     pub fn focus_selection_in_view(

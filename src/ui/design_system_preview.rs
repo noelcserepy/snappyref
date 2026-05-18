@@ -389,8 +389,8 @@ fn palette_overlay(ui: &mut egui::Ui) {
         .show(ui, |ui| {
             palette_input(ui);
             divider(ui);
-            palette_result_row(ui, "black fabric folds", "Library");
-            palette_result_row(ui, "warm rim light", "This Board");
+            palette_result_row(ui, "black fabric folds", "Asset Result");
+            palette_result_row(ui, "warm rim light", "Asset Result");
             palette_footer(ui);
         });
 }
@@ -459,11 +459,6 @@ fn palette_footer(ui: &mut egui::Ui) {
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
-                ui.label(
-                    egui::RichText::new("This Board")
-                        .text_style(egui::TextStyle::Small)
-                        .color(crate::ui::theme::TEXT_SUBTLE),
-                );
                 ui.with_layout(crate::ui::layout::row_end_center_y_layout(), |ui| {
                     kbd_pill(ui, "↵");
                     ui.label(

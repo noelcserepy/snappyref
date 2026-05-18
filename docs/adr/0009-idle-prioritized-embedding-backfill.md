@@ -2,7 +2,7 @@
 
 SnappyRef keeps **Semantic Search** available as an always-on product capability, but bulk **Embedding Backfill** should be idle-prioritized rather than started immediately during app startup.
 
-Startup, **Active Board Load**, board switching, import, crop, and canvas interaction are more important than completing all missing embeddings as fast as possible. The trade-off is that some **Library Scope** results may appear later on a cold or newly expanded library, but the app stays responsive and avoids passive CPU contention.
+Startup, **Active Board Load**, board switching, import, crop, and canvas interaction are more important than completing all missing embeddings as fast as possible. The trade-off is that some **Library-wide Search** results may appear later on a cold or newly expanded library, but the app stays responsive and avoids passive CPU contention.
 
 ## Decision
 

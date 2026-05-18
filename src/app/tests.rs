@@ -14,7 +14,7 @@ use crate::search::palette::{
     search_result_tile_height,
 };
 #[cfg(feature = "semantic-search")]
-use crate::search::semantic::{LocalModelStoreStatus, SearchResultAssetEntry, SearchScope};
+use crate::search::semantic::{LocalModelStoreStatus, SearchResultAssetEntry};
 #[cfg(feature = "semantic-search")]
 use crate::sources::crop::CropUndoEntry;
 use crate::ui::sidebar::{
@@ -139,8 +139,6 @@ fn app_config_restores_always_on_top_workspace_setting() {
         verification_mode: None,
         #[cfg(debug_assertions)]
         verification_search_query: None,
-        #[cfg(all(debug_assertions, feature = "semantic-search"))]
-        verification_search_scope: crate::search::semantic::SearchScope::ThisBoard,
         update_smoke_install: false,
         update_smoke_status_path: None,
     };
@@ -1849,7 +1847,7 @@ fn search_using_image_context_action_opens_image_pivot_search() {
     assert!(app.search.overlay.suppress_next_outside_click);
     let pivot = app.search.overlay.image_pivot.unwrap();
     assert_eq!(pivot.asset_id, 42);
-    assert_eq!(pivot.item_id, 42);
+    assert!(pivot.asset_preview_path.is_none());
 }
 
 #[cfg(feature = "semantic-search")]
@@ -2670,7 +2668,6 @@ fn switching_boards_clears_selection_search_and_transient_undo() {
     );
     app.canvas.select_placements(&[1]);
     app.search.overlay.open = true;
-    app.canvas.set_search_matches(vec![1], Some(1));
     app.crop_flow.push_test_undo_entry(CropUndoEntry {
         previous_record: placement,
         previous_rgba: vec![255, 255, 255, 255].into(),
@@ -2767,12 +2764,11 @@ fn search_shortcut_opens_missing_palette_with_focused_install_action() {
 
 #[cfg(feature = "semantic-search")]
 #[test]
-fn escape_closes_search_overlay_and_clears_matches() {
+fn escape_closes_search_overlay() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
     app.search.overlay.open = true;
     app.search.overlay.query = "cat".to_owned();
-    app.canvas.set_search_matches(vec![1, 2], Some(1));
 
     let _ = ctx.run_ui(
         egui::RawInput {
@@ -2818,38 +2814,7 @@ fn search_overlay_focuses_text_input_when_requested() {
 
 #[cfg(feature = "semantic-search")]
 #[test]
-fn tab_switches_search_scope_from_any_search_overlay_focus_state() {
-    let ctx = egui::Context::default();
-    let mut app = test_app(None);
-    app.search.overlay.open = true;
-    app.search.overlay.focus_requested = true;
-    app.search.overlay.scope = SearchScope::ThisBoard;
-
-    let _ = ctx.run_ui(
-        egui::RawInput {
-            events: vec![egui::Event::Key {
-                key: egui::Key::Tab,
-                physical_key: Some(egui::Key::Tab),
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::default(),
-            }],
-            ..Default::default()
-        },
-        |ui| {
-            app.show_search_overlay(
-                ui.ctx(),
-                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),
-            )
-        },
-    );
-
-    assert_eq!(app.search.overlay.scope, SearchScope::Library);
-}
-
-#[cfg(feature = "semantic-search")]
-#[test]
-fn search_keyboard_flow_owns_tab_and_escape_through_app_render_path() {
+fn search_keyboard_flow_owns_escape_through_app_render_path() {
     let root = temp_library_root("snappyref-search-keyboard-routing");
     let library = Library::initialize(root.clone()).unwrap();
     let second = library.create_board("Second").unwrap();
@@ -2857,7 +2822,6 @@ fn search_keyboard_flow_owns_tab_and_escape_through_app_render_path() {
     app.settings.semantic_search_enabled = true;
     app.search
         .set_local_model_store_status_for_verification(LocalModelStoreStatus::Installed);
-    app.search.overlay.scope = SearchScope::ThisBoard;
     let mut harness = app_harness(app, |ctx, app| {
         let screen_rect = test_screen_rect();
         app.handle_search_shortcut(ctx);
@@ -2880,12 +2844,6 @@ fn search_keyboard_flow_owns_tab_and_escape_through_app_render_path() {
             .ctx
             .memory(|memory| { memory.has_focus(egui::Id::new("semantic_search_input")) })
     );
-
-    harness.key_press(egui::Key::Tab);
-    harness.step();
-
-    assert_eq!(harness.state().search.overlay.scope, SearchScope::Library);
-    assert_eq!(harness.state().active_board_id, 1);
 
     harness.key_press_modifiers(
         egui::Modifiers {
@@ -2925,7 +2883,6 @@ fn enter_places_unplaced_library_search_result_on_empty_active_board() {
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
-    app.search.overlay.scope = SearchScope::Library;
     app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: library_item
             .asset
@@ -2944,8 +2901,6 @@ fn enter_places_unplaced_library_search_result_on_empty_active_board() {
         asset_width: 1,
         asset_height: 1,
         similarity: 0.9,
-        placement_ids: Vec::new(),
-        instance_count: 0,
     }];
     app.search.overlay.result_selection.replace(0);
     let mut harness = app_harness(app, |ctx, app| {
@@ -3016,7 +2971,6 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
-    app.search.overlay.scope = SearchScope::Library;
     app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: library_item
             .asset
@@ -3035,8 +2989,6 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
         asset_width: 1,
         asset_height: 1,
         similarity: 0.9,
-        placement_ids: Vec::new(),
-        instance_count: 0,
     }];
     app.search.overlay.result_selection.replace(0);
     let mut harness = app_harness(app, |ctx, app| {
@@ -3059,64 +3011,6 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
     );
     assert_eq!(active_items.len(), 1);
     assert_eq!(active_items[0].state.geometry.scale, expected_scale);
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[cfg(feature = "semantic-search")]
-#[test]
-fn library_scope_survives_search_result_placement() {
-    let root = temp_library_root("snappyref-library-search-scope-after-placement");
-    let library = Library::initialize(root.clone()).unwrap();
-    let first_path = library
-        .store_rgba_image("library-only", &[255, 0, 0, 255], 1, 1)
-        .unwrap();
-    let library_item = library
-        .persist_imported_image(&first_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
-        .unwrap();
-    library
-        .archive_placements(&[library_item.state.id])
-        .unwrap();
-    let empty_board = library.create_board("Empty").unwrap();
-    library.set_active_board(empty_board.id).unwrap();
-    let mut app = test_app(Some(library.clone()));
-    app.active_board_id = empty_board.id;
-    app.search.overlay.open = true;
-    app.search.overlay.scope = SearchScope::Library;
-    app.search.overlay.results = vec![SearchResultAssetEntry {
-        asset_id: library_item
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .id,
-        asset_preview_path: None,
-        asset_original_path: Some(
-            library_item
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-                .clone(),
-        ),
-        asset_width: 1,
-        asset_height: 1,
-        similarity: 0.9,
-        placement_ids: Vec::new(),
-        instance_count: 0,
-    }];
-    app.search.overlay.result_selection.replace(0);
-    let mut harness = app_harness(app, |ctx, app| {
-        app.show_search_overlay(ctx, test_screen_rect());
-    });
-
-    harness.key_press(egui::Key::Enter);
-    harness.step();
-    harness.hover_at(egui::pos2(900.0, 600.0));
-    harness.drag_at(egui::pos2(900.0, 600.0));
-    harness.drop_at(egui::pos2(900.0, 600.0));
-    harness.step();
-
-    assert_eq!(harness.state().search.overlay.scope, SearchScope::Library);
 
     let _ = fs::remove_dir_all(root);
 }
@@ -3146,7 +3040,6 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
     ));
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
-    app.search.overlay.scope = SearchScope::Library;
     app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: library_item
             .asset
@@ -3165,8 +3058,6 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
         asset_width: 1,
         asset_height: 1,
         similarity: 0.9,
-        placement_ids: Vec::new(),
-        instance_count: 0,
     }];
     app.search.overlay.result_selection.replace(0);
     let mut harness = app_harness(app, |ctx, app| {
@@ -3261,7 +3152,6 @@ fn command_enter_library_search_results_show_pending_cursor_layout_items() {
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
-    app.search.overlay.scope = SearchScope::Library;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
             asset_id: first.asset.as_ref().expect("loaded placement asset").id,
@@ -3277,8 +3167,6 @@ fn command_enter_library_search_results_show_pending_cursor_layout_items() {
             asset_width: 1,
             asset_height: 1,
             similarity: 0.9,
-            placement_ids: Vec::new(),
-            instance_count: 0,
         },
         SearchResultAssetEntry {
             asset_id: second.asset.as_ref().expect("loaded placement asset").id,
@@ -3294,8 +3182,6 @@ fn command_enter_library_search_results_show_pending_cursor_layout_items() {
             asset_width: 1,
             asset_height: 1,
             similarity: 0.8,
-            placement_ids: Vec::new(),
-            instance_count: 0,
         },
     ];
     app.search.overlay.result_selection.replace(0);
@@ -3365,7 +3251,6 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
-    app.search.overlay.scope = SearchScope::Library;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
             asset_id: first.asset.as_ref().expect("loaded placement asset").id,
@@ -3374,8 +3259,6 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
             asset_width: first.asset.as_ref().expect("loaded placement asset").width,
             asset_height: first.asset.as_ref().expect("loaded placement asset").height,
             similarity: 0.9,
-            placement_ids: Vec::new(),
-            instance_count: 0,
         },
         SearchResultAssetEntry {
             asset_id: second.asset.as_ref().expect("loaded placement asset").id,
@@ -3388,8 +3271,6 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
                 .expect("loaded placement asset")
                 .height,
             similarity: 0.8,
-            placement_ids: Vec::new(),
-            instance_count: 0,
         },
     ];
     app.search.overlay.result_selection.replace(0);
@@ -3478,7 +3359,6 @@ fn multi_select_enter_library_search_results_show_pending_cursor_layout_items() 
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
-    app.search.overlay.scope = SearchScope::Library;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
             asset_id: first.asset.as_ref().expect("loaded placement asset").id,
@@ -3494,8 +3374,6 @@ fn multi_select_enter_library_search_results_show_pending_cursor_layout_items() 
             asset_width: 1,
             asset_height: 1,
             similarity: 0.9,
-            placement_ids: Vec::new(),
-            instance_count: 0,
         },
         SearchResultAssetEntry {
             asset_id: second.asset.as_ref().expect("loaded placement asset").id,
@@ -3511,8 +3389,6 @@ fn multi_select_enter_library_search_results_show_pending_cursor_layout_items() 
             asset_width: 1,
             asset_height: 1,
             similarity: 0.8,
-            placement_ids: Vec::new(),
-            instance_count: 0,
         },
     ];
     app.search.overlay.result_selection.replace(0);
@@ -3577,7 +3453,6 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
-    app.search.overlay.scope = SearchScope::Library;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
             asset_id: first.asset.as_ref().expect("loaded placement asset").id,
@@ -3593,8 +3468,6 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
             asset_width: 1,
             asset_height: 1,
             similarity: 0.9,
-            placement_ids: Vec::new(),
-            instance_count: 0,
         },
         SearchResultAssetEntry {
             asset_id: second.asset.as_ref().expect("loaded placement asset").id,
@@ -3610,8 +3483,6 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
             asset_width: 1,
             asset_height: 1,
             similarity: 0.8,
-            placement_ids: Vec::new(),
-            instance_count: 0,
         },
     ];
     app.search.overlay.result_selection.replace(0);
@@ -3712,7 +3583,6 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
-    app.search.overlay.scope = SearchScope::Library;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
             asset_id: first.asset.as_ref().expect("loaded placement asset").id,
@@ -3728,8 +3598,6 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
             asset_width: 1,
             asset_height: 1,
             similarity: 0.9,
-            placement_ids: Vec::new(),
-            instance_count: 0,
         },
         SearchResultAssetEntry {
             asset_id: second.asset.as_ref().expect("loaded placement asset").id,
@@ -3745,8 +3613,6 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
             asset_width: 1,
             asset_height: 1,
             similarity: 0.8,
-            placement_ids: Vec::new(),
-            instance_count: 0,
         },
     ];
     app.search.overlay.result_selection.replace(0);
@@ -4418,8 +4284,6 @@ fn test_app(library: Option<Library>) -> SnappyRefApp {
         verification_mode: None,
         #[cfg(debug_assertions)]
         verification_search_query: None,
-        #[cfg(all(debug_assertions, feature = "semantic-search"))]
-        verification_search_scope: crate::search::semantic::SearchScope::ThisBoard,
         #[cfg(debug_assertions)]
         sidebar_hot_preview: false,
         update_service: super::UpdateService::new(super::UpdateConfig::default()),

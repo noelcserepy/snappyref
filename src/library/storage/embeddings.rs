@@ -43,13 +43,6 @@ pub struct AssetSearchHit {
 }
 
 #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
-#[derive(Clone, Debug)]
-pub struct BoardSearchInstance {
-    pub item_id: i64,
-    pub asset_id: i64,
-}
-
-#[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
 fn encode_f32_slice(values: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(values.len() * std::mem::size_of::<f32>());
     for value in values {
@@ -459,7 +452,7 @@ impl Library {
             .map(|jobs| jobs.into_iter().next())
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
+    #[allow(dead_code)]
     pub fn load_active_canvas_embeddings(
         &self,
         model_key: &str,
@@ -569,53 +562,6 @@ impl Library {
             }
             None => Ok(None),
         }
-    }
-
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
-    pub fn placement_instances_for_assets(
-        &self,
-        asset_ids: &[i64],
-    ) -> Result<Vec<BoardSearchInstance>, String> {
-        if asset_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let placeholders = std::iter::repeat_n("?", asset_ids.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            "SELECT
-                board_items.id,
-                board_items.asset_id
-             FROM board_items
-             JOIN assets ON assets.id = board_items.asset_id
-             WHERE board_items.archived = 0
-               AND board_items.board_id = ?
-               AND assets.archived = 0
-               AND board_items.asset_id IN ({placeholders})
-             ORDER BY board_items.z_index ASC, board_items.id ASC"
-        );
-
-        let mut statement = connection
-            .prepare(&sql)
-            .map_err(|error| format!("failed to prepare board-search-instance query: {error}"))?;
-
-        let rows = statement
-            .query_map(
-                params_from_iter(std::iter::once(active_board_id).chain(asset_ids.iter().copied())),
-                |row| {
-                    Ok(BoardSearchInstance {
-                        item_id: row.get(0)?,
-                        asset_id: row.get(1)?,
-                    })
-                },
-            )
-            .map_err(|error| format!("failed to read board-search-instance query: {error}"))?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("failed to collect board-search instances: {error}"))
     }
 
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]

@@ -533,18 +533,6 @@ fn paint_image_overlay(
     image_rect: egui::Rect,
     debug_labels: bool,
 ) {
-    if state
-        .interaction
-        .search_match_placement_ids
-        .contains(&image.placement.state.id)
-    {
-        painter.rect_stroke(
-            image_rect,
-            crate::ui::theme::RADIUS_NONE,
-            egui::Stroke::new(SELECTION_BORDER_WIDTH, IMAGE_SELECTION_BORDER_COLOR),
-            egui::StrokeKind::Outside,
-        );
-    }
     if state.is_selected(image.placement.state.id)
         && selection_border_visible(state, painter.ctx().input(|input| input.time))
     {

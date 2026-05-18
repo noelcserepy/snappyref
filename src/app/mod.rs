@@ -66,8 +66,6 @@ pub struct AppConfig {
     verification_mode: Option<VerificationMode>,
     #[cfg(debug_assertions)]
     verification_search_query: Option<String>,
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    verification_search_scope: crate::search::semantic::SearchScope,
     update_smoke_install: bool,
     update_smoke_status_path: Option<std::path::PathBuf>,
 }
@@ -513,8 +511,6 @@ impl AppConfig {
         let mut verification_mode = None;
         #[cfg(debug_assertions)]
         let mut verification_search_query = None;
-        #[cfg(all(debug_assertions, feature = "semantic-search"))]
-        let mut verification_search_scope = crate::search::semantic::SearchScope::ThisBoard;
         let library_root = crate::library::location::resolve_library_root();
         let mut arguments = std::env::args().skip(1);
 
@@ -702,10 +698,9 @@ impl AppConfig {
                     verification_search_query = Some(query.to_owned());
                 }
             } else if let Some(query) = argument.strip_prefix("--verify-search-library=") {
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                #[cfg(debug_assertions)]
                 {
                     verification_search_query = Some(query.to_owned());
-                    verification_search_scope = crate::search::semantic::SearchScope::Library;
                 }
             } else if cfg!(debug_assertions) && argument == "--verify-search" {
                 #[cfg(debug_assertions)]
@@ -713,10 +708,9 @@ impl AppConfig {
                     verification_search_query = arguments.next();
                 }
             } else if cfg!(debug_assertions) && argument == "--verify-search-library" {
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                #[cfg(debug_assertions)]
                 {
                     verification_search_query = arguments.next();
-                    verification_search_scope = crate::search::semantic::SearchScope::Library;
                 }
             }
         }
@@ -738,8 +732,6 @@ impl AppConfig {
             verification_mode,
             #[cfg(debug_assertions)]
             verification_search_query,
-            #[cfg(all(debug_assertions, feature = "semantic-search"))]
-            verification_search_scope,
             library_root,
             update_smoke_install,
             update_smoke_status_path,
@@ -1112,8 +1104,6 @@ pub struct SnappyRefApp {
     verification_mode: Option<VerificationMode>,
     #[cfg(debug_assertions)]
     verification_search_query: Option<String>,
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    verification_search_scope: crate::search::semantic::SearchScope,
     #[cfg(debug_assertions)]
     sidebar_hot_preview: bool,
     update_service: UpdateService,
@@ -1222,8 +1212,6 @@ impl SnappyRefApp {
                     verification_mode: config.verification_mode,
                     #[cfg(debug_assertions)]
                     verification_search_query: None,
-                    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                    verification_search_scope: config.verification_search_scope,
                     #[cfg(debug_assertions)]
                     sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                     update_service: UpdateService::new(UpdateConfig::default()),
@@ -1358,7 +1346,6 @@ impl SnappyRefApp {
                         app.search.overlay.open = true;
                         app.search.overlay.focus_requested = true;
                         app.search.overlay.query = query;
-                        app.search.overlay.scope = config.verification_search_scope;
                         app.search.overlay.last_query_edit_at = Some(Instant::now());
                     }
                     app.verification_search_query =
@@ -1391,7 +1378,7 @@ impl SnappyRefApp {
                     {
                         app.search.overlay.image_pivot = Some(ImageSearchPivot {
                             asset_id: 42,
-                            item_id: -1,
+                            asset_preview_path: None,
                         });
                     }
                 }
@@ -1449,8 +1436,6 @@ impl SnappyRefApp {
                 verification_mode: config.verification_mode,
                 #[cfg(debug_assertions)]
                 verification_search_query: None,
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                verification_search_scope: config.verification_search_scope,
                 #[cfg(debug_assertions)]
                 sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                 update_service: UpdateService::new(UpdateConfig::default()),
@@ -2106,10 +2091,6 @@ impl SnappyRefApp {
         {
             self.search.close_overlay(Some(&mut self.canvas));
             self.search.reset_embedding_backfill();
-        }
-        #[cfg(not(feature = "semantic-search"))]
-        {
-            self.canvas.clear_search_matches();
         }
         self.crop_flow.clear_undo_stack();
     }
@@ -5260,7 +5241,6 @@ impl SnappyRefApp {
         };
         self.search.drive_verification_search(
             &query,
-            self.verification_search_scope,
             &mut self.settings.semantic_search_enabled,
             self.library.as_ref(),
             &mut self.canvas,

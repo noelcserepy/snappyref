@@ -1,37 +1,18 @@
+#[cfg(test)]
 use crate::library::storage::{ActiveCanvasEmbedding, AssetSearchHit, Library};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum SearchScope {
-    ThisBoard,
-    Library,
-}
-
-impl Default for SearchScope {
-    fn default() -> Self {
-        Self::ThisBoard
-    }
-}
-
-impl SearchScope {
-    pub(crate) fn includes_unplaced_assets(self) -> bool {
-        matches!(self, Self::Library)
-    }
-}
-
-pub fn search_embeddings_for_scope(
+#[cfg(test)]
+pub fn search_library_embeddings(
     library: &Library,
-    scope: SearchScope,
     model_key: &str,
     query_embedding: &[f32],
     limit: usize,
 ) -> Result<Vec<AssetSearchHit>, String> {
-    let embeddings = match scope {
-        SearchScope::ThisBoard => library.load_active_canvas_embeddings(model_key)?,
-        SearchScope::Library => library.load_library_embeddings(model_key)?,
-    };
+    let embeddings = library.load_library_embeddings(model_key)?;
     search_embedding_rows(embeddings, query_embedding, limit)
 }
 
+#[cfg(test)]
 fn search_embedding_rows(
     embeddings: Vec<ActiveCanvasEmbedding>,
     query_embedding: &[f32],
@@ -56,15 +37,15 @@ fn search_embedding_rows(
 
 #[cfg(test)]
 mod tests {
-    use super::{SearchScope, search_embeddings_for_scope};
+    use super::search_library_embeddings;
     use crate::library::storage::Library;
     use eframe::egui;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn library_scope_search_includes_assets_without_active_placements() {
-        let root = temp_root("snappyref-library-scope-index-test");
+    fn library_search_includes_assets_without_active_placements() {
+        let root = temp_root("snappyref-library-index-test");
         let library = Library::initialize(root.clone()).unwrap();
         let active_path = library
             .store_rgba_image("active", &[255, 0, 0, 255], 1, 1)
@@ -111,28 +92,9 @@ mod tests {
             )
             .unwrap();
 
-        let board_hits = search_embeddings_for_scope(
-            &library,
-            SearchScope::ThisBoard,
-            "test-model",
-            &[1.0, 0.0],
-            5,
-        )
-        .unwrap();
-        let library_hits = search_embeddings_for_scope(
-            &library,
-            SearchScope::Library,
-            "test-model",
-            &[1.0, 0.0],
-            5,
-        )
-        .unwrap();
+        let library_hits =
+            search_library_embeddings(&library, "test-model", &[1.0, 0.0], 5).unwrap();
 
-        assert_eq!(board_hits.len(), 1);
-        assert_eq!(
-            board_hits[0].asset_id,
-            active.asset.as_ref().expect("loaded placement asset").id
-        );
         assert_eq!(
             library_hits[0].asset_id,
             unplaced.asset.as_ref().expect("loaded placement asset").id

@@ -15,5 +15,7 @@ mod stack_order;
 mod tests;
 
 pub use connection::Library;
+#[cfg(test)]
+pub use embeddings::ActiveCanvasEmbedding;
 #[cfg(feature = "semantic-search")]
-pub use embeddings::{ActiveCanvasEmbedding, AssetSearchHit, EmbeddingStatus};
+pub use embeddings::{AssetSearchHit, EmbeddingStatus};

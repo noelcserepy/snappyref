@@ -5,7 +5,6 @@ mod model;
 mod model_store;
 mod service;
 
-pub use index::SearchScope;
 pub(crate) use install::SemanticSearchInstallProgress;
 #[cfg(not(test))]
 pub(crate) use install::{
