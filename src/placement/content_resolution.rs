@@ -49,7 +49,7 @@ pub(crate) struct ContentResolutionCleanupTicket {
 #[derive(Clone, Debug)]
 pub(crate) struct LoadedContentResolutionLog {
     pub(crate) origin: ImportOrigin,
-    pub(crate) record: Placement,
+    pub(crate) placement: Placement,
     pub(crate) diagnostics: Option<ExistingLoadDiagnostics>,
     pub(crate) trace: Option<ImportTrace>,
 }
@@ -176,7 +176,7 @@ impl ContentResolutionRuntime {
         let completion = self.resolve_completion(
             queue_id,
             target_board_id,
-            outcome.log.as_ref().map(|log| log.record.state.id),
+            outcome.log.as_ref().map(|log| log.placement.state.id),
         );
         FinishedLoadedContentResolution {
             cleanup_ticket: outcome.cleanup_ticket,
@@ -211,12 +211,12 @@ impl ContentResolutionRuntime {
         );
         if let (Some(library), Some(placement_id)) = (library, completion.placement_id) {
             let failed_board_id = completion.target_board_id.unwrap_or(active_board_id);
-            if let Ok(Some(record)) =
+            if let Ok(Some(placement)) =
                 library.mark_placement_failed(failed_board_id, placement_id, outcome.status.clone())
                 && failed_board_id == active_board_id
                 && canvas.placement_for_id(placement_id).is_some()
             {
-                canvas.add_unresolved_placement(record);
+                canvas.add_unresolved_placement(placement);
                 canvas.select_placements(&[placement_id]);
             }
         }
@@ -487,7 +487,7 @@ mod tests {
             .load_placements()
             .unwrap()
             .into_iter()
-            .find(|record| record.state.id == loading.state.id)
+            .find(|placement| placement.state.id == loading.state.id)
             .unwrap();
         assert!(matches!(
             stored.content,

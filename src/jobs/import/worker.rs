@@ -195,7 +195,7 @@ impl ImportWorker {
                         ImagePreparationRequest::LoadExisting {
                             target_board_id,
                             queue_id,
-                            record,
+                            placement,
                             max_texture_side,
                             canvas_image_settings,
                             target_lod,
@@ -205,7 +205,7 @@ impl ImportWorker {
                             &worker_library,
                             target_board_id,
                             queue_id,
-                            record,
+                            placement,
                             max_texture_side,
                             canvas_image_settings,
                             target_lod,
@@ -213,12 +213,15 @@ impl ImportWorker {
                             worker_render_state.as_ref(),
                         ),
                         ImagePreparationRequest::BackfillLod {
-                            record,
+                            placement,
                             canvas_image_settings,
                             lod,
-                        } => {
-                            backfill_cache_lod(&worker_library, record, canvas_image_settings, lod)
-                        }
+                        } => backfill_cache_lod(
+                            &worker_library,
+                            placement,
+                            canvas_image_settings,
+                            lod,
+                        ),
                     };
 
                     worker_queue.finish_one();

@@ -157,7 +157,7 @@ pub(crate) fn import_path_sync_traced(
             .store_original(&source_path)
             .map_err(|error| format!("{}: {error}", source_path.display()))?;
 
-        let record = library
+        let placement = library
             .persist_imported_image_resolving_placement(
                 target_board_id,
                 placement_id,
@@ -174,7 +174,7 @@ pub(crate) fn import_path_sync_traced(
         let preview_started_at = Instant::now();
         install_prepared_canvas_cache(
             library,
-            record.asset.as_ref().expect("loaded placement asset").id,
+            placement.asset.as_ref().expect("loaded placement asset").id,
             canvas_image_settings.max_side,
             CanvasImageLod::Working,
             &prepared,
@@ -195,7 +195,7 @@ pub(crate) fn import_path_sync_traced(
         return Ok(PreparedPlacementImage {
             target_board_id,
             queue_id,
-            record,
+            placement,
             preview_rgba: preview.rgba,
             preview_width: preview.width,
             preview_height: preview.height,
@@ -237,7 +237,7 @@ pub(crate) fn import_path_sync_traced(
         .store_original(&source_path)
         .map_err(|error| format!("{}: {error}", source_path.display()))?;
 
-    let record = library
+    let placement = library
         .persist_imported_image_resolving_placement(
             target_board_id,
             placement_id,
@@ -259,7 +259,7 @@ pub(crate) fn import_path_sync_traced(
         canvas_image_settings,
     )?;
     let _ = library.store_canvas_image_cache(
-        record.asset.as_ref().expect("loaded placement asset").id,
+        placement.asset.as_ref().expect("loaded placement asset").id,
         canvas_image_settings.max_side,
         &canvas_source.rgba,
         canvas_source.width,
@@ -297,7 +297,7 @@ pub(crate) fn import_path_sync_traced(
     Ok(PreparedPlacementImage {
         target_board_id,
         queue_id,
-        record,
+        placement,
         preview_rgba: preview.rgba,
         preview_width: preview.width,
         preview_height: preview.height,
@@ -350,7 +350,7 @@ fn import_svg_path_sync_traced(
     let file_size = std::fs::metadata(&stored_path)
         .map_err(|error| format!("failed to read stored SVG metadata: {error}"))?
         .len();
-    let record = library
+    let placement = library
         .persist_imported_image_resolving_placement(
             target_board_id,
             placement_id,
@@ -373,7 +373,7 @@ fn import_svg_path_sync_traced(
     Ok(PreparedPlacementImage {
         target_board_id,
         queue_id,
-        record,
+        placement,
         preview_rgba: Vec::new(),
         preview_width: svg.width,
         preview_height: svg.height,
@@ -429,7 +429,6 @@ pub(crate) fn import_path(
             target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
             placement_id,
-            item_id: None,
             context: source_path.display().to_string(),
             error,
         },
@@ -475,7 +474,6 @@ pub(crate) fn import_url(
             target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
             placement_id,
-            item_id: None,
             context: url,
             error,
         },
@@ -525,7 +523,6 @@ pub(crate) fn import_clipboard(
             target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
             placement_id,
-            item_id: None,
             context: "clipboard".to_owned(),
             error,
         },
@@ -618,7 +615,7 @@ pub(crate) fn import_url_sync_traced(
     let source_name = remote_image_source_name(&downloaded.url);
     let stored_path =
         library.store_original_bytes(&source_name, &decoded.extension, &downloaded.bytes)?;
-    let record = library.persist_imported_image_resolving_placement(
+    let placement = library.persist_imported_image_resolving_placement(
         target_board_id,
         placement_id,
         &stored_path,
@@ -639,7 +636,7 @@ pub(crate) fn import_url_sync_traced(
         canvas_image_settings,
     )?;
     let _ = library.store_canvas_image_cache(
-        record.asset.as_ref().expect("loaded placement asset").id,
+        placement.asset.as_ref().expect("loaded placement asset").id,
         canvas_image_settings.max_side,
         &canvas_source.rgba,
         canvas_source.width,
@@ -686,7 +683,7 @@ pub(crate) fn import_url_sync_traced(
     Ok(PreparedPlacementImage {
         target_board_id,
         queue_id,
-        record,
+        placement,
         preview_rgba: preview.rgba,
         preview_width: preview.width,
         preview_height: preview.height,
@@ -737,7 +734,7 @@ fn import_downloaded_svg_sync_traced(
     let store_started_at = Instant::now();
     let source_name = remote_image_source_name(&downloaded.url);
     let stored_path = library.store_original_bytes(&source_name, "svg", &svg.bytes)?;
-    let record = library.persist_imported_image_resolving_placement(
+    let placement = library.persist_imported_image_resolving_placement(
         target_board_id,
         placement_id,
         &stored_path,
@@ -758,7 +755,7 @@ fn import_downloaded_svg_sync_traced(
     Ok(PreparedPlacementImage {
         target_board_id,
         queue_id,
-        record,
+        placement,
         preview_rgba: Vec::new(),
         preview_width: svg.width,
         preview_height: svg.height,
@@ -816,7 +813,7 @@ pub(crate) fn import_clipboard_sync_traced(
         height as f32 * initial_scale.max(0.01),
         import_gap,
     )?;
-    let record = library.persist_imported_image_resolving_placement(
+    let placement = library.persist_imported_image_resolving_placement(
         target_board_id,
         placement_id,
         &stored_path,
@@ -831,7 +828,7 @@ pub(crate) fn import_clipboard_sync_traced(
     let preview_started_at = Instant::now();
     let canvas_source = canvas_source_image_from_rgba(width, height, &rgba, canvas_image_settings)?;
     let _ = library.store_canvas_image_cache(
-        record.asset.as_ref().expect("loaded placement asset").id,
+        placement.asset.as_ref().expect("loaded placement asset").id,
         canvas_image_settings.max_side,
         &canvas_source.rgba,
         canvas_source.width,
@@ -853,7 +850,7 @@ pub(crate) fn import_clipboard_sync_traced(
     Ok(PreparedPlacementImage {
         target_board_id,
         queue_id: Some(queue_id),
-        record,
+        placement,
         preview_rgba: preview.rgba,
         preview_width: preview.width,
         preview_height: preview.height,

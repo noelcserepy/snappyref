@@ -15,7 +15,7 @@ pub struct Board {
 #[derive(Clone, Debug, PartialEq)]
 pub struct BoardSummary {
     pub board: Board,
-    pub image_count: usize,
+    pub placement_count: usize,
 }
 
 #[allow(dead_code)]
@@ -36,11 +36,13 @@ pub enum PlacementContent {
         asset_id: i64,
     },
     Loading {
-        intent: ContentResolutionSource,
+        #[serde(alias = "intent")]
+        source: ContentResolutionSource,
         status_message: Option<String>,
     },
     Failed {
-        intent: Option<ContentResolutionSource>,
+        #[serde(alias = "intent")]
+        source: Option<ContentResolutionSource>,
         message: String,
         recoverable: bool,
     },
@@ -121,7 +123,7 @@ impl Placement {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct PlacementLayoutItem {
+pub struct PlacementFootprint {
     pub id: PlacementId,
     pub center: Pos2,
     pub width: f32,

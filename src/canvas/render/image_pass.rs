@@ -7,9 +7,9 @@ use super::annotations::{annotation_should_paint, paint_annotation, paint_annota
 use crate::canvas::geometry::{image_screen_corners_for_record, image_screen_rect_for_record};
 use crate::canvas::interaction::image_screen_rect;
 use crate::canvas::{
-    ANNOTATION_CULL_MARGIN_SCREEN, CanvasImage, CanvasImageLod, CanvasState, CanvasTexture,
+    ANNOTATION_CULL_MARGIN_SCREEN, CanvasImageLod, CanvasState, CanvasTexture,
     IMAGE_CULL_MARGIN_SCREEN, IMAGE_DETAIL_PROMOTION_THRESHOLD, ImagePaintStats, ImagePassBatch,
-    ImagePassCallback, ImagePassInstance, ImagePassMetrics,
+    ImagePassCallback, ImagePassInstance, ImagePassMetrics, RenderedPlacement,
 };
 use crate::data::CanvasStackItem;
 
@@ -30,13 +30,13 @@ pub(crate) fn paint_images(
     let mut metrics = ImagePassMetrics::default();
     let visible_images = state
         .document
-        .images
+        .rendered_placements
         .iter()
         .filter_map(|image| {
             let image_rect = image_screen_rect(state, rect, image);
             image_rect
                 .intersects(cull_rect)
-                .then_some((image.record.state.id, image_rect))
+                .then_some((image.placement.state.id, image_rect))
         })
         .collect::<Vec<_>>();
     metrics.visible_images = visible_images.len();
@@ -51,13 +51,13 @@ pub(crate) fn paint_images(
     let mut fallback_images = Vec::new();
     let mut next_animation_repaint = None;
 
-    for (item_id, image_rect) in &visible_images {
-        let animation_active = state.is_selected(*item_id)
+    for (placement_id, image_rect) in &visible_images {
+        let animation_active = state.is_selected(*placement_id)
             || pointer_hover_pos.is_some_and(|pos| image_rect.contains(pos));
         if animation_active
             && let Some((rgba, width, height)) =
-                state.advance_animated_image(*item_id, animation_time)
-            && let Some(image) = state.image_by_item_id_mut(*item_id)
+                state.advance_animated_image(*placement_id, animation_time)
+            && let Some(image) = state.rendered_placement_by_id_mut(*placement_id)
             && let CanvasTexture::Managed(texture) = &mut image.texture
         {
             texture.set(
@@ -66,11 +66,11 @@ pub(crate) fn paint_images(
             );
         }
 
-        let Some(image) = state.image_by_item_id(*item_id) else {
+        let Some(image) = state.rendered_placement_by_id(*placement_id) else {
             continue;
         };
-        if !image.record.is_loaded() || matches!(image.texture, CanvasTexture::Unloaded { .. }) {
-            fallback_images.push(*item_id);
+        if !image.placement.is_loaded() || matches!(image.texture, CanvasTexture::Unloaded { .. }) {
+            fallback_images.push(*placement_id);
             continue;
         }
         if image.animation.is_some() {
@@ -79,22 +79,22 @@ pub(crate) fn paint_images(
                 metrics.active_animated_images += 1;
                 next_animation_repaint = min_repaint_delay(
                     next_animation_repaint,
-                    state.animated_image_repaint_delay(*item_id, animation_time),
+                    state.animated_image_repaint_delay(*placement_id, animation_time),
                 );
             }
         }
         if matches!(image.texture, CanvasTexture::Svg { .. }) {
-            svg_images.push((*item_id, *image_rect));
+            svg_images.push((*placement_id, *image_rect));
             continue;
         }
 
         let native_eligible = matches!(image.texture, CanvasTexture::Native(_))
             && image.animation.is_none()
-            && image.record.state.rotation.abs() <= 0.0001;
+            && image.placement.state.rotation.abs() <= 0.0001;
         if native_eligible {
-            native_images.push((*item_id, *image_rect));
+            native_images.push((*placement_id, *image_rect));
         } else {
-            fallback_images.push(*item_id);
+            fallback_images.push(*placement_id);
         }
     }
 
@@ -106,8 +106,8 @@ pub(crate) fn paint_images(
             Arc<crate::jobs::NativeTextureHandle>,
             u32,
         )> = None;
-        for (item_id, image_rect) in &native_images {
-            let Some(image) = state.image_by_item_id(*item_id) else {
+        for (placement_id, image_rect) in &native_images {
+            let Some(image) = state.rendered_placement_by_id(*placement_id) else {
                 continue;
             };
             let CanvasTexture::Native(texture) = &image.texture else {
@@ -150,17 +150,17 @@ pub(crate) fn paint_images(
     }
 
     metrics.fallback_images = fallback_images.len();
-    for (item_id, image_rect) in svg_images {
-        let Some(image) = state.image_by_item_id(item_id) else {
+    for (placement_id, image_rect) in svg_images {
+        let Some(image) = state.rendered_placement_by_id(placement_id) else {
             continue;
         };
         paint_svg_image(ui, image, image_rect);
     }
-    for item_id in fallback_images {
-        let Some(image) = state.image_by_item_id(item_id) else {
+    for placement_id in fallback_images {
+        let Some(image) = state.rendered_placement_by_id(placement_id) else {
             continue;
         };
-        if image.record.is_loaded() {
+        if image.placement.is_loaded() {
             paint_image_mesh(painter, state, rect, image);
         } else {
             let image_rect = image_screen_rect(state, rect, image);
@@ -173,16 +173,16 @@ pub(crate) fn paint_images(
     if allow_lod_promotion {
         let promotion_requests = visible_images
             .iter()
-            .filter_map(|(item_id, _)| {
-                desired_image_lod(state, rect, *item_id).map(|lod| (*item_id, lod))
+            .filter_map(|(placement_id, _)| {
+                desired_image_lod(state, rect, *placement_id).map(|lod| (*placement_id, lod))
             })
             .collect::<Vec<_>>();
-        for (item_id, lod) in promotion_requests {
-            state.request_image_lod_load(item_id, lod);
+        for (placement_id, lod) in promotion_requests {
+            state.request_image_lod_load(placement_id, lod);
         }
     }
 
-    for image in &state.document.images {
+    for image in &state.document.rendered_placements {
         let image_rect = image_screen_rect(state, rect, image);
         if !image_rect.intersects(cull_rect) {
             continue;
@@ -232,9 +232,9 @@ fn canvas_stack_matches_existing_layering(state: &CanvasState) -> bool {
     let ordered = state.ordered_canvas_items_back_to_front();
     let existing = state
         .document
-        .images
+        .rendered_placements
         .iter()
-        .map(|image| CanvasStackItem::Placement(image.record.state.id))
+        .map(|image| CanvasStackItem::Placement(image.placement.state.id))
         .chain(
             state
                 .document
@@ -269,8 +269,8 @@ fn paint_canvas_items_interleaved(
 
     for item in state.ordered_canvas_items_back_to_front() {
         match item {
-            CanvasStackItem::Placement(item_id) => {
-                let Some(image) = state.image_by_item_id(item_id) else {
+            CanvasStackItem::Placement(placement_id) => {
+                let Some(image) = state.rendered_placement_by_id(placement_id) else {
                     continue;
                 };
                 let image_rect = image_screen_rect(state, rect, image);
@@ -279,14 +279,14 @@ fn paint_canvas_items_interleaved(
                 }
                 metrics.visible_images += 1;
                 metrics.fallback_images += 1;
-                visible_placement_ids.push(item_id);
+                visible_placement_ids.push(placement_id);
 
-                let animation_active = state.is_selected(item_id)
+                let animation_active = state.is_selected(placement_id)
                     || pointer_hover_pos.is_some_and(|pos| image_rect.contains(pos));
                 if animation_active
                     && let Some((rgba, width, height)) =
-                        state.advance_animated_image(item_id, animation_time)
-                    && let Some(image) = state.image_by_item_id_mut(item_id)
+                        state.advance_animated_image(placement_id, animation_time)
+                    && let Some(image) = state.rendered_placement_by_id_mut(placement_id)
                     && let CanvasTexture::Managed(texture) = &mut image.texture
                 {
                     texture.set(
@@ -298,10 +298,10 @@ fn paint_canvas_items_interleaved(
                     );
                 }
 
-                let Some(image) = state.image_by_item_id(item_id) else {
+                let Some(image) = state.rendered_placement_by_id(placement_id) else {
                     continue;
                 };
-                if !image.record.is_loaded()
+                if !image.placement.is_loaded()
                     || matches!(image.texture, CanvasTexture::Unloaded { .. })
                 {
                     paint_unloaded_placement(painter, image, image_rect);
@@ -314,7 +314,7 @@ fn paint_canvas_items_interleaved(
                         metrics.active_animated_images += 1;
                         next_animation_repaint = min_repaint_delay(
                             next_animation_repaint,
-                            state.animated_image_repaint_delay(item_id, animation_time),
+                            state.animated_image_repaint_delay(placement_id, animation_time),
                         );
                     }
                 }
@@ -339,12 +339,12 @@ fn paint_canvas_items_interleaved(
     if allow_lod_promotion {
         let promotion_requests = visible_placement_ids
             .iter()
-            .filter_map(|item_id| {
-                desired_image_lod(state, rect, *item_id).map(|lod| (*item_id, lod))
+            .filter_map(|placement_id| {
+                desired_image_lod(state, rect, *placement_id).map(|lod| (*placement_id, lod))
             })
             .collect::<Vec<_>>();
-        for (item_id, lod) in promotion_requests {
-            state.request_image_lod_load(item_id, lod);
+        for (placement_id, lod) in promotion_requests {
+            state.request_image_lod_load(placement_id, lod);
         }
     }
 
@@ -356,8 +356,12 @@ fn paint_canvas_items_interleaved(
     metrics
 }
 
-fn paint_unloaded_placement(painter: &egui::Painter, image: &CanvasImage, image_rect: egui::Rect) {
-    let (fill, stroke, label) = match &image.record.content {
+fn paint_unloaded_placement(
+    painter: &egui::Painter,
+    image: &RenderedPlacement,
+    image_rect: egui::Rect,
+) {
+    let (fill, stroke, label) = match &image.placement.content {
         crate::data::PlacementContent::Loading { .. } => (
             crate::ui::theme::SURFACE,
             egui::Stroke::new(1.0, crate::ui::theme::BORDER_STRONG),
@@ -404,7 +408,7 @@ fn min_repaint_delay(current: Option<Duration>, candidate: Option<Duration>) -> 
     }
 }
 
-fn paint_svg_image(ui: &egui::Ui, image: &CanvasImage, image_rect: egui::Rect) {
+fn paint_svg_image(ui: &egui::Ui, image: &RenderedPlacement, image_rect: egui::Rect) {
     let CanvasTexture::Svg { uri, bytes, .. } = &image.texture else {
         return;
     };
@@ -435,10 +439,10 @@ fn image_pass_instance(rect: egui::Rect, image_rect: egui::Rect) -> ImagePassIns
 pub(crate) fn desired_image_lod(
     state: &CanvasState,
     rect: egui::Rect,
-    item_id: i64,
+    placement_id: i64,
 ) -> Option<CanvasImageLod> {
-    let image = state.image_by_item_id(item_id)?;
-    if !image.record.is_loaded() || matches!(image.texture, CanvasTexture::Unloaded { .. }) {
+    let image = state.rendered_placement_by_id(placement_id)?;
+    if !image.placement.is_loaded() || matches!(image.texture, CanvasTexture::Unloaded { .. }) {
         return None;
     }
     if image.loaded_lod < CanvasImageLod::Working {
@@ -458,14 +462,14 @@ pub(crate) fn desired_image_lod(
 fn paint_image_overlay(
     painter: &egui::Painter,
     state: &CanvasState,
-    image: &CanvasImage,
+    image: &RenderedPlacement,
     image_rect: egui::Rect,
     debug_labels: bool,
 ) {
     if state
         .interaction
         .search_match_placement_ids
-        .contains(&image.record.state.id)
+        .contains(&image.placement.state.id)
     {
         painter.rect_stroke(
             image_rect,
@@ -474,11 +478,11 @@ fn paint_image_overlay(
             egui::StrokeKind::Outside,
         );
     }
-    if state.is_selected(image.record.state.id)
+    if state.is_selected(image.placement.state.id)
         && selection_border_visible(state, painter.ctx().input(|input| input.time))
     {
         let corners = image_screen_corners_for_record(
-            &image.record,
+            &image.placement,
             state.pan,
             state.zoom,
             painter.clip_rect().center(),
@@ -492,7 +496,9 @@ fn paint_image_overlay(
     if debug_labels {
         let label = format!(
             "#{}  ({:.0}, {:.0})",
-            image.record.state.id, image.record.state.center.x, image.record.state.center.y
+            image.placement.state.id,
+            image.placement.state.center.x,
+            image.placement.state.center.y
         );
         painter.text(
             image_rect.min + egui::vec2(crate::ui::theme::SPACE_2, crate::ui::theme::SPACE_2),
@@ -517,10 +523,10 @@ fn paint_image_mesh(
     painter: &egui::Painter,
     state: &CanvasState,
     rect: egui::Rect,
-    image: &CanvasImage,
+    image: &RenderedPlacement,
 ) {
     let corners =
-        image_screen_corners_for_record(&image.record, state.pan, state.zoom, rect.center());
+        image_screen_corners_for_record(&image.placement, state.pan, state.zoom, rect.center());
     let mut mesh = egui::Mesh::with_texture(image.texture.id());
     let left_top = mesh.vertices.len() as u32;
     mesh.vertices.push(egui::epaint::Vertex {
@@ -573,7 +579,7 @@ pub(crate) fn canvas_texture_from_preview(
 }
 
 pub(crate) fn image_paint_stats_for_records(
-    records: &[crate::data::Placement],
+    placements: &[crate::data::Placement],
     rect: egui::Rect,
     pan: egui::Vec2,
     zoom: f32,
@@ -581,9 +587,9 @@ pub(crate) fn image_paint_stats_for_records(
 ) -> ImagePaintStats {
     let mut stats = ImagePaintStats::default();
     let cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
-    for record in records {
+    for placement in placements {
         stats.considered += 1;
-        let image_rect = image_screen_rect_for_record(record, rect, pan, zoom, rect.center());
+        let image_rect = image_screen_rect_for_record(placement, rect, pan, zoom, rect.center());
         if !cull_offscreen || image_rect.intersects(cull_rect) {
             stats.drawn += 1;
         }
@@ -592,7 +598,7 @@ pub(crate) fn image_paint_stats_for_records(
 }
 
 pub(crate) fn image_texture_group_count_for_records(
-    records: &[crate::data::Placement],
+    placements: &[crate::data::Placement],
     rect: egui::Rect,
     pan: egui::Vec2,
     zoom: f32,
@@ -600,14 +606,14 @@ pub(crate) fn image_texture_group_count_for_records(
     let cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
     let mut groups = 0;
     let mut previous_asset_id = None;
-    for record in records {
-        let image_rect = image_screen_rect_for_record(record, rect, pan, zoom, rect.center());
+    for placement in placements {
+        let image_rect = image_screen_rect_for_record(placement, rect, pan, zoom, rect.center());
         if !image_rect.intersects(cull_rect) {
             continue;
         }
-        if previous_asset_id != Some(record.asset.as_ref().expect("loaded placement asset").id) {
+        if previous_asset_id != Some(placement.asset.as_ref().expect("loaded placement asset").id) {
             groups += 1;
-            previous_asset_id = Some(record.asset.as_ref().expect("loaded placement asset").id);
+            previous_asset_id = Some(placement.asset.as_ref().expect("loaded placement asset").id);
         }
     }
     groups

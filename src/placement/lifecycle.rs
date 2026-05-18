@@ -71,15 +71,15 @@ pub(crate) fn commit_search_provisional_batch(
     let provisional_records = request
         .provisional_placement_ids
         .iter()
-        .filter_map(|item_id| canvas.placement_for_id(*item_id))
+        .filter_map(|placement_id| canvas.placement_for_id(*placement_id))
         .collect::<Vec<_>>();
     let drop_world =
-        source_center_for_records(&provisional_records).unwrap_or(request.fallback_world);
-    let source_center = source_center_for_records(
+        source_center_for_placements(&provisional_records).unwrap_or(request.fallback_world);
+    let source_center = source_center_for_placements(
         &request
             .placement_ids
             .iter()
-            .filter_map(|item_id| canvas.placement_for_id(*item_id))
+            .filter_map(|placement_id| canvas.placement_for_id(*placement_id))
             .collect::<Vec<_>>(),
     )
     .unwrap_or(drop_world);
@@ -92,20 +92,20 @@ pub(crate) fn commit_search_provisional_batch(
         .collect::<Vec<_>>();
 
     let mut added_placement_ids = Vec::new();
-    for (index, mut record) in duplicated.into_iter().enumerate() {
+    for (index, mut placement) in duplicated.into_iter().enumerate() {
         if let Some(provisional) = item_provisionals.get(index) {
-            record.state.center.x = provisional.state.center.x;
-            record.state.center.y = provisional.state.center.y;
-            library.update_placement_state(&record.state)?;
+            placement.state.center.x = provisional.state.center.x;
+            placement.state.center.y = provisional.state.center.y;
+            library.update_placement_state(&placement.state)?;
         }
-        added_placement_ids.push(record.state.id);
-        canvas.add_loaded_reference_placement(record)?;
+        added_placement_ids.push(placement.state.id);
+        canvas.add_loaded_reference_placement(placement)?;
     }
 
     let asset_provisionals = provisional_records
         .iter()
-        .filter(|record| {
-            record
+        .filter(|placement| {
+            placement
                 .state
                 .asset_id
                 .is_some_and(|asset_id| request.asset_ids.contains(&asset_id))
@@ -127,16 +127,16 @@ pub(crate) fn commit_search_provisional_batch(
             true,
             settings.target_canvas_area,
         );
-        let record = library.create_placement_from_asset(
+        let placement = library.create_placement_from_asset(
             asset_id,
             provisional.state.center,
             scale,
             provisional.state.rotation,
             provisional.state.z_index,
         )?;
-        added_placement_ids.push(record.state.id);
-        canvas.add_unresolved_placement(record.clone());
-        load_existing_records.push(record);
+        added_placement_ids.push(placement.state.id);
+        canvas.add_unresolved_placement(placement.clone());
+        load_existing_records.push(placement);
     }
 
     if !added_placement_ids.is_empty() {
@@ -150,18 +150,18 @@ pub(crate) fn commit_search_provisional_batch(
     })
 }
 
-fn source_center_for_records(records: &[Placement]) -> Option<egui::Pos2> {
+fn source_center_for_placements(placements: &[Placement]) -> Option<egui::Pos2> {
     let mut min = egui::Pos2::new(f32::INFINITY, f32::INFINITY);
     let mut max = egui::Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
     let mut found = false;
 
-    for record in records {
+    for placement in placements {
         found = true;
-        let half_size = record.scaled_visual_size() * 0.5;
-        min.x = min.x.min(record.state.center.x - half_size.x);
-        min.y = min.y.min(record.state.center.y - half_size.y);
-        max.x = max.x.max(record.state.center.x + half_size.x);
-        max.y = max.y.max(record.state.center.y + half_size.y);
+        let half_size = placement.scaled_visual_size() * 0.5;
+        min.x = min.x.min(placement.state.center.x - half_size.x);
+        min.y = min.y.min(placement.state.center.y - half_size.y);
+        max.x = max.x.max(placement.state.center.x + half_size.x);
+        max.y = max.y.max(placement.state.center.y + half_size.y);
     }
 
     found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))
@@ -276,10 +276,13 @@ mod tests {
         assert_eq!(committed.added_placement_ids.len(), 1);
         assert_eq!(committed.load_existing_records.len(), 1);
         assert!(canvas.provisional_records_in_selection_order().is_empty());
-        let record = canvas
+        let placement = canvas
             .placement_for_id(committed.added_placement_ids[0])
             .unwrap();
-        assert_eq!(record.lifecycle, crate::data::PlacementLifecycle::Committed);
+        assert_eq!(
+            placement.lifecycle,
+            crate::data::PlacementLifecycle::Committed
+        );
         assert_eq!(
             canvas.selected_placement_ids(),
             committed.added_placement_ids

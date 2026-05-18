@@ -109,7 +109,7 @@ impl Library {
                         name: row.get(1)?,
                         archived: row.get::<_, i64>(2)? != 0,
                     },
-                    image_count: row.get::<_, i64>(3)? as usize,
+                    placement_count: row.get::<_, i64>(3)? as usize,
                 })
             })
             .map_err(|error| format!("failed to read board summaries query: {error}"))?;

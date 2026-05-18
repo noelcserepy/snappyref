@@ -26,17 +26,17 @@ fn loaded_placements_load_as_committed_loaded_content() {
     let source = root.join("source.png");
     fs::write(&source, [255, 255, 255, 255]).unwrap();
     let library = Library::initialize(root.clone()).unwrap();
-    let record = library
+    let placement = library
         .persist_imported_image(&source, "image/png", 10, 20, 4, egui::pos2(3.0, 4.0), 2.0)
         .unwrap();
 
     let reloaded = library.load_placements().unwrap();
     assert_eq!(reloaded.len(), 1);
-    assert_eq!(reloaded[0].state.id, record.state.id);
+    assert_eq!(reloaded[0].state.id, placement.state.id);
     assert_eq!(
         reloaded[0].content,
         PlacementContent::Loaded {
-            asset_id: record.asset.as_ref().expect("loaded placement asset").id
+            asset_id: placement.asset.as_ref().expect("loaded placement asset").id
         }
     );
     assert!(reloaded[0].asset.is_some());
@@ -44,8 +44,8 @@ fn loaded_placements_load_as_committed_loaded_content() {
     assert_eq!(reloaded[0].visual_size, egui::vec2(10.0, 20.0));
     assert_eq!(
         library.load_placement_layout_items().unwrap()[0],
-        crate::data::PlacementLayoutItem {
-            id: record.state.id,
+        crate::data::PlacementFootprint {
+            id: placement.state.id,
             center: egui::pos2(3.0, 4.0),
             width: 20.0,
             height: 40.0,
@@ -102,13 +102,13 @@ fn committed_loading_and_failed_placements_persist_load_and_stack() {
     assert_eq!(
         library.load_placement_layout_items().unwrap(),
         vec![
-            crate::data::PlacementLayoutItem {
+            crate::data::PlacementFootprint {
                 id: loading.state.id,
                 center: egui::pos2(12.0, 24.0),
                 width: 640.0,
                 height: 360.0,
             },
-            crate::data::PlacementLayoutItem {
+            crate::data::PlacementFootprint {
                 id: failed.state.id,
                 center: egui::pos2(48.0, 96.0),
                 width: 120.0,
@@ -1697,13 +1697,13 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
     let path = library
         .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
         .unwrap();
-    let record = library
+    let placement = library
         .persist_imported_image(&path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
         .unwrap();
 
     library
         .record_retryable_asset_embedding_failure(
-            record.asset.as_ref().expect("loaded placement asset").id,
+            placement.asset.as_ref().expect("loaded placement asset").id,
             "mobileclip_s0",
             768,
             "temporary failure",
@@ -1720,7 +1720,7 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
 
     library
         .record_retryable_asset_embedding_failure(
-            record.asset.as_ref().expect("loaded placement asset").id,
+            placement.asset.as_ref().expect("loaded placement asset").id,
             "mobileclip_s0",
             768,
             "temporary failure again",
@@ -1743,7 +1743,7 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
 
     library
         .record_retryable_asset_embedding_failure(
-            record.asset.as_ref().expect("loaded placement asset").id,
+            placement.asset.as_ref().expect("loaded placement asset").id,
             "mobileclip_s0",
             768,
             "temporary failure exhausted",
@@ -1767,13 +1767,13 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
     let path = library
         .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
         .unwrap();
-    let record = library
+    let placement = library
         .persist_imported_image(&path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
         .unwrap();
 
     library
         .record_retryable_asset_embedding_failure(
-            record.asset.as_ref().expect("loaded placement asset").id,
+            placement.asset.as_ref().expect("loaded placement asset").id,
             "mobileclip_s0",
             768,
             "temporary failure",
@@ -1782,7 +1782,7 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
         .unwrap();
     library
         .upsert_asset_embedding_status(
-            record.asset.as_ref().expect("loaded placement asset").id,
+            placement.asset.as_ref().expect("loaded placement asset").id,
             "mobileclip_s0",
             768,
             EmbeddingStatus::Pending,
@@ -1791,7 +1791,7 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
         .unwrap();
     library
         .record_retryable_asset_embedding_failure(
-            record.asset.as_ref().expect("loaded placement asset").id,
+            placement.asset.as_ref().expect("loaded placement asset").id,
             "mobileclip_s0",
             768,
             "temporary failure again",
@@ -1815,7 +1815,7 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
 
     library
         .upsert_asset_embedding_blob(
-            record.asset.as_ref().expect("loaded placement asset").id,
+            placement.asset.as_ref().expect("loaded placement asset").id,
             "mobileclip_s0",
             &[1.0, 0.0],
         )
@@ -1837,13 +1837,13 @@ fn terminal_embedding_failures_are_not_automatic_retry_jobs() {
     let path = library
         .store_rgba_image("terminal", &[255, 0, 0, 255], 1, 1)
         .unwrap();
-    let record = library
+    let placement = library
         .persist_imported_image(&path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
         .unwrap();
 
     library
         .record_terminal_asset_embedding_failure(
-            record.asset.as_ref().expect("loaded placement asset").id,
+            placement.asset.as_ref().expect("loaded placement asset").id,
             "mobileclip_s0",
             768,
             "failed to open image",
@@ -1940,7 +1940,7 @@ fn cropped_relink_requires_new_asset_embedding() {
         .store_rgba_image("cropped", &[0, 255, 0, 255], 1, 1)
         .unwrap();
 
-    let record = library
+    let placement = library
         .persist_imported_image(
             &original_path,
             "image/png",
@@ -1953,7 +1953,7 @@ fn cropped_relink_requires_new_asset_embedding() {
         .unwrap();
     library
         .upsert_asset_embedding_blob(
-            record.asset.as_ref().expect("loaded placement asset").id,
+            placement.asset.as_ref().expect("loaded placement asset").id,
             "mobileclip_s0",
             &[1.0, 0.0],
         )
@@ -1961,7 +1961,7 @@ fn cropped_relink_requires_new_asset_embedding() {
 
     let relinked_asset = library
         .create_asset_and_relink_placement(
-            record.state.id,
+            placement.state.id,
             &cropped_path,
             "image/png",
             1,

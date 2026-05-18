@@ -78,6 +78,10 @@ _Avoid_: Import reservation, placeholder completion, worker-owned Placement stat
 The persisted source descriptor used to retry, finish, or fail a Placement's content resolution, such as an external path, external URL, clipboard payload, or existing Asset. It belongs to Placement Content State after a Placement exists; it is not a pre-Placement Source Intent.
 _Avoid_: Placement Content Intent, Source Intent
 
+**Placement Preview Slot**:
+A transient UI/render footprint for pre-Placement hover or verification previews. A Placement Preview Slot is not persisted, selected, stack-ordered, undoable, or part of Document History. Once content is committed to the board, it must be represented as a Placement with Placement Content State, not as a preview slot.
+_Avoid_: Import Placeholder, placeholder item, pending Placement
+
 **Selection Border**:
 The outline that shows the current canvas selection; it hides while a placement is moving and reappears after the movement pauses or the drag ends.
 _Avoid_: Drag guide, snap outline
@@ -105,6 +109,10 @@ _Avoid_: Perfect square layout, masonry layout
 **Compact Size Normalization**:
 The optional pre-packing resize phase of compact arrangement where selected Placements with near-matching visual width or height may be scaled so their visible footprints form cleaner rows or columns.
 _Avoid_: Normalize close heights/widths, bucket resize, pre-packing resize
+
+**Placement Footprint**:
+A transient geometry input used by arrangement, preview planning, and guide-snapping calculations. A Placement Footprint may describe a real Placement or a pre-Placement preview slot, but it is not itself a domain object and must not be persisted as board content.
+_Avoid_: PlacementLayoutItem, layout item as domain object
 
 **Directional Settle Arrange**:
 An arrange command where selected Placements move as far as possible toward one edge of the current selection bounds, stopping at that edge or at the Workspace Settings image gap from already-settled selected Placements.
@@ -310,6 +318,10 @@ _Avoid_: Thumbnail cache, preview cache
 A transient CPU-side raster copy of a selected placement's current canvas-sized pixels, used for crop preview and crop undo.
 _Avoid_: Canvas image cache, asset cache, permanent preview
 
+**Rendered Placement**:
+The canvas render adapter that pairs a Placement with runtime texture, LOD, and animation state. It is UI/render-owned and must not be treated as the domain Placement itself.
+_Avoid_: CanvasImage as Placement identity, image record
+
 **Canvas Image LOD**:
 A level of detail for a canvas image cache derivative.
 _Avoid_: Cache tier, image mode, downscale mode
@@ -467,7 +479,7 @@ The confirmed command that removes selected assets from boards and library searc
 _Avoid_: Permanent delete, delete file
 
 **Import Placeholder**:
-Deprecated term for the visual rendering of a loading Placement. Do not model import placeholders as separate canvas items; use Placement Content State instead.
+Deprecated term for the visual rendering of a loading Placement or a pre-Placement preview. Do not model committed import placeholders as separate canvas items; use Placement Content State for committed content and **Placement Preview Slot** for transient pre-Placement previews.
 _Avoid_: Temporary item, pending asset, placeholder item
 
 **PlacementDraft**:
@@ -589,6 +601,8 @@ _Avoid_: Release asset, build cache
 - A **Crop Preview** may use a **Canvas Pixel Snapshot** before the final cropped **Asset** exists.
 - **Delete (from board)** removes **Placements** and **Annotations** from the **Active Board** but does not remove **Assets** from the **Library**.
 - **Remove from Library** archives **Assets** and removes their **Placements** across all **Boards**.
+- **Rendered Placement** belongs to the canvas render layer and wraps a **Placement** with runtime image resources; it is not the domain object.
+- **Placement Footprint** belongs to transient arrangement/preview calculations and is not persisted board content.
 - Storage table and column names such as `board_items`, `item_id`, and `content_resolution_intent` are legacy persistence vocabulary. Keep them inside storage/migration adapters and translate to **Placement**, **PlacementId**, and **Content Resolution Source** at domain boundaries. Use `item_id` in domain code only when the union is truly a **Canvas Item**.
 
 ## Perf Corpus

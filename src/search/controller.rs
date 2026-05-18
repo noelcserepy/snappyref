@@ -1808,7 +1808,7 @@ mod tests {
         assert!(matches!(
             record.content,
             crate::data::PlacementContent::Loading {
-                intent: crate::data::ContentResolutionSource::SearchAsset { asset_id: 10 },
+                source: crate::data::ContentResolutionSource::SearchAsset { asset_id: 10 },
                 ..
             }
         ));

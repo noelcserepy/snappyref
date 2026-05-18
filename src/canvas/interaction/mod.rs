@@ -98,9 +98,9 @@ pub(super) fn handle_input(
         && primary_pressed
         && image_drag_scale_modifier_held
         && let Some(pointer_pos) = pointer_pos
-        && let Some(item_id) = hit_test_image(state, rect, pointer_pos)
+        && let Some(placement_id) = hit_test_image(state, rect, pointer_pos)
     {
-        begin_image_drag_scale(state, rect, item_id, pointer_pos);
+        begin_image_drag_scale(state, rect, placement_id, pointer_pos);
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         return;
     }
@@ -165,7 +165,7 @@ pub(super) fn handle_input(
     }
 
     if let Some(pointer_pos) = pointer_pos
-        && let Some(image) = state.selected_single_image()
+        && let Some(image) = state.selected_single_rendered_placement()
         && let Some(handle) = hit_test_image_resize_handle(state, rect, image, pointer_pos)
     {
         ui.ctx().set_cursor_icon(image_resize_cursor_icon(handle));
@@ -199,18 +199,19 @@ pub(super) fn handle_input(
                 start_world: pointer_world,
                 current_world: pointer_world,
             });
-        } else if crop_key_held && let Some(item_id) = hit_test_image(state, rect, pointer_pos) {
-            if !begin_crop(state, item_id, pointer_pos) {
+        } else if crop_key_held && let Some(placement_id) = hit_test_image(state, rect, pointer_pos)
+        {
+            if !begin_crop(state, placement_id, pointer_pos) {
                 return;
             }
-        } else if let Some(image) = state.selected_single_image().map(|image| {
+        } else if let Some(image) = state.selected_single_rendered_placement().map(|image| {
             (
-                image.record.state.id,
+                image.placement.state.id,
                 hit_test_image_resize_handle(state, rect, image, pointer_pos),
             )
-        }) && let (item_id, Some(handle)) = image
+        }) && let (placement_id, Some(handle)) = image
         {
-            begin_image_resize(state, rect, item_id, handle);
+            begin_image_resize(state, rect, placement_id, handle);
             return;
         } else if rotation_handle_key_held
             && hit_test_selected_image_rotation_handle(state, rect, pointer_pos)
@@ -262,11 +263,11 @@ pub(super) fn handle_input(
                         return;
                     }
                 }
-                CanvasHit::Placement(item_id) => {
+                CanvasHit::Placement(placement_id) => {
                     if shift_held {
-                        state.add_to_selection(item_id);
-                    } else if !state.is_selected(item_id) {
-                        state.set_single_selection(item_id);
+                        state.add_to_selection(placement_id);
+                    } else if !state.is_selected(placement_id) {
+                        state.set_single_selection(placement_id);
                     }
 
                     let pointer_world = state.screen_to_world(pointer_pos, rect);
@@ -385,14 +386,18 @@ pub(super) fn handle_input(
     {
         match transform_state {
             ImageTransformState::Resizing {
-                item_id,
+                placement_id,
                 anchor_screen,
                 start_handle_screen,
                 start_scale,
             } => {
-                if let Some(image) = state.image_by_item_id(item_id).cloned() {
+                if let Some(image) = state.rendered_placement_by_id(placement_id).cloned() {
                     let (center_screen, scale) = resized_image_transform(
-                        image.record.asset.as_ref().expect("loaded placement asset"),
+                        image
+                            .placement
+                            .asset
+                            .as_ref()
+                            .expect("loaded placement asset"),
                         start_scale,
                         anchor_screen,
                         start_handle_screen,
@@ -400,11 +405,11 @@ pub(super) fn handle_input(
                     );
                     let center_world = state.screen_to_world(center_screen, rect);
                     let anchor_world = state.screen_to_world(anchor_screen, rect);
-                    let base_size = image.record.base_visual_size();
+                    let base_size = image.placement.base_visual_size();
                     let base_visual_size = super::rotated_visual_size(
                         base_size.x,
                         base_size.y,
-                        image.record.state.rotation,
+                        image.placement.state.rotation,
                     );
                     let desired_rect = egui::Rect::from_center_size(
                         center_world,
@@ -419,12 +424,16 @@ pub(super) fn handle_input(
                         compute_resize_snap_preview(
                             state,
                             rect,
-                            item_id,
+                            placement_id,
                             desired_rect,
                             anchor_world,
                             base_visual_size,
                             min_image_scale(
-                                image.record.asset.as_ref().expect("loaded placement asset"),
+                                image
+                                    .placement
+                                    .asset
+                                    .as_ref()
+                                    .expect("loaded placement asset"),
                             ),
                         )
                     };
@@ -435,7 +444,7 @@ pub(super) fn handle_input(
                                 (snap_rect.width() / base_visual_size.x.max(f32::EPSILON)).max(
                                     min_image_scale(
                                         image
-                                            .record
+                                            .placement
                                             .asset
                                             .as_ref()
                                             .expect("loaded placement asset"),
@@ -444,7 +453,7 @@ pub(super) fn handle_input(
                             )
                         })
                         .unwrap_or((center_world, scale));
-                    state.set_image_center_and_scale(item_id, center_world, scale);
+                    state.set_image_center_and_scale(placement_id, center_world, scale);
                 }
             }
             ImageTransformState::Scaling {
@@ -468,7 +477,7 @@ pub(super) fn handle_input(
                     scaled_image_transforms(&starting_items, group_center_world, factor)
                 {
                     state.set_image_center_and_scale(
-                        transform.item_id,
+                        transform.placement_id,
                         transform.center_world,
                         transform.scale,
                     );
@@ -488,11 +497,11 @@ pub(super) fn handle_input(
                     state.rotation_snap_degrees,
                     alt_held,
                 );
-                for (item_id, start_center_world, start_rotation) in starting_items {
+                for (placement_id, start_center_world, start_rotation) in starting_items {
                     let offset = start_center_world - center_world;
                     let rotated_offset = rotate_vec2(offset, rotation_delta);
                     state.set_image_center_and_rotation(
-                        item_id,
+                        placement_id,
                         center_world + rotated_offset,
                         start_rotation + rotation_delta,
                     );
@@ -535,15 +544,17 @@ pub(super) fn handle_input(
             state.interaction.pending_annotation = pending_annotation_from_draft(draft_state);
         } else if let Some(transform_state) = state.interaction.image_transform_state.take() {
             match transform_state {
-                ImageTransformState::Resizing { item_id, .. } => state.mark_dirty(item_id),
+                ImageTransformState::Resizing { placement_id, .. } => {
+                    state.mark_dirty(placement_id)
+                }
                 ImageTransformState::Scaling { placement_ids, .. } => {
-                    for item_id in placement_ids {
-                        state.mark_dirty(item_id);
+                    for placement_id in placement_ids {
+                        state.mark_dirty(placement_id);
                     }
                 }
                 ImageTransformState::Rotating { placement_ids, .. } => {
-                    for item_id in placement_ids {
-                        state.mark_dirty(item_id);
+                    for placement_id in placement_ids {
+                        state.mark_dirty(placement_id);
                     }
                 }
             }
@@ -578,10 +589,10 @@ pub(super) fn handle_input(
         && primary_double_clicked
         && pointer_in_canvas_rect
         && let Some(pointer_pos) = pointer_pos
-        && let Some(item_id) = hit_test_image(state, rect, pointer_pos)
+        && let Some(placement_id) = hit_test_image(state, rect, pointer_pos)
     {
-        if !state.is_selected(item_id) {
-            state.set_single_selection(item_id);
+        if !state.is_selected(placement_id) {
+            state.set_single_selection(placement_id);
         }
         state.interaction.pending_focus_selection_request = true;
         return;
@@ -662,19 +673,19 @@ fn drawing_annotation_kind(ui: &egui::Ui) -> Option<CanvasAnnotationKind> {
 fn hit_test_image(state: &CanvasState, rect: egui::Rect, pointer_pos: egui::Pos2) -> Option<i64> {
     state
         .document
-        .images
+        .rendered_placements
         .iter()
         .rev()
         .find(|image| {
             image_contains_screen_point(
-                &image.record,
+                &image.placement,
                 pointer_pos,
                 state.pan,
                 state.zoom,
                 rect.center(),
             )
         })
-        .map(|image| image.record.state.id)
+        .map(|image| image.placement.state.id)
 }
 
 #[cfg(test)]
@@ -802,14 +813,14 @@ mod tests {
     fn image_drag_scale_preserves_multi_image_layout_around_group_center() {
         let starting_items = vec![
             super::ImageScaleStart {
-                item_id: 1,
+                placement_id: 1,
                 center_world: egui::pos2(-100.0, 0.0),
                 base_visual_size: egui::vec2(100.0, 80.0),
                 start_scale: 1.0,
                 min_scale: 0.1,
             },
             super::ImageScaleStart {
-                item_id: 2,
+                placement_id: 2,
                 center_world: egui::pos2(100.0, 0.0),
                 base_visual_size: egui::vec2(100.0, 80.0),
                 start_scale: 0.5,
@@ -819,10 +830,10 @@ mod tests {
 
         let transforms = scaled_image_transforms(&starting_items, egui::pos2(0.0, 0.0), 2.0);
 
-        assert_eq!(transforms[0].item_id, 1);
+        assert_eq!(transforms[0].placement_id, 1);
         assert_eq!(transforms[0].center_world, egui::pos2(-200.0, 0.0));
         assert!((transforms[0].scale - 2.0).abs() < 0.01);
-        assert_eq!(transforms[1].item_id, 2);
+        assert_eq!(transforms[1].placement_id, 2);
         assert_eq!(transforms[1].center_world, egui::pos2(200.0, 0.0));
         assert!((transforms[1].scale - 1.0).abs() < 0.01);
     }
@@ -860,7 +871,7 @@ mod tests {
         canvas.select_placements(&[1]);
 
         let starting_items = vec![super::ImageScaleStart {
-            item_id: 1,
+            placement_id: 1,
             center_world: egui::Pos2::ZERO,
             base_visual_size: egui::vec2(100.0, 100.0),
             start_scale: 1.0,
@@ -1456,7 +1467,7 @@ mod tests {
             file_size: 0,
             imported_at: 0,
         };
-        let record = Placement::loaded(
+        let placement = Placement::loaded(
             PlacementState {
                 id,
                 asset_id: Some(id),
@@ -1474,7 +1485,7 @@ mod tests {
             PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
-                record,
+                placement,
                 preview_rgba: rgba,
                 preview_width: width,
                 preview_height: height,

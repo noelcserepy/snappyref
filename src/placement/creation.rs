@@ -46,12 +46,12 @@ pub(crate) struct CompletedPlacementCreationBatch {
 #[allow(dead_code)]
 pub(crate) struct CreatedLoadedPlacement {
     pub(crate) reservation: Option<ContentResolutionReservation>,
-    pub(crate) record: Placement,
+    pub(crate) placement: Placement,
 }
 
 pub(crate) struct CreatedLoadingPlacement {
     pub(crate) reservation: ContentResolutionReservation,
-    pub(crate) record: Placement,
+    pub(crate) placement: Placement,
 }
 
 pub(crate) enum ProvisionalSourceIntent {
@@ -162,7 +162,7 @@ pub(crate) fn create_committed_loading_placement(
     library: &Library,
     content_resolution: &mut ContentResolutionRuntime,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::data::PlacementLayoutItem>,
+    layout: &mut Vec<crate::data::PlacementFootprint>,
     target_board_id: i64,
     intent: SourceIntent,
     center_world: egui::Pos2,
@@ -170,7 +170,7 @@ pub(crate) fn create_committed_loading_placement(
 ) -> Result<CreatedLoadingPlacement, String> {
     let (width, height) = normalized_dimensions(&intent);
     let size_world = visual_size_for_dimensions(width, height, settings.target_canvas_area);
-    let record = library.persist_committed_loading_placement(
+    let placement = library.persist_committed_loading_placement(
         center_world,
         1.0,
         size_world.x.max(1.0),
@@ -179,20 +179,20 @@ pub(crate) fn create_committed_loading_placement(
         Some("Loading".to_owned()),
     )?;
     let reservation =
-        content_resolution.reserve_placement(target_board_id, record.state.id, center_world);
+        content_resolution.reserve_placement(target_board_id, placement.state.id, center_world);
 
-    layout.push(crate::data::PlacementLayoutItem {
-        id: record.state.id,
-        center: record.state.center,
-        width: record.scaled_visual_size().x,
-        height: record.scaled_visual_size().y,
+    layout.push(crate::data::PlacementFootprint {
+        id: placement.state.id,
+        center: placement.state.center,
+        width: placement.scaled_visual_size().x,
+        height: placement.scaled_visual_size().y,
     });
-    canvas.add_unresolved_placement(record.clone());
-    canvas.select_placements(&[record.state.id]);
+    canvas.add_unresolved_placement(placement.clone());
+    canvas.select_placements(&[placement.state.id]);
 
     Ok(CreatedLoadingPlacement {
         reservation,
-        record,
+        placement,
     })
 }
 
@@ -200,7 +200,7 @@ pub(crate) fn create_committed_loading_placements(
     library: &Library,
     content_resolution: &mut ContentResolutionRuntime,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::data::PlacementLayoutItem>,
+    layout: &mut Vec<crate::data::PlacementFootprint>,
     target_board_id: i64,
     intents: Vec<SourceIntent>,
     anchor_world: egui::Pos2,
@@ -224,7 +224,7 @@ pub(crate) fn create_committed_loading_placements(
     }
     let placement_ids = created
         .iter()
-        .map(|created| created.record.state.id)
+        .map(|created| created.placement.state.id)
         .collect::<Vec<_>>();
     canvas.select_placements(&placement_ids);
     Ok(created)
@@ -246,7 +246,7 @@ pub(crate) fn create_provisional_placements(
     let sizes = intents
         .iter()
         .map(|intent| match intent {
-            ProvisionalSourceIntent::ExistingPlacement(record) => record.scaled_visual_size(),
+            ProvisionalSourceIntent::ExistingPlacement(placement) => placement.scaled_visual_size(),
             ProvisionalSourceIntent::ExistingAsset { dimensions, .. } => {
                 visual_size_for_dimensions(dimensions.0, dimensions.1, settings.target_canvas_area)
             }
@@ -259,20 +259,20 @@ pub(crate) fn create_provisional_placements(
 
     for (intent, (center_world, _size_world)) in intents.into_iter().zip(centers) {
         match intent {
-            ProvisionalSourceIntent::ExistingPlacement(mut record) => {
-                record.state.id = next_id;
-                record.state.center.x = center_world.x;
-                record.state.center.y = center_world.y;
-                record.state.z_index = next_id as i32;
-                record.lifecycle = PlacementLifecycle::Provisional;
-                canvas.add_provisional_reference_item(record);
+            ProvisionalSourceIntent::ExistingPlacement(mut placement) => {
+                placement.state.id = next_id;
+                placement.state.center.x = center_world.x;
+                placement.state.center.y = center_world.y;
+                placement.state.z_index = next_id as i32;
+                placement.lifecycle = PlacementLifecycle::Provisional;
+                canvas.add_provisional_reference_item(placement);
             }
             ProvisionalSourceIntent::ExistingAsset {
                 asset_id,
                 label,
                 dimensions,
             } => {
-                let record = provisional_asset_record(
+                let placement = provisional_asset_record(
                     next_id,
                     asset_id,
                     label,
@@ -280,7 +280,7 @@ pub(crate) fn create_provisional_placements(
                     center_world,
                     settings,
                 );
-                canvas.add_provisional_unloaded_item(record);
+                canvas.add_provisional_unloaded_item(placement);
             }
         }
         provisional_ids.push(next_id);
@@ -292,7 +292,7 @@ pub(crate) fn create_provisional_placements(
 }
 
 fn provisional_asset_record(
-    item_id: i64,
+    placement_id: i64,
     asset_id: i64,
     label: String,
     dimensions: (u32, u32),
@@ -304,17 +304,17 @@ fn provisional_asset_record(
     let _ = label;
     Placement {
         state: PlacementState {
-            id: item_id,
+            id: placement_id,
             asset_id: Some(asset_id),
             center: center_world,
             scale,
             rotation: 0.0,
-            z_index: item_id as i32,
+            z_index: placement_id as i32,
             archived: false,
         },
         asset: None,
         content: PlacementContent::Loading {
-            intent: ContentResolutionSource::SearchAsset { asset_id },
+            source: ContentResolutionSource::SearchAsset { asset_id },
             status_message: Some("Loading".to_owned()),
         },
         lifecycle: PlacementLifecycle::Provisional,
@@ -326,7 +326,7 @@ fn provisional_asset_record(
 pub(crate) fn create_existing_asset_placements(
     library: &Library,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::data::PlacementLayoutItem>,
+    layout: &mut Vec<crate::data::PlacementFootprint>,
     _target_board_id: i64,
     asset_ids: Vec<i64>,
     preferred_centers: Vec<egui::Pos2>,
@@ -366,21 +366,21 @@ pub(crate) fn create_existing_asset_placements(
             true,
             settings.target_canvas_area,
         );
-        let record =
+        let placement =
             match library.create_placement_from_asset(asset.id, center_world, scale, 0.0, 0) {
-                Ok(record) => record,
+                Ok(placement) => placement,
                 Err(error) => return Err(error),
             };
-        layout.push(crate::data::PlacementLayoutItem {
-            id: record.state.id,
-            center: record.state.center,
-            width: record.scaled_visual_size().x,
-            height: record.scaled_visual_size().y,
+        layout.push(crate::data::PlacementFootprint {
+            id: placement.state.id,
+            center: placement.state.center,
+            width: placement.scaled_visual_size().x,
+            height: placement.scaled_visual_size().y,
         });
-        canvas.add_unresolved_placement(record.clone());
+        canvas.add_unresolved_placement(placement.clone());
         placements.push(CreatedLoadedPlacement {
             reservation: None,
-            record,
+            placement,
         });
     }
 
@@ -442,10 +442,10 @@ impl PlacementCreationBatchTracker {
             if !batch.pending_queue_ids.remove(&queue_id) {
                 continue;
             }
-            if let Some(item_id) = loaded_item_id
-                && !batch.loaded_placement_ids.contains(&item_id)
+            if let Some(placement_id) = loaded_item_id
+                && !batch.loaded_placement_ids.contains(&placement_id)
             {
-                batch.loaded_placement_ids.push(item_id);
+                batch.loaded_placement_ids.push(placement_id);
             }
             if batch.pending_queue_ids.is_empty()
                 && target_board_id.is_none_or(|id| id == batch.target_board_id)

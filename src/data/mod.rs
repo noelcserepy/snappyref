@@ -12,7 +12,7 @@ pub use asset::ImageAsset;
 pub use placement::AssetId;
 pub use placement::{
     Board, BoardSummary, CanvasStackItem, ContentResolutionSource, Placement, PlacementContent,
-    PlacementId, PlacementLayoutItem, PlacementLifecycle, PlacementState,
+    PlacementFootprint, PlacementId, PlacementLifecycle, PlacementState,
 };
 pub use session::{
     CanvasImageLod, DEFAULT_CANVAS_IMAGE_MAX_SIDE, DEFAULT_IMPORT_GAP,

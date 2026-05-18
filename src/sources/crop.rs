@@ -49,14 +49,14 @@ impl CropFlow {
 
         let mut enqueued = false;
         while let Some(request) = canvas.take_pending_crop() {
-            let item_id = request.item_id;
-            canvas.mark_crop_pending(item_id);
-            if let Err(error) = canvas.warm_cached_pixels_for_item(library, item_id) {
-                canvas.clear_crop_pending(item_id);
+            let placement_id = request.placement_id;
+            canvas.mark_crop_pending(placement_id);
+            if let Err(error) = canvas.warm_cached_pixels_for_item(library, placement_id) {
+                canvas.clear_crop_pending(placement_id);
                 return Err(error);
             }
             if let Err(error) = canvas.apply_pending_crop_preview(ctx, &request) {
-                canvas.clear_crop_pending(item_id);
+                canvas.clear_crop_pending(placement_id);
                 return Err(error);
             }
             if let Err(error) = import_worker.enqueue(crate::jobs::ImagePreparationRequest::Crop {
@@ -66,7 +66,7 @@ impl CropFlow {
                     max_side: canvas_image_max_side,
                 },
             }) {
-                canvas.clear_crop_pending(item_id);
+                canvas.clear_crop_pending(placement_id);
                 return Err(error);
             }
             enqueued = true;
@@ -84,20 +84,20 @@ impl CropFlow {
         _canvas_image_max_side: u32,
         semantic_search_enabled: bool,
     ) -> Result<CroppedImageIntegration, String> {
-        let item_id = cropped.item_id;
+        let placement_id = cropped.placement_id;
         let stored_path = cropped.stored_path.clone();
-        let previous_snapshot = match canvas.snapshot_item_image(item_id) {
+        let previous_snapshot = match canvas.snapshot_item_image(placement_id) {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 cleanup_failed_crop(&stored_path);
-                canvas.clear_crop_pending(item_id);
+                canvas.clear_crop_pending(placement_id);
                 return Err(error);
             }
         };
 
         let Some(library) = library else {
             cleanup_failed_crop(&stored_path);
-            canvas.clear_crop_pending(item_id);
+            canvas.clear_crop_pending(placement_id);
             return Err("Storage unavailable".to_owned());
         };
 
@@ -105,7 +105,7 @@ impl CropFlow {
             Ok(item) => item,
             Err(error) => {
                 cleanup_failed_crop(&stored_path);
-                canvas.clear_crop_pending(item_id);
+                canvas.clear_crop_pending(placement_id);
                 return Err(error);
             }
         };
@@ -122,7 +122,7 @@ impl CropFlow {
             Ok(asset) => asset,
             Err(error) => {
                 cleanup_failed_crop(&stored_path);
-                canvas.clear_crop_pending(item_id);
+                canvas.clear_crop_pending(placement_id);
                 return Err(error);
             }
         };
@@ -198,7 +198,7 @@ impl CropFlow {
                 queue_id: None,
                 preview_width: entry.previous_preview_width,
                 preview_height: entry.previous_preview_height,
-                record: entry.previous_record,
+                placement: entry.previous_record,
                 preview_rgba: entry.previous_rgba.to_vec(),
                 animated_preview: None,
                 preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
@@ -253,8 +253,8 @@ mod tests {
             .unwrap();
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
-        let mut record = test_record(42, 42, 8, 8);
-        record
+        let mut placement = test_record(42, 42, 8, 8);
+        placement
             .asset
             .as_mut()
             .expect("loaded placement asset")
@@ -267,7 +267,7 @@ mod tests {
             PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
-                record: record.clone(),
+                placement: placement.clone(),
                 preview_rgba,
                 preview_width: 4,
                 preview_height: 4,
@@ -280,8 +280,8 @@ mod tests {
             },
         );
         canvas.set_pending_crop_for_test(CanvasCropRequest {
-            item_id: 42,
-            source_asset: record.asset.clone().expect("loaded placement asset"),
+            placement_id: 42,
+            source_asset: placement.asset.clone().expect("loaded placement asset"),
             crop_rect: PixelCropRect {
                 x: 2,
                 y: 2,
@@ -298,14 +298,18 @@ mod tests {
 
         assert!(enqueued);
         assert_eq!(
-            canvas.preview_for_item_id(42).unwrap().texture_size,
+            canvas.preview_for_placement_id(42).unwrap().texture_size,
             egui::vec2(2.0, 2.0)
         );
-        let record = canvas.placement_for_id(42).unwrap();
+        let placement = canvas.placement_for_id(42).unwrap();
         assert_eq!(
             (
-                record.asset.as_ref().expect("loaded placement asset").width,
-                record
+                placement
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .width,
+                placement
                     .asset
                     .as_ref()
                     .expect("loaded placement asset")
@@ -313,15 +317,18 @@ mod tests {
             ),
             (4, 4)
         );
-        assert_eq!((record.state.center.x, record.state.center.y), (2.0, 2.0));
+        assert_eq!(
+            (placement.state.center.x, placement.state.center.y),
+            (2.0, 2.0)
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }
 
-    fn test_record(item_id: i64, asset_id: i64, width: u32, height: u32) -> Placement {
+    fn test_record(placement_id: i64, asset_id: i64, width: u32, height: u32) -> Placement {
         Placement::loaded(
             PlacementState {
-                id: item_id,
+                id: placement_id,
                 asset_id: Some(asset_id),
                 center: eframe::egui::Pos2::ZERO,
                 scale: 1.0,

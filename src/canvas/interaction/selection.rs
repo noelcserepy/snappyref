@@ -19,9 +19,9 @@ pub(crate) fn open_context_menu_at_pointer(
                     state.document.selected_annotation_ids = vec![annotation_id];
                 }
             }
-            CanvasHit::Placement(item_id) => {
-                if !state.is_selected(item_id) {
-                    state.set_single_selection(item_id);
+            CanvasHit::Placement(placement_id) => {
+                if !state.is_selected(placement_id) {
+                    state.set_single_selection(placement_id);
                 }
             }
         }
@@ -49,18 +49,18 @@ pub(crate) fn hit_test_canvas_item(
         .into_iter()
         .rev()
         .find_map(|item| match item {
-            CanvasStackItem::Placement(item_id) => state
-                .image_by_item_id(item_id)
+            CanvasStackItem::Placement(placement_id) => state
+                .rendered_placement_by_id(placement_id)
                 .filter(|image| {
                     image_contains_screen_point(
-                        &image.record,
+                        &image.placement,
                         pointer_pos,
                         state.pan,
                         state.zoom,
                         rect.center(),
                     )
                 })
-                .map(|_| CanvasHit::Placement(item_id)),
+                .map(|_| CanvasHit::Placement(placement_id)),
             CanvasStackItem::Annotation(annotation_id) => state
                 .annotation_by_id(annotation_id)
                 .filter(|annotation| annotation_hit_test(state, rect, annotation, pointer_pos))
@@ -102,10 +102,10 @@ pub(crate) fn update_marquee_selection(
         egui::Rect::from_two_pos(marquee_state.start_screen, marquee_state.current_screen);
     let selected = state
         .document
-        .images
+        .rendered_placements
         .iter()
         .filter(|image| image_screen_rect(state, rect, image).intersects(selection_rect))
-        .map(|image| image.record.state.id)
+        .map(|image| image.placement.state.id)
         .collect::<Vec<_>>();
     let selected_annotation_ids = state
         .document

@@ -22,8 +22,7 @@ pub(super) fn crop_item(
         return ImagePreparationResult::Failed {
             target_board_id: None,
             queue_id: None,
-            placement_id: None,
-            item_id: Some(request.item_id),
+            placement_id: Some(request.placement_id),
             context: source_context,
             error: "SVG cropping is not supported yet".to_owned(),
         };
@@ -35,8 +34,7 @@ pub(super) fn crop_item(
             return ImagePreparationResult::Failed {
                 target_board_id: None,
                 queue_id: None,
-                placement_id: None,
-                item_id: Some(request.item_id),
+                placement_id: Some(request.placement_id),
                 context: source_context,
                 error,
             };
@@ -48,8 +46,7 @@ pub(super) fn crop_item(
             return ImagePreparationResult::Failed {
                 target_board_id: None,
                 queue_id: None,
-                placement_id: None,
-                item_id: Some(request.item_id),
+                placement_id: Some(request.placement_id),
                 context: source_context,
                 error: "failed to rebuild source image pixels for crop".to_owned(),
             };
@@ -83,8 +80,7 @@ pub(super) fn crop_item(
             return ImagePreparationResult::Failed {
                 target_board_id: None,
                 queue_id: None,
-                placement_id: None,
-                item_id: Some(request.item_id),
+                placement_id: Some(request.placement_id),
                 context: source_context,
                 error,
             };
@@ -98,8 +94,7 @@ pub(super) fn crop_item(
             return ImagePreparationResult::Failed {
                 target_board_id: None,
                 queue_id: None,
-                placement_id: None,
-                item_id: Some(request.item_id),
+                placement_id: Some(request.placement_id),
                 context: stored_path.display().to_string(),
                 error: format!("failed to read cropped image metadata: {error}"),
             };
@@ -119,8 +114,7 @@ pub(super) fn crop_item(
             return ImagePreparationResult::Failed {
                 target_board_id: None,
                 queue_id: None,
-                placement_id: None,
-                item_id: Some(request.item_id),
+                placement_id: Some(request.placement_id),
                 context: source_context,
                 error,
             };
@@ -133,15 +127,14 @@ pub(super) fn crop_item(
             return ImagePreparationResult::Failed {
                 target_board_id: None,
                 queue_id: None,
-                placement_id: None,
-                item_id: Some(request.item_id),
+                placement_id: Some(request.placement_id),
                 context: source_context,
                 error,
             };
         }
     };
     ImagePreparationResult::Cropped(PreparedCropPreview {
-        item_id: request.item_id,
+        placement_id: request.placement_id,
         stored_path,
         width,
         height,

@@ -182,7 +182,7 @@ pub enum ImagePreparationRequest {
     LoadExisting {
         target_board_id: i64,
         queue_id: Option<u64>,
-        record: Placement,
+        placement: Placement,
         max_texture_side: usize,
         canvas_image_settings: CanvasImageSettings,
         target_lod: CanvasImageLod,
@@ -190,7 +190,7 @@ pub enum ImagePreparationRequest {
         trace: Option<ImportTrace>,
     },
     BackfillLod {
-        record: Placement,
+        placement: Placement,
         canvas_image_settings: CanvasImageSettings,
         lod: CanvasImageLod,
     },
@@ -213,7 +213,6 @@ pub enum ImagePreparationResult {
         target_board_id: Option<i64>,
         queue_id: Option<u64>,
         placement_id: Option<i64>,
-        item_id: Option<i64>,
         context: String,
         error: String,
     },
@@ -223,7 +222,7 @@ pub enum ImagePreparationResult {
 pub struct PreparedPlacementImage {
     pub target_board_id: i64,
     pub queue_id: Option<u64>,
-    pub record: Placement,
+    pub placement: Placement,
     pub preview_rgba: Vec<u8>,
     pub preview_width: u32,
     pub preview_height: u32,
@@ -237,7 +236,7 @@ pub struct PreparedPlacementImage {
 
 #[derive(Clone, Debug)]
 pub struct PreparedCropPreview {
-    pub item_id: i64,
+    pub placement_id: i64,
     pub stored_path: PathBuf,
     pub width: u32,
     pub height: u32,
@@ -252,7 +251,7 @@ pub struct PreparedCropPreview {
 
 #[derive(Clone, Debug)]
 pub struct StartupTraceEntry {
-    pub record: Placement,
+    pub placement: Placement,
     pub diagnostics: ExistingLoadDiagnostics,
     pub timings: ImportTimings,
     pub preview_width: u32,

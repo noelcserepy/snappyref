@@ -119,7 +119,7 @@ impl SearchController {
     ) {
         let mut source_intents = placement_ids
             .iter()
-            .filter_map(|item_id| canvas.placement_for_id(*item_id))
+            .filter_map(|placement_id| canvas.placement_for_id(*placement_id))
             .map(crate::placement::creation::ProvisionalSourceIntent::ExistingPlacement)
             .collect::<Vec<_>>();
 

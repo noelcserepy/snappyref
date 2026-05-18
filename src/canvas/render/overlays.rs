@@ -29,7 +29,7 @@ pub(crate) fn paint_crop_marquee(painter: &egui::Painter, rect: egui::Rect, stat
     let Some(crop_state) = &state.interaction.crop_state else {
         return;
     };
-    let Some(image) = state.image_by_item_id(crop_state.item_id) else {
+    let Some(image) = state.rendered_placement_by_id(crop_state.placement_id) else {
         return;
     };
 
@@ -159,7 +159,7 @@ fn rotation_handle_visible(ctx: &egui::Context, state: &CanvasState) -> bool {
         )
 }
 
-pub(crate) fn paint_import_placeholders(
+pub(crate) fn paint_placement_preview_slots(
     painter: &egui::Painter,
     rect: egui::Rect,
     state: &CanvasState,
@@ -171,14 +171,21 @@ pub(crate) fn paint_import_placeholders(
     let phase = (time / SHIMMER_PERIOD_SECS).rem_euclid(1.0);
     let mut any_visible = false;
 
-    for placeholder in state
+    for preview_slot in state
         .interaction
-        .import_placeholders
+        .placement_preview_slots
         .iter()
-        .chain(state.interaction.hover_preview_placeholders.iter())
+        .chain(state.interaction.hover_preview_slots.iter())
     {
-        any_visible |=
-            paint_import_placeholder(painter, rect, state, cull_rect, placeholder, phase, false);
+        any_visible |= paint_placement_preview_slot(
+            painter,
+            rect,
+            state,
+            cull_rect,
+            preview_slot,
+            phase,
+            false,
+        );
     }
 
     if any_visible {
@@ -186,12 +193,12 @@ pub(crate) fn paint_import_placeholders(
     }
 }
 
-fn paint_import_placeholder(
+fn paint_placement_preview_slot(
     painter: &egui::Painter,
     rect: egui::Rect,
     state: &CanvasState,
     cull_rect: egui::Rect,
-    placeholder: &crate::canvas::ImportPlaceholder,
+    preview_slot: &crate::canvas::PlacementPreviewSlot,
     phase: f32,
     show_selection_border: bool,
 ) -> bool {
@@ -200,8 +207,8 @@ fn paint_import_placeholder(
     const SHIMMER_TILT_FRACTION: f32 = 0.25;
 
     let placeholder_rect = egui::Rect::from_center_size(
-        state.world_to_screen(placeholder.center_world, rect),
-        placeholder.size_world * state.zoom,
+        state.world_to_screen(preview_slot.center_world, rect),
+        preview_slot.size_world * state.zoom,
     );
     if !placeholder_rect.intersects(cull_rect) {
         return false;

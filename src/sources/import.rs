@@ -10,7 +10,7 @@ pub(crate) enum ExternalImportSource {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CanvasImportPlaceholder {
+pub(crate) struct PlacementPreviewSlot {
     pub(crate) queue_id: u64,
     pub(crate) label: String,
     pub(crate) center_world: egui::Pos2,
@@ -34,27 +34,27 @@ pub(crate) struct ImportPlacementSettings {
 #[derive(Default)]
 pub(crate) struct ImportIntake {
     next_queue_id: u64,
-    placeholders_by_board: HashMap<i64, Vec<CanvasImportPlaceholder>>,
+    preview_slots_by_board: HashMap<i64, Vec<PlacementPreviewSlot>>,
 }
 
 impl ImportIntake {
     pub(crate) fn new() -> Self {
         Self {
             next_queue_id: 1,
-            placeholders_by_board: HashMap::new(),
+            preview_slots_by_board: HashMap::new(),
         }
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn reserve_import(
         &mut self,
-        layout: &mut Vec<crate::data::PlacementLayoutItem>,
+        layout: &mut Vec<crate::data::PlacementFootprint>,
         target_board_id: i64,
         label: String,
         dimensions: Option<(u32, u32)>,
         desired_world: egui::Pos2,
         settings: ImportPlacementSettings,
-    ) -> (ImportReservation, Option<CanvasImportPlaceholder>) {
+    ) -> (ImportReservation, Option<PlacementPreviewSlot>) {
         self.reserve_import_at_world(
             layout,
             target_board_id,
@@ -68,60 +68,60 @@ impl ImportIntake {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn reserve_import_at_world(
         &mut self,
-        layout: &mut Vec<crate::data::PlacementLayoutItem>,
+        layout: &mut Vec<crate::data::PlacementFootprint>,
         target_board_id: i64,
         label: String,
         dimensions: Option<(u32, u32)>,
         center_world: egui::Pos2,
         settings: ImportPlacementSettings,
-    ) -> (ImportReservation, Option<CanvasImportPlaceholder>) {
+    ) -> (ImportReservation, Option<PlacementPreviewSlot>) {
         let queue_id = self.next_queue_id();
-        let placeholder = dimensions.map(|(width, height)| {
+        let preview_slot = dimensions.map(|(width, height)| {
             let size_world =
                 import_preview_size_world(width, height, settings.import_target_canvas_area);
-            layout.push(crate::data::PlacementLayoutItem {
+            layout.push(crate::data::PlacementFootprint {
                 id: -((layout.len() as i64) + 1),
                 center: center_world,
                 width: size_world.x,
                 height: size_world.y,
             });
-            let placeholder = CanvasImportPlaceholder {
+            let preview_slot = PlacementPreviewSlot {
                 queue_id,
                 label,
                 center_world,
                 size_world,
             };
-            self.queue_placeholder(target_board_id, placeholder.clone());
-            placeholder
+            self.queue_preview_slot(target_board_id, preview_slot.clone());
+            preview_slot
         });
 
         (
             ImportReservation {
                 target_board_id,
                 queue_id,
-                reserved_world: placeholder
+                reserved_world: preview_slot
                     .as_ref()
-                    .map(|placeholder| placeholder.center_world),
+                    .map(|preview_slot| preview_slot.center_world),
             },
-            placeholder,
+            preview_slot,
         )
     }
 
-    pub(crate) fn remove_placeholder_for_board(&mut self, board_id: i64, queue_id: u64) {
-        if let Some(placeholders) = self.placeholders_by_board.get_mut(&board_id) {
-            placeholders.retain(|placeholder| placeholder.queue_id != queue_id);
+    pub(crate) fn remove_preview_slot_for_board(&mut self, board_id: i64, queue_id: u64) {
+        if let Some(preview_slots) = self.preview_slots_by_board.get_mut(&board_id) {
+            preview_slots.retain(|preview_slot| preview_slot.queue_id != queue_id);
         }
     }
 
-    pub(crate) fn placeholders_for_board(&self, board_id: i64) -> Vec<CanvasImportPlaceholder> {
-        self.placeholders_by_board
+    pub(crate) fn preview_slots_for_board(&self, board_id: i64) -> Vec<PlacementPreviewSlot> {
+        self.preview_slots_by_board
             .get(&board_id)
             .cloned()
             .unwrap_or_default()
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn queue_placeholder_for_board(
+    pub(crate) fn queue_preview_slot_for_board(
         &mut self,
         board_id: i64,
         queue_id: u64,
@@ -131,8 +131,8 @@ impl ImportIntake {
         height: u32,
         auto_image_scaling: bool,
         import_target_canvas_area: f32,
-    ) -> CanvasImportPlaceholder {
-        let placeholder = CanvasImportPlaceholder {
+    ) -> PlacementPreviewSlot {
+        let preview_slot = PlacementPreviewSlot {
             queue_id,
             label,
             center_world,
@@ -143,8 +143,8 @@ impl ImportIntake {
                 import_target_canvas_area,
             ),
         };
-        self.queue_placeholder(board_id, placeholder.clone());
-        placeholder
+        self.queue_preview_slot(board_id, preview_slot.clone());
+        preview_slot
     }
 
     fn next_queue_id(&mut self) -> u64 {
@@ -156,10 +156,10 @@ impl ImportIntake {
         queue_id
     }
 
-    fn queue_placeholder(&mut self, board_id: i64, placeholder: CanvasImportPlaceholder) {
-        let placeholders = self.placeholders_by_board.entry(board_id).or_default();
-        placeholders.retain(|existing| existing.queue_id != placeholder.queue_id);
-        placeholders.push(placeholder);
+    fn queue_preview_slot(&mut self, board_id: i64, preview_slot: PlacementPreviewSlot) {
+        let preview_slots = self.preview_slots_by_board.entry(board_id).or_default();
+        preview_slots.retain(|existing| existing.queue_id != preview_slot.queue_id);
+        preview_slots.push(preview_slot);
     }
 }
 
@@ -225,7 +225,7 @@ mod tests {
         let mut intake = ImportIntake::new();
         let mut layout = Vec::new();
 
-        let (reservation, placeholder) = intake.reserve_import(
+        let (reservation, preview_slot) = intake.reserve_import(
             &mut layout,
             2,
             "Alpha".to_owned(),
@@ -242,9 +242,9 @@ mod tests {
             reservation.reserved_world,
             Some(eframe::egui::pos2(10.0, 20.0))
         );
-        assert!(placeholder.is_some());
-        assert_eq!(intake.placeholders_for_board(1).len(), 0);
-        assert_eq!(intake.placeholders_for_board(2).len(), 1);
+        assert!(preview_slot.is_some());
+        assert_eq!(intake.preview_slots_for_board(1).len(), 0);
+        assert_eq!(intake.preview_slots_for_board(2).len(), 1);
     }
 
     #[test]
@@ -252,7 +252,7 @@ mod tests {
         let mut intake = ImportIntake::new();
         let mut layout = Vec::new();
 
-        let (_reservation, placeholder) = intake.reserve_import(
+        let (_reservation, preview_slot) = intake.reserve_import(
             &mut layout,
             1,
             "large.png".to_owned(),
@@ -263,8 +263,8 @@ mod tests {
             },
         );
 
-        let placeholder = placeholder.expect("known image dimensions should create a preview");
-        assert!(placeholder.size_world.x * placeholder.size_world.y <= 10_000.0 + 1.0);
+        let preview_slot = preview_slot.expect("known image dimensions should create a preview");
+        assert!(preview_slot.size_world.x * preview_slot.size_world.y <= 10_000.0 + 1.0);
     }
 
     #[test]

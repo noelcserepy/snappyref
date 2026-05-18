@@ -60,23 +60,23 @@ fn decode_placement_content(state: &str, payload: Option<&str>, asset_id: i64) -
     {
         return match content {
             PlacementContent::Loading {
-                intent,
+                source,
                 status_message,
             } => {
                 let resumable = matches!(
-                    intent,
+                    source,
                     ContentResolutionSource::ExternalPath { .. }
                         | ContentResolutionSource::ExternalUrl { .. }
                         | ContentResolutionSource::SearchAsset { .. }
                 );
                 if resumable {
                     PlacementContent::Loading {
-                        intent,
+                        source,
                         status_message,
                     }
                 } else {
                     PlacementContent::Failed {
-                        intent: Some(intent),
+                        source: Some(source),
                         message: "Placement content could not be resumed after restart".to_owned(),
                         recoverable: true,
                     }
@@ -88,12 +88,12 @@ fn decode_placement_content(state: &str, payload: Option<&str>, asset_id: i64) -
 
     match state {
         "loading" => PlacementContent::Failed {
-            intent: None,
+            source: None,
             message: "Placement content could not be resumed after restart".to_owned(),
             recoverable: true,
         },
         "failed" => PlacementContent::Failed {
-            intent: None,
+            source: None,
             message: "Placement content failed to resolve".to_owned(),
             recoverable: true,
         },
@@ -304,13 +304,13 @@ impl Library {
         let Some(mut record) = existing else {
             return Ok(None);
         };
-        let intent = match &record.content {
-            PlacementContent::Loading { intent, .. } => Some(intent.clone()),
-            PlacementContent::Failed { intent, .. } => intent.clone(),
+        let source = match &record.content {
+            PlacementContent::Loading { source, .. } => Some(source.clone()),
+            PlacementContent::Failed { source, .. } => source.clone(),
             PlacementContent::Loaded { .. } => None,
         };
         record.content = PlacementContent::Failed {
-            intent,
+            source,
             message,
             recoverable: true,
         };
@@ -343,7 +343,7 @@ impl Library {
         initial_scale: f32,
         visual_width: f32,
         visual_height: f32,
-        intent: ContentResolutionSource,
+        source: ContentResolutionSource,
         status_message: Option<String>,
     ) -> Result<Placement, String> {
         self.persist_committed_unloaded_placement(
@@ -352,7 +352,7 @@ impl Library {
             visual_width,
             visual_height,
             PlacementContent::Loading {
-                intent,
+                source,
                 status_message,
             },
         )
@@ -365,7 +365,7 @@ impl Library {
         initial_scale: f32,
         visual_width: f32,
         visual_height: f32,
-        intent: Option<ContentResolutionSource>,
+        source: Option<ContentResolutionSource>,
         message: String,
         recoverable: bool,
     ) -> Result<Placement, String> {
@@ -375,7 +375,7 @@ impl Library {
             visual_width,
             visual_height,
             PlacementContent::Failed {
-                intent,
+                source,
                 message,
                 recoverable,
             },
@@ -551,7 +551,7 @@ impl Library {
             .map_err(|error| format!("failed to collect board-items: {error}"))
     }
 
-    pub fn load_placement_layout_items(&self) -> Result<Vec<PlacementLayoutItem>, String> {
+    pub fn load_placement_layout_items(&self) -> Result<Vec<PlacementFootprint>, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
         self.load_placement_layout_items_for_board_id(&connection, active_board_id)
@@ -561,7 +561,7 @@ impl Library {
     pub fn load_placement_layout_items_for_board(
         &self,
         board_id: i64,
-    ) -> Result<Vec<PlacementLayoutItem>, String> {
+    ) -> Result<Vec<PlacementFootprint>, String> {
         let connection = self.connection()?;
         if !board_is_non_archived(&connection, board_id)? {
             return Err(format!("cannot load missing or archived board {board_id}"));
@@ -573,7 +573,7 @@ impl Library {
         &self,
         connection: &Connection,
         board_id: i64,
-    ) -> Result<Vec<PlacementLayoutItem>, String> {
+    ) -> Result<Vec<PlacementFootprint>, String> {
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -593,7 +593,7 @@ impl Library {
 
         let rows = statement
             .query_map(params![board_id], |row| {
-                Ok(PlacementLayoutItem {
+                Ok(PlacementFootprint {
                     id: row.get(0)?,
                     center: egui::pos2(row.get(1)?, row.get(2)?),
                     width: row.get(3)?,

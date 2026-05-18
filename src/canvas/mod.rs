@@ -18,7 +18,7 @@ use interaction::{
 use render::{
     annotation_style_toolbar_rect, editing_textbox_toolbar_rect, paint_annotation_draft,
     paint_background, paint_canvas_items, paint_crop_marquee, paint_guide_snap_indicators,
-    paint_import_placeholders, paint_marquee, paint_selection_bounds,
+    paint_marquee, paint_placement_preview_slots, paint_selection_bounds,
     show_annotation_style_toolbar, show_textbox_editor,
 };
 use state::{CanvasDocumentState, CanvasInteractionState, CanvasRenderState};
@@ -154,8 +154,8 @@ struct AnnotationPaintStats {
 }
 
 #[derive(Clone)]
-pub(crate) struct CanvasImage {
-    pub(crate) record: Placement,
+pub(crate) struct RenderedPlacement {
+    pub(crate) placement: Placement,
     texture: CanvasTexture,
     loaded_lod: CanvasImageLod,
     animation: Option<AnimatedCanvasImage>,
@@ -163,7 +163,7 @@ pub(crate) struct CanvasImage {
 
 #[derive(Clone)]
 struct PendingCropPreview {
-    image: CanvasImage,
+    image: RenderedPlacement,
     rgba: SharedRgba,
 }
 
@@ -284,7 +284,7 @@ pub(crate) struct SelectedLayoutItem {
 
 #[derive(Clone)]
 struct ImageScaleStart {
-    item_id: i64,
+    placement_id: i64,
     center_world: egui::Pos2,
     base_visual_size: egui::Vec2,
     start_scale: f32,
@@ -313,7 +313,7 @@ struct AnnotationDragState {
 #[derive(Clone)]
 enum ImageTransformState {
     Resizing {
-        item_id: i64,
+        placement_id: i64,
         anchor_screen: egui::Pos2,
         start_handle_screen: egui::Pos2,
         start_scale: f32,
@@ -398,7 +398,7 @@ struct TextboxLayoutCacheEntry {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct ImportPlaceholder {
+struct PlacementPreviewSlot {
     queue_id: u64,
     center_world: egui::Pos2,
     size_world: egui::Vec2,
@@ -411,7 +411,7 @@ struct MarqueeState {
 }
 
 struct CropState {
-    item_id: i64,
+    placement_id: i64,
     start_screen: egui::Pos2,
     current_screen: egui::Pos2,
 }
@@ -456,7 +456,7 @@ pub struct PixelCropRect {
 
 #[derive(Clone, Debug)]
 pub struct CanvasCropRequest {
-    pub item_id: i64,
+    pub placement_id: i64,
     pub source_asset: crate::data::ImageAsset,
     pub crop_rect: PixelCropRect,
     pub crop_offset_local: egui::Vec2,
@@ -521,12 +521,12 @@ impl CanvasState {
         for item in &drag_state.starting_items {
             if let Some(image) = self
                 .document
-                .images
+                .rendered_placements
                 .iter_mut()
-                .find(|image| image.record.state.id == item.id)
+                .find(|image| image.placement.state.id == item.id)
             {
-                image.record.state.center.x = item.x + world_delta.x + snap_offset.x;
-                image.record.state.center.y = item.y + world_delta.y + snap_offset.y;
+                image.placement.state.center.x = item.x + world_delta.x + snap_offset.x;
+                image.placement.state.center.y = item.y + world_delta.y + snap_offset.y;
             }
         }
         snap_preview_rect.is_some()
@@ -789,7 +789,7 @@ pub fn show(
 
     painter.rect_filled(rect, 0.0, crate::ui::theme::BACKGROUND);
     paint_background(&painter, rect, state);
-    paint_import_placeholders(&painter, rect, state);
+    paint_placement_preview_slots(&painter, rect, state);
     let image_pass = paint_canvas_items(
         &painter,
         ui,
@@ -824,7 +824,7 @@ pub fn paint_perf_report() -> PaintPerfReport {
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(960.0, 640.0));
     let pan = egui::Vec2::ZERO;
     let zoom = 1.0;
-    let records = (0..400)
+    let placements = (0..400)
         .map(|index| {
             let x = if index < 24 {
                 (index % 6) as f32 * 140.0 - 320.0
@@ -861,13 +861,13 @@ pub fn paint_perf_report() -> PaintPerfReport {
         .collect::<Vec<_>>();
 
     let legacy_started_at = std::time::Instant::now();
-    let legacy_stats = render::image_paint_stats_for_records(&records, rect, pan, zoom, false);
+    let legacy_stats = render::image_paint_stats_for_records(&placements, rect, pan, zoom, false);
     let legacy_visibility_pass_ms = legacy_started_at.elapsed().as_secs_f64() * 1000.0;
     let current_started_at = std::time::Instant::now();
-    let current_stats = render::image_paint_stats_for_records(&records, rect, pan, zoom, true);
+    let current_stats = render::image_paint_stats_for_records(&placements, rect, pan, zoom, true);
     let current_visibility_pass_ms = current_started_at.elapsed().as_secs_f64() * 1000.0;
     let current_texture_groups =
-        render::image_texture_group_count_for_records(&records, rect, pan, zoom);
+        render::image_texture_group_count_for_records(&placements, rect, pan, zoom);
 
     PaintPerfReport {
         legacy_visibility_pass_ms,
@@ -902,9 +902,9 @@ mod tests {
         unified_canvas_paint_order_for_state,
     };
     use super::{
-        AnnotationDraftState, CanvasCropRequest, CanvasImage, CanvasInputPolicy, CanvasState,
-        CanvasTexture, FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM,
-        PixelCropRect, SelectedLayoutItem, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
+        AnnotationDraftState, CanvasCropRequest, CanvasInputPolicy, CanvasState, CanvasTexture,
+        FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, PixelCropRect,
+        RenderedPlacement, SelectedLayoutItem, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
         TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion, TextboxResizeHandle,
         rotated_visual_size,
     };
@@ -929,22 +929,22 @@ mod tests {
     fn push_test_image(
         ui: &eframe::egui::Ui,
         state: &mut CanvasState,
-        item_id: i64,
+        placement_id: i64,
         width: u32,
         height: u32,
         scale: f32,
         center: eframe::egui::Pos2,
     ) {
         let texture = ui.ctx().load_texture(
-            format!("test-image-{item_id}"),
+            format!("test-image-{placement_id}"),
             eframe::egui::ColorImage::filled([4, 4], eframe::egui::Color32::WHITE),
             eframe::egui::TextureOptions::LINEAR,
         );
-        state.document.images.push(CanvasImage {
-            record: Placement::loaded(
+        state.document.rendered_placements.push(RenderedPlacement {
+            placement: Placement::loaded(
                 PlacementState {
-                    id: item_id,
-                    asset_id: Some(item_id),
+                    id: placement_id,
+                    asset_id: Some(placement_id),
                     center: eframe::egui::pos2(center.x, center.y),
                     scale,
                     rotation: 0.0,
@@ -952,9 +952,9 @@ mod tests {
                     archived: false,
                 },
                 ImageAsset {
-                    id: item_id,
-                    original_path: PathBuf::from(format!("image-{item_id}.png")),
-                    filename: format!("image-{item_id}.png"),
+                    id: placement_id,
+                    original_path: PathBuf::from(format!("image-{placement_id}.png")),
+                    filename: format!("image-{placement_id}.png"),
                     mime_type: "image/png".to_owned(),
                     width,
                     height,
@@ -1015,15 +1015,15 @@ mod tests {
         CanvasStrokeWidth::default()
     }
 
-    fn test_record(item_id: i64, asset_id: i64, width: u32, height: u32) -> Placement {
+    fn test_record(placement_id: i64, asset_id: i64, width: u32, height: u32) -> Placement {
         Placement::loaded(
             PlacementState {
-                id: item_id,
+                id: placement_id,
                 asset_id: Some(asset_id),
                 center: eframe::egui::Pos2::ZERO,
                 scale: 1.0,
                 rotation: 0.0,
-                z_index: item_id as i32,
+                z_index: placement_id as i32,
                 archived: false,
             },
             ImageAsset {
@@ -1040,21 +1040,21 @@ mod tests {
     }
 
     fn unloaded_test_record(
-        item_id: i64,
+        placement_id: i64,
         content: PlacementContent,
         visual_width: f32,
         visual_height: f32,
         scale: f32,
         center: eframe::egui::Pos2,
     ) -> Placement {
-        let mut record = Placement {
+        let mut placement = Placement {
             state: PlacementState {
-                id: item_id,
+                id: placement_id,
                 asset_id: None,
                 center,
                 scale,
                 rotation: 0.0,
-                z_index: item_id as i32,
+                z_index: placement_id as i32,
                 archived: false,
             },
             asset: None,
@@ -1062,13 +1062,13 @@ mod tests {
             lifecycle: PlacementLifecycle::Committed,
             visual_size: eframe::egui::vec2(visual_width, visual_height),
         };
-        record.content = content;
-        record.lifecycle = PlacementLifecycle::Committed;
-        record
+        placement.content = content;
+        placement.lifecycle = PlacementLifecycle::Committed;
+        placement
     }
 
     fn native_loaded_item(
-        record: Placement,
+        placement: Placement,
         texture: Arc<crate::jobs::NativeTextureHandle>,
     ) -> crate::jobs::PreparedPlacementImage {
         crate::jobs::PreparedPlacementImage {
@@ -1076,16 +1076,24 @@ mod tests {
             queue_id: None,
             preview_rgba: vec![
                 255;
-                record.asset.as_ref().expect("loaded placement asset").width as usize
-                    * record
+                placement
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .width as usize
+                    * placement
                         .asset
                         .as_ref()
                         .expect("loaded placement asset")
                         .height as usize
                     * 4
             ],
-            preview_width: record.asset.as_ref().expect("loaded placement asset").width,
-            preview_height: record
+            preview_width: placement
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .width,
+            preview_height: placement
                 .asset
                 .as_ref()
                 .expect("loaded placement asset")
@@ -1094,7 +1102,7 @@ mod tests {
             preview_texture: crate::jobs::ImportedPreviewTexture::Native(texture),
             loaded_lod: CanvasImageLod::Working,
             existing_load_diagnostics: None,
-            record,
+            placement,
             origin: crate::jobs::ImportOrigin::Existing,
             trace: None,
         }
@@ -1102,7 +1110,7 @@ mod tests {
 
     fn animated_loaded_item(
         _ui: &eframe::egui::Ui,
-        record: Placement,
+        placement: Placement,
     ) -> crate::jobs::PreparedPlacementImage {
         let first_frame = vec![0, 0, 255, 255];
         let second_frame = vec![0, 255, 0, 255];
@@ -1129,7 +1137,7 @@ mod tests {
             preview_texture: crate::jobs::ImportedPreviewTexture::Cpu,
             loaded_lod: CanvasImageLod::Working,
             existing_load_diagnostics: None,
-            record,
+            placement,
             origin: crate::jobs::ImportOrigin::Existing,
             trace: None,
         }
@@ -1205,7 +1213,7 @@ mod tests {
             .apply_cropped_item(
                 &ctx,
                 crate::jobs::PreparedCropPreview {
-                    item_id: 1,
+                    placement_id: 1,
                     stored_path: PathBuf::from("crop.png"),
                     width: 2,
                     height: 2,
@@ -1267,7 +1275,7 @@ mod tests {
             .add_loaded_reference_placement(test_record(2, 1, 1, 1))
             .unwrap();
 
-        assert!(state.document.images[1].animation.is_some());
+        assert!(state.document.rendered_placements[1].animation.is_some());
         assert_eq!(
             state.advance_animated_image(2, 0.15).unwrap().0.as_ref(),
             &[0, 255, 0, 255]
@@ -1282,9 +1290,9 @@ mod tests {
         assert!(
             state
                 .document
-                .images
+                .rendered_placements
                 .iter()
-                .any(|image| image.record.state.id == 2 && image.animation.is_some())
+                .any(|image| image.placement.state.id == 2 && image.animation.is_some())
         );
     }
 
@@ -1454,11 +1462,11 @@ mod tests {
                 eframe::egui::ColorImage::filled([1, 1], eframe::egui::Color32::WHITE),
                 eframe::egui::TextureOptions::LINEAR,
             );
-            state.document.images.push(CanvasImage {
-                record: unloaded_test_record(
+            state.document.rendered_placements.push(RenderedPlacement {
+                placement: unloaded_test_record(
                     101,
                     PlacementContent::Loading {
-                        intent: ContentResolutionSource::Unknown {
+                        source: ContentResolutionSource::Unknown {
                             description: "test".to_owned(),
                         },
                         status_message: None,
@@ -1504,10 +1512,10 @@ mod tests {
     #[test]
     fn provisional_placements_are_filtered_from_document_changes() {
         let mut state = CanvasState::default();
-        let mut record = unloaded_test_record(
+        let mut placement = unloaded_test_record(
             -1,
             PlacementContent::Loading {
-                intent: ContentResolutionSource::SearchAsset { asset_id: 42 },
+                source: ContentResolutionSource::SearchAsset { asset_id: 42 },
                 status_message: Some("Loading".to_owned()),
             },
             120.0,
@@ -1515,8 +1523,8 @@ mod tests {
             1.0,
             eframe::egui::pos2(10.0, 20.0),
         );
-        record.lifecycle = PlacementLifecycle::Provisional;
-        state.add_provisional_unloaded_item(record);
+        placement.lifecycle = PlacementLifecycle::Provisional;
+        state.add_provisional_unloaded_item(placement);
         state.select_placements(&[-1]);
         state.center_selected_placements_on(eframe::egui::pos2(40.0, 60.0));
 
@@ -1529,10 +1537,10 @@ mod tests {
     #[test]
     fn cancel_removes_provisional_placements_without_archiving_rows() {
         let mut state = CanvasState::default();
-        let mut record = unloaded_test_record(
+        let mut placement = unloaded_test_record(
             -1,
             PlacementContent::Loading {
-                intent: ContentResolutionSource::SearchAsset { asset_id: 42 },
+                source: ContentResolutionSource::SearchAsset { asset_id: 42 },
                 status_message: Some("Loading".to_owned()),
             },
             120.0,
@@ -1540,8 +1548,8 @@ mod tests {
             1.0,
             eframe::egui::pos2(10.0, 20.0),
         );
-        record.lifecycle = PlacementLifecycle::Provisional;
-        state.add_provisional_unloaded_item(record);
+        placement.lifecycle = PlacementLifecycle::Provisional;
+        state.add_provisional_unloaded_item(placement);
         state.select_placements(&[-1]);
 
         let removed = state.remove_provisional_placements();
@@ -1554,37 +1562,37 @@ mod tests {
     }
 
     #[test]
-    fn import_placeholders_replace_by_queue_id_and_remove_cleanly() {
+    fn placement_preview_slots_replace_by_queue_id_and_remove_cleanly() {
         let mut state = CanvasState::default();
-        state.add_import_placeholder(
+        state.add_placement_preview_slot(
             7,
             eframe::egui::pos2(10.0, 20.0),
             eframe::egui::vec2(100.0, 80.0),
             "first".to_owned(),
         );
-        state.add_import_placeholder(
+        state.add_placement_preview_slot(
             7,
             eframe::egui::pos2(30.0, 40.0),
             eframe::egui::vec2(120.0, 90.0),
             "updated".to_owned(),
         );
 
-        assert_eq!(state.import_placeholder_count(), 1);
-        state.remove_import_placeholder(7);
-        assert_eq!(state.import_placeholder_count(), 0);
+        assert_eq!(state.placement_preview_slot_count(), 1);
+        state.remove_placement_preview_slot(7);
+        assert_eq!(state.placement_preview_slot_count(), 0);
     }
 
     #[test]
-    fn hover_preview_placeholders_replace_and_clear_without_touching_queued_placeholders() {
+    fn hover_preview_slots_replace_and_clear_without_touching_queued_placeholders() {
         let mut state = CanvasState::default();
-        state.add_import_placeholder(
+        state.add_placement_preview_slot(
             1,
             eframe::egui::pos2(0.0, 0.0),
             eframe::egui::vec2(100.0, 80.0),
             "queued".to_owned(),
         );
 
-        state.set_hover_preview_placeholders(vec![
+        state.set_hover_preview_slots(vec![
             (
                 eframe::egui::pos2(10.0, 10.0),
                 eframe::egui::vec2(50.0, 50.0),
@@ -1594,22 +1602,22 @@ mod tests {
                 eframe::egui::vec2(50.0, 50.0),
             ),
         ]);
-        assert_eq!(state.hover_preview_placeholder_count(), 2);
-        assert_eq!(state.import_placeholder_count(), 1);
+        assert_eq!(state.hover_preview_slot_count(), 2);
+        assert_eq!(state.placement_preview_slot_count(), 1);
 
-        state.set_hover_preview_placeholders(vec![(
+        state.set_hover_preview_slots(vec![(
             eframe::egui::pos2(20.0, 20.0),
             eframe::egui::vec2(40.0, 40.0),
         )]);
-        assert_eq!(state.hover_preview_placeholder_count(), 1);
+        assert_eq!(state.hover_preview_slot_count(), 1);
 
-        state.clear_hover_preview_placeholders();
-        assert_eq!(state.hover_preview_placeholder_count(), 0);
-        assert_eq!(state.import_placeholder_count(), 1);
+        state.clear_hover_preview_slots();
+        assert_eq!(state.hover_preview_slot_count(), 0);
+        assert_eq!(state.placement_preview_slot_count(), 1);
     }
 
     #[test]
-    fn clearing_hover_preview_placeholders_also_clears_guide_indicators() {
+    fn clearing_hover_preview_slots_also_clears_guide_indicators() {
         eframe::egui::__run_test_ui(|ui| {
             let mut state = CanvasState::default();
             push_test_image(
@@ -1633,7 +1641,7 @@ mod tests {
             );
 
             assert_eq!(state.guide_snap_indicator_count(), 1);
-            state.clear_hover_preview_placeholders();
+            state.clear_hover_preview_slots();
             assert_eq!(state.guide_snap_indicator_count(), 0);
         });
     }
@@ -2145,7 +2153,7 @@ mod tests {
                 1.0,
                 eframe::egui::pos2(200.0, 160.0),
             );
-            let image = state.image_by_item_id(21).unwrap();
+            let image = state.rendered_placement_by_id(21).unwrap();
             let image_rect = image_screen_rect(&state, canvas_rect, image);
             let pointer_pos = image_rect.right_bottom() + eframe::egui::vec2(8.0, 8.0);
 
@@ -2230,22 +2238,22 @@ mod tests {
             let changed = state.apply_target_area_to_selected_images(90_000.0);
 
             assert_eq!(changed, 2);
-            for item_id in [31, 32] {
-                let image = state.image_by_item_id(item_id).unwrap();
+            for placement_id in [31, 32] {
+                let image = state.rendered_placement_by_id(placement_id).unwrap();
                 let area = image
-                    .record
+                    .placement
                     .asset
                     .as_ref()
                     .expect("loaded placement asset")
                     .width as f32
                     * image
-                        .record
+                        .placement
                         .asset
                         .as_ref()
                         .expect("loaded placement asset")
                         .height as f32
-                    * image.record.state.scale
-                    * image.record.state.scale;
+                    * image.placement.state.scale
+                    * image.placement.state.scale;
                 assert!((area - 90_000.0).abs() < 0.1);
             }
         });
@@ -3053,31 +3061,31 @@ mod tests {
             [4, 4],
             |_| {},
         );
-        state.document.images.push(CanvasImage {
-            record: test_record(42, 42, 4, 4),
+        state.document.rendered_placements.push(RenderedPlacement {
+            placement: test_record(42, 42, 4, 4),
             texture: CanvasTexture::Native(handle),
             loaded_lod: CanvasImageLod::Working,
             animation: None,
         });
 
-        assert!(state.can_start_crop_on_item(42));
+        assert!(state.can_start_crop_on_placement(42));
         state.mark_crop_pending(42);
-        assert!(!state.can_start_crop_on_item(42));
+        assert!(!state.can_start_crop_on_placement(42));
         state.clear_crop_pending(42);
-        assert!(state.can_start_crop_on_item(42));
+        assert!(state.can_start_crop_on_placement(42));
     }
 
     #[test]
     fn crop_guard_rejects_svg_items() {
         let mut state = super::CanvasState::default();
-        let mut record = test_record(42, 42, 4, 4);
-        record
+        let mut placement = test_record(42, 42, 4, 4);
+        placement
             .asset
             .as_mut()
             .expect("loaded placement asset")
             .mime_type = "image/svg+xml".to_owned();
-        state.document.images.push(CanvasImage {
-            record,
+        state.document.rendered_placements.push(RenderedPlacement {
+            placement,
             texture: CanvasTexture::Svg {
                 uri: "memory://test.svg".to_owned(),
                 bytes: Arc::<[u8]>::from(b"<svg viewBox='0 0 4 4'/>".as_slice()),
@@ -3087,14 +3095,14 @@ mod tests {
             animation: None,
         });
 
-        assert!(!state.can_start_crop_on_item(42));
+        assert!(!state.can_start_crop_on_placement(42));
     }
 
     #[test]
     fn pending_crop_preview_uses_cached_pixels_before_worker_finishes() {
         let ctx = eframe::egui::Context::default();
         let mut state = super::CanvasState::default();
-        let record = test_record(42, 42, 8, 8);
+        let placement = test_record(42, 42, 8, 8);
         let source_rgba = (0..16)
             .flat_map(|index| [index, 0, 0, 255])
             .collect::<Vec<_>>();
@@ -3103,7 +3111,7 @@ mod tests {
             crate::jobs::PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
-                record,
+                placement,
                 preview_rgba: source_rgba.clone(),
                 preview_width: 4,
                 preview_height: 4,
@@ -3121,7 +3129,7 @@ mod tests {
             .insert(42, source_rgba.clone().into());
 
         let request = CanvasCropRequest {
-            item_id: 42,
+            placement_id: 42,
             source_asset: test_record(42, 42, 8, 8)
                 .asset
                 .expect("loaded placement asset"),
@@ -3136,13 +3144,17 @@ mod tests {
 
         state.apply_pending_crop_preview(&ctx, &request).unwrap();
 
-        let preview = state.preview_for_item_id(42).unwrap();
+        let preview = state.preview_for_placement_id(42).unwrap();
         assert_eq!(preview.texture_size, eframe::egui::vec2(2.0, 2.0));
-        let record = state.placement_for_id(42).unwrap();
+        let placement = state.placement_for_id(42).unwrap();
         assert_eq!(
             (
-                record.asset.as_ref().expect("loaded placement asset").width,
-                record
+                placement
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .width,
+                placement
                     .asset
                     .as_ref()
                     .expect("loaded placement asset")
@@ -3150,7 +3162,10 @@ mod tests {
             ),
             (4, 4)
         );
-        assert_eq!((record.state.center.x, record.state.center.y), (2.0, 2.0));
+        assert_eq!(
+            (placement.state.center.x, placement.state.center.y),
+            (2.0, 2.0)
+        );
 
         let original = state.snapshot_item_image(42).unwrap();
         assert_eq!(
@@ -3169,7 +3184,7 @@ mod tests {
     fn pending_crop_restore_snapshot_shares_warmed_pixels() {
         let ctx = eframe::egui::Context::default();
         let mut state = super::CanvasState::default();
-        let record = test_record(42, 42, 8, 8);
+        let placement = test_record(42, 42, 8, 8);
         let source_rgba = vec![255; 4 * 4 * 4];
         let shared_rgba = super::SharedRgba::from(source_rgba.clone());
         state.add_prepared_placement_image(
@@ -3177,7 +3192,7 @@ mod tests {
             crate::jobs::PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
-                record,
+                placement,
                 preview_rgba: source_rgba,
                 preview_width: 4,
                 preview_height: 4,
@@ -3195,7 +3210,7 @@ mod tests {
             .insert(42, shared_rgba.clone());
 
         let request = CanvasCropRequest {
-            item_id: 42,
+            placement_id: 42,
             source_asset: test_record(42, 42, 8, 8)
                 .asset
                 .expect("loaded placement asset"),
@@ -3226,7 +3241,7 @@ mod tests {
             crate::jobs::PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
-                record: test_record(42, 42, 8, 8),
+                placement: test_record(42, 42, 8, 8),
                 preview_rgba: vec![255; 4 * 4 * 4],
                 preview_width: 4,
                 preview_height: 4,
@@ -3252,7 +3267,7 @@ mod tests {
             crate::jobs::PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
-                record: test_record(42, 42, 8, 8),
+                placement: test_record(42, 42, 8, 8),
                 preview_rgba: vec![255; 4 * 4 * 4],
                 preview_width: 4,
                 preview_height: 4,
@@ -3279,13 +3294,13 @@ mod tests {
     fn final_crop_integration_after_pending_preview_applies_crop_offset_once() {
         let ctx = eframe::egui::Context::default();
         let mut state = super::CanvasState::default();
-        let record = test_record(42, 42, 8, 8);
+        let placement = test_record(42, 42, 8, 8);
         state.add_prepared_placement_image(
             &ctx,
             crate::jobs::PreparedPlacementImage {
                 target_board_id: 1,
                 queue_id: None,
-                record,
+                placement,
                 preview_rgba: vec![255; 4 * 4 * 4],
                 preview_width: 4,
                 preview_height: 4,
@@ -3302,7 +3317,7 @@ mod tests {
             .asset_rgba_cache
             .insert(42, vec![255; 4 * 4 * 4].into());
         let request = CanvasCropRequest {
-            item_id: 42,
+            placement_id: 42,
             source_asset: test_record(42, 42, 8, 8)
                 .asset
                 .expect("loaded placement asset"),
@@ -3316,7 +3331,7 @@ mod tests {
         };
         state.apply_pending_crop_preview(&ctx, &request).unwrap();
         let cropped = crate::jobs::PreparedCropPreview {
-            item_id: 42,
+            placement_id: 42,
             stored_path: std::path::PathBuf::from("cropped.png"),
             width: 4,
             height: 4,
@@ -3339,9 +3354,12 @@ mod tests {
             .apply_cropped_item(&ctx, cropped, asset, updated_item)
             .unwrap();
 
-        let record = state.placement_for_id(42).unwrap();
-        assert_eq!(record.state.asset_id, Some(99));
-        assert_eq!((record.state.center.x, record.state.center.y), (2.0, 2.0));
+        let placement = state.placement_for_id(42).unwrap();
+        assert_eq!(placement.state.asset_id, Some(99));
+        assert_eq!(
+            (placement.state.center.x, placement.state.center.y),
+            (2.0, 2.0)
+        );
     }
 
     #[test]
@@ -3828,15 +3846,15 @@ mod tests {
 
         let first = state
             .document
-            .images
+            .rendered_placements
             .iter()
-            .find(|image| image.record.state.id == 1)
+            .find(|image| image.placement.state.id == 1)
             .unwrap();
         let second = state
             .document
-            .images
+            .rendered_placements
             .iter()
-            .find(|image| image.record.state.id == 2)
+            .find(|image| image.placement.state.id == 2)
             .unwrap();
         let first_rect = placement_visual_bounds_world(first);
         let second_rect = placement_visual_bounds_world(second);
@@ -3878,30 +3896,30 @@ mod tests {
 
         let first = state
             .document
-            .images
+            .rendered_placements
             .iter()
-            .find(|image| image.record.state.id == 1)
+            .find(|image| image.placement.state.id == 1)
             .unwrap();
         let second = state
             .document
-            .images
+            .rendered_placements
             .iter()
-            .find(|image| image.record.state.id == 2)
+            .find(|image| image.placement.state.id == 2)
             .unwrap();
         let first_width = first
-            .record
+            .placement
             .asset
             .as_ref()
             .expect("loaded placement asset")
             .width as f32
-            * first.record.state.scale;
+            * first.placement.state.scale;
         let second_width = second
-            .record
+            .placement
             .asset
             .as_ref()
             .expect("loaded placement asset")
             .width as f32
-            * second.record.state.scale;
+            * second.placement.state.scale;
         assert!((first_width - second_width).abs() < 0.001);
     }
 
@@ -3936,11 +3954,11 @@ mod tests {
 
         let first = state
             .document
-            .images
+            .rendered_placements
             .iter()
-            .find(|image| image.record.state.id == 1)
+            .find(|image| image.placement.state.id == 1)
             .unwrap();
-        assert!((first.record.state.scale - 1.0).abs() < 0.001);
+        assert!((first.placement.state.scale - 1.0).abs() < 0.001);
     }
 
     #[test]
@@ -4390,12 +4408,12 @@ mod tests {
     fn placement_rect(
         items: &[SelectedLayoutItem],
         placements: &[(i64, eframe::egui::Pos2)],
-        item_id: i64,
+        placement_id: i64,
     ) -> eframe::egui::Rect {
-        let item = items.iter().find(|item| item.id == item_id).unwrap();
+        let item = items.iter().find(|item| item.id == placement_id).unwrap();
         let center = placements
             .iter()
-            .find(|(placement_id, _)| *placement_id == item_id)
+            .find(|(candidate_placement_id, _)| *candidate_placement_id == placement_id)
             .map(|(_, center)| *center)
             .unwrap();
         eframe::egui::Rect::from_center_size(center, eframe::egui::vec2(item.width, item.height))
@@ -4428,26 +4446,29 @@ mod tests {
             || right.bottom() + gap <= left.top()
     }
 
-    fn placement_visual_bounds_world(image: &CanvasImage) -> eframe::egui::Rect {
+    fn placement_visual_bounds_world(image: &RenderedPlacement) -> eframe::egui::Rect {
         let visual_size = rotated_visual_size(
             image
-                .record
+                .placement
                 .asset
                 .as_ref()
                 .expect("loaded placement asset")
                 .width as f32
-                * image.record.state.scale.max(0.01),
+                * image.placement.state.scale.max(0.01),
             image
-                .record
+                .placement
                 .asset
                 .as_ref()
                 .expect("loaded placement asset")
                 .height as f32
-                * image.record.state.scale.max(0.01),
-            image.record.state.rotation,
+                * image.placement.state.scale.max(0.01),
+            image.placement.state.rotation,
         );
         eframe::egui::Rect::from_center_size(
-            eframe::egui::pos2(image.record.state.center.x, image.record.state.center.y),
+            eframe::egui::pos2(
+                image.placement.state.center.x,
+                image.placement.state.center.y,
+            ),
             visual_size,
         )
     }
@@ -4455,17 +4476,20 @@ mod tests {
     fn selected_image_positions(state: &CanvasState) -> Vec<(i64, eframe::egui::Pos2)> {
         let mut positions = state
             .document
-            .images
+            .rendered_placements
             .iter()
-            .filter(|image| state.is_selected(image.record.state.id))
+            .filter(|image| state.is_selected(image.placement.state.id))
             .map(|image| {
                 (
-                    image.record.state.id,
-                    eframe::egui::pos2(image.record.state.center.x, image.record.state.center.y),
+                    image.placement.state.id,
+                    eframe::egui::pos2(
+                        image.placement.state.center.x,
+                        image.placement.state.center.y,
+                    ),
                 )
             })
             .collect::<Vec<_>>();
-        positions.sort_by_key(|(item_id, _)| *item_id);
+        positions.sort_by_key(|(placement_id, _)| *placement_id);
         positions
     }
 }

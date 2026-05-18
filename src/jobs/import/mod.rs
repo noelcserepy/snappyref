@@ -48,8 +48,11 @@ use worker::ImportWorkerConfig;
 #[cfg(test)]
 pub(super) use worker::{RequestQueue, WorkerKind};
 
-pub fn sort_records_by_viewport_proximity(records: &mut [Placement], viewport_world: egui::Rect) {
-    records.sort_by(|left, right| {
+pub fn sort_records_by_viewport_proximity(
+    placements: &mut [Placement],
+    viewport_world: egui::Rect,
+) {
+    placements.sort_by(|left, right| {
         record_viewport_distance_sq(left, viewport_world)
             .total_cmp(&record_viewport_distance_sq(right, viewport_world))
             .then_with(|| {
@@ -61,8 +64,8 @@ pub fn sort_records_by_viewport_proximity(records: &mut [Placement], viewport_wo
     });
 }
 
-fn record_viewport_distance_sq(record: &Placement, viewport_world: egui::Rect) -> f32 {
-    let rect = record_world_rect(record);
+fn record_viewport_distance_sq(placement: &Placement, viewport_world: egui::Rect) -> f32 {
+    let rect = record_world_rect(placement);
     if rect.intersects(viewport_world) {
         return 0.0;
     }
@@ -78,21 +81,25 @@ fn record_viewport_distance_sq(record: &Placement, viewport_world: egui::Rect) -
     center.distance_sq(clamped)
 }
 
-fn record_intersects_viewport_world(record: &Placement, viewport_world: egui::Rect) -> bool {
-    record_world_rect(record).intersects(viewport_world)
+fn record_intersects_viewport_world(placement: &Placement, viewport_world: egui::Rect) -> bool {
+    record_world_rect(placement).intersects(viewport_world)
 }
 
-fn record_world_rect(record: &Placement) -> egui::Rect {
+fn record_world_rect(placement: &Placement) -> egui::Rect {
     let size = egui::vec2(
-        record.asset.as_ref().expect("loaded placement asset").width as f32,
-        record
+        placement
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .width as f32,
+        placement
             .asset
             .as_ref()
             .expect("loaded placement asset")
             .height as f32,
-    ) * record.state.scale.max(0.01);
+    ) * placement.state.scale.max(0.01);
     egui::Rect::from_center_size(
-        egui::pos2(record.state.center.x, record.state.center.y),
+        egui::pos2(placement.state.center.x, placement.state.center.y),
         size,
     )
 }

@@ -251,7 +251,7 @@ pub(crate) fn search_result_tile(
         .rect_filled(preview_rect, tile_radius, crate::ui::theme::SURFACE);
 
     if let Some(item_id) = group.placement_ids.first().copied()
-        && let Some(preview) = canvas.preview_for_item_id(item_id)
+        && let Some(preview) = canvas.preview_for_placement_id(item_id)
     {
         paint_texture_cover(ui, preview_rect, preview.texture_id, preview.texture_size);
     } else if let Some(path) = &group.asset_preview_path {
@@ -509,7 +509,7 @@ fn paint_image_pivot_pill(
 
                 let (thumb_rect, _) = ui
                     .allocate_exact_size(egui::vec2(thumb_size, thumb_size), egui::Sense::hover());
-                if let Some(preview) = canvas.preview_for_item_id(pivot.item_id) {
+                if let Some(preview) = canvas.preview_for_placement_id(pivot.item_id) {
                     let preview_aspect = thumb_rect.width() / thumb_rect.height().max(1.0);
                     let texture_aspect = preview.texture_size.x / preview.texture_size.y.max(1.0);
                     let uv_rect = if texture_aspect > preview_aspect {

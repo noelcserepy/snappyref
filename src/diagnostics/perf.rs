@@ -387,15 +387,15 @@ pub fn print_startup_trace(library_root: &std::path::Path) -> Result<(), String>
         println!(
             "startup_item startup_ms={:.2} item_id={} asset_id={} file={} source_kind={:?} source_mb={:.2} backfilled_cache={} source_dims={}x{} preview_dims={}x{} decode_ms={:.2} preview_ms={:.2} worker_ms={:.2} source={}",
             entry.startup_elapsed.as_secs_f64() * 1000.0,
-            entry.record.state.id,
+            entry.placement.state.id,
             entry
-                .record
+                .placement
                 .asset
                 .as_ref()
                 .expect("loaded placement asset")
                 .id,
             entry
-                .record
+                .placement
                 .asset
                 .as_ref()
                 .expect("loaded placement asset")

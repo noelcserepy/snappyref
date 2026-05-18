@@ -46,12 +46,16 @@ fn external_image_for_selection(
     let Some(library) = library else {
         return Ok(None);
     };
-    let record = canvas
+    let placement = canvas
         .placement_for_id(selected_placement_ids[0])
         .ok_or_else(|| "missing selected placement".to_owned())?;
     let byte_len = external_image_byte_len(
-        record.asset.as_ref().expect("loaded placement asset").width,
-        record
+        placement
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .width,
+        placement
             .asset
             .as_ref()
             .expect("loaded placement asset")
@@ -63,9 +67,13 @@ fn external_image_for_selection(
 
     let Ok((rgba, width, height)) = crate::jobs::load_canvas_snapshot_pixels(
         library,
-        &record,
-        record.asset.as_ref().expect("loaded placement asset").width,
-        record
+        &placement,
+        placement
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .width,
+        placement
             .asset
             .as_ref()
             .expect("loaded placement asset")
@@ -210,7 +218,7 @@ mod tests {
         let source = library
             .store_rgba_image("copy-source", &rgba, 2, 1)
             .unwrap();
-        let record = library
+        let placement = library
             .persist_imported_image(
                 &source,
                 "image/png",
@@ -221,10 +229,10 @@ mod tests {
                 1.0,
             )
             .unwrap();
-        let item_id = record.state.id;
+        let placement_id = placement.state.id;
         let mut canvas = crate::canvas::CanvasState::default();
-        canvas.add_prepared_placement_image(&ctx, loaded_item(record, rgba.clone(), 2, 1));
-        canvas.select_placements(&[item_id]);
+        canvas.add_prepared_placement_image(&ctx, loaded_item(placement, rgba.clone(), 2, 1));
+        canvas.select_placements(&[placement_id]);
 
         let payload = build_selection_copy_payload(&canvas, Some(&library))
             .unwrap()
@@ -284,17 +292,21 @@ mod tests {
         let root = temp_library_root("snappyref-copy-oversized-image");
         let library = crate::library::storage::Library::initialize(root).unwrap();
         let mut canvas = crate::canvas::CanvasState::default();
-        let mut record = test_record(1, 1);
-        record.asset.as_mut().expect("loaded placement asset").width = 20_000;
-        record
+        let mut placement = test_record(1, 1);
+        placement
+            .asset
+            .as_mut()
+            .expect("loaded placement asset")
+            .width = 20_000;
+        placement
             .asset
             .as_mut()
             .expect("loaded placement asset")
             .height = 20_000;
-        record.visual_size = eframe::egui::vec2(20_000.0, 20_000.0);
+        placement.visual_size = eframe::egui::vec2(20_000.0, 20_000.0);
         canvas.add_prepared_placement_image(
             &ctx,
-            loaded_item(record, vec![255, 255, 255, 255], 1, 1),
+            loaded_item(placement, vec![255, 255, 255, 255], 1, 1),
         );
         canvas.select_placements(&[1]);
 
@@ -311,8 +323,8 @@ mod tests {
         let ctx = eframe::egui::Context::default();
         let root = temp_library_root("snappyref-copy-unsupported-image");
         let library = crate::library::storage::Library::initialize(root).unwrap();
-        let mut record = test_record(1, 1);
-        record
+        let mut placement = test_record(1, 1);
+        placement
             .asset
             .as_mut()
             .expect("loaded placement asset")
@@ -321,7 +333,7 @@ mod tests {
         let mut canvas = crate::canvas::CanvasState::default();
         canvas.add_prepared_placement_image(
             &ctx,
-            loaded_item(record, vec![255, 255, 255, 255], 1, 1),
+            loaded_item(placement, vec![255, 255, 255, 255], 1, 1),
         );
         canvas.select_placements(&[1]);
 
@@ -334,7 +346,7 @@ mod tests {
     }
 
     fn loaded_item(
-        record: Placement,
+        placement: Placement,
         preview_rgba: Vec<u8>,
         preview_width: u32,
         preview_height: u32,
@@ -342,7 +354,7 @@ mod tests {
         crate::jobs::PreparedPlacementImage {
             target_board_id: 1,
             queue_id: None,
-            record,
+            placement,
             preview_rgba,
             preview_width,
             preview_height,
@@ -355,10 +367,10 @@ mod tests {
         }
     }
 
-    fn test_record(item_id: i64, asset_id: i64) -> Placement {
+    fn test_record(placement_id: i64, asset_id: i64) -> Placement {
         Placement::loaded(
             PlacementState {
-                id: item_id,
+                id: placement_id,
                 asset_id: Some(asset_id),
                 center: eframe::egui::Pos2::ZERO,
                 scale: 1.0,

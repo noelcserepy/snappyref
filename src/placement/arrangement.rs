@@ -1123,8 +1123,8 @@ fn placed_bounds(
     let mut max_x = f32::NEG_INFINITY;
     let mut max_y = f32::NEG_INFINITY;
 
-    for (item_id, center) in placements {
-        let item = items.iter().find(|item| item.id == *item_id)?;
+    for (placement_id, center) in placements {
+        let item = items.iter().find(|item| item.id == *placement_id)?;
         min_x = min_x.min(center.x - item.width * 0.5);
         min_y = min_y.min(center.y - item.height * 0.5);
         max_x = max_x.max(center.x + item.width * 0.5);
@@ -1141,8 +1141,8 @@ fn normalize_placements_to_origin(
     let mut min_x = f32::INFINITY;
     let mut min_y = f32::INFINITY;
 
-    for (item_id, center) in placements.iter() {
-        let item = items.iter().find(|item| item.id == *item_id)?;
+    for (placement_id, center) in placements.iter() {
+        let item = items.iter().find(|item| item.id == *placement_id)?;
         min_x = min_x.min(center.x - item.width * 0.5);
         min_y = min_y.min(center.y - item.height * 0.5);
     }
@@ -1223,7 +1223,7 @@ mod tests {
             },
             asset: None,
             content: PlacementContent::Loading {
-                intent: crate::data::ContentResolutionSource::Unknown {
+                source: crate::data::ContentResolutionSource::Unknown {
                     description: "test".to_owned(),
                 },
                 status_message: None,

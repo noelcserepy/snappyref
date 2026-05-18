@@ -3,31 +3,31 @@ use eframe::egui;
 use super::PixelCropRect;
 
 pub(super) fn image_screen_center_for_record(
-    record: &crate::data::Placement,
+    placement: &crate::data::Placement,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> egui::Pos2 {
-    screen_center + pan + egui::vec2(record.state.center.x, record.state.center.y) * zoom
+    screen_center + pan + egui::vec2(placement.state.center.x, placement.state.center.y) * zoom
 }
 
 pub(super) fn image_screen_size_for_record(
-    record: &crate::data::Placement,
+    placement: &crate::data::Placement,
     zoom: f32,
 ) -> egui::Vec2 {
-    record.scaled_visual_size() * zoom
+    placement.scaled_visual_size() * zoom
 }
 
 pub(super) fn image_screen_corners_for_record(
-    record: &crate::data::Placement,
+    placement: &crate::data::Placement,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> [egui::Pos2; 4] {
-    let center = image_screen_center_for_record(record, pan, zoom, screen_center);
-    let half_size = image_screen_size_for_record(record, zoom) * 0.5;
-    let sin = record.state.rotation.sin();
-    let cos = record.state.rotation.cos();
+    let center = image_screen_center_for_record(placement, pan, zoom, screen_center);
+    let half_size = image_screen_size_for_record(placement, zoom) * 0.5;
+    let sin = placement.state.rotation.sin();
+    let cos = placement.state.rotation.cos();
     let rotate = |offset: egui::Vec2| {
         egui::vec2(
             offset.x * cos - offset.y * sin,
@@ -44,14 +44,14 @@ pub(super) fn image_screen_corners_for_record(
 }
 
 pub(super) fn image_screen_rect_for_record(
-    record: &crate::data::Placement,
+    placement: &crate::data::Placement,
     rect: egui::Rect,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> egui::Rect {
     let _ = rect;
-    image_screen_corners_for_record(record, pan, zoom, screen_center)
+    image_screen_corners_for_record(placement, pan, zoom, screen_center)
         .into_iter()
         .fold(egui::Rect::NOTHING, |mut bounds, corner| {
             bounds.extend_with(corner);
@@ -60,12 +60,12 @@ pub(super) fn image_screen_rect_for_record(
 }
 
 pub(super) fn image_rotation_handle_screen_pos(
-    record: &crate::data::Placement,
+    placement: &crate::data::Placement,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> (egui::Pos2, egui::Pos2) {
-    let corners = image_screen_corners_for_record(record, pan, zoom, screen_center);
+    let corners = image_screen_corners_for_record(placement, pan, zoom, screen_center);
     let top_mid = corners[0].lerp(corners[1], 0.5);
     let bottom_mid = corners[3].lerp(corners[2], 0.5);
     let outward = (top_mid - bottom_mid).normalized();
@@ -80,18 +80,18 @@ pub(super) fn min_image_scale(asset: &crate::data::ImageAsset) -> f32 {
 }
 
 pub(super) fn image_contains_screen_point(
-    record: &crate::data::Placement,
+    placement: &crate::data::Placement,
     pointer_pos: egui::Pos2,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> bool {
-    let center = image_screen_center_for_record(record, pan, zoom, screen_center);
+    let center = image_screen_center_for_record(placement, pan, zoom, screen_center);
     let local = pointer_pos - center;
-    let sin = (-record.state.rotation).sin();
-    let cos = (-record.state.rotation).cos();
+    let sin = (-placement.state.rotation).sin();
+    let cos = (-placement.state.rotation).cos();
     let unrotated = egui::vec2(local.x * cos - local.y * sin, local.x * sin + local.y * cos);
-    let half_size = image_screen_size_for_record(record, zoom) * 0.5;
+    let half_size = image_screen_size_for_record(placement, zoom) * 0.5;
 
     unrotated.x.abs() <= half_size.x && unrotated.y.abs() <= half_size.y
 }

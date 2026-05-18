@@ -156,11 +156,11 @@ pub fn startup_trace(
     viewport_world: egui::Rect,
     canvas_image_settings: CanvasImageSettings,
 ) -> Result<Vec<StartupTraceEntry>, String> {
-    let mut records = library.load_placements()?;
-    sort_records_by_viewport_proximity(&mut records, viewport_world);
+    let mut placements = library.load_placements()?;
+    sort_records_by_viewport_proximity(&mut placements, viewport_world);
     let started_at = Instant::now();
-    let mut entries = Vec::with_capacity(records.len());
-    for record in records {
+    let mut entries = Vec::with_capacity(placements.len());
+    for placement in placements {
         let trace = ImportTrace {
             queued_at: Instant::now(),
             timings: ImportTimings::default(),
@@ -169,7 +169,7 @@ pub fn startup_trace(
             library,
             1,
             None,
-            record.clone(),
+            placement.clone(),
             usize::MAX,
             canvas_image_settings,
             CanvasImageLod::Overview,
@@ -185,7 +185,7 @@ pub fn startup_trace(
                     .map(|trace| trace.timings)
                     .ok_or_else(|| "missing existing-load trace".to_owned())?;
                 entries.push(StartupTraceEntry {
-                    record: loaded.record,
+                    placement: loaded.placement,
                     diagnostics,
                     timings,
                     preview_width: loaded.preview_width,
@@ -309,7 +309,7 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
         .ok_or_else(|| "missing import trace".to_owned())?;
     let canvas_cache_path = library.canvas_image_cache_path(
         loaded
-            .record
+            .placement
             .asset
             .as_ref()
             .expect("loaded placement asset")
@@ -324,7 +324,7 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
         .map(|metadata| metadata.len())
         .unwrap_or(
             loaded
-                .record
+                .placement
                 .asset
                 .as_ref()
                 .expect("loaded placement asset")
@@ -335,13 +335,13 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
         source_path,
         source_file_size,
         source_width: loaded
-            .record
+            .placement
             .asset
             .as_ref()
             .expect("loaded placement asset")
             .width,
         source_height: loaded
-            .record
+            .placement
             .asset
             .as_ref()
             .expect("loaded placement asset")
@@ -360,20 +360,20 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
 
 fn measure_first_visible_load_ms(
     library: &Library,
-    mut records: Vec<Placement>,
+    mut placements: Vec<Placement>,
     viewport_world: egui::Rect,
     prioritize: bool,
 ) -> Result<f64, String> {
     if prioritize {
-        sort_records_by_viewport_proximity(&mut records, viewport_world);
+        sort_records_by_viewport_proximity(&mut placements, viewport_world);
     }
     let started_at = Instant::now();
-    for record in records {
+    for placement in placements {
         let loaded = load_existing(
             library,
             1,
             None,
-            record.clone(),
+            placement.clone(),
             usize::MAX,
             CanvasImageSettings::default(),
             CanvasImageLod::Working,
@@ -382,7 +382,7 @@ fn measure_first_visible_load_ms(
         );
         match loaded {
             ImagePreparationResult::Loaded(loaded) => {
-                if record_intersects_viewport_world(&loaded.record, viewport_world) {
+                if record_intersects_viewport_world(&loaded.placement, viewport_world) {
                     return Ok(started_at.elapsed().as_secs_f64() * 1000.0);
                 }
             }
@@ -415,12 +415,12 @@ fn measure_interactive_import_ms(
             crate::data::DEFAULT_IMPORT_GAP,
         )?;
     } else {
-        for record in backlog {
+        for placement in backlog {
             match load_existing(
                 library,
                 1,
                 None,
-                record.clone(),
+                placement.clone(),
                 usize::MAX,
                 CanvasImageSettings::default(),
                 CanvasImageLod::Working,
@@ -465,7 +465,7 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
         worker.enqueue(ImagePreparationRequest::LoadExisting {
             target_board_id: 1,
             queue_id: None,
-            record: perf_record(
+            placement: perf_record(
                 index as i64 + 1,
                 &path,
                 egui::pos2(2500.0 + index as f32 * 40.0, 2500.0),
@@ -536,23 +536,23 @@ fn measure_worker_interactive_import_ms(config: ImportWorkerConfig) -> Result<f6
 }
 
 fn perf_record(
-    item_id: i64,
+    placement_id: i64,
     path: &Path,
     center: egui::Pos2,
     width: u32,
     height: u32,
 ) -> Placement {
     let item = crate::data::PlacementState {
-        id: item_id,
-        asset_id: Some(item_id),
+        id: placement_id,
+        asset_id: Some(placement_id),
         center,
         scale: 1.0,
         rotation: 0.0,
-        z_index: item_id as i32,
+        z_index: placement_id as i32,
         archived: false,
     };
     let asset = crate::data::ImageAsset {
-        id: item_id,
+        id: placement_id,
         original_path: path.to_path_buf(),
         filename: path
             .file_name()

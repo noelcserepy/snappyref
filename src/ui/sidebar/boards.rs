@@ -33,7 +33,7 @@ pub(super) fn paint_sidebar_boards(
                                 ui,
                                 summary.board.id,
                                 &summary.board.name,
-                                &image_count_label(summary.image_count),
+                                &placement_count_label(summary.placement_count),
                                 summary.board.id == active_board_id,
                                 shortcut.as_deref(),
                                 forced_hover_index == Some(index),
@@ -285,7 +285,7 @@ fn paint_create_board_button(ui: &mut egui::Ui) -> bool {
     response.clicked()
 }
 
-fn image_count_label(count: usize) -> String {
+fn placement_count_label(count: usize) -> String {
     match count {
         1 => "1 image".to_owned(),
         _ => format!("{count} images"),

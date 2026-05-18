@@ -4,8 +4,8 @@ use eframe::egui;
 
 use super::{
     AnnotationDraftState, AnnotationDragState, CanvasContextMenuRequest, CanvasCropRequest,
-    CanvasImage, CropState, DragState, ImageTransformState, ImportPlaceholder, MarqueeState,
-    PendingAnnotation, PendingCropPreview, SharedRgba, TextboxLayoutCacheEntry,
+    CropState, DragState, ImageTransformState, MarqueeState, PendingAnnotation, PendingCropPreview,
+    PlacementPreviewSlot, RenderedPlacement, SharedRgba, TextboxLayoutCacheEntry,
     TextboxTransformState,
 };
 use crate::data::{CanvasAnnotation, CanvasImageLod, CanvasStackItem};
@@ -21,7 +21,7 @@ pub(super) struct MouseWheelZoomAnimation {
 
 #[derive(Default)]
 pub(crate) struct CanvasDocumentState {
-    pub(crate) images: Vec<CanvasImage>,
+    pub(crate) rendered_placements: Vec<RenderedPlacement>,
     pub(super) annotations: Vec<CanvasAnnotation>,
     pub(super) stack_order: Vec<CanvasStackItem>,
     pub(super) selected_placement_ids: Vec<i64>,
@@ -50,8 +50,8 @@ pub(crate) struct CanvasInteractionState {
     pub(super) pending_annotation: Option<PendingAnnotation>,
     pub(super) pending_context_menu_request: Option<CanvasContextMenuRequest>,
     pub(super) pending_focus_selection_request: bool,
-    pub(super) import_placeholders: Vec<ImportPlaceholder>,
-    pub(super) hover_preview_placeholders: Vec<ImportPlaceholder>,
+    pub(super) placement_preview_slots: Vec<PlacementPreviewSlot>,
+    pub(super) hover_preview_slots: Vec<PlacementPreviewSlot>,
     pub(crate) guide_snap_indicators: Vec<super::GuideSnapIndicator>,
     pub(super) mouse_wheel_zoom_animation: Option<MouseWheelZoomAnimation>,
     pub(super) last_pointer_screen_pos: Option<egui::Pos2>,

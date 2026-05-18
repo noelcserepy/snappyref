@@ -27,7 +27,7 @@ pub(crate) fn load_existing(
     library: &Library,
     target_board_id: i64,
     queue_id: Option<u64>,
-    record: Placement,
+    placement: Placement,
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     target_lod: CanvasImageLod,
@@ -41,7 +41,7 @@ pub(crate) fn load_existing(
     }
 
     if original_mime_type_is_svg(
-        &record
+        &placement
             .asset
             .as_ref()
             .expect("loaded placement asset")
@@ -49,7 +49,7 @@ pub(crate) fn load_existing(
     ) {
         let decode_started_at = Instant::now();
         match read_svg_document(
-            &record
+            &placement
                 .asset
                 .as_ref()
                 .expect("loaded placement asset")
@@ -70,7 +70,7 @@ pub(crate) fn load_existing(
                         uri: format!(
                             "bytes://asset-svg-{}.svg",
                             stable_svg_uri_key(
-                                &record
+                                &placement
                                     .asset
                                     .as_ref()
                                     .expect("loaded placement asset")
@@ -79,15 +79,19 @@ pub(crate) fn load_existing(
                         ),
                         bytes: Arc::<[u8]>::from(svg.bytes),
                         size: [
-                            record.asset.as_ref().expect("loaded placement asset").width as usize,
-                            record
+                            placement
+                                .asset
+                                .as_ref()
+                                .expect("loaded placement asset")
+                                .width as usize,
+                            placement
                                 .asset
                                 .as_ref()
                                 .expect("loaded placement asset")
                                 .height as usize,
                         ],
                     },
-                    record,
+                    placement,
                     animated_preview: None,
                     loaded_lod: target_lod,
                     existing_load_diagnostics: None,
@@ -99,9 +103,8 @@ pub(crate) fn load_existing(
                 return ImagePreparationResult::Failed {
                     target_board_id: Some(target_board_id),
                     queue_id,
-                    placement_id: None,
-                    item_id: Some(record.state.id),
-                    context: record
+                    placement_id: Some(placement.state.id),
+                    context: placement
                         .asset
                         .as_ref()
                         .expect("loaded placement asset")
@@ -118,7 +121,7 @@ pub(crate) fn load_existing(
     let preview_started_at = Instant::now();
     match load_existing_preview(
         library,
-        &record,
+        &placement,
         canvas_image_settings,
         target_lod,
         max_texture_side,
@@ -134,9 +137,8 @@ pub(crate) fn load_existing(
                         return ImagePreparationResult::Failed {
                             target_board_id: Some(target_board_id),
                             queue_id,
-                            placement_id: None,
-                            item_id: Some(record.state.id),
-                            context: record
+                            placement_id: Some(placement.state.id),
+                            context: placement
                                 .asset
                                 .as_ref()
                                 .expect("loaded placement asset")
@@ -156,7 +158,7 @@ pub(crate) fn load_existing(
             ImagePreparationResult::Loaded(PreparedPlacementImage {
                 target_board_id,
                 queue_id,
-                record,
+                placement,
                 preview_rgba: preview.rgba,
                 preview_width: preview.width,
                 preview_height: preview.height,
@@ -171,9 +173,8 @@ pub(crate) fn load_existing(
         Err(error) => ImagePreparationResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id,
-            placement_id: None,
-            item_id: Some(record.state.id),
-            context: record
+            placement_id: Some(placement.state.id),
+            context: placement
                 .asset
                 .as_ref()
                 .expect("loaded placement asset")
@@ -204,7 +205,7 @@ fn lod_settings(
 
 fn load_existing_preview(
     library: &Library,
-    record: &Placement,
+    placement: &Placement,
     canvas_image_settings: CanvasImageSettings,
     target_lod: CanvasImageLod,
     max_texture_side: usize,
@@ -217,14 +218,14 @@ fn load_existing_preview(
     String,
 > {
     if original_mime_type_is_svg(
-        &record
+        &placement
             .asset
             .as_ref()
             .expect("loaded placement asset")
             .mime_type,
     ) {
         let svg = read_svg_document(
-            &record
+            &placement
                 .asset
                 .as_ref()
                 .expect("loaded placement asset")
@@ -232,7 +233,7 @@ fn load_existing_preview(
         )?;
         let diagnostics = ExistingLoadDiagnostics {
             source_kind: ExistingLoadSourceKind::Original,
-            source_path: record
+            source_path: placement
                 .asset
                 .as_ref()
                 .expect("loaded placement asset")
@@ -256,14 +257,14 @@ fn load_existing_preview(
 
     let lod_settings = lod_settings(canvas_image_settings, target_lod);
     let (canvas_source, animated_preview, diagnostics) = if original_mime_type_supports_animation(
-        &record
+        &placement
             .asset
             .as_ref()
             .expect("loaded placement asset")
             .mime_type,
     ) {
         let decoded = decode_image_file(
-            &record
+            &placement
                 .asset
                 .as_ref()
                 .expect("loaded placement asset")
@@ -291,7 +292,7 @@ fn load_existing_preview(
                 .transpose()?,
             ExistingLoadDiagnostics {
                 source_kind: ExistingLoadSourceKind::Original,
-                source_path: record
+                source_path: placement
                     .asset
                     .as_ref()
                     .expect("loaded placement asset")
@@ -304,7 +305,7 @@ fn load_existing_preview(
             },
         )
     } else if let Some(cache_path) = library.canvas_image_cache_path_for_lod(
-        record.asset.as_ref().expect("loaded placement asset").id,
+        placement.asset.as_ref().expect("loaded placement asset").id,
         lod_settings.max_side,
         target_lod,
     ) && cache_path.is_file()
@@ -332,13 +333,13 @@ fn load_existing_preview(
             Err(_) => {
                 let _ = std::fs::remove_file(&cache_path);
                 let (preview, diagnostics) =
-                    backfill_canvas_image_cache(library, record, lod_settings, target_lod)?;
+                    backfill_canvas_image_cache(library, placement, lod_settings, target_lod)?;
                 (preview, None, diagnostics)
             }
         }
     } else {
         let (preview, diagnostics) =
-            backfill_canvas_image_cache(library, record, lod_settings, target_lod)?;
+            backfill_canvas_image_cache(library, placement, lod_settings, target_lod)?;
         (preview, None, diagnostics)
     };
 
@@ -366,7 +367,7 @@ fn load_existing_preview(
 
 pub fn load_canvas_snapshot_pixels(
     library: &Library,
-    record: &Placement,
+    placement: &Placement,
     target_width: u32,
     target_height: u32,
 ) -> Result<(Vec<u8>, u32, u32), String> {
@@ -374,7 +375,7 @@ pub fn load_canvas_snapshot_pixels(
         return Err("cannot cache zero-sized canvas pixels".to_owned());
     }
     if original_mime_type_is_svg(
-        &record
+        &placement
             .asset
             .as_ref()
             .expect("loaded placement asset")
@@ -385,7 +386,7 @@ pub fn load_canvas_snapshot_pixels(
 
     for path in canvas_snapshot_cache_candidates(
         library,
-        record.asset.as_ref().expect("loaded placement asset").id,
+        placement.asset.as_ref().expect("loaded placement asset").id,
         target_width,
         target_height,
     ) {
@@ -409,7 +410,7 @@ pub fn load_canvas_snapshot_pixels(
     }
 
     let decoded = decode_image_file_with_max_side(
-        &record
+        &placement
             .asset
             .as_ref()
             .expect("loaded placement asset")
@@ -469,25 +470,26 @@ fn resize_rgba_exact(
 
 fn backfill_canvas_image_cache(
     library: &Library,
-    record: &Placement,
+    placement: &Placement,
     canvas_image_settings: CanvasImageSettings,
     lod: CanvasImageLod,
 ) -> Result<(PreviewImage, ExistingLoadDiagnostics), String> {
-    let decode_path = preferred_backfill_source_path(library, record, canvas_image_settings, lod)
-        .unwrap_or_else(|| {
-            record
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-                .clone()
-        });
+    let decode_path =
+        preferred_backfill_source_path(library, placement, canvas_image_settings, lod)
+            .unwrap_or_else(|| {
+                placement
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .original_path
+                    .clone()
+            });
     if let Some(prepared) =
         prepare_import_image_with_helper(&decode_path, canvas_image_settings).unwrap_or(None)
     {
         let source_path = install_prepared_canvas_cache(
             library,
-            record.asset.as_ref().expect("loaded placement asset").id,
+            placement.asset.as_ref().expect("loaded placement asset").id,
             canvas_image_settings.max_side,
             lod,
             &prepared,
@@ -523,7 +525,7 @@ fn backfill_canvas_image_cache(
     )?;
     let source_path = library
         .store_canvas_image_cache_for_lod(
-            record.asset.as_ref().expect("loaded placement asset").id,
+            placement.asset.as_ref().expect("loaded placement asset").id,
             canvas_image_settings.max_side,
             lod,
             &canvas_source.rgba,
@@ -531,7 +533,7 @@ fn backfill_canvas_image_cache(
             canvas_source.height,
         )?
         .unwrap_or_else(|| {
-            record
+            placement
                 .asset
                 .as_ref()
                 .expect("loaded placement asset")
@@ -558,14 +560,14 @@ fn backfill_canvas_image_cache(
 
 fn preferred_backfill_source_path(
     library: &Library,
-    record: &Placement,
+    placement: &Placement,
     canvas_image_settings: CanvasImageSettings,
     lod: CanvasImageLod,
 ) -> Option<PathBuf> {
     match lod {
         CanvasImageLod::Working => None,
         CanvasImageLod::Overview => library.canvas_image_cache_path_for_lod(
-            record.asset.as_ref().expect("loaded placement asset").id,
+            placement.asset.as_ref().expect("loaded placement asset").id,
             canvas_image_settings.max_side,
             CanvasImageLod::Working,
         ),
@@ -575,18 +577,18 @@ fn preferred_backfill_source_path(
 
 pub(super) fn backfill_cache_lod(
     library: &Library,
-    record: Placement,
+    placement: Placement,
     canvas_image_settings: CanvasImageSettings,
     lod: CanvasImageLod,
 ) -> ImagePreparationResult {
     let lod_settings = lod_settings(canvas_image_settings, lod);
-    match backfill_canvas_image_cache(library, &record, lod_settings, lod) {
+    match backfill_canvas_image_cache(library, &placement, lod_settings, lod) {
         Ok(_) => ImagePreparationResult::CacheLodBackfilled {
-            asset_id: record.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: placement.asset.as_ref().expect("loaded placement asset").id,
             lod,
         },
         Err(error) => ImagePreparationResult::CacheLodBackfillFailed {
-            asset_id: record.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: placement.asset.as_ref().expect("loaded placement asset").id,
             lod,
             error,
         },

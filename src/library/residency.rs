@@ -32,21 +32,21 @@ impl ImageResidencyCoordinator {
     pub(crate) fn queue_startup_existing_loads(
         &mut self,
         import_worker: &ImportWorker,
-        mut records: Vec<Placement>,
+        mut placements: Vec<Placement>,
         viewport_world: eframe::egui::Rect,
         active_board_id: i64,
         settings: &WorkspaceSettings,
         max_texture_side: usize,
         trace_enabled: bool,
     ) -> Result<(), String> {
-        crate::jobs::sort_records_by_viewport_proximity(&mut records, viewport_world);
+        crate::jobs::sort_records_by_viewport_proximity(&mut placements, viewport_world);
         let (canvas_image_settings, target_lod) = startup_existing_image_load_settings(settings);
-        for record in records {
-            let item_id = record.state.id;
+        for placement in placements {
+            let placement_id = placement.state.id;
             import_worker.enqueue(ImagePreparationRequest::LoadExisting {
                 target_board_id: active_board_id,
                 queue_id: None,
-                record,
+                placement,
                 max_texture_side,
                 canvas_image_settings,
                 target_lod,
@@ -56,13 +56,14 @@ impl ImageResidencyCoordinator {
                     timings: ImportTimings::default(),
                 }),
             })?;
-            self.inflight_image_lod_loads.insert(item_id, target_lod);
+            self.inflight_image_lod_loads
+                .insert(placement_id, target_lod);
         }
         Ok(())
     }
 
-    pub(crate) fn note_loaded_item(&mut self, item_id: i64) {
-        self.inflight_image_lod_loads.remove(&item_id);
+    pub(crate) fn note_loaded_placement(&mut self, placement_id: i64) {
+        self.inflight_image_lod_loads.remove(&placement_id);
     }
 
     pub(crate) fn has_pending_image_work(&self) -> bool {
@@ -108,7 +109,6 @@ impl ImageResidencyCoordinator {
                 target_board_id,
                 queue_id,
                 placement_id,
-                item_id,
                 context,
                 error,
             } => ImagePreparationResultResidencyOutcome::Failed(self.integrate_failed_import(
@@ -117,7 +117,6 @@ impl ImageResidencyCoordinator {
                 target_board_id,
                 queue_id,
                 placement_id,
-                item_id,
                 context,
                 error,
             )),
@@ -141,9 +140,9 @@ impl ImageResidencyCoordinator {
             });
         let origin = loaded.origin;
         let loaded_lod = loaded.loaded_lod;
-        let loaded_record = loaded.record.clone();
+        let loaded_record = loaded.placement.clone();
         let existing_load_diagnostics = loaded.existing_load_diagnostics.clone();
-        self.note_loaded_item(loaded.record.state.id);
+        self.note_loaded_placement(loaded.placement.state.id);
 
         if loaded.target_board_id != active_board_id {
             return LoadedContentResolutionOutcome {
@@ -155,9 +154,9 @@ impl ImageResidencyCoordinator {
         }
 
         if canvas
-            .placement_for_id(loaded.record.state.id)
+            .placement_for_id(loaded.placement.state.id)
             .is_some_and(|current| {
-                current.is_loaded() && current.state.asset_id != loaded.record.state.asset_id
+                current.is_loaded() && current.state.asset_id != loaded.placement.state.asset_id
             })
         {
             return LoadedContentResolutionOutcome {
@@ -171,7 +170,7 @@ impl ImageResidencyCoordinator {
         let indexed_asset = (settings.semantic_search_enabled
             && asset_mime_type_supports_raster_derivatives(
                 &loaded
-                    .record
+                    .placement
                     .asset
                     .as_ref()
                     .expect("loaded placement asset")
@@ -180,13 +179,13 @@ impl ImageResidencyCoordinator {
         .then(|| {
             (
                 loaded
-                    .record
+                    .placement
                     .asset
                     .as_ref()
                     .expect("loaded placement asset")
                     .id,
                 loaded
-                    .record
+                    .placement
                     .asset
                     .as_ref()
                     .expect("loaded placement asset")
@@ -214,17 +213,21 @@ impl ImageResidencyCoordinator {
             indexed_asset,
             log: Some(LoadedContentResolutionLog {
                 origin,
-                record: loaded_record,
+                placement: loaded_record,
                 diagnostics: existing_load_diagnostics,
                 trace,
             }),
         }
     }
 
-    pub(crate) fn note_failed_item(&mut self, canvas: &mut CanvasState, item_id: Option<i64>) {
-        if let Some(item_id) = item_id {
-            self.inflight_image_lod_loads.remove(&item_id);
-            canvas.clear_pending_image_lod_load(item_id);
+    pub(crate) fn note_failed_placement(
+        &mut self,
+        canvas: &mut CanvasState,
+        placement_id: Option<i64>,
+    ) {
+        if let Some(placement_id) = placement_id {
+            self.inflight_image_lod_loads.remove(&placement_id);
+            canvas.clear_pending_image_lod_load(placement_id);
         }
     }
 
@@ -235,7 +238,6 @@ impl ImageResidencyCoordinator {
         target_board_id: Option<i64>,
         queue_id: Option<u64>,
         placement_id: Option<i64>,
-        item_id: Option<i64>,
         context: String,
         error: String,
     ) -> FailedContentResolutionOutcome {
@@ -243,9 +245,9 @@ impl ImageResidencyCoordinator {
             target_board_id: target_board_id.unwrap_or(active_board_id),
             queue_id,
         });
-        self.note_failed_item(canvas, item_id);
-        if let Some(item_id) = item_id {
-            canvas.clear_crop_pending(item_id);
+        self.note_failed_placement(canvas, placement_id);
+        if let Some(placement_id) = placement_id {
+            canvas.clear_crop_pending(placement_id);
         }
         FailedContentResolutionOutcome {
             cleanup_ticket,
@@ -268,7 +270,7 @@ impl ImageResidencyCoordinator {
     pub(crate) fn queue_backfill(
         &mut self,
         import_worker: Option<&ImportWorker>,
-        record: &Placement,
+        placement: &Placement,
         settings: &WorkspaceSettings,
         lod: CanvasImageLod,
     ) -> Option<String> {
@@ -276,18 +278,18 @@ impl ImageResidencyCoordinator {
             return None;
         };
         if !self.pending_cache_backfills.insert((
-            record.asset.as_ref().expect("loaded placement asset").id,
+            placement.asset.as_ref().expect("loaded placement asset").id,
             lod,
         )) {
             return None;
         }
         if let Err(error) = import_worker.enqueue(ImagePreparationRequest::BackfillLod {
-            record: record.clone(),
+            placement: placement.clone(),
             canvas_image_settings: canvas_image_settings(settings),
             lod,
         }) {
             self.pending_cache_backfills.remove(&(
-                record.asset.as_ref().expect("loaded placement asset").id,
+                placement.asset.as_ref().expect("loaded placement asset").id,
                 lod,
             ));
             return Some(error);
@@ -298,13 +300,13 @@ impl ImageResidencyCoordinator {
     pub(crate) fn queue_overview_backfill_after_working_load(
         &mut self,
         import_worker: Option<&ImportWorker>,
-        record: &Placement,
+        placement: &Placement,
         settings: &WorkspaceSettings,
         loaded_lod: CanvasImageLod,
     ) -> Option<String> {
         if loaded_lod != CanvasImageLod::Working
             || !asset_mime_type_supports_raster_derivatives(
-                &record
+                &placement
                     .asset
                     .as_ref()
                     .expect("loaded placement asset")
@@ -313,7 +315,7 @@ impl ImageResidencyCoordinator {
         {
             return None;
         }
-        self.queue_backfill(import_worker, record, settings, CanvasImageLod::Overview)
+        self.queue_backfill(import_worker, placement, settings, CanvasImageLod::Overview)
     }
 
     pub(crate) fn dispatch_pending_lod_requests(
@@ -329,30 +331,31 @@ impl ImageResidencyCoordinator {
         };
 
         let mut last_error = None;
-        for (item_id, target_lod) in canvas.take_pending_image_lod_loads() {
+        for (placement_id, target_lod) in canvas.take_pending_image_lod_loads() {
             if self
                 .inflight_image_lod_loads
-                .get(&item_id)
+                .get(&placement_id)
                 .is_some_and(|existing| *existing >= target_lod)
             {
                 continue;
             }
-            let Some(record) = canvas.placement_for_id(item_id) else {
+            let Some(placement) = canvas.placement_for_id(placement_id) else {
                 continue;
             };
-            self.inflight_image_lod_loads.insert(item_id, target_lod);
+            self.inflight_image_lod_loads
+                .insert(placement_id, target_lod);
             if let Err(error) = import_worker.enqueue(ImagePreparationRequest::LoadExisting {
                 target_board_id: active_board_id,
                 queue_id: None,
-                record,
+                placement,
                 max_texture_side,
                 canvas_image_settings: canvas_image_settings(settings),
                 target_lod,
                 priority: ExistingLoadPriority::Background,
                 trace: None,
             }) {
-                self.inflight_image_lod_loads.remove(&item_id);
-                canvas.clear_pending_image_lod_load(item_id);
+                self.inflight_image_lod_loads.remove(&placement_id);
+                canvas.clear_pending_image_lod_load(placement_id);
                 last_error = Some(error);
             }
         }
@@ -361,8 +364,8 @@ impl ImageResidencyCoordinator {
     }
 
     #[cfg(test)]
-    fn inflight_lod_for(&self, item_id: i64) -> Option<CanvasImageLod> {
-        self.inflight_image_lod_loads.get(&item_id).copied()
+    fn inflight_lod_for(&self, placement_id: i64) -> Option<CanvasImageLod> {
+        self.inflight_image_lod_loads.get(&placement_id).copied()
     }
 
     #[cfg(test)]
@@ -407,7 +410,7 @@ mod tests {
             .inflight_image_lod_loads
             .insert(7, CanvasImageLod::Detail);
 
-        residency.note_failed_item(&mut canvas, Some(7));
+        residency.note_failed_placement(&mut canvas, Some(7));
 
         assert_eq!(residency.inflight_lod_for(7), None);
     }

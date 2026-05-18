@@ -92,18 +92,18 @@ pub(crate) fn copy_selected_board_payload(canvas: &CanvasState) -> Option<Clipbo
     let source_bounds = canvas.selected_world_bounds()?;
     let mut items = Vec::new();
     let mut placement_ids = Vec::new();
-    for item_id in canvas.selected_placement_ids() {
-        let record = canvas.placement_for_id(item_id)?;
-        let asset = record.asset.as_ref()?;
-        let asset_id = record.state.asset_id?;
-        placement_ids.push(item_id);
+    for placement_id in canvas.selected_placement_ids() {
+        let placement = canvas.placement_for_id(placement_id)?;
+        let asset = placement.asset.as_ref()?;
+        let asset_id = placement.state.asset_id?;
+        placement_ids.push(placement_id);
         items.push(ClipboardPlacementState {
             asset_id,
-            center_x: record.state.center.x,
-            center_y: record.state.center.y,
-            scale: record.state.scale,
-            rotation: record.state.rotation,
-            z_index: record.state.z_index,
+            center_x: placement.state.center.x,
+            center_y: placement.state.center.y,
+            scale: placement.state.scale,
+            rotation: placement.state.rotation,
+            z_index: placement.state.z_index,
             width: asset.width,
             height: asset.height,
         });
@@ -132,9 +132,9 @@ pub(crate) fn copy_selected_board_payload(canvas: &CanvasState) -> Option<Clipbo
         .canvas_stack_order()
         .into_iter()
         .filter_map(|item| match item {
-            CanvasStackItem::Placement(item_id) => placement_ids
+            CanvasStackItem::Placement(placement_id) => placement_ids
                 .iter()
-                .position(|id| *id == item_id)
+                .position(|id| *id == placement_id)
                 .map(|index| ClipboardStackEntry {
                     kind: "placement".to_owned(),
                     index,
@@ -197,15 +197,15 @@ pub(crate) fn paste_board_payload_at(
 
     let mut pasted_placement_ids = Vec::new();
     for item in &payload.items {
-        let record = library.create_placement_from_asset(
+        let placement = library.create_placement_from_asset(
             item.asset_id,
             egui::pos2(item.center_x + delta.x, item.center_y + delta.y),
             item.scale,
             item.rotation,
             item.z_index,
         )?;
-        pasted_placement_ids.push(record.state.id);
-        if let Err(error) = context.canvas.add_loaded_reference_placement(record) {
+        pasted_placement_ids.push(placement.state.id);
+        if let Err(error) = context.canvas.add_loaded_reference_placement(placement) {
             if context.import_worker_available {
                 needs_existing_reload = true;
             } else {
@@ -339,8 +339,8 @@ fn move_pasted_content_to_front(
     for entry in &payload.stack_order {
         match entry.kind.as_str() {
             "placement" => {
-                if let Some(item_id) = pasted_placement_ids.get(entry.index) {
-                    pasted_stack_order.push(CanvasStackItem::Placement(*item_id));
+                if let Some(placement_id) = pasted_placement_ids.get(entry.index) {
+                    pasted_stack_order.push(CanvasStackItem::Placement(*placement_id));
                 }
             }
             "annotation" => {

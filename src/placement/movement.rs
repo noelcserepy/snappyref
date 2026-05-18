@@ -157,18 +157,21 @@ fn guide_snap_candidate_rects(
     let viewport = viewport_near_world_rect(state, screen_rect);
     state
         .document
-        .images
+        .rendered_placements
         .iter()
-        .filter(|image| !excluded_placement_ids.contains(&image.record.state.id))
+        .filter(|image| !excluded_placement_ids.contains(&image.placement.state.id))
         .filter_map(|image| {
-            let scaled_size = image.record.scaled_visual_size();
+            let scaled_size = image.placement.scaled_visual_size();
             let visual_size = crate::canvas::rotated_visual_size(
                 scaled_size.x,
                 scaled_size.y,
-                image.record.state.rotation,
+                image.placement.state.rotation,
             );
             let rect = egui::Rect::from_center_size(
-                egui::pos2(image.record.state.center.x, image.record.state.center.y),
+                egui::pos2(
+                    image.placement.state.center.x,
+                    image.placement.state.center.y,
+                ),
                 visual_size,
             );
             rect.intersects(viewport)
@@ -223,12 +226,12 @@ fn apply_dragged_item_positions(
     for item in items {
         if let Some(image) = state
             .document
-            .images
+            .rendered_placements
             .iter_mut()
-            .find(|image| image.record.state.id == item.id)
+            .find(|image| image.placement.state.id == item.id)
         {
-            image.record.state.center.x = item.x + world_delta.x + snap_offset.x;
-            image.record.state.center.y = item.y + world_delta.y + snap_offset.y;
+            image.placement.state.center.x = item.x + world_delta.x + snap_offset.x;
+            image.placement.state.center.y = item.y + world_delta.y + snap_offset.y;
             moved += 1;
         }
     }

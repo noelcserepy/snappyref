@@ -20,7 +20,7 @@ pub(super) use image_pass::{
     image_texture_group_count_for_records, paint_canvas_items,
 };
 pub(super) use overlays::{
-    paint_crop_marquee, paint_guide_snap_indicators, paint_import_placeholders, paint_marquee,
+    paint_crop_marquee, paint_guide_snap_indicators, paint_marquee, paint_placement_preview_slots,
     paint_selection_bounds,
 };
 pub(super) use textbox_editor::{
@@ -38,8 +38,8 @@ pub(super) use textbox_editor::{
 mod tests {
     use super::*;
     use crate::canvas::{
-        CanvasDocumentState, CanvasImage, CanvasImageLod, CanvasRenderState, CanvasState,
-        CanvasTexture,
+        CanvasDocumentState, CanvasImageLod, CanvasRenderState, CanvasState, CanvasTexture,
+        RenderedPlacement,
     };
     use crate::data::{ImageAsset, Placement, PlacementState};
     use eframe::egui;
@@ -49,7 +49,7 @@ mod tests {
     fn visible_overview_image_promotes_to_working_lod() {
         let mut state = CanvasState {
             document: CanvasDocumentState {
-                images: vec![test_image(7, CanvasImageLod::Overview, [256, 256])],
+                rendered_placements: vec![test_image(7, CanvasImageLod::Overview, [256, 256])],
                 ..Default::default()
             },
             ..Default::default()
@@ -72,7 +72,7 @@ mod tests {
         let state = CanvasState {
             zoom: 2.0,
             document: CanvasDocumentState {
-                images: vec![test_image(9, CanvasImageLod::Working, [256, 256])],
+                rendered_placements: vec![test_image(9, CanvasImageLod::Working, [256, 256])],
                 ..Default::default()
             },
             render: CanvasRenderState::default(),
@@ -115,34 +115,34 @@ mod tests {
     }
 
     fn test_image(
-        item_id: i64,
+        placement_id: i64,
         loaded_lod: CanvasImageLod,
         texture_size: [usize; 2],
-    ) -> CanvasImage {
-        test_image_at(item_id, loaded_lod, texture_size, egui::Pos2::ZERO)
+    ) -> RenderedPlacement {
+        test_image_at(placement_id, loaded_lod, texture_size, egui::Pos2::ZERO)
     }
 
     fn test_image_at(
-        item_id: i64,
+        placement_id: i64,
         loaded_lod: CanvasImageLod,
         texture_size: [usize; 2],
         center_world: egui::Pos2,
-    ) -> CanvasImage {
-        CanvasImage {
-            record: Placement::loaded(
+    ) -> RenderedPlacement {
+        RenderedPlacement {
+            placement: Placement::loaded(
                 PlacementState {
-                    id: item_id,
-                    asset_id: Some(item_id),
+                    id: placement_id,
+                    asset_id: Some(placement_id),
                     center: eframe::egui::pos2(center_world.x, center_world.y),
                     scale: 1.0,
                     rotation: 0.0,
-                    z_index: item_id as i32,
+                    z_index: placement_id as i32,
                     archived: false,
                 },
                 ImageAsset {
-                    id: item_id,
-                    original_path: PathBuf::from(format!("image-{item_id}.png")),
-                    filename: format!("image-{item_id}.png"),
+                    id: placement_id,
+                    original_path: PathBuf::from(format!("image-{placement_id}.png")),
+                    filename: format!("image-{placement_id}.png"),
                     mime_type: "image/png".to_owned(),
                     width: texture_size[0] as u32,
                     height: texture_size[1] as u32,
@@ -151,7 +151,7 @@ mod tests {
                 },
             ),
             texture: CanvasTexture::Svg {
-                uri: format!("bytes://image-{item_id}.svg"),
+                uri: format!("bytes://image-{placement_id}.svg"),
                 bytes: std::sync::Arc::<[u8]>::from([]),
                 size: texture_size,
             },
