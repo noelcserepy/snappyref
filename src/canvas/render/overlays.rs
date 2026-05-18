@@ -207,8 +207,8 @@ fn paint_placement_preview_slot(
     const SHIMMER_TILT_FRACTION: f32 = 0.25;
 
     let placeholder_rect = egui::Rect::from_center_size(
-        state.world_to_screen(preview_slot.center_world, rect),
-        preview_slot.size_world * state.zoom,
+        state.world_to_screen(preview_slot.geometry.center, rect),
+        preview_slot.geometry.size * state.zoom,
     );
     if !placeholder_rect.intersects(cull_rect) {
         return false;

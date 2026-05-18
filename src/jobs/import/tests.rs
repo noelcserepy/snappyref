@@ -109,7 +109,7 @@ fn file_imports_land_in_same_area_band() {
     assert!((displayed_area(&portrait) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
     assert!((displayed_area(&landscape) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
     assert!((displayed_area(&square) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
-    assert_eq!(small.placement.state.scale, 1.0);
+    assert_eq!(small.placement.state.geometry.scale, 1.0);
 
     let _ = fs::remove_dir_all(root);
 }
@@ -168,7 +168,7 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
     };
 
     assert!((displayed_area(&tall) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
-    assert_eq!(small.placement.state.scale, 1.0);
+    assert_eq!(small.placement.state.geometry.scale, 1.0);
 
     let _ = fs::remove_dir_all(root);
 }
@@ -239,8 +239,8 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
     };
 
     assert_eq!(loaded.target_board_id, second.id);
-    assert_eq!(loaded.placement.state.center.x, 42.0);
-    assert_eq!(loaded.placement.state.center.y, 24.0);
+    assert_eq!(loaded.placement.state.geometry.center.x, 42.0);
+    assert_eq!(loaded.placement.state.geometry.center.y, 24.0);
     assert_eq!(
         library.load_placements_for_board(first.id).unwrap().len(),
         1
@@ -405,15 +405,15 @@ fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
 
     let first_rect = eframe::egui::Rect::from_center_size(
         eframe::egui::pos2(
-            first.placement.state.center.x,
-            first.placement.state.center.y,
+            first.placement.state.geometry.center.x,
+            first.placement.state.geometry.center.y,
         ),
         eframe::egui::vec2(200.0, 200.0),
     );
     let second_rect = eframe::egui::Rect::from_center_size(
         eframe::egui::pos2(
-            second.placement.state.center.x,
-            second.placement.state.center.y,
+            second.placement.state.geometry.center.x,
+            second.placement.state.geometry.center.y,
         ),
         eframe::egui::vec2(200.0, 200.0),
     );
@@ -453,8 +453,8 @@ fn reserved_world_is_persisted_without_worker_relayout() {
         other => panic!("expected reserved clipboard import to load, got {other:?}"),
     };
 
-    assert_eq!(loaded.placement.state.center.x, reserved_world.x);
-    assert_eq!(loaded.placement.state.center.y, reserved_world.y);
+    assert_eq!(loaded.placement.state.geometry.center.x, reserved_world.x);
+    assert_eq!(loaded.placement.state.geometry.center.y, reserved_world.y);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -490,8 +490,8 @@ fn overlapping_reserved_world_is_preserved_when_persisting() {
         }
     };
 
-    assert_eq!(loaded.placement.state.center.x, reserved_world.x);
-    assert_eq!(loaded.placement.state.center.y, reserved_world.y);
+    assert_eq!(loaded.placement.state.geometry.center.x, reserved_world.x);
+    assert_eq!(loaded.placement.state.geometry.center.y, reserved_world.y);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -1639,8 +1639,8 @@ fn displayed_area(loaded: &super::PreparedPlacementImage) -> f32 {
             .as_ref()
             .expect("loaded placement asset")
             .height as f32
-        * loaded.placement.state.scale
-        * loaded.placement.state.scale
+        * loaded.placement.state.geometry.scale
+        * loaded.placement.state.geometry.scale
 }
 
 fn test_viewport_world() -> eframe::egui::Rect {

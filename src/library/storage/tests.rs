@@ -243,9 +243,9 @@ fn imported_asset_resolves_existing_loading_placement_without_geometry_or_stack_
         .unwrap();
 
     assert_eq!(loaded.state.id, loading.state.id);
-    assert_eq!(loaded.state.center.x, 12.0);
-    assert_eq!(loaded.state.center.y, 24.0);
-    assert_eq!(loaded.state.scale, 1.5);
+    assert_eq!(loaded.state.geometry.center.x, 12.0);
+    assert_eq!(loaded.state.geometry.center.y, 24.0);
+    assert_eq!(loaded.state.geometry.scale, 1.5);
     assert_eq!(loaded.visual_size, egui::vec2(320.0, 180.0));
     assert!(matches!(loaded.content, PlacementContent::Loaded { .. }));
     assert_eq!(library.load_canvas_stack_order().unwrap(), stack_before);
@@ -277,7 +277,7 @@ fn import_failure_marks_loading_placement_failed_and_archived_completion_stays_s
         .unwrap()
         .unwrap();
     assert!(matches!(failed.content, PlacementContent::Failed { .. }));
-    assert_eq!(failed.state.center.x, 10.0);
+    assert_eq!(failed.state.geometry.center.x, 10.0);
     assert_eq!(failed.visual_size.x, 100.0);
 
     library.archive_placements(&[loading.state.id]).unwrap();
@@ -398,9 +398,9 @@ fn update_preservation_smoke() {
         items[0].asset.as_ref().expect("loaded placement asset").id,
         imported.asset.as_ref().expect("loaded placement asset").id
     );
-    assert_eq!(items[0].state.center.x, 42.0);
-    assert_eq!(items[0].state.center.y, 24.0);
-    assert_eq!(items[0].state.scale, 1.5);
+    assert_eq!(items[0].state.geometry.center.x, 42.0);
+    assert_eq!(items[0].state.geometry.center.y, 24.0);
+    assert_eq!(items[0].state.geometry.scale, 1.5);
     assert_eq!(
         items[0]
             .asset

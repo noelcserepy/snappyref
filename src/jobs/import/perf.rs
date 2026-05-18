@@ -542,15 +542,15 @@ fn perf_record(
     width: u32,
     height: u32,
 ) -> Placement {
-    let item = crate::data::PlacementState {
-        id: placement_id,
-        asset_id: Some(placement_id),
+    let item = crate::data::PlacementState::new(
+        placement_id,
+        Some(placement_id),
         center,
-        scale: 1.0,
-        rotation: 0.0,
-        z_index: placement_id as i32,
-        archived: false,
-    };
+        1.0,
+        0.0,
+        placement_id as i32,
+        false,
+    );
     let asset = crate::data::ImageAsset {
         id: placement_id,
         original_path: path.to_path_buf(),

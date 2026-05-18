@@ -27,15 +27,23 @@ A board-local canvas item with position, scale, rotation, z-order, archive state
 _Avoid_: Board item, image, copy
 
 **Placement State**:
-The persisted mutable state inside a Placement: id, optional asset id, center, scale, rotation, z-order, and archive flag. Placement State is not a separate board object.
+The persisted mutable state inside a Placement: id, optional asset id, Rect Geometry, and archive flag. Placement State is not a separate board object.
 _Avoid_: Board item state, item row
+
+**Rect Geometry**:
+The shared transform primitive for rectangular canvas things: center, size, scale, rotation, and z-order. Placement State uses Rect Geometry for persisted placement transforms; placement visual bounds derive from Rect Geometry plus the placement's current visual size.
+_Avoid_: Position fields, transform bag
+
+**Segment Geometry**:
+The shared primitive for line-like canvas things: start point, end point, and z-order. Line and arrow annotations use Segment Geometry instead of rectangular geometry.
+_Avoid_: Line bounds, endpoint fields
 
 **Placement Content State**:
 The asset-resolution state of a Placement. Loaded Placements render their Asset; loading Placements render a placeholder of the known or fallback size while import/search work resolves; failed Placements render an error placeholder but remain normal selectable, movable canvas items.
 _Avoid_: Placeholder item, pending item, preview object
 
 **Annotation**:
-Board-local non-asset markup such as a textbox, arrow, or line.
+Board-local non-asset markup such as a textbox, arrow, or line. Textbox annotations use Rect Geometry; line-like annotations use Segment Geometry.
 _Avoid_: Note, drawing, mark
 
 **Textbox**:

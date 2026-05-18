@@ -8,7 +8,12 @@ pub(super) fn image_screen_center_for_record(
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> egui::Pos2 {
-    screen_center + pan + egui::vec2(placement.state.center.x, placement.state.center.y) * zoom
+    screen_center
+        + pan
+        + egui::vec2(
+            placement.state.geometry.center.x,
+            placement.state.geometry.center.y,
+        ) * zoom
 }
 
 pub(super) fn image_screen_size_for_record(
@@ -26,8 +31,8 @@ pub(super) fn image_screen_corners_for_record(
 ) -> [egui::Pos2; 4] {
     let center = image_screen_center_for_record(placement, pan, zoom, screen_center);
     let half_size = image_screen_size_for_record(placement, zoom) * 0.5;
-    let sin = placement.state.rotation.sin();
-    let cos = placement.state.rotation.cos();
+    let sin = placement.state.geometry.rotation.sin();
+    let cos = placement.state.geometry.rotation.cos();
     let rotate = |offset: egui::Vec2| {
         egui::vec2(
             offset.x * cos - offset.y * sin,
@@ -88,8 +93,8 @@ pub(super) fn image_contains_screen_point(
 ) -> bool {
     let center = image_screen_center_for_record(placement, pan, zoom, screen_center);
     let local = pointer_pos - center;
-    let sin = (-placement.state.rotation).sin();
-    let cos = (-placement.state.rotation).cos();
+    let sin = (-placement.state.geometry.rotation).sin();
+    let cos = (-placement.state.geometry.rotation).cos();
     let unrotated = egui::vec2(local.x * cos - local.y * sin, local.x * sin + local.y * cos);
     let half_size = image_screen_size_for_record(placement, zoom) * 0.5;
 
@@ -175,9 +180,9 @@ pub(super) fn merge_cropped_item_fields(
     crop_offset_local: egui::Vec2,
 ) {
     item.asset_id = Some(asset_id);
-    let scale = item.scale.max(0.01);
-    item.center.x += crop_offset_local.x * scale;
-    item.center.y += crop_offset_local.y * scale;
+    let scale = item.geometry.scale.max(0.01);
+    item.geometry.center.x += crop_offset_local.x * scale;
+    item.geometry.center.y += crop_offset_local.y * scale;
 }
 
 #[cfg(test)]

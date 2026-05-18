@@ -29,13 +29,7 @@ pub(crate) struct CompactInput {
 
 impl CompactInput {
     pub(crate) fn layout_item(self) -> SelectedLayoutItem {
-        SelectedLayoutItem {
-            id: self.placement_id,
-            x: self.bounds.center().x,
-            y: self.bounds.center().y,
-            width: self.bounds.width(),
-            height: self.bounds.height(),
-        }
+        SelectedLayoutItem::from_rect(self.placement_id, self.bounds)
     }
 }
 
@@ -55,7 +49,7 @@ impl Placement {
 
     pub(crate) fn apply_compact_output(&mut self, output: CompactOutput) {
         if output.placement_id == self.id() {
-            self.state.center = output.center;
+            self.state.geometry.center = output.center;
         }
     }
 }
@@ -76,14 +70,20 @@ pub(crate) fn horizontal_layout(
         return None;
     }
 
-    let max_height = items.iter().map(|item| item.height).fold(0.0_f32, f32::max);
+    let max_height = items
+        .iter()
+        .map(|item| item.height())
+        .fold(0.0_f32, f32::max);
     let mut x_cursor = 0.0;
     let mut placements = Vec::with_capacity(items.len());
 
     for item in items {
-        let center = egui::pos2(x_cursor + item.width * 0.5, max_height - item.height * 0.5);
+        let center = egui::pos2(
+            x_cursor + item.width() * 0.5,
+            max_height - item.height() * 0.5,
+        );
         placements.push((item.id, center));
-        x_cursor += item.width + gap;
+        x_cursor += item.width() + gap;
     }
 
     let total_width = (x_cursor - gap).max(0.0);
@@ -98,14 +98,17 @@ pub(crate) fn vertical_layout(
         return None;
     }
 
-    let max_width = items.iter().map(|item| item.width).fold(0.0_f32, f32::max);
+    let max_width = items
+        .iter()
+        .map(|item| item.width())
+        .fold(0.0_f32, f32::max);
     let mut y_cursor = 0.0;
     let mut placements = Vec::with_capacity(items.len());
 
     for item in items {
-        let center = egui::pos2(item.width * 0.5, y_cursor + item.height * 0.5);
+        let center = egui::pos2(item.width() * 0.5, y_cursor + item.height() * 0.5);
         placements.push((item.id, center));
-        y_cursor += item.height + gap;
+        y_cursor += item.height() + gap;
     }
 
     let total_height = (y_cursor - gap).max(0.0);
@@ -131,7 +134,7 @@ pub(crate) fn directional_settle_layout(
             settled_center_for_item(&item, direction, bounds, gap, blocking_gap, &settled_rects);
         settled_rects.push(egui::Rect::from_center_size(
             center,
-            egui::vec2(item.width, item.height),
+            egui::vec2(item.width(), item.height()),
         ));
         placements.push((item.id, center));
     }
@@ -143,10 +146,7 @@ pub(crate) fn layout_bounds_for_items(items: &[SelectedLayoutItem]) -> Option<eg
     let mut bounds = egui::Rect::NOTHING;
     let mut found = false;
     for item in items {
-        let rect = egui::Rect::from_center_size(
-            egui::pos2(item.x, item.y),
-            egui::vec2(item.width, item.height),
-        );
+        let rect = item.rect();
         if found {
             bounds = bounds.union(rect);
         } else {
@@ -168,31 +168,28 @@ fn settle_order(
         SettleDirection::Right => right_rect
             .right()
             .total_cmp(&left_rect.right())
-            .then_with(|| right.x.total_cmp(&left.x))
+            .then_with(|| right.center().x.total_cmp(&left.center().x))
             .then_with(|| left.id.cmp(&right.id)),
         SettleDirection::Left => left_rect
             .left()
             .total_cmp(&right_rect.left())
-            .then_with(|| left.x.total_cmp(&right.x))
+            .then_with(|| left.center().x.total_cmp(&right.center().x))
             .then_with(|| left.id.cmp(&right.id)),
         SettleDirection::Down => right_rect
             .bottom()
             .total_cmp(&left_rect.bottom())
-            .then_with(|| right.y.total_cmp(&left.y))
+            .then_with(|| right.center().y.total_cmp(&left.center().y))
             .then_with(|| left.id.cmp(&right.id)),
         SettleDirection::Up => left_rect
             .top()
             .total_cmp(&right_rect.top())
-            .then_with(|| left.y.total_cmp(&right.y))
+            .then_with(|| left.center().y.total_cmp(&right.center().y))
             .then_with(|| left.id.cmp(&right.id)),
     }
 }
 
 fn layout_item_rect(item: &SelectedLayoutItem) -> egui::Rect {
-    egui::Rect::from_center_size(
-        egui::pos2(item.x, item.y),
-        egui::vec2(item.width, item.height),
-    )
+    item.rect()
 }
 
 fn settled_center_for_item(
@@ -203,13 +200,13 @@ fn settled_center_for_item(
     blocking_gap: f32,
     settled_rects: &[egui::Rect],
 ) -> egui::Pos2 {
-    let half_width = item.width * 0.5;
-    let half_height = item.height * 0.5;
+    let half_width = item.width() * 0.5;
+    let half_height = item.height() * 0.5;
     match direction {
         SettleDirection::Right => {
             let mut x = bounds.right() - half_width;
-            let item_top = item.y - half_height;
-            let item_bottom = item.y + half_height;
+            let item_top = item.center().y - half_height;
+            let item_bottom = item.center().y + half_height;
             for blocker in settled_rects {
                 if intervals_within_gap(
                     item_top,
@@ -221,12 +218,12 @@ fn settled_center_for_item(
                     x = x.min(blocker.left() - gap - half_width);
                 }
             }
-            egui::pos2(x, item.y)
+            egui::pos2(x, item.center().y)
         }
         SettleDirection::Left => {
             let mut x = bounds.left() + half_width;
-            let item_top = item.y - half_height;
-            let item_bottom = item.y + half_height;
+            let item_top = item.center().y - half_height;
+            let item_bottom = item.center().y + half_height;
             for blocker in settled_rects {
                 if intervals_within_gap(
                     item_top,
@@ -238,12 +235,12 @@ fn settled_center_for_item(
                     x = x.max(blocker.right() + gap + half_width);
                 }
             }
-            egui::pos2(x, item.y)
+            egui::pos2(x, item.center().y)
         }
         SettleDirection::Down => {
             let mut y = bounds.bottom() - half_height;
-            let item_left = item.x - half_width;
-            let item_right = item.x + half_width;
+            let item_left = item.center().x - half_width;
+            let item_right = item.center().x + half_width;
             for blocker in settled_rects {
                 if intervals_within_gap(
                     item_left,
@@ -255,12 +252,12 @@ fn settled_center_for_item(
                     y = y.min(blocker.top() - gap - half_height);
                 }
             }
-            egui::pos2(item.x, y)
+            egui::pos2(item.center().x, y)
         }
         SettleDirection::Up => {
             let mut y = bounds.top() + half_height;
-            let item_left = item.x - half_width;
-            let item_right = item.x + half_width;
+            let item_left = item.center().x - half_width;
+            let item_right = item.center().x + half_width;
             for blocker in settled_rects {
                 if intervals_within_gap(
                     item_left,
@@ -272,7 +269,7 @@ fn settled_center_for_item(
                     y = y.max(blocker.bottom() + gap + half_height);
                 }
             }
-            egui::pos2(item.x, y)
+            egui::pos2(item.center().x, y)
         }
     }
 }
@@ -453,13 +450,7 @@ fn compact_variant_result(
     let layout_items = items
         .iter()
         .zip(factors.iter())
-        .map(|(item, (factor, _))| SelectedLayoutItem {
-            id: item.layout.id,
-            x: item.layout.x,
-            y: item.layout.y,
-            width: item.layout.width * *factor,
-            height: item.layout.height * *factor,
-        })
+        .map(|(item, (factor, _))| item.layout.with_size(item.layout.size() * *factor))
         .collect::<Vec<_>>();
     let candidate = best_compact_candidate(&layout_items, gap)?;
     let mut changed_count = 0;
@@ -614,8 +605,8 @@ fn size_bucket_from_dimensions(dimensions: &[f32]) -> SizeBucket {
 
 fn compact_item_dimension(item: &CompactInputItem, axis: Axis) -> f32 {
     match axis {
-        Axis::Width => item.layout.width,
-        Axis::Height => item.layout.height,
+        Axis::Width => item.layout.width(),
+        Axis::Height => item.layout.height(),
     }
 }
 
@@ -647,12 +638,12 @@ pub(crate) fn compact_layout_for_sizes(
     let items = sizes
         .iter()
         .enumerate()
-        .map(|(index, size)| SelectedLayoutItem {
-            id: index as i64,
-            x: 0.0,
-            y: 0.0,
-            width: size.x,
-            height: size.y,
+        .map(|(index, size)| {
+            SelectedLayoutItem::new(
+                index as i64,
+                egui::pos2(0.0, 0.0),
+                egui::vec2(size.x, size.y),
+            )
         })
         .collect::<Vec<_>>();
 
@@ -736,28 +727,32 @@ fn sorted_compact_items(
     let mut sorted = items.to_vec();
     sorted.sort_by(|left, right| match sort {
         CompactSort::MaxSide => right
-            .width
-            .max(right.height)
-            .total_cmp(&left.width.max(left.height))
-            .then_with(|| (right.width * right.height).total_cmp(&(left.width * left.height)))
-            .then_with(|| left.id.cmp(&right.id)),
-        CompactSort::Area => (right.width * right.height)
-            .total_cmp(&(left.width * left.height))
+            .width()
+            .max(right.height())
+            .total_cmp(&left.width().max(left.height()))
             .then_with(|| {
-                right
-                    .width
-                    .max(right.height)
-                    .total_cmp(&left.width.max(left.height))
+                (right.width() * right.height()).total_cmp(&(left.width() * left.height()))
             })
             .then_with(|| left.id.cmp(&right.id)),
-        CompactSort::Perimeter => (right.width + right.height)
-            .total_cmp(&(left.width + left.height))
-            .then_with(|| (right.width * right.height).total_cmp(&(left.width * left.height)))
+        CompactSort::Area => (right.width() * right.height())
+            .total_cmp(&(left.width() * left.height()))
+            .then_with(|| {
+                right
+                    .width()
+                    .max(right.height())
+                    .total_cmp(&left.width().max(left.height()))
+            })
+            .then_with(|| left.id.cmp(&right.id)),
+        CompactSort::Perimeter => (right.width() + right.height())
+            .total_cmp(&(left.width() + left.height()))
+            .then_with(|| {
+                (right.width() * right.height()).total_cmp(&(left.width() * left.height()))
+            })
             .then_with(|| left.id.cmp(&right.id)),
         CompactSort::Height => right
-            .height
-            .total_cmp(&left.height)
-            .then_with(|| right.width.total_cmp(&left.width))
+            .height()
+            .total_cmp(&left.height())
+            .then_with(|| right.width().total_cmp(&left.width()))
             .then_with(|| left.id.cmp(&right.id)),
     });
     sorted
@@ -766,11 +761,11 @@ fn sorted_compact_items(
 fn compact_candidate_widths(items: &[SelectedLayoutItem], gap: f32) -> Vec<f32> {
     let total_area = items
         .iter()
-        .map(|item| (item.width + gap) * (item.height + gap))
+        .map(|item| (item.width() + gap) * (item.height() + gap))
         .sum::<f32>();
     let max_width = items
         .iter()
-        .map(|item| item.width + gap)
+        .map(|item| item.width() + gap)
         .fold(0.0_f32, f32::max);
     let ideal_width = total_area.sqrt().max(max_width);
     let mut widths = [0.85, 0.95, 1.0, 1.05, 1.15]
@@ -781,14 +776,14 @@ fn compact_candidate_widths(items: &[SelectedLayoutItem], gap: f32) -> Vec<f32> 
     let mut running_width = 0.0_f32;
 
     for item in items.iter().take(12) {
-        let effective_width = item.width + gap;
+        let effective_width = item.width() + gap;
         running_width += effective_width;
         widths.push(running_width.max(max_width));
     }
     widths.push(
         items
             .iter()
-            .map(|item| item.width + gap)
+            .map(|item| item.width() + gap)
             .sum::<f32>()
             .max(max_width),
     );
@@ -808,12 +803,16 @@ fn maxrects_pack_layout(
         return None;
     }
 
-    let total_height = items.iter().map(|item| item.height + gap).sum::<f32>().max(
-        items
-            .iter()
-            .map(|item| item.height + gap)
-            .fold(0.0_f32, f32::max),
-    );
+    let total_height = items
+        .iter()
+        .map(|item| item.height() + gap)
+        .sum::<f32>()
+        .max(
+            items
+                .iter()
+                .map(|item| item.height() + gap)
+                .fold(0.0_f32, f32::max),
+        );
     let mut free_rects = vec![PackRect {
         x: 0.0,
         y: 0.0,
@@ -834,7 +833,10 @@ fn maxrects_pack_layout(
         };
         placements.push((
             item.id,
-            egui::pos2(placed.x + item.width * 0.5, placed.y + item.height * 0.5),
+            egui::pos2(
+                placed.x + item.width() * 0.5,
+                placed.y + item.height() * 0.5,
+            ),
         ));
         padded_placements.push((item.id, placed));
     }
@@ -844,7 +846,7 @@ fn maxrects_pack_layout(
     let (padded_width, padded_height) = placed_padded_bounds(&padded_placements)?;
     let padded_area = items
         .iter()
-        .map(|item| (item.width + gap) * (item.height + gap))
+        .map(|item| (item.width() + gap) * (item.height() + gap))
         .sum::<f32>();
     let score_area = (padded_width * padded_height).max(1.0);
     let occupancy = padded_area / score_area;
@@ -1109,8 +1111,8 @@ fn padded_item_rect(item: &SelectedLayoutItem, gap: f32) -> PackRect {
     PackRect {
         x: 0.0,
         y: 0.0,
-        width: item.width + gap,
-        height: item.height + gap,
+        width: item.width() + gap,
+        height: item.height() + gap,
     }
 }
 
@@ -1125,10 +1127,10 @@ fn placed_bounds(
 
     for (placement_id, center) in placements {
         let item = items.iter().find(|item| item.id == *placement_id)?;
-        min_x = min_x.min(center.x - item.width * 0.5);
-        min_y = min_y.min(center.y - item.height * 0.5);
-        max_x = max_x.max(center.x + item.width * 0.5);
-        max_y = max_y.max(center.y + item.height * 0.5);
+        min_x = min_x.min(center.x - item.width() * 0.5);
+        min_y = min_y.min(center.y - item.height() * 0.5);
+        max_x = max_x.max(center.x + item.width() * 0.5);
+        max_y = max_y.max(center.y + item.height() * 0.5);
     }
 
     Some(((max_x - min_x).max(0.0), (max_y - min_y).max(0.0)))
@@ -1143,8 +1145,8 @@ fn normalize_placements_to_origin(
 
     for (placement_id, center) in placements.iter() {
         let item = items.iter().find(|item| item.id == *placement_id)?;
-        min_x = min_x.min(center.x - item.width * 0.5);
-        min_y = min_y.min(center.y - item.height * 0.5);
+        min_x = min_x.min(center.x - item.width() * 0.5);
+        min_y = min_y.min(center.y - item.height() * 0.5);
     }
 
     if !min_x.is_finite() || !min_y.is_finite() {
@@ -1212,15 +1214,7 @@ mod tests {
 
     fn placement(id: PlacementId, center: egui::Pos2) -> Placement {
         Placement {
-            state: PlacementState {
-                id,
-                asset_id: None,
-                center,
-                scale: 2.0,
-                rotation: 0.0,
-                z_index: 0,
-                archived: false,
-            },
+            state: PlacementState::new(id, None, center, 2.0, 0.0, 0, false),
             asset: None,
             content: PlacementContent::Loading {
                 source: crate::data::ContentResolutionSource::Unknown {
@@ -1252,13 +1246,13 @@ mod tests {
             placement_id: 8,
             center: egui::pos2(10.0, 10.0),
         });
-        assert_eq!(record.state.center, egui::pos2(50.0, 30.0));
+        assert_eq!(record.state.geometry.center, egui::pos2(50.0, 30.0));
 
         record.apply_compact_output(CompactOutput {
             placement_id: 7,
             center: egui::pos2(10.0, 10.0),
         });
-        assert_eq!(record.state.center, egui::pos2(10.0, 10.0));
+        assert_eq!(record.state.geometry.center, egui::pos2(10.0, 10.0));
     }
 }
 

@@ -203,8 +203,8 @@ fn expand_textbox_to_height(state: &mut CanvasState, index: usize, required_heig
     }
 
     let world_rect = normalized_textbox_rect(
-        egui::pos2(annotation.start_x, annotation.start_y),
-        egui::pos2(annotation.end_x, annotation.end_y),
+        egui::pos2(annotation.start().x, annotation.start().y),
+        egui::pos2(annotation.end().x, annotation.end().y),
     );
     if required_height <= world_rect.height() + 0.5 {
         return false;
@@ -216,10 +216,11 @@ fn expand_textbox_to_height(state: &mut CanvasState, index: usize, required_heig
         egui::vec2(world_rect.width(), required_height),
     );
     let annotation = &mut state.document.annotations[index];
-    annotation.start_x = new_rect.min.x;
-    annotation.start_y = new_rect.min.y;
-    annotation.end_x = new_rect.max.x;
-    annotation.end_y = new_rect.max.y;
+    annotation.geometry = crate::data::CanvasAnnotationGeometry::from_kind(
+        annotation.kind,
+        new_rect.min,
+        new_rect.max,
+    );
     state.mark_annotation_dirty(annotation_id);
     true
 }

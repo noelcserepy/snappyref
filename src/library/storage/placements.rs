@@ -38,10 +38,13 @@ fn insert_placement_row(
     Ok(PlacementState {
         id: transaction.last_insert_rowid(),
         asset_id: Some(asset_id),
-        center: desired_world,
-        scale: initial_scale,
-        rotation: 0.0,
-        z_index: 0,
+        geometry: crate::data::RectGeometry::new(
+            desired_world,
+            eframe::egui::Vec2::ZERO,
+            initial_scale,
+            0.0,
+            0,
+        ),
         archived: false,
     })
 }
@@ -252,15 +255,15 @@ impl Library {
                  WHERE id = ?1",
                 params![placement_id],
                 |row| {
-                    Ok(PlacementState {
-                        id: row.get(0)?,
-                        asset_id: row.get(1)?,
-                        center: egui::pos2(row.get(2)?, row.get(3)?),
-                        scale: row.get(4)?,
-                        rotation: row.get(5)?,
-                        z_index: row.get(6)?,
-                        archived: row.get::<_, i64>(7)? != 0,
-                    })
+                    Ok(PlacementState::new(
+                        row.get(0)?,
+                        row.get(1)?,
+                        egui::pos2(row.get(2)?, row.get(3)?),
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get::<_, i64>(7)? != 0,
+                    ))
                 },
             )
             .map_err(|error| {
@@ -435,10 +438,13 @@ impl Library {
         let item = PlacementState {
             id: item_id,
             asset_id: None,
-            center: desired_world,
-            scale: initial_scale,
-            rotation: 0.0,
-            z_index: 0,
+            geometry: crate::data::RectGeometry::new(
+                desired_world,
+                eframe::egui::Vec2::ZERO,
+                initial_scale,
+                0.0,
+                0,
+            ),
             archived: false,
         };
         Ok(Placement {
@@ -499,15 +505,15 @@ impl Library {
         let rows = statement
             .query_map(params![board_id], |row| {
                 let row_asset_id = row.get::<_, Option<i64>>(1)?;
-                let item = PlacementState {
-                    id: row.get(0)?,
-                    asset_id: row_asset_id,
-                    center: egui::pos2(row.get(2)?, row.get(3)?),
-                    scale: row.get(4)?,
-                    rotation: row.get(5)?,
-                    z_index: row.get(6)?,
-                    archived: false,
-                };
+                let item = PlacementState::new(
+                    row.get(0)?,
+                    row_asset_id,
+                    egui::pos2(row.get(2)?, row.get(3)?),
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    false,
+                );
                 let content_state: String = row.get(15)?;
                 let lifecycle: String = row.get(16)?;
                 let visual_width: Option<f32> = row.get(17)?;
@@ -614,11 +620,11 @@ impl Library {
                  SET x = ?1, y = ?2, scale = ?3, rotation = ?4, z_index = ?5, archived = ?6
                  WHERE id = ?7",
                 params![
-                    item.center.x,
-                    item.center.y,
-                    item.scale,
-                    item.rotation,
-                    item.z_index,
+                    item.geometry.center.x,
+                    item.geometry.center.y,
+                    item.geometry.scale,
+                    item.geometry.rotation,
+                    item.geometry.z_index,
                     if item.archived { 1_i64 } else { 0_i64 },
                     item.id,
                 ],
@@ -637,11 +643,11 @@ impl Library {
                  WHERE id = ?8",
                 params![
                     item.asset_id,
-                    item.center.x,
-                    item.center.y,
-                    item.scale,
-                    item.rotation,
-                    item.z_index,
+                    item.geometry.center.x,
+                    item.geometry.center.y,
+                    item.geometry.scale,
+                    item.geometry.rotation,
+                    item.geometry.z_index,
                     if item.archived { 1_i64 } else { 0_i64 },
                     item.id,
                 ],
@@ -765,15 +771,15 @@ impl Library {
         for item_id in placement_ids {
             let record = statement
                 .query_row(params![item_id, active_board_id], |row| {
-                    let item = PlacementState {
-                        id: row.get(0)?,
-                        asset_id: row.get(1)?,
-                        center: egui::pos2(row.get(2)?, row.get(3)?),
-                        scale: row.get(4)?,
-                        rotation: row.get(5)?,
-                        z_index: row.get(6)?,
-                        archived: false,
-                    };
+                    let item = PlacementState::new(
+                        row.get(0)?,
+                        row.get(1)?,
+                        egui::pos2(row.get(2)?, row.get(3)?),
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        false,
+                    );
                     let asset = ImageAsset {
                         id: row.get(7)?,
                         original_path: PathBuf::from(row.get::<_, String>(8)?),
@@ -818,11 +824,11 @@ impl Library {
                             .state
                             .asset_id
                             .ok_or_else(|| format!("placement {} has no asset", source.state.id))?,
-                        source.state.center.x + delta.x,
-                        source.state.center.y + delta.y,
-                        source.state.scale,
-                        source.state.rotation,
-                        source.state.z_index,
+                        source.state.geometry.center.x + delta.x,
+                        source.state.geometry.center.y + delta.y,
+                        source.state.geometry.scale,
+                        source.state.geometry.rotation,
+                        source.state.geometry.z_index,
                         0_i64
                     ],
                 )
@@ -836,18 +842,18 @@ impl Library {
                 active_board_id,
                 CanvasStackItem::Placement(item_id),
             )?;
-            let item = PlacementState {
-                id: item_id,
-                asset_id: source.state.asset_id,
-                center: egui::pos2(
-                    source.state.center.x + delta.x,
-                    source.state.center.y + delta.y,
+            let item = PlacementState::new(
+                item_id,
+                source.state.asset_id,
+                egui::pos2(
+                    source.state.geometry.center.x + delta.x,
+                    source.state.geometry.center.y + delta.y,
                 ),
-                scale: source.state.scale,
-                rotation: source.state.rotation,
-                z_index: source.state.z_index,
-                archived: false,
-            };
+                source.state.geometry.scale,
+                source.state.geometry.rotation,
+                source.state.geometry.z_index,
+                false,
+            );
             duplicated.push(Placement::loaded(
                 item,
                 source
@@ -909,15 +915,15 @@ impl Library {
             CanvasStackItem::Placement(item_id),
         )?;
 
-        let item = PlacementState {
-            id: item_id,
-            asset_id: Some(asset_id),
-            center: center_world,
+        let item = PlacementState::new(
+            item_id,
+            Some(asset_id),
+            center_world,
             scale,
             rotation,
             z_index,
-            archived: false,
-        };
+            false,
+        );
         Ok(Placement::loaded(item, asset))
     }
 }

@@ -29,48 +29,44 @@ impl Library {
 
         let rows = statement
             .query_map(params![active_board_id], |row| {
-                let kind = row.get::<_, String>(1)?;
-                Ok(CanvasAnnotation {
-                    id: row.get(0)?,
-                    kind: CanvasAnnotationKind::from_str(&kind).ok_or_else(|| {
+                let kind_text = row.get::<_, String>(1)?;
+                let kind = CanvasAnnotationKind::from_str(&kind_text).ok_or_else(|| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("unknown canvas annotation kind: {kind_text}"),
+                        )),
+                    )
+                })?;
+                Ok(CanvasAnnotation::new(
+                    row.get(0)?,
+                    kind,
+                    egui::pos2(row.get(2)?, row.get(3)?),
+                    egui::pos2(row.get(4)?, row.get(5)?),
+                    row.get(6)?,
+                    CanvasTextSize::from_str(&row.get::<_, String>(7)?).ok_or_else(|| {
                         rusqlite::Error::FromSqlConversionFailure(
-                            1,
+                            7,
                             rusqlite::types::Type::Text,
                             Box::new(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
-                                format!("unknown canvas annotation kind: {kind}"),
+                                "unknown canvas text size",
                             )),
                         )
                     })?,
-                    start_x: row.get(2)?,
-                    start_y: row.get(3)?,
-                    end_x: row.get(4)?,
-                    end_y: row.get(5)?,
-                    text: row.get(6)?,
-                    text_size: CanvasTextSize::from_str(&row.get::<_, String>(7)?).ok_or_else(
-                        || {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                7,
-                                rusqlite::types::Type::Text,
-                                Box::new(std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData,
-                                    "unknown canvas text size",
-                                )),
-                            )
-                        },
-                    )?,
-                    stroke_width: CanvasStrokeWidth::from_str(&row.get::<_, String>(8)?)
-                        .ok_or_else(|| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                8,
-                                rusqlite::types::Type::Text,
-                                Box::new(std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData,
-                                    "unknown canvas stroke width",
-                                )),
-                            )
-                        })?,
-                    color: CanvasAnnotationColor::from_str(&row.get::<_, String>(9)?).ok_or_else(
+                    CanvasStrokeWidth::from_str(&row.get::<_, String>(8)?).ok_or_else(|| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            8,
+                            rusqlite::types::Type::Text,
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "unknown canvas stroke width",
+                            )),
+                        )
+                    })?,
+                    CanvasAnnotationColor::from_str(&row.get::<_, String>(9)?).ok_or_else(
                         || {
                             rusqlite::Error::FromSqlConversionFailure(
                                 9,
@@ -82,9 +78,9 @@ impl Library {
                             )
                         },
                     )?,
-                    background_enabled: row.get::<_, i64>(10).unwrap_or(0) != 0,
-                    archived: false,
-                })
+                    row.get::<_, i64>(10).unwrap_or(0) != 0,
+                    false,
+                ))
             })
             .map_err(|error| format!("failed to read canvas-annotations query: {error}"))?;
 
@@ -145,20 +141,18 @@ impl Library {
             CanvasStackItem::Annotation(annotation_id),
         )?;
 
-        Ok(CanvasAnnotation {
-            id: annotation_id,
+        Ok(CanvasAnnotation::new(
+            annotation_id,
             kind,
-            start_x: start.x,
-            start_y: start.y,
-            end_x: end.x,
-            end_y: end.y,
-            text: text.to_owned(),
+            start,
+            end,
+            text.to_owned(),
             text_size,
             stroke_width,
             color,
             background_enabled,
-            archived: false,
-        })
+            false,
+        ))
     }
 
     pub fn update_canvas_annotation(&self, annotation: &CanvasAnnotation) -> Result<(), String> {
@@ -178,10 +172,10 @@ impl Library {
                      archived = ?10
                  WHERE id = ?11",
                 params![
-                    annotation.start_x,
-                    annotation.start_y,
-                    annotation.end_x,
-                    annotation.end_y,
+                    annotation.start().x,
+                    annotation.start().y,
+                    annotation.end().x,
+                    annotation.end().y,
                     annotation.text,
                     annotation.text_size.as_str(),
                     annotation.stroke_width.as_str(),

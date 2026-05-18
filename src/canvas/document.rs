@@ -155,7 +155,7 @@ impl CanvasState {
         ));
         self.document
             .rendered_placements
-            .sort_by_key(|image| image.placement.state.z_index);
+            .sort_by_key(|image| image.placement.state.geometry.z_index);
     }
 
     pub fn add_unresolved_placement(&mut self, placement: Placement) {
@@ -187,7 +187,7 @@ impl CanvasState {
         ));
         self.document
             .rendered_placements
-            .sort_by_key(|image| image.placement.state.z_index);
+            .sort_by_key(|image| image.placement.state.geometry.z_index);
     }
 
     pub fn add_provisional_unloaded_item(&mut self, mut placement: Placement) {
@@ -277,7 +277,7 @@ impl CanvasState {
         ));
         self.document
             .rendered_placements
-            .sort_by_key(|image| image.placement.state.z_index);
+            .sort_by_key(|image| image.placement.state.geometry.z_index);
         Ok(())
     }
 
@@ -700,10 +700,10 @@ impl CanvasState {
             }
 
             found = true;
-            min.x = min.x.min(image.placement.state.center.x);
-            min.y = min.y.min(image.placement.state.center.y);
-            max.x = max.x.max(image.placement.state.center.x);
-            max.y = max.y.max(image.placement.state.center.y);
+            min.x = min.x.min(image.placement.state.geometry.center.x);
+            min.y = min.y.min(image.placement.state.geometry.center.y);
+            max.x = max.x.max(image.placement.state.geometry.center.x);
+            max.y = max.y.max(image.placement.state.geometry.center.y);
         }
 
         found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))
@@ -742,12 +742,12 @@ impl CanvasState {
         self.remove_placement_preview_slot(queue_id);
         self.interaction
             .placement_preview_slots
-            .push(PlacementPreviewSlot {
+            .push(PlacementPreviewSlot::new(
                 queue_id,
                 center_world,
                 size_world,
                 label,
-            });
+            ));
     }
 
     pub fn remove_placement_preview_slot(&mut self, queue_id: u64) {
@@ -763,9 +763,9 @@ impl CanvasState {
             .enumerate()
             .map(|(index, preview_slot)| PlacementFootprint {
                 id: -((index as i64) + 1),
-                center: preview_slot.center_world,
-                width: preview_slot.size_world.x,
-                height: preview_slot.size_world.y,
+                center: preview_slot.geometry.center,
+                width: preview_slot.geometry.size.x,
+                height: preview_slot.geometry.size.y,
             })
             .collect()
     }
@@ -786,12 +786,7 @@ impl CanvasState {
         self.interaction
             .hover_preview_slots
             .extend(preview_slots.into_iter().map(|(center_world, size_world)| {
-                PlacementPreviewSlot {
-                    queue_id: 0,
-                    center_world,
-                    size_world,
-                    label: String::new(),
-                }
+                PlacementPreviewSlot::new(0, center_world, size_world, String::new())
             }));
     }
 
@@ -861,12 +856,12 @@ impl CanvasState {
         let items = preview_slots
             .iter()
             .enumerate()
-            .map(|(index, (center, size))| SelectedLayoutItem {
-                id: -((index as i64) + 1),
-                x: center.x,
-                y: center.y,
-                width: size.x,
-                height: size.y,
+            .map(|(index, (center, size))| {
+                SelectedLayoutItem::new(
+                    -((index as i64) + 1),
+                    egui::pos2(center.x, center.y),
+                    egui::vec2(size.x, size.y),
+                )
             })
             .collect::<Vec<_>>();
         let Some(bounds) =
@@ -1011,7 +1006,7 @@ impl CanvasState {
             image.placement = placement;
             self.document
                 .rendered_placements
-                .sort_by_key(|image| image.placement.state.z_index);
+                .sort_by_key(|image| image.placement.state.geometry.z_index);
         } else {
             let _ = self.add_loaded_reference_placement(placement);
         }
@@ -1172,8 +1167,8 @@ impl CanvasState {
             let size = image.placement.scaled_visual_size();
             let image_rect = egui::Rect::from_center_size(
                 egui::pos2(
-                    image.placement.state.center.x,
-                    image.placement.state.center.y,
+                    image.placement.state.geometry.center.x,
+                    image.placement.state.geometry.center.y,
                 ),
                 size,
             );
@@ -1390,7 +1385,7 @@ impl CanvasState {
             return items.len();
         }
 
-        items.sort_by(|left, right| left.x.total_cmp(&right.x));
+        items.sort_by(|left, right| left.center().x.total_cmp(&right.center().x));
         let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
         let Some((placements, total_width, total_height)) =
             crate::placement::arrangement::horizontal_layout(&items, gap)
@@ -1410,7 +1405,7 @@ impl CanvasState {
             return items.len();
         }
 
-        items.sort_by(|left, right| left.y.total_cmp(&right.y));
+        items.sort_by(|left, right| left.center().y.total_cmp(&right.center().y));
         let current_center = self.selected_center_world().unwrap_or(egui::Pos2::ZERO);
         let Some((placements, total_width, total_height)) =
             crate::placement::arrangement::vertical_layout(&items, gap)
@@ -1485,8 +1480,8 @@ impl CanvasState {
 
         for item in items {
             if let Some(image) = self.rendered_placement_by_id_mut(item.id) {
-                image.placement.state.center.x += delta.x;
-                image.placement.state.center.y += delta.y;
+                image.placement.state.geometry.center.x += delta.x;
+                image.placement.state.geometry.center.y += delta.y;
                 moved_ids.push(item.id);
             }
         }
@@ -1935,15 +1930,16 @@ impl CanvasState {
             return false;
         }
 
-        let changed = annotation.start_x != normalized.min.x
-            || annotation.start_y != normalized.min.y
-            || annotation.end_x != normalized.max.x
-            || annotation.end_y != normalized.max.y;
+        let changed = annotation.start().x != normalized.min.x
+            || annotation.start().y != normalized.min.y
+            || annotation.end().x != normalized.max.x
+            || annotation.end().y != normalized.max.y;
         if changed {
-            annotation.start_x = normalized.min.x;
-            annotation.start_y = normalized.min.y;
-            annotation.end_x = normalized.max.x;
-            annotation.end_y = normalized.max.y;
+            annotation.geometry = crate::data::CanvasAnnotationGeometry::from_kind(
+                annotation.kind,
+                normalized.min,
+                normalized.max,
+            );
             self.invalidate_textbox_layout_cache(annotation_id);
             self.mark_annotation_dirty(annotation_id);
         }
@@ -1959,15 +1955,16 @@ impl CanvasState {
         let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
             return false;
         };
-        let changed = annotation.start_x != start_world.x
-            || annotation.start_y != start_world.y
-            || annotation.end_x != end_world.x
-            || annotation.end_y != end_world.y;
+        let changed = annotation.start().x != start_world.x
+            || annotation.start().y != start_world.y
+            || annotation.end().x != end_world.x
+            || annotation.end().y != end_world.y;
         if changed {
-            annotation.start_x = start_world.x;
-            annotation.start_y = start_world.y;
-            annotation.end_x = end_world.x;
-            annotation.end_y = end_world.y;
+            annotation.geometry = crate::data::CanvasAnnotationGeometry::from_kind(
+                annotation.kind,
+                start_world,
+                end_world,
+            );
             if annotation.kind == CanvasAnnotationKind::Textbox {
                 self.invalidate_textbox_layout_cache(annotation_id);
             }
@@ -1975,15 +1972,20 @@ impl CanvasState {
         changed
     }
 
-    pub(super) fn selected_textbox_start_rects(&self) -> Vec<(i64, egui::Rect)> {
+    pub(super) fn selected_textbox_start_rects(&self) -> Vec<(i64, crate::data::RectGeometry)> {
         self.document
             .selected_annotation_ids
             .iter()
             .filter_map(|annotation_id| {
                 self.annotation_by_id(*annotation_id)
                     .and_then(|annotation| {
-                        (annotation.kind == CanvasAnnotationKind::Textbox)
-                            .then_some((*annotation_id, textbox_world_rect(annotation)))
+                        (annotation.kind == CanvasAnnotationKind::Textbox).then_some((
+                            *annotation_id,
+                            crate::data::RectGeometry::from_bounds(
+                                textbox_world_rect(annotation),
+                                0,
+                            ),
+                        ))
                     })
             })
             .collect()
@@ -2054,15 +2056,16 @@ impl CanvasState {
                 let visual_size = super::rotated_visual_size(
                     scaled_size.x,
                     scaled_size.y,
-                    image.placement.state.rotation,
+                    image.placement.state.geometry.rotation,
                 );
-                SelectedLayoutItem {
-                    id: image.placement.state.id,
-                    x: image.placement.state.center.x,
-                    y: image.placement.state.center.y,
-                    width: visual_size.x,
-                    height: visual_size.y,
-                }
+                SelectedLayoutItem::new(
+                    image.placement.state.id,
+                    egui::pos2(
+                        image.placement.state.geometry.center.x,
+                        image.placement.state.geometry.center.y,
+                    ),
+                    egui::vec2(visual_size.x, visual_size.y),
+                )
             })
             .collect()
     }
@@ -2100,8 +2103,8 @@ impl CanvasState {
                 .find(|image| image.placement.state.id == placement_id)
             {
                 let world_center = local_center + offset;
-                image.placement.state.center.x = world_center.x;
-                image.placement.state.center.y = world_center.y;
+                image.placement.state.geometry.center.x = world_center.x;
+                image.placement.state.geometry.center.y = world_center.y;
                 arranged_ids.push(placement_id);
             }
         }
@@ -2128,13 +2131,13 @@ impl CanvasState {
                 .find(|image| image.placement.state.id == placement_id)
             {
                 let world_center = local_center + offset;
-                if (image.placement.state.center.x - world_center.x).abs() <= 0.001
-                    && (image.placement.state.center.y - world_center.y).abs() <= 0.001
+                if (image.placement.state.geometry.center.x - world_center.x).abs() <= 0.001
+                    && (image.placement.state.geometry.center.y - world_center.y).abs() <= 0.001
                 {
                     continue;
                 }
-                image.placement.state.center.x = world_center.x;
-                image.placement.state.center.y = world_center.y;
+                image.placement.state.geometry.center.x = world_center.x;
+                image.placement.state.geometry.center.y = world_center.y;
                 arranged_ids.push(placement_id);
             }
         }
@@ -2167,11 +2170,12 @@ impl CanvasState {
                     .find(|(scale_item_id, _)| *scale_item_id == placement_id)
                     .map(|(_, factor)| *factor)
                     .unwrap_or(1.0);
-                let next_scale = (image.placement.state.scale * scale_factor).max(0.01);
-                let position_changed = (image.placement.state.center.x - world_center.x).abs()
-                    > 0.001
-                    || (image.placement.state.center.y - world_center.y).abs() > 0.001;
-                let scale_changed = (image.placement.state.scale - next_scale).abs() > 0.001;
+                let next_scale = (image.placement.state.geometry.scale * scale_factor).max(0.01);
+                let position_changed =
+                    (image.placement.state.geometry.center.x - world_center.x).abs() > 0.001
+                        || (image.placement.state.geometry.center.y - world_center.y).abs() > 0.001;
+                let scale_changed =
+                    (image.placement.state.geometry.scale - next_scale).abs() > 0.001;
                 if !position_changed && !scale_changed {
                     continue;
                 }
@@ -2182,7 +2186,7 @@ impl CanvasState {
                         center: world_center,
                     },
                 );
-                image.placement.state.scale = next_scale;
+                image.placement.state.geometry.scale = next_scale;
                 changed_ids.push(placement_id);
             }
         }
@@ -2229,7 +2233,7 @@ impl CanvasState {
 
         let total_area = items
             .iter()
-            .map(|item| item.width.max(0.0) * item.height.max(0.0))
+            .map(|item| item.width().max(0.0) * item.height().max(0.0))
             .sum::<f32>();
         Some(total_area / items.len() as f32)
     }
@@ -2397,10 +2401,10 @@ impl CanvasState {
                 .expect("loaded placement asset"),
         );
         let normalized = scale.max(min_scale);
-        if (image.placement.state.scale - normalized).abs() <= f32::EPSILON {
+        if (image.placement.state.geometry.scale - normalized).abs() <= f32::EPSILON {
             return false;
         }
-        image.placement.state.scale = normalized;
+        image.placement.state.geometry.scale = normalized;
         true
     }
 
@@ -2421,16 +2425,18 @@ impl CanvasState {
                 .expect("loaded placement asset"),
         );
         let normalized_scale = scale.max(min_scale);
-        let position_changed = (image.placement.state.center.x - center.x).abs() > f32::EPSILON
-            || (image.placement.state.center.y - center.y).abs() > f32::EPSILON;
-        let scale_changed = (image.placement.state.scale - normalized_scale).abs() > f32::EPSILON;
+        let position_changed = (image.placement.state.geometry.center.x - center.x).abs()
+            > f32::EPSILON
+            || (image.placement.state.geometry.center.y - center.y).abs() > f32::EPSILON;
+        let scale_changed =
+            (image.placement.state.geometry.scale - normalized_scale).abs() > f32::EPSILON;
         if !position_changed && !scale_changed {
             return false;
         }
 
-        image.placement.state.center.x = center.x;
-        image.placement.state.center.y = center.y;
-        image.placement.state.scale = normalized_scale;
+        image.placement.state.geometry.center.x = center.x;
+        image.placement.state.geometry.center.y = center.y;
+        image.placement.state.geometry.scale = normalized_scale;
         true
     }
 
@@ -2438,10 +2444,10 @@ impl CanvasState {
         let Some(image) = self.rendered_placement_by_id_mut(placement_id) else {
             return false;
         };
-        if (image.placement.state.rotation - rotation).abs() <= f32::EPSILON {
+        if (image.placement.state.geometry.rotation - rotation).abs() <= f32::EPSILON {
             return false;
         }
-        image.placement.state.rotation = rotation;
+        image.placement.state.geometry.rotation = rotation;
         true
     }
 
@@ -2454,16 +2460,18 @@ impl CanvasState {
         let Some(image) = self.rendered_placement_by_id_mut(placement_id) else {
             return false;
         };
-        let position_changed = (image.placement.state.center.x - center.x).abs() > f32::EPSILON
-            || (image.placement.state.center.y - center.y).abs() > f32::EPSILON;
-        let rotation_changed = (image.placement.state.rotation - rotation).abs() > f32::EPSILON;
+        let position_changed = (image.placement.state.geometry.center.x - center.x).abs()
+            > f32::EPSILON
+            || (image.placement.state.geometry.center.y - center.y).abs() > f32::EPSILON;
+        let rotation_changed =
+            (image.placement.state.geometry.rotation - rotation).abs() > f32::EPSILON;
         if !position_changed && !rotation_changed {
             return false;
         }
 
-        image.placement.state.center.x = center.x;
-        image.placement.state.center.y = center.y;
-        image.placement.state.rotation = rotation;
+        image.placement.state.geometry.center.x = center.x;
+        image.placement.state.geometry.center.y = center.y;
+        image.placement.state.geometry.rotation = rotation;
         true
     }
 
@@ -2554,8 +2562,8 @@ fn layout_bounds_with_offset(
     let mut found = false;
     for item in items {
         let rect = egui::Rect::from_center_size(
-            egui::pos2(item.x + offset.x, item.y + offset.y),
-            egui::vec2(item.width, item.height),
+            egui::pos2(item.center().x + offset.x, item.center().y + offset.y),
+            egui::vec2(item.width(), item.height()),
         );
         if found {
             bounds = bounds.union(rect);

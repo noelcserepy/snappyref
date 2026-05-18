@@ -94,8 +94,8 @@ pub(crate) fn commit_search_provisional_batch(
     let mut added_placement_ids = Vec::new();
     for (index, mut placement) in duplicated.into_iter().enumerate() {
         if let Some(provisional) = item_provisionals.get(index) {
-            placement.state.center.x = provisional.state.center.x;
-            placement.state.center.y = provisional.state.center.y;
+            placement.state.geometry.center.x = provisional.state.geometry.center.x;
+            placement.state.geometry.center.y = provisional.state.geometry.center.y;
             library.update_placement_state(&placement.state)?;
         }
         added_placement_ids.push(placement.state.id);
@@ -129,10 +129,10 @@ pub(crate) fn commit_search_provisional_batch(
         );
         let placement = library.create_placement_from_asset(
             asset_id,
-            provisional.state.center,
+            provisional.state.geometry.center,
             scale,
-            provisional.state.rotation,
-            provisional.state.z_index,
+            provisional.state.geometry.rotation,
+            provisional.state.geometry.z_index,
         )?;
         added_placement_ids.push(placement.state.id);
         canvas.add_unresolved_placement(placement.clone());
@@ -158,10 +158,10 @@ fn source_center_for_placements(placements: &[Placement]) -> Option<egui::Pos2> 
     for placement in placements {
         found = true;
         let half_size = placement.scaled_visual_size() * 0.5;
-        min.x = min.x.min(placement.state.center.x - half_size.x);
-        min.y = min.y.min(placement.state.center.y - half_size.y);
-        max.x = max.x.max(placement.state.center.x + half_size.x);
-        max.y = max.y.max(placement.state.center.y + half_size.y);
+        min.x = min.x.min(placement.state.geometry.center.x - half_size.x);
+        min.y = min.y.min(placement.state.geometry.center.y - half_size.y);
+        max.x = max.x.max(placement.state.geometry.center.x + half_size.x);
+        max.y = max.y.max(placement.state.geometry.center.y + half_size.y);
     }
 
     found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))

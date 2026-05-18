@@ -394,8 +394,8 @@ mod tests {
                 1.0,
             )
             .unwrap();
-        record.state.center.x = 42.0;
-        record.state.center.y = 64.0;
+        record.state.geometry.center.x = 42.0;
+        record.state.geometry.center.y = 64.0;
         let changes = crate::canvas::CanvasDocumentChanges {
             updated_placements: vec![record.state.clone()],
             ..Default::default()
@@ -408,8 +408,8 @@ mod tests {
         persistence.flush().unwrap();
 
         let stored = library.load_placements().unwrap();
-        assert_eq!(stored[0].state.center.x, 42.0);
-        assert_eq!(stored[0].state.center.y, 64.0);
+        assert_eq!(stored[0].state.geometry.center.x, 42.0);
+        assert_eq!(stored[0].state.geometry.center.y, 64.0);
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -437,15 +437,15 @@ mod tests {
             .unwrap();
         let mut persistence = DocumentPersistence::queued(library.clone());
 
-        record.state.center.x = 10.0;
+        record.state.geometry.center.x = 10.0;
         persistence
             .enqueue_canvas_document_changes_for_test(crate::canvas::CanvasDocumentChanges {
                 updated_placements: vec![record.state.clone()],
                 ..Default::default()
             })
             .unwrap();
-        record.state.center.x = 30.0;
-        record.state.center.y = 40.0;
+        record.state.geometry.center.x = 30.0;
+        record.state.geometry.center.y = 40.0;
         persistence
             .enqueue_canvas_document_changes_for_test(crate::canvas::CanvasDocumentChanges {
                 updated_placements: vec![record.state.clone()],
@@ -455,8 +455,8 @@ mod tests {
         persistence.flush().unwrap();
 
         let stored = library.load_placements().unwrap();
-        assert_eq!(stored[0].state.center.x, 30.0);
-        assert_eq!(stored[0].state.center.y, 40.0);
+        assert_eq!(stored[0].state.geometry.center.x, 30.0);
+        assert_eq!(stored[0].state.geometry.center.y, 40.0);
 
         let _ = std::fs::remove_dir_all(root);
     }

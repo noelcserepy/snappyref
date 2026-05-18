@@ -278,7 +278,7 @@ mod tests {
         let restored = library.load_placements().unwrap();
         assert_eq!(restored.len(), 1);
         assert_eq!(restored[0].state.id, record.state.id);
-        assert_eq!(restored[0].state.center.x, 10.0);
+        assert_eq!(restored[0].state.geometry.center.x, 10.0);
         assert_eq!(
             library.load_canvas_stack_order().unwrap(),
             vec![CanvasStackItem::Placement(record.state.id)]

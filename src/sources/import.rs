@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
+use crate::data::RectGeometry;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ExternalImportSource {
     Path(PathBuf),
@@ -13,8 +15,25 @@ pub(crate) enum ExternalImportSource {
 pub(crate) struct PlacementPreviewSlot {
     pub(crate) queue_id: u64,
     pub(crate) label: String,
-    pub(crate) center_world: egui::Pos2,
-    pub(crate) size_world: egui::Vec2,
+    pub(crate) geometry: RectGeometry,
+}
+
+impl PlacementPreviewSlot {
+    fn new(queue_id: u64, label: String, center_world: egui::Pos2, size_world: egui::Vec2) -> Self {
+        Self {
+            queue_id,
+            label,
+            geometry: RectGeometry::new(center_world, size_world, 1.0, 0.0, 0),
+        }
+    }
+
+    pub(crate) fn center_world(&self) -> egui::Pos2 {
+        self.geometry.center
+    }
+
+    pub(crate) fn size_world(&self) -> egui::Vec2 {
+        self.geometry.size
+    }
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -85,12 +104,7 @@ impl ImportIntake {
                 width: size_world.x,
                 height: size_world.y,
             });
-            let preview_slot = PlacementPreviewSlot {
-                queue_id,
-                label,
-                center_world,
-                size_world,
-            };
+            let preview_slot = PlacementPreviewSlot::new(queue_id, label, center_world, size_world);
             self.queue_preview_slot(target_board_id, preview_slot.clone());
             preview_slot
         });
@@ -101,7 +115,7 @@ impl ImportIntake {
                 queue_id,
                 reserved_world: preview_slot
                     .as_ref()
-                    .map(|preview_slot| preview_slot.center_world),
+                    .map(|preview_slot| preview_slot.center_world()),
             },
             preview_slot,
         )
@@ -132,17 +146,12 @@ impl ImportIntake {
         auto_image_scaling: bool,
         import_target_canvas_area: f32,
     ) -> PlacementPreviewSlot {
-        let preview_slot = PlacementPreviewSlot {
+        let preview_slot = PlacementPreviewSlot::new(
             queue_id,
             label,
             center_world,
-            size_world: import_size_world(
-                width,
-                height,
-                auto_image_scaling,
-                import_target_canvas_area,
-            ),
-        };
+            import_size_world(width, height, auto_image_scaling, import_target_canvas_area),
+        );
         self.queue_preview_slot(board_id, preview_slot.clone());
         preview_slot
     }
@@ -264,7 +273,7 @@ mod tests {
         );
 
         let preview_slot = preview_slot.expect("known image dimensions should create a preview");
-        assert!(preview_slot.size_world.x * preview_slot.size_world.y <= 10_000.0 + 1.0);
+        assert!(preview_slot.size_world().x * preview_slot.size_world().y <= 10_000.0 + 1.0);
     }
 
     #[test]

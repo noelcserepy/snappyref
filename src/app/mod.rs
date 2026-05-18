@@ -1267,20 +1267,19 @@ impl SnappyRefApp {
                 if config.draw_arrow_on_start() {
                     app.canvas
                         .apply_viewport_state(&crate::data::ViewportState::default());
-                    app.canvas.add_annotation(crate::data::CanvasAnnotation {
-                        id: -1,
-                        kind: crate::data::CanvasAnnotationKind::Arrow,
-                        start_x: -220.0,
-                        start_y: -120.0,
-                        end_x: 220.0,
-                        end_y: 120.0,
-                        text: String::new(),
-                        text_size: crate::data::CanvasTextSize::default(),
-                        stroke_width: crate::data::CanvasStrokeWidth::L,
-                        color: crate::data::CanvasAnnotationColor::Coral,
-                        background_enabled: false,
-                        archived: false,
-                    });
+                    app.canvas
+                        .add_annotation(crate::data::CanvasAnnotation::new(
+                            -1,
+                            crate::data::CanvasAnnotationKind::Arrow,
+                            egui::pos2(-220.0, -120.0),
+                            egui::pos2(220.0, 120.0),
+                            String::new(),
+                            crate::data::CanvasTextSize::default(),
+                            crate::data::CanvasStrokeWidth::L,
+                            crate::data::CanvasAnnotationColor::Coral,
+                            false,
+                            false,
+                        ));
                     app.canvas.select_single_annotation(-1);
                     app.status = "Added debug arrow".to_owned();
                 }
@@ -1288,20 +1287,19 @@ impl SnappyRefApp {
                 if config.edit_textbox_on_start() {
                     app.canvas
                         .apply_viewport_state(&crate::data::ViewportState::default());
-                    app.canvas.add_annotation(crate::data::CanvasAnnotation {
-                        id: -2,
-                        kind: crate::data::CanvasAnnotationKind::Textbox,
-                        start_x: -160.0,
-                        start_y: -80.0,
-                        end_x: 160.0,
-                        end_y: 80.0,
-                        text: "debug textbox".to_owned(),
-                        text_size: crate::data::CanvasTextSize::default(),
-                        stroke_width: crate::data::CanvasStrokeWidth::default(),
-                        color: crate::data::CanvasAnnotationColor::Sky,
-                        background_enabled: true,
-                        archived: false,
-                    });
+                    app.canvas
+                        .add_annotation(crate::data::CanvasAnnotation::new(
+                            -2,
+                            crate::data::CanvasAnnotationKind::Textbox,
+                            egui::pos2(-160.0, -80.0),
+                            egui::pos2(160.0, 80.0),
+                            "debug textbox".to_owned(),
+                            crate::data::CanvasTextSize::default(),
+                            crate::data::CanvasStrokeWidth::default(),
+                            crate::data::CanvasAnnotationColor::Sky,
+                            true,
+                            false,
+                        ));
                     app.canvas.begin_textbox_edit(-2);
                     app.status = "Editing debug textbox".to_owned();
                 }
@@ -2624,8 +2622,8 @@ impl SnappyRefApp {
     ) {
         self.canvas.add_placement_preview_slot(
             preview_slot.queue_id,
-            preview_slot.center_world,
-            preview_slot.size_world,
+            preview_slot.center_world(),
+            preview_slot.size_world(),
             preview_slot.label,
         );
     }
@@ -2815,7 +2813,10 @@ impl SnappyRefApp {
             },
         )
         .into_iter()
-        .map(|preview| (preview.label, preview.dimensions, preview.center_world))
+        .map(|preview| {
+            let center_world = preview.center_world();
+            (preview.label, preview.dimensions, center_world)
+        })
         .collect()
     }
 
@@ -4420,8 +4421,8 @@ impl SnappyRefApp {
                 && self.settings.default_textbox_background;
             match library.create_canvas_annotation(
                 request.kind,
-                request.start_world,
-                request.end_world,
+                request.start_world(),
+                request.end_world(),
                 &request.text,
                 request.text_size,
                 crate::data::CanvasStrokeWidth::default(),
@@ -4845,10 +4846,13 @@ impl SnappyRefApp {
             crate::data::PlacementState {
                 id: -40,
                 asset_id: Some(-40),
-                center: egui::Pos2::ZERO,
-                scale: 1.0,
-                rotation: 0.0,
-                z_index: 0,
+                geometry: crate::data::RectGeometry::new(
+                    egui::Pos2::ZERO,
+                    eframe::egui::Vec2::ZERO,
+                    1.0,
+                    0.0,
+                    0,
+                ),
                 archived: false,
             },
             asset,
@@ -4913,10 +4917,13 @@ impl SnappyRefApp {
             crate::data::PlacementState {
                 id: -60,
                 asset_id: Some(-60),
-                center: egui::Pos2::ZERO,
-                scale: 1.5,
-                rotation: 0.0,
-                z_index: 0,
+                geometry: crate::data::RectGeometry::new(
+                    egui::Pos2::ZERO,
+                    eframe::egui::Vec2::ZERO,
+                    1.5,
+                    0.0,
+                    0,
+                ),
                 archived: false,
             },
             asset,
@@ -5920,10 +5927,10 @@ fn source_center_for_records(placements: &[crate::data::Placement]) -> Option<eg
     for placement in placements {
         found = true;
         let half_size = placement.scaled_visual_size() * 0.5;
-        min.x = min.x.min(placement.state.center.x - half_size.x);
-        min.y = min.y.min(placement.state.center.y - half_size.y);
-        max.x = max.x.max(placement.state.center.x + half_size.x);
-        max.y = max.y.max(placement.state.center.y + half_size.y);
+        min.x = min.x.min(placement.state.geometry.center.x - half_size.x);
+        min.y = min.y.min(placement.state.geometry.center.y - half_size.y);
+        max.x = max.x.max(placement.state.geometry.center.x + half_size.x);
+        max.y = max.y.max(placement.state.geometry.center.y + half_size.y);
     }
 
     found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))

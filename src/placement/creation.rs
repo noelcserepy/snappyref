@@ -5,6 +5,7 @@ use eframe::egui;
 use crate::canvas::CanvasState;
 use crate::data::{
     ContentResolutionSource, Placement, PlacementContent, PlacementLifecycle, PlacementState,
+    RectGeometry,
 };
 use crate::library::storage::Library;
 use crate::placement::content_resolution::{
@@ -27,7 +28,13 @@ pub(crate) struct SourceIntent {
 pub(crate) struct SourceIntentPreview {
     pub(crate) label: String,
     pub(crate) dimensions: Option<(u32, u32)>,
-    pub(crate) center_world: egui::Pos2,
+    pub(crate) geometry: RectGeometry,
+}
+
+impl SourceIntentPreview {
+    pub(crate) fn center_world(&self) -> egui::Pos2 {
+        self.geometry.center
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -150,10 +157,10 @@ pub(crate) fn plan_source_intent_previews(
     intents
         .iter()
         .zip(centers)
-        .map(|(intent, (center_world, _))| SourceIntentPreview {
+        .map(|(intent, (center_world, size_world))| SourceIntentPreview {
             label: intent.label.clone(),
             dimensions: Some(normalized_dimensions(intent)),
-            center_world,
+            geometry: RectGeometry::new(center_world, size_world, 1.0, 0.0, 0),
         })
         .collect()
 }
@@ -183,7 +190,7 @@ pub(crate) fn create_committed_loading_placement(
 
     layout.push(crate::data::PlacementFootprint {
         id: placement.state.id,
-        center: placement.state.center,
+        center: placement.state.geometry.center,
         width: placement.scaled_visual_size().x,
         height: placement.scaled_visual_size().y,
     });
@@ -218,7 +225,7 @@ pub(crate) fn create_committed_loading_placements(
             layout,
             target_board_id,
             intent,
-            preview.center_world,
+            preview.center_world(),
             settings,
         )?);
     }
@@ -261,9 +268,9 @@ pub(crate) fn create_provisional_placements(
         match intent {
             ProvisionalSourceIntent::ExistingPlacement(mut placement) => {
                 placement.state.id = next_id;
-                placement.state.center.x = center_world.x;
-                placement.state.center.y = center_world.y;
-                placement.state.z_index = next_id as i32;
+                placement.state.geometry.center.x = center_world.x;
+                placement.state.geometry.center.y = center_world.y;
+                placement.state.geometry.z_index = next_id as i32;
                 placement.lifecycle = PlacementLifecycle::Provisional;
                 canvas.add_provisional_reference_item(placement);
             }
@@ -303,15 +310,15 @@ fn provisional_asset_record(
     let scale = crate::jobs::initial_import_scale(width, height, true, settings.target_canvas_area);
     let _ = label;
     Placement {
-        state: PlacementState {
-            id: placement_id,
-            asset_id: Some(asset_id),
-            center: center_world,
+        state: PlacementState::new(
+            placement_id,
+            Some(asset_id),
+            center_world,
             scale,
-            rotation: 0.0,
-            z_index: placement_id as i32,
-            archived: false,
-        },
+            0.0,
+            placement_id as i32,
+            false,
+        ),
         asset: None,
         content: PlacementContent::Loading {
             source: ContentResolutionSource::SearchAsset { asset_id },
@@ -353,7 +360,7 @@ pub(crate) fn create_existing_asset_placements(
             .collect::<Vec<_>>();
         plan_source_intent_previews(canvas, &source_intents, anchor_world, screen_rect, settings)
             .into_iter()
-            .map(|preview| preview.center_world)
+            .map(|preview| preview.center_world())
             .collect()
     };
 
@@ -373,7 +380,7 @@ pub(crate) fn create_existing_asset_placements(
             };
         layout.push(crate::data::PlacementFootprint {
             id: placement.state.id,
-            center: placement.state.center,
+            center: placement.state.geometry.center,
             width: placement.scaled_visual_size().x,
             height: placement.scaled_visual_size().y,
         });

@@ -423,15 +423,15 @@ fn compact_arrangement_action_uses_dense_compact_layout() {
             imported_at: 0,
         };
         let placement = Placement::loaded(
-            PlacementState {
-                id: *id,
-                asset_id: Some(*id),
-                center: eframe::egui::pos2(index as f32 * 500.0, index as f32 * 120.0),
-                scale: 1.0,
-                rotation: 0.0,
-                z_index: index as i32,
-                archived: false,
-            },
+            PlacementState::new(
+                *id,
+                Some(*id),
+                eframe::egui::pos2(index as f32 * 500.0, index as f32 * 120.0),
+                1.0,
+                0.0,
+                index as i32,
+                false,
+            ),
             asset,
         );
         let rgba = vec![255; (*width as usize) * (*height as usize) * 4];
@@ -574,12 +574,12 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
     );
 
     let pasted_delta = egui::vec2(
-        pasted_annotations[0].start_x - pasted_items[0].state.center.x,
-        pasted_annotations[0].start_y - pasted_items[0].state.center.y,
+        pasted_annotations[0].start().x - pasted_items[0].state.geometry.center.x,
+        pasted_annotations[0].start().y - pasted_items[0].state.geometry.center.y,
     );
     let source_delta = egui::vec2(
-        source_annotation.start_x - source_item.state.center.x,
-        source_annotation.start_y - source_item.state.center.y,
+        source_annotation.start().x - source_item.state.geometry.center.x,
+        source_annotation.start().y - source_item.state.geometry.center.y,
     );
     assert_eq!(pasted_delta, source_delta);
     assert_eq!(
@@ -859,8 +859,8 @@ fn paste_preserves_annotation_only_stack_order_and_places_group_at_front() {
         library
             .create_canvas_annotation(
                 annotation.kind,
-                egui::pos2(annotation.start_x, annotation.start_y),
-                egui::pos2(annotation.end_x, annotation.end_y),
+                egui::pos2(annotation.start().x, annotation.start().y),
+                egui::pos2(annotation.end().x, annotation.end().y),
                 &annotation.text,
                 annotation.text_size,
                 annotation.stroke_width,
@@ -978,12 +978,12 @@ fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
         .find(|annotation| annotation.id != source_annotation.id)
         .unwrap();
     let item_offset = egui::vec2(
-        duplicated_item.state.center.x - source_item.state.center.x,
-        duplicated_item.state.center.y - source_item.state.center.y,
+        duplicated_item.state.geometry.center.x - source_item.state.geometry.center.x,
+        duplicated_item.state.geometry.center.y - source_item.state.geometry.center.y,
     );
     let annotation_offset = egui::vec2(
-        duplicated_annotation.start_x - source_annotation.start_x,
-        duplicated_annotation.start_y - source_annotation.start_y,
+        duplicated_annotation.start().x - source_annotation.start().x,
+        duplicated_annotation.start().y - source_annotation.start().y,
     );
     assert_eq!(annotation_offset, item_offset);
     assert_ne!(item_offset, egui::Vec2::ZERO);
@@ -1078,8 +1078,8 @@ fn duplicate_preserves_annotation_only_stack_order_and_places_group_at_front() {
         library
             .create_canvas_annotation(
                 annotation.kind,
-                egui::pos2(annotation.start_x, annotation.start_y),
-                egui::pos2(annotation.end_x, annotation.end_y),
+                egui::pos2(annotation.start().x, annotation.start().y),
+                egui::pos2(annotation.end().x, annotation.end().y),
                 &annotation.text,
                 annotation.text_size,
                 annotation.stroke_width,
@@ -1128,34 +1128,32 @@ fn command_a_selects_all_active_board_images_and_annotations() {
         app.canvas
             .add_prepared_placement_image(&ctx, test_loaded_item(id, 1));
     }
-    app.canvas.add_annotation(crate::data::CanvasAnnotation {
-        id: 10,
-        kind: CanvasAnnotationKind::Textbox,
-        start_x: 0.0,
-        start_y: 0.0,
-        end_x: 100.0,
-        end_y: 40.0,
-        text: "one".to_owned(),
-        text_size: CanvasTextSize::M,
-        stroke_width: CanvasStrokeWidth::M,
-        color: crate::data::CanvasAnnotationColor::Default,
-        background_enabled: false,
-        archived: false,
-    });
-    app.canvas.add_annotation(crate::data::CanvasAnnotation {
-        id: 11,
-        kind: CanvasAnnotationKind::Line,
-        start_x: 20.0,
-        start_y: 20.0,
-        end_x: 80.0,
-        end_y: 80.0,
-        text: String::new(),
-        text_size: CanvasTextSize::M,
-        stroke_width: CanvasStrokeWidth::M,
-        color: crate::data::CanvasAnnotationColor::Default,
-        background_enabled: false,
-        archived: false,
-    });
+    app.canvas
+        .add_annotation(crate::data::CanvasAnnotation::new(
+            10,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(0.0, 0.0),
+            eframe::egui::pos2(100.0, 40.0),
+            "one".to_owned(),
+            CanvasTextSize::M,
+            CanvasStrokeWidth::M,
+            crate::data::CanvasAnnotationColor::Default,
+            false,
+            false,
+        ));
+    app.canvas
+        .add_annotation(crate::data::CanvasAnnotation::new(
+            11,
+            CanvasAnnotationKind::Line,
+            eframe::egui::pos2(20.0, 20.0),
+            eframe::egui::pos2(80.0, 80.0),
+            String::new(),
+            CanvasTextSize::M,
+            CanvasStrokeWidth::M,
+            crate::data::CanvasAnnotationColor::Default,
+            false,
+            false,
+        ));
     app.canvas.select_content(&[], &[]);
 
     let _ = ctx.run_ui(
@@ -1247,8 +1245,8 @@ fn arrow_keys_apply_directional_settle_arrange() {
             .expect("loaded placement asset")
             .height = 40;
         loaded.placement.visual_size = egui::vec2(100.0, 40.0);
-        loaded.placement.state.center.x = x;
-        loaded.placement.state.center.y = y;
+        loaded.placement.state.geometry.center.x = x;
+        loaded.placement.state.geometry.center.y = y;
         app.canvas.add_prepared_placement_image(&ctx, loaded);
     }
     app.canvas.select_placements(&[1, 2, 3]);
@@ -1275,12 +1273,12 @@ fn arrow_keys_apply_directional_settle_arrange() {
     let first = app.canvas.placement_for_id(1).unwrap();
     let second = app.canvas.placement_for_id(2).unwrap();
     let third = app.canvas.placement_for_id(3).unwrap();
-    assert_eq!(second.state.center.x + 50.0, 220.0);
+    assert_eq!(second.state.geometry.center.x + 50.0, 220.0);
     assert_eq!(
-        first.state.center.x + 50.0 + app.settings.import_gap,
-        second.state.center.x - 50.0
+        first.state.geometry.center.x + 50.0 + app.settings.import_gap,
+        second.state.geometry.center.x - 50.0
     );
-    assert_eq!(third.state.center.x + 50.0, 220.0);
+    assert_eq!(third.state.geometry.center.x + 50.0, 220.0);
     assert_eq!(app.status, "Settled 2 images right");
 }
 
@@ -1346,20 +1344,19 @@ fn copy_selection_payload_preserves_internal_json_for_mixed_selection() {
     let mut app = test_app(None);
     app.canvas
         .add_prepared_placement_image(&ctx, test_loaded_item(1, 1));
-    app.canvas.add_annotation(crate::data::CanvasAnnotation {
-        id: 20,
-        kind: CanvasAnnotationKind::Textbox,
-        start_x: 10.0,
-        start_y: 10.0,
-        end_x: 70.0,
-        end_y: 40.0,
-        text: "caption".to_owned(),
-        text_size: CanvasTextSize::M,
-        stroke_width: CanvasStrokeWidth::M,
-        color: crate::data::CanvasAnnotationColor::Default,
-        background_enabled: false,
-        archived: false,
-    });
+    app.canvas
+        .add_annotation(crate::data::CanvasAnnotation::new(
+            20,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(10.0, 10.0),
+            eframe::egui::pos2(70.0, 40.0),
+            "caption".to_owned(),
+            CanvasTextSize::M,
+            CanvasStrokeWidth::M,
+            crate::data::CanvasAnnotationColor::Default,
+            false,
+            false,
+        ));
     app.canvas.select_content(&[1], &[20]);
 
     let copy_payload =
@@ -1393,20 +1390,19 @@ fn context_menu_items_reflect_mixed_selection_capabilities() {
     let mut app = test_app(None);
     app.canvas
         .add_prepared_placement_image(&ctx, test_loaded_item(1, 1));
-    app.canvas.add_annotation(crate::data::CanvasAnnotation {
-        id: 20,
-        kind: CanvasAnnotationKind::Textbox,
-        start_x: 10.0,
-        start_y: 10.0,
-        end_x: 70.0,
-        end_y: 40.0,
-        text: "caption".to_owned(),
-        text_size: CanvasTextSize::M,
-        stroke_width: CanvasStrokeWidth::M,
-        color: crate::data::CanvasAnnotationColor::Default,
-        background_enabled: false,
-        archived: false,
-    });
+    app.canvas
+        .add_annotation(crate::data::CanvasAnnotation::new(
+            20,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(10.0, 10.0),
+            eframe::egui::pos2(70.0, 40.0),
+            "caption".to_owned(),
+            CanvasTextSize::M,
+            CanvasStrokeWidth::M,
+            crate::data::CanvasAnnotationColor::Default,
+            false,
+            false,
+        ));
     app.canvas.select_content(&[1], &[20]);
 
     let items = app.context_menu_items();
@@ -1535,20 +1531,19 @@ fn stack_order_context_actions_are_enabled_for_image_and_annotation_selections()
     let mut app = test_app(None);
     app.canvas
         .add_prepared_placement_image(&ctx, test_loaded_item(1, 1));
-    app.canvas.add_annotation(crate::data::CanvasAnnotation {
-        id: 20,
-        kind: CanvasAnnotationKind::Textbox,
-        start_x: 10.0,
-        start_y: 10.0,
-        end_x: 70.0,
-        end_y: 40.0,
-        text: "caption".to_owned(),
-        text_size: CanvasTextSize::M,
-        stroke_width: CanvasStrokeWidth::M,
-        color: crate::data::CanvasAnnotationColor::Default,
-        background_enabled: false,
-        archived: false,
-    });
+    app.canvas
+        .add_annotation(crate::data::CanvasAnnotation::new(
+            20,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(10.0, 10.0),
+            eframe::egui::pos2(70.0, 40.0),
+            "caption".to_owned(),
+            CanvasTextSize::M,
+            CanvasStrokeWidth::M,
+            crate::data::CanvasAnnotationColor::Default,
+            false,
+            false,
+        ));
 
     app.canvas.select_content(&[1], &[]);
     let image_only = app.context_menu_items();
@@ -2653,15 +2648,7 @@ fn switching_boards_clears_selection_search_and_transient_undo() {
         imported_at: 0,
     };
     let placement = Placement::loaded(
-        PlacementState {
-            id: 1,
-            asset_id: Some(1),
-            center: eframe::egui::pos2(0.0, 0.0),
-            scale: 1.0,
-            rotation: 0.0,
-            z_index: 0,
-            archived: false,
-        },
+        PlacementState::new(1, Some(1), eframe::egui::pos2(0.0, 0.0), 1.0, 0.0, 0, false),
         asset,
     );
     app.canvas.add_prepared_placement_image(
@@ -3071,7 +3058,7 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
         crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA,
     );
     assert_eq!(active_items.len(), 1);
-    assert_eq!(active_items[0].state.scale, expected_scale);
+    assert_eq!(active_items[0].state.geometry.scale, expected_scale);
 
     let _ = fs::remove_dir_all(root);
 }
@@ -3422,7 +3409,7 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
         .into_iter()
         .map(|placement| crate::data::PlacementFootprint {
             id: placement.state.id,
-            center: placement.state.center,
+            center: placement.state.geometry.center,
             width: placement.scaled_visual_size().x,
             height: placement.scaled_visual_size().y,
         })
@@ -3963,15 +3950,7 @@ fn search_drop_source_center_uses_image_extents() {
             imported_at: 0,
         };
         let placement = Placement::loaded(
-            PlacementState {
-                id,
-                asset_id: Some(id),
-                center: egui::pos2(x, 0.0),
-                scale: 1.0,
-                rotation: 0.0,
-                z_index: id as i32,
-                archived: false,
-            },
+            PlacementState::new(id, Some(id), egui::pos2(x, 0.0), 1.0, 0.0, id as i32, false),
             asset,
         );
         app.canvas.add_prepared_placement_image(
@@ -4042,15 +4021,15 @@ fn completed_multi_file_import_batch_selects_without_mutating_geometry() {
             imported_at: 0,
         };
         let placement = Placement::loaded(
-            PlacementState {
+            PlacementState::new(
                 id,
-                asset_id: Some(id),
-                center: eframe::egui::pos2(0.0, 0.0),
-                scale: 1.0,
-                rotation: 0.0,
-                z_index: id as i32,
-                archived: false,
-            },
+                Some(id),
+                eframe::egui::pos2(0.0, 0.0),
+                1.0,
+                0.0,
+                id as i32,
+                false,
+            ),
             asset,
         );
         app.integrate_loaded_import(
@@ -4075,8 +4054,8 @@ fn completed_multi_file_import_batch_selects_without_mutating_geometry() {
     assert_eq!(app.canvas.selected_placement_ids(), vec![1, 2, 3]);
     for placement_id in [1_i64, 2, 3] {
         let placement = app.canvas.placement_for_id(placement_id).unwrap();
-        assert_eq!(placement.state.center.x, 0.0);
-        assert_eq!(placement.state.center.y, 0.0);
+        assert_eq!(placement.state.geometry.center.x, 0.0);
+        assert_eq!(placement.state.geometry.center.y, 0.0);
     }
     assert!(app.pending_import_batches.is_empty());
 }
@@ -4102,8 +4081,8 @@ fn completed_import_batch_uses_original_anchor_after_out_of_order_failures() {
         .expect("loaded placement asset")
         .height = 80;
     third.placement.visual_size = egui::vec2(140.0, 80.0);
-    third.placement.state.center.x = 4000.0;
-    third.placement.state.center.y = -1000.0;
+    third.placement.state.geometry.center.x = 4000.0;
+    third.placement.state.geometry.center.y = -1000.0;
     app.integrate_loaded_import(&ctx, third);
 
     app.finish_import_queue_id_in_batches(Some(app.active_board_id), Some(2), None);
@@ -4122,25 +4101,49 @@ fn completed_import_batch_uses_original_anchor_after_out_of_order_failures() {
         .expect("loaded placement asset")
         .height = 170;
     first.placement.visual_size = egui::vec2(90.0, 170.0);
-    first.placement.state.center.x = -2500.0;
-    first.placement.state.center.y = 3600.0;
+    first.placement.state.geometry.center.x = -2500.0;
+    first.placement.state.geometry.center.y = 3600.0;
     app.integrate_loaded_import(&ctx, first);
 
     assert_eq!(app.canvas.selected_placement_ids(), vec![3, 1]);
     assert_eq!(
-        app.canvas.placement_for_id(3).unwrap().state.center.x,
+        app.canvas
+            .placement_for_id(3)
+            .unwrap()
+            .state
+            .geometry
+            .center
+            .x,
         4000.0
     );
     assert_eq!(
-        app.canvas.placement_for_id(3).unwrap().state.center.y,
+        app.canvas
+            .placement_for_id(3)
+            .unwrap()
+            .state
+            .geometry
+            .center
+            .y,
         -1000.0
     );
     assert_eq!(
-        app.canvas.placement_for_id(1).unwrap().state.center.x,
+        app.canvas
+            .placement_for_id(1)
+            .unwrap()
+            .state
+            .geometry
+            .center
+            .x,
         -2500.0
     );
     assert_eq!(
-        app.canvas.placement_for_id(1).unwrap().state.center.y,
+        app.canvas
+            .placement_for_id(1)
+            .unwrap()
+            .state
+            .geometry
+            .center
+            .y,
         3600.0
     );
     assert!(app.pending_import_batches.is_empty());
@@ -4398,7 +4401,11 @@ fn raw_dropped_file_enqueues_external_import() {
         .canvas
         .screen_to_world(drop_pos, screen_rect);
     assert!(
-        egui::pos2(placement.state.center.x, placement.state.center.y).distance(expected_world)
+        egui::pos2(
+            placement.state.geometry.center.x,
+            placement.state.geometry.center.y
+        )
+        .distance(expected_world)
             < 1.0
     );
 
@@ -4582,15 +4589,15 @@ fn test_loaded_item(placement_id: i64, target_board_id: i64) -> PreparedPlacemen
         imported_at: 0,
     };
     let placement = Placement::loaded(
-        PlacementState {
-            id: placement_id,
-            asset_id: Some(placement_id),
-            center: eframe::egui::pos2(0.0, 0.0),
-            scale: 1.0,
-            rotation: 0.0,
-            z_index: 0,
-            archived: false,
-        },
+        PlacementState::new(
+            placement_id,
+            Some(placement_id),
+            eframe::egui::pos2(0.0, 0.0),
+            1.0,
+            0.0,
+            0,
+            false,
+        ),
         asset,
     );
     PreparedPlacementImage {
@@ -4630,18 +4637,16 @@ fn add_loaded_record(app: &mut SnappyRefApp, ctx: &egui::Context, placement: Pla
 }
 
 fn test_canvas_annotation(id: i64, start: egui::Pos2) -> crate::data::CanvasAnnotation {
-    crate::data::CanvasAnnotation {
+    crate::data::CanvasAnnotation::new(
         id,
-        kind: CanvasAnnotationKind::Line,
-        start_x: start.x,
-        start_y: start.y,
-        end_x: start.x + 40.0,
-        end_y: start.y + 30.0,
-        text: String::new(),
-        text_size: CanvasTextSize::M,
-        stroke_width: CanvasStrokeWidth::M,
-        color: crate::data::CanvasAnnotationColor::Gold,
-        background_enabled: false,
-        archived: false,
-    }
+        CanvasAnnotationKind::Line,
+        start,
+        egui::pos2(start.x + 40.0, start.y + 30.0),
+        String::new(),
+        CanvasTextSize::M,
+        CanvasStrokeWidth::M,
+        crate::data::CanvasAnnotationColor::Gold,
+        false,
+        false,
+    )
 }

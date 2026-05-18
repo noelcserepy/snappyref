@@ -150,29 +150,31 @@ pub(crate) fn paint_annotation_draft(
     let Some(draft_state) = &state.interaction.annotation_draft_state else {
         return;
     };
-    let draft = pending_annotation_from_draft(draft_state.clone()).unwrap_or(PendingAnnotation {
-        kind: draft_state.kind,
-        start_world: draft_state.start_world,
-        end_world: draft_state.current_world,
-        text: String::new(),
-        text_size: CanvasTextSize::default(),
+    let draft = pending_annotation_from_draft(draft_state.clone()).unwrap_or_else(|| {
+        PendingAnnotation::new(
+            draft_state.kind,
+            draft_state.start_world(),
+            draft_state.current_world(),
+            String::new(),
+            CanvasTextSize::default(),
+        )
     });
     let stroke = crate::ui::theme::stroke_strong();
     match draft.kind {
         CanvasAnnotationKind::Line => {
-            let start = state.world_to_screen(draft.start_world, rect);
-            let end = state.world_to_screen(draft.end_world, rect);
+            let start = state.world_to_screen(draft.start_world(), rect);
+            let end = state.world_to_screen(draft.end_world(), rect);
             painter.line_segment([start, end], stroke);
         }
         CanvasAnnotationKind::Arrow => {
-            let start = state.world_to_screen(draft.start_world, rect);
-            let end = state.world_to_screen(draft.end_world, rect);
+            let start = state.world_to_screen(draft.start_world(), rect);
+            let end = state.world_to_screen(draft.end_world(), rect);
             paint_arrow_segment(painter, start, end, stroke);
         }
         CanvasAnnotationKind::Textbox => {
             let textbox_rect = egui::Rect::from_two_pos(
-                state.world_to_screen(draft.start_world, rect),
-                state.world_to_screen(draft.end_world, rect),
+                state.world_to_screen(draft.start_world(), rect),
+                state.world_to_screen(draft.end_world(), rect),
             );
             painter.rect_stroke(
                 textbox_rect,

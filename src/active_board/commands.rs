@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::active_board::persistence::DocumentPersistence;
 use crate::canvas::CanvasState;
-use crate::data::{CanvasAnnotationKind, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize};
+use crate::data::{
+    CanvasAnnotationGeometry, CanvasAnnotationKind, CanvasStackItem, CanvasStrokeWidth,
+    CanvasTextSize, RectGeometry,
+};
 use crate::library::storage::Library;
 
 pub(crate) const COPY_PAYLOAD_KIND: &str = "snappyref-board-items";
@@ -59,6 +62,24 @@ pub(crate) struct ClipboardPlacementState {
     height: u32,
 }
 
+impl ClipboardPlacementState {
+    fn geometry(&self) -> RectGeometry {
+        RectGeometry::new(
+            egui::pos2(self.center_x, self.center_y),
+            egui::vec2(self.width as f32, self.height as f32),
+            self.scale,
+            self.rotation,
+            self.z_index,
+        )
+    }
+
+    fn translated_geometry(&self, delta: egui::Vec2) -> RectGeometry {
+        let mut geometry = self.geometry();
+        geometry.center += delta;
+        geometry
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ClipboardAnnotation {
     kind: String,
@@ -71,6 +92,28 @@ pub(crate) struct ClipboardAnnotation {
     stroke_width: String,
     color: String,
     background_enabled: bool,
+}
+
+impl ClipboardAnnotation {
+    fn geometry(&self) -> Result<CanvasAnnotationGeometry, String> {
+        let kind = CanvasAnnotationKind::from_str(&self.kind)
+            .ok_or_else(|| format!("unknown copied annotation kind: {}", self.kind))?;
+        Ok(CanvasAnnotationGeometry::from_kind(
+            kind,
+            egui::pos2(self.start_x, self.start_y),
+            egui::pos2(self.end_x, self.end_y),
+        ))
+    }
+
+    fn translated_geometry(&self, delta: egui::Vec2) -> Result<CanvasAnnotationGeometry, String> {
+        let geometry = self.geometry()?;
+        Ok(CanvasAnnotationGeometry::from_kind(
+            CanvasAnnotationKind::from_str(&self.kind)
+                .ok_or_else(|| format!("unknown copied annotation kind: {}", self.kind))?,
+            geometry.start() + delta,
+            geometry.end() + delta,
+        ))
+    }
 }
 
 pub(crate) fn copy_selection_to_json(
@@ -99,11 +142,11 @@ pub(crate) fn copy_selected_board_payload(canvas: &CanvasState) -> Option<Clipbo
         placement_ids.push(placement_id);
         items.push(ClipboardPlacementState {
             asset_id,
-            center_x: placement.state.center.x,
-            center_y: placement.state.center.y,
-            scale: placement.state.scale,
-            rotation: placement.state.rotation,
-            z_index: placement.state.z_index,
+            center_x: placement.state.geometry.center.x,
+            center_y: placement.state.geometry.center.y,
+            scale: placement.state.geometry.scale,
+            rotation: placement.state.geometry.rotation,
+            z_index: placement.state.geometry.z_index,
             width: asset.width,
             height: asset.height,
         });
@@ -116,10 +159,10 @@ pub(crate) fn copy_selected_board_payload(canvas: &CanvasState) -> Option<Clipbo
         annotation_ids.push(annotation_id);
         annotations.push(ClipboardAnnotation {
             kind: annotation.kind.as_str().to_owned(),
-            start_x: annotation.start_x,
-            start_y: annotation.start_y,
-            end_x: annotation.end_x,
-            end_y: annotation.end_y,
+            start_x: annotation.start().x,
+            start_y: annotation.start().y,
+            end_x: annotation.end().x,
+            end_y: annotation.end().y,
             text: annotation.text,
             text_size: annotation.text_size.as_str().to_owned(),
             stroke_width: annotation.stroke_width.as_str().to_owned(),
@@ -197,12 +240,13 @@ pub(crate) fn paste_board_payload_at(
 
     let mut pasted_placement_ids = Vec::new();
     for item in &payload.items {
+        let geometry = item.translated_geometry(delta);
         let placement = library.create_placement_from_asset(
             item.asset_id,
-            egui::pos2(item.center_x + delta.x, item.center_y + delta.y),
-            item.scale,
-            item.rotation,
-            item.z_index,
+            geometry.center,
+            geometry.scale,
+            geometry.rotation,
+            geometry.z_index,
         )?;
         pasted_placement_ids.push(placement.state.id);
         if let Err(error) = context.canvas.add_loaded_reference_placement(placement) {
@@ -224,10 +268,11 @@ pub(crate) fn paste_board_payload_at(
             .ok_or_else(|| format!("unknown copied stroke width: {}", annotation.stroke_width))?;
         let color = crate::data::CanvasAnnotationColor::from_str(&annotation.color)
             .ok_or_else(|| format!("unknown copied annotation color: {}", annotation.color))?;
+        let geometry = annotation.translated_geometry(delta)?;
         let pasted = library.create_canvas_annotation(
             kind,
-            egui::pos2(annotation.start_x + delta.x, annotation.start_y + delta.y),
-            egui::pos2(annotation.end_x + delta.x, annotation.end_y + delta.y),
+            geometry.start(),
+            geometry.end(),
             &annotation.text,
             text_size,
             stroke_width,
@@ -395,11 +440,7 @@ pub(crate) fn clipboard_payload_bounds(payload: &ClipboardBoardSelection) -> Opt
     let mut bounds: Option<egui::Rect> = None;
 
     for item in &payload.items {
-        let size = egui::vec2(
-            item.width as f32 * item.scale.max(0.01),
-            item.height as f32 * item.scale.max(0.01),
-        );
-        let rect = egui::Rect::from_center_size(egui::pos2(item.center_x, item.center_y), size);
+        let rect = item.geometry().unrotated_bounds();
         bounds = Some(match bounds {
             Some(existing) => existing.union(rect),
             None => rect,
@@ -407,10 +448,10 @@ pub(crate) fn clipboard_payload_bounds(payload: &ClipboardBoardSelection) -> Opt
     }
 
     for annotation in &payload.annotations {
-        let rect = egui::Rect::from_two_pos(
-            egui::pos2(annotation.start_x, annotation.start_y),
-            egui::pos2(annotation.end_x, annotation.end_y),
-        );
+        let Ok(geometry) = annotation.geometry() else {
+            return None;
+        };
+        let rect = egui::Rect::from_two_pos(geometry.start(), geometry.end());
         bounds = Some(match bounds {
             Some(existing) => existing.union(rect),
             None => rect,

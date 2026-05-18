@@ -92,13 +92,11 @@ mod tests {
             interaction: crate::canvas::CanvasInteractionState {
                 drag_state: Some(crate::canvas::DragState {
                     pointer_start_world: egui::Pos2::ZERO,
-                    starting_items: vec![crate::canvas::SelectedLayoutItem {
-                        id: 1,
-                        x: 0.0,
-                        y: 0.0,
-                        width: 100.0,
-                        height: 100.0,
-                    }],
+                    starting_items: vec![crate::canvas::SelectedLayoutItem::new(
+                        1,
+                        egui::pos2(0.0, 0.0),
+                        egui::vec2(100.0, 100.0),
+                    )],
                     snap_preview_rect_world: None,
                     started_at_seconds: 10.0,
                     last_movement_seconds: 10.5,
@@ -130,15 +128,15 @@ mod tests {
     ) -> RenderedPlacement {
         RenderedPlacement {
             placement: Placement::loaded(
-                PlacementState {
-                    id: placement_id,
-                    asset_id: Some(placement_id),
-                    center: eframe::egui::pos2(center_world.x, center_world.y),
-                    scale: 1.0,
-                    rotation: 0.0,
-                    z_index: placement_id as i32,
-                    archived: false,
-                },
+                PlacementState::new(
+                    placement_id,
+                    Some(placement_id),
+                    eframe::egui::pos2(center_world.x, center_world.y),
+                    1.0,
+                    0.0,
+                    placement_id as i32,
+                    false,
+                ),
                 ImageAsset {
                     id: placement_id,
                     original_path: PathBuf::from(format!("image-{placement_id}.png")),

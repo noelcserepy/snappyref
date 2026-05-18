@@ -1,3 +1,7 @@
+use eframe::egui::{Pos2, Rect};
+
+use super::{RectGeometry, SegmentGeometry};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CanvasAnnotationKind {
     Line,
@@ -150,16 +154,81 @@ impl Default for CanvasAnnotationColor {
 pub struct CanvasAnnotation {
     pub id: i64,
     pub kind: CanvasAnnotationKind,
-    pub start_x: f32,
-    pub start_y: f32,
-    pub end_x: f32,
-    pub end_y: f32,
+    pub geometry: CanvasAnnotationGeometry,
     pub text: String,
     pub text_size: CanvasTextSize,
     pub stroke_width: CanvasStrokeWidth,
     pub color: CanvasAnnotationColor,
     pub background_enabled: bool,
     pub archived: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CanvasAnnotationGeometry {
+    Rect(RectGeometry),
+    Segment(SegmentGeometry),
+}
+
+impl CanvasAnnotationGeometry {
+    pub fn from_kind(kind: CanvasAnnotationKind, start: Pos2, end: Pos2) -> Self {
+        match kind {
+            CanvasAnnotationKind::Textbox => {
+                Self::Rect(RectGeometry::from_bounds(Rect::from_two_pos(start, end), 0))
+            }
+            CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow => {
+                Self::Segment(SegmentGeometry::new(start, end, 0))
+            }
+        }
+    }
+
+    pub fn start(self) -> Pos2 {
+        match self {
+            Self::Rect(geometry) => geometry.unrotated_bounds().min,
+            Self::Segment(geometry) => geometry.start,
+        }
+    }
+
+    pub fn end(self) -> Pos2 {
+        match self {
+            Self::Rect(geometry) => geometry.unrotated_bounds().max,
+            Self::Segment(geometry) => geometry.end,
+        }
+    }
+}
+
+impl CanvasAnnotation {
+    pub fn new(
+        id: i64,
+        kind: CanvasAnnotationKind,
+        start: Pos2,
+        end: Pos2,
+        text: String,
+        text_size: CanvasTextSize,
+        stroke_width: CanvasStrokeWidth,
+        color: CanvasAnnotationColor,
+        background_enabled: bool,
+        archived: bool,
+    ) -> Self {
+        Self {
+            id,
+            kind,
+            geometry: CanvasAnnotationGeometry::from_kind(kind, start, end),
+            text,
+            text_size,
+            stroke_width,
+            color,
+            background_enabled,
+            archived,
+        }
+    }
+
+    pub fn start(&self) -> Pos2 {
+        self.geometry.start()
+    }
+
+    pub fn end(&self) -> Pos2 {
+        self.geometry.end()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

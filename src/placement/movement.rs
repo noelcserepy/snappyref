@@ -165,12 +165,12 @@ fn guide_snap_candidate_rects(
             let visual_size = crate::canvas::rotated_visual_size(
                 scaled_size.x,
                 scaled_size.y,
-                image.placement.state.rotation,
+                image.placement.state.geometry.rotation,
             );
             let rect = egui::Rect::from_center_size(
                 egui::pos2(
-                    image.placement.state.center.x,
-                    image.placement.state.center.y,
+                    image.placement.state.geometry.center.x,
+                    image.placement.state.geometry.center.y,
                 ),
                 visual_size,
             );
@@ -196,8 +196,8 @@ pub(crate) fn layout_bounds_with_offset(
     let mut found = false;
     for item in items {
         let rect = egui::Rect::from_center_size(
-            egui::pos2(item.x + offset.x, item.y + offset.y),
-            egui::vec2(item.width, item.height),
+            egui::pos2(item.center().x + offset.x, item.center().y + offset.y),
+            egui::vec2(item.width(), item.height()),
         );
         if found {
             bounds = bounds.union(rect);
@@ -230,8 +230,10 @@ fn apply_dragged_item_positions(
             .iter_mut()
             .find(|image| image.placement.state.id == item.id)
         {
-            image.placement.state.center.x = item.x + world_delta.x + snap_offset.x;
-            image.placement.state.center.y = item.y + world_delta.y + snap_offset.y;
+            image.placement.state.geometry.center.x =
+                item.center().x + world_delta.x + snap_offset.x;
+            image.placement.state.geometry.center.y =
+                item.center().y + world_delta.y + snap_offset.y;
             moved += 1;
         }
     }

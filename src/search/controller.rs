@@ -1553,7 +1553,12 @@ mod tests {
         let layout = canvas
             .provisional_records_in_selection_order()
             .into_iter()
-            .map(|record| (record.state.center.x, record.state.center.y))
+            .map(|record| {
+                (
+                    record.state.geometry.center.x,
+                    record.state.geometry.center.y,
+                )
+            })
             .collect::<Vec<_>>();
         let mut rows = layout
             .iter()
@@ -1593,10 +1598,13 @@ mod tests {
                 PlacementState {
                     id: item_id,
                     asset_id: Some(asset_id),
-                    center: *position,
-                    scale: 0.5,
-                    rotation: 0.0,
-                    z_index: index as i32,
+                    geometry: crate::data::RectGeometry::new(
+                        *position,
+                        eframe::egui::Vec2::ZERO,
+                        0.5,
+                        0.0,
+                        index as i32,
+                    ),
                     archived: false,
                 },
                 asset,
@@ -1691,15 +1699,15 @@ mod tests {
             imported_at: 0,
         };
         canvas.add_unresolved_placement(Placement::loaded(
-            PlacementState {
-                id: 900,
-                asset_id: Some(900),
-                center: eframe::egui::pos2(0.0, 0.0),
-                scale: 1.0,
-                rotation: 0.0,
-                z_index: 0,
-                archived: false,
-            },
+            PlacementState::new(
+                900,
+                Some(900),
+                eframe::egui::pos2(0.0, 0.0),
+                1.0,
+                0.0,
+                0,
+                false,
+            ),
             target_asset,
         ));
 

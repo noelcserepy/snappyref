@@ -35,7 +35,7 @@ pub(crate) fn begin_image_resize(
     );
     let start_handle_screen = image_resize_handle_screen_pos(corners, handle);
     let anchor_screen = image_resize_anchor_screen_pos(corners, handle);
-    let start_scale = image.placement.state.scale;
+    let start_scale = image.placement.state.geometry.scale;
 
     state.finish_textbox_edit();
     state.document.selected_placement_ids.clear();
@@ -77,31 +77,31 @@ pub(crate) fn begin_image_drag_scale(
     let starting_items = placement_ids
         .iter()
         .filter_map(|placement_id| {
-            state
-                .rendered_placement_by_id(*placement_id)
-                .map(|image| ImageScaleStart {
-                    placement_id: *placement_id,
-                    center_world: egui::pos2(
-                        image.placement.state.center.x,
-                        image.placement.state.center.y,
+            state.rendered_placement_by_id(*placement_id).map(|image| {
+                ImageScaleStart::new(
+                    *placement_id,
+                    egui::pos2(
+                        image.placement.state.geometry.center.x,
+                        image.placement.state.geometry.center.y,
                     ),
-                    base_visual_size: {
+                    {
                         let base_size = image.placement.base_visual_size();
                         super::super::rotated_visual_size(
                             base_size.x,
                             base_size.y,
-                            image.placement.state.rotation,
+                            image.placement.state.geometry.rotation,
                         )
                     },
-                    start_scale: image.placement.state.scale,
-                    min_scale: min_image_scale(
+                    image.placement.state.geometry.scale,
+                    min_image_scale(
                         image
                             .placement
                             .asset
                             .as_ref()
                             .expect("loaded placement asset"),
                     ),
-                })
+                )
+            })
         })
         .collect::<Vec<_>>();
 
@@ -148,10 +148,10 @@ pub(crate) fn begin_image_rotation(
                 (
                     *placement_id,
                     egui::pos2(
-                        image.placement.state.center.x,
-                        image.placement.state.center.y,
+                        image.placement.state.geometry.center.x,
+                        image.placement.state.geometry.center.y,
                     ),
-                    image.placement.state.rotation,
+                    image.placement.state.geometry.rotation,
                 )
             })
         })
@@ -278,8 +278,8 @@ fn selected_group_rotation_angle(state: &CanvasState) -> Option<f32> {
         let Some(image) = state.rendered_placement_by_id(*placement_id) else {
             continue;
         };
-        sin_sum += image.placement.state.rotation.sin();
-        cos_sum += image.placement.state.rotation.cos();
+        sin_sum += image.placement.state.geometry.rotation.sin();
+        cos_sum += image.placement.state.geometry.rotation.cos();
         count += 1;
     }
     (count > 0).then(|| sin_sum.atan2(cos_sum))
@@ -374,11 +374,11 @@ pub(crate) fn scaled_image_transforms(
     starting_items
         .iter()
         .map(|item| {
-            let offset = item.center_world - group_center_world;
+            let offset = item.center_world() - group_center_world;
             ImageScaleTransform {
                 placement_id: item.placement_id,
                 center_world: group_center_world + offset * factor,
-                scale: (item.start_scale * factor).max(item.min_scale),
+                scale: (item.start_scale() * factor).max(item.min_scale),
             }
         })
         .collect()
@@ -392,10 +392,10 @@ fn scaled_image_bounds(
     let mut bounds = egui::Rect::NOTHING;
     let mut found = false;
     for item in starting_items {
-        let offset = item.center_world - group_center_world;
+        let offset = item.center_world() - group_center_world;
         let center = group_center_world + offset * factor;
-        let scale = (item.start_scale * factor).max(item.min_scale);
-        let rect = egui::Rect::from_center_size(center, item.base_visual_size * scale);
+        let scale = (item.start_scale() * factor).max(item.min_scale);
+        let rect = egui::Rect::from_center_size(center, item.base_visual_size() * scale);
         if found {
             bounds = bounds.union(rect);
         } else {
@@ -475,7 +475,7 @@ pub(crate) fn compute_uniform_scale_snap_preview(
     let start_rect = scaled_image_bounds(starting_items, group_center_world, 1.0)?;
     let min_factor = starting_items
         .iter()
-        .map(|item| item.min_scale / item.start_scale.max(f32::EPSILON))
+        .map(|item| item.min_scale / item.start_scale().max(f32::EPSILON))
         .fold(0.0, f32::max);
     let candidates = guide_snap_candidate_rects(state, screen_rect, placement_ids);
     let Some(result) = super::super::guide_snap::snap_uniform_scale(
@@ -519,12 +519,12 @@ fn guide_snap_candidate_rects(
             let visual_size = super::super::rotated_visual_size(
                 scaled_size.x,
                 scaled_size.y,
-                image.placement.state.rotation,
+                image.placement.state.geometry.rotation,
             );
             let rect = egui::Rect::from_center_size(
                 egui::pos2(
-                    image.placement.state.center.x,
-                    image.placement.state.center.y,
+                    image.placement.state.geometry.center.x,
+                    image.placement.state.geometry.center.y,
                 ),
                 visual_size,
             );

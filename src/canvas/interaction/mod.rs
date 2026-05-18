@@ -194,11 +194,8 @@ pub(super) fn handle_input(
             state.interaction.textbox_transform_state = None;
             state.interaction.marquee_state = None;
             state.interaction.crop_state = None;
-            state.interaction.annotation_draft_state = Some(AnnotationDraftState {
-                kind,
-                start_world: pointer_world,
-                current_world: pointer_world,
-            });
+            state.interaction.annotation_draft_state =
+                Some(AnnotationDraftState::new(kind, pointer_world));
         } else if crop_key_held && let Some(placement_id) = hit_test_image(state, rect, pointer_pos)
         {
             if !begin_crop(state, placement_id, pointer_pos) {
@@ -304,7 +301,7 @@ pub(super) fn handle_input(
     {
         let world = (pointer_pos - rect.center() - state.pan) / state.zoom;
         let pointer_world = egui::pos2(world.x, world.y);
-        draft_state.current_world = pointer_world;
+        draft_state.set_current_world(pointer_world);
     }
 
     if state.interaction.crop_state.is_none()
@@ -316,11 +313,11 @@ pub(super) fn handle_input(
         if pointer_pos.distance(drag_state.pointer_start_screen) >= TEXTBOX_DRAG_THRESHOLD_SCREEN {
             let pointer_world = state.screen_to_world(pointer_pos, rect);
             let world_delta = pointer_world - drag_state.pointer_start_world;
-            for (annotation_id, start_world, end_world) in drag_state.starting_points {
+            for (annotation_id, segment) in drag_state.starting_segments {
                 state.set_annotation_world_points(
                     annotation_id,
-                    start_world + world_delta,
-                    end_world + world_delta,
+                    segment.start + world_delta,
+                    segment.end + world_delta,
                 );
             }
         }
@@ -354,9 +351,12 @@ pub(super) fn handle_input(
                 start_rects_world,
             } => {
                 let pointer_world = state.screen_to_world(pointer_pos, rect);
-                for (annotation_id, start_rect_world) in start_rects_world {
-                    let world_rect =
-                        moved_textbox_rect(start_rect_world, pointer_start_world, pointer_world);
+                for (annotation_id, start_geometry) in start_rects_world {
+                    let world_rect = moved_textbox_rect(
+                        start_geometry.unrotated_bounds(),
+                        pointer_start_world,
+                        pointer_world,
+                    );
                     state.set_textbox_world_rect(annotation_id, world_rect);
                 }
             }
@@ -370,7 +370,7 @@ pub(super) fn handle_input(
                 let world_rect = resized_textbox_rect(
                     dragged_handle,
                     anchor_world,
-                    start_rect_world,
+                    start_rect_world.unrotated_bounds(),
                     pointer_world,
                 );
                 state.set_textbox_world_rect(annotation_id, world_rect);
@@ -409,7 +409,7 @@ pub(super) fn handle_input(
                     let base_visual_size = super::rotated_visual_size(
                         base_size.x,
                         base_size.y,
-                        image.placement.state.rotation,
+                        image.placement.state.geometry.rotation,
                     );
                     let desired_rect = egui::Rect::from_center_size(
                         center_world,
@@ -812,20 +812,20 @@ mod tests {
     #[test]
     fn image_drag_scale_preserves_multi_image_layout_around_group_center() {
         let starting_items = vec![
-            super::ImageScaleStart {
-                placement_id: 1,
-                center_world: egui::pos2(-100.0, 0.0),
-                base_visual_size: egui::vec2(100.0, 80.0),
-                start_scale: 1.0,
-                min_scale: 0.1,
-            },
-            super::ImageScaleStart {
-                placement_id: 2,
-                center_world: egui::pos2(100.0, 0.0),
-                base_visual_size: egui::vec2(100.0, 80.0),
-                start_scale: 0.5,
-                min_scale: 0.1,
-            },
+            super::ImageScaleStart::new(
+                1,
+                egui::pos2(-100.0, 0.0),
+                egui::vec2(100.0, 80.0),
+                1.0,
+                0.1,
+            ),
+            super::ImageScaleStart::new(
+                2,
+                egui::pos2(100.0, 0.0),
+                egui::vec2(100.0, 80.0),
+                0.5,
+                0.1,
+            ),
         ];
 
         let transforms = scaled_image_transforms(&starting_items, egui::pos2(0.0, 0.0), 2.0);
@@ -870,13 +870,13 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(174.0, 0.0), 100, 100);
         canvas.select_placements(&[1]);
 
-        let starting_items = vec![super::ImageScaleStart {
-            placement_id: 1,
-            center_world: egui::Pos2::ZERO,
-            base_visual_size: egui::vec2(100.0, 100.0),
-            start_scale: 1.0,
-            min_scale: 0.1,
-        }];
+        let starting_items = vec![super::ImageScaleStart::new(
+            1,
+            egui::Pos2::ZERO,
+            egui::vec2(100.0, 100.0),
+            1.0,
+            0.1,
+        )];
 
         let factor = compute_uniform_scale_snap_preview(
             &mut canvas,
@@ -959,20 +959,18 @@ mod tests {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(0.0, 0.0), 180, 140);
-        canvas.add_annotation(CanvasAnnotation {
-            id: 10,
-            kind: CanvasAnnotationKind::Textbox,
-            start_x: -210.0,
-            start_y: -70.0,
-            end_x: -30.0,
-            end_y: 70.0,
-            text: "textbox".to_owned(),
-            text_size: CanvasTextSize::default(),
-            stroke_width: CanvasStrokeWidth::default(),
-            color: CanvasAnnotationColor::Sky,
-            background_enabled: false,
-            archived: false,
-        });
+        canvas.add_annotation(CanvasAnnotation::new(
+            10,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(-210.0, -70.0),
+            eframe::egui::pos2(-30.0, 70.0),
+            "textbox".to_owned(),
+            CanvasTextSize::default(),
+            CanvasStrokeWidth::default(),
+            CanvasAnnotationColor::Sky,
+            false,
+            false,
+        ));
         canvas.select_placements(&[2]);
 
         let drag_state = DragState {
@@ -1468,15 +1466,15 @@ mod tests {
             imported_at: 0,
         };
         let placement = Placement::loaded(
-            PlacementState {
+            PlacementState::new(
                 id,
-                asset_id: Some(id),
-                center: eframe::egui::pos2(center_world.x, center_world.y),
-                scale: 1.0,
-                rotation: 0.0,
-                z_index: 0,
-                archived: false,
-            },
+                Some(id),
+                eframe::egui::pos2(center_world.x, center_world.y),
+                1.0,
+                0.0,
+                0,
+                false,
+            ),
             asset,
         );
         let rgba = vec![255; width as usize * height as usize * 4];

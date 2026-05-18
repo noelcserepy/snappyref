@@ -5,7 +5,7 @@ use super::super::{
     PendingAnnotation,
 };
 use super::{normalized_textbox_rect, textbox_screen_rect, textbox_world_rect};
-use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasTextSize};
+use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasTextSize, SegmentGeometry};
 
 pub(crate) fn begin_annotation_drag(
     state: &mut CanvasState,
@@ -35,14 +35,13 @@ pub(crate) fn begin_annotation_drag(
                 })
         })
         .collect::<Vec<_>>();
-    let starting_points = annotation_ids
+    let starting_segments = annotation_ids
         .iter()
         .filter_map(|selected_id| {
             state.annotation_by_id(*selected_id).map(|annotation| {
                 (
                     *selected_id,
-                    egui::pos2(annotation.start_x, annotation.start_y),
-                    egui::pos2(annotation.end_x, annotation.end_y),
+                    SegmentGeometry::new(annotation.start(), annotation.end(), 0),
                 )
             })
         })
@@ -57,7 +56,7 @@ pub(crate) fn begin_annotation_drag(
         annotation_ids,
         pointer_start_world: state.screen_to_world(pointer_pos, rect),
         pointer_start_screen: pointer_pos,
-        starting_points,
+        starting_segments,
     });
 }
 
@@ -81,8 +80,8 @@ pub(crate) fn annotation_screen_points(
     annotation: &CanvasAnnotation,
 ) -> (egui::Pos2, egui::Pos2) {
     (
-        state.world_to_screen(egui::pos2(annotation.start_x, annotation.start_y), rect),
-        state.world_to_screen(egui::pos2(annotation.end_x, annotation.end_y), rect),
+        state.world_to_screen(egui::pos2(annotation.start().x, annotation.start().y), rect),
+        state.world_to_screen(egui::pos2(annotation.end().x, annotation.end().y), rect),
     )
 }
 
@@ -90,8 +89,8 @@ pub(crate) fn annotation_world_rect(annotation: &CanvasAnnotation) -> egui::Rect
     match annotation.kind {
         CanvasAnnotationKind::Textbox => textbox_world_rect(annotation),
         CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow => egui::Rect::from_two_pos(
-            egui::pos2(annotation.start_x, annotation.start_y),
-            egui::pos2(annotation.end_x, annotation.end_y),
+            egui::pos2(annotation.start().x, annotation.start().y),
+            egui::pos2(annotation.end().x, annotation.end().y),
         ),
     }
 }
@@ -143,24 +142,27 @@ pub(crate) fn pending_annotation_from_draft(
 ) -> Option<PendingAnnotation> {
     match draft_state.kind {
         CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow => {
-            let distance = draft_state.start_world.distance(draft_state.current_world);
-            (distance > 2.0).then_some(PendingAnnotation {
-                kind: draft_state.kind,
-                start_world: draft_state.start_world,
-                end_world: draft_state.current_world,
-                text: String::new(),
-                text_size: CanvasTextSize::default(),
-            })
+            let distance = draft_state
+                .start_world()
+                .distance(draft_state.current_world());
+            (distance > 2.0).then_some(PendingAnnotation::new(
+                draft_state.kind,
+                draft_state.start_world(),
+                draft_state.current_world(),
+                String::new(),
+                CanvasTextSize::default(),
+            ))
         }
         CanvasAnnotationKind::Textbox => {
-            let rect = normalized_textbox_rect(draft_state.start_world, draft_state.current_world);
-            Some(PendingAnnotation {
-                kind: CanvasAnnotationKind::Textbox,
-                start_world: rect.min,
-                end_world: rect.max,
-                text: String::new(),
-                text_size: CanvasTextSize::default(),
-            })
+            let rect =
+                normalized_textbox_rect(draft_state.start_world(), draft_state.current_world());
+            Some(PendingAnnotation::new(
+                CanvasAnnotationKind::Textbox,
+                rect.min,
+                rect.max,
+                String::new(),
+                CanvasTextSize::default(),
+            ))
         }
     }
 }

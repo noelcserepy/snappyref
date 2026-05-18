@@ -76,7 +76,7 @@ pub(crate) fn handle_textbox_primary_press(
                 annotation_id: annotation.id,
                 dragged_handle: handle,
                 anchor_world: textbox_resize_handle_anchor_world_pos(world_rect, handle),
-                start_rect_world: world_rect,
+                start_rect_world: crate::data::RectGeometry::from_bounds(world_rect, 0),
             });
             true
         }
@@ -96,8 +96,8 @@ pub(crate) fn handle_textbox_primary_press(
 
 pub(crate) fn textbox_world_rect(annotation: &CanvasAnnotation) -> egui::Rect {
     normalized_textbox_rect(
-        egui::pos2(annotation.start_x, annotation.start_y),
-        egui::pos2(annotation.end_x, annotation.end_y),
+        egui::pos2(annotation.start().x, annotation.start().y),
+        egui::pos2(annotation.end().x, annotation.end().y),
     )
 }
 

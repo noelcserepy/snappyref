@@ -90,7 +90,7 @@ pub(crate) fn paint_images(
 
         let native_eligible = matches!(image.texture, CanvasTexture::Native(_))
             && image.animation.is_none()
-            && image.placement.state.rotation.abs() <= 0.0001;
+            && image.placement.state.geometry.rotation.abs() <= 0.0001;
         if native_eligible {
             native_images.push((*placement_id, *image_rect));
         } else {
@@ -497,8 +497,8 @@ fn paint_image_overlay(
         let label = format!(
             "#{}  ({:.0}, {:.0})",
             image.placement.state.id,
-            image.placement.state.center.x,
-            image.placement.state.center.y
+            image.placement.state.geometry.center.x,
+            image.placement.state.geometry.center.y
         );
         painter.text(
             image_rect.min + egui::vec2(crate::ui::theme::SPACE_2, crate::ui::theme::SPACE_2),

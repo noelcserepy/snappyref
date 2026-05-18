@@ -262,20 +262,18 @@ mod tests {
             &ctx,
             loaded_item(test_record(1, 1), vec![255, 255, 255, 255], 1, 1),
         );
-        canvas.add_annotation(crate::data::CanvasAnnotation {
-            id: 20,
-            kind: crate::data::CanvasAnnotationKind::Textbox,
-            start_x: 10.0,
-            start_y: 10.0,
-            end_x: 70.0,
-            end_y: 40.0,
-            text: "caption".to_owned(),
-            text_size: crate::data::CanvasTextSize::M,
-            stroke_width: crate::data::CanvasStrokeWidth::M,
-            color: crate::data::CanvasAnnotationColor::Default,
-            background_enabled: false,
-            archived: false,
-        });
+        canvas.add_annotation(crate::data::CanvasAnnotation::new(
+            20,
+            crate::data::CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(10.0, 10.0),
+            eframe::egui::pos2(70.0, 40.0),
+            "caption".to_owned(),
+            crate::data::CanvasTextSize::M,
+            crate::data::CanvasStrokeWidth::M,
+            crate::data::CanvasAnnotationColor::Default,
+            false,
+            false,
+        ));
         canvas.select_content(&[1], &[20]);
 
         let payload = build_selection_copy_payload(&canvas, None)
@@ -372,10 +370,13 @@ mod tests {
             PlacementState {
                 id: placement_id,
                 asset_id: Some(asset_id),
-                center: eframe::egui::Pos2::ZERO,
-                scale: 1.0,
-                rotation: 0.0,
-                z_index: 0,
+                geometry: crate::data::RectGeometry::new(
+                    eframe::egui::Pos2::ZERO,
+                    eframe::egui::Vec2::ZERO,
+                    1.0,
+                    0.0,
+                    0,
+                ),
                 archived: false,
             },
             ImageAsset {

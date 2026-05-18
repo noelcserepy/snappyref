@@ -117,7 +117,7 @@ impl CropFlow {
             cropped.width,
             cropped.height,
             cropped.file_size,
-            updated_item.center,
+            updated_item.geometry.center,
         ) {
             Ok(asset) => asset,
             Err(error) => {
@@ -318,7 +318,10 @@ mod tests {
             (4, 4)
         );
         assert_eq!(
-            (placement.state.center.x, placement.state.center.y),
+            (
+                placement.state.geometry.center.x,
+                placement.state.geometry.center.y
+            ),
             (2.0, 2.0)
         );
 
@@ -330,10 +333,13 @@ mod tests {
             PlacementState {
                 id: placement_id,
                 asset_id: Some(asset_id),
-                center: eframe::egui::Pos2::ZERO,
-                scale: 1.0,
-                rotation: 0.0,
-                z_index: 0,
+                geometry: crate::data::RectGeometry::new(
+                    eframe::egui::Pos2::ZERO,
+                    eframe::egui::Vec2::ZERO,
+                    1.0,
+                    0.0,
+                    0,
+                ),
                 archived: false,
             },
             ImageAsset {

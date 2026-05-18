@@ -1,5 +1,7 @@
 use eframe::egui::{Pos2, Rect, Vec2, vec2};
 
+use super::RectGeometry;
+
 pub type PlacementId = i64;
 pub type AssetId = i64;
 
@@ -23,11 +25,27 @@ pub struct BoardSummary {
 pub struct PlacementState {
     pub id: PlacementId,
     pub asset_id: Option<AssetId>,
-    pub center: Pos2,
-    pub scale: f32,
-    pub rotation: f32,
-    pub z_index: i32,
+    pub geometry: RectGeometry,
     pub archived: bool,
+}
+
+impl PlacementState {
+    pub fn new(
+        id: PlacementId,
+        asset_id: Option<AssetId>,
+        center: Pos2,
+        scale: f32,
+        rotation: f32,
+        z_index: i32,
+        archived: bool,
+    ) -> Self {
+        Self {
+            id,
+            asset_id,
+            geometry: RectGeometry::new(center, Vec2::ZERO, scale, rotation, z_index),
+            archived,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -101,7 +119,7 @@ impl Placement {
 
     #[allow(dead_code)]
     pub fn center(&self) -> Pos2 {
-        self.state.center
+        self.state.geometry.center
     }
 
     pub fn base_visual_size(&self) -> eframe::egui::Vec2 {
@@ -109,16 +127,13 @@ impl Placement {
     }
 
     pub fn scaled_visual_size(&self) -> eframe::egui::Vec2 {
-        self.base_visual_size() * self.state.scale.max(0.01)
+        self.base_visual_size() * self.state.geometry.scale.max(0.01)
     }
 
     pub fn visual_bounds(&self) -> Rect {
-        let size = rotated_visual_size(
-            self.scaled_visual_size().x,
-            self.scaled_visual_size().y,
-            self.state.rotation,
-        );
-        Rect::from_center_size(self.state.center, size)
+        let mut geometry = self.state.geometry;
+        geometry.size = self.base_visual_size();
+        geometry.visual_bounds()
     }
 }
 
@@ -128,12 +143,6 @@ pub struct PlacementFootprint {
     pub center: Pos2,
     pub width: f32,
     pub height: f32,
-}
-
-fn rotated_visual_size(width: f32, height: f32, rotation: f32) -> Vec2 {
-    let sin = rotation.sin().abs();
-    let cos = rotation.cos().abs();
-    vec2(width * cos + height * sin, width * sin + height * cos)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

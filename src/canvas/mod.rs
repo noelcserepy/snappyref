@@ -8,8 +8,8 @@ mod render;
 mod state;
 
 use crate::data::{
-    CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
-    CanvasImageLod, CanvasTextSize, Placement,
+    CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationGeometry, CanvasAnnotationKind,
+    CanvasBackground, CanvasImageLod, CanvasTextSize, Placement, RectGeometry, SegmentGeometry,
 };
 use eframe::egui;
 use interaction::{
@@ -276,19 +276,82 @@ fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
 #[derive(Clone, Debug)]
 pub(crate) struct SelectedLayoutItem {
     pub(crate) id: i64,
-    pub(crate) x: f32,
-    pub(crate) y: f32,
-    pub(crate) width: f32,
-    pub(crate) height: f32,
+    pub(crate) geometry: RectGeometry,
+}
+
+impl SelectedLayoutItem {
+    pub(crate) fn from_rect(id: i64, rect: egui::Rect) -> Self {
+        Self {
+            id,
+            geometry: RectGeometry::from_bounds(rect, 0),
+        }
+    }
+
+    pub(crate) fn new(id: i64, center: egui::Pos2, size: egui::Vec2) -> Self {
+        Self {
+            id,
+            geometry: RectGeometry::new(center, size, 1.0, 0.0, 0),
+        }
+    }
+
+    pub(crate) fn center(&self) -> egui::Pos2 {
+        self.geometry.center
+    }
+
+    pub(crate) fn size(&self) -> egui::Vec2 {
+        self.geometry.size * self.geometry.scale.max(0.01)
+    }
+
+    pub(crate) fn rect(&self) -> egui::Rect {
+        egui::Rect::from_center_size(self.center(), self.size())
+    }
+
+    pub(crate) fn width(&self) -> f32 {
+        self.size().x
+    }
+
+    pub(crate) fn height(&self) -> f32 {
+        self.size().y
+    }
+
+    pub(crate) fn with_size(&self, size: egui::Vec2) -> Self {
+        Self::new(self.id, self.center(), size)
+    }
 }
 
 #[derive(Clone)]
 struct ImageScaleStart {
     placement_id: i64,
-    center_world: egui::Pos2,
-    base_visual_size: egui::Vec2,
-    start_scale: f32,
+    geometry: RectGeometry,
     min_scale: f32,
+}
+
+impl ImageScaleStart {
+    fn new(
+        placement_id: i64,
+        center_world: egui::Pos2,
+        base_visual_size: egui::Vec2,
+        start_scale: f32,
+        min_scale: f32,
+    ) -> Self {
+        Self {
+            placement_id,
+            geometry: RectGeometry::new(center_world, base_visual_size, start_scale, 0.0, 0),
+            min_scale,
+        }
+    }
+
+    fn center_world(&self) -> egui::Pos2 {
+        self.geometry.center
+    }
+
+    fn base_visual_size(&self) -> egui::Vec2 {
+        self.geometry.size
+    }
+
+    fn start_scale(&self) -> f32 {
+        self.geometry.scale
+    }
 }
 
 #[derive(Clone)]
@@ -307,7 +370,7 @@ struct AnnotationDragState {
     annotation_ids: Vec<i64>,
     pointer_start_world: egui::Pos2,
     pointer_start_screen: egui::Pos2,
-    starting_points: Vec<(i64, egui::Pos2, egui::Pos2)>,
+    starting_segments: Vec<(i64, SegmentGeometry)>,
 }
 
 #[derive(Clone)]
@@ -339,18 +402,18 @@ enum TextboxTransformState {
         annotation_ids: Vec<i64>,
         pointer_start_world: egui::Pos2,
         pointer_start_screen: egui::Pos2,
-        start_rects_world: Vec<(i64, egui::Rect)>,
+        start_rects_world: Vec<(i64, RectGeometry)>,
     },
     Moving {
         annotation_ids: Vec<i64>,
         pointer_start_world: egui::Pos2,
-        start_rects_world: Vec<(i64, egui::Rect)>,
+        start_rects_world: Vec<(i64, RectGeometry)>,
     },
     Resizing {
         annotation_id: i64,
         dragged_handle: TextboxResizeHandle,
         anchor_world: egui::Pos2,
-        start_rect_world: egui::Rect,
+        start_rect_world: RectGeometry,
     },
 }
 
@@ -400,9 +463,18 @@ struct TextboxLayoutCacheEntry {
 #[derive(Clone, Debug, PartialEq)]
 struct PlacementPreviewSlot {
     queue_id: u64,
-    center_world: egui::Pos2,
-    size_world: egui::Vec2,
+    geometry: RectGeometry,
     label: String,
+}
+
+impl PlacementPreviewSlot {
+    fn new(queue_id: u64, center_world: egui::Pos2, size_world: egui::Vec2, label: String) -> Self {
+        Self {
+            queue_id,
+            geometry: RectGeometry::new(center_world, size_world, 1.0, 0.0, 0),
+            label,
+        }
+    }
 }
 
 struct MarqueeState {
@@ -433,17 +505,61 @@ struct AnimatedCanvasImage {
 #[derive(Clone)]
 struct AnnotationDraftState {
     kind: CanvasAnnotationKind,
-    start_world: egui::Pos2,
-    current_world: egui::Pos2,
+    geometry: SegmentGeometry,
+}
+
+impl AnnotationDraftState {
+    fn new(kind: CanvasAnnotationKind, start_world: egui::Pos2) -> Self {
+        Self {
+            kind,
+            geometry: SegmentGeometry::new(start_world, start_world, 0),
+        }
+    }
+
+    fn start_world(&self) -> egui::Pos2 {
+        self.geometry.start
+    }
+
+    fn current_world(&self) -> egui::Pos2 {
+        self.geometry.end
+    }
+
+    fn set_current_world(&mut self, current_world: egui::Pos2) {
+        self.geometry.end = current_world;
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct PendingAnnotation {
     pub kind: CanvasAnnotationKind,
-    pub start_world: egui::Pos2,
-    pub end_world: egui::Pos2,
+    pub geometry: CanvasAnnotationGeometry,
     pub text: String,
     pub text_size: CanvasTextSize,
+}
+
+impl PendingAnnotation {
+    fn new(
+        kind: CanvasAnnotationKind,
+        start_world: egui::Pos2,
+        end_world: egui::Pos2,
+        text: String,
+        text_size: CanvasTextSize,
+    ) -> Self {
+        Self {
+            kind,
+            geometry: CanvasAnnotationGeometry::from_kind(kind, start_world, end_world),
+            text,
+            text_size,
+        }
+    }
+
+    pub(crate) fn start_world(&self) -> egui::Pos2 {
+        self.geometry.start()
+    }
+
+    pub(crate) fn end_world(&self) -> egui::Pos2 {
+        self.geometry.end()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -525,8 +641,10 @@ impl CanvasState {
                 .iter_mut()
                 .find(|image| image.placement.state.id == item.id)
             {
-                image.placement.state.center.x = item.x + world_delta.x + snap_offset.x;
-                image.placement.state.center.y = item.y + world_delta.y + snap_offset.y;
+                image.placement.state.geometry.center.x =
+                    item.center().x + world_delta.x + snap_offset.x;
+                image.placement.state.geometry.center.y =
+                    item.center().y + world_delta.y + snap_offset.y;
             }
         }
         snap_preview_rect.is_some()
@@ -837,15 +955,15 @@ pub fn paint_perf_report() -> PaintPerfReport {
                 2600.0 + index as f32 * 24.0
             };
             crate::data::Placement::loaded(
-                crate::data::PlacementState {
-                    id: index as i64 + 1,
-                    asset_id: Some(index as i64 + 1),
-                    center: egui::pos2(x, y),
-                    scale: 1.0,
-                    rotation: 0.0,
-                    z_index: index as i32,
-                    archived: false,
-                },
+                crate::data::PlacementState::new(
+                    index as i64 + 1,
+                    Some(index as i64 + 1),
+                    egui::pos2(x, y),
+                    1.0,
+                    0.0,
+                    index as i32,
+                    false,
+                ),
                 crate::data::ImageAsset {
                     id: index as i64 + 1,
                     original_path: std::path::PathBuf::new(),
@@ -942,15 +1060,15 @@ mod tests {
         );
         state.document.rendered_placements.push(RenderedPlacement {
             placement: Placement::loaded(
-                PlacementState {
-                    id: placement_id,
-                    asset_id: Some(placement_id),
-                    center: eframe::egui::pos2(center.x, center.y),
+                PlacementState::new(
+                    placement_id,
+                    Some(placement_id),
+                    eframe::egui::pos2(center.x, center.y),
                     scale,
-                    rotation: 0.0,
-                    z_index: 0,
-                    archived: false,
-                },
+                    0.0,
+                    0,
+                    false,
+                ),
                 ImageAsset {
                     id: placement_id,
                     original_path: PathBuf::from(format!("image-{placement_id}.png")),
@@ -1020,10 +1138,13 @@ mod tests {
             PlacementState {
                 id: placement_id,
                 asset_id: Some(asset_id),
-                center: eframe::egui::Pos2::ZERO,
-                scale: 1.0,
-                rotation: 0.0,
-                z_index: placement_id as i32,
+                geometry: crate::data::RectGeometry::new(
+                    eframe::egui::Pos2::ZERO,
+                    eframe::egui::Vec2::ZERO,
+                    1.0,
+                    0.0,
+                    placement_id as i32,
+                ),
                 archived: false,
             },
             ImageAsset {
@@ -1048,15 +1169,15 @@ mod tests {
         center: eframe::egui::Pos2,
     ) -> Placement {
         let mut placement = Placement {
-            state: PlacementState {
-                id: placement_id,
-                asset_id: None,
+            state: PlacementState::new(
+                placement_id,
+                None,
                 center,
                 scale,
-                rotation: 0.0,
-                z_index: placement_id as i32,
-                archived: false,
-            },
+                0.0,
+                placement_id as i32,
+                false,
+            ),
             asset: None,
             content: content.clone(),
             lifecycle: PlacementLifecycle::Committed,
@@ -1237,15 +1358,7 @@ mod tests {
                     file_size: 0,
                     imported_at: 0,
                 },
-                PlacementState {
-                    id: 1,
-                    asset_id: Some(2),
-                    center: eframe::egui::pos2(0.0, 0.0),
-                    scale: 1.0,
-                    rotation: 0.0,
-                    z_index: 1,
-                    archived: false,
-                },
+                PlacementState::new(1, Some(2), eframe::egui::pos2(0.0, 0.0), 1.0, 0.0, 1, false),
             )
             .unwrap();
         drop(new_texture);
@@ -1310,15 +1423,15 @@ mod tests {
         assert_eq!(crop_rect.width, 100);
         assert_eq!(crop_rect.height, 80);
 
-        let item = PlacementState {
-            id: 1,
-            asset_id: Some(1),
-            center: eframe::egui::pos2(200.0, 120.0),
-            scale: 2.0,
-            rotation: 0.0,
-            z_index: 0,
-            archived: false,
-        };
+        let item = PlacementState::new(
+            1,
+            Some(1),
+            eframe::egui::pos2(200.0, 120.0),
+            2.0,
+            0.0,
+            0,
+            false,
+        );
         let asset = ImageAsset {
             id: 1,
             original_path: PathBuf::from("image.png"),
@@ -1338,8 +1451,8 @@ mod tests {
         merge_cropped_item_fields(&mut merged_item, 2, crop_offset_local);
 
         assert_eq!(merged_item.asset_id, Some(2));
-        assert_eq!(merged_item.center.x, 150.0);
-        assert_eq!(merged_item.center.y, 110.0);
+        assert_eq!(merged_item.geometry.center.x, 150.0);
+        assert_eq!(merged_item.geometry.center.y, 110.0);
     }
 
     #[test]
@@ -1370,28 +1483,27 @@ mod tests {
 
     #[test]
     fn textbox_click_draft_uses_default_note_size() {
-        let pending = pending_annotation_from_draft(AnnotationDraftState {
-            kind: CanvasAnnotationKind::Textbox,
-            start_world: eframe::egui::pos2(20.0, 40.0),
-            current_world: eframe::egui::pos2(20.0, 40.0),
-        })
+        let pending = pending_annotation_from_draft(AnnotationDraftState::new(
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(20.0, 40.0),
+        ))
         .unwrap();
 
-        assert_eq!(pending.start_world, eframe::egui::pos2(20.0, 40.0));
-        assert_eq!(pending.end_world, eframe::egui::pos2(260.0, 96.0));
+        assert_eq!(pending.start_world(), eframe::egui::pos2(20.0, 40.0));
+        assert_eq!(pending.end_world(), eframe::egui::pos2(260.0, 96.0));
     }
 
     #[test]
     fn textbox_drag_draft_preserves_explicit_size() {
-        let pending = pending_annotation_from_draft(AnnotationDraftState {
-            kind: CanvasAnnotationKind::Textbox,
-            start_world: eframe::egui::pos2(20.0, 40.0),
-            current_world: eframe::egui::pos2(340.0, 120.0),
-        })
-        .unwrap();
+        let mut draft = AnnotationDraftState::new(
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(20.0, 40.0),
+        );
+        draft.set_current_world(eframe::egui::pos2(340.0, 120.0));
+        let pending = pending_annotation_from_draft(draft).unwrap();
 
-        assert_eq!(pending.start_world, eframe::egui::pos2(20.0, 40.0));
-        assert_eq!(pending.end_world, eframe::egui::pos2(340.0, 120.0));
+        assert_eq!(pending.start_world(), eframe::egui::pos2(20.0, 40.0));
+        assert_eq!(pending.end_world(), eframe::egui::pos2(340.0, 120.0));
     }
 
     #[test]
@@ -1489,10 +1601,8 @@ mod tests {
             let layout_items = state.selected_layout_items();
             assert_eq!(layout_items.len(), 1);
             assert_eq!(layout_items[0].id, 101);
-            assert_eq!(layout_items[0].x, 10.0);
-            assert_eq!(layout_items[0].y, 20.0);
-            assert_eq!(layout_items[0].width, 240.0);
-            assert_eq!(layout_items[0].height, 160.0);
+            assert_eq!(layout_items[0].center(), eframe::egui::pos2(10.0, 20.0));
+            assert_eq!(layout_items[0].size(), eframe::egui::vec2(240.0, 160.0));
             assert_eq!(
                 state.selected_bounds_world().unwrap(),
                 eframe::egui::Rect::from_center_size(
@@ -1730,20 +1840,18 @@ mod tests {
             eframe::egui::pos2(0.0, 0.0),
             eframe::egui::pos2(800.0, 600.0),
         );
-        let annotation = CanvasAnnotation {
-            id: 11,
-            kind: CanvasAnnotationKind::Textbox,
-            start_x: 20.0,
-            start_y: 40.0,
-            end_x: 260.0,
-            end_y: 96.0,
-            text: "zoomed out".to_owned(),
-            text_size: default_text_size(),
-            stroke_width: default_stroke_width(),
-            color: default_annotation_color(),
-            background_enabled: false,
-            archived: false,
-        };
+        let annotation = CanvasAnnotation::new(
+            11,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(20.0, 40.0),
+            eframe::egui::pos2(260.0, 96.0),
+            "zoomed out".to_owned(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        );
 
         let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
         let content_rect = textbox_content_rect(textbox_rect);
@@ -1762,20 +1870,18 @@ mod tests {
                 eframe::egui::pos2(0.0, 0.0),
                 eframe::egui::pos2(960.0, 640.0),
             );
-            state.add_annotation(CanvasAnnotation {
-                id: 71,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 80.0,
-                start_y: 200.0,
-                end_x: 420.0,
-                end_y: 320.0,
-                text: "toolbar".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            });
+            state.add_annotation(CanvasAnnotation::new(
+                71,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(80.0, 200.0),
+                eframe::egui::pos2(420.0, 320.0),
+                "toolbar".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ));
             state.begin_textbox_edit(71);
 
             let annotation = state.annotation_by_id(71).unwrap().clone();
@@ -1794,20 +1900,18 @@ mod tests {
                 eframe::egui::pos2(0.0, 0.0),
                 eframe::egui::pos2(960.0, 640.0),
             );
-            state.add_annotation(CanvasAnnotation {
-                id: 74,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 80.0,
-                start_y: 200.0,
-                end_x: 420.0,
-                end_y: 320.0,
-                text: "toolbar".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            });
+            state.add_annotation(CanvasAnnotation::new(
+                74,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(80.0, 200.0),
+                eframe::egui::pos2(420.0, 320.0),
+                "toolbar".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ));
             state.begin_textbox_edit(74);
 
             let annotation = state.annotation_by_id(74).unwrap().clone();
@@ -1830,20 +1934,18 @@ mod tests {
                 eframe::egui::pos2(0.0, 0.0),
                 eframe::egui::pos2(960.0, 640.0),
             );
-            state.add_annotation(CanvasAnnotation {
-                id: 72,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 80.0,
-                start_y: -300.0,
-                end_x: 420.0,
-                end_y: -180.0,
-                text: "toolbar".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            });
+            state.add_annotation(CanvasAnnotation::new(
+                72,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(80.0, -300.0),
+                eframe::egui::pos2(420.0, -180.0),
+                "toolbar".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ));
             state.begin_textbox_edit(72);
 
             let toolbar_rect = editing_textbox_toolbar_rect(ui, &state, canvas_rect).unwrap();
@@ -1864,20 +1966,18 @@ mod tests {
                 eframe::egui::pos2(0.0, 0.0),
                 eframe::egui::pos2(420.0, 320.0),
             );
-            state.add_annotation(CanvasAnnotation {
-                id: 73,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 220.0,
-                start_y: 140.0,
-                end_x: 460.0,
-                end_y: 240.0,
-                text: "toolbar".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            });
+            state.add_annotation(CanvasAnnotation::new(
+                73,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(220.0, 140.0),
+                eframe::egui::pos2(460.0, 240.0),
+                "toolbar".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ));
             state.begin_textbox_edit(73);
 
             let toolbar_rect = editing_textbox_toolbar_rect(ui, &state, canvas_rect).unwrap();
@@ -2112,20 +2212,18 @@ mod tests {
             eframe::egui::pos2(0.0, 0.0),
             eframe::egui::pos2(800.0, 600.0),
         );
-        let annotation = CanvasAnnotation {
-            id: 1,
-            kind: CanvasAnnotationKind::Textbox,
-            start_x: 20.0,
-            start_y: 40.0,
-            end_x: 260.0,
-            end_y: 96.0,
-            text: String::new(),
-            text_size: default_text_size(),
-            stroke_width: default_stroke_width(),
-            color: default_annotation_color(),
-            background_enabled: false,
-            archived: false,
-        };
+        let annotation = CanvasAnnotation::new(
+            1,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(20.0, 40.0),
+            eframe::egui::pos2(260.0, 96.0),
+            String::new(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        );
 
         let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
         let pointer_pos = eframe::egui::pos2(textbox_rect.right() + 8.0, textbox_rect.center().y);
@@ -2252,8 +2350,8 @@ mod tests {
                         .as_ref()
                         .expect("loaded placement asset")
                         .height as f32
-                    * image.placement.state.scale
-                    * image.placement.state.scale;
+                    * image.placement.state.geometry.scale
+                    * image.placement.state.geometry.scale;
                 assert!((area - 90_000.0).abs() < 0.1);
             }
         });
@@ -2297,20 +2395,18 @@ mod tests {
                 eframe::egui::pos2(0.0, 0.0),
                 eframe::egui::pos2(800.0, 600.0),
             );
-            let annotation = CanvasAnnotation {
-                id: 14,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 20.0,
-                start_y: 40.0,
-                end_x: 320.0,
-                end_y: 160.0,
-                text: "short".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            };
+            let annotation = CanvasAnnotation::new(
+                14,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(20.0, 40.0),
+                eframe::egui::pos2(320.0, 160.0),
+                "short".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            );
 
             let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
             let content_rect = textbox_content_rect(textbox_rect);
@@ -2365,20 +2461,18 @@ mod tests {
                 eframe::egui::pos2(0.0, 0.0),
                 eframe::egui::pos2(800.0, 600.0),
             );
-            state.add_annotation(CanvasAnnotation {
-                id: 15,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 20.0,
-                start_y: 40.0,
-                end_x: 320.0,
-                end_y: 180.0,
-                text: "short".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            });
+            state.add_annotation(CanvasAnnotation::new(
+                15,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(20.0, 40.0),
+                eframe::egui::pos2(320.0, 180.0),
+                "short".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ));
 
             let annotation = state.annotation_by_id(15).unwrap().clone();
             let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
@@ -2409,20 +2503,18 @@ mod tests {
                 eframe::egui::pos2(0.0, 0.0),
                 eframe::egui::pos2(800.0, 600.0),
             );
-            state.add_annotation(CanvasAnnotation {
-                id: 18,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 20.0,
-                start_y: 40.0,
-                end_x: 320.0,
-                end_y: 180.0,
-                text: "short".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            });
+            state.add_annotation(CanvasAnnotation::new(
+                18,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(20.0, 40.0),
+                eframe::egui::pos2(320.0, 180.0),
+                "short".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ));
             state.document.selected_annotation_ids.clear();
 
             let annotation = state.annotation_by_id(18).unwrap().clone();
@@ -2454,20 +2546,18 @@ mod tests {
                 eframe::egui::pos2(0.0, 0.0),
                 eframe::egui::pos2(800.0, 600.0),
             );
-            state.add_annotation(CanvasAnnotation {
-                id: 19,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 20.0,
-                start_y: 40.0,
-                end_x: 320.0,
-                end_y: 180.0,
-                text: "short".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            });
+            state.add_annotation(CanvasAnnotation::new(
+                19,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(20.0, 40.0),
+                eframe::egui::pos2(320.0, 180.0),
+                "short".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ));
             state.document.selected_annotation_ids = vec![19];
 
             let annotation = state.annotation_by_id(19).unwrap().clone();
@@ -2501,20 +2591,18 @@ mod tests {
                 eframe::egui::pos2(0.0, 0.0),
                 eframe::egui::pos2(800.0, 600.0),
             );
-            state.add_annotation(CanvasAnnotation {
-                id: 16,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 20.0,
-                start_y: 40.0,
-                end_x: 320.0,
-                end_y: 180.0,
-                text: String::new(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            });
+            state.add_annotation(CanvasAnnotation::new(
+                16,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(20.0, 40.0),
+                eframe::egui::pos2(320.0, 180.0),
+                String::new(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ));
             state.begin_textbox_edit(16);
 
             let annotation = state.annotation_by_id(16).unwrap().clone();
@@ -2548,20 +2636,18 @@ mod tests {
                 eframe::egui::pos2(800.0, 600.0),
             );
             for (id, start_x) in [(21, 20.0), (22, 360.0)] {
-                state.add_annotation(CanvasAnnotation {
+                state.add_annotation(CanvasAnnotation::new(
                     id,
-                    kind: CanvasAnnotationKind::Textbox,
-                    start_x,
-                    start_y: 40.0,
-                    end_x: start_x + 220.0,
-                    end_y: 140.0,
-                    text: "group".to_owned(),
-                    text_size: default_text_size(),
-                    stroke_width: default_stroke_width(),
-                    color: default_annotation_color(),
-                    background_enabled: false,
-                    archived: false,
-                });
+                    CanvasAnnotationKind::Textbox,
+                    eframe::egui::pos2(start_x, 40.0),
+                    eframe::egui::pos2(start_x + 220.0, 140.0),
+                    "group".to_owned(),
+                    default_text_size(),
+                    default_stroke_width(),
+                    default_annotation_color(),
+                    false,
+                    false,
+                ));
             }
             state.document.selected_annotation_ids = vec![21, 22];
 
@@ -2594,20 +2680,18 @@ mod tests {
                 eframe::egui::pos2(0.0, 0.0),
                 eframe::egui::pos2(800.0, 600.0),
             );
-            state.add_annotation(CanvasAnnotation {
-                id: 17,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 20.0,
-                start_y: 40.0,
-                end_x: 320.0,
-                end_y: 180.0,
-                text: "hello world".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            });
+            state.add_annotation(CanvasAnnotation::new(
+                17,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(20.0, 40.0),
+                eframe::egui::pos2(320.0, 180.0),
+                "hello world".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ));
             state.begin_textbox_edit(17);
 
             let annotation = state.annotation_by_id(17).unwrap().clone();
@@ -2652,20 +2736,18 @@ mod tests {
     #[test]
     fn begin_textbox_edit_selects_textbox_without_placeholder_content() {
         let mut state = CanvasState::default();
-        state.add_annotation(CanvasAnnotation {
-            id: 5,
-            kind: CanvasAnnotationKind::Textbox,
-            start_x: 20.0,
-            start_y: 40.0,
-            end_x: 260.0,
-            end_y: 96.0,
-            text: String::new(),
-            text_size: default_text_size(),
-            stroke_width: default_stroke_width(),
-            color: default_annotation_color(),
-            background_enabled: false,
-            archived: false,
-        });
+        state.add_annotation(CanvasAnnotation::new(
+            5,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(20.0, 40.0),
+            eframe::egui::pos2(260.0, 96.0),
+            String::new(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        ));
 
         state.begin_textbox_edit(5);
 
@@ -2681,20 +2763,18 @@ mod tests {
     #[test]
     fn finishing_empty_textbox_edit_removes_and_archives_annotation() {
         let mut state = CanvasState::default();
-        state.add_annotation(CanvasAnnotation {
-            id: 7,
-            kind: CanvasAnnotationKind::Textbox,
-            start_x: 20.0,
-            start_y: 40.0,
-            end_x: 260.0,
-            end_y: 80.0,
-            text: String::new(),
-            text_size: default_text_size(),
-            stroke_width: default_stroke_width(),
-            color: default_annotation_color(),
-            background_enabled: false,
-            archived: false,
-        });
+        state.add_annotation(CanvasAnnotation::new(
+            7,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(20.0, 40.0),
+            eframe::egui::pos2(260.0, 80.0),
+            String::new(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        ));
 
         state.begin_textbox_edit(7);
         state.finish_textbox_edit();
@@ -2727,20 +2807,18 @@ mod tests {
                 ),
             );
 
-            state.add_annotation(CanvasAnnotation {
-                id: 5,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 20.0,
-                start_y: 40.0,
-                end_x: 260.0,
-                end_y: 96.0,
-                text: String::new(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            });
+            state.add_annotation(CanvasAnnotation::new(
+                5,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(20.0, 40.0),
+                eframe::egui::pos2(260.0, 96.0),
+                String::new(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ));
 
             assert!(!state.render.textbox_layout_cache.contains_key(&5));
         });
@@ -2793,20 +2871,18 @@ mod tests {
     fn remove_annotation_locally_invalidates_textbox_layout_cache() {
         eframe::egui::__run_test_ui(|ui| {
             let mut state = CanvasState::default();
-            state.add_annotation(CanvasAnnotation {
-                id: 3,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 20.0,
-                start_y: 40.0,
-                end_x: 260.0,
-                end_y: 96.0,
-                text: "hello".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            });
+            state.add_annotation(CanvasAnnotation::new(
+                3,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(20.0, 40.0),
+                eframe::egui::pos2(260.0, 96.0),
+                "hello".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ));
             state.cache_textbox_layout(
                 3,
                 "hello",
@@ -2834,20 +2910,18 @@ mod tests {
     fn set_textbox_world_rect_invalidates_textbox_layout_cache() {
         eframe::egui::__run_test_ui(|ui| {
             let mut state = CanvasState::default();
-            state.add_annotation(CanvasAnnotation {
-                id: 4,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 20.0,
-                start_y: 40.0,
-                end_x: 260.0,
-                end_y: 96.0,
-                text: "resize".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            });
+            state.add_annotation(CanvasAnnotation::new(
+                4,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(20.0, 40.0),
+                eframe::egui::pos2(260.0, 96.0),
+                "resize".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ));
             state.cache_textbox_layout(
                 4,
                 "resize",
@@ -2879,20 +2953,18 @@ mod tests {
     #[test]
     fn marquee_selection_can_select_textbox_when_no_images_intersect() {
         let mut state = CanvasState::default();
-        state.add_annotation(CanvasAnnotation {
-            id: 12,
-            kind: CanvasAnnotationKind::Textbox,
-            start_x: 20.0,
-            start_y: 40.0,
-            end_x: 260.0,
-            end_y: 96.0,
-            text: "textbox".to_owned(),
-            text_size: default_text_size(),
-            stroke_width: default_stroke_width(),
-            color: default_annotation_color(),
-            background_enabled: false,
-            archived: false,
-        });
+        state.add_annotation(CanvasAnnotation::new(
+            12,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(20.0, 40.0),
+            eframe::egui::pos2(260.0, 96.0),
+            "textbox".to_owned(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        ));
 
         state.set_marquee_selection(Vec::new(), vec![12], false);
 
@@ -2903,34 +2975,30 @@ mod tests {
     #[test]
     fn marquee_selection_can_add_multiple_textboxes() {
         let mut state = CanvasState::default();
-        state.add_annotation(CanvasAnnotation {
-            id: 12,
-            kind: CanvasAnnotationKind::Textbox,
-            start_x: 20.0,
-            start_y: 40.0,
-            end_x: 260.0,
-            end_y: 96.0,
-            text: "textbox".to_owned(),
-            text_size: default_text_size(),
-            stroke_width: default_stroke_width(),
-            color: default_annotation_color(),
-            background_enabled: false,
-            archived: false,
-        });
-        state.add_annotation(CanvasAnnotation {
-            id: 13,
-            kind: CanvasAnnotationKind::Textbox,
-            start_x: 280.0,
-            start_y: 40.0,
-            end_x: 420.0,
-            end_y: 96.0,
-            text: "textbox".to_owned(),
-            text_size: default_text_size(),
-            stroke_width: default_stroke_width(),
-            color: default_annotation_color(),
-            background_enabled: false,
-            archived: false,
-        });
+        state.add_annotation(CanvasAnnotation::new(
+            12,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(20.0, 40.0),
+            eframe::egui::pos2(260.0, 96.0),
+            "textbox".to_owned(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        ));
+        state.add_annotation(CanvasAnnotation::new(
+            13,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(280.0, 40.0),
+            eframe::egui::pos2(420.0, 96.0),
+            "textbox".to_owned(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        ));
 
         state.set_marquee_selection(Vec::new(), vec![12], false);
         state.set_marquee_selection(Vec::new(), vec![13], true);
@@ -2945,62 +3013,54 @@ mod tests {
             eframe::egui::pos2(800.0, 600.0),
         );
         let annotations = vec![
-            CanvasAnnotation {
-                id: 30,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 20.0,
-                start_y: 40.0,
-                end_x: 320.0,
-                end_y: 180.0,
-                text: "visible".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            },
-            CanvasAnnotation {
-                id: 31,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 2000.0,
-                start_y: 40.0,
-                end_x: 2300.0,
-                end_y: 180.0,
-                text: "offscreen-a".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            },
-            CanvasAnnotation {
-                id: 32,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 2400.0,
-                start_y: 260.0,
-                end_x: 2700.0,
-                end_y: 400.0,
-                text: "offscreen-b".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            },
-            CanvasAnnotation {
-                id: 33,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: 2800.0,
-                start_y: -120.0,
-                end_x: 3100.0,
-                end_y: 20.0,
-                text: "offscreen-c".to_owned(),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            },
+            CanvasAnnotation::new(
+                30,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(20.0, 40.0),
+                eframe::egui::pos2(320.0, 180.0),
+                "visible".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ),
+            CanvasAnnotation::new(
+                31,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(2000.0, 40.0),
+                eframe::egui::pos2(2300.0, 180.0),
+                "offscreen-a".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ),
+            CanvasAnnotation::new(
+                32,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(2400.0, 260.0),
+                eframe::egui::pos2(2700.0, 400.0),
+                "offscreen-b".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ),
+            CanvasAnnotation::new(
+                33,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(2800.0, -120.0),
+                eframe::egui::pos2(3100.0, 20.0),
+                "offscreen-c".to_owned(),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ),
         ];
 
         let legacy = annotation_paint_stats_for_annotations(
@@ -3032,24 +3092,24 @@ mod tests {
 
     #[test]
     fn merge_only_updates_crop_owned_item_fields() {
-        let mut item = PlacementState {
-            id: 7,
-            asset_id: Some(2),
-            center: eframe::egui::pos2(12.0, 18.0),
-            scale: 1.5,
-            rotation: 0.25,
-            z_index: 9,
-            archived: false,
-        };
+        let mut item = PlacementState::new(
+            7,
+            Some(2),
+            eframe::egui::pos2(12.0, 18.0),
+            1.5,
+            0.25,
+            9,
+            false,
+        );
 
         merge_cropped_item_fields(&mut item, 11, eframe::egui::vec2(80.0, 96.0));
 
         assert_eq!(item.asset_id, Some(11));
-        assert_eq!(item.center.x, 132.0);
-        assert_eq!(item.center.y, 162.0);
-        assert_eq!(item.scale, 1.5);
-        assert_eq!(item.rotation, 0.25);
-        assert_eq!(item.z_index, 9);
+        assert_eq!(item.geometry.center.x, 132.0);
+        assert_eq!(item.geometry.center.y, 162.0);
+        assert_eq!(item.geometry.scale, 1.5);
+        assert_eq!(item.geometry.rotation, 0.25);
+        assert_eq!(item.geometry.z_index, 9);
         assert!(!item.archived);
     }
 
@@ -3163,7 +3223,10 @@ mod tests {
             (4, 4)
         );
         assert_eq!(
-            (placement.state.center.x, placement.state.center.y),
+            (
+                placement.state.geometry.center.x,
+                placement.state.geometry.center.y
+            ),
             (2.0, 2.0)
         );
 
@@ -3357,7 +3420,10 @@ mod tests {
         let placement = state.placement_for_id(42).unwrap();
         assert_eq!(placement.state.asset_id, Some(99));
         assert_eq!(
-            (placement.state.center.x, placement.state.center.y),
+            (
+                placement.state.geometry.center.x,
+                placement.state.geometry.center.y
+            ),
             (2.0, 2.0)
         );
     }
@@ -3585,7 +3651,7 @@ mod tests {
             .iter()
             .map(|(id, center)| {
                 let item = items.iter().find(|item| item.id == *id).unwrap();
-                positioned_layout_item(*id, center.x, center.y, item.width, item.height)
+                positioned_layout_item(*id, center.x, center.y, item.width(), item.height())
             })
             .collect::<Vec<_>>();
         let settled_bounds = layout_bounds_for_items(&settled_items).unwrap();
@@ -3607,7 +3673,7 @@ mod tests {
             .iter()
             .map(|(id, center)| {
                 let item = items.iter().find(|item| item.id == *id).unwrap();
-                positioned_layout_item(*id, center.x, center.y, item.width, item.height)
+                positioned_layout_item(*id, center.x, center.y, item.width(), item.height())
             })
             .collect::<Vec<_>>();
 
@@ -3731,7 +3797,7 @@ mod tests {
         let (_, compact_width, compact_height) = best_compact_layout(&items, gap).unwrap();
         let item_area = items
             .iter()
-            .map(|item| item.width * item.height)
+            .map(|item| item.width() * item.height())
             .sum::<f32>();
         let occupancy = item_area / (compact_width * compact_height);
 
@@ -3754,7 +3820,7 @@ mod tests {
         let (_, compact_width, compact_height) = best_compact_layout(&items, gap).unwrap();
         let item_area = items
             .iter()
-            .map(|item| (item.width + gap) * (item.height + gap))
+            .map(|item| (item.width() + gap) * (item.height() + gap))
             .sum::<f32>();
         let occupancy = item_area / (compact_width * compact_height);
 
@@ -3912,14 +3978,14 @@ mod tests {
             .as_ref()
             .expect("loaded placement asset")
             .width as f32
-            * first.placement.state.scale;
+            * first.placement.state.geometry.scale;
         let second_width = second
             .placement
             .asset
             .as_ref()
             .expect("loaded placement asset")
             .width as f32
-            * second.placement.state.scale;
+            * second.placement.state.geometry.scale;
         assert!((first_width - second_width).abs() < 0.001);
     }
 
@@ -3958,7 +4024,7 @@ mod tests {
             .iter()
             .find(|image| image.placement.state.id == 1)
             .unwrap();
-        assert!((first.placement.state.scale - 1.0).abs() < 0.001);
+        assert!((first.placement.state.geometry.scale - 1.0).abs() < 0.001);
     }
 
     #[test]
@@ -4085,20 +4151,18 @@ mod tests {
         eframe::egui::__run_test_ui(|ui| {
             push_test_image(ui, &mut state, 1, 40, 40, 1.0, eframe::egui::pos2(0.0, 0.0));
         });
-        state.add_annotation(CanvasAnnotation {
-            id: 20,
-            kind: CanvasAnnotationKind::Textbox,
-            start_x: 80.0,
-            start_y: 0.0,
-            end_x: 160.0,
-            end_y: 40.0,
-            text: "note".to_owned(),
-            text_size: default_text_size(),
-            stroke_width: default_stroke_width(),
-            color: default_annotation_color(),
-            background_enabled: false,
-            archived: false,
-        });
+        state.add_annotation(CanvasAnnotation::new(
+            20,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(80.0, 0.0),
+            eframe::egui::pos2(160.0, 40.0),
+            "note".to_owned(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        ));
         state.select_placements(&[1]);
 
         open_context_menu_at_pointer(
@@ -4122,20 +4186,18 @@ mod tests {
         eframe::egui::__run_test_ui(|ui| {
             push_test_image(ui, &mut state, 1, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
         });
-        state.add_annotation(CanvasAnnotation {
-            id: 20,
-            kind: CanvasAnnotationKind::Textbox,
-            start_x: -40.0,
-            start_y: -40.0,
-            end_x: 40.0,
-            end_y: 40.0,
-            text: "note".to_owned(),
-            text_size: default_text_size(),
-            stroke_width: default_stroke_width(),
-            color: default_annotation_color(),
-            background_enabled: false,
-            archived: false,
-        });
+        state.add_annotation(CanvasAnnotation::new(
+            20,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(-40.0, -40.0),
+            eframe::egui::pos2(40.0, 40.0),
+            "note".to_owned(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        ));
         state.set_canvas_stack_order(vec![
             CanvasStackItem::Annotation(20),
             CanvasStackItem::Placement(1),
@@ -4155,20 +4217,18 @@ mod tests {
             push_test_image(ui, &mut state, 1, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
             push_test_image(ui, &mut state, 2, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
         });
-        state.add_annotation(CanvasAnnotation {
-            id: 20,
-            kind: CanvasAnnotationKind::Textbox,
-            start_x: -40.0,
-            start_y: -40.0,
-            end_x: 40.0,
-            end_y: 40.0,
-            text: "note".to_owned(),
-            text_size: default_text_size(),
-            stroke_width: default_stroke_width(),
-            color: default_annotation_color(),
-            background_enabled: false,
-            archived: false,
-        });
+        state.add_annotation(CanvasAnnotation::new(
+            20,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(-40.0, -40.0),
+            eframe::egui::pos2(40.0, 40.0),
+            "note".to_owned(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        ));
         state.set_canvas_stack_order(vec![
             CanvasStackItem::Placement(1),
             CanvasStackItem::Annotation(20),
@@ -4192,20 +4252,18 @@ mod tests {
             push_test_image(ui, &mut state, 1, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
             push_test_image(ui, &mut state, 2, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
         });
-        state.add_annotation(CanvasAnnotation {
-            id: 20,
-            kind: CanvasAnnotationKind::Textbox,
-            start_x: -40.0,
-            start_y: -40.0,
-            end_x: 40.0,
-            end_y: 40.0,
-            text: "note".to_owned(),
-            text_size: default_text_size(),
-            stroke_width: default_stroke_width(),
-            color: default_annotation_color(),
-            background_enabled: false,
-            archived: false,
-        });
+        state.add_annotation(CanvasAnnotation::new(
+            20,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(-40.0, -40.0),
+            eframe::egui::pos2(40.0, 40.0),
+            "note".to_owned(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        ));
         state.set_canvas_stack_order(vec![
             CanvasStackItem::Placement(1),
             CanvasStackItem::Annotation(20),
@@ -4243,20 +4301,18 @@ mod tests {
             push_test_image(ui, &mut state, 3, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
         });
         for annotation_id in [20, 21] {
-            state.add_annotation(CanvasAnnotation {
-                id: annotation_id,
-                kind: CanvasAnnotationKind::Textbox,
-                start_x: -40.0,
-                start_y: -40.0,
-                end_x: 40.0,
-                end_y: 40.0,
-                text: format!("note {annotation_id}"),
-                text_size: default_text_size(),
-                stroke_width: default_stroke_width(),
-                color: default_annotation_color(),
-                background_enabled: false,
-                archived: false,
-            });
+            state.add_annotation(CanvasAnnotation::new(
+                annotation_id,
+                CanvasAnnotationKind::Textbox,
+                eframe::egui::pos2(-40.0, -40.0),
+                eframe::egui::pos2(40.0, 40.0),
+                format!("note {annotation_id}"),
+                default_text_size(),
+                default_stroke_width(),
+                default_annotation_color(),
+                false,
+                false,
+            ));
         }
         state.set_canvas_stack_order(vec![
             CanvasStackItem::Placement(1),
@@ -4302,20 +4358,18 @@ mod tests {
         eframe::egui::__run_test_ui(|ui| {
             push_test_image(ui, &mut state, 1, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
         });
-        state.add_annotation(CanvasAnnotation {
-            id: 20,
-            kind: CanvasAnnotationKind::Textbox,
-            start_x: -40.0,
-            start_y: -40.0,
-            end_x: 40.0,
-            end_y: 40.0,
-            text: "note".to_owned(),
-            text_size: default_text_size(),
-            stroke_width: default_stroke_width(),
-            color: default_annotation_color(),
-            background_enabled: false,
-            archived: false,
-        });
+        state.add_annotation(CanvasAnnotation::new(
+            20,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(-40.0, -40.0),
+            eframe::egui::pos2(40.0, 40.0),
+            "note".to_owned(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        ));
         state.set_canvas_stack_order(vec![
             CanvasStackItem::Annotation(20),
             CanvasStackItem::Placement(1),
@@ -4340,20 +4394,18 @@ mod tests {
         eframe::egui::__run_test_ui(|ui| {
             push_test_image(ui, &mut state, 1, 40, 40, 1.0, eframe::egui::pos2(0.0, 0.0));
         });
-        state.add_annotation(CanvasAnnotation {
-            id: 20,
-            kind: CanvasAnnotationKind::Textbox,
-            start_x: 80.0,
-            start_y: 0.0,
-            end_x: 160.0,
-            end_y: 40.0,
-            text: "note".to_owned(),
-            text_size: default_text_size(),
-            stroke_width: default_stroke_width(),
-            color: default_annotation_color(),
-            background_enabled: false,
-            archived: false,
-        });
+        state.add_annotation(CanvasAnnotation::new(
+            20,
+            CanvasAnnotationKind::Textbox,
+            eframe::egui::pos2(80.0, 0.0),
+            eframe::egui::pos2(160.0, 40.0),
+            "note".to_owned(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        ));
         state.select_content(&[1], &[20]);
 
         open_context_menu_at_pointer(&mut state, rect, rect.center());
@@ -4374,13 +4426,11 @@ mod tests {
         width: f32,
         height: f32,
     ) -> SelectedLayoutItem {
-        SelectedLayoutItem {
+        SelectedLayoutItem::new(
             id,
-            x,
-            y,
-            width,
-            height,
-        }
+            eframe::egui::pos2(x, y),
+            eframe::egui::vec2(width, height),
+        )
     }
 
     fn center_gap_x(
@@ -4416,7 +4466,10 @@ mod tests {
             .find(|(candidate_placement_id, _)| *candidate_placement_id == placement_id)
             .map(|(_, center)| *center)
             .unwrap();
-        eframe::egui::Rect::from_center_size(center, eframe::egui::vec2(item.width, item.height))
+        eframe::egui::Rect::from_center_size(
+            center,
+            eframe::egui::vec2(item.width(), item.height()),
+        )
     }
 
     fn aspect_ratio(width: f32, height: f32) -> f32 {
@@ -4454,20 +4507,20 @@ mod tests {
                 .as_ref()
                 .expect("loaded placement asset")
                 .width as f32
-                * image.placement.state.scale.max(0.01),
+                * image.placement.state.geometry.scale.max(0.01),
             image
                 .placement
                 .asset
                 .as_ref()
                 .expect("loaded placement asset")
                 .height as f32
-                * image.placement.state.scale.max(0.01),
-            image.placement.state.rotation,
+                * image.placement.state.geometry.scale.max(0.01),
+            image.placement.state.geometry.rotation,
         );
         eframe::egui::Rect::from_center_size(
             eframe::egui::pos2(
-                image.placement.state.center.x,
-                image.placement.state.center.y,
+                image.placement.state.geometry.center.x,
+                image.placement.state.geometry.center.y,
             ),
             visual_size,
         )
@@ -4483,8 +4536,8 @@ mod tests {
                 (
                     image.placement.state.id,
                     eframe::egui::pos2(
-                        image.placement.state.center.x,
-                        image.placement.state.center.y,
+                        image.placement.state.geometry.center.x,
+                        image.placement.state.geometry.center.y,
                     ),
                 )
             })

@@ -57,8 +57,9 @@ pub fn sort_records_by_viewport_proximity(
             .total_cmp(&record_viewport_distance_sq(right, viewport_world))
             .then_with(|| {
                 left.state
+                    .geometry
                     .z_index
-                    .cmp(&right.state.z_index)
+                    .cmp(&right.state.geometry.z_index)
                     .then_with(|| left.state.id.cmp(&right.state.id))
             })
     });
@@ -97,9 +98,12 @@ fn record_world_rect(placement: &Placement) -> egui::Rect {
             .as_ref()
             .expect("loaded placement asset")
             .height as f32,
-    ) * placement.state.scale.max(0.01);
+    ) * placement.state.geometry.scale.max(0.01);
     egui::Rect::from_center_size(
-        egui::pos2(placement.state.center.x, placement.state.center.y),
+        egui::pos2(
+            placement.state.geometry.center.x,
+            placement.state.geometry.center.y,
+        ),
         size,
     )
 }
