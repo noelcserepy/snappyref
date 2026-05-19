@@ -221,6 +221,8 @@ def per_helper_peaks(
 # averaging to zero.
 _PHASE_MARKERS = [
     "scenario_started",
+    "first_placement_loaded",
+    "all_placements_loaded",
     "first_placement_visible",
     "all_placements_visible",
     "semantic_model_load_started",
@@ -270,6 +272,15 @@ def phase_summary_from_events(events: list[dict[str, Any]]) -> dict[str, Any]:
 
     durations["queue_to_first_placement_ms"] = _delta(
         "scenario_started", "first_placement_visible"
+    )
+    durations["queue_to_first_loaded_ms"] = _delta(
+        "scenario_started", "first_placement_loaded"
+    )
+    durations["first_loaded_to_first_visible_ms"] = _delta(
+        "first_placement_loaded", "first_placement_visible"
+    )
+    durations["all_loaded_to_all_visible_ms"] = _delta(
+        "all_placements_loaded", "all_placements_visible"
     )
     durations["first_to_all_placements_ms"] = _delta(
         "first_placement_visible", "all_placements_visible"
@@ -342,7 +353,7 @@ def per_format_groups_from_events(events: list[dict[str, Any]]) -> list[dict[str
     visible_seen: set[str] = set()
     for event in events:
         kind = event.get("event")
-        if kind == "placement_visible":
+        if kind == "placement_loaded":
             filename = event.get("filename") or ""
             manifest_file: str | None = None
             for basename, candidate in queued_basename_to_file.items():
@@ -586,19 +597,21 @@ class _Tests(unittest.TestCase):
                 "bytes": 2000,
             },
             {
-                "event": "placement_visible",
+                "event": "placement_loaded",
                 "elapsed_ms": 50.0,
                 "filename": "999-0-a.jpg",
                 "asset_id": 1,
             },
-            {"event": "first_placement_visible", "elapsed_ms": 50.0},
+            {"event": "first_placement_loaded", "elapsed_ms": 50.0},
             {
-                "event": "placement_visible",
+                "event": "placement_loaded",
                 "elapsed_ms": 200.0,
                 "filename": "999-1-b.png",
                 "asset_id": 2,
             },
-            {"event": "all_placements_visible", "elapsed_ms": 200.0},
+            {"event": "all_placements_loaded", "elapsed_ms": 200.0},
+            {"event": "first_placement_visible", "elapsed_ms": 75.0},
+            {"event": "all_placements_visible", "elapsed_ms": 230.0},
             {"event": "semantic_model_load_started", "elapsed_ms": 60.0},
             {"event": "semantic_model_ready", "elapsed_ms": 360.0},
             {"event": "first_import_embedding_started", "elapsed_ms": 365.0},
@@ -635,12 +648,15 @@ class _Tests(unittest.TestCase):
         durations = summary["durations_ms"]
         self.assertEqual(markers["scenario_started"], 0.0)
         self.assertEqual(markers["settled_idle"], 730.0)
-        self.assertAlmostEqual(durations["queue_to_first_placement_ms"], 50.0)
+        self.assertAlmostEqual(durations["queue_to_first_placement_ms"], 75.0)
+        self.assertAlmostEqual(durations["queue_to_first_loaded_ms"], 50.0)
+        self.assertAlmostEqual(durations["first_loaded_to_first_visible_ms"], 25.0)
+        self.assertAlmostEqual(durations["all_loaded_to_all_visible_ms"], 30.0)
         self.assertAlmostEqual(durations["model_load_ms"], 300.0)
         self.assertAlmostEqual(durations["first_embedding_ms"], 235.0)
         self.assertAlmostEqual(durations["embedding_drain_ms"], 335.0)
         self.assertAlmostEqual(durations["model_unload_ms"], 15.0)
-        self.assertAlmostEqual(durations["all_placements_to_settled_idle_ms"], 530.0)
+        self.assertAlmostEqual(durations["all_placements_to_settled_idle_ms"], 500.0)
 
     def test_phase_summary_missing_markers_yield_none(self) -> None:
         events = [event for event in self._events() if event["event"] != "settled_idle"]

@@ -343,33 +343,57 @@ def tree_sample(root_pid, elapsed_ms):
     return out
 
 
-def measure_case(library):
+def measure_case(case_dir, library):
     env = os.environ.copy()
     env["SNAPPYREF_LIBRARY_ROOT"] = str(library)
-    process = subprocess.Popen([binary], env=env)
-    started = time.monotonic()
-    rows = []
-    tree_rows = []
-    try:
-        time.sleep(startup_wait_secs)
-        end_at = time.monotonic() + sample_secs
-        while time.monotonic() < end_at and process.poll() is None:
-            elapsed_ms = (time.monotonic() - started) * 1000.0
-            sample = process_sample(process.pid)
-            if sample:
-                sample["elapsed_ms"] = elapsed_ms
-                rows.append(sample)
-            tree_rows.extend(tree_sample(process.pid, elapsed_ms))
-            time.sleep(sample_interval_secs)
-    finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+    with (case_dir / "app.log").open("w") as app_log:
+        process = subprocess.Popen(
+            [binary],
+            env=env,
+            stdout=app_log,
+            stderr=subprocess.STDOUT,
+        )
+        maybe_activate_app()
+        started = time.monotonic()
+        rows = []
+        tree_rows = []
+        try:
+            time.sleep(startup_wait_secs)
+            end_at = time.monotonic() + sample_secs
+            while time.monotonic() < end_at and process.poll() is None:
+                elapsed_ms = (time.monotonic() - started) * 1000.0
+                sample = process_sample(process.pid)
+                if sample:
+                    sample["elapsed_ms"] = elapsed_ms
+                    rows.append(sample)
+                tree_rows.extend(tree_sample(process.pid, elapsed_ms))
+                time.sleep(sample_interval_secs)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
     return rows, tree_rows, process.pid
+
+
+def maybe_activate_app():
+    if os.environ.get("SNAPPYREF_PERF_FRONTMOST") != "1":
+        return
+    if sys.platform != "darwin":
+        return
+    subprocess.run(
+        [
+            "osascript",
+            "-e",
+            'tell application "System Events" to set frontmost of process "snappyref" to true',
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
 
 
 def write_samples(case_dir, rows, tree_rows):
@@ -502,9 +526,13 @@ def run():
     seed_library_once()
     overall = []
     for case_name in cases:
-        print(f"== case {case_name} ==")
         case_dir, library, assets, placements = build_case_library(case_name)
-        rows, tree_rows, main_pid = measure_case(library)
+        expectation = "empty active board expected" if placements == 0 else "placements should be visible"
+        print(
+            f"== case {case_name}: assets={assets} placements={placements} ({expectation}) ==",
+            flush=True,
+        )
+        rows, tree_rows, main_pid = measure_case(case_dir, library)
         write_samples(case_dir, rows, tree_rows)
         summary = build_summary(
             case_name, library, rows, tree_rows, main_pid, assets, placements

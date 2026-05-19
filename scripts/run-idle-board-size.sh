@@ -145,37 +145,65 @@ def make_library(size):
     return case_dir, library
 
 
-def measure_idle(size, library):
+def measure_idle(size, case_dir, library):
     env = os.environ.copy()
     env["SNAPPYREF_LIBRARY_ROOT"] = str(library)
-    process = subprocess.Popen([binary], env=env)
-    started = time.monotonic()
-    startup_wait = float(os.environ.get("SNAPPYREF_IDLE_BOARD_STARTUP_WAIT_SECS", "15"))
-    sample_secs = float(os.environ.get("SNAPPYREF_IDLE_BOARD_SAMPLE_SECS", "12"))
-    interval = float(os.environ.get("SNAPPYREF_IDLE_BOARD_SAMPLE_INTERVAL_SECS", "0.2"))
-    time.sleep(startup_wait)
-    rows = []
-    end_at = time.monotonic() + sample_secs
-    while time.monotonic() < end_at and process.poll() is None:
-        sample = process_sample(process.pid)
-        if sample:
-            sample["elapsed_ms"] = (time.monotonic() - started) * 1000.0
-            rows.append(sample)
-        time.sleep(interval)
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
+    with (case_dir / "app.log").open("w") as app_log:
+        process = subprocess.Popen(
+            [binary],
+            env=env,
+            stdout=app_log,
+            stderr=subprocess.STDOUT,
+        )
+        print(
+            f"case=board-{size} placements={size} pid={process.pid} library={library}",
+            flush=True,
+        )
+        maybe_activate_app()
+        started = time.monotonic()
+        startup_wait = float(os.environ.get("SNAPPYREF_IDLE_BOARD_STARTUP_WAIT_SECS", "15"))
+        sample_secs = float(os.environ.get("SNAPPYREF_IDLE_BOARD_SAMPLE_SECS", "12"))
+        interval = float(os.environ.get("SNAPPYREF_IDLE_BOARD_SAMPLE_INTERVAL_SECS", "0.2"))
+        time.sleep(startup_wait)
+        rows = []
+        end_at = time.monotonic() + sample_secs
+        while time.monotonic() < end_at and process.poll() is None:
+            sample = process_sample(process.pid)
+            if sample:
+                sample["elapsed_ms"] = (time.monotonic() - started) * 1000.0
+                rows.append(sample)
+            time.sleep(interval)
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
     return rows
+
+
+def maybe_activate_app():
+    if os.environ.get("SNAPPYREF_PERF_FRONTMOST") != "1":
+        return
+    if sys.platform != "darwin":
+        return
+    subprocess.run(
+        [
+            "osascript",
+            "-e",
+            'tell application "System Events" to set frontmost of process "snappyref" to true',
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
 
 
 seed_library_once()
 overall = {}
 for size in sizes:
     case_dir, library = make_library(size)
-    rows = measure_idle(size, library)
+    rows = measure_idle(size, case_dir, library)
     csv_path = case_dir / "idle-samples.csv"
     with csv_path.open("w", newline="") as handle:
         writer = csv.DictWriter(

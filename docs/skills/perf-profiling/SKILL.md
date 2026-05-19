@@ -12,14 +12,27 @@ Use this skill when improving SnappyRef performance. Treat perf work as a measur
 
 ## Principles
 
-- Measure the real app on the local machine before optimizing.
+- Measure the fully optimized release app on the local machine before optimizing.
+- Treat visual paint as central perf evidence: import timing runs from queued
+  import to a painted canvas frame, then through embedding drain and settled
+  idle.
+- Use [inspect](../inspect/SKILL.md) to reproduce or verify UI behavior; use
+  perf scripts to measure real-app timing, CPU, RSS, helper processes, and
+  memory. Do not treat inspect harness timings as perf evidence.
 - Keep work state separate from outcome metrics.
 - Use **Settled Idle** for queue drain state, not for CPU success.
 - Use **Quiescent Idle** and **Quiescent Memory** for steady-state targets.
 - Optimize idle CPU and quiescent RSS before optimizing **Time to Idle**.
 - Preserve phase breakdowns so a faster headline number does not hide a worse import, embedding, backfill, or memory profile.
 - Prefer helper-process isolation when native libraries or large allocators do not return memory to the OS after work drains.
-- Perf scenario launches are non-activating by default so agent-run measurements do not steal focus. This keeps the app visible and running normally; avoid hiding/minimizing the app during measurements unless that is the condition being tested.
+- Perf scenario launches are non-activating by default so agent-run measurements
+  do not steal focus. When a human-visible repro matters, set
+  `SNAPPYREF_PERF_FRONTMOST=1` and use a longer hold window, for example
+  `SNAPPYREF_PERF_IDLE_HOLD_SECS=60`.
+- Do not confuse empty-board baseline phases with failed imports. `library-100`,
+  `library-1000`, and `board-0` are expected to show no placements; placement
+  visibility should be checked with import scenarios, `board-1+`, or
+  `library-*-board-*` cases.
 
 ## Baseline Scenarios
 
@@ -72,8 +85,10 @@ Do not call the app "idle" because CPU is low. The state is idle when app work q
 Use app events to break **Time to Idle** into phases:
 
 - import queued
-- first placement visible
-- all placements visible
+- first placement loaded into canvas state
+- all placements loaded into canvas state
+- first placement visible in a painted canvas frame
+- all placements visible in a painted canvas frame
 - embedding model load started
 - embedding model load timing
 - embedding model ready
@@ -110,15 +125,19 @@ Use:
   below).
 - `phase-summary.json`: before/after-friendly headline summary derived
   from `events.ndjson`. Contains phase markers (`scenario_started`,
-  `first_placement_visible`, `semantic_model_load_started`,
-  `semantic_model_ready`, `first_import_embedding_started`,
-  `first_import_embedding_done`, `all_import_embeddings_done`,
-  `semantic_model_unload_requested`, `semantic_model_unloaded`,
-  `settled_idle`) plus precomputed durations (queue→first-placement,
-  model-load, first-embedding, embedding-drain, model-unload,
-  all-placements→settled-idle). Also includes per-format groups so a
-  single artifact carries the per-format breakdown previously only
-  available via `summarize-perf-by-format.py`.
+  `first_placement_loaded`, `first_placement_visible`,
+  `semantic_model_load_started`, `semantic_model_ready`,
+  `first_import_embedding_started`, `first_import_embedding_done`,
+  `all_import_embeddings_done`, `semantic_model_unload_requested`,
+  `semantic_model_unloaded`, `settled_idle`) plus precomputed durations
+  (queue→first-loaded, loaded→visible, queue→first-visible, model-load,
+  first-embedding, embedding-drain, model-unload,
+  all-visible→settled-idle). `first_placement_visible` is recorded after
+  the release build produces a canvas paint pass with visible images; do
+  not substitute the earlier loaded marker when measuring user-visible
+  import performance. Also includes per-format groups so a single artifact
+  carries the per-format breakdown previously only available via
+  `summarize-perf-by-format.py`.
 
 `run-existing-library-baseline.sh` adds per-case files under
 `perf-assets/runs/<timestamp>-existing-library-baseline/case-<name>/`:
@@ -193,8 +212,12 @@ Use stable, permissive, low-risk sources such as Wikimedia Commons, public-domai
 4. Add the narrowest instrumentation that distinguishes those hypotheses.
 5. Change one variable.
 6. Re-run the same scenario and compare the same windows.
-7. Remove throwaway probes.
+7. Remove throwaway instrumentation.
 8. Update `CONTEXT.md`, `docs/adr/`, or this skill when the result changes durable project language or perf process.
+
+If the perf issue starts as a user interaction bug, first create or run an
+inspect scenario that reproduces the behavior. Then run or add a perf scenario
+for the timing, CPU, or memory measurement.
 
 ## Known Patterns
 

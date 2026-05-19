@@ -97,9 +97,12 @@ struct PerfScenarioState {
     started_at: Instant,
     queued: bool,
     expected_imports: usize,
+    loaded_imports: usize,
     visible_imports: usize,
     demand_embeddings_queued: usize,
     demand_embeddings_done: usize,
+    first_loaded_logged: bool,
+    all_loaded_logged: bool,
     first_visible_logged: bool,
     all_visible_logged: bool,
     first_embedding_queued_logged: bool,
@@ -204,9 +207,12 @@ impl PerfScenarioState {
             started_at: Instant::now(),
             queued: false,
             expected_imports: 0,
+            loaded_imports: 0,
             visible_imports: 0,
             demand_embeddings_queued: 0,
             demand_embeddings_done: 0,
+            first_loaded_logged: false,
+            all_loaded_logged: false,
             first_visible_logged: false,
             all_visible_logged: false,
             first_embedding_queued_logged: false,
@@ -338,6 +344,7 @@ impl PerfScenarioState {
             "scenario": self.name,
             "time_to_idle_ms": self.elapsed_ms(),
             "expected_imports": self.expected_imports,
+            "loaded_imports": self.loaded_imports,
             "visible_imports": self.visible_imports,
             "demand_embeddings_queued": self.demand_embeddings_queued,
             "demand_embeddings_done": self.demand_embeddings_done,
@@ -1270,6 +1277,49 @@ impl SnappyRefApp {
         }
         ctx.request_repaint_after(Duration::from_millis(16));
         false
+    }
+
+    fn record_perf_painted_frame(&mut self) {
+        let Some(scenario) = &mut self.perf_scenario else {
+            return;
+        };
+        if scenario.expected_imports == 0 || scenario.loaded_imports == 0 {
+            return;
+        }
+
+        let image_pass = self.frame_perf.canvas.image_pass;
+        let visible = image_pass
+            .visible_images
+            .min(scenario.loaded_imports)
+            .min(scenario.expected_imports);
+        if visible > scenario.visible_imports {
+            scenario.visible_imports = visible;
+        }
+        if scenario.visible_imports == 0 {
+            return;
+        }
+
+        let frame = serde_json::json!({
+            "visible": scenario.visible_imports,
+            "expected": scenario.expected_imports,
+            "canvas_frame": {
+                "visible_images": image_pass.visible_images,
+                "visible_animated_images": image_pass.visible_animated_images,
+                "active_animated_images": image_pass.active_animated_images,
+                "fallback_images": image_pass.fallback_images,
+                "draw_calls": image_pass.draw_calls,
+                "texture_groups": image_pass.texture_groups,
+                "build_time_ms": image_pass.build_time_ms,
+            },
+        });
+        if !scenario.first_visible_logged {
+            scenario.first_visible_logged = true;
+            scenario.emit("first_placement_visible", frame.clone());
+        }
+        if scenario.visible_imports >= scenario.expected_imports && !scenario.all_visible_logged {
+            scenario.all_visible_logged = true;
+            scenario.emit("all_placements_visible", frame);
+        }
     }
 
     /// True once all visible startup work queues have drained at least
@@ -3320,7 +3370,7 @@ impl SnappyRefApp {
         }
         if let Some(log) = finished.log {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
-                scenario.visible_imports += 1;
+                scenario.loaded_imports += 1;
                 let metadata = resolution_queue_id
                     .and_then(|queue_id| scenario.asset_by_queue_id.get(&queue_id).cloned());
                 if let Some(metadata) = &metadata {
@@ -3342,10 +3392,10 @@ impl SnappyRefApp {
                     ),
                     None => (None, None, None, None),
                 };
-                if !scenario.first_visible_logged {
-                    scenario.first_visible_logged = true;
+                if !scenario.first_loaded_logged {
+                    scenario.first_loaded_logged = true;
                     scenario.emit(
-                        "first_placement_visible",
+                        "first_placement_loaded",
                         serde_json::json!({
                             "format": format_value,
                             "file": source_file,
@@ -3353,9 +3403,9 @@ impl SnappyRefApp {
                     );
                 }
                 scenario.emit(
-                    "placement_visible",
+                    "placement_loaded",
                     serde_json::json!({
-                        "visible": scenario.visible_imports,
+                        "loaded": scenario.loaded_imports,
                         "asset_id": log.placement.asset.as_ref().expect("loaded placement asset").id,
                         "placement_id": log.placement.state.id,
                         "mime_type": log.placement.asset.as_ref().expect("loaded placement asset").mime_type,
@@ -3367,11 +3417,11 @@ impl SnappyRefApp {
                         "queue_id": resolution_queue_id,
                     }),
                 );
-                if scenario.visible_imports >= scenario.expected_imports
-                    && !scenario.all_visible_logged
+                if scenario.loaded_imports >= scenario.expected_imports
+                    && !scenario.all_loaded_logged
                 {
-                    scenario.all_visible_logged = true;
-                    scenario.emit("all_placements_visible", serde_json::json!({}));
+                    scenario.all_loaded_logged = true;
+                    scenario.emit("all_placements_loaded", serde_json::json!({}));
                 }
             }
             self.log_loaded_timing(
@@ -4718,6 +4768,7 @@ impl eframe::App for SnappyRefApp {
             canvas_input_policy,
             false,
         );
+        self.record_perf_painted_frame();
         let context_menu_just_opened =
             if let Some(request) = self.canvas.take_context_menu_request() {
                 self.context_menu_pos = Some(request.screen_pos);
