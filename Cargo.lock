@@ -1384,10 +1384,15 @@ version = "0.34.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "839cd66e1b2f1ee9c168eba9a1b33007d057575b2b943886a4da2a7f1f7509ee"
 dependencies = [
+ "eframe",
  "egui",
+ "egui-wgpu",
+ "image",
  "kittest",
+ "pollster",
  "serde",
  "toml",
+ "wgpu",
 ]
 
 [[package]]

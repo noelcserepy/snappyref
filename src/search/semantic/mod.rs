@@ -7,10 +7,8 @@ mod service;
 
 pub(crate) use install::SemanticSearchInstallProgress;
 #[cfg(not(test))]
-pub(crate) use install::{
-    default_semantic_search_asset_descriptor, install_semantic_search_asset,
-    remove_semantic_search_assets,
-};
+pub(crate) use install::remove_semantic_search_assets;
+pub(crate) use install::{default_semantic_search_asset_descriptor, install_semantic_search_asset};
 pub(crate) use install_controller::{
     SemanticSearchInstallController, SemanticSearchInstallDisplay, SemanticSearchInstallSnapshot,
 };

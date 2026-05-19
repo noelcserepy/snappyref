@@ -6,7 +6,7 @@ Read these before normal work:
 
 1. `CONTEXT.md`, if it exists.
 2. `docs/adr/*.md`, if any exist.
-3. `docs/skills/app-inspection/SKILL.md`, if it exists.
+3. `docs/skills/inspect/SKILL.md`, if it exists.
 4. `docs/skills/perf-profiling/SKILL.md`, if it exists.
 5. `docs/skills/patchnotes/SKILL.md`, if it exists.
 
@@ -22,7 +22,7 @@ Use `grill-with-docs` when language, boundaries, lifecycle, storage, release/upd
 
 ## Repo-Local Skills
 
-Use [app-inspection](docs/skills/app-inspection/SKILL.md) when inspecting the app, verifying a UI state, capturing a screenshot, adding a temporary debug probe, or setting deterministic in-app UI state for capture.
+Use [inspect](docs/skills/inspect/SKILL.md) for UI/app behavior verification. Prefer `docs/skills/inspect/scripts/run-scenario.sh <scenario>` and inspect artifacts over manual app launches, OS mouse automation, ad hoc screenshots, or debug flags.
 
 Use [perf-profiling](docs/skills/perf-profiling/SKILL.md) when measuring or improving startup, import, embedding, idle CPU, or memory performance.
 
@@ -45,7 +45,7 @@ Read `DESIGN_SYSTEM.md` before UI work. Treat it as the canonical visual vocabul
 
 ## Testing Notes
 
-- Use `cargo check` after probe or UI changes before trusting a screenshot.
+- Use `cargo check` after UI/app-inspection changes before trusting screenshots. For behavior verification, prefer an inspect scenario and artifact.
 - Use `scripts/update-smoke-macos.sh` or `scripts/update-smoke-windows.sh` only for explicit auto-update smoke checks. They build a scratch install, force the running app to report an old version, fetch the published GitHub manifest, stage the real latest release for that platform, and verify the platform update apply path. Details live in [release-operations](docs/release-operations.md). They are intentionally manual, networked, and not a pre-push gate.
 - Use [use-windows](docs/skills/use-windows/SKILL.md) for Windows-native checks before GitHub Actions when a change touches Windows behavior, release packaging assumptions, path handling, updater behavior, native drop/clipboard/input behavior, or platform-specific code.
 - Windows verification follows one invariant: make changes on Mac, run `scripts/windows-sync.sh`, then verify on Windows. Do not develop directly in the Windows checkout.

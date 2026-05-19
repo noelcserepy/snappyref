@@ -541,52 +541,6 @@ impl CanvasState {
         let world = (screen - rect.center() - self.pan) / self.zoom;
         egui::pos2(world.x, world.y)
     }
-
-    #[cfg(debug_assertions)]
-    pub(crate) fn seed_move_snap_preview_for_selected_items(
-        &mut self,
-        rect: egui::Rect,
-        world_delta: egui::Vec2,
-    ) -> bool {
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: self.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
-        let snap_preview_rect = crate::placement::movement::compute_drag_snap_preview(
-            self,
-            rect,
-            &drag_state,
-            world_delta,
-        );
-        let snap_offset = snap_preview_rect
-            .and_then(|snap_rect| {
-                crate::placement::movement::layout_bounds_with_offset(
-                    &drag_state.starting_items,
-                    world_delta,
-                )
-                .map(|bounds| snap_rect.center() - bounds.center())
-            })
-            .unwrap_or(egui::Vec2::ZERO);
-        for item in &drag_state.starting_items {
-            if let Some(image) = self
-                .document
-                .rendered_placements
-                .iter_mut()
-                .find(|image| image.placement.state.id == item.id)
-            {
-                image.placement.state.geometry.center.x =
-                    item.center().x + world_delta.x + snap_offset.x;
-                image.placement.state.geometry.center.y =
-                    item.center().y + world_delta.y + snap_offset.y;
-            }
-        }
-        snap_preview_rect.is_some()
-    }
 }
 
 pub(crate) fn rotated_display_size(width: f32, height: f32, rotation: f32) -> egui::Vec2 {

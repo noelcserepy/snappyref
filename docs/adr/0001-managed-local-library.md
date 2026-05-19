@@ -9,4 +9,4 @@ This supersedes the earlier planning idea that originals would stay wherever the
 - The app may copy imported source files into `library/originals/`.
 - Canvas cache derivatives live under the user-owned library, not inside release artifacts.
 - Database migrations are forward-only; older app versions are not guaranteed to open a library after a newer version migrates it.
-- Tests and debug probes may override the library root, but production startup resolves it from the install root.
+- Tests and inspection harnesses may override the library root, but production startup resolves it from the install root.

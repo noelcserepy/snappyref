@@ -134,11 +134,8 @@ impl SearchController {
             .unwrap_or(LocalModelStoreStatus::Missing)
     }
 
-    #[cfg(any(test, debug_assertions))]
-    pub(crate) fn set_local_model_store_status_for_verification(
-        &mut self,
-        status: LocalModelStoreStatus,
-    ) {
+    #[cfg(test)]
+    pub(crate) fn set_local_model_store_status_for_test(&mut self, status: LocalModelStoreStatus) {
         self.local_model_store_status = Some(status);
     }
 
@@ -701,54 +698,6 @@ impl SearchController {
                     .service
                     .as_ref()
                     .is_some_and(|service| service.search_embedding_cache_warming()))
-    }
-
-    pub(crate) fn drive_verification_search(
-        &mut self,
-        query: &str,
-        enabled: &mut bool,
-        library: Option<&Library>,
-        canvas: &mut CanvasState,
-        status: &mut String,
-        canvas_image_max_side: u32,
-    ) {
-        if !*enabled {
-            *enabled = true;
-            self.sync_service(
-                *enabled,
-                library,
-                status,
-                Some(canvas),
-                canvas_image_max_side,
-            );
-        }
-
-        self.overlay.open = true;
-        self.overlay.focus_requested = true;
-        self.overlay.suppress_next_outside_click = true;
-        if self.overlay.query.trim() != query.trim() {
-            self.overlay.query = query.to_owned();
-            self.overlay.last_query_edit_at = None;
-            self.overlay.last_submitted_query.clear();
-            self.overlay.results.clear();
-            self.overlay.result_selection.clear();
-            self.pending_result_selection = None;
-            self.overlay.active_recent_search_index = 0;
-            self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
-            self.overlay.has_more_results = false;
-        }
-
-        self.submit_query(canvas);
-    }
-
-    pub(crate) fn verification_search_settled(&self, query: &str) -> bool {
-        self.overlay.open
-            && self.overlay.query.trim() == query.trim()
-            && self.overlay.last_submitted_query == query.trim()
-            && matches!(
-                self.overlay.status,
-                SearchOverlayStatus::Ready | SearchOverlayStatus::Error(_)
-            )
     }
 
     pub(crate) fn search_using_selected_image(
@@ -1809,7 +1758,7 @@ mod tests {
             visible_canvas_rect: screen_rect,
         };
         search.overlay.open = true;
-        search.overlay.query = "verify drag".to_owned();
+        search.overlay.query = "inspect drag".to_owned();
         search.overlay.status = SearchOverlayStatus::Ready;
         search.overlay.last_expanded_overlay_rect = Some(egui::Rect::from_min_size(
             egui::pos2(380.0, 72.0),
