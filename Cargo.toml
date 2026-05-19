@@ -35,7 +35,7 @@ url = "2.5.7"
 usvg = { version = "0.45.1", default-features = false }
 
 [dev-dependencies]
-egui_kittest = "0.34.1"
+egui_kittest = { version = "0.34.1", features = ["eframe", "wgpu"] }
 pollster = "0.4.0"
 
 [profile.release-fast]

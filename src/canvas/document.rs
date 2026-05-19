@@ -568,11 +568,6 @@ impl CanvasState {
         self.placement_gap = gap.max(0.0);
     }
 
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub fn set_animation_time_override_seconds(&mut self, seconds: Option<f32>) {
-        self.render.animation_time_override_seconds = seconds;
-    }
-
     pub fn viewport_state(&self) -> ViewportState {
         ViewportState {
             camera_pan_x: self.pan.x,
@@ -645,16 +640,6 @@ impl CanvasState {
 
     pub fn set_background(&mut self, background: CanvasBackground) {
         self.background = background;
-    }
-
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub fn clear_board_for_verification(&mut self) {
-        self.document = super::state::CanvasDocumentState::default();
-        self.interaction = super::state::CanvasInteractionState::default();
-        self.render.asset_rgba_cache.clear();
-        self.render.textbox_layout_cache.clear();
-        self.render.pending_image_lod_loads.clear();
-        self.render.animation_time_override_seconds = None;
     }
 
     pub fn focus_selection_in_view(
@@ -1323,18 +1308,6 @@ impl CanvasState {
         let placement_ids = self.all_placement_ids();
         let annotation_ids = self.all_annotation_ids();
         self.select_content(&placement_ids, &annotation_ids);
-    }
-
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub fn select_single_annotation(&mut self, annotation_id: i64) {
-        self.finish_textbox_edit();
-        self.document.selected_placement_ids.clear();
-        self.document.selected_annotation_ids = vec![annotation_id];
-        self.interaction.editing_text_annotation_id = None;
-        self.interaction.image_transform_state = None;
-        self.interaction.textbox_transform_state = None;
-        self.interaction.annotation_drag_state = None;
-        self.prune_cached_pixels_to_selected_items();
     }
 
     pub fn arrange_selected_horizontal(&mut self, gap: f32) -> usize {

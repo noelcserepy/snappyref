@@ -16,7 +16,7 @@ pub(crate) fn paint_provisional_placement_previews(
     rect: egui::Rect,
     state: &CanvasState,
 ) {
-    let stroke = egui::Stroke::new(2.0, crate::ui::theme::ACCENT);
+    let stroke = egui::Stroke::new(SELECTION_BORDER_WIDTH, IMAGE_SELECTION_BORDER_COLOR);
     let mut painted = Vec::new();
     for image in state
         .document
@@ -24,6 +24,9 @@ pub(crate) fn paint_provisional_placement_previews(
         .iter()
         .filter(|image| image.placement.lifecycle == PlacementLifecycle::Provisional)
     {
+        if state.is_selected(image.placement.state.id) {
+            continue;
+        }
         let image_rect = image_screen_rect(state, rect, image);
         painted.push((image.placement.state.id, image_rect));
         painter.rect_stroke(

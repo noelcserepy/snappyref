@@ -19,8 +19,6 @@ use crate::placement::content_resolution::{
 };
 #[cfg(feature = "semantic-search")]
 use crate::search::SearchController;
-#[cfg(feature = "semantic-search")]
-use crate::search::palette::ImageSearchPivot;
 use crate::sources::crop::CropFlow;
 use crate::sources::import::ExternalImportSource;
 use crate::ui::sidebar::{
@@ -49,7 +47,6 @@ pub(crate) use shortcuts::{SUPPORTED_SHORTCUTS, SupportedShortcut};
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
-    pub screenshot_path: Option<std::path::PathBuf>,
     library_root: Result<std::path::PathBuf, String>,
     no_startup_focus: bool,
     perf_log: bool,
@@ -62,10 +59,6 @@ pub struct AppConfig {
     perf_corpus: Option<std::path::PathBuf>,
     perf_run_dir: Option<std::path::PathBuf>,
     startup_trace: bool,
-    #[cfg(debug_assertions)]
-    verification_mode: Option<VerificationMode>,
-    #[cfg(debug_assertions)]
-    verification_search_query: Option<String>,
     update_smoke_install: bool,
     update_smoke_status_path: Option<std::path::PathBuf>,
 }
@@ -104,9 +97,12 @@ struct PerfScenarioState {
     started_at: Instant,
     queued: bool,
     expected_imports: usize,
+    loaded_imports: usize,
     visible_imports: usize,
     demand_embeddings_queued: usize,
     demand_embeddings_done: usize,
+    first_loaded_logged: bool,
+    all_loaded_logged: bool,
     first_visible_logged: bool,
     all_visible_logged: bool,
     first_embedding_queued_logged: bool,
@@ -211,9 +207,12 @@ impl PerfScenarioState {
             started_at: Instant::now(),
             queued: false,
             expected_imports: 0,
+            loaded_imports: 0,
             visible_imports: 0,
             demand_embeddings_queued: 0,
             demand_embeddings_done: 0,
+            first_loaded_logged: false,
+            all_loaded_logged: false,
             first_visible_logged: false,
             all_visible_logged: false,
             first_embedding_queued_logged: false,
@@ -345,6 +344,7 @@ impl PerfScenarioState {
             "scenario": self.name,
             "time_to_idle_ms": self.elapsed_ms(),
             "expected_imports": self.expected_imports,
+            "loaded_imports": self.loaded_imports,
             "visible_imports": self.visible_imports,
             "demand_embeddings_queued": self.demand_embeddings_queued,
             "demand_embeddings_done": self.demand_embeddings_done,
@@ -460,42 +460,8 @@ fn duration_between(start_ms: Option<f64>, end_ms: Option<f64>) -> Option<f64> {
     }
 }
 
-#[cfg(debug_assertions)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum VerificationMode {
-    OpenSidebar,
-    OpenSidebarHot,
-    OpenSidebarNarrow,
-    OpenSidebarBoards,
-    OpenSidebarBoardsHover,
-    OpenPalette,
-    OpenPaletteImagePivot,
-    DrawArrow,
-    EditTextbox,
-    RotateImage,
-    AnimatedGif,
-    SvgImage,
-    MoveSnapPreview,
-    ContextMenu,
-    ImportLoaded,
-    ImportMatrix,
-    BackgroundGrid,
-    BackgroundDots,
-    BackgroundTransition,
-    ActiveBoardChip,
-    SemanticSearchFirstLaunchPrompt,
-    SemanticSearchInstall,
-    SearchDragSource,
-    SearchMultiDragSource,
-    SearchDragPreview,
-    BoardDeleteConfirmation,
-    LibraryRemoveConfirmation,
-    DesignSystemPreview,
-}
-
 impl AppConfig {
     pub fn from_env() -> Self {
-        let mut screenshot_path = None;
         let mut no_startup_focus = false;
         let mut perf_log = false;
         let mut perf_report = false;
@@ -510,19 +476,11 @@ impl AppConfig {
         let mut update_smoke_install = false;
         let mut update_smoke_status_path =
             std::env::var_os("SNAPPYREF_UPDATE_SMOKE_STATUS").map(std::path::PathBuf::from);
-        #[cfg(debug_assertions)]
-        let mut verification_mode = None;
-        #[cfg(debug_assertions)]
-        let mut verification_search_query = None;
         let library_root = crate::library::location::resolve_library_root();
         let mut arguments = std::env::args().skip(1);
 
         while let Some(argument) = arguments.next() {
-            if argument == "--screenshot" {
-                screenshot_path = arguments.next().map(std::path::PathBuf::from);
-            } else if let Some(path) = argument.strip_prefix("--screenshot=") {
-                screenshot_path = Some(std::path::PathBuf::from(path));
-            } else if argument == "--no-startup-focus" {
+            if argument == "--no-startup-focus" {
                 no_startup_focus = true;
             } else if argument == "--perf-log" {
                 perf_log = true;
@@ -566,181 +524,10 @@ impl AppConfig {
                 perf_run_dir = Some(std::path::PathBuf::from(path));
             } else if argument == "--startup-trace" {
                 startup_trace = true;
-            } else if cfg!(debug_assertions) && argument == "--verify-sidebar" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::OpenSidebar);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-sidebar-hot" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::OpenSidebarHot);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-sidebar-narrow" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::OpenSidebarNarrow);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-sidebar-boards" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::OpenSidebarBoards);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-sidebar-boards-hover" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::OpenSidebarBoardsHover);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-palette" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::OpenPalette);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-palette-image-pivot" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::OpenPaletteImagePivot);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-arrow" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::DrawArrow);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-textbox" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::EditTextbox);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-rotate-image" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::RotateImage);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-gif" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::AnimatedGif);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-svg" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::SvgImage);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-move-snap" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::MoveSnapPreview);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-context-menu" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::ContextMenu);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-import-loaded" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::ImportLoaded);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-import-matrix" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::ImportMatrix);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-background-grid" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::BackgroundGrid);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-background-dots" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::BackgroundDots);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-background-transition" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::BackgroundTransition);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-active-board-chip" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::ActiveBoardChip);
-                }
-            } else if cfg!(all(debug_assertions, feature = "semantic-search"))
-                && argument == "--verify-semantic-search-first-launch-prompt"
-            {
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                {
-                    verification_mode = Some(VerificationMode::SemanticSearchFirstLaunchPrompt);
-                }
-            } else if cfg!(all(debug_assertions, feature = "semantic-search"))
-                && argument == "--verify-semantic-search-install"
-            {
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                {
-                    verification_mode = Some(VerificationMode::SemanticSearchInstall);
-                }
-            } else if cfg!(all(debug_assertions, feature = "semantic-search"))
-                && argument == "--verify-search-drag-preview"
-            {
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                {
-                    verification_mode = Some(VerificationMode::SearchDragPreview);
-                }
-            } else if cfg!(all(debug_assertions, feature = "semantic-search"))
-                && argument == "--verify-search-drag-source"
-            {
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                {
-                    verification_mode = Some(VerificationMode::SearchDragSource);
-                }
-            } else if cfg!(all(debug_assertions, feature = "semantic-search"))
-                && argument == "--verify-search-multi-drag-source"
-            {
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                {
-                    verification_mode = Some(VerificationMode::SearchMultiDragSource);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-board-delete-confirmation" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::BoardDeleteConfirmation);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-library-remove-confirmation" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::LibraryRemoveConfirmation);
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-design-system" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_mode = Some(VerificationMode::DesignSystemPreview);
-                }
-            } else if let Some(query) = argument.strip_prefix("--verify-search=") {
-                #[cfg(debug_assertions)]
-                {
-                    verification_search_query = Some(query.to_owned());
-                }
-            } else if let Some(query) = argument.strip_prefix("--verify-search-library=") {
-                #[cfg(debug_assertions)]
-                {
-                    verification_search_query = Some(query.to_owned());
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-search" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_search_query = arguments.next();
-                }
-            } else if cfg!(debug_assertions) && argument == "--verify-search-library" {
-                #[cfg(debug_assertions)]
-                {
-                    verification_search_query = arguments.next();
-                }
             }
         }
 
         Self {
-            screenshot_path,
             no_startup_focus,
             perf_log,
             perf_report,
@@ -752,262 +539,24 @@ impl AppConfig {
             perf_corpus,
             perf_run_dir,
             startup_trace,
-            #[cfg(debug_assertions)]
-            verification_mode,
-            #[cfg(debug_assertions)]
-            verification_search_query,
             library_root,
             update_smoke_install,
             update_smoke_status_path,
         }
     }
 
-    #[cfg(debug_assertions)]
-    fn open_sidebar_on_start(&self) -> bool {
-        matches!(
-            self.verification_mode,
-            Some(
-                VerificationMode::OpenSidebar
-                    | VerificationMode::OpenSidebarHot
-                    | VerificationMode::OpenSidebarNarrow
-                    | VerificationMode::OpenSidebarBoards
-                    | VerificationMode::OpenSidebarBoardsHover
-            )
-        )
-    }
-
-    #[cfg(debug_assertions)]
-    fn open_sidebar_hot_on_start(&self) -> bool {
-        matches!(
-            self.verification_mode,
-            Some(VerificationMode::OpenSidebarHot)
-        )
-    }
-
-    #[cfg(debug_assertions)]
-    fn open_sidebar_narrow_on_start(&self) -> bool {
-        matches!(
-            self.verification_mode,
-            Some(VerificationMode::OpenSidebarNarrow)
-        )
-    }
-
-    #[cfg(debug_assertions)]
-    fn open_sidebar_boards_on_start(&self) -> bool {
-        matches!(
-            self.verification_mode,
-            Some(VerificationMode::OpenSidebarBoards | VerificationMode::OpenSidebarBoardsHover)
-        )
-    }
-
-    #[cfg(debug_assertions)]
-    fn open_palette_on_start(&self) -> bool {
-        matches!(
-            self.verification_mode,
-            Some(VerificationMode::OpenPalette | VerificationMode::OpenPaletteImagePivot)
-        )
-    }
-
-    #[cfg(debug_assertions)]
-    fn open_palette_image_pivot_on_start(&self) -> bool {
-        matches!(
-            self.verification_mode,
-            Some(VerificationMode::OpenPaletteImagePivot)
-        )
-    }
-
-    #[cfg(debug_assertions)]
-    fn draw_arrow_on_start(&self) -> bool {
-        matches!(self.verification_mode, Some(VerificationMode::DrawArrow))
-    }
-
-    #[cfg(debug_assertions)]
-    fn edit_textbox_on_start(&self) -> bool {
-        matches!(self.verification_mode, Some(VerificationMode::EditTextbox))
-    }
-
-    #[cfg(debug_assertions)]
-    fn rotate_image_on_start(&self) -> bool {
-        matches!(self.verification_mode, Some(VerificationMode::RotateImage))
-    }
-
-    #[cfg(debug_assertions)]
-    fn verify_gif_on_start(&self) -> bool {
-        matches!(self.verification_mode, Some(VerificationMode::AnimatedGif))
-    }
-
-    #[cfg(debug_assertions)]
-    fn verify_svg_on_start(&self) -> bool {
-        matches!(self.verification_mode, Some(VerificationMode::SvgImage))
-    }
-
-    #[cfg(debug_assertions)]
-    fn verify_move_snap_on_start(&self) -> bool {
-        matches!(
-            self.verification_mode,
-            Some(VerificationMode::MoveSnapPreview)
-        )
-    }
-
-    #[cfg(debug_assertions)]
-    fn verify_context_menu_on_start(&self) -> bool {
-        matches!(self.verification_mode, Some(VerificationMode::ContextMenu))
-    }
-
-    #[cfg(debug_assertions)]
-    fn verify_board_delete_confirmation_on_start(&self) -> bool {
-        matches!(
-            self.verification_mode,
-            Some(VerificationMode::BoardDeleteConfirmation)
-        )
-    }
-
-    #[cfg(debug_assertions)]
-    fn verify_library_remove_confirmation_on_start(&self) -> bool {
-        matches!(
-            self.verification_mode,
-            Some(VerificationMode::LibraryRemoveConfirmation)
-        )
-    }
-
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    fn verify_semantic_search_first_launch_prompt_on_start(&self) -> bool {
-        matches!(
-            self.verification_mode,
-            Some(VerificationMode::SemanticSearchFirstLaunchPrompt)
-        )
-    }
-
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    fn verify_semantic_search_install_on_start(&self) -> bool {
-        matches!(
-            self.verification_mode,
-            Some(VerificationMode::SemanticSearchInstall)
-        )
-    }
-
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    fn verify_search_drag_preview_on_start(&self) -> bool {
-        matches!(
-            self.verification_mode,
-            Some(
-                VerificationMode::SearchDragPreview
-                    | VerificationMode::SearchDragSource
-                    | VerificationMode::SearchMultiDragSource
-            )
-        )
-    }
-
-    #[cfg(debug_assertions)]
-    fn verify_import_loaded_on_start(&self) -> bool {
-        matches!(self.verification_mode, Some(VerificationMode::ImportLoaded))
-    }
-
-    #[cfg(debug_assertions)]
-    fn verify_import_matrix_on_start(&self) -> bool {
-        matches!(self.verification_mode, Some(VerificationMode::ImportMatrix))
-    }
-
-    #[cfg(debug_assertions)]
-    fn background_verification_mode(&self) -> Option<VerificationMode> {
-        match self.verification_mode {
-            Some(
-                VerificationMode::BackgroundGrid
-                | VerificationMode::BackgroundDots
-                | VerificationMode::BackgroundTransition,
-            ) => self.verification_mode,
-            _ => None,
-        }
-    }
-
-    #[cfg(debug_assertions)]
-    fn skip_existing_items_on_start(&self) -> bool {
-        self.perf_scenario_requested()
-            || matches!(
-                self.verification_mode,
-                Some(
-                    VerificationMode::DrawArrow
-                        | VerificationMode::EditTextbox
-                        | VerificationMode::RotateImage
-                        | VerificationMode::AnimatedGif
-                        | VerificationMode::SvgImage
-                        | VerificationMode::MoveSnapPreview
-                        | VerificationMode::ContextMenu
-                        | VerificationMode::ImportLoaded
-                        | VerificationMode::ImportMatrix
-                        | VerificationMode::SearchDragSource
-                        | VerificationMode::SearchMultiDragSource
-                        | VerificationMode::SearchDragPreview
-                        | VerificationMode::BackgroundGrid
-                        | VerificationMode::BackgroundDots
-                        | VerificationMode::BackgroundTransition
-                        | VerificationMode::BoardDeleteConfirmation
-                        | VerificationMode::LibraryRemoveConfirmation
-                        | VerificationMode::DesignSystemPreview
-                )
-            )
-    }
-
-    #[cfg(debug_assertions)]
-    fn verification_search_query(&self) -> Option<&str> {
-        self.verification_search_query.as_deref()
-    }
-
-    #[cfg(not(debug_assertions))]
     fn skip_existing_items_on_start(&self) -> bool {
         self.perf_scenario_requested()
     }
 
-    #[cfg(debug_assertions)]
-    pub(crate) fn startup_viewport_size(&self) -> egui::Vec2 {
-        if self.open_sidebar_narrow_on_start() {
-            egui::vec2(780.0, STARTUP_VIEWPORT_SIZE.y)
-        } else {
-            STARTUP_VIEWPORT_SIZE
-        }
-    }
-
-    #[cfg(not(debug_assertions))]
     fn open_sidebar_on_start(&self) -> bool {
         false
     }
 
-    #[cfg(not(debug_assertions))]
-    fn open_sidebar_hot_on_start(&self) -> bool {
-        false
-    }
-
-    #[cfg(not(debug_assertions))]
     fn open_sidebar_boards_on_start(&self) -> bool {
         false
     }
 
-    #[cfg(not(debug_assertions))]
-    fn open_palette_on_start(&self) -> bool {
-        false
-    }
-
-    #[cfg(not(debug_assertions))]
-    fn open_palette_image_pivot_on_start(&self) -> bool {
-        false
-    }
-
-    #[cfg(not(debug_assertions))]
-    fn draw_arrow_on_start(&self) -> bool {
-        false
-    }
-
-    #[cfg(not(debug_assertions))]
-    fn edit_textbox_on_start(&self) -> bool {
-        false
-    }
-
-    #[cfg(not(debug_assertions))]
-    fn verification_search_query(&self) -> Option<&str> {
-        None
-    }
-
-    #[cfg(not(debug_assertions))]
     pub(crate) fn startup_viewport_size(&self) -> egui::Vec2 {
         STARTUP_VIEWPORT_SIZE
     }
@@ -1041,11 +590,7 @@ impl AppConfig {
     }
 
     pub(crate) fn startup_focus_enabled(&self) -> bool {
-        !(self.no_startup_focus
-            || self.screenshot_path.is_some()
-            || self.verification_mode_active()
-            || self.perf_scenario_requested()
-            || self.update_smoke_install)
+        !(self.no_startup_focus || self.perf_scenario_requested() || self.update_smoke_install)
     }
 
     pub(crate) fn restored_window_state(&self) -> Option<crate::data::WindowState> {
@@ -1074,20 +619,7 @@ impl AppConfig {
     }
 
     fn persist_window_state_enabled(&self) -> bool {
-        self.screenshot_path.is_none()
-            && !self.verification_mode_active()
-            && !self.perf_scenario_requested()
-            && !self.update_smoke_install
-    }
-
-    #[cfg(debug_assertions)]
-    fn verification_mode_active(&self) -> bool {
-        self.verification_mode.is_some() || self.verification_search_query.is_some()
-    }
-
-    #[cfg(not(debug_assertions))]
-    fn verification_mode_active(&self) -> bool {
-        false
+        !self.perf_scenario_requested() && !self.update_smoke_install
     }
 
     pub fn startup_trace_requested(&self) -> bool {
@@ -1103,8 +635,6 @@ impl AppConfig {
 
 pub struct SnappyRefApp {
     canvas: crate::canvas::CanvasState,
-    screenshot_capture: crate::sources::screenshot::ScreenshotCapture,
-    window_capture: Option<crate::platform::capture::NativeWindowCapture>,
     wgpu_render_state: Option<eframe::egui_wgpu::RenderState>,
     library: Option<crate::library::storage::Library>,
     import_worker: Option<crate::jobs::ImagePrepWorker>,
@@ -1139,12 +669,6 @@ pub struct SnappyRefApp {
     pending_user_session: Option<crate::data::UserSession>,
     pending_user_session_save_at: Option<Instant>,
     board_summaries_cache: BoardSummariesCache,
-    #[cfg(debug_assertions)]
-    verification_mode: Option<VerificationMode>,
-    #[cfg(debug_assertions)]
-    verification_search_query: Option<String>,
-    #[cfg(debug_assertions)]
-    sidebar_hot_preview: bool,
     update_service: UpdateService,
     user_update_flow_active: bool,
     update_smoke: Option<UpdateSmokeState>,
@@ -1177,12 +701,6 @@ impl BoardSummariesCache {
 impl SnappyRefApp {
     pub fn new(cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
         crate::platform::native_drop::install_url_drop_bridge(cc);
-        let screenshot_path = config.screenshot_path.clone();
-        let window_capture = if screenshot_path.is_some() {
-            None
-        } else {
-            crate::platform::capture::NativeWindowCapture::from_creation_context(cc)
-        };
         let max_texture_side = cc.egui_ctx.input(|input| input.max_texture_side.max(1));
         let update_smoke = UpdateSmokeState::from_config(&config);
 
@@ -1201,10 +719,6 @@ impl SnappyRefApp {
                 let status = "Library ready".to_owned();
                 let mut app = Self {
                     canvas: crate::canvas::CanvasState::default(),
-                    screenshot_capture: crate::sources::screenshot::ScreenshotCapture::new(
-                        screenshot_path.clone(),
-                    ),
-                    window_capture,
                     wgpu_render_state: cc.wgpu_render_state.clone(),
                     library: Some(library.clone()),
                     import_worker: Some(import_worker),
@@ -1247,12 +761,6 @@ impl SnappyRefApp {
                     pending_user_session: None,
                     pending_user_session_save_at: None,
                     board_summaries_cache: BoardSummariesCache::default(),
-                    #[cfg(debug_assertions)]
-                    verification_mode: config.verification_mode,
-                    #[cfg(debug_assertions)]
-                    verification_search_query: None,
-                    #[cfg(debug_assertions)]
-                    sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                     update_service: UpdateService::new(UpdateConfig::default()),
                     user_update_flow_active: false,
                     update_smoke: update_smoke.clone(),
@@ -1266,184 +774,15 @@ impl SnappyRefApp {
                 if config.open_sidebar_boards_on_start() {
                     app.sidebar_tab = SidebarTab::Boards;
                 }
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                if config.open_sidebar_on_start() {
-                    app.settings.semantic_search_first_launch_prompt_seen = true;
-                }
-                #[cfg(all(feature = "semantic-search", not(debug_assertions)))]
+                #[cfg(feature = "semantic-search")]
                 app.sync_semantic_search_service();
-                #[cfg(all(feature = "semantic-search", debug_assertions))]
-                if !matches!(
-                    config.verification_mode,
-                    Some(
-                        VerificationMode::SearchDragPreview
-                            | VerificationMode::SearchDragSource
-                            | VerificationMode::SearchMultiDragSource
-                    )
-                ) {
-                    app.sync_semantic_search_service();
-                }
                 if !config.skip_existing_items_on_start() {
                     app.enqueue_existing_items();
-                }
-                #[cfg(debug_assertions)]
-                if config.draw_arrow_on_start() {
-                    app.canvas
-                        .apply_viewport_state(&crate::data::ViewportState::default());
-                    app.canvas
-                        .add_annotation(crate::data::CanvasAnnotation::new(
-                            -1,
-                            crate::data::CanvasAnnotationKind::Arrow,
-                            egui::pos2(-220.0, -120.0),
-                            egui::pos2(220.0, 120.0),
-                            String::new(),
-                            crate::data::CanvasTextSize::default(),
-                            crate::data::CanvasStrokeWidth::L,
-                            crate::data::CanvasAnnotationColor::Coral,
-                            false,
-                            false,
-                        ));
-                    app.canvas.select_single_annotation(-1);
-                    app.status = "Added debug arrow".to_owned();
-                }
-                #[cfg(debug_assertions)]
-                if config.edit_textbox_on_start() {
-                    app.canvas
-                        .apply_viewport_state(&crate::data::ViewportState::default());
-                    app.canvas
-                        .add_annotation(crate::data::CanvasAnnotation::new(
-                            -2,
-                            crate::data::CanvasAnnotationKind::Textbox,
-                            egui::pos2(-160.0, -80.0),
-                            egui::pos2(160.0, 80.0),
-                            "debug textbox".to_owned(),
-                            crate::data::CanvasTextSize::default(),
-                            crate::data::CanvasStrokeWidth::default(),
-                            crate::data::CanvasAnnotationColor::Sky,
-                            true,
-                            false,
-                        ));
-                    app.canvas.begin_textbox_edit(-2);
-                    app.status = "Editing debug textbox".to_owned();
-                }
-                #[cfg(debug_assertions)]
-                if config.rotate_image_on_start() {
-                    app.seed_rotation_verification(&cc.egui_ctx);
-                }
-                #[cfg(debug_assertions)]
-                if config.verify_gif_on_start() {
-                    app.seed_gif_verification(&cc.egui_ctx);
-                }
-                #[cfg(debug_assertions)]
-                if config.verify_svg_on_start() {
-                    app.seed_svg_verification(&cc.egui_ctx);
-                }
-                #[cfg(debug_assertions)]
-                if config.verify_move_snap_on_start() {
-                    app.seed_move_snap_verification(&cc.egui_ctx);
-                }
-                #[cfg(debug_assertions)]
-                if config.verify_context_menu_on_start() {
-                    app.seed_context_menu_verification(&cc.egui_ctx);
-                }
-                #[cfg(debug_assertions)]
-                if config.verify_board_delete_confirmation_on_start() {
-                    app.pending_board_delete = Some(PendingBoardDelete {
-                        board_id: app.active_board_id,
-                        board_name: "Moodboard".to_owned(),
-                    });
-                }
-                #[cfg(debug_assertions)]
-                if config.verify_library_remove_confirmation_on_start() {
-                    app.pending_library_remove = Some(PendingLibraryRemove {
-                        asset_ids: vec![1, 2],
-                    });
-                }
-                #[cfg(debug_assertions)]
-                if config.verify_import_loaded_on_start() {
-                    app.seed_import_verification_loaded(&cc.egui_ctx);
-                }
-                #[cfg(debug_assertions)]
-                if config.verify_import_matrix_on_start() {
-                    app.seed_import_verification_matrix(&cc.egui_ctx);
-                }
-                #[cfg(debug_assertions)]
-                if let Some(mode) = config.background_verification_mode() {
-                    app.seed_background_verification(mode);
-                }
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                if config.verify_semantic_search_first_launch_prompt_on_start() {
-                    app.settings.semantic_search_first_launch_prompt_seen = false;
-                    app.search.set_local_model_store_status_for_verification(
-                        crate::search::semantic::LocalModelStoreStatus::Missing,
-                    );
-                }
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                if config.verify_semantic_search_install_on_start() {
-                    app.settings.semantic_search_first_launch_prompt_seen = false;
-                    app.search.set_local_model_store_status_for_verification(
-                        crate::search::semantic::LocalModelStoreStatus::Missing,
-                    );
-                    app.enable_semantic_search_from_first_launch_prompt(&cc.egui_ctx);
-                }
-                #[cfg(all(debug_assertions, feature = "semantic-search"))]
-                if config.verify_search_drag_preview_on_start() {
-                    app.seed_search_drag_preview_verification(&cc.egui_ctx);
-                }
-                #[cfg(debug_assertions)]
-                if let Some(query) = config.verification_search_query().map(ToOwned::to_owned) {
-                    app.settings.semantic_search_enabled = true;
-                    #[cfg(feature = "semantic-search")]
-                    app.sync_semantic_search_service();
-                    #[cfg(feature = "semantic-search")]
-                    {
-                        app.search.overlay.open = true;
-                        app.search.overlay.focus_requested = true;
-                        app.search.overlay.query = query;
-                        app.search.overlay.last_query_edit_at = Some(Instant::now());
-                    }
-                    app.verification_search_query =
-                        config.verification_search_query().map(ToOwned::to_owned);
-                }
-                #[cfg(debug_assertions)]
-                if app.sidebar_hot_preview {
-                    app.settings.auto_image_scaling = false;
-                    app.settings.placement_gap = 32.0;
-                    app.settings.canvas_image_max_side = crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE;
-                    app.canvas
-                        .set_background(crate::data::CanvasBackground::Grid);
-                    app.settings.semantic_search_enabled = true;
-                    #[cfg(feature = "semantic-search")]
-                    app.sync_semantic_search_service();
-                }
-                #[cfg(debug_assertions)]
-                if config.open_palette_on_start() {
-                    app.settings.semantic_search_enabled = true;
-                    #[cfg(feature = "semantic-search")]
-                    {
-                        app.sync_semantic_search_service();
-                        app.search.overlay.open = true;
-                        app.search.overlay.focus_requested = true;
-                    }
-                }
-                #[cfg(debug_assertions)]
-                if config.open_palette_image_pivot_on_start() {
-                    #[cfg(feature = "semantic-search")]
-                    {
-                        app.search.overlay.image_pivot = Some(ImageSearchPivot {
-                            asset_id: 42,
-                            asset_preview_path: None,
-                        });
-                    }
                 }
                 app
             }
             Err(error) => Self {
                 canvas: crate::canvas::CanvasState::default(),
-                screenshot_capture: crate::sources::screenshot::ScreenshotCapture::new(
-                    screenshot_path,
-                ),
-                window_capture,
                 wgpu_render_state: cc.wgpu_render_state.clone(),
                 library: None,
                 import_worker: None,
@@ -1486,12 +825,6 @@ impl SnappyRefApp {
                 pending_user_session: None,
                 pending_user_session_save_at: None,
                 board_summaries_cache: BoardSummariesCache::default(),
-                #[cfg(debug_assertions)]
-                verification_mode: config.verification_mode,
-                #[cfg(debug_assertions)]
-                verification_search_query: None,
-                #[cfg(debug_assertions)]
-                sidebar_hot_preview: config.open_sidebar_hot_on_start(),
                 update_service: UpdateService::new(UpdateConfig::default()),
                 user_update_flow_active: false,
                 update_smoke,
@@ -1944,6 +1277,49 @@ impl SnappyRefApp {
         }
         ctx.request_repaint_after(Duration::from_millis(16));
         false
+    }
+
+    fn record_perf_painted_frame(&mut self) {
+        let Some(scenario) = &mut self.perf_scenario else {
+            return;
+        };
+        if scenario.expected_imports == 0 || scenario.loaded_imports == 0 {
+            return;
+        }
+
+        let image_pass = self.frame_perf.canvas.image_pass;
+        let visible = image_pass
+            .visible_images
+            .min(scenario.loaded_imports)
+            .min(scenario.expected_imports);
+        if visible > scenario.visible_imports {
+            scenario.visible_imports = visible;
+        }
+        if scenario.visible_imports == 0 {
+            return;
+        }
+
+        let frame = serde_json::json!({
+            "visible": scenario.visible_imports,
+            "expected": scenario.expected_imports,
+            "canvas_frame": {
+                "visible_images": image_pass.visible_images,
+                "visible_animated_images": image_pass.visible_animated_images,
+                "active_animated_images": image_pass.active_animated_images,
+                "fallback_images": image_pass.fallback_images,
+                "draw_calls": image_pass.draw_calls,
+                "texture_groups": image_pass.texture_groups,
+                "build_time_ms": image_pass.build_time_ms,
+            },
+        });
+        if !scenario.first_visible_logged {
+            scenario.first_visible_logged = true;
+            scenario.emit("first_placement_visible", frame.clone());
+        }
+        if scenario.visible_imports >= scenario.expected_imports && !scenario.all_visible_logged {
+            scenario.all_visible_logged = true;
+            scenario.emit("all_placements_visible", frame);
+        }
     }
 
     /// True once all visible startup work queues have drained at least
@@ -3994,7 +3370,7 @@ impl SnappyRefApp {
         }
         if let Some(log) = finished.log {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
-                scenario.visible_imports += 1;
+                scenario.loaded_imports += 1;
                 let metadata = resolution_queue_id
                     .and_then(|queue_id| scenario.asset_by_queue_id.get(&queue_id).cloned());
                 if let Some(metadata) = &metadata {
@@ -4016,10 +3392,10 @@ impl SnappyRefApp {
                     ),
                     None => (None, None, None, None),
                 };
-                if !scenario.first_visible_logged {
-                    scenario.first_visible_logged = true;
+                if !scenario.first_loaded_logged {
+                    scenario.first_loaded_logged = true;
                     scenario.emit(
-                        "first_placement_visible",
+                        "first_placement_loaded",
                         serde_json::json!({
                             "format": format_value,
                             "file": source_file,
@@ -4027,9 +3403,9 @@ impl SnappyRefApp {
                     );
                 }
                 scenario.emit(
-                    "placement_visible",
+                    "placement_loaded",
                     serde_json::json!({
-                        "visible": scenario.visible_imports,
+                        "loaded": scenario.loaded_imports,
                         "asset_id": log.placement.asset.as_ref().expect("loaded placement asset").id,
                         "placement_id": log.placement.state.id,
                         "mime_type": log.placement.asset.as_ref().expect("loaded placement asset").mime_type,
@@ -4041,11 +3417,11 @@ impl SnappyRefApp {
                         "queue_id": resolution_queue_id,
                     }),
                 );
-                if scenario.visible_imports >= scenario.expected_imports
-                    && !scenario.all_visible_logged
+                if scenario.loaded_imports >= scenario.expected_imports
+                    && !scenario.all_loaded_logged
                 {
-                    scenario.all_visible_logged = true;
-                    scenario.emit("all_placements_visible", serde_json::json!({}));
+                    scenario.all_loaded_logged = true;
+                    scenario.emit("all_placements_loaded", serde_json::json!({}));
                 }
             }
             self.log_loaded_timing(
@@ -4735,761 +4111,6 @@ impl SnappyRefApp {
         }
     }
 
-    #[cfg(debug_assertions)]
-    fn seed_background_verification(&mut self, mode: VerificationMode) {
-        let (background, zoom) = match mode {
-            VerificationMode::BackgroundDots => (crate::data::CanvasBackground::Dots, 1.0),
-            VerificationMode::BackgroundTransition => {
-                let transition_zoom = 0.9;
-                (crate::data::CanvasBackground::Grid, transition_zoom)
-            }
-            _ => (crate::data::CanvasBackground::Grid, 1.0),
-        };
-        self.canvas
-            .apply_viewport_state(&crate::data::ViewportState {
-                camera_pan_x: 0.0,
-                camera_pan_y: 0.0,
-                camera_zoom: zoom,
-                canvas_background: background,
-            });
-    }
-
-    #[cfg(debug_assertions)]
-    fn seed_import_verification_existing_anchor(
-        &mut self,
-        ctx: &egui::Context,
-    ) -> Result<i64, String> {
-        self.seed_import_verification_image(
-            ctx,
-            "verify-existing",
-            egui::pos2(0.0, 0.0),
-            180,
-            140,
-            [188, 146, 255, 255],
-        )
-    }
-
-    #[cfg(debug_assertions)]
-    fn seed_import_verification_image(
-        &mut self,
-        ctx: &egui::Context,
-        source_name: &str,
-        center_world: egui::Pos2,
-        width: u32,
-        height: u32,
-        color: [u8; 4],
-    ) -> Result<i64, String> {
-        let Some(library) = &self.library else {
-            return Err("Library unavailable".to_owned());
-        };
-        let rgba = Self::solid_rgba(width, height, color);
-        let stored_path = library.store_rgba_image(source_name, &rgba, width, height)?;
-        let file_size = std::fs::metadata(&stored_path)
-            .map_err(|error| format!("failed to read debug image metadata: {error}"))?
-            .len();
-        let placement = library.persist_imported_image(
-            &stored_path,
-            image::ImageFormat::Png.to_mime_type(),
-            width,
-            height,
-            file_size,
-            center_world,
-            1.0,
-        )?;
-        let placement_id = placement.state.id;
-        self.canvas.add_prepared_placement_image(
-            ctx,
-            crate::jobs::PreparedPlacementImage {
-                target_board_id: self.active_board_id,
-                queue_id: None,
-                placement,
-                preview_rgba: rgba,
-                preview_width: width,
-                preview_height: height,
-                animated_preview: None,
-                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-                loaded_lod: crate::data::CanvasImageLod::Working,
-                existing_load_diagnostics: None,
-                origin: crate::jobs::ImportOrigin::Existing,
-                trace: None,
-            },
-        );
-        Ok(placement_id)
-    }
-
-    #[cfg(debug_assertions)]
-    fn seed_rotation_verification(&mut self, ctx: &egui::Context) {
-        self.canvas
-            .apply_viewport_state(&crate::data::ViewportState::default());
-        match self.seed_import_verification_existing_anchor(ctx) {
-            Ok(placement_id) => {
-                self.canvas.select_placements(&[placement_id]);
-                let _ = self
-                    .canvas
-                    .set_image_rotation(placement_id, 30_f32.to_radians());
-                self.status = "Added rotated debug image".to_owned();
-            }
-            Err(error) => self.status = error,
-        }
-    }
-
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    fn seed_search_drag_preview_verification(&mut self, ctx: &egui::Context) {
-        self.canvas
-            .apply_viewport_state(&crate::data::ViewportState::default());
-        self.canvas
-            .set_background(crate::data::CanvasBackground::Grid);
-        self.settings.semantic_search_enabled = false;
-        self.settings.semantic_search_first_launch_prompt_seen = true;
-        self.search.set_local_model_store_status_for_verification(
-            crate::search::semantic::LocalModelStoreStatus::Installed,
-        );
-
-        let _ = self.seed_import_verification_image(
-            ctx,
-            "verify-search-drag-underlay",
-            egui::pos2(120.0, 40.0),
-            360,
-            260,
-            [68, 86, 120, 255],
-        );
-
-        let Some(library) = &self.library else {
-            self.status = "Library unavailable".to_owned();
-            return;
-        };
-
-        let specs = if matches!(
-            self.verification_mode,
-            Some(VerificationMode::SearchMultiDragSource)
-        ) {
-            vec![
-                (
-                    "verify-search-drag-result-a",
-                    320_u32,
-                    220_u32,
-                    [204, 94, 52, 255],
-                ),
-                (
-                    "verify-search-drag-result-b",
-                    220_u32,
-                    320_u32,
-                    [235, 198, 114, 255],
-                ),
-            ]
-        } else {
-            vec![(
-                "verify-search-drag-result",
-                320_u32,
-                220_u32,
-                [204, 94, 52, 255],
-            )]
-        };
-        let result = (|| -> Result<Vec<crate::data::Placement>, String> {
-            let mut placements = Vec::with_capacity(specs.len());
-            for (label, width, height, color) in specs {
-                let rgba = Self::solid_rgba(width, height, color);
-                let stored_path = library.store_rgba_image(label, &rgba, width, height)?;
-                let file_size = std::fs::metadata(&stored_path).map_err(|error| {
-                    format!("failed to read debug search image metadata: {error}")
-                })?;
-                let placement = library.persist_imported_image(
-                    &stored_path,
-                    image::ImageFormat::Png.to_mime_type(),
-                    width,
-                    height,
-                    file_size.len(),
-                    egui::pos2(0.0, 0.0),
-                    1.0,
-                )?;
-                placements.push(placement);
-            }
-            let placement_ids = placements
-                .iter()
-                .map(|placement| placement.state.id)
-                .collect::<Vec<_>>();
-            library.archive_placements(&placement_ids)?;
-            Ok(placements)
-        })();
-
-        let Ok(search_placements) = result else {
-            self.status = result
-                .err()
-                .unwrap_or_else(|| "Search drag verification seed failed".to_owned());
-            return;
-        };
-        self.search.overlay.open = true;
-        self.search.overlay.focus_requested = false;
-        self.search.overlay.query = "verify drag".to_owned();
-        self.search.overlay.status = crate::search::palette::SearchOverlayStatus::Ready;
-        self.search.overlay.results = search_placements
-            .iter()
-            .map(|placement| {
-                let asset = placement.asset.as_ref().expect("debug search asset");
-                crate::search::semantic::SearchResultAssetEntry {
-                    asset_id: asset.id,
-                    asset_preview_path: None,
-                    asset_original_path: Some(asset.original_path.clone()),
-                    asset_width: asset.width,
-                    asset_height: asset.height,
-                    similarity: 0.99,
-                }
-            })
-            .collect();
-        self.search.overlay.result_selection.replace(0);
-        if matches!(
-            self.verification_mode,
-            Some(VerificationMode::SearchMultiDragSource)
-        ) {
-            self.search.overlay.result_selection.toggle(1);
-        }
-        self.search.overlay.last_expanded_overlay_rect = Some(egui::Rect::from_min_size(
-            egui::pos2(24.0, 72.0),
-            egui::vec2(crate::search::palette::PALETTE_WIDTH, 420.0),
-        ));
-        if matches!(
-            self.verification_mode,
-            Some(VerificationMode::SearchDragPreview)
-        ) {
-            let asset = search_placements[0]
-                .asset
-                .as_ref()
-                .expect("debug search asset");
-            self.search.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
-                asset_ids: vec![asset.id],
-                outside_overlay: true,
-                provisional_batch_active: true,
-                auto_fit_applied: false,
-            });
-            let placement_creation_settings = self.placement_creation_settings();
-            crate::placement::lifecycle::start_provisional_batch(
-                &mut self.canvas,
-                vec![
-                    crate::placement::creation::ProvisionalSourceIntent::ExistingAsset {
-                        asset_id: asset.id,
-                        label: "verify-search-drag-result".to_owned(),
-                        dimensions: (asset.width, asset.height),
-                    },
-                ],
-                egui::pos2(120.0, 40.0),
-                egui::Rect::from_min_size(egui::Pos2::ZERO, STARTUP_VIEWPORT_SIZE),
-                placement_creation_settings,
-            );
-            crate::diagnostics::search_drag_debug(format!(
-                "seed_search_drag_preview_verification provisional_ids={:?} stack={:?}",
-                self.canvas.selected_placement_ids(),
-                self.canvas.canvas_stack_order()
-            ));
-            self.status = "Seeded search drag preview verification".to_owned();
-        } else {
-            self.status = "Seeded search drag source verification".to_owned();
-        }
-        ctx.request_repaint_after(Duration::from_millis(16));
-    }
-
-    #[cfg(debug_assertions)]
-    fn seed_gif_verification(&mut self, ctx: &egui::Context) {
-        self.canvas
-            .apply_viewport_state(&crate::data::ViewportState::default());
-        let width = 160_u32;
-        let height = 120_u32;
-        let first = Self::solid_rgba(width, height, [231, 94, 66, 255]);
-        let second = Self::solid_rgba(width, height, [70, 142, 255, 255]);
-        let asset = crate::data::ImageAsset {
-            id: -40,
-            original_path: std::path::PathBuf::from("/tmp/debug.gif"),
-            filename: "debug.gif".to_owned(),
-            mime_type: image::ImageFormat::Gif.to_mime_type().to_owned(),
-            width,
-            height,
-            file_size: (first.len() + second.len()) as u64,
-            imported_at: 0,
-        };
-        let placement = crate::data::Placement::loaded(
-            crate::data::PlacementState {
-                id: -40,
-                asset_id: Some(-40),
-                geometry: crate::data::RectGeometry::new(
-                    egui::Pos2::ZERO,
-                    eframe::egui::Vec2::ZERO,
-                    1.0,
-                    0.0,
-                    0,
-                ),
-                archived: false,
-            },
-            asset,
-        );
-        self.canvas.add_prepared_placement_image(
-            ctx,
-            crate::jobs::PreparedPlacementImage {
-                target_board_id: self.active_board_id,
-                queue_id: None,
-                placement,
-                preview_rgba: first.clone(),
-                preview_width: width,
-                preview_height: height,
-                animated_preview: Some(crate::jobs::AnimatedPreview {
-                    frames: vec![
-                        crate::jobs::AnimatedPreviewFrame {
-                            rgba: first,
-                            delay_seconds: 0.12,
-                        },
-                        crate::jobs::AnimatedPreviewFrame {
-                            rgba: second,
-                            delay_seconds: 0.12,
-                        },
-                    ],
-                    width,
-                    height,
-                }),
-                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-                loaded_lod: crate::data::CanvasImageLod::Working,
-                existing_load_diagnostics: None,
-                origin: crate::jobs::ImportOrigin::Existing,
-                trace: None,
-            },
-        );
-        self.canvas.select_placements(&[-40]);
-        self.canvas.set_animation_time_override_seconds(Some(0.13));
-        self.status = "Added animated GIF debug image".to_owned();
-    }
-
-    #[cfg(debug_assertions)]
-    fn seed_svg_verification(&mut self, ctx: &egui::Context) {
-        self.canvas
-            .apply_viewport_state(&crate::data::ViewportState::default());
-        self.canvas.clear_board_for_verification();
-        let width = 240_u32;
-        let height = 160_u32;
-        let svg = format!(
-            r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><rect width="{width}" height="{height}" rx="0" fill="#f8fafc"/><rect x="18" y="18" width="204" height="124" fill="#14b8a6"/><circle cx="120" cy="80" r="46" fill="#2563eb"/><path d="M52 116 L102 54 L139 98 L164 70 L204 116 Z" fill="#f59e0b"/></svg>"##
-        )
-        .into_bytes();
-        let asset = crate::data::ImageAsset {
-            id: -60,
-            original_path: std::path::PathBuf::from("/tmp/debug.svg"),
-            filename: "debug.svg".to_owned(),
-            mime_type: "image/svg+xml".to_owned(),
-            width,
-            height,
-            file_size: svg.len() as u64,
-            imported_at: 0,
-        };
-        let placement = crate::data::Placement::loaded(
-            crate::data::PlacementState {
-                id: -60,
-                asset_id: Some(-60),
-                geometry: crate::data::RectGeometry::new(
-                    egui::Pos2::ZERO,
-                    eframe::egui::Vec2::ZERO,
-                    1.5,
-                    0.0,
-                    0,
-                ),
-                archived: false,
-            },
-            asset,
-        );
-        self.canvas.add_prepared_placement_image(
-            ctx,
-            crate::jobs::PreparedPlacementImage {
-                target_board_id: self.active_board_id,
-                queue_id: None,
-                placement,
-                preview_rgba: Vec::new(),
-                preview_width: width,
-                preview_height: height,
-                animated_preview: None,
-                preview_texture: crate::jobs::ImagePrepPreviewTexture::Svg {
-                    uri: "bytes://verify-svg.svg".to_owned(),
-                    bytes: std::sync::Arc::<[u8]>::from(svg),
-                    size: [width as usize, height as usize],
-                },
-                loaded_lod: crate::data::CanvasImageLod::Working,
-                existing_load_diagnostics: None,
-                origin: crate::jobs::ImportOrigin::Existing,
-                trace: None,
-            },
-        );
-        self.canvas.select_placements(&[-60]);
-        self.status = "Added SVG debug image".to_owned();
-    }
-
-    #[cfg(debug_assertions)]
-    fn seed_move_snap_verification(&mut self, ctx: &egui::Context) {
-        self.canvas
-            .apply_viewport_state(&crate::data::ViewportState::default());
-        self.canvas.clear_board_for_verification();
-        self.settings.placement_gap = 24.0;
-        self.canvas.set_placement_gap(self.settings.placement_gap);
-
-        let left_result = self.seed_import_verification_image(
-            ctx,
-            "verify-snap-left",
-            egui::pos2(-170.0, 150.0),
-            120,
-            180,
-            [126, 150, 255, 255],
-        );
-        let top_result = self.seed_import_verification_image(
-            ctx,
-            "verify-snap-top",
-            egui::pos2(10.0, -120.0),
-            220,
-            120,
-            [188, 146, 255, 255],
-        );
-        let moving_result = self.seed_import_verification_image(
-            ctx,
-            "verify-snap-moving",
-            egui::pos2(70.0, 36.0),
-            180,
-            140,
-            [231, 94, 66, 255],
-        );
-
-        match (left_result, top_result, moving_result) {
-            (Ok(_), Ok(_), Ok(placement_id)) => {
-                self.canvas.select_placements(&[placement_id]);
-                let screen_rect =
-                    egui::Rect::from_min_size(egui::Pos2::ZERO, STARTUP_VIEWPORT_SIZE);
-                if self
-                    .canvas
-                    .seed_move_snap_preview_for_selected_items(screen_rect, egui::vec2(0.0, -88.0))
-                {
-                    self.status = "Added move snap debug preview".to_owned();
-                } else {
-                    self.status = "Failed to compute move snap debug preview".to_owned();
-                }
-            }
-            (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => self.status = error,
-        }
-    }
-
-    #[cfg(debug_assertions)]
-    fn seed_context_menu_verification(&mut self, ctx: &egui::Context) {
-        self.canvas
-            .apply_viewport_state(&crate::data::ViewportState::default());
-        self.canvas.clear_board_for_verification();
-
-        let image_result = self.seed_import_verification_image(
-            ctx,
-            "verify-context-menu",
-            egui::pos2(-80.0, 0.0),
-            180,
-            140,
-            [70, 142, 255, 255],
-        );
-        let annotation_result = self.library.as_ref().map(|library| {
-            library.create_canvas_annotation(
-                crate::data::CanvasAnnotationKind::Textbox,
-                egui::pos2(80.0, -60.0),
-                egui::pos2(260.0, 20.0),
-                "menu target",
-                crate::data::CanvasTextSize::M,
-                crate::data::CanvasStrokeWidth::M,
-                crate::data::CanvasAnnotationColor::Gold,
-                true,
-            )
-        });
-
-        match (image_result, annotation_result) {
-            (Ok(placement_id), Some(Ok(annotation))) => {
-                let annotation_id = annotation.id;
-                self.canvas.add_annotation(annotation);
-                self.canvas
-                    .select_content(&[placement_id], &[annotation_id]);
-                self.context_menu_pos = Some(egui::pos2(520.0, 260.0));
-                self.status = "Opened debug context menu".to_owned();
-            }
-            (Err(error), _) | (_, Some(Err(error))) => self.status = error,
-            (_, None) => self.status = "Library unavailable".to_owned(),
-        }
-    }
-
-    #[cfg(debug_assertions)]
-    fn seed_import_verification_loaded(&mut self, ctx: &egui::Context) {
-        self.canvas
-            .apply_viewport_state(&crate::data::ViewportState::default());
-        if self.import_worker.is_none() {
-            self.status = "Import worker unavailable".to_owned();
-            return;
-        }
-        if let Err(error) = self.seed_import_verification_existing_anchor(ctx) {
-            self.status = error;
-            return;
-        }
-        let desired_world = egui::Pos2::ZERO;
-        let viewport_world = self.startup_viewport_world_rect();
-        let mut layout = match self.import_arrangement_input_snapshot() {
-            Ok(layout) => layout,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
-        for (label, width, height, color) in [
-            ("Alpha", 180_u32, 140_u32, [231_u8, 94, 66, 255]),
-            ("Beta", 180, 140, [70, 142, 255, 255]),
-            ("Gamma", 180, 140, [73, 179, 122, 255]),
-        ] {
-            let reservation = self.reserve_import(
-                &mut layout,
-                label.to_owned(),
-                Some((width, height)),
-                desired_world,
-                viewport_world,
-                crate::data::ContentResolutionSource::Clipboard,
-            );
-            let rgba = Self::solid_rgba(width, height, color);
-            let enqueue_result = self.import_worker.as_ref().and_then(|import_worker| {
-                import_worker
-                    .enqueue(
-                        crate::placement::content_resolution::import_clipboard_request(
-                            rgba,
-                            width,
-                            height,
-                            reservation,
-                            desired_world,
-                            viewport_world,
-                            self.import_request_config(),
-                            None,
-                        ),
-                    )
-                    .err()
-            });
-            if let Some(error) = enqueue_result {
-                self.remove_import_reservation(reservation);
-                self.status = error;
-                return;
-            }
-        }
-        self.status = "Queued debug imports".to_owned();
-    }
-
-    #[cfg(debug_assertions)]
-    fn seed_import_verification_matrix(&mut self, ctx: &egui::Context) {
-        self.canvas
-            .apply_viewport_state(&crate::data::ViewportState::default());
-        self.canvas.clear_board_for_verification();
-        self.settings.semantic_search_first_launch_prompt_seen = true;
-        if self.import_worker.is_none() {
-            self.status = "Import worker unavailable".to_owned();
-            return;
-        }
-
-        let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, STARTUP_VIEWPORT_SIZE);
-        let viewport_world = self.startup_viewport_world_rect();
-
-        let drop_path = match Self::write_import_verification_png(
-            "snappyref-verify-drop.png",
-            220,
-            150,
-            [231, 94, 66, 255],
-        ) {
-            Ok(path) => path,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
-        let clipboard_path = match Self::write_import_verification_png(
-            "snappyref-verify-clipboard-path.png",
-            150,
-            210,
-            [70, 142, 255, 255],
-        ) {
-            Ok(path) => path,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
-
-        self.enqueue_external_import_sources(
-            vec![ExternalImportSource::Path(drop_path)],
-            screen_rect,
-            egui::pos2(-280.0, -140.0),
-        );
-        self.enqueue_external_import_sources(
-            vec![ExternalImportSource::Path(clipboard_path)],
-            screen_rect,
-            egui::pos2(0.0, -140.0),
-        );
-
-        if !self.enqueue_debug_clipboard_image_import(
-            180,
-            180,
-            [73, 179, 122, 255],
-            egui::pos2(280.0, -140.0),
-            viewport_world,
-        ) {
-            return;
-        }
-
-        if let Some(url) = std::env::var("SNAPPYREF_VERIFY_IMPORT_URL")
-            .ok()
-            .filter(|url| !url.trim().is_empty())
-        {
-            let _ =
-                self.handle_clipboard_url_import_at(screen_rect, &url, egui::pos2(-140.0, 140.0));
-        }
-
-        match self.seed_import_verification_image(
-            ctx,
-            "verify-internal-paste-source",
-            egui::pos2(140.0, 140.0),
-            170,
-            130,
-            [188, 146, 255, 255],
-        ) {
-            Ok(placement_id) => {
-                self.canvas.select_placements(&[placement_id]);
-                if let Some(payload) = self.copy_selected_board_payload()
-                    && let Err(error) =
-                        self.paste_board_payload_at(&payload, egui::pos2(360.0, 140.0))
-                {
-                    self.status = error;
-                    return;
-                }
-            }
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        }
-
-        self.status = "Queued debug import matrix".to_owned();
-    }
-
-    #[cfg(debug_assertions)]
-    fn enqueue_debug_clipboard_image_import(
-        &mut self,
-        width: u32,
-        height: u32,
-        color: [u8; 4],
-        desired_world: egui::Pos2,
-        viewport_world: egui::Rect,
-    ) -> bool {
-        let mut layout = match self.import_arrangement_input_snapshot() {
-            Ok(layout) => layout,
-            Err(error) => {
-                self.status = error;
-                return false;
-            }
-        };
-        let reservation = self.reserve_import(
-            &mut layout,
-            "Clipboard image".to_owned(),
-            Some((width, height)),
-            desired_world,
-            viewport_world,
-            crate::data::ContentResolutionSource::Clipboard,
-        );
-        let rgba = Self::solid_rgba(width, height, color);
-        if let Err(error) = self
-            .import_worker
-            .as_ref()
-            .expect("checked import worker")
-            .enqueue(
-                crate::placement::content_resolution::import_clipboard_request(
-                    rgba,
-                    width,
-                    height,
-                    reservation,
-                    desired_world,
-                    viewport_world,
-                    self.import_request_config(),
-                    None,
-                ),
-            )
-        {
-            self.remove_import_reservation(reservation);
-            self.status = error;
-            return false;
-        }
-        true
-    }
-
-    #[cfg(debug_assertions)]
-    fn write_import_verification_png(
-        name: &str,
-        width: u32,
-        height: u32,
-        color: [u8; 4],
-    ) -> Result<std::path::PathBuf, String> {
-        let path = std::env::temp_dir().join(name);
-        let rgba = Self::solid_rgba(width, height, color);
-        image::save_buffer_with_format(
-            &path,
-            &rgba,
-            width,
-            height,
-            image::ColorType::Rgba8,
-            image::ImageFormat::Png,
-        )
-        .map_err(|error| {
-            format!(
-                "failed to write debug import PNG {}: {error}",
-                path.display()
-            )
-        })?;
-        Ok(path)
-    }
-
-    #[cfg(debug_assertions)]
-    fn verification_imports_settled(&self) -> bool {
-        match self.verification_mode {
-            Some(VerificationMode::ImportLoaded) => self.content_resolution.pending_len() == 0,
-            Some(VerificationMode::ImportMatrix) => self.content_resolution.pending_len() == 0,
-            _ => true,
-        }
-    }
-
-    #[cfg(not(debug_assertions))]
-    fn verification_imports_settled(&self) -> bool {
-        true
-    }
-
-    fn solid_rgba(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
-        let mut rgba = vec![0; width as usize * height as usize * 4];
-        for chunk in rgba.chunks_exact_mut(4) {
-            chunk.copy_from_slice(&color);
-        }
-        rgba
-    }
-
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    fn drive_verification_search(&mut self) {
-        let Some(query) = self.verification_search_query.clone() else {
-            return;
-        };
-        self.search.drive_verification_search(
-            &query,
-            &mut self.settings.semantic_search_enabled,
-            self.library.as_ref(),
-            &mut self.canvas,
-            &mut self.status,
-            self.settings.canvas_image_max_side,
-        );
-    }
-
-    #[cfg(all(debug_assertions, feature = "semantic-search"))]
-    fn verification_search_settled(&self) -> bool {
-        self.verification_search_query
-            .as_deref()
-            .is_none_or(|query| self.search.verification_search_settled(query))
-    }
-
-    #[cfg(not(all(debug_assertions, feature = "semantic-search")))]
-    fn drive_verification_search(&mut self) {}
-
-    #[cfg(not(all(debug_assertions, feature = "semantic-search")))]
-    fn verification_search_settled(&self) -> bool {
-        true
-    }
-
     #[cfg(feature = "semantic-search")]
     fn sync_semantic_search_service(&mut self) {
         self.search.sync_service(
@@ -6104,45 +4725,7 @@ impl eframe::App for SnappyRefApp {
         #[cfg(feature = "semantic-search")]
         self.drive_semantic_search_install(ui.ctx());
         self.handle_history_shortcuts(ui.ctx());
-        self.drive_verification_search();
         if self.drive_perf_scenario(ui.ctx(), screen_rect) {
-            return;
-        }
-
-        if !self.verification_search_settled() || !self.verification_imports_settled() {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(16));
-            return;
-        }
-
-        if self.screenshot_capture.is_pending()
-            && let Some(render_state) = &self.wgpu_render_state
-        {
-            let _ = render_state.device.poll(eframe::wgpu::PollType::Poll);
-            ui.ctx().request_repaint();
-        }
-
-        if self.screenshot_capture.begin_frame(
-            ui.ctx(),
-            self.window_capture.as_ref(),
-            &mut self.status,
-        ) {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-            return;
-        }
-
-        #[cfg(debug_assertions)]
-        if matches!(
-            self.verification_mode,
-            Some(VerificationMode::DesignSystemPreview)
-        ) {
-            crate::ui::design_system_preview::show(ui, screen_rect);
-            if self
-                .screenshot_capture
-                .handle_event(ui.ctx(), &mut self.status)
-            {
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-            }
             return;
         }
 
@@ -6185,6 +4768,7 @@ impl eframe::App for SnappyRefApp {
             canvas_input_policy,
             false,
         );
+        self.record_perf_painted_frame();
         let context_menu_just_opened =
             if let Some(request) = self.canvas.take_context_menu_request() {
                 self.context_menu_pos = Some(request.screen_pos);
@@ -6243,13 +4827,6 @@ impl eframe::App for SnappyRefApp {
             &mut self.canvas,
             &board_summaries,
             self.active_board_id,
-            #[cfg(debug_assertions)]
-            matches!(
-                self.verification_mode,
-                Some(VerificationMode::OpenSidebarBoardsHover)
-            )
-            .then_some(1),
-            #[cfg(not(debug_assertions))]
             None,
             self.update_service.state(),
             about_updates,
@@ -6304,12 +4881,6 @@ impl eframe::App for SnappyRefApp {
         }
         #[cfg(feature = "semantic-search")]
         self.show_search_overlay(ui.ctx(), screen_rect);
-        if self
-            .screenshot_capture
-            .handle_event(ui.ctx(), &mut self.status)
-        {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-        }
     }
 
     fn on_exit(&mut self) {

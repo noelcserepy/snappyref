@@ -5,9 +5,8 @@
 - Tokens/styles: `src/theme.rs`
 - Layout helpers: `src/ui_layout.rs`
 - Shared UI patterns: `src/sidebar.rs`, `src/palette.rs`, `src/canvas/render.rs`
-- Preview/probe: `src/design_system_preview.rs`, exposed through `--verify-design-system` in debug builds
-- Verification command: `cargo run --bin snappyref -- --verify-design-system --screenshot /tmp/snappyref-design-system.png`
-- Temporary comparisons: add narrow debug-only probes in `src/app.rs` and remove them after the decision unless they become reusable verification states.
+- Visual verification: use `docs/skills/inspect/SKILL.md` and inspect scenarios/artifacts.
+- Temporary comparisons: add the narrowest inspect scenario observation or assertion, then remove one-off instrumentation after the decision unless it becomes a reusable inspect primitive.
 
 ## Design Decisions
 
@@ -85,9 +84,9 @@ Semantic search and library recall live in `src/search.rs` with reusable paint h
 
 Annotation and edit controls live close to the selected item in `src/canvas/render.rs`. Canvas overlays and toolbars should stay compact and avoid obscuring the reference material.
 
-Image selection borders use the `TEXT` color, 2px stroke, square corners, and zero padding from the image bounds. Use this same border language for selected search result thumbnails in `src/palette.rs`, selected canvas Placements, and search drag previews in `src/canvas/render.rs`. Search results are library-wide Asset Results and do not highlight existing canvas Placements. Do not use rounded corners, expanded outlines, alternate selected colors, or thicker lead/hover variants for image selection.
+Image selection borders use the `TEXT` color, 1px stroke, square corners, and zero padding from the image bounds. Use this same border language for selected search result thumbnails in `src/palette.rs`, selected canvas Placements, and search drag previews in `src/canvas/render.rs`. Search results are library-wide Asset Results and do not highlight existing canvas Placements. Do not use rounded corners, expanded outlines, alternate selected colors, double-stroked previews, or thicker lead/hover variants for image selection.
 
-Keep screenshotable debug verification probes in `src/app.rs` when they expose a broadly useful state. Keep one-off inspection probes narrow and remove them after use.
+Use inspect scenarios for screenshot-backed visual checks. Do not add startup debug flags or probe-only app states for design review.
 
 ### Interaction, State, And Accessibility
 

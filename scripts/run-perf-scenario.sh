@@ -146,6 +146,27 @@ def sample_tree(root_pid, elapsed_ms):
 started = time.monotonic()
 process = subprocess.Popen(cmd, env=env)
 root_pid = process.pid
+print(f"scenario={scenario} pid={root_pid} run_dir={run_dir}", flush=True)
+
+
+def maybe_activate_app():
+    if os.environ.get("SNAPPYREF_PERF_FRONTMOST") != "1":
+        return
+    if sys.platform != "darwin":
+        return
+    subprocess.run(
+        [
+            "osascript",
+            "-e",
+            'tell application "System Events" to set frontmost of process "snappyref" to true',
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+
+maybe_activate_app()
 
 tree_samples: list[dict] = []
 
