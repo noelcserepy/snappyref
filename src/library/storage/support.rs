@@ -1,5 +1,5 @@
 pub(super) use std::fs::{self, File};
-pub(super) use std::io::BufWriter;
+pub(super) use std::io::{BufReader, BufWriter, Read};
 pub(super) use std::path::{Path, PathBuf};
 pub(super) use std::sync::atomic::{AtomicU64, Ordering};
 pub(super) use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,6 +10,7 @@ pub(super) use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 pub(super) use image::codecs::webp::WebPEncoder;
 pub(super) use image::{ColorType, ExtendedColorType, ImageEncoder, ImageFormat};
 pub(super) use rusqlite::{Connection, Transaction, params, params_from_iter};
+pub(super) use sha2::{Digest, Sha256};
 
 pub(super) use crate::data::{
     Board, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,

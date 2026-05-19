@@ -35,6 +35,8 @@ const USER_SESSION_SAVE_DEBOUNCE: Duration = Duration::from_millis(750);
 /// ADR-0015: discovery is opportunistic and the manual button is a
 /// convenience, not a way to hammer the manifest endpoint.
 const MANUAL_UPDATE_CHECK_THROTTLE: Duration = Duration::from_secs(60);
+const BOARD_LOAD_DEDUPE_HASH_LIMIT: usize = 32;
+const BOARD_LOAD_DEDUPE_GROUP_LIMIT: usize = 8;
 
 mod shortcuts;
 
@@ -1514,6 +1516,56 @@ impl SnappyRefApp {
 
     fn load_active_board(&mut self) {
         crate::active_board::load::load_active_board(self);
+    }
+
+    fn dedupe_library_exact(
+        &mut self,
+        hash_limit: usize,
+        group_limit: usize,
+    ) -> Option<crate::library::storage::ExactDedupeReport> {
+        let Some(library) = &self.library else {
+            self.status = "Storage unavailable".to_owned();
+            return None;
+        };
+        match library.dedupe_exact_assets(hash_limit, group_limit) {
+            Ok(report) => {
+                if report.changed() {
+                    #[cfg(feature = "semantic-search")]
+                    self.search.invalidate_library_search_cache();
+                    self.refresh_board_summaries();
+                }
+                Some(report)
+            }
+            Err(error) => {
+                self.status = error;
+                None
+            }
+        }
+    }
+
+    fn dedupe_library_for_board_load(&mut self) {
+        let _ =
+            self.dedupe_library_exact(BOARD_LOAD_DEDUPE_HASH_LIMIT, BOARD_LOAD_DEDUPE_GROUP_LIMIT);
+    }
+
+    fn dedupe_library_from_shortcut(&mut self) {
+        self.save_active_board_before_transition();
+        let Some(report) = self.dedupe_library_exact(usize::MAX, usize::MAX) else {
+            return;
+        };
+        if report.changed() {
+            self.load_active_board();
+            let noun = if report.duplicate_assets_removed == 1 {
+                "duplicate"
+            } else {
+                "duplicates"
+            };
+            self.status = format!("Removed {} {noun}", report.duplicate_assets_removed);
+        } else if report.hashed_assets > 0 {
+            self.status = format!("Checked {} assets; no duplicates", report.hashed_assets);
+        } else {
+            self.status = "No exact duplicates found".to_owned();
+        }
     }
 
     fn clear_active_board_transients(&mut self) {
@@ -3638,6 +3690,7 @@ impl SnappyRefApp {
                 | SupportedShortcutAction::ToggleAlwaysOnTop
                 | SupportedShortcutAction::ApplyDefaultAverageArea
                 | SupportedShortcutAction::AverageSelectionArea
+                | SupportedShortcutAction::DedupeLibrary
                 | SupportedShortcutAction::Arrange(_) => shortcut
                     .binding
                     .is_some_and(|binding| shortcut_pressed(ctx, binding)),
@@ -3711,6 +3764,9 @@ impl SnappyRefApp {
                         continue;
                     }
                     apply_average_selection_area(&mut self.canvas, &mut self.status);
+                }
+                SupportedShortcutAction::DedupeLibrary => {
+                    self.dedupe_library_from_shortcut();
                 }
             }
             break;
@@ -4924,6 +4980,10 @@ impl crate::active_board::load::ActiveBoardLoadHost for SnappyRefApp {
 
     fn load_active_board_viewport(&mut self) {
         SnappyRefApp::load_session_viewport(self);
+    }
+
+    fn dedupe_library_for_active_board_load(&mut self) {
+        SnappyRefApp::dedupe_library_for_board_load(self);
     }
 
     fn enqueue_active_board_existing_items(&mut self) {

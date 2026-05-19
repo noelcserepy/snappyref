@@ -12,6 +12,7 @@ Earlier compact layout behavior could prefer a visually square bounding box whil
 - User-invoked compact arrangement may run **Compact Size Normalization** before packing: a bounded candidate-generation pass that proposes small aspect-preserving scale changes for selected placements whose visual width or height is near an existing size bucket, then scores those variants by final compact quality. A dimension is near a bucket when it is within about one world unit or about five percent of that bucket.
 - Compact Size Normalization must earn its resize: a normalized candidate should beat the no-resize candidate only when post-pack occupancy improves meaningfully, roughly two to three percentage points. Near-equivalent candidates prefer fewer changed placements, smaller total scale deltas, and downscales over upscales.
 - Candidate squareness only decides when occupancy is roughly equivalent, within about three percentage points.
+- Extreme tall or wide bounds are an exception to the normal density-first tie-break: when any candidate can fit within 16:9, candidates outside 16:9 are not acceptable even if they are denser. This prevents many small placements from being stranded in a long side column.
 - Right-edge cleanliness is only a weak tie-break among near-equivalent candidates; clean top and left edges matter more.
 - The configured Placement Gap is always respected.
 - Packing uses rotated visual placement footprints, not unrotated asset dimensions.
@@ -22,6 +23,6 @@ Earlier compact layout behavior could prefer a visually square bounding box whil
 ## Consequences
 
 - Compact arrangement is not a masonry layout and not a perfect-square layout.
-- A less square result is correct when it is meaningfully denser.
+- A less square result is correct when it is meaningfully denser, unless it exceeds the 16:9 compactness boundary and another candidate stays within it.
 - Future tuning should compare candidate density before adjusting squareness preferences.
 - Import/search preview compaction may reuse the same compact layout objective, but it must preserve caller/source order when mapping preview slots back to async work.

@@ -354,6 +354,7 @@ struct CompactCandidate {
     height: f32,
     occupancy: f32,
     aspect: f32,
+    grid_aspect: f32,
     right_edge_raggedness: f32,
     area: f32,
 }
@@ -905,6 +906,7 @@ fn maxrects_pack_layout(
     let score_area = (padded_width * padded_height).max(1.0);
     let occupancy = padded_area / score_area;
     let aspect = padded_width.max(padded_height) / padded_width.min(padded_height).max(1.0);
+    let grid_aspect = compact_grid_aspect(&padded_placements);
     Some(CompactCandidate {
         right_edge_raggedness: right_edge_raggedness(&padded_placements, padded_width),
         placements,
@@ -912,6 +914,7 @@ fn maxrects_pack_layout(
         height: layout_height,
         occupancy,
         aspect,
+        grid_aspect,
         area: score_area,
     })
 }
@@ -1241,8 +1244,41 @@ fn right_edge_raggedness(placements: &[(i64, PackRect)], layout_width: f32) -> f
         / placements.len() as f32
 }
 
+fn compact_grid_aspect(placements: &[(i64, PackRect)]) -> f32 {
+    if placements.is_empty() {
+        return 1.0;
+    }
+
+    let columns = compact_axis_bucket_count(placements.iter().map(|(_, rect)| rect.x));
+    let rows = compact_axis_bucket_count(placements.iter().map(|(_, rect)| rect.y));
+    columns.max(rows) as f32 / columns.min(rows).max(1) as f32
+}
+
+fn compact_axis_bucket_count(values: impl Iterator<Item = f32>) -> usize {
+    let mut values = values.collect::<Vec<_>>();
+    values.sort_by(|left, right| left.total_cmp(right));
+    let mut count = 0usize;
+    let mut last = None::<f32>;
+    for value in values {
+        if last.is_none_or(|previous| (value - previous).abs() > 1.0) {
+            count += 1;
+            last = Some(value);
+        }
+    }
+    count
+}
+
 fn compact_candidate_better(candidate: &CompactCandidate, best: &CompactCandidate) -> bool {
+    const ACCEPTABLE_ASPECT_RATIO: f32 = 16.0 / 9.0;
     const OCCUPANCY_DECIDES_THRESHOLD: f32 = 0.03;
+    const ASPECT_DECIDES_THRESHOLD: f32 = 0.25;
+    if candidate.aspect <= ACCEPTABLE_ASPECT_RATIO && best.aspect > ACCEPTABLE_ASPECT_RATIO {
+        return true;
+    }
+    if candidate.aspect > ACCEPTABLE_ASPECT_RATIO && best.aspect <= ACCEPTABLE_ASPECT_RATIO {
+        return false;
+    }
+
     if candidate.occupancy > best.occupancy + OCCUPANCY_DECIDES_THRESHOLD {
         return true;
     }
@@ -1250,6 +1286,17 @@ fn compact_candidate_better(candidate: &CompactCandidate, best: &CompactCandidat
         return false;
     }
 
+    candidate.aspect < best.aspect - ASPECT_DECIDES_THRESHOLD
+        || ((candidate.aspect - best.aspect).abs() <= ASPECT_DECIDES_THRESHOLD
+            && (candidate.grid_aspect < best.grid_aspect - 0.001
+                || ((candidate.grid_aspect - best.grid_aspect).abs() < 0.001
+                    && compact_candidate_secondary_tie_break(candidate, best))))
+}
+
+fn compact_candidate_secondary_tie_break(
+    candidate: &CompactCandidate,
+    best: &CompactCandidate,
+) -> bool {
     candidate.aspect < best.aspect - 0.001
         || ((candidate.aspect - best.aspect).abs() < 0.001
             && (candidate.occupancy > best.occupancy + 0.001
@@ -1315,6 +1362,101 @@ mod tests {
             center: egui::pos2(10.0, 10.0),
         });
         assert_eq!(record.state.geometry.center, egui::pos2(10.0, 10.0));
+    }
+
+    #[test]
+    fn compact_layout_balances_equal_size_landscape_images() {
+        let items = (0..6)
+            .map(|index| {
+                PlacementArrangementInput::new(
+                    index,
+                    egui::pos2(index as f32 * 160.0, 0.0),
+                    egui::vec2(150.0, 40.0),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let (placements, _, _) = best_compact_layout(&items, 12.0).unwrap();
+        let columns = compact_axis_bucket_count(placements.iter().map(|(_, center)| center.x));
+        let rows = compact_axis_bucket_count(placements.iter().map(|(_, center)| center.y));
+
+        assert_eq!(columns, 2);
+        assert_eq!(rows, 3);
+    }
+
+    #[test]
+    fn compact_layout_avoids_extreme_column_for_mixed_tiny_images() {
+        let tiny_count = 24;
+        let mut items = (0..tiny_count)
+            .map(|index| {
+                PlacementArrangementInput::new(
+                    index,
+                    egui::pos2(index as f32 * 12.0, index as f32 * 9.0),
+                    egui::vec2(20.0 + (index % 3) as f32, 24.0 + (index % 2) as f32),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (index, size) in [
+            egui::vec2(160.0, 100.0),
+            egui::vec2(120.0, 150.0),
+            egui::vec2(90.0, 70.0),
+            egui::vec2(70.0, 110.0),
+            egui::vec2(54.0, 64.0),
+            egui::vec2(92.0, 42.0),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let id = tiny_count + index as i64;
+            items.push(PlacementArrangementInput::new(
+                id,
+                egui::pos2(index as f32 * 140.0, -120.0),
+                size,
+            ));
+        }
+        let (_, width, height) = best_compact_layout(&items, 12.0).unwrap();
+        let aspect = width.max(height) / width.min(height).max(1.0);
+
+        assert!(
+            aspect <= 3.0,
+            "expected a rectangle-like compact layout, got {width}x{height}"
+        );
+    }
+
+    #[test]
+    fn compact_layout_keeps_copied_windows_column_under_sixteen_by_nine() {
+        let mut id = 0_i64;
+        let mut items = Vec::new();
+        for _ in 0..21 {
+            items.push(PlacementArrangementInput::new(
+                id,
+                egui::pos2(id as f32 * 8.0, 0.0),
+                egui::vec2(346.4, 259.8),
+            ));
+            id += 1;
+        }
+        items.push(PlacementArrangementInput::new(
+            id,
+            egui::pos2(id as f32 * 8.0, 0.0),
+            egui::vec2(369.0, 245.6),
+        ));
+        id += 1;
+        for _ in 0..21 {
+            items.push(PlacementArrangementInput::new(
+                id,
+                egui::pos2(id as f32 * 8.0, 0.0),
+                egui::vec2(369.0, 243.9),
+            ));
+            id += 1;
+        }
+
+        let (_, width, height) = best_compact_layout(&items, 0.0).unwrap();
+        let aspect = width.max(height) / width.min(height).max(1.0);
+
+        assert!(
+            aspect <= 16.0 / 9.0,
+            "expected copied Windows column to fit 16:9, got {width}x{height}"
+        );
     }
 }
 

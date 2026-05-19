@@ -22,6 +22,10 @@ if [[ "$scenario" == "--help" || "$scenario" == "-h" ]]; then
   echo "  semantic-search-real-install"
   echo "  sample-image-import"
   echo "  blue-image-search-drag"
+  echo "  search-palette-footer"
+  echo "  compact-equal-size-images"
+  echo "  compact-mixed-column-images"
+  echo "  compact-windows-column-images"
   exit 0
 fi
 
@@ -33,6 +37,10 @@ if [[ "$scenario" == "--list" ]]; then
   echo "semantic-search-real-install"
   echo "sample-image-import"
   echo "blue-image-search-drag"
+  echo "search-palette-footer"
+  echo "compact-equal-size-images"
+  echo "compact-mixed-column-images"
+  echo "compact-windows-column-images"
   exit 0
 fi
 
@@ -57,6 +65,18 @@ case "$scenario" in
     ;;
   blue-image-search-drag)
     test_filter="inspect_blue_image_search_drag_writes_artifact"
+    ;;
+  search-palette-footer)
+    test_filter="inspect_search_palette_footer_writes_artifact"
+    ;;
+  compact-equal-size-images)
+    test_filter="inspect_compact_equal_size_images_writes_artifact"
+    ;;
+  compact-mixed-column-images)
+    test_filter="inspect_compact_mixed_column_images_writes_artifact"
+    ;;
+  compact-windows-column-images)
+    test_filter="inspect_compact_windows_column_images_writes_artifact"
     ;;
   *)
     echo "status=fail"

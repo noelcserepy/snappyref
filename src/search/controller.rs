@@ -685,6 +685,17 @@ impl SearchController {
         self.pending_demand_embeddings.len()
     }
 
+    pub(crate) fn invalidate_library_search_cache(&mut self) {
+        self.result_cache.clear();
+        if let Some(service) = &self.service {
+            service.invalidate_search_embedding_cache();
+        }
+        self.embedding_backfill.exhausted = false;
+        if self.overlay.open {
+            self.overlay.last_submitted_query.clear();
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) fn completed_demand_embedding_count(&self) -> usize {
         self.completed_demand_embeddings

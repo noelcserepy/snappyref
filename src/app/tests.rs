@@ -3930,6 +3930,402 @@ fn inspect_sample_image_import_writes_artifact() {
 
 #[cfg(feature = "semantic-search")]
 #[test]
+fn inspect_compact_windows_column_images_writes_artifact() {
+    let scenario_name = inspect_scenario_name("compact-windows-column-images");
+    let mut scenario = InspectScenario::new(scenario_name);
+    scenario.event(
+        "seed",
+        serde_json::json!({
+            "seed": "copied-windows-library-column-asset-sizes",
+            "source_assets": [
+                "1779098228313-7-dmytro-koplyk--xbiOACMg8A-unsplash.jpg",
+                "1779098229588-9-steve-gribble-5SzX75APpo0-unsplash.jpg",
+                "1779013778968-6-sung-jin-cho-6iNPrmVctzQ-unsplash.jpg"
+            ],
+        }),
+    );
+
+    let mut app = test_app(None);
+    app.settings.placement_gap = 0.0;
+    let mut harness = app_full_harness(app);
+    let ctx = harness.ctx.clone();
+    let mut id = 1_i64;
+
+    for index in 0..21 {
+        add_inspect_compact_image(
+            &mut harness,
+            &ctx,
+            id,
+            346,
+            260,
+            if index % 2 == 0 {
+                [74, 84, 76, 255]
+            } else {
+                [112, 122, 110, 255]
+            },
+            egui::pos2(-480.0, -320.0 + index as f32 * 260.0),
+        );
+        id += 1;
+    }
+    add_inspect_compact_image(
+        &mut harness,
+        &ctx,
+        id,
+        369,
+        246,
+        [150, 156, 140, 255],
+        egui::pos2(-480.0, -320.0 + 21.0 * 260.0),
+    );
+    id += 1;
+    for index in 0..21 {
+        add_inspect_compact_image(
+            &mut harness,
+            &ctx,
+            id,
+            369,
+            244,
+            if index % 2 == 0 {
+                [82, 92, 74, 255]
+            } else {
+                [122, 132, 118, 255]
+            },
+            egui::pos2(-110.0, -320.0 + index as f32 * 244.0),
+        );
+        id += 1;
+    }
+
+    harness
+        .state_mut()
+        .canvas
+        .select_placements(&(1_i64..id).collect::<Vec<_>>());
+    harness.step();
+
+    scenario.capture_screen("screen-000-before-compact", &mut harness);
+    scenario.fact(
+        "compact.windows-column.before",
+        compact_selection_fact(harness.state()),
+    );
+    harness.key_press(egui::Key::Q);
+    harness.step();
+    harness
+        .state_mut()
+        .canvas
+        .focus_selection_in_view(test_screen_rect(), test_screen_rect());
+    harness.step();
+    let after_stats = scenario.capture_screen("screen-001-after-q-compact", &mut harness);
+    let after_fact = compact_selection_fact(harness.state());
+    scenario.fact("compact.windows-column.after", after_fact.clone());
+    scenario.assertion(
+        "compact copied Windows column frame is opaque",
+        after_stats.transparent_pixels == 0,
+    );
+    scenario.assertion(
+        "q compact keeps copied Windows column within sixteen by nine",
+        after_fact["bounds_aspect"]
+            .as_f64()
+            .is_some_and(|aspect| aspect <= 16.0 / 9.0),
+    );
+
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
+}
+
+#[cfg(feature = "semantic-search")]
+#[test]
+fn inspect_compact_mixed_column_images_writes_artifact() {
+    let scenario_name = inspect_scenario_name("compact-mixed-column-images");
+    let mut scenario = InspectScenario::new(scenario_name);
+    scenario.event(
+        "seed",
+        serde_json::json!({
+            "seed": "many-tiny-landscape-images-plus-mixed-sizes",
+        }),
+    );
+
+    let mut app = test_app(None);
+    app.settings.placement_gap = 12.0;
+    let mut harness = app_full_harness(app);
+    let ctx = harness.ctx.clone();
+    let mut id = 1_i64;
+
+    for index in 0..24 {
+        let width = 20_u32 + (index % 3) as u32;
+        let height = 24_u32 + (index % 2) as u32;
+        let color = if index % 2 == 0 {
+            [82, 92, 74, 255]
+        } else {
+            [120, 128, 116, 255]
+        };
+        add_inspect_compact_image(
+            &mut harness,
+            &ctx,
+            id,
+            width,
+            height,
+            color,
+            egui::pos2(-500.0 + index as f32 * 14.0, -260.0 + index as f32 * 10.0),
+        );
+        id += 1;
+    }
+
+    for (width, height, color, center) in [
+        (160, 100, [206, 184, 150, 255], egui::pos2(120.0, 0.0)),
+        (120, 150, [92, 132, 172, 255], egui::pos2(270.0, -70.0)),
+        (90, 70, [178, 170, 158, 255], egui::pos2(400.0, 40.0)),
+        (70, 110, [198, 94, 70, 255], egui::pos2(540.0, -100.0)),
+        (54, 64, [220, 216, 198, 255], egui::pos2(650.0, 20.0)),
+        (92, 42, [78, 126, 226, 255], egui::pos2(760.0, -60.0)),
+    ] {
+        add_inspect_compact_image(&mut harness, &ctx, id, width, height, color, center);
+        id += 1;
+    }
+
+    harness
+        .state_mut()
+        .canvas
+        .select_placements(&(1_i64..id).collect::<Vec<_>>());
+    harness.step();
+
+    scenario.capture_screen("screen-000-before-compact", &mut harness);
+    scenario.fact(
+        "compact.mixed-column.before",
+        compact_selection_fact(harness.state()),
+    );
+    harness.key_press(egui::Key::Q);
+    harness.step();
+    let after_stats = scenario.capture_screen("screen-001-after-q-compact", &mut harness);
+    let after_fact = compact_selection_fact(harness.state());
+    scenario.fact("compact.mixed-column.after", after_fact.clone());
+    scenario.assertion(
+        "compact mixed-column frame is opaque",
+        after_stats.transparent_pixels == 0,
+    );
+    scenario.assertion(
+        "q compact avoids a dominant tall thumbnail column",
+        after_fact["max_column_count"]
+            .as_u64()
+            .is_some_and(|count| count <= 12),
+    );
+    scenario.assertion(
+        "q compact keeps mixed selection in a rectangle-like bounds",
+        after_fact["bounds_aspect"]
+            .as_f64()
+            .is_some_and(|aspect| aspect <= 3.0),
+    );
+
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
+}
+
+#[cfg(feature = "semantic-search")]
+#[test]
+fn inspect_compact_equal_size_images_writes_artifact() {
+    let scenario_name = inspect_scenario_name("compact-equal-size-images");
+    let mut scenario = InspectScenario::new(scenario_name);
+    scenario.event(
+        "seed",
+        serde_json::json!({
+            "seed": "six-equal-size-selected-images",
+        }),
+    );
+
+    let mut app = test_app(None);
+    app.settings.placement_gap = 12.0;
+    let mut harness = app_full_harness(app);
+    let ctx = harness.ctx.clone();
+    let colors = [
+        [228, 171, 72, 255],
+        [155, 108, 218, 255],
+        [76, 190, 184, 255],
+        [206, 89, 94, 255],
+        [97, 145, 228, 255],
+        [133, 190, 92, 255],
+    ];
+
+    for id in 1_i64..=6 {
+        let asset = ImageAsset {
+            id,
+            original_path: PathBuf::from(format!("compact-equal-{id}.png")),
+            filename: format!("compact-equal-{id}.png"),
+            mime_type: "image/png".to_owned(),
+            width: 150,
+            height: 40,
+            file_size: 150 * 40 * 4,
+            imported_at: 0,
+        };
+        let placement = Placement::loaded(
+            PlacementState::with_display_size(
+                id,
+                Some(id),
+                egui::pos2(-360.0 + id as f32 * 150.0, -120.0 + id as f32 * 20.0),
+                egui::vec2(150.0, 40.0),
+                1.0,
+                0.0,
+                id as i32,
+                false,
+            ),
+            asset,
+        );
+        harness.state_mut().canvas.add_prepared_placement_image(
+            &ctx,
+            PreparedPlacementImage {
+                target_board_id: 1,
+                queue_id: None,
+                placement,
+                preview_rgba: solid_rgba(colors[(id - 1) as usize], 150, 40),
+                preview_width: 150,
+                preview_height: 40,
+                animated_preview: None,
+                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
+                loaded_lod: crate::data::CanvasImageLod::Working,
+                existing_load_diagnostics: None,
+                origin: crate::jobs::ImportOrigin::Existing,
+                trace: None,
+            },
+        );
+    }
+    harness
+        .state_mut()
+        .canvas
+        .select_placements(&(1_i64..=6).collect::<Vec<_>>());
+    harness.step();
+
+    scenario.capture_screen("screen-000-before-compact", &mut harness);
+    scenario.fact(
+        "compact.equal.before",
+        compact_selection_fact(harness.state()),
+    );
+    harness.key_press(egui::Key::Q);
+    harness.step();
+    let after_stats = scenario.capture_screen("screen-001-after-q-compact", &mut harness);
+    let after_fact = compact_selection_fact(harness.state());
+    scenario.fact("compact.equal.after", after_fact.clone());
+    scenario.assertion(
+        "compact equal-size frame is opaque",
+        after_stats.transparent_pixels == 0,
+    );
+    scenario.assertion(
+        "q compact arranges six equal-size images wider than one column",
+        after_fact["column_count"]
+            .as_u64()
+            .is_some_and(|count| count > 1),
+    );
+
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
+}
+
+#[cfg(feature = "semantic-search")]
+#[test]
+fn inspect_search_palette_footer_writes_artifact() {
+    let scenario_name = inspect_scenario_name("search-palette-footer");
+    let mut scenario = InspectScenario::new(scenario_name);
+    scenario.event(
+        "seed",
+        serde_json::json!({
+            "seed": "empty-search-palette-plus-results-footer",
+        }),
+    );
+
+    let root = temp_library_root("snappyref-inspect-search-palette-footer");
+    let library = Library::initialize(root.clone()).unwrap();
+    let result_specs = [
+        ("first-result", [228, 171, 72, 255], 180_u32, 120_u32),
+        ("second-result", [155, 108, 218, 255], 140_u32, 140_u32),
+    ];
+    let mut result_placements = Vec::new();
+    for (index, (name, color, width, height)) in result_specs.into_iter().enumerate() {
+        let path = library
+            .store_rgba_image(name, &solid_rgba(color, width, height), width, height)
+            .unwrap();
+        let placement = library
+            .persist_imported_image(
+                &path,
+                "image/png",
+                width,
+                height,
+                width as u64 * height as u64 * 4,
+                egui::pos2(index as f32 * 32.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library.archive_placements(&[placement.state.id]).unwrap();
+        result_placements.push(placement);
+    }
+
+    let mut app = test_app(Some(library.clone()));
+    app.search.overlay.open = true;
+    app.search.overlay.status = crate::search::palette::SearchOverlayStatus::Ready;
+    let mut harness = app_full_harness(app);
+
+    let empty_stats = scenario.capture_screen("screen-000-empty-search-palette", &mut harness);
+    scenario.fact(
+        "search.palette.footer.empty",
+        serde_json::json!({
+            "status": "Ready",
+            "result_count": harness.state().search.overlay.results.len(),
+        }),
+    );
+    scenario.assertion(
+        "empty palette frame is opaque",
+        empty_stats.transparent_pixels == 0,
+    );
+
+    let results = result_placements
+        .iter()
+        .enumerate()
+        .map(|(index, placement)| {
+            inspect_search_result_entry(placement, 0.88 - index as f32 * 0.06)
+        })
+        .collect::<Vec<_>>();
+    harness.state_mut().search.overlay.results = results;
+    harness.state_mut().search.overlay.has_more_results = true;
+    harness
+        .state_mut()
+        .search
+        .overlay
+        .result_selection
+        .replace(0);
+    harness.step();
+
+    let results_stats = scenario.capture_screen("screen-001-results-search-palette", &mut harness);
+    scenario.fact(
+        "search.palette.footer.results",
+        serde_json::json!({
+            "has_more_results": harness.state().search.overlay.has_more_results,
+            "result_count": harness.state().search.overlay.results.len(),
+            "selection_count": harness.state().search.overlay.result_selection.selected().len(),
+        }),
+    );
+    scenario.assertion(
+        "results palette frame is opaque",
+        results_stats.transparent_pixels == 0,
+    );
+
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(feature = "semantic-search")]
+#[test]
 fn inspect_blue_image_search_drag_writes_artifact() {
     let scenario_name = inspect_scenario_name("blue-image-search-drag");
     let mut scenario = InspectScenario::new(scenario_name);
@@ -5900,6 +6296,141 @@ fn inspect_command_modifier() -> egui::Modifiers {
         command: true,
         ..Default::default()
     }
+}
+
+#[cfg(feature = "semantic-search")]
+fn compact_selection_fact(app: &SnappyRefApp) -> serde_json::Value {
+    let mut centers = app
+        .canvas
+        .selected_placement_ids()
+        .into_iter()
+        .filter_map(|id| {
+            app.canvas
+                .placement_for_id(id)
+                .map(|placement| (id, placement.state.geometry.center))
+        })
+        .collect::<Vec<_>>();
+    centers.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut xs = centers
+        .iter()
+        .map(|(_, center)| center.x)
+        .collect::<Vec<_>>();
+    let mut ys = centers
+        .iter()
+        .map(|(_, center)| center.y)
+        .collect::<Vec<_>>();
+    xs.sort_by(|left, right| left.total_cmp(right));
+    ys.sort_by(|left, right| left.total_cmp(right));
+    let column_count = compact_axis_bucket_count(xs);
+    let row_count = compact_axis_bucket_count(ys);
+    let max_column_count = compact_axis_max_bucket_size(
+        centers
+            .iter()
+            .map(|(_, center)| center.x)
+            .collect::<Vec<_>>(),
+    );
+    let bounds = app.canvas.selected_bounds_world();
+    let bounds_aspect = bounds
+        .map(|bounds| bounds.width().max(bounds.height()) / bounds.width().min(bounds.height()))
+        .unwrap_or(1.0);
+    serde_json::json!({
+        "selected_count": centers.len(),
+        "column_count": column_count,
+        "row_count": row_count,
+        "max_column_count": max_column_count,
+        "bounds_aspect": bounds_aspect,
+        "bounds_world": bounds.map(inspect_rect),
+        "centers": centers
+            .iter()
+            .map(|(id, center)| serde_json::json!({
+                "id": id,
+                "center": inspect_pos(*center),
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+#[cfg(feature = "semantic-search")]
+fn compact_axis_bucket_count(mut values: Vec<f32>) -> usize {
+    let mut buckets = 0usize;
+    let mut last = None::<f32>;
+    for value in values.drain(..) {
+        if last.is_none_or(|previous| (value - previous).abs() > 1.0) {
+            buckets += 1;
+            last = Some(value);
+        }
+    }
+    buckets
+}
+
+#[cfg(feature = "semantic-search")]
+fn compact_axis_max_bucket_size(mut values: Vec<f32>) -> usize {
+    values.sort_by(|left, right| left.total_cmp(right));
+    let mut max_bucket = 0usize;
+    let mut current_bucket = 0usize;
+    let mut last = None::<f32>;
+    for value in values {
+        if last.is_none_or(|previous| (value - previous).abs() > 1.0) {
+            max_bucket = max_bucket.max(current_bucket);
+            current_bucket = 1;
+            last = Some(value);
+        } else {
+            current_bucket += 1;
+        }
+    }
+    max_bucket.max(current_bucket)
+}
+
+#[cfg(feature = "semantic-search")]
+fn add_inspect_compact_image(
+    harness: &mut Harness<'_, SnappyRefApp>,
+    ctx: &egui::Context,
+    id: i64,
+    width: u32,
+    height: u32,
+    color: [u8; 4],
+    center: egui::Pos2,
+) {
+    let asset = ImageAsset {
+        id,
+        original_path: PathBuf::from(format!("compact-fixture-{id}.png")),
+        filename: format!("compact-fixture-{id}.png"),
+        mime_type: "image/png".to_owned(),
+        width,
+        height,
+        file_size: width as u64 * height as u64 * 4,
+        imported_at: 0,
+    };
+    let placement = Placement::loaded(
+        PlacementState::with_display_size(
+            id,
+            Some(id),
+            center,
+            egui::vec2(width as f32, height as f32),
+            1.0,
+            0.0,
+            id as i32,
+            false,
+        ),
+        asset,
+    );
+    harness.state_mut().canvas.add_prepared_placement_image(
+        ctx,
+        PreparedPlacementImage {
+            target_board_id: 1,
+            queue_id: None,
+            placement,
+            preview_rgba: solid_rgba(color, width, height),
+            preview_width: width,
+            preview_height: height,
+            animated_preview: None,
+            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
+            loaded_lod: crate::data::CanvasImageLod::Working,
+            existing_load_diagnostics: None,
+            origin: crate::jobs::ImportOrigin::Existing,
+            trace: None,
+        },
+    );
 }
 
 #[cfg(feature = "semantic-search")]
