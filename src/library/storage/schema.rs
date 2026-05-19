@@ -181,6 +181,23 @@ fn ensure_assets_archived_column(connection: &Connection) -> Result<(), String> 
     Ok(())
 }
 
+fn ensure_assets_original_sha256_column(connection: &Connection) -> Result<(), String> {
+    ensure_column(
+        connection,
+        "assets",
+        "original_sha256",
+        "ALTER TABLE assets ADD COLUMN original_sha256 TEXT",
+    )?;
+    connection
+        .execute(
+            "CREATE INDEX IF NOT EXISTS idx_assets_exact_dedupe
+             ON assets(archived, file_size, original_sha256, id)",
+            [],
+        )
+        .map_err(|error| format!("failed to create asset dedupe index: {error}"))?;
+    Ok(())
+}
+
 fn ensure_default_board(connection: &Connection) -> Result<(), String> {
     let count: i64 = connection
         .query_row(
@@ -836,7 +853,8 @@ impl Library {
                     height        INTEGER NOT NULL,
                     file_size     INTEGER NOT NULL,
                     imported_at   INTEGER NOT NULL,
-                    archived      INTEGER NOT NULL DEFAULT 0
+                    archived      INTEGER NOT NULL DEFAULT 0,
+                    original_sha256 TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS boards (
@@ -935,6 +953,7 @@ impl Library {
         ensure_board_items_archived_column(&connection)?;
         ensure_board_items_placement_columns(&connection)?;
         ensure_assets_archived_column(&connection)?;
+        ensure_assets_original_sha256_column(&connection)?;
         ensure_default_board(&connection)?;
         ensure_board_items_board_id_column(&connection)?;
         ensure_board_items_asset_id_nullable(&connection)?;

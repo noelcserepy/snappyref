@@ -14,6 +14,7 @@ mod stack_order;
 #[cfg(test)]
 mod tests;
 
+pub use assets::ExactDedupeReport;
 pub use connection::Library;
 #[cfg(test)]
 pub use embeddings::ActiveCanvasEmbedding;

@@ -369,6 +369,10 @@ impl SemanticSearchService {
             .map(|cache| cache.warming)
             .unwrap_or(false)
     }
+
+    pub fn invalidate_search_embedding_cache(&self) {
+        clear_search_embedding_cache(&self.search_embedding_cache);
+    }
 }
 
 #[cfg(target_os = "macos")]

@@ -1059,6 +1059,137 @@ fn archive_assets_removes_their_placements_from_all_boards_and_preserves_files()
 }
 
 #[test]
+fn exact_dedupe_relinks_placements_to_first_asset_and_deletes_duplicates() {
+    let root = temp_root("snappyref-exact-dedupe-test");
+    let library = Library::initialize(root.clone()).unwrap();
+    let second_board = library.create_board("Second").unwrap();
+    let first_path = library
+        .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let duplicate_path = library
+        .store_rgba_image("duplicate", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+
+    let first = library
+        .persist_imported_image(
+            &first_path,
+            "image/png",
+            1,
+            1,
+            fs::metadata(&first_path).unwrap().len(),
+            egui::pos2(10.0, 20.0),
+            1.0,
+        )
+        .unwrap();
+    library.set_active_board(second_board.id).unwrap();
+    let duplicate = library
+        .persist_imported_image(
+            &duplicate_path,
+            "image/png",
+            1,
+            1,
+            fs::metadata(&duplicate_path).unwrap().len(),
+            egui::pos2(30.0, 40.0),
+            1.0,
+        )
+        .unwrap();
+    let first_asset_id = first.asset.as_ref().expect("loaded placement asset").id;
+    let duplicate_asset_id = duplicate.asset.as_ref().expect("loaded placement asset").id;
+    let duplicate_original_path = duplicate
+        .asset
+        .as_ref()
+        .expect("loaded placement asset")
+        .original_path
+        .clone();
+    library
+        .upsert_asset_embedding_blob(first_asset_id, "test-model", &[1.0, 0.0])
+        .unwrap();
+    library
+        .upsert_asset_embedding_blob(duplicate_asset_id, "test-model", &[0.0, 1.0])
+        .unwrap();
+    library
+        .store_canvas_image_cache(
+            duplicate_asset_id,
+            crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+            &[255, 0, 0, 255],
+            1,
+            1,
+        )
+        .unwrap();
+    assert!(
+        library
+            .canvas_image_cache_path(
+                duplicate_asset_id,
+                crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE
+            )
+            .is_some()
+    );
+
+    let report = library.dedupe_exact_assets(usize::MAX, usize::MAX).unwrap();
+
+    assert_eq!(report.hashed_assets, 2);
+    assert_eq!(report.duplicate_assets_removed, 1);
+    assert_eq!(report.placements_relinked, 1);
+    assert_eq!(
+        report.asset_id_remaps,
+        vec![(duplicate_asset_id, first_asset_id)]
+    );
+    assert!(!duplicate_original_path.exists());
+    assert!(
+        library
+            .canvas_image_cache_path(
+                duplicate_asset_id,
+                crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE
+            )
+            .is_none()
+    );
+
+    library.set_active_board(1).unwrap();
+    let first_board_placements = library.load_placements().unwrap();
+    assert_eq!(first_board_placements.len(), 1);
+    assert_eq!(
+        first_board_placements[0].state.asset_id,
+        Some(first_asset_id)
+    );
+    library.set_active_board(second_board.id).unwrap();
+    let second_board_placements = library.load_placements().unwrap();
+    assert_eq!(second_board_placements.len(), 1);
+    assert_eq!(
+        second_board_placements[0].state.asset_id,
+        Some(first_asset_id)
+    );
+    assert_eq!(
+        second_board_placements[0].content,
+        PlacementContent::Loaded {
+            asset_id: first_asset_id
+        }
+    );
+
+    let embeddings = library.load_library_embeddings("test-model").unwrap();
+    assert_eq!(embeddings.len(), 1);
+    assert_eq!(embeddings[0].asset_id, first_asset_id);
+    let connection = Connection::open(root.join("library.db")).unwrap();
+    let live_assets: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM assets WHERE archived = 0",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(live_assets, 1);
+    let duplicate_embedding_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM asset_embeddings WHERE asset_id = ?1",
+            [duplicate_asset_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(duplicate_embedding_rows, 0);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn workspace_settings_remain_global_across_active_boards() {
     let root = temp_root("snappyref-global-settings-test");
     let library = Library::initialize(root.clone()).unwrap();

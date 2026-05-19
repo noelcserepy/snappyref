@@ -1,4 +1,20 @@
 use super::*;
+use std::collections::HashMap;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExactDedupeReport {
+    pub hashed_assets: usize,
+    pub duplicate_assets_removed: usize,
+    pub placements_relinked: usize,
+    pub canonical_asset_ids: Vec<i64>,
+    pub asset_id_remaps: Vec<(i64, i64)>,
+}
+
+impl ExactDedupeReport {
+    pub fn changed(&self) -> bool {
+        self.duplicate_assets_removed > 0 || self.placements_relinked > 0
+    }
+}
 
 pub(super) fn insert_asset_row(
     transaction: &Transaction<'_>,
@@ -52,7 +68,326 @@ pub(super) fn insert_asset_row(
     })
 }
 
+#[derive(Clone, Debug)]
+struct AssetHashJob {
+    id: i64,
+    original_path: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct DuplicateAsset {
+    id: i64,
+    original_path: PathBuf,
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let file =
+        File::open(path).map_err(|error| format!("failed to open {}: {error}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("failed to hash {}: {error}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn sqlite_limit(limit: usize) -> i64 {
+    i64::try_from(limit).unwrap_or(i64::MAX)
+}
+
+fn remap_placement_content_asset_ids(payload: &str, remaps: &HashMap<i64, i64>) -> Option<String> {
+    let mut content = serde_json::from_str::<PlacementContent>(payload).ok()?;
+    let changed = match &mut content {
+        PlacementContent::Loaded { asset_id } => {
+            if let Some(canonical_id) = remaps.get(asset_id) {
+                *asset_id = *canonical_id;
+                true
+            } else {
+                false
+            }
+        }
+        PlacementContent::Loading {
+            source: ContentResolutionSource::SearchAsset { asset_id },
+            ..
+        } => {
+            if let Some(canonical_id) = remaps.get(asset_id) {
+                *asset_id = *canonical_id;
+                true
+            } else {
+                false
+            }
+        }
+        PlacementContent::Failed {
+            source: Some(ContentResolutionSource::SearchAsset { asset_id }),
+            ..
+        } => {
+            if let Some(canonical_id) = remaps.get(asset_id) {
+                *asset_id = *canonical_id;
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    };
+    changed
+        .then(|| serde_json::to_string(&content).ok())
+        .flatten()
+}
+
 impl Library {
+    pub fn dedupe_exact_assets(
+        &self,
+        hash_limit: usize,
+        group_limit: usize,
+    ) -> Result<ExactDedupeReport, String> {
+        let mut report = ExactDedupeReport::default();
+        report.hashed_assets = self.backfill_asset_hashes(hash_limit)?;
+
+        let groups = self.duplicate_asset_groups(group_limit)?;
+        for group in groups {
+            let group_report = self.dedupe_duplicate_asset_group(group)?;
+            report.duplicate_assets_removed += group_report.duplicate_assets_removed;
+            report.placements_relinked += group_report.placements_relinked;
+            report
+                .canonical_asset_ids
+                .extend(group_report.canonical_asset_ids);
+            report.asset_id_remaps.extend(group_report.asset_id_remaps);
+        }
+        report.canonical_asset_ids.sort_unstable();
+        report.canonical_asset_ids.dedup();
+        report.asset_id_remaps.sort_unstable();
+        report.asset_id_remaps.dedup();
+        Ok(report)
+    }
+
+    fn backfill_asset_hashes(&self, limit: usize) -> Result<usize, String> {
+        if limit == 0 {
+            return Ok(0);
+        }
+        let jobs = {
+            let connection = self.connection()?;
+            let mut statement = connection
+                .prepare(
+                    "SELECT id, original_path
+                     FROM assets
+                     WHERE archived = 0
+                       AND original_sha256 IS NULL
+                     ORDER BY id ASC
+                     LIMIT ?1",
+                )
+                .map_err(|error| format!("failed to prepare asset-hash query: {error}"))?;
+            let rows = statement
+                .query_map(params![sqlite_limit(limit)], |row| {
+                    Ok(AssetHashJob {
+                        id: row.get(0)?,
+                        original_path: PathBuf::from(row.get::<_, String>(1)?),
+                    })
+                })
+                .map_err(|error| format!("failed to read asset-hash query: {error}"))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("failed to collect asset hash jobs: {error}"))?
+        };
+
+        let mut hashed = 0_usize;
+        for job in jobs {
+            let hash = sha256_file(&job.original_path)?;
+            let connection = self.connection()?;
+            connection
+                .execute(
+                    "UPDATE assets
+                     SET original_sha256 = ?1
+                     WHERE id = ?2
+                       AND original_sha256 IS NULL",
+                    params![hash, job.id],
+                )
+                .map_err(|error| format!("failed to store asset hash {}: {error}", job.id))?;
+            hashed += 1;
+        }
+        Ok(hashed)
+    }
+
+    fn duplicate_asset_groups(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(i64, Vec<DuplicateAsset>)>, String> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT original_sha256, file_size
+                 FROM assets
+                 WHERE archived = 0
+                   AND original_sha256 IS NOT NULL
+                 GROUP BY original_sha256, file_size
+                 HAVING COUNT(*) > 1
+                 ORDER BY MIN(id) ASC
+                 LIMIT ?1",
+            )
+            .map_err(|error| format!("failed to prepare duplicate asset group query: {error}"))?;
+        let group_keys = statement
+            .query_map(params![sqlite_limit(limit)], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|error| format!("failed to read duplicate asset group query: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect duplicate asset groups: {error}"))?;
+        drop(statement);
+
+        let mut groups = Vec::new();
+        for (hash, file_size) in group_keys {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id, original_path
+                     FROM assets
+                     WHERE archived = 0
+                       AND original_sha256 = ?1
+                       AND file_size = ?2
+                     ORDER BY id ASC",
+                )
+                .map_err(|error| format!("failed to prepare duplicate asset query: {error}"))?;
+            let assets = statement
+                .query_map(params![hash, file_size], |row| {
+                    Ok(DuplicateAsset {
+                        id: row.get(0)?,
+                        original_path: PathBuf::from(row.get::<_, String>(1)?),
+                    })
+                })
+                .map_err(|error| format!("failed to read duplicate asset query: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("failed to collect duplicate assets: {error}"))?;
+            if let Some(canonical) = assets.first()
+                && assets.len() > 1
+            {
+                groups.push((canonical.id, assets[1..].to_vec()));
+            }
+        }
+        Ok(groups)
+    }
+
+    fn dedupe_duplicate_asset_group(
+        &self,
+        group: (i64, Vec<DuplicateAsset>),
+    ) -> Result<ExactDedupeReport, String> {
+        let (canonical_id, duplicates) = group;
+        if duplicates.is_empty() {
+            return Ok(ExactDedupeReport::default());
+        }
+        let duplicate_ids = duplicates.iter().map(|asset| asset.id).collect::<Vec<_>>();
+        let duplicate_paths = duplicates
+            .iter()
+            .map(|asset| asset.original_path.clone())
+            .collect::<Vec<_>>();
+        let remaps = duplicate_ids
+            .iter()
+            .map(|duplicate_id| (*duplicate_id, canonical_id))
+            .collect::<HashMap<_, _>>();
+
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start asset dedupe transaction: {error}"))?;
+
+        let mut payload_statement = transaction
+            .prepare(
+                "SELECT id, content_resolution_intent
+                 FROM board_items
+                 WHERE content_resolution_intent IS NOT NULL",
+            )
+            .map_err(|error| {
+                format!("failed to prepare placement-content dedupe query: {error}")
+            })?;
+        let payloads = payload_statement
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| format!("failed to read placement-content dedupe query: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect placement-content dedupe rows: {error}"))?;
+        drop(payload_statement);
+
+        for (placement_id, payload) in payloads {
+            if let Some(updated) = remap_placement_content_asset_ids(&payload, &remaps) {
+                transaction
+                    .execute(
+                        "UPDATE board_items
+                         SET content_resolution_intent = ?1
+                         WHERE id = ?2",
+                        params![updated, placement_id],
+                    )
+                    .map_err(|error| {
+                        format!("failed to remap placement content {placement_id}: {error}")
+                    })?;
+            }
+        }
+
+        let placeholders = std::iter::repeat_n("?", duplicate_ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let relink_sql = format!(
+            "UPDATE board_items
+             SET asset_id = ?1
+             WHERE asset_id IN ({placeholders})"
+        );
+        let placements_relinked = transaction
+            .execute(
+                &relink_sql,
+                params_from_iter(
+                    std::iter::once(canonical_id).chain(duplicate_ids.iter().copied()),
+                ),
+            )
+            .map_err(|error| format!("failed to relink duplicate placements: {error}"))?;
+
+        let delete_embeddings_sql =
+            format!("DELETE FROM asset_embeddings WHERE asset_id IN ({placeholders})");
+        transaction
+            .execute(
+                &delete_embeddings_sql,
+                params_from_iter(duplicate_ids.iter().copied()),
+            )
+            .map_err(|error| format!("failed to delete duplicate embeddings: {error}"))?;
+
+        let delete_sql = format!("DELETE FROM assets WHERE id IN ({placeholders})");
+        let duplicate_assets_removed = transaction
+            .execute(&delete_sql, params_from_iter(duplicate_ids.iter().copied()))
+            .map_err(|error| format!("failed to delete duplicate assets: {error}"))?;
+
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit asset dedupe transaction: {error}"))?;
+
+        for path in duplicate_paths {
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("failed to remove duplicate original: {error}")),
+            }
+        }
+        for duplicate_id in &duplicate_ids {
+            self.remove_asset_canvas_caches(*duplicate_id)?;
+        }
+
+        Ok(ExactDedupeReport {
+            hashed_assets: 0,
+            duplicate_assets_removed,
+            placements_relinked,
+            canonical_asset_ids: vec![canonical_id],
+            asset_id_remaps: duplicate_ids
+                .into_iter()
+                .map(|duplicate_id| (duplicate_id, canonical_id))
+                .collect(),
+        })
+    }
+
     pub fn create_asset_and_relink_placement(
         &self,
         item_id: i64,

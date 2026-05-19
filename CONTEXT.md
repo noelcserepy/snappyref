@@ -14,6 +14,10 @@ _Avoid_: All photos view, global board
 An image stored in the library, independent of any board placement.
 _Avoid_: Image file, photo, source image
 
+**Exact Dedupe**:
+The library repair flow that treats Assets with identical managed-original SHA-256 hashes as one Asset identity. The first-added Asset is the canonical Asset, defined by the lowest Asset id. Duplicate Placements are preserved by relinking them to the canonical Asset; duplicate Asset rows, embeddings, managed originals, and canvas cache files are removed.
+_Avoid_: Search filtering, visual similarity dedupe, embedding merge
+
 **Board**:
 A separate canvas workspace over the shared library.
 _Avoid_: Scene, project, collection, nested board

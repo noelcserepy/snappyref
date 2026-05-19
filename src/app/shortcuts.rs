@@ -19,6 +19,7 @@ pub(super) enum SupportedShortcutAction {
     Arrange(ArrangementAction),
     ApplyDefaultAverageArea,
     AverageSelectionArea,
+    DedupeLibrary,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -256,6 +257,17 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         mac: "Arrow keys",
         binding: None,
         shortcut_action: None,
+    },
+    SupportedShortcut {
+        action: "Dedupe library",
+        windows: "P",
+        mac: "P",
+        binding: Some(ShortcutBinding {
+            key: egui::Key::P,
+            command: false,
+            shift: false,
+        }),
+        shortcut_action: Some(SupportedShortcutAction::DedupeLibrary),
     },
     SupportedShortcut {
         action: "Default avg area",
