@@ -16,10 +16,10 @@ use super::arrangement::resolve_import_world;
 use super::decode::{install_prepared_canvas_cache, prepare_image_with_helper};
 use super::preview_texture::build_preview_texture;
 use super::{
-    CanvasImageSettings, DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImagePrepPreviewTexture,
-    ImagePrepResult, ImagePrepTrace, ImportOrigin, PreparedPlacementImage, SVG_MIME_TYPE,
-    animated_preview_max_side, canvas_source_image_from_rgba, is_svg_path,
-    original_mime_type_is_svg, parse_svg_document, read_svg_document, stable_svg_uri_key,
+    CanvasImageSettings, DEFAULT_PLACEMENT_TARGET_AREA, ImagePrepPreviewTexture, ImagePrepResult,
+    ImagePrepTrace, ImportOrigin, PreparedPlacementImage, SVG_MIME_TYPE, animated_preview_max_side,
+    canvas_source_image_from_rgba, is_svg_path, original_mime_type_is_svg, parse_svg_document,
+    read_svg_document, stable_svg_uri_key,
 };
 
 const URL_IMPORT_MAX_BYTES: u64 = 64 * 1024 * 1024;
@@ -48,7 +48,7 @@ pub fn import_path_sync(
         usize::MAX,
         CanvasImageSettings::default(),
         auto_scale,
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        DEFAULT_PLACEMENT_TARGET_AREA,
         placement_gap,
         None,
         None,
@@ -80,7 +80,7 @@ pub fn import_clipboard_sync(
         usize::MAX,
         CanvasImageSettings::default(),
         auto_scale,
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        DEFAULT_PLACEMENT_TARGET_AREA,
         placement_gap,
         None,
         None,
@@ -99,7 +99,7 @@ pub(crate) fn import_path_sync_traced(
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
-    target_canvas_area: f32,
+    placement_target_area: f32,
     placement_gap: f32,
     trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
@@ -121,7 +121,7 @@ pub(crate) fn import_path_sync_traced(
             reserved_world,
             viewport_world,
             auto_scale,
-            target_canvas_area,
+            placement_target_area,
             placement_gap,
             worker_started_at,
             trace,
@@ -135,11 +135,11 @@ pub(crate) fn import_path_sync_traced(
         if let Some(trace) = &mut trace {
             trace.timings.decode_or_load = decode_started_at.elapsed();
         }
-        let initial_scale = initial_import_scale(
+        let initial_scale = display_scale_for_placement_target_area(
             prepared.source_width,
             prepared.source_height,
             auto_scale,
-            target_canvas_area,
+            placement_target_area,
         );
         let arranged_world = resolve_import_world(
             library,
@@ -215,11 +215,11 @@ pub(crate) fn import_path_sync_traced(
     if let Some(trace) = &mut trace {
         trace.timings.decode_or_load = decode_started_at.elapsed();
     }
-    let initial_scale = initial_import_scale(
+    let initial_scale = display_scale_for_placement_target_area(
         decoded.source_width,
         decoded.source_height,
         auto_scale,
-        target_canvas_area,
+        placement_target_area,
     );
     let arranged_world = resolve_import_world(
         library,
@@ -320,7 +320,7 @@ fn import_svg_path_sync_traced(
     reserved_world: Option<egui::Pos2>,
     viewport_world: egui::Rect,
     auto_scale: bool,
-    target_canvas_area: f32,
+    placement_target_area: f32,
     placement_gap: f32,
     worker_started_at: Instant,
     mut trace: Option<ImagePrepTrace>,
@@ -331,7 +331,12 @@ fn import_svg_path_sync_traced(
         trace.timings.decode_or_load = decode_started_at.elapsed();
     }
 
-    let initial_scale = initial_import_scale(svg.width, svg.height, auto_scale, target_canvas_area);
+    let initial_scale = display_scale_for_placement_target_area(
+        svg.width,
+        svg.height,
+        auto_scale,
+        placement_target_area,
+    );
     let arranged_world = resolve_import_world(
         library,
         target_board_id,
@@ -402,7 +407,7 @@ pub(crate) fn import_path(
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
-    target_canvas_area: f32,
+    placement_target_area: f32,
     placement_gap: f32,
     trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
@@ -419,7 +424,7 @@ pub(crate) fn import_path(
         max_texture_side,
         canvas_image_settings,
         auto_scale,
-        target_canvas_area,
+        placement_target_area,
         placement_gap,
         trace,
         wgpu_render_state,
@@ -447,7 +452,7 @@ pub(crate) fn import_url(
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
-    target_canvas_area: f32,
+    placement_target_area: f32,
     placement_gap: f32,
     trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
@@ -464,7 +469,7 @@ pub(crate) fn import_url(
         max_texture_side,
         canvas_image_settings,
         auto_scale,
-        target_canvas_area,
+        placement_target_area,
         placement_gap,
         trace,
         wgpu_render_state,
@@ -494,7 +499,7 @@ pub(crate) fn import_clipboard(
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
-    target_canvas_area: f32,
+    placement_target_area: f32,
     placement_gap: f32,
     trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
@@ -513,7 +518,7 @@ pub(crate) fn import_clipboard(
         max_texture_side,
         canvas_image_settings,
         auto_scale,
-        target_canvas_area,
+        placement_target_area,
         placement_gap,
         trace,
         wgpu_render_state,
@@ -547,7 +552,7 @@ pub(crate) fn import_url_sync_traced(
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
-    target_canvas_area: f32,
+    placement_target_area: f32,
     placement_gap: f32,
     trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
@@ -575,7 +580,7 @@ pub(crate) fn import_url_sync_traced(
             reserved_world,
             viewport_world,
             auto_scale,
-            target_canvas_area,
+            placement_target_area,
             placement_gap,
             worker_started_at,
             trace,
@@ -594,11 +599,11 @@ pub(crate) fn import_url_sync_traced(
         trace.timings.decode_or_load += decode_started_at.elapsed();
     }
 
-    let initial_scale = initial_import_scale(
+    let initial_scale = display_scale_for_placement_target_area(
         decoded.source_width,
         decoded.source_height,
         auto_scale,
-        target_canvas_area,
+        placement_target_area,
     );
     let arranged_world = resolve_import_world(
         library,
@@ -706,7 +711,7 @@ fn import_downloaded_svg_sync_traced(
     reserved_world: Option<egui::Pos2>,
     viewport_world: egui::Rect,
     auto_scale: bool,
-    target_canvas_area: f32,
+    placement_target_area: f32,
     placement_gap: f32,
     worker_started_at: Instant,
     mut trace: Option<ImagePrepTrace>,
@@ -719,7 +724,12 @@ fn import_downloaded_svg_sync_traced(
         trace.timings.decode_or_load += decode_started_at.elapsed();
     }
 
-    let initial_scale = initial_import_scale(svg.width, svg.height, auto_scale, target_canvas_area);
+    let initial_scale = display_scale_for_placement_target_area(
+        svg.width,
+        svg.height,
+        auto_scale,
+        placement_target_area,
+    );
     let arranged_world = resolve_import_world(
         library,
         target_board_id,
@@ -786,7 +796,7 @@ pub(crate) fn import_clipboard_sync_traced(
     max_texture_side: usize,
     canvas_image_settings: CanvasImageSettings,
     auto_scale: bool,
-    target_canvas_area: f32,
+    placement_target_area: f32,
     placement_gap: f32,
     trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
@@ -802,7 +812,8 @@ pub(crate) fn import_clipboard_sync_traced(
     let file_size = std::fs::metadata(&stored_path)
         .map_err(|error| format!("failed to read clipboard image metadata: {error}"))?
         .len();
-    let initial_scale = initial_import_scale(width, height, auto_scale, target_canvas_area);
+    let initial_scale =
+        display_scale_for_placement_target_area(width, height, auto_scale, placement_target_area);
     let arranged_world = resolve_import_world(
         library,
         target_board_id,
@@ -950,17 +961,17 @@ fn remote_image_source_name(url: &url::Url) -> String {
     })
 }
 
-pub fn initial_import_scale(
+pub fn display_scale_for_placement_target_area(
     asset_width: u32,
     asset_height: u32,
     auto_scale: bool,
-    target_canvas_area: f32,
+    placement_target_area: f32,
 ) -> f32 {
     if !auto_scale || asset_width == 0 || asset_height == 0 {
         return 1.0;
     }
 
-    let target_canvas_area = target_canvas_area.max(1.0);
+    let placement_target_area = placement_target_area.max(1.0);
     let asset_area = asset_width as f32 * asset_height as f32;
-    (target_canvas_area / asset_area).sqrt().min(1.0)
+    (placement_target_area / asset_area).sqrt().min(1.0)
 }

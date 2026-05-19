@@ -24,6 +24,7 @@ Use this skill when inspecting the app, verifying a UI state, or adding a tempor
 - Inspect the resulting PNG directly before changing anything else.
 - If a state depends on persisted viewport or session data, reset it inside the probe so the screenshot is deterministic.
 - Screenshot and verification launches are non-activating by default so they do not steal focus. Add `--no-startup-focus` for manual inspection launches that should also stay in the background.
+- For manual pointer automation or screenshot repros, launch the repo-built debug binary explicitly, not the installed release app. Resize the window close to the full screen bounds without entering macOS fullscreen/maximized mode, keep all driven coordinates inside that window, and close the app when testing is done.
 
 ## Creating New Probes
 

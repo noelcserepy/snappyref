@@ -20,8 +20,8 @@ pub(crate) use existing_load::load_existing;
 pub(super) use persist::import_path_sync;
 #[cfg(test)]
 pub(super) use persist::import_url_sync_traced;
+pub use persist::{display_scale_for_placement_target_area, import_clipboard_sync};
 pub(super) use persist::{import_clipboard, import_path, import_path_sync_traced, import_url};
-pub use persist::{import_clipboard_sync, initial_import_scale};
 #[cfg(test)]
 use preview_texture::build_preview_texture;
 pub use preview_texture::{ImagePrepPreviewTexture, NativeTextureHandle};
@@ -34,9 +34,9 @@ pub use request::{
     WorkerInteractiveImportPerfReport,
 };
 
-pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA;
-pub fn default_import_reference_span() -> f32 {
-    DEFAULT_IMPORT_TARGET_CANVAS_AREA.sqrt()
+pub const DEFAULT_PLACEMENT_TARGET_AREA: f32 = crate::data::DEFAULT_PLACEMENT_TARGET_AREA;
+pub fn placement_target_reference_span() -> f32 {
+    DEFAULT_PLACEMENT_TARGET_AREA.sqrt()
 }
 
 const INTERACTIVE_CROP_PREVIEW_MAX_SIDE: u32 = 1024;

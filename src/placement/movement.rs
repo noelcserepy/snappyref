@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::canvas::{CanvasState, DragState};
-use crate::data::PlacementLayoutItem;
+use crate::placement::arrangement::PlacementArrangementInput;
 
 pub(crate) fn begin_selected_placement_drag(
     state: &mut CanvasState,
@@ -10,7 +10,7 @@ pub(crate) fn begin_selected_placement_drag(
 ) {
     state.interaction.drag_state = Some(DragState {
         pointer_start_world: pointer_world,
-        starting_items: state.selected_layout_items(),
+        starting_items: state.selected_arrangement_inputs(),
         snap_preview_rect_world: None,
         started_at_seconds: now_seconds,
         last_movement_seconds: now_seconds,
@@ -54,7 +54,7 @@ pub(crate) fn move_selected_placement_group_to_center(
     screen_rect: egui::Rect,
     now_seconds: f64,
 ) -> usize {
-    let items = state.selected_layout_items();
+    let items = state.selected_arrangement_inputs();
     let Some(bounds) = layout_bounds_with_offset(&items, egui::Vec2::ZERO) else {
         state.clear_guide_snap_indicators();
         return 0;
@@ -190,7 +190,7 @@ fn viewport_near_world_rect(state: &CanvasState, screen_rect: egui::Rect) -> egu
 }
 
 pub(crate) fn layout_bounds_with_offset(
-    items: &[PlacementLayoutItem],
+    items: &[PlacementArrangementInput],
     offset: egui::Vec2,
 ) -> Option<egui::Rect> {
     let mut bounds = egui::Rect::NOTHING;
@@ -212,7 +212,7 @@ pub(crate) fn layout_bounds_with_offset(
 
 fn apply_dragged_item_positions(
     state: &mut CanvasState,
-    items: &[PlacementLayoutItem],
+    items: &[PlacementArrangementInput],
     world_delta: egui::Vec2,
     snap_preview_rect: Option<egui::Rect>,
 ) -> usize {
@@ -263,7 +263,7 @@ fn record_synthetic_drag_movement(
     now_seconds: f64,
     world_delta: egui::Vec2,
 ) {
-    let starting_items = state.selected_layout_items();
+    let starting_items = state.selected_arrangement_inputs();
     if starting_items.is_empty() {
         return;
     }

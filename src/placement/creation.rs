@@ -4,8 +4,8 @@ use eframe::egui;
 
 use crate::canvas::CanvasState;
 use crate::data::{
-    ContentResolutionSource, Placement, PlacementContent, PlacementLifecycle, PlacementState,
-    RectGeometry,
+    CanvasStackItem, ContentResolutionSource, Placement, PlacementContent, PlacementLifecycle,
+    PlacementState, RectGeometry,
 };
 use crate::library::storage::Library;
 use crate::placement::content_resolution::{
@@ -39,7 +39,7 @@ impl SourceIntentPreview {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PlacementCreationSettings {
-    pub(crate) target_canvas_area: f32,
+    pub(crate) placement_target_area: f32,
     pub(crate) gap: f32,
 }
 
@@ -86,17 +86,24 @@ struct PendingPlacementCreationBatch {
 pub(crate) fn display_size_for_dimensions(
     width: u32,
     height: u32,
-    target_canvas_area: f32,
+    placement_target_area: f32,
 ) -> egui::Vec2 {
     let width = width.max(1);
     let height = height.max(1);
-    let scale = crate::jobs::initial_import_scale(width, height, true, target_canvas_area);
+    let scale = crate::jobs::display_scale_for_placement_target_area(
+        width,
+        height,
+        true,
+        placement_target_area,
+    );
     egui::vec2(width as f32 * scale, height as f32 * scale)
 }
 
 #[allow(dead_code)]
-pub(crate) fn canvas_input_policy(placement_pending: bool) -> crate::canvas::CanvasInputPolicy {
-    if placement_pending {
+pub(crate) fn canvas_input_policy(
+    placement_creation_active: bool,
+) -> crate::canvas::CanvasInputPolicy {
+    if placement_creation_active {
         crate::canvas::CanvasInputPolicy::ViewportOnly
     } else {
         crate::canvas::CanvasInputPolicy::Full
@@ -145,7 +152,7 @@ pub(crate) fn plan_source_intent_previews(
         .iter()
         .map(|intent| {
             let (width, height) = normalized_dimensions(intent);
-            display_size_for_dimensions(width, height, settings.target_canvas_area)
+            display_size_for_dimensions(width, height, settings.placement_target_area)
         })
         .collect::<Vec<_>>();
     let centers = if uses_approximate_dimensions && sizes.len() > 1 {
@@ -169,14 +176,14 @@ pub(crate) fn create_committed_loading_placement(
     library: &Library,
     content_resolution: &mut ContentResolutionRuntime,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::data::PlacementLayoutItem>,
+    layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
     target_board_id: i64,
     intent: SourceIntent,
     center_world: egui::Pos2,
     settings: PlacementCreationSettings,
 ) -> Result<CreatedLoadingPlacement, String> {
     let (width, height) = normalized_dimensions(&intent);
-    let size_world = display_size_for_dimensions(width, height, settings.target_canvas_area);
+    let size_world = display_size_for_dimensions(width, height, settings.placement_target_area);
     let placement = library.persist_committed_loading_placement(
         center_world,
         1.0,
@@ -188,11 +195,13 @@ pub(crate) fn create_committed_loading_placement(
     let reservation =
         content_resolution.reserve_placement(target_board_id, placement.state.id, center_world);
 
-    layout.push(crate::data::PlacementLayoutItem::new(
-        placement.state.id,
-        placement.state.geometry.center,
-        placement.state.geometry.scaled_size(),
-    ));
+    layout.push(
+        crate::placement::arrangement::PlacementArrangementInput::new(
+            placement.state.id,
+            placement.state.geometry.center,
+            placement.state.geometry.scaled_size(),
+        ),
+    );
     canvas.add_unresolved_placement(placement.clone());
     canvas.select_placements(&[placement.state.id]);
 
@@ -206,7 +215,7 @@ pub(crate) fn create_committed_loading_placements(
     library: &Library,
     content_resolution: &mut ContentResolutionRuntime,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::data::PlacementLayoutItem>,
+    layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
     target_board_id: i64,
     intents: Vec<SourceIntent>,
     anchor_world: egui::Pos2,
@@ -254,56 +263,85 @@ pub(crate) fn create_provisional_placements(
         .map(|intent| match intent {
             ProvisionalSourceIntent::SourceIntent(intent) => {
                 let (width, height) = normalized_dimensions(intent);
-                display_size_for_dimensions(width, height, settings.target_canvas_area)
+                display_size_for_dimensions(width, height, settings.placement_target_area)
             }
             ProvisionalSourceIntent::ExistingAsset { dimensions, .. } => {
-                display_size_for_dimensions(dimensions.0, dimensions.1, settings.target_canvas_area)
+                display_size_for_dimensions(
+                    dimensions.0,
+                    dimensions.1,
+                    settings.placement_target_area,
+                )
             }
         })
         .collect::<Vec<_>>();
     let centers =
         canvas.compact_guided_layout_for_sizes(&sizes, anchor_world, screen_rect, settings.gap);
-    let mut next_id = canvas.next_provisional_item_id();
+    let mut next_id = canvas.next_provisional_placement_id();
+    let mut next_z_index = next_front_placement_z_index(canvas);
     let mut provisional_ids = Vec::with_capacity(intents.len());
 
     for (intent, (center_world, _size_world)) in intents.into_iter().zip(centers) {
         match intent {
             ProvisionalSourceIntent::SourceIntent(intent) => {
-                let placement = provisional_loading_record(next_id, intent, center_world, settings);
-                canvas.add_provisional_unloaded_item(placement);
+                let placement = provisional_loading_placement(
+                    next_id,
+                    intent,
+                    center_world,
+                    next_z_index,
+                    settings,
+                );
+                canvas.add_provisional_unresolved_placement(placement);
             }
             ProvisionalSourceIntent::ExistingAsset {
                 asset_id,
                 label,
                 dimensions,
             } => {
-                let placement = provisional_asset_record(
+                let placement = provisional_asset_placement(
                     next_id,
                     asset_id,
                     label,
                     dimensions,
                     center_world,
+                    next_z_index,
                     settings,
                 );
-                canvas.add_provisional_unloaded_item(placement);
+                canvas.add_provisional_unresolved_placement(placement);
             }
         }
         provisional_ids.push(next_id);
         next_id -= 1;
+        next_z_index = next_z_index.saturating_add(1);
     }
 
     canvas.select_placements(&provisional_ids);
     provisional_ids
 }
 
-fn provisional_loading_record(
+fn next_front_placement_z_index(canvas: &CanvasState) -> i32 {
+    canvas
+        .canvas_stack_order()
+        .into_iter()
+        .filter_map(|item| match item {
+            CanvasStackItem::Placement(placement_id) => canvas
+                .placement_for_id(placement_id)
+                .map(|placement| placement.state.geometry.z_index),
+            CanvasStackItem::Annotation(_) => None,
+        })
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1)
+}
+
+fn provisional_loading_placement(
     placement_id: i64,
     intent: SourceIntent,
     center_world: egui::Pos2,
+    z_index: i32,
     settings: PlacementCreationSettings,
 ) -> Placement {
     let (width, height) = normalized_dimensions(&intent);
-    let size_world = display_size_for_dimensions(width, height, settings.target_canvas_area);
+    let size_world = display_size_for_dimensions(width, height, settings.placement_target_area);
     let _ = intent.label;
     let _ = intent.approximate_dimensions;
     Placement {
@@ -314,7 +352,7 @@ fn provisional_loading_record(
             size_world,
             1.0,
             0.0,
-            placement_id as i32,
+            z_index,
             false,
         ),
         asset: None,
@@ -326,16 +364,22 @@ fn provisional_loading_record(
     }
 }
 
-fn provisional_asset_record(
+fn provisional_asset_placement(
     placement_id: i64,
     asset_id: i64,
     label: String,
     dimensions: (u32, u32),
     center_world: egui::Pos2,
+    z_index: i32,
     settings: PlacementCreationSettings,
 ) -> Placement {
     let (width, height) = (dimensions.0.max(1), dimensions.1.max(1));
-    let scale = crate::jobs::initial_import_scale(width, height, true, settings.target_canvas_area);
+    let scale = crate::jobs::display_scale_for_placement_target_area(
+        width,
+        height,
+        true,
+        settings.placement_target_area,
+    );
     let _ = label;
     Placement {
         state: PlacementState::with_display_size(
@@ -345,7 +389,7 @@ fn provisional_asset_record(
             egui::vec2(width as f32, height as f32),
             scale,
             0.0,
-            placement_id as i32,
+            z_index,
             false,
         ),
         asset: None,
@@ -361,7 +405,7 @@ fn provisional_asset_record(
 pub(crate) fn create_existing_asset_placements(
     library: &Library,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::data::PlacementLayoutItem>,
+    layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
     _target_board_id: i64,
     asset_ids: Vec<i64>,
     preferred_centers: Vec<egui::Pos2>,
@@ -395,22 +439,24 @@ pub(crate) fn create_existing_asset_placements(
     let mut placements = Vec::with_capacity(assets.len());
     for (asset_index, asset) in assets.into_iter().enumerate() {
         let center_world = centers.get(asset_index).copied().unwrap_or(anchor_world);
-        let scale = crate::jobs::initial_import_scale(
+        let scale = crate::jobs::display_scale_for_placement_target_area(
             asset.width,
             asset.height,
             true,
-            settings.target_canvas_area,
+            settings.placement_target_area,
         );
         let placement =
             match library.create_placement_from_asset(asset.id, center_world, scale, 0.0, 0) {
                 Ok(placement) => placement,
                 Err(error) => return Err(error),
             };
-        layout.push(crate::data::PlacementLayoutItem::new(
-            placement.state.id,
-            placement.state.geometry.center,
-            placement.state.geometry.scaled_size(),
-        ));
+        layout.push(
+            crate::placement::arrangement::PlacementArrangementInput::new(
+                placement.state.id,
+                placement.state.geometry.center,
+                placement.state.geometry.scaled_size(),
+            ),
+        );
         canvas.add_unresolved_placement(placement.clone());
         placements.push(CreatedLoadedPlacement {
             reservation: None,
@@ -465,7 +511,7 @@ impl PlacementCreationBatchTracker {
         &mut self,
         target_board_id: Option<i64>,
         queue_id: Option<u64>,
-        loaded_item_id: Option<i64>,
+        loaded_placement_id: Option<i64>,
     ) -> Vec<CompletedPlacementCreationBatch> {
         let Some(queue_id) = queue_id else {
             return Vec::new();
@@ -476,7 +522,7 @@ impl PlacementCreationBatchTracker {
             if !batch.pending_queue_ids.remove(&queue_id) {
                 continue;
             }
-            if let Some(placement_id) = loaded_item_id
+            if let Some(placement_id) = loaded_placement_id
                 && !batch.loaded_placement_ids.contains(&placement_id)
             {
                 batch.loaded_placement_ids.push(placement_id);
@@ -501,7 +547,7 @@ impl PlacementCreationBatchTracker {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn pending_placement_creation_keeps_viewport_navigation_available() {
+    fn active_placement_creation_keeps_viewport_navigation_available() {
         assert_eq!(
             super::canvas_input_policy(true),
             crate::canvas::CanvasInputPolicy::ViewportOnly

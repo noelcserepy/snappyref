@@ -8,7 +8,9 @@ use std::time::Instant;
 use crate::active_board::commands::{
     ActiveBoardCommandContext, ClipboardBoardSelection, PasteCommandOutcome,
 };
-use crate::active_board::history::{DocumentHistory, HistoryAction, HistoryDirection, RowChange};
+use crate::active_board::history::{
+    DocumentHistory, HistoryAction, HistoryChange, HistoryDirection,
+};
 use crate::active_board::persistence::DocumentPersistence;
 use crate::library::residency::{ImagePrepResultResidencyOutcome, ImageResidencyCoordinator};
 use crate::placement::content_resolution::{
@@ -483,6 +485,9 @@ enum VerificationMode {
     ActiveBoardChip,
     SemanticSearchFirstLaunchPrompt,
     SemanticSearchInstall,
+    SearchDragSource,
+    SearchMultiDragSource,
+    SearchDragPreview,
     BoardDeleteConfirmation,
     LibraryRemoveConfirmation,
     DesignSystemPreview,
@@ -675,6 +680,27 @@ impl AppConfig {
                 {
                     verification_mode = Some(VerificationMode::SemanticSearchInstall);
                 }
+            } else if cfg!(all(debug_assertions, feature = "semantic-search"))
+                && argument == "--verify-search-drag-preview"
+            {
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                {
+                    verification_mode = Some(VerificationMode::SearchDragPreview);
+                }
+            } else if cfg!(all(debug_assertions, feature = "semantic-search"))
+                && argument == "--verify-search-drag-source"
+            {
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                {
+                    verification_mode = Some(VerificationMode::SearchDragSource);
+                }
+            } else if cfg!(all(debug_assertions, feature = "semantic-search"))
+                && argument == "--verify-search-multi-drag-source"
+            {
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                {
+                    verification_mode = Some(VerificationMode::SearchMultiDragSource);
+                }
             } else if cfg!(debug_assertions) && argument == "--verify-board-delete-confirmation" {
                 #[cfg(debug_assertions)]
                 {
@@ -860,6 +886,18 @@ impl AppConfig {
         )
     }
 
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    fn verify_search_drag_preview_on_start(&self) -> bool {
+        matches!(
+            self.verification_mode,
+            Some(
+                VerificationMode::SearchDragPreview
+                    | VerificationMode::SearchDragSource
+                    | VerificationMode::SearchMultiDragSource
+            )
+        )
+    }
+
     #[cfg(debug_assertions)]
     fn verify_import_loaded_on_start(&self) -> bool {
         matches!(self.verification_mode, Some(VerificationMode::ImportLoaded))
@@ -897,6 +935,9 @@ impl AppConfig {
                         | VerificationMode::ContextMenu
                         | VerificationMode::ImportLoaded
                         | VerificationMode::ImportMatrix
+                        | VerificationMode::SearchDragSource
+                        | VerificationMode::SearchMultiDragSource
+                        | VerificationMode::SearchDragPreview
                         | VerificationMode::BackgroundGrid
                         | VerificationMode::BackgroundDots
                         | VerificationMode::BackgroundTransition
@@ -1229,8 +1270,19 @@ impl SnappyRefApp {
                 if config.open_sidebar_on_start() {
                     app.settings.semantic_search_first_launch_prompt_seen = true;
                 }
-                #[cfg(feature = "semantic-search")]
+                #[cfg(all(feature = "semantic-search", not(debug_assertions)))]
                 app.sync_semantic_search_service();
+                #[cfg(all(feature = "semantic-search", debug_assertions))]
+                if !matches!(
+                    config.verification_mode,
+                    Some(
+                        VerificationMode::SearchDragPreview
+                            | VerificationMode::SearchDragSource
+                            | VerificationMode::SearchMultiDragSource
+                    )
+                ) {
+                    app.sync_semantic_search_service();
+                }
                 if !config.skip_existing_items_on_start() {
                     app.enqueue_existing_items();
                 }
@@ -1333,6 +1385,10 @@ impl SnappyRefApp {
                         crate::search::semantic::LocalModelStoreStatus::Missing,
                     );
                     app.enable_semantic_search_from_first_launch_prompt(&cc.egui_ctx);
+                }
+                #[cfg(all(debug_assertions, feature = "semantic-search"))]
+                if config.verify_search_drag_preview_on_start() {
+                    app.seed_search_drag_preview_verification(&cc.egui_ctx);
                 }
                 #[cfg(debug_assertions)]
                 if let Some(query) = config.verification_search_query().map(ToOwned::to_owned) {
@@ -1526,7 +1582,7 @@ impl SnappyRefApp {
 
         let desired_world = self.preferred_import_world(ctx, screen_rect);
         let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let mut layout = match self.import_layout_snapshot() {
+        let mut layout = match self.import_arrangement_input_snapshot() {
             Ok(layout) => layout,
             Err(error) => {
                 self.emit_perf_error_and_close(ctx, error);
@@ -1580,7 +1636,7 @@ impl SnappyRefApp {
     fn enqueue_perf_entry(
         &mut self,
         entry: &PerfCorpusEntry,
-        layout: &mut Vec<crate::data::PlacementLayoutItem>,
+        layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
         desired_world: egui::Pos2,
         viewport_world: egui::Rect,
     ) -> Result<(), String> {
@@ -1671,7 +1727,7 @@ impl SnappyRefApp {
 
         let desired_world = self.preferred_import_world(ctx, screen_rect);
         let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let mut layout = match self.import_layout_snapshot() {
+        let mut layout = match self.import_arrangement_input_snapshot() {
             Ok(layout) => layout,
             Err(error) => {
                 self.emit_perf_error_and_close(ctx, error);
@@ -2537,13 +2593,13 @@ impl SnappyRefApp {
         crate::sources::import::import_preview_size_world(
             width,
             height,
-            self.settings.import_target_canvas_area,
+            self.settings.placement_target_area,
         )
     }
 
     fn placement_creation_settings(&self) -> crate::placement::creation::PlacementCreationSettings {
         crate::placement::creation::PlacementCreationSettings {
-            target_canvas_area: self.settings.import_target_canvas_area,
+            placement_target_area: self.settings.placement_target_area,
             gap: self.settings.placement_gap,
         }
     }
@@ -2553,7 +2609,7 @@ impl SnappyRefApp {
             max_texture_side: self.max_texture_side,
             canvas_image_max_side: self.settings.canvas_image_max_side,
             auto_image_scaling: true,
-            import_target_canvas_area: self.settings.import_target_canvas_area,
+            placement_target_area: self.settings.placement_target_area,
             placement_gap: self.settings.placement_gap,
         }
     }
@@ -2565,9 +2621,11 @@ impl SnappyRefApp {
         })
     }
 
-    fn import_layout_snapshot(&self) -> Result<Vec<crate::data::PlacementLayoutItem>, String> {
+    fn import_arrangement_input_snapshot(
+        &self,
+    ) -> Result<Vec<crate::placement::arrangement::PlacementArrangementInput>, String> {
         let layout = if let Some(library) = &self.library {
-            library.load_placement_layout_items()?
+            library.load_placement_arrangement_inputs()?
         } else {
             Vec::new()
         };
@@ -2576,7 +2634,7 @@ impl SnappyRefApp {
 
     fn reserve_import(
         &mut self,
-        layout: &mut Vec<crate::data::PlacementLayoutItem>,
+        layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
         label: String,
         dimensions: Option<(u32, u32)>,
         desired_world: egui::Pos2,
@@ -2598,7 +2656,7 @@ impl SnappyRefApp {
 
     fn create_committed_loading_import(
         &mut self,
-        layout: &mut Vec<crate::data::PlacementLayoutItem>,
+        layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
         intent: crate::placement::creation::SourceIntent,
         center_world: egui::Pos2,
     ) -> ContentResolutionReservation {
@@ -2640,12 +2698,24 @@ impl SnappyRefApp {
         let hover_intake = crate::sources::external_drag::hovered(ui);
         let hovered_sources = hover_intake.sources.clone();
         if hovered_sources.is_empty() {
+            crate::diagnostics::search_drag_debug(format!(
+                "external_hover empty cleanup external_ids={:?} pending_fallback_before={} selected={:?}",
+                self.external_hover_provisional_placement_ids,
+                self.pending_missing_drop_fallback.is_some(),
+                self.canvas.selected_placement_ids()
+            ));
             self.pending_missing_drop_fallback = self.last_hovered_external_drag.take();
-            crate::placement::lifecycle::cancel_provisional_batch(&mut self.canvas);
+            self.canvas
+                .delete_placements(&self.external_hover_provisional_placement_ids);
             self.external_hover_provisional_placement_ids.clear();
             self.hover_preview_dimensions.clear();
             return;
         }
+        crate::diagnostics::search_drag_debug(format!(
+            "external_hover sources count={} screen_pos={:?}",
+            hovered_sources.len(),
+            hover_intake.screen_pos
+        ));
         if self.last_hovered_external_drag.as_ref() == Some(&hover_intake)
             && !self.external_hover_provisional_placement_ids.is_empty()
         {
@@ -2722,7 +2792,7 @@ impl SnappyRefApp {
             desired_world,
             screen_rect,
             crate::placement::creation::PlacementCreationSettings {
-                target_canvas_area: self.settings.import_target_canvas_area,
+                placement_target_area: self.settings.placement_target_area,
                 gap: self.settings.placement_gap,
             },
         )
@@ -2814,11 +2884,13 @@ impl SnappyRefApp {
         &mut self,
         target_board_id: Option<i64>,
         queue_id: Option<u64>,
-        loaded_item_id: Option<i64>,
+        loaded_placement_id: Option<i64>,
     ) {
-        let completed_batches =
-            self.pending_import_batches
-                .finish_queue_id(target_board_id, queue_id, loaded_item_id);
+        let completed_batches = self.pending_import_batches.finish_queue_id(
+            target_board_id,
+            queue_id,
+            loaded_placement_id,
+        );
         for batch in completed_batches {
             self.finalize_completed_import_batch(
                 batch.target_board_id,
@@ -2968,7 +3040,7 @@ impl SnappyRefApp {
         let rgba = clipboard_image.bytes.into_owned();
         let width = clipboard_image.width as u32;
         let height = clipboard_image.height as u32;
-        let mut layout = match self.import_layout_snapshot() {
+        let mut layout = match self.import_arrangement_input_snapshot() {
             Ok(layout) => layout,
             Err(error) => {
                 self.status = error;
@@ -3023,7 +3095,7 @@ impl SnappyRefApp {
         };
 
         let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let mut layout = match self.import_layout_snapshot() {
+        let mut layout = match self.import_arrangement_input_snapshot() {
             Ok(layout) => layout,
             Err(error) => {
                 self.status = error;
@@ -3072,7 +3144,7 @@ impl SnappyRefApp {
         }
 
         let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let mut layout = match self.import_layout_snapshot() {
+        let mut layout = match self.import_arrangement_input_snapshot() {
             Ok(layout) => layout,
             Err(error) => {
                 self.status = error;
@@ -3097,11 +3169,13 @@ impl SnappyRefApp {
                             placement.state.id,
                             placement.state.geometry.center,
                         );
-                        layout.push(crate::data::PlacementLayoutItem::new(
-                            placement.state.id,
-                            placement.state.geometry.center,
-                            placement.state.geometry.scaled_size(),
-                        ));
+                        layout.push(
+                            crate::placement::arrangement::PlacementArrangementInput::new(
+                                placement.state.id,
+                                placement.state.geometry.center,
+                                placement.state.geometry.scaled_size(),
+                            ),
+                        );
                         created.push(crate::placement::creation::CreatedLoadingPlacement {
                             reservation,
                             placement,
@@ -3517,8 +3591,8 @@ impl SnappyRefApp {
 
         #[cfg(feature = "semantic-search")]
         {
-            if self.search.placement_creation_pending() {
-                return crate::canvas::CanvasInputPolicy::Full;
+            if self.search.provisional_batch_active() {
+                return crate::canvas::CanvasInputPolicy::ViewportOnly;
             }
             return crate::canvas::CanvasInputPolicy::Blocked;
         }
@@ -3698,7 +3772,7 @@ impl SnappyRefApp {
             label: label.to_owned(),
             placements: Vec::new(),
             annotations: Vec::new(),
-            stack_order: Some(RowChange {
+            stack_order: Some(HistoryChange {
                 before: Some(before_stack_order),
                 after: Some(self.canvas.canvas_stack_order()),
             }),
@@ -3715,7 +3789,7 @@ impl SnappyRefApp {
             .selected_placement_ids()
             .into_iter()
             .filter_map(|placement_id| self.canvas.placement_for_id(placement_id))
-            .map(|placement| RowChange {
+            .map(|placement| HistoryChange {
                 before: None,
                 after: Some(placement),
             })
@@ -3725,7 +3799,7 @@ impl SnappyRefApp {
             .selected_annotation_ids()
             .into_iter()
             .filter_map(|annotation_id| self.canvas.annotation_for_id(annotation_id))
-            .map(|annotation| RowChange {
+            .map(|annotation| HistoryChange {
                 before: None,
                 after: Some(annotation),
             })
@@ -3734,7 +3808,7 @@ impl SnappyRefApp {
             label,
             placements: placement_changes,
             annotations: annotation_changes,
-            stack_order: Some(RowChange {
+            stack_order: Some(HistoryChange {
                 before: Some(before_stack_order),
                 after: Some(self.canvas.canvas_stack_order()),
             }),
@@ -3836,7 +3910,7 @@ impl SnappyRefApp {
                     .note_loaded_placement(integration.updated_record.state.id);
                 self.document_history.record_applied(HistoryAction {
                     label: "Crop image".to_owned(),
-                    placements: vec![RowChange {
+                    placements: vec![HistoryChange {
                         before: Some(integration.previous_record.clone()),
                         after: Some(integration.updated_record.clone()),
                     }],
@@ -3910,7 +3984,7 @@ impl SnappyRefApp {
         {
             self.document_history.record_applied(HistoryAction {
                 label: "Import image".to_owned(),
-                placements: vec![RowChange {
+                placements: vec![HistoryChange {
                     before: None,
                     after: Some(log.placement.clone()),
                 }],
@@ -4378,11 +4452,11 @@ impl SnappyRefApp {
                             }
                             .to_owned(),
                             placements: Vec::new(),
-                            annotations: vec![RowChange {
+                            annotations: vec![HistoryChange {
                                 before: None,
                                 after: Some(created),
                             }],
-                            stack_order: Some(RowChange {
+                            stack_order: Some(HistoryChange {
                                 before: Some(before_stack_order),
                                 after: Some(self.canvas.canvas_stack_order()),
                             }),
@@ -4501,7 +4575,7 @@ impl SnappyRefApp {
                 } else {
                     library.load_asset(after.asset_id?).ok()?
                 };
-                Some(RowChange {
+                Some(HistoryChange {
                     before,
                     after: Some(crate::data::Placement::loaded(after, asset)),
                 })
@@ -4515,13 +4589,13 @@ impl SnappyRefApp {
                     .iter()
                     .find(|annotation| annotation.id == after.id)
                     .cloned();
-                RowChange {
+                HistoryChange {
                     before,
                     after: Some(after),
                 }
             })
             .collect::<Vec<_>>();
-        let stack_order = changes.stack_order.map(|after| RowChange {
+        let stack_order = changes.stack_order.map(|after| HistoryChange {
             before: current_stack_order,
             after: Some(after),
         });
@@ -4608,7 +4682,7 @@ impl SnappyRefApp {
                     .map(|placement| {
                         let mut archived = placement.clone();
                         archived.state.archived = true;
-                        RowChange {
+                        HistoryChange {
                             before: Some(placement),
                             after: Some(archived),
                         }
@@ -4619,7 +4693,7 @@ impl SnappyRefApp {
                     .map(|annotation| {
                         let mut archived = annotation.clone();
                         archived.archived = true;
-                        RowChange {
+                        HistoryChange {
                             before: Some(annotation),
                             after: Some(archived),
                         }
@@ -4629,7 +4703,7 @@ impl SnappyRefApp {
                     label: status.clone(),
                     placements: placement_changes,
                     annotations: annotation_changes,
-                    stack_order: Some(RowChange {
+                    stack_order: Some(HistoryChange {
                         before: Some(before_stack_order),
                         after: Some(self.canvas.canvas_stack_order()),
                     }),
@@ -4757,6 +4831,160 @@ impl SnappyRefApp {
             }
             Err(error) => self.status = error,
         }
+    }
+
+    #[cfg(all(debug_assertions, feature = "semantic-search"))]
+    fn seed_search_drag_preview_verification(&mut self, ctx: &egui::Context) {
+        self.canvas
+            .apply_viewport_state(&crate::data::ViewportState::default());
+        self.canvas
+            .set_background(crate::data::CanvasBackground::Grid);
+        self.settings.semantic_search_enabled = false;
+        self.settings.semantic_search_first_launch_prompt_seen = true;
+        self.search.set_local_model_store_status_for_verification(
+            crate::search::semantic::LocalModelStoreStatus::Installed,
+        );
+
+        let _ = self.seed_import_verification_image(
+            ctx,
+            "verify-search-drag-underlay",
+            egui::pos2(120.0, 40.0),
+            360,
+            260,
+            [68, 86, 120, 255],
+        );
+
+        let Some(library) = &self.library else {
+            self.status = "Library unavailable".to_owned();
+            return;
+        };
+
+        let specs = if matches!(
+            self.verification_mode,
+            Some(VerificationMode::SearchMultiDragSource)
+        ) {
+            vec![
+                (
+                    "verify-search-drag-result-a",
+                    320_u32,
+                    220_u32,
+                    [204, 94, 52, 255],
+                ),
+                (
+                    "verify-search-drag-result-b",
+                    220_u32,
+                    320_u32,
+                    [235, 198, 114, 255],
+                ),
+            ]
+        } else {
+            vec![(
+                "verify-search-drag-result",
+                320_u32,
+                220_u32,
+                [204, 94, 52, 255],
+            )]
+        };
+        let result = (|| -> Result<Vec<crate::data::Placement>, String> {
+            let mut placements = Vec::with_capacity(specs.len());
+            for (label, width, height, color) in specs {
+                let rgba = Self::solid_rgba(width, height, color);
+                let stored_path = library.store_rgba_image(label, &rgba, width, height)?;
+                let file_size = std::fs::metadata(&stored_path).map_err(|error| {
+                    format!("failed to read debug search image metadata: {error}")
+                })?;
+                let placement = library.persist_imported_image(
+                    &stored_path,
+                    image::ImageFormat::Png.to_mime_type(),
+                    width,
+                    height,
+                    file_size.len(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                )?;
+                placements.push(placement);
+            }
+            let placement_ids = placements
+                .iter()
+                .map(|placement| placement.state.id)
+                .collect::<Vec<_>>();
+            library.archive_placements(&placement_ids)?;
+            Ok(placements)
+        })();
+
+        let Ok(search_placements) = result else {
+            self.status = result
+                .err()
+                .unwrap_or_else(|| "Search drag verification seed failed".to_owned());
+            return;
+        };
+        self.search.overlay.open = true;
+        self.search.overlay.focus_requested = false;
+        self.search.overlay.query = "verify drag".to_owned();
+        self.search.overlay.status = crate::search::palette::SearchOverlayStatus::Ready;
+        self.search.overlay.results = search_placements
+            .iter()
+            .map(|placement| {
+                let asset = placement.asset.as_ref().expect("debug search asset");
+                crate::search::semantic::SearchResultAssetEntry {
+                    asset_id: asset.id,
+                    asset_preview_path: None,
+                    asset_original_path: Some(asset.original_path.clone()),
+                    asset_width: asset.width,
+                    asset_height: asset.height,
+                    similarity: 0.99,
+                }
+            })
+            .collect();
+        self.search.overlay.result_selection.replace(0);
+        if matches!(
+            self.verification_mode,
+            Some(VerificationMode::SearchMultiDragSource)
+        ) {
+            self.search.overlay.result_selection.toggle(1);
+        }
+        self.search.overlay.last_expanded_overlay_rect = Some(egui::Rect::from_min_size(
+            egui::pos2(24.0, 72.0),
+            egui::vec2(crate::search::palette::PALETTE_WIDTH, 420.0),
+        ));
+        if matches!(
+            self.verification_mode,
+            Some(VerificationMode::SearchDragPreview)
+        ) {
+            let asset = search_placements[0]
+                .asset
+                .as_ref()
+                .expect("debug search asset");
+            self.search.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
+                asset_ids: vec![asset.id],
+                outside_overlay: true,
+                provisional_batch_active: true,
+                auto_fit_applied: false,
+            });
+            let placement_creation_settings = self.placement_creation_settings();
+            crate::placement::lifecycle::start_provisional_batch(
+                &mut self.canvas,
+                vec![
+                    crate::placement::creation::ProvisionalSourceIntent::ExistingAsset {
+                        asset_id: asset.id,
+                        label: "verify-search-drag-result".to_owned(),
+                        dimensions: (asset.width, asset.height),
+                    },
+                ],
+                egui::pos2(120.0, 40.0),
+                egui::Rect::from_min_size(egui::Pos2::ZERO, STARTUP_VIEWPORT_SIZE),
+                placement_creation_settings,
+            );
+            crate::diagnostics::search_drag_debug(format!(
+                "seed_search_drag_preview_verification provisional_ids={:?} stack={:?}",
+                self.canvas.selected_placement_ids(),
+                self.canvas.canvas_stack_order()
+            ));
+            self.status = "Seeded search drag preview verification".to_owned();
+        } else {
+            self.status = "Seeded search drag source verification".to_owned();
+        }
+        ctx.request_repaint_after(Duration::from_millis(16));
     }
 
     #[cfg(debug_assertions)]
@@ -4994,7 +5222,7 @@ impl SnappyRefApp {
         }
         let desired_world = egui::Pos2::ZERO;
         let viewport_world = self.startup_viewport_world_rect();
-        let mut layout = match self.import_layout_snapshot() {
+        let mut layout = match self.import_arrangement_input_snapshot() {
             Ok(layout) => layout,
             Err(error) => {
                 self.status = error;
@@ -5144,7 +5372,7 @@ impl SnappyRefApp {
         desired_world: egui::Pos2,
         viewport_world: egui::Rect,
     ) -> bool {
-        let mut layout = match self.import_layout_snapshot() {
+        let mut layout = match self.import_arrangement_input_snapshot() {
             Ok(layout) => layout,
             Err(error) => {
                 self.status = error;
@@ -5412,8 +5640,8 @@ impl SnappyRefApp {
             screen_rect,
             &mut self.canvas,
             &mut self.status,
-            crate::search::SearchPlacementPreviewConfig {
-                import_target_canvas_area: self.settings.import_target_canvas_area,
+            crate::search::SearchPlacementCreationConfig {
+                placement_target_area: self.settings.placement_target_area,
                 placement_gap: self.settings.placement_gap,
                 visible_canvas_rect,
             },
@@ -5432,11 +5660,17 @@ impl SnappyRefApp {
         drop_request: crate::search::SearchDropRequest,
         _screen_rect: egui::Rect,
     ) {
+        crate::diagnostics::search_drag_debug(format!(
+            "handle_search_drop start asset_ids={:?} provisional_ids={:?}",
+            drop_request.asset_ids, drop_request.provisional_placement_ids
+        ));
         if drop_request.asset_ids.is_empty() {
+            crate::diagnostics::search_drag_debug("handle_search_drop abort empty_asset_ids");
             return;
         }
 
         let Some(library) = self.library.clone() else {
+            crate::diagnostics::search_drag_debug("handle_search_drop abort no_library");
             self.status = "Storage unavailable".to_owned();
             return;
         };
@@ -5453,12 +5687,20 @@ impl SnappyRefApp {
         ) {
             Ok(committed) => committed,
             Err(error) => {
+                crate::diagnostics::search_drag_debug(format!(
+                    "handle_search_drop commit_error error={error}"
+                ));
                 self.status = error;
                 return;
             }
         };
+        crate::diagnostics::search_drag_debug(format!(
+            "handle_search_drop committed added={:?} load_existing_count={}",
+            committed.added_placement_ids,
+            committed.load_existing_placements.len()
+        ));
 
-        for placement in &committed.load_existing_records {
+        for placement in &committed.load_existing_placements {
             if let Some(import_worker) = &self.import_worker {
                 if let Err(error) =
                     import_worker.enqueue(crate::jobs::ImagePrepRequest::LoadExisting {
@@ -5474,10 +5716,18 @@ impl SnappyRefApp {
                         trace: None,
                     })
                 {
+                    crate::diagnostics::search_drag_debug(format!(
+                        "handle_search_drop enqueue_load_existing_error placement_id={} error={error}",
+                        placement.state.id
+                    ));
                     self.status = error;
                     return;
                 }
             } else {
+                crate::diagnostics::search_drag_debug(format!(
+                    "handle_search_drop load_existing_sync placement_id={}",
+                    placement.state.id
+                ));
                 match crate::jobs::load_existing(
                     &library,
                     self.active_board_id,
@@ -5492,9 +5742,16 @@ impl SnappyRefApp {
                     self.wgpu_render_state.as_ref(),
                 ) {
                     crate::jobs::ImagePrepResult::Loaded(loaded) => {
+                        crate::diagnostics::search_drag_debug(format!(
+                            "handle_search_drop load_existing_loaded placement_id={}",
+                            loaded.placement.state.id
+                        ));
                         self.integrate_loaded_import(ctx, loaded);
                     }
                     crate::jobs::ImagePrepResult::Failed { error, .. } => {
+                        crate::diagnostics::search_drag_debug(format!(
+                            "handle_search_drop load_existing_failed error={error}"
+                        ));
                         self.status = error;
                         return;
                     }
@@ -5513,13 +5770,17 @@ impl SnappyRefApp {
         let placed_count = committed.placed_count();
         let noun = if placed_count == 1 { "image" } else { "images" };
         self.status = format!("Added {placed_count} search {noun}");
+        crate::diagnostics::search_drag_debug(format!(
+            "handle_search_drop done status={}",
+            self.status
+        ));
         self.search.close_overlay(Some(&mut self.canvas));
     }
 
     #[cfg(feature = "semantic-search")]
     #[cfg_attr(not(test), allow(dead_code))]
     fn source_center_for_placement_ids(&self, placement_ids: &[i64]) -> Option<egui::Pos2> {
-        source_center_for_records(
+        source_center_for_placements(
             &placement_ids
                 .iter()
                 .filter_map(|placement_id| self.canvas.placement_for_id(*placement_id))
@@ -5811,7 +6072,7 @@ fn semantic_search_settings_status(
 
 #[cfg(feature = "semantic-search")]
 #[cfg_attr(not(test), allow(dead_code))]
-fn source_center_for_records(placements: &[crate::data::Placement]) -> Option<egui::Pos2> {
+fn source_center_for_placements(placements: &[crate::data::Placement]) -> Option<egui::Pos2> {
     let mut min = egui::Pos2::new(f32::INFINITY, f32::INFINITY);
     let mut max = egui::Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
     let mut found = false;
@@ -5903,12 +6164,12 @@ impl eframe::App for SnappyRefApp {
         self.canvas.set_pointer_mode(self.settings.pointer_mode);
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         #[cfg(feature = "semantic-search")]
-        self.search.prepare_canvas_drag_preview(
+        self.search.prepare_canvas_provisional_batch(
             ui.ctx(),
             &mut self.canvas,
             screen_rect,
-            crate::search::SearchPlacementPreviewConfig {
-                import_target_canvas_area: self.settings.import_target_canvas_area,
+            crate::search::SearchPlacementCreationConfig {
+                placement_target_area: self.settings.placement_target_area,
                 placement_gap: self.settings.placement_gap,
                 visible_canvas_rect,
             },
@@ -6198,7 +6459,7 @@ fn apply_default_average_area_to_selection(
     status: &mut String,
 ) {
     let changed =
-        canvas.apply_target_area_to_selected_images(crate::jobs::DEFAULT_IMPORT_TARGET_CANVAS_AREA);
+        canvas.apply_target_area_to_selected_images(crate::jobs::DEFAULT_PLACEMENT_TARGET_AREA);
     let noun = if changed == 1 { "image" } else { "images" };
     *status = format!("Applied default average area to {changed} {noun}");
 }

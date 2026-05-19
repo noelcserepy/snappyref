@@ -4,7 +4,7 @@ use super::CanvasBackground;
 
 pub const DEFAULT_PLACEMENT_GAP: f32 = 0.0;
 pub const DEFAULT_CANVAS_IMAGE_MAX_SIDE: u32 = 2000;
-pub const DEFAULT_IMPORT_TARGET_CANVAS_AREA: f32 = 90_000.0;
+pub const DEFAULT_PLACEMENT_TARGET_AREA: f32 = 90_000.0;
 pub const DEFAULT_ROTATION_SNAP_DEGREES: f32 = 15.0;
 pub const DEFAULT_VIEWPORT_ZOOM: f32 = 0.45;
 
@@ -83,8 +83,11 @@ pub struct WorkspaceSettings {
     pub auto_image_scaling: bool,
     #[serde(default = "default_placement_gap")]
     pub placement_gap: f32,
-    #[serde(default = "default_import_target_canvas_area")]
-    pub import_target_canvas_area: f32,
+    #[serde(
+        default = "default_placement_target_area",
+        rename = "import_target_canvas_area"
+    )]
+    pub placement_target_area: f32,
     #[serde(default = "default_canvas_image_max_side")]
     pub canvas_image_max_side: u32,
     #[serde(default = "default_semantic_search_enabled")]
@@ -114,8 +117,8 @@ fn default_placement_gap() -> f32 {
     DEFAULT_PLACEMENT_GAP
 }
 
-fn default_import_target_canvas_area() -> f32 {
-    DEFAULT_IMPORT_TARGET_CANVAS_AREA
+fn default_placement_target_area() -> f32 {
+    DEFAULT_PLACEMENT_TARGET_AREA
 }
 
 fn default_canvas_image_max_side() -> u32 {
@@ -135,7 +138,7 @@ impl Default for WorkspaceSettings {
         Self {
             auto_image_scaling: true,
             placement_gap: DEFAULT_PLACEMENT_GAP,
-            import_target_canvas_area: DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
             canvas_image_max_side: DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             semantic_search_enabled: true,
             semantic_search_first_launch_prompt_seen: false,

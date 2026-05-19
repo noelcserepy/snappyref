@@ -23,9 +23,10 @@ use super::{
 use crate::data::{
     CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
     CanvasImageLod, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, Placement,
-    PlacementLayoutItem, PlacementLifecycle, ViewportState,
+    PlacementLifecycle, ViewportState,
 };
 use crate::jobs::{PreparedCropPreview, PreparedPlacementImage};
+use crate::placement::arrangement::PlacementArrangementInput;
 
 #[derive(Clone, Copy)]
 enum StackOrderMove {
@@ -190,12 +191,12 @@ impl CanvasState {
             .sort_by_key(|image| image.placement.state.geometry.z_index);
     }
 
-    pub fn add_provisional_unloaded_item(&mut self, mut placement: Placement) {
+    pub fn add_provisional_unresolved_placement(&mut self, mut placement: Placement) {
         placement.lifecycle = PlacementLifecycle::Provisional;
         self.add_unresolved_placement(placement);
     }
 
-    pub fn next_provisional_item_id(&self) -> i64 {
+    pub fn next_provisional_placement_id(&self) -> i64 {
         self.document
             .rendered_placements
             .iter()
@@ -222,7 +223,7 @@ impl CanvasState {
         &mut self,
         committed: Vec<(i64, Placement)>,
     ) -> Vec<Placement> {
-        let mut committed_records = Vec::with_capacity(committed.len());
+        let mut committed_placements = Vec::with_capacity(committed.len());
         for (provisional_id, mut placement) in committed {
             placement.lifecycle = PlacementLifecycle::Committed;
             let committed_id = placement.state.id;
@@ -249,12 +250,12 @@ impl CanvasState {
                     *item = CanvasStackItem::Placement(committed_id);
                 }
             }
-            committed_records.push(placement);
+            committed_placements.push(placement);
         }
-        committed_records
+        committed_placements
     }
 
-    pub fn provisional_records_in_selection_order(&self) -> Vec<Placement> {
+    pub fn provisional_placements_in_selection_order(&self) -> Vec<Placement> {
         self.document
             .selected_placement_ids
             .iter()
@@ -405,7 +406,7 @@ impl CanvasState {
         &self,
         cropped: &PreparedCropPreview,
     ) -> Result<crate::data::PlacementState, String> {
-        let source_item =
+        let source_placement_state =
             if let Some(preview) = self.render.pending_crop_previews.get(&cropped.placement_id) {
                 preview.image.placement.state.clone()
             } else {
@@ -415,12 +416,16 @@ impl CanvasState {
                 image.placement.state.clone()
             };
 
-        let mut item = source_item;
-        let asset_id = item
+        let mut updated_placement_state = source_placement_state;
+        let asset_id = updated_placement_state
             .asset_id
-            .ok_or_else(|| format!("placement {} has no asset", item.id))?;
-        merge_cropped_item_fields(&mut item, asset_id, cropped.crop_offset_local);
-        Ok(item)
+            .ok_or_else(|| format!("placement {} has no asset", updated_placement_state.id))?;
+        merge_cropped_item_fields(
+            &mut updated_placement_state,
+            asset_id,
+            cropped.crop_offset_local,
+        );
+        Ok(updated_placement_state)
     }
 
     pub fn apply_pending_crop_preview(
@@ -477,14 +482,18 @@ impl CanvasState {
         let mut asset = request.source_asset.clone();
         asset.width = request.crop_rect.width;
         asset.height = request.crop_rect.height;
-        let mut item = original_image.placement.state.clone();
-        let asset_id = item
+        let mut updated_placement_state = original_image.placement.state.clone();
+        let asset_id = updated_placement_state
             .asset_id
-            .ok_or_else(|| format!("placement {} has no asset", item.id))?;
-        merge_cropped_item_fields(&mut item, asset_id, request.crop_offset_local);
+            .ok_or_else(|| format!("placement {} has no asset", updated_placement_state.id))?;
+        merge_cropped_item_fields(
+            &mut updated_placement_state,
+            asset_id,
+            request.crop_offset_local,
+        );
 
         let image = &mut self.document.rendered_placements[image_index];
-        image.placement.state = item;
+        image.placement.state = updated_placement_state;
         image.placement.asset = Some(asset);
         image.texture = texture;
         image.loaded_lod = CanvasImageLod::Working;
@@ -778,10 +787,10 @@ impl CanvasState {
         screen_rect: egui::Rect,
         gap: f32,
     ) -> Vec<(egui::Pos2, egui::Vec2)> {
-        let mut layout_items =
+        let mut arrangement_inputs =
             crate::placement::arrangement::compact_layout_for_sizes(sizes, gap, center_world);
-        self.guide_snap_layout_items(&mut layout_items, screen_rect);
-        layout_items
+        self.guide_snap_arrangement_inputs(&mut arrangement_inputs, screen_rect);
+        arrangement_inputs
     }
 
     pub fn balanced_guided_layout_for_sizes(
@@ -791,22 +800,22 @@ impl CanvasState {
         screen_rect: egui::Rect,
         gap: f32,
     ) -> Vec<(egui::Pos2, egui::Vec2)> {
-        let mut layout_items =
+        let mut arrangement_inputs =
             crate::placement::arrangement::balanced_grid_layout_for_sizes(sizes, gap, center_world);
-        self.guide_snap_layout_items(&mut layout_items, screen_rect);
-        layout_items
+        self.guide_snap_arrangement_inputs(&mut arrangement_inputs, screen_rect);
+        arrangement_inputs
     }
 
-    fn guide_snap_layout_items(
+    fn guide_snap_arrangement_inputs(
         &mut self,
-        layout_items: &mut [(egui::Pos2, egui::Vec2)],
+        arrangement_inputs: &mut [(egui::Pos2, egui::Vec2)],
         screen_rect: egui::Rect,
     ) {
-        let items = layout_items
+        let items = arrangement_inputs
             .iter()
             .enumerate()
             .map(|(index, (center, size))| {
-                PlacementLayoutItem::new(
+                PlacementArrangementInput::new(
                     -((index as i64) + 1),
                     egui::pos2(center.x, center.y),
                     egui::vec2(size.x, size.y),
@@ -835,7 +844,7 @@ impl CanvasState {
             return;
         }
         self.set_guide_snap_indicators(snap_result.indicators);
-        for (center, _) in layout_items {
+        for (center, _) in arrangement_inputs {
             *center += snap_offset;
         }
     }
@@ -1329,7 +1338,7 @@ impl CanvasState {
     }
 
     pub fn arrange_selected_horizontal(&mut self, gap: f32) -> usize {
-        let mut items = self.selected_layout_items();
+        let mut items = self.selected_arrangement_inputs();
         if items.len() <= 1 {
             return items.len();
         }
@@ -1349,7 +1358,7 @@ impl CanvasState {
     }
 
     pub fn arrange_selected_vertical(&mut self, gap: f32) -> usize {
-        let mut items = self.selected_layout_items();
+        let mut items = self.selected_arrangement_inputs();
         if items.len() <= 1 {
             return items.len();
         }
@@ -1375,10 +1384,10 @@ impl CanvasState {
         }
 
         let current_center = self
-            .source_center_for_layout_items(
+            .source_center_for_arrangement_inputs(
                 &items
                     .iter()
-                    .map(|item| item.layout.clone())
+                    .map(|item| item.arrangement_input.clone())
                     .collect::<Vec<_>>(),
             )
             .unwrap_or(egui::Pos2::ZERO);
@@ -1396,13 +1405,13 @@ impl CanvasState {
     }
 
     pub fn arrange_selected_compact_preserving_sizes(&mut self, gap: f32) -> usize {
-        let items = self.selected_layout_items();
+        let items = self.selected_arrangement_inputs();
         if items.len() <= 1 {
             return items.len();
         }
 
         let current_center = self
-            .source_center_for_layout_items(&items)
+            .source_center_for_arrangement_inputs(&items)
             .unwrap_or(egui::Pos2::ZERO);
         let Some((placements, width, height)) =
             crate::placement::arrangement::best_compact_layout(&items, gap)
@@ -1421,7 +1430,7 @@ impl CanvasState {
         direction: crate::placement::arrangement::SettleDirection,
         gap: f32,
     ) -> usize {
-        let items = self.selected_layout_items();
+        let items = self.selected_arrangement_inputs();
         if items.len() <= 1 {
             return items.len();
         }
@@ -1441,7 +1450,7 @@ impl CanvasState {
 
     #[allow(dead_code)]
     pub fn center_selected_placements_on(&mut self, center_world: egui::Pos2) -> usize {
-        let items = self.selected_layout_items();
+        let items = self.selected_arrangement_inputs();
         let Some(bounds) = layout_bounds_with_offset(&items, egui::Vec2::ZERO) else {
             return 0;
         };
@@ -2016,7 +2025,7 @@ impl CanvasState {
         )
     }
 
-    pub(crate) fn selected_layout_items(&self) -> Vec<PlacementLayoutItem> {
+    pub(crate) fn selected_arrangement_inputs(&self) -> Vec<PlacementArrangementInput> {
         self.document
             .rendered_placements
             .iter()
@@ -2028,7 +2037,7 @@ impl CanvasState {
                     display_size.y,
                     image.placement.state.geometry.rotation,
                 );
-                PlacementLayoutItem::new(
+                PlacementArrangementInput::new(
                     image.placement.state.id,
                     egui::pos2(
                         image.placement.state.geometry.center.x,
@@ -2048,13 +2057,16 @@ impl CanvasState {
             .map(|image| {
                 let input = image.placement.compact_input();
                 crate::placement::arrangement::CompactInputItem {
-                    layout: input.layout_item(),
+                    arrangement_input: input.arrangement_input(),
                 }
             })
             .collect()
     }
 
-    fn source_center_for_layout_items(&self, items: &[PlacementLayoutItem]) -> Option<egui::Pos2> {
+    fn source_center_for_arrangement_inputs(
+        &self,
+        items: &[PlacementArrangementInput],
+    ) -> Option<egui::Pos2> {
         layout_bounds_with_offset(items, egui::Vec2::ZERO).map(|bounds| bounds.center())
     }
 
@@ -2196,7 +2208,7 @@ impl CanvasState {
     }
 
     pub fn average_selected_image_area(&self) -> Option<f32> {
-        let items = self.selected_layout_items();
+        let items = self.selected_arrangement_inputs();
         if items.is_empty() {
             return None;
         }
@@ -2525,7 +2537,7 @@ fn asset_mime_type_is_svg(mime_type: &str) -> bool {
 }
 
 fn layout_bounds_with_offset(
-    items: &[PlacementLayoutItem],
+    items: &[PlacementArrangementInput],
     offset: egui::Vec2,
 ) -> Option<egui::Rect> {
     let mut bounds = egui::Rect::NOTHING;

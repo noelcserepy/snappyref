@@ -76,11 +76,15 @@ pub enum PlacementContent {
         asset_id: i64,
     },
     Loading {
+        // Compatibility: older persisted payloads used `intent` for this
+        // post-Placement Content Resolution Source.
         #[serde(alias = "intent")]
         source: ContentResolutionSource,
         status_message: Option<String>,
     },
     Failed {
+        // Compatibility: older persisted payloads used `intent` for this
+        // post-Placement Content Resolution Source.
         #[serde(alias = "intent")]
         source: Option<ContentResolutionSource>,
         message: String,
@@ -157,55 +161,6 @@ impl Placement {
 
     pub fn visual_bounds(&self) -> Rect {
         self.state.geometry.visual_bounds()
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct PlacementLayoutItem {
-    pub id: PlacementId,
-    pub geometry: RectGeometry,
-}
-
-impl PlacementLayoutItem {
-    pub fn from_rect(id: PlacementId, rect: Rect) -> Self {
-        Self {
-            id,
-            geometry: RectGeometry::from_bounds(rect, 0),
-        }
-    }
-
-    pub fn new(id: PlacementId, center: Pos2, display_size: Vec2) -> Self {
-        Self {
-            id,
-            geometry: RectGeometry::new(center, display_size, 1.0, 0.0, 0),
-        }
-    }
-
-    pub fn center(&self) -> Pos2 {
-        self.geometry.center
-    }
-
-    pub fn size(&self) -> Vec2 {
-        self.geometry.size * self.geometry.scale.max(0.01)
-    }
-
-    pub fn rect(&self) -> Rect {
-        Rect::from_center_size(self.center(), self.size())
-    }
-
-    pub fn width(&self) -> f32 {
-        self.size().x
-    }
-
-    pub fn height(&self) -> f32 {
-        self.size().y
-    }
-
-    pub fn with_size(&self, display_size: Vec2) -> Self {
-        let mut item = self.clone();
-        item.geometry.size = display_size;
-        item.geometry.scale = 1.0;
-        item
     }
 }
 

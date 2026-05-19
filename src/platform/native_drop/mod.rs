@@ -222,7 +222,36 @@ mod platform {
     }
 
     pub(super) fn cursor_screen_pos() -> Option<egui::Pos2> {
-        None
+        let event_class = AnyClass::get("NSEvent")?;
+        let app_class = AnyClass::get("NSApplication")?;
+        let screen_point: NSPoint = unsafe { msg_send![event_class, mouseLocation] };
+        let app: *mut NSObject = unsafe { msg_send![app_class, sharedApplication] };
+        let app = unsafe { app.as_ref()? };
+        let mut window: Option<Retained<NSObject>> = unsafe { msg_send_id![app, keyWindow] };
+        if window.is_none() {
+            window = unsafe { msg_send_id![app, mainWindow] };
+        }
+        let window = window?;
+        let window_point: NSPoint =
+            unsafe { msg_send![&*window, convertPointFromScreen: screen_point] };
+        let content_view: Option<Retained<NSObject>> =
+            unsafe { msg_send_id![&*window, contentView] };
+        let content_view = content_view?;
+        let bounds: NSRect = unsafe { msg_send![&*content_view, bounds] };
+        let view_point: NSPoint = unsafe {
+            msg_send![
+                &*content_view,
+                convertPoint: window_point,
+                fromView: Option::<&NSObject>::None
+            ]
+        };
+        let is_flipped: bool = unsafe { msg_send![&*content_view, isFlipped] };
+        Some(view_point_to_egui_pos(
+            view_point.x,
+            view_point.y,
+            bounds.size.height,
+            is_flipped,
+        ))
     }
 
     pub(super) fn take_dropped_urls() -> Vec<String> {

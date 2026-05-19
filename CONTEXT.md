@@ -129,6 +129,10 @@ _Avoid_: Placement Creation, Source Intent, PlacementDraft
 The compact arrangement objective for selected placements: minimize visible holes first, then prefer a rough square when density is close. Squareness should decide only when candidate occupancy is roughly within three percentage points. Compact arrangement is placement-only: it may reorder selected placements and change their positions, but it preserves authored scale and rotation. The packed block should keep clean top and left edges; right-edge cleanliness is only a soft tie-break among near-equivalent candidates.
 _Avoid_: Perfect square layout, masonry layout
 
+**Placement Arrangement Input**:
+A transient adapter passed into arrangement algorithms when they need a Placement id plus rectangular geometry. It is not persisted board content and should not be exported as canonical data vocabulary.
+_Avoid_: Selected Layout Item, layout item
+
 **Compact Size Normalization**:
 The optional pre-packing resize phase of compact arrangement where selected Placements with near-matching visual width or height may be scaled so their visible footprints form cleaner rows or columns.
 _Avoid_: Normalize close heights/widths, bucket resize, pre-packing resize

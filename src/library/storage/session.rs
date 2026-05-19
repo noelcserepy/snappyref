@@ -106,11 +106,11 @@ pub(super) fn legacy_user_session_from_row(
         settings: WorkspaceSettings {
             auto_image_scaling: row.get::<_, i64>(0)? != 0,
             placement_gap: row.get(1)?,
-            import_target_canvas_area: row
+            placement_target_area: row
                 .get::<_, f32>(2)
                 .ok()
                 .map(|value| value.max(1.0))
-                .unwrap_or(crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA),
+                .unwrap_or(crate::data::DEFAULT_PLACEMENT_TARGET_AREA),
             canvas_image_max_side: row
                 .get::<_, i64>(4)
                 .ok()
@@ -271,7 +271,7 @@ impl Library {
                         0_i64
                     },
                     session.settings.placement_gap,
-                    session.settings.import_target_canvas_area,
+                    session.settings.placement_target_area,
                     session.viewport.canvas_background.as_str(),
                     if session.settings.semantic_search_enabled {
                         1_i64

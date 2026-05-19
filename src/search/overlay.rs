@@ -3,9 +3,9 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 use super::controller::{
-    SearchController, SearchDropRequest, SearchPlacementPreviewConfig, result_is_on_bottom_row,
+    SearchController, SearchDropRequest, SearchPlacementCreationConfig, result_is_on_bottom_row,
 };
-use super::placement::pending_placement_commit_intent;
+use super::placement::provisional_placement_commit_requested;
 use super::selection::{PendingResultSelection, SearchSelectionMode};
 use crate::canvas::CanvasState;
 use crate::search::palette::{
@@ -33,7 +33,7 @@ impl SearchController {
         screen_rect: egui::Rect,
         canvas: &mut CanvasState,
         status: &mut String,
-        placement_preview_config: SearchPlacementPreviewConfig,
+        placement_creation_config: SearchPlacementCreationConfig,
     ) -> Option<SearchDropRequest> {
         if !self.overlay.open {
             return None;
@@ -49,9 +49,9 @@ impl SearchController {
                 .overlay
                 .drag_state
                 .as_ref()
-                .is_some_and(|drag| drag.placement_pending)
+                .is_some_and(|drag| drag.provisional_batch_active)
             {
-                self.cancel_pending_placement(canvas);
+                self.cancel_search_provisional_batch(canvas);
             } else {
                 self.close_overlay(Some(canvas));
             }
@@ -74,12 +74,14 @@ impl SearchController {
             search_result_grid_content_height(result_count, grid_layout.columns);
         let grid_viewport_height = grid_content_height.min(PALETTE_GRID_MAX_HEIGHT);
         let pointer_pos = ctx.input(|input| input.pointer.latest_pos());
+        let result_drag_active = self.overlay.drag_state.is_some();
         let drag_outside = self
             .overlay
             .drag_state
             .as_ref()
             .is_some_and(|drag| drag.outside_overlay);
-        let scrim_visible = !drag_outside;
+        let compact_for_drag = result_drag_active;
+        let scrim_visible = !compact_for_drag;
         let scrim_t = ctx.animate_bool(
             egui::Id::new("semantic_search_scrim_visible"),
             scrim_visible,
@@ -177,7 +179,7 @@ impl SearchController {
                             }
                         }
 
-                        if !drag_outside {
+                        if !compact_for_drag {
                             paint_palette_divider(ui);
 
                             if result_count == 0 {
@@ -279,6 +281,12 @@ impl SearchController {
                                                             ));
                                                         }
                                                         if response.drag_started() {
+                                                            crate::diagnostics::search_drag_debug(
+                                                                format!(
+                                                                    "overlay tile drag_started index={index} response_rect={:?}",
+                                                                    response.rect
+                                                                ),
+                                                            );
                                                             drag_start_index = Some(index);
                                                         }
                                                     }
@@ -319,53 +327,80 @@ impl SearchController {
             });
 
         let overlay_rect = area_response.response.rect;
-        if !drag_outside {
+        if !drag_outside || compact_for_drag {
             self.overlay.last_expanded_overlay_rect = Some(overlay_rect);
         }
-        self.prepare_canvas_drag_preview(ctx, canvas, screen_rect, placement_preview_config);
+        let needs_initial_provisional_batch = self
+            .overlay
+            .drag_state
+            .as_ref()
+            .is_some_and(|drag| !drag.provisional_batch_active);
+        if needs_initial_provisional_batch {
+            self.prepare_canvas_provisional_batch(
+                ctx,
+                canvas,
+                screen_rect,
+                placement_creation_config,
+            );
+        }
         let mut drop_request = None;
-        let mut cancelled_pending_placement = false;
-        let cancel_pending_placement = ctx.input(|input| input.pointer.secondary_clicked());
-        if cancel_pending_placement
+        let mut cancelled_provisional_batch = false;
+        let cancel_search_provisional_batch = ctx.input(|input| input.pointer.secondary_clicked());
+        if cancel_search_provisional_batch
             && self
                 .overlay
                 .drag_state
                 .as_ref()
-                .is_some_and(|drag| drag.placement_pending)
+                .is_some_and(|drag| drag.provisional_batch_active)
         {
-            self.cancel_pending_placement(canvas);
-            cancelled_pending_placement = true;
+            self.cancel_search_provisional_batch(canvas);
+            cancelled_provisional_batch = true;
             ctx.request_repaint_after(Duration::from_millis(16));
         } else if ctx.input(|input| {
-            pending_placement_commit_intent(input.pointer.primary_clicked(), input.modifiers)
+            provisional_placement_commit_requested(input.pointer.primary_clicked(), input.modifiers)
         }) && self
             .overlay
             .drag_state
             .as_ref()
-            .is_some_and(|drag| drag.placement_pending)
+            .is_some_and(|drag| drag.provisional_batch_active)
             && let Some(drag) = self.overlay.drag_state.take()
         {
+            let provisional_placement_ids = canvas
+                .provisional_placements_in_selection_order()
+                .into_iter()
+                .map(|placement| placement.state.id)
+                .collect::<Vec<_>>();
+            crate::diagnostics::search_drag_debug(format!(
+                "overlay commit primary_clicked asset_ids={:?} provisional_ids={provisional_placement_ids:?}",
+                drag.asset_ids
+            ));
             drop_request = Some(SearchDropRequest {
                 asset_ids: drag.asset_ids,
-                provisional_placement_ids: canvas
-                    .provisional_records_in_selection_order()
-                    .into_iter()
-                    .map(|record| record.state.id)
-                    .collect(),
+                provisional_placement_ids,
             });
             ctx.request_repaint_after(Duration::from_millis(16));
         } else if ctx.input(|input| input.pointer.any_released())
             && let Some(drag) = self.overlay.drag_state.take()
         {
             if drag.outside_overlay {
+                let provisional_placement_ids = canvas
+                    .provisional_placements_in_selection_order()
+                    .into_iter()
+                    .map(|placement| placement.state.id)
+                    .collect::<Vec<_>>();
+                crate::diagnostics::search_drag_debug(format!(
+                    "overlay commit pointer_released asset_ids={:?} provisional_ids={provisional_placement_ids:?}",
+                    drag.asset_ids
+                ));
                 drop_request = Some(SearchDropRequest {
                     asset_ids: drag.asset_ids,
-                    provisional_placement_ids: canvas
-                        .provisional_records_in_selection_order()
-                        .into_iter()
-                        .map(|record| record.state.id)
-                        .collect(),
+                    provisional_placement_ids,
                 });
+            } else {
+                crate::diagnostics::search_drag_debug(format!(
+                    "overlay pointer_released inside_overlay asset_ids={:?}",
+                    drag.asset_ids
+                ));
             }
             ctx.request_repaint_after(Duration::from_millis(16));
         }
@@ -381,7 +416,7 @@ impl SearchController {
             && !suppress_outside_click
             && self.overlay.drag_state.is_none()
             && drop_request.is_none()
-            && !cancelled_pending_placement
+            && !cancelled_provisional_batch
         {
             self.close_overlay(Some(canvas));
             return drop_request;
@@ -396,12 +431,12 @@ impl SearchController {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
 
-        let placement_pending = self
+        let provisional_batch_active = self
             .overlay
             .drag_state
             .as_ref()
-            .is_some_and(|drag| drag.placement_pending);
-        if placement_pending {
+            .is_some_and(|drag| drag.provisional_batch_active);
+        if provisional_batch_active {
             return drop_request;
         }
 
@@ -453,7 +488,7 @@ impl SearchController {
                         canvas,
                         pointer_pos,
                         screen_rect,
-                        placement_preview_config,
+                        placement_creation_config,
                     );
                 } else {
                     self.start_keyboard_placement_for_selected_results(
@@ -461,7 +496,7 @@ impl SearchController {
                         canvas,
                         pointer_pos,
                         screen_rect,
-                        placement_preview_config,
+                        placement_creation_config,
                     );
                 }
             }

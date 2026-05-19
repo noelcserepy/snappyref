@@ -21,7 +21,7 @@ pub(crate) struct CommitSearchProvisionalRequest {
 #[derive(Clone, Debug)]
 pub(crate) struct CommittedSearchProvisionalBatch {
     pub(crate) added_placement_ids: Vec<i64>,
-    pub(crate) load_existing_records: Vec<Placement>,
+    pub(crate) load_existing_placements: Vec<Placement>,
     pub(crate) history_action: Option<crate::active_board::history::HistoryAction>,
 }
 
@@ -64,18 +64,18 @@ pub(crate) fn commit_loading_provisional_batch(
     canvas: &mut CanvasState,
     placement_ids: &[i64],
 ) -> Result<CommittedLoadingProvisionalBatch, String> {
-    let provisional_records = placement_ids
+    let provisional_placements = placement_ids
         .iter()
         .filter_map(|placement_id| canvas.placement_for_id(*placement_id))
         .filter(|placement| placement.lifecycle == crate::data::PlacementLifecycle::Provisional)
         .collect::<Vec<_>>();
-    if provisional_records.is_empty() {
+    if provisional_placements.is_empty() {
         return Ok(CommittedLoadingProvisionalBatch {
             placements: Vec::new(),
         });
     }
 
-    let committed_pairs = library.commit_provisional_loading_placements(&provisional_records)?;
+    let committed_pairs = library.commit_provisional_loading_placements(&provisional_placements)?;
     let placements = canvas.commit_provisional_placements_in_place(committed_pairs);
     let stack_after = canvas.canvas_stack_order();
     library.save_canvas_stack_order(&stack_after)?;
@@ -97,25 +97,25 @@ pub(crate) fn commit_search_provisional_batch(
     if request.asset_ids.is_empty() {
         return Ok(CommittedSearchProvisionalBatch {
             added_placement_ids: Vec::new(),
-            load_existing_records: Vec::new(),
+            load_existing_placements: Vec::new(),
             history_action: None,
         });
     }
 
-    let mut provisional_records = request
+    let mut provisional_placements = request
         .provisional_placement_ids
         .iter()
         .filter_map(|placement_id| canvas.placement_for_id(*placement_id))
         .collect::<Vec<_>>();
-    if provisional_records.is_empty() {
+    if provisional_placements.is_empty() {
         return Ok(CommittedSearchProvisionalBatch {
             added_placement_ids: Vec::new(),
-            load_existing_records: Vec::new(),
+            load_existing_placements: Vec::new(),
             history_action: None,
         });
     }
 
-    for placement in &mut provisional_records {
+    for placement in &mut provisional_placements {
         let Some(asset_id) = placement.state.asset_id else {
             continue;
         };
@@ -124,38 +124,38 @@ pub(crate) fn commit_search_provisional_batch(
         }
         let asset = library.load_asset(asset_id)?;
         placement.state.geometry.size = egui::vec2(asset.width as f32, asset.height as f32);
-        placement.state.geometry.scale = crate::jobs::initial_import_scale(
+        placement.state.geometry.scale = crate::jobs::display_scale_for_placement_target_area(
             asset.width,
             asset.height,
             true,
-            _settings.target_canvas_area,
+            _settings.placement_target_area,
         );
     }
 
     let stack_before = library.load_canvas_stack_order().ok();
-    let committed_pairs = library.commit_provisional_placements(&provisional_records)?;
-    let committed_records = canvas.commit_provisional_placements_in_place(committed_pairs);
+    let committed_pairs = library.commit_provisional_placements(&provisional_placements)?;
+    let committed_placements = canvas.commit_provisional_placements_in_place(committed_pairs);
     let stack_after = canvas.canvas_stack_order();
     library.save_canvas_stack_order(&stack_after)?;
 
-    let added_placement_ids = committed_records
+    let added_placement_ids = committed_placements
         .iter()
         .map(|placement| placement.state.id)
         .collect::<Vec<_>>();
     canvas.select_placements(&added_placement_ids);
-    let load_existing_records = committed_records.clone();
+    let load_existing_placements = committed_placements.clone();
     let history_action = Some(crate::active_board::history::HistoryAction {
         label: "Add search images".to_owned(),
-        placements: committed_records
+        placements: committed_placements
             .iter()
             .cloned()
-            .map(|placement| crate::active_board::history::RowChange {
+            .map(|placement| crate::active_board::history::HistoryChange {
                 before: None,
                 after: Some(placement),
             })
             .collect(),
         annotations: Vec::new(),
-        stack_order: stack_before.map(|before| crate::active_board::history::RowChange {
+        stack_order: stack_before.map(|before| crate::active_board::history::HistoryChange {
             before: Some(before),
             after: Some(
                 stack_after
@@ -173,7 +173,7 @@ pub(crate) fn commit_search_provisional_batch(
 
     Ok(CommittedSearchProvisionalBatch {
         added_placement_ids,
-        load_existing_records,
+        load_existing_placements,
         history_action,
     })
 }
@@ -207,14 +207,82 @@ mod tests {
             egui::Pos2::ZERO,
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)),
             PlacementCreationSettings {
-                target_canvas_area: 10_000.0,
+                placement_target_area: 10_000.0,
                 gap: 16.0,
             },
         );
 
         assert_eq!(batch.placement_ids.len(), 1);
         assert_eq!(canvas.selected_placement_ids(), batch.placement_ids);
-        assert_eq!(canvas.provisional_records_in_selection_order().len(), 1);
+        assert_eq!(canvas.provisional_placements_in_selection_order().len(), 1);
+    }
+
+    #[test]
+    fn provisional_batch_places_previews_above_existing_placements() {
+        let mut canvas = CanvasState::default();
+        canvas.add_unresolved_placement(Placement {
+            state: crate::data::PlacementState::with_display_size(
+                42,
+                None,
+                egui::Pos2::ZERO,
+                egui::vec2(100.0, 100.0),
+                1.0,
+                0.0,
+                12,
+                false,
+            ),
+            asset: None,
+            content: crate::data::PlacementContent::Loading {
+                source: crate::data::ContentResolutionSource::SearchAsset { asset_id: 42 },
+                status_message: Some("Loading".to_owned()),
+            },
+            lifecycle: crate::data::PlacementLifecycle::Committed,
+        });
+
+        let batch = start_provisional_batch(
+            &mut canvas,
+            vec![
+                ProvisionalSourceIntent::ExistingAsset {
+                    asset_id: 7,
+                    label: "asset-7".to_owned(),
+                    dimensions: (100, 50),
+                },
+                ProvisionalSourceIntent::ExistingAsset {
+                    asset_id: 8,
+                    label: "asset-8".to_owned(),
+                    dimensions: (100, 50),
+                },
+            ],
+            egui::Pos2::ZERO,
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)),
+            PlacementCreationSettings {
+                placement_target_area: 10_000.0,
+                gap: 16.0,
+            },
+        );
+
+        let z_indexes = batch
+            .placement_ids
+            .iter()
+            .map(|placement_id| {
+                canvas
+                    .placement_for_id(*placement_id)
+                    .unwrap()
+                    .state
+                    .geometry
+                    .z_index
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(z_indexes, vec![13, 14]);
+        assert_eq!(
+            canvas.canvas_stack_order(),
+            vec![
+                CanvasStackItem::Placement(42),
+                CanvasStackItem::Placement(batch.placement_ids[0]),
+                CanvasStackItem::Placement(batch.placement_ids[1]),
+            ]
+        );
     }
 
     #[test]
@@ -230,7 +298,7 @@ mod tests {
             egui::Pos2::ZERO,
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)),
             PlacementCreationSettings {
-                target_canvas_area: 10_000.0,
+                placement_target_area: 10_000.0,
                 gap: 16.0,
             },
         );
@@ -238,7 +306,11 @@ mod tests {
         let removed = cancel_provisional_batch(&mut canvas);
 
         assert_eq!(removed, batch.placement_ids);
-        assert!(canvas.provisional_records_in_selection_order().is_empty());
+        assert!(
+            canvas
+                .provisional_placements_in_selection_order()
+                .is_empty()
+        );
         assert!(!canvas.take_document_changes().has_changes());
     }
 
@@ -263,7 +335,7 @@ mod tests {
             egui::pos2(42.0, 24.0),
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)),
             PlacementCreationSettings {
-                target_canvas_area: 10_000.0,
+                placement_target_area: 10_000.0,
                 gap: 16.0,
             },
         );
@@ -276,15 +348,19 @@ mod tests {
                 provisional_placement_ids: provisional.placement_ids,
             },
             PlacementCreationSettings {
-                target_canvas_area: 10_000.0,
+                placement_target_area: 10_000.0,
                 gap: 16.0,
             },
         )
         .unwrap();
 
         assert_eq!(committed.added_placement_ids.len(), 1);
-        assert_eq!(committed.load_existing_records.len(), 1);
-        assert!(canvas.provisional_records_in_selection_order().is_empty());
+        assert_eq!(committed.load_existing_placements.len(), 1);
+        assert!(
+            canvas
+                .provisional_placements_in_selection_order()
+                .is_empty()
+        );
         let placement = canvas
             .placement_for_id(committed.added_placement_ids[0])
             .unwrap();

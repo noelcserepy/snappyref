@@ -11,7 +11,7 @@ use crate::canvas::{
     IMAGE_CULL_MARGIN_SCREEN, IMAGE_DETAIL_PROMOTION_THRESHOLD, ImagePaintStats, ImagePassBatch,
     ImagePassCallback, ImagePassInstance, ImagePassMetrics, RenderedPlacement,
 };
-use crate::data::CanvasStackItem;
+use crate::data::{CanvasStackItem, PlacementLifecycle};
 
 const SELECTION_BORDER_WIDTH: f32 = 1.0;
 const IMAGE_SELECTION_BORDER_COLOR: egui::Color32 = crate::ui::theme::TEXT;
@@ -228,7 +228,21 @@ pub(crate) fn unified_canvas_paint_order_for_state(state: &CanvasState) -> Vec<C
     state.ordered_canvas_items_back_to_front()
 }
 
+#[cfg(test)]
+pub(crate) fn optimized_image_pass_eligible_for_state(state: &CanvasState) -> bool {
+    canvas_stack_matches_existing_layering(state)
+}
+
 fn canvas_stack_matches_existing_layering(state: &CanvasState) -> bool {
+    if state
+        .document
+        .rendered_placements
+        .iter()
+        .any(|image| image.placement.lifecycle == PlacementLifecycle::Provisional)
+    {
+        return false;
+    }
+
     let ordered = state.ordered_canvas_items_back_to_front();
     let existing = state
         .document
@@ -534,7 +548,8 @@ fn paint_image_overlay(
     debug_labels: bool,
 ) {
     if state.is_selected(image.placement.state.id)
-        && selection_border_visible(state, painter.ctx().input(|input| input.time))
+        && (image.placement.lifecycle == PlacementLifecycle::Provisional
+            || selection_border_visible(state, painter.ctx().input(|input| input.time)))
     {
         let corners = image_screen_corners_for_record(
             &image.placement,

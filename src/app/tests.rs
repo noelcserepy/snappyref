@@ -93,7 +93,7 @@ fn save_user_session_round_trips_placement_gap() {
     let mut app = test_app(Some(library.clone()));
     app.settings.auto_image_scaling = false;
     app.settings.placement_gap = 37.0;
-    app.settings.import_target_canvas_area = 45_000.0;
+    app.settings.placement_target_area = 45_000.0;
     app.settings.canvas_image_max_side = 4096;
     app.canvas
         .set_background(crate::data::CanvasBackground::Grid);
@@ -103,7 +103,7 @@ fn save_user_session_round_trips_placement_gap() {
     let session = library.load_user_session().unwrap();
     assert!(!session.settings.auto_image_scaling);
     assert_eq!(session.settings.placement_gap, 37.0);
-    assert_eq!(session.settings.import_target_canvas_area, 45_000.0);
+    assert_eq!(session.settings.placement_target_area, 45_000.0);
     assert_eq!(session.settings.canvas_image_max_side, 4096);
     assert_eq!(
         session.viewport.canvas_background,
@@ -3003,11 +3003,11 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
     harness.step();
 
     let active_items = library.load_placements().unwrap();
-    let expected_scale = crate::jobs::initial_import_scale(
+    let expected_scale = crate::jobs::display_scale_for_placement_target_area(
         width,
         height,
         true,
-        crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        crate::data::DEFAULT_PLACEMENT_TARGET_AREA,
     );
     assert_eq!(active_items.len(), 1);
     assert_eq!(active_items[0].state.geometry.scale, expected_scale);
@@ -3113,7 +3113,7 @@ fn long_search_error_does_not_expand_palette_width() {
 
 #[cfg(feature = "semantic-search")]
 #[test]
-fn command_enter_library_search_results_show_pending_cursor_layout_items() {
+fn command_enter_library_search_results_show_pending_cursor_arrangement_inputs() {
     let root = temp_library_root("snappyref-library-search-cmd-enter-provisional-placement");
     let library = Library::initialize(root.clone()).unwrap();
     let first_path = library
@@ -3202,7 +3202,7 @@ fn command_enter_library_search_results_show_pending_cursor_layout_items() {
         harness
             .state()
             .canvas
-            .provisional_records_in_selection_order()
+            .provisional_placements_in_selection_order()
             .len(),
         2
     );
@@ -3285,10 +3285,10 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
     let layout = harness
         .state()
         .canvas
-        .provisional_records_in_selection_order()
+        .provisional_placements_in_selection_order()
         .into_iter()
         .map(|placement| {
-            crate::data::PlacementLayoutItem::new(
+            crate::placement::arrangement::PlacementArrangementInput::new(
                 placement.state.id,
                 placement.state.geometry.center,
                 placement.state.geometry.scaled_size(),
@@ -3320,7 +3320,7 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
 
 #[cfg(feature = "semantic-search")]
 #[test]
-fn multi_select_enter_library_search_results_show_pending_cursor_layout_items() {
+fn multi_select_enter_library_search_results_show_pending_cursor_arrangement_inputs() {
     let root = temp_library_root("snappyref-library-search-multi-enter-provisional-placement");
     let library = Library::initialize(root.clone()).unwrap();
     let first_path = library
@@ -3404,12 +3404,268 @@ fn multi_select_enter_library_search_results_show_pending_cursor_layout_items() 
         harness
             .state()
             .canvas
-            .provisional_records_in_selection_order()
+            .provisional_placements_in_selection_order()
             .len(),
         2
     );
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(feature = "semantic-search")]
+#[test]
+fn dragging_library_search_result_out_of_palette_creates_provisional_placement() {
+    let root = temp_library_root("snappyref-library-search-pointer-drag-provisional-placement");
+    let library = Library::initialize(root.clone()).unwrap();
+    let source_path = library
+        .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
+        .unwrap();
+    let source = library
+        .persist_imported_image(
+            &source_path,
+            "image/png",
+            10,
+            10,
+            4,
+            egui::pos2(0.0, 0.0),
+            1.0,
+        )
+        .unwrap();
+    library.archive_placements(&[source.state.id]).unwrap();
+    let empty_board = library.create_board("Empty").unwrap();
+    library.set_active_board(empty_board.id).unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.active_board_id = empty_board.id;
+    app.search.overlay.open = true;
+    app.search.overlay.results = vec![SearchResultAssetEntry {
+        asset_id: source.asset.as_ref().expect("loaded placement asset").id,
+        asset_preview_path: None,
+        asset_original_path: Some(
+            source
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .original_path
+                .clone(),
+        ),
+        asset_width: source.asset.as_ref().expect("loaded placement asset").width,
+        asset_height: source
+            .asset
+            .as_ref()
+            .expect("loaded placement asset")
+            .height,
+        similarity: 0.9,
+    }];
+    app.search.overlay.result_selection.replace(0);
+    let mut harness = app_harness(app, |ctx, app| {
+        app.show_search_overlay(ctx, test_screen_rect());
+    });
+
+    harness.hover_at(egui::pos2(344.0, 206.0));
+    harness.drag_at(egui::pos2(344.0, 206.0));
+    harness.hover_at(egui::pos2(900.0, 600.0));
+    harness.step();
+
+    assert_eq!(
+        harness
+            .state()
+            .canvas
+            .provisional_placements_in_selection_order()
+            .len(),
+        1
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(feature = "semantic-search")]
+#[test]
+fn dragging_multiple_library_search_results_centers_provisional_group_on_pointer() {
+    let root = temp_library_root("snappyref-library-search-pointer-drag-multi-center");
+    let library = Library::initialize(root.clone()).unwrap();
+    let first_path = library
+        .store_rgba_image("first", &vec![255; 120 * 80 * 4], 120, 80)
+        .unwrap();
+    let second_path = library
+        .store_rgba_image("second", &vec![180; 80 * 120 * 4], 80, 120)
+        .unwrap();
+    let first = library
+        .persist_imported_image(
+            &first_path,
+            "image/png",
+            120,
+            80,
+            4,
+            egui::pos2(0.0, 0.0),
+            1.0,
+        )
+        .unwrap();
+    let second = library
+        .persist_imported_image(
+            &second_path,
+            "image/png",
+            80,
+            120,
+            4,
+            egui::pos2(0.0, 0.0),
+            1.0,
+        )
+        .unwrap();
+    library
+        .archive_placements(&[first.state.id, second.state.id])
+        .unwrap();
+    let empty_board = library.create_board("Empty").unwrap();
+    library.set_active_board(empty_board.id).unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.active_board_id = empty_board.id;
+    app.search.overlay.open = true;
+    app.search.overlay.results = vec![
+        SearchResultAssetEntry {
+            asset_id: first.asset.as_ref().expect("loaded placement asset").id,
+            asset_preview_path: None,
+            asset_original_path: Some(
+                first
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .original_path
+                    .clone(),
+            ),
+            asset_width: first.asset.as_ref().expect("loaded placement asset").width,
+            asset_height: first.asset.as_ref().expect("loaded placement asset").height,
+            similarity: 0.9,
+        },
+        SearchResultAssetEntry {
+            asset_id: second.asset.as_ref().expect("loaded placement asset").id,
+            asset_preview_path: None,
+            asset_original_path: Some(
+                second
+                    .asset
+                    .as_ref()
+                    .expect("loaded placement asset")
+                    .original_path
+                    .clone(),
+            ),
+            asset_width: second.asset.as_ref().expect("loaded placement asset").width,
+            asset_height: second
+                .asset
+                .as_ref()
+                .expect("loaded placement asset")
+                .height,
+            similarity: 0.8,
+        },
+    ];
+    app.search.overlay.result_selection.replace(0);
+    app.search.overlay.result_selection.toggle(1);
+    let mut harness = app_harness(app, |ctx, app| {
+        app.show_search_overlay(ctx, test_screen_rect());
+    });
+
+    let pointer_screen = egui::pos2(900.0, 600.0);
+    harness.hover_at(egui::pos2(344.0, 206.0));
+    harness.drag_at(egui::pos2(344.0, 206.0));
+    harness.hover_at(pointer_screen);
+    harness.step();
+
+    let bounds = harness.state().canvas.selected_bounds_world().unwrap();
+    let pointer_world = harness
+        .state()
+        .canvas
+        .screen_to_world(pointer_screen, test_screen_rect());
+    assert_eq!(
+        harness
+            .state()
+            .canvas
+            .provisional_placements_in_selection_order()
+            .len(),
+        2
+    );
+    assert!(
+        (bounds.center().x - pointer_world.x).abs() < 0.1,
+        "group center x {:?} should match pointer world x {:?}",
+        bounds.center().x,
+        pointer_world.x
+    );
+    assert!(
+        (bounds.center().y - pointer_world.y).abs() < 0.1,
+        "group center y {:?} should match pointer world y {:?}",
+        bounds.center().y,
+        pointer_world.y
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(feature = "semantic-search")]
+#[test]
+fn active_search_provisional_drag_keeps_canvas_edit_input_disabled() {
+    let ctx = egui::Context::default();
+    let mut app = test_app(None);
+    app.search.overlay.open = true;
+    app.search.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
+        asset_ids: vec![1, 2],
+        outside_overlay: true,
+        provisional_batch_active: true,
+        auto_fit_applied: false,
+    });
+
+    assert_eq!(
+        app.canvas_input_policy(&ctx),
+        crate::canvas::CanvasInputPolicy::ViewportOnly
+    );
+}
+
+#[cfg(feature = "semantic-search")]
+#[test]
+fn empty_external_hover_does_not_cancel_search_provisional_placement() {
+    let mut app = test_app(None);
+    crate::placement::lifecycle::start_provisional_batch(
+        &mut app.canvas,
+        vec![
+            crate::placement::creation::ProvisionalSourceIntent::ExistingAsset {
+                asset_id: 10,
+                label: "search-asset-10".to_owned(),
+                dimensions: (100, 100),
+            },
+        ],
+        egui::pos2(0.0, 0.0),
+        test_screen_rect(),
+        crate::placement::creation::PlacementCreationSettings {
+            placement_target_area: app.settings.placement_target_area,
+            gap: app.settings.placement_gap,
+        },
+    );
+    let mut harness = app_harness(app, |ctx, app| {
+        egui::Area::new(egui::Id::new("external-hover-test-surface"))
+            .fixed_pos(egui::Pos2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_min_size(test_screen_rect().size());
+                app.handle_hovered_files(ui, test_screen_rect());
+            });
+    });
+
+    harness.hover_at(egui::pos2(900.0, 600.0));
+    harness.step();
+
+    assert_eq!(
+        harness
+            .state()
+            .canvas
+            .provisional_placements_in_selection_order()
+            .len(),
+        1
+    );
+
+    harness.step();
+
+    assert_eq!(
+        harness
+            .state()
+            .canvas
+            .provisional_placements_in_selection_order()
+            .len(),
+        1
+    );
 }
 
 #[cfg(feature = "semantic-search")]
@@ -3526,7 +3782,7 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
         harness
             .state()
             .canvas
-            .provisional_records_in_selection_order()
+            .provisional_placements_in_selection_order()
             .len(),
         2
     );
@@ -4174,7 +4430,7 @@ fn raw_dropped_file_enqueues_external_import() {
         harness
             .state()
             .canvas
-            .provisional_records_in_selection_order()
+            .provisional_placements_in_selection_order()
             .len(),
         1
     );
@@ -4195,7 +4451,7 @@ fn raw_dropped_file_enqueues_external_import() {
         harness
             .state()
             .canvas
-            .provisional_records_in_selection_order()
+            .provisional_placements_in_selection_order()
             .is_empty()
     );
     assert_eq!(harness.state().content_resolution.pending_len(), 1);

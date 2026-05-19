@@ -43,8 +43,8 @@ fn loaded_placements_load_as_committed_loaded_content() {
     assert_eq!(reloaded[0].lifecycle, PlacementLifecycle::Committed);
     assert_eq!(reloaded[0].state.geometry.size, egui::vec2(10.0, 20.0));
     assert_eq!(
-        library.load_placement_layout_items().unwrap()[0],
-        crate::data::PlacementLayoutItem::new(
+        library.load_placement_arrangement_inputs().unwrap()[0],
+        crate::placement::arrangement::PlacementArrangementInput::new(
             placement.state.id,
             egui::pos2(3.0, 4.0),
             egui::vec2(20.0, 40.0),
@@ -99,14 +99,14 @@ fn committed_loading_and_failed_placements_persist_load_and_stack() {
     assert_eq!(reloaded[0].state.geometry.size.x, 320.0);
     assert_eq!(reloaded[1].state.geometry.size.y, 90.0);
     assert_eq!(
-        library.load_placement_layout_items().unwrap(),
+        library.load_placement_arrangement_inputs().unwrap(),
         vec![
-            crate::data::PlacementLayoutItem::new(
+            crate::placement::arrangement::PlacementArrangementInput::new(
                 loading.state.id,
                 egui::pos2(12.0, 24.0),
                 egui::vec2(640.0, 360.0),
             ),
-            crate::data::PlacementLayoutItem::new(
+            crate::placement::arrangement::PlacementArrangementInput::new(
                 failed.state.id,
                 egui::pos2(48.0, 96.0),
                 egui::vec2(120.0, 90.0),
@@ -122,6 +122,35 @@ fn committed_loading_and_failed_placements_persist_load_and_stack() {
     );
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn legacy_content_resolution_intent_payload_alias_decodes_as_source() {
+    let loading_payload = r#"{"Loading":{"intent":{"ExternalPath":{"path":"/tmp/source.png"}},"status_message":"Queued"}}"#;
+    let failed_payload = r#"{"Failed":{"intent":{"Unknown":{"description":"clipboard"}},"message":"Could not read image","recoverable":true}}"#;
+
+    let loading: PlacementContent = serde_json::from_str(loading_payload).unwrap();
+    let failed: PlacementContent = serde_json::from_str(failed_payload).unwrap();
+
+    assert_eq!(
+        loading,
+        PlacementContent::Loading {
+            source: ContentResolutionSource::ExternalPath {
+                path: "/tmp/source.png".to_owned(),
+            },
+            status_message: Some("Queued".to_owned()),
+        }
+    );
+    assert_eq!(
+        failed,
+        PlacementContent::Failed {
+            source: Some(ContentResolutionSource::Unknown {
+                description: "clipboard".to_owned(),
+            }),
+            message: "Could not read image".to_owned(),
+            recoverable: true,
+        }
+    );
 }
 
 #[test]
@@ -337,7 +366,7 @@ fn update_preservation_smoke() {
     session.viewport.canvas_background = CanvasBackground::Grid;
     session.settings.auto_image_scaling = false;
     session.settings.placement_gap = 36.0;
-    session.settings.import_target_canvas_area = 54_321.0;
+    session.settings.placement_target_area = 54_321.0;
     session.settings.semantic_search_enabled = false;
     session.settings.canvas_image_max_side = 4096;
     session.settings.rotation_snap_degrees = 30.0;
@@ -380,10 +409,7 @@ fn update_preservation_smoke() {
     );
     assert!(!reloaded_session.settings.auto_image_scaling);
     assert_eq!(reloaded_session.settings.placement_gap, 36.0);
-    assert_eq!(
-        reloaded_session.settings.import_target_canvas_area,
-        54_321.0
-    );
+    assert_eq!(reloaded_session.settings.placement_target_area, 54_321.0);
     assert!(!reloaded_session.settings.semantic_search_enabled);
     assert_eq!(reloaded_session.settings.canvas_image_max_side, 4096);
     assert_eq!(reloaded_session.settings.rotation_snap_degrees, 30.0);
@@ -1048,7 +1074,7 @@ fn workspace_settings_remain_global_across_active_boards() {
     let mut session = library.load_user_session().unwrap();
     session.settings.auto_image_scaling = false;
     session.settings.placement_gap = 48.0;
-    session.settings.import_target_canvas_area = 45_000.0;
+    session.settings.placement_target_area = 45_000.0;
     session.settings.semantic_search_enabled = false;
     session.settings.semantic_search_first_launch_prompt_seen = true;
     session.settings.canvas_image_max_side = 4096;
@@ -1064,7 +1090,7 @@ fn workspace_settings_remain_global_across_active_boards() {
     assert_eq!(reopened.active_board_id, first_board.id);
     assert!(!reopened.settings.auto_image_scaling);
     assert_eq!(reopened.settings.placement_gap, 48.0);
-    assert_eq!(reopened.settings.import_target_canvas_area, 45_000.0);
+    assert_eq!(reopened.settings.placement_target_area, 45_000.0);
     assert!(!reopened.settings.semantic_search_enabled);
     assert!(reopened.settings.semantic_search_first_launch_prompt_seen);
     assert_eq!(reopened.settings.canvas_image_max_side, 4096);
@@ -1081,7 +1107,7 @@ fn workspace_settings_remain_global_across_active_boards() {
         CanvasBackground::Grid
     );
     assert_eq!(second_reopened.settings.placement_gap, 48.0);
-    assert_eq!(second_reopened.settings.import_target_canvas_area, 45_000.0);
+    assert_eq!(second_reopened.settings.placement_target_area, 45_000.0);
 
     drop(library);
     let library = Library::initialize(root.clone()).unwrap();
@@ -1111,7 +1137,7 @@ fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
     let mut session = library.load_user_session().unwrap();
     session.settings.auto_image_scaling = false;
     session.settings.placement_gap = 48.0;
-    session.settings.import_target_canvas_area = 45_000.0;
+    session.settings.placement_target_area = 45_000.0;
     session.settings.semantic_search_enabled = false;
     session.settings.canvas_image_max_side = 4096;
     session.settings.rotation_snap_degrees = 45.0;
@@ -1145,7 +1171,7 @@ fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
 
     assert!(!reloaded.settings.auto_image_scaling);
     assert_eq!(reloaded.settings.placement_gap, 48.0);
-    assert_eq!(reloaded.settings.import_target_canvas_area, 45_000.0);
+    assert_eq!(reloaded.settings.placement_target_area, 45_000.0);
     assert!(!reloaded.settings.semantic_search_enabled);
     assert_eq!(reloaded.settings.canvas_image_max_side, 4096);
     assert_eq!(reloaded.settings.rotation_snap_degrees, 45.0);
@@ -1231,7 +1257,7 @@ fn existing_legacy_user_session_columns_backfill_payload() {
     assert_eq!(session.viewport.canvas_background, CanvasBackground::Grid);
     assert!(!session.settings.auto_image_scaling);
     assert_eq!(session.settings.placement_gap, 48.0);
-    assert_eq!(session.settings.import_target_canvas_area, 45_000.0);
+    assert_eq!(session.settings.placement_target_area, 45_000.0);
     assert!(!session.settings.semantic_search_enabled);
     assert_eq!(session.settings.canvas_image_max_side, 4096);
     assert_eq!(session.settings.rotation_snap_degrees, 45.0);
@@ -1312,8 +1338,8 @@ fn existing_user_session_rows_migrate_to_default_preferences() {
         crate::data::DEFAULT_PLACEMENT_GAP
     );
     assert_eq!(
-        session.settings.import_target_canvas_area,
-        crate::data::DEFAULT_IMPORT_TARGET_CANVAS_AREA
+        session.settings.placement_target_area,
+        crate::data::DEFAULT_PLACEMENT_TARGET_AREA
     );
     assert_eq!(
         session.settings.canvas_image_max_side,

@@ -1,8 +1,8 @@
 use super::{
-    CanvasImageSettings, DEFAULT_IMPORT_TARGET_CANVAS_AREA, ImagePrepPreviewTexture,
-    ImagePrepResult, ImagePrepTimings, ImagePrepTrace, ImagePrepWorker, ImagePrepWorkerConfig,
-    arrange_rect_world, build_preview_texture, crop_item, file_import_perf_report,
-    import_clipboard, import_path_sync, import_url_sync_traced, initial_import_scale,
+    CanvasImageSettings, DEFAULT_PLACEMENT_TARGET_AREA, ImagePrepPreviewTexture, ImagePrepResult,
+    ImagePrepTimings, ImagePrepTrace, ImagePrepWorker, ImagePrepWorkerConfig, arrange_rect_world,
+    build_preview_texture, crop_item, display_scale_for_placement_target_area,
+    file_import_perf_report, import_clipboard, import_path_sync, import_url_sync_traced,
     load_existing, rects_overlap_with_gap,
 };
 use crate::data::CanvasImageLod;
@@ -22,24 +22,22 @@ fn downscaled_canvas_settings(max_side: u32) -> CanvasImageSettings {
 
 #[test]
 fn scales_down_large_portrait_images_to_target_area() {
-    let scale = initial_import_scale(1000, 1500, true, DEFAULT_IMPORT_TARGET_CANVAS_AREA);
-    assert!(
-        (scale - (DEFAULT_IMPORT_TARGET_CANVAS_AREA / 1_500_000.0).sqrt()).abs() < f32::EPSILON
-    );
+    let scale =
+        display_scale_for_placement_target_area(1000, 1500, true, DEFAULT_PLACEMENT_TARGET_AREA);
+    assert!((scale - (DEFAULT_PLACEMENT_TARGET_AREA / 1_500_000.0).sqrt()).abs() < f32::EPSILON);
 }
 
 #[test]
 fn scales_down_large_landscape_images_by_area_cap() {
-    let scale = initial_import_scale(1920, 1080, true, DEFAULT_IMPORT_TARGET_CANVAS_AREA);
-    assert!(
-        (scale - (DEFAULT_IMPORT_TARGET_CANVAS_AREA / 2_073_600.0).sqrt()).abs() < f32::EPSILON
-    );
+    let scale =
+        display_scale_for_placement_target_area(1920, 1080, true, DEFAULT_PLACEMENT_TARGET_AREA);
+    assert!((scale - (DEFAULT_PLACEMENT_TARGET_AREA / 2_073_600.0).sqrt()).abs() < f32::EPSILON);
 }
 
 #[test]
 fn scales_down_large_images_to_configured_target_area() {
     let target_area = 40_000.0;
-    let scale = initial_import_scale(1000, 1500, true, target_area);
+    let scale = display_scale_for_placement_target_area(1000, 1500, true, target_area);
 
     assert!((scale - (target_area / 1_500_000.0).sqrt()).abs() < f32::EPSILON);
 }
@@ -47,7 +45,7 @@ fn scales_down_large_images_to_configured_target_area() {
 #[test]
 fn keeps_smaller_images_at_full_scale() {
     assert_eq!(
-        initial_import_scale(180, 240, true, DEFAULT_IMPORT_TARGET_CANVAS_AREA),
+        display_scale_for_placement_target_area(180, 240, true, DEFAULT_PLACEMENT_TARGET_AREA),
         1.0
     );
 }
@@ -55,7 +53,7 @@ fn keeps_smaller_images_at_full_scale() {
 #[test]
 fn disabling_auto_scale_keeps_full_scale() {
     assert_eq!(
-        initial_import_scale(1200, 2000, false, DEFAULT_IMPORT_TARGET_CANVAS_AREA),
+        display_scale_for_placement_target_area(1200, 2000, false, DEFAULT_PLACEMENT_TARGET_AREA),
         1.0
     );
 }
@@ -107,9 +105,9 @@ fn file_imports_land_in_same_area_band() {
     )
     .unwrap();
 
-    assert!((displayed_area(&portrait) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
-    assert!((displayed_area(&landscape) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
-    assert!((displayed_area(&square) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
+    assert!((displayed_area(&portrait) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
+    assert!((displayed_area(&landscape) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
+    assert!((displayed_area(&square) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
     assert_eq!(small.placement.state.geometry.scale, 1.0);
 
     let _ = fs::remove_dir_all(root);
@@ -137,7 +135,7 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
         usize::MAX,
         CanvasImageSettings::default(),
         true,
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        DEFAULT_PLACEMENT_TARGET_AREA,
         crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
@@ -159,7 +157,7 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
         usize::MAX,
         CanvasImageSettings::default(),
         false,
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        DEFAULT_PLACEMENT_TARGET_AREA,
         crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
@@ -168,7 +166,7 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
         other => panic!("expected loaded small clipboard image, got {other:?}"),
     };
 
-    assert!((displayed_area(&tall) - DEFAULT_IMPORT_TARGET_CANVAS_AREA).abs() < 0.1);
+    assert!((displayed_area(&tall) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
     assert_eq!(small.placement.state.geometry.scale, 1.0);
 
     let _ = fs::remove_dir_all(root);
@@ -230,7 +228,7 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
         usize::MAX,
         CanvasImageSettings::default(),
         false,
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        DEFAULT_PLACEMENT_TARGET_AREA,
         crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
@@ -372,7 +370,7 @@ fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
         usize::MAX,
         CanvasImageSettings::default(),
         false,
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        DEFAULT_PLACEMENT_TARGET_AREA,
         gap,
         None,
         None,
@@ -395,7 +393,7 @@ fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
         usize::MAX,
         CanvasImageSettings::default(),
         false,
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        DEFAULT_PLACEMENT_TARGET_AREA,
         gap,
         None,
         None,
@@ -445,7 +443,7 @@ fn reserved_world_is_persisted_without_worker_relayout() {
         usize::MAX,
         CanvasImageSettings::default(),
         false,
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        DEFAULT_PLACEMENT_TARGET_AREA,
         crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
@@ -480,7 +478,7 @@ fn overlapping_reserved_world_is_preserved_when_persisting() {
         usize::MAX,
         CanvasImageSettings::default(),
         false,
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        DEFAULT_PLACEMENT_TARGET_AREA,
         crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
@@ -516,7 +514,7 @@ fn url_import_downloads_and_persists_original_bytes() {
         usize::MAX,
         CanvasImageSettings::default(),
         false,
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        DEFAULT_PLACEMENT_TARGET_AREA,
         crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
@@ -610,7 +608,7 @@ fn url_import_preserves_svg_as_vector_source() {
         usize::MAX,
         CanvasImageSettings::default(),
         false,
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        DEFAULT_PLACEMENT_TARGET_AREA,
         crate::data::DEFAULT_PLACEMENT_GAP,
         None,
         None,
@@ -1045,7 +1043,7 @@ fn make_import_path_request(source_path: PathBuf) -> super::ImagePrepRequest {
         max_texture_side: usize::MAX,
         canvas_image_settings: CanvasImageSettings::default(),
         auto_scale: true,
-        target_canvas_area: DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
         placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
         trace: None,
     }
@@ -1135,7 +1133,7 @@ fn traced_clipboard_import_populates_non_negative_timings() {
         usize::MAX,
         CanvasImageSettings::default(),
         false,
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        DEFAULT_PLACEMENT_TARGET_AREA,
         crate::data::DEFAULT_PLACEMENT_GAP,
         Some(trace),
         None,

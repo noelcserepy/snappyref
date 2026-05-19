@@ -5,12 +5,12 @@ pub use image_formats::{AnimatedPreview, AnimatedPreviewFrame, decode_image_file
 pub(crate) use import::load_existing;
 pub(crate) use import::print_imageprep_output_from_args;
 pub use import::{
-    CanvasImageSettings, DEFAULT_IMPORT_TARGET_CANVAS_AREA, ExistingLoadDiagnostics,
+    CanvasImageSettings, DEFAULT_PLACEMENT_TARGET_AREA, ExistingLoadDiagnostics,
     ExistingLoadPriority, ImagePrepPreviewTexture, ImagePrepRequest, ImagePrepResult,
     ImagePrepTimings, ImagePrepTrace, ImagePrepWorker, ImagePrepWorkerStats, ImportOrigin,
     NativeTextureHandle, PreparedCropPreview, PreparedPlacementImage, arrange_rect_world,
-    default_import_reference_span, file_import_perf_report, initial_import_scale,
-    interactive_import_perf_report, load_canvas_snapshot_pixels,
+    display_scale_for_placement_target_area, file_import_perf_report,
+    interactive_import_perf_report, load_canvas_snapshot_pixels, placement_target_reference_span,
     sort_records_by_viewport_proximity, startup_perf_report, startup_trace,
     worker_interactive_import_perf_report,
 };
