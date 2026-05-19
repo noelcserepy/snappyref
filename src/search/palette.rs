@@ -19,6 +19,7 @@ const SEARCH_RESULT_LIBRARY_PREVIEW_MAX_SIDE: u32 = 512;
 const KBD_PILL_SIZE: egui::Vec2 = egui::vec2(28.0, 28.0);
 const PALETTE_CHROME_Y_MARGIN: i8 = crate::ui::theme::SPACE_3 as i8;
 const PALETTE_FOOTER_STATUS_WIDTH: f32 = 96.0;
+const PALETTE_FOOTER_STATUS_DOT_SIZE: f32 = 6.0;
 
 pub(crate) struct SearchOverlayState {
     pub open: bool,
@@ -642,7 +643,7 @@ pub(crate) fn paint_palette_empty_state(
         .show(ui, |ui| {
             selected_recent_search = paint_palette_empty_group(
                 ui,
-                "RECENT",
+                "Recent",
                 recent_searches,
                 active_recent_search_index,
             );
@@ -810,37 +811,11 @@ pub(crate) fn paint_palette_footer(
                 ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
                 if result_count == 0 {
                     let idle_text = palette_status_text(status, "Ready");
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(PALETTE_FOOTER_STATUS_WIDTH, KBD_PILL_SIZE.y),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            let dot_rect = ui
-                                .allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover())
-                                .0;
-                            ui.painter().circle_filled(
-                                dot_rect.center(),
-                                3.0,
-                                crate::ui::theme::GREEN,
-                            );
-                            ui.add_sized(
-                                egui::vec2(
-                                    PALETTE_FOOTER_STATUS_WIDTH - 6.0 - crate::ui::theme::SPACE_2,
-                                    KBD_PILL_SIZE.y,
-                                ),
-                                egui::Label::new(
-                                    egui::RichText::new(idle_text)
-                                        .text_style(egui::TextStyle::Small)
-                                        .color(crate::ui::theme::TEXT_SUBTLE)
-                                        .size(11.0),
-                                )
-                                .truncate(),
-                            );
-                        },
-                    );
+                    paint_palette_footer_status(ui, &idle_text);
                 } else if has_more_results {
                     let more_hint_width = KBD_PILL_SIZE.x
                         + crate::ui::theme::SPACE_2
-                        + footer_hint_label_width(ui, "more");
+                        + footer_hint_label_width(ui, "More");
                     ui.allocate_ui_with_layout(
                         egui::vec2(more_hint_width, KBD_PILL_SIZE.y),
                         crate::ui::layout::row_center_y_layout(),
@@ -848,30 +823,58 @@ pub(crate) fn paint_palette_footer(
                             ui.spacing_mut().item_spacing.x = 0.0;
                             paint_kbd_pill(ui, "↓");
                             ui.add_space(crate::ui::theme::SPACE_2);
-                            footer_hint_label(ui, "more");
+                            footer_hint_label(ui, "More");
                         },
                     );
                 }
                 ui.with_layout(crate::ui::layout::row_end_center_y_layout(), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     if result_count == 0 {
-                        footer_hint_label(ui, "select");
+                        footer_hint_label(ui, "Select");
                         paint_kbd_pill(ui, "↵");
                         ui.add_space(8.0);
-                        footer_hint_label(ui, "navigate");
+                        footer_hint_label(ui, "Navigate");
                         paint_kbd_pill(ui, "↓");
                         paint_kbd_pill(ui, "↑");
                     } else {
-                        footer_hint_label(ui, "place all");
+                        footer_hint_label(ui, "Place All");
                         paint_kbd_pill(ui, "↵");
                         paint_kbd_pill(ui, command_modifier_key_label());
                         ui.add_space(8.0);
-                        footer_hint_label(ui, "place");
+                        footer_hint_label(ui, "Place");
                         paint_kbd_pill(ui, "↵");
                     }
                 });
             });
         });
+}
+
+fn paint_palette_footer_status(ui: &mut egui::Ui, label: &str) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(PALETTE_FOOTER_STATUS_WIDTH, KBD_PILL_SIZE.y),
+        egui::Sense::hover(),
+    );
+    let dot_center = egui::pos2(
+        rect.left() + PALETTE_FOOTER_STATUS_DOT_SIZE * 0.5,
+        rect.center().y,
+    );
+    ui.painter().circle_filled(
+        dot_center,
+        PALETTE_FOOTER_STATUS_DOT_SIZE * 0.5,
+        crate::ui::theme::GREEN,
+    );
+
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::proportional(11.0),
+        crate::ui::theme::TEXT_SUBTLE,
+    );
+    let text_pos = egui::pos2(
+        dot_center.x + PALETTE_FOOTER_STATUS_DOT_SIZE * 0.5 + crate::ui::theme::SPACE_3,
+        rect.center().y - galley.size().y * 0.5,
+    );
+    ui.painter()
+        .galley(text_pos, galley, crate::ui::theme::TEXT_SUBTLE);
 }
 
 fn palette_status_text(status: &SearchOverlayStatus, idle_text: &'static str) -> String {

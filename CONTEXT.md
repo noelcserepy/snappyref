@@ -130,7 +130,7 @@ User-facing wording for commands that add content to the Active Board. Architect
 _Avoid_: Placement Creation, Source Intent, PlacementDraft
 
 **Dense Compact Layout**:
-The compact arrangement objective for selected placements: minimize visible holes first, then prefer a rough square when density is close. Squareness should decide only when candidate occupancy is roughly within three percentage points. Compact arrangement is placement-only: it may reorder selected placements and change their positions, but it preserves authored scale and rotation. The packed block should keep clean top and left edges; right-edge cleanliness is only a soft tie-break among near-equivalent candidates.
+The compact arrangement objective for selected placements: minimize visible holes first, then prefer a rough square when density is close. Squareness should normally decide only when candidate occupancy is roughly within three percentage points, but candidates whose final bounds exceed 16:9 are unacceptable when any candidate can fit within 16:9. Compact arrangement should not strand many small Placements in a long side column just because that candidate is slightly denser. Compact arrangement is placement-only: it may reorder selected placements and change their positions, but it preserves authored scale and rotation. The packed block should keep clean top and left edges; right-edge cleanliness is only a soft tie-break among near-equivalent candidates.
 _Avoid_: Perfect square layout, masonry layout
 
 **Placement Arrangement Input**:
