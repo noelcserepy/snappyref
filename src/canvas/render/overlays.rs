@@ -4,12 +4,42 @@ use super::image_pass::selection_border_visible;
 use crate::canvas::geometry::clamped_crop_screen_rect;
 use crate::canvas::interaction::{image_screen_rect, selected_image_rotation_handle_screen_pos};
 use crate::canvas::{CanvasState, IMAGE_ROTATE_HANDLE_RADIUS_SCREEN};
-use crate::data::CanvasAnnotationKind;
+use crate::data::{CanvasAnnotationKind, PlacementLifecycle};
 
 const SELECTION_BORDER_WIDTH: f32 = 1.0;
 const IMAGE_SELECTION_BORDER_COLOR: egui::Color32 = crate::ui::theme::TEXT;
 const GUIDE_SNAP_COLOR: egui::Color32 = crate::ui::theme::ACCENT_ORANGE;
 const GUIDE_SNAP_X_RADIUS: f32 = 2.0;
+
+pub(crate) fn paint_provisional_placement_previews(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    state: &CanvasState,
+) {
+    let stroke = egui::Stroke::new(2.0, crate::ui::theme::ACCENT);
+    let mut painted = Vec::new();
+    for image in state
+        .document
+        .rendered_placements
+        .iter()
+        .filter(|image| image.placement.lifecycle == PlacementLifecycle::Provisional)
+    {
+        let image_rect = image_screen_rect(state, rect, image);
+        painted.push((image.placement.state.id, image_rect));
+        painter.rect_stroke(
+            image_rect,
+            crate::ui::theme::RADIUS_NONE,
+            stroke,
+            egui::StrokeKind::Outside,
+        );
+    }
+    if !painted.is_empty() {
+        crate::diagnostics::search_drag_debug(format!(
+            "paint_provisional_placement_previews count={} rects={painted:?}",
+            painted.len()
+        ));
+    }
+}
 
 pub(crate) fn paint_marquee(painter: &egui::Painter, state: &CanvasState) {
     let Some(marquee_state) = &state.interaction.marquee_state else {

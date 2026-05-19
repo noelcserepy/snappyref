@@ -9,9 +9,9 @@ mod state;
 
 use crate::data::{
     CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationGeometry, CanvasAnnotationKind,
-    CanvasBackground, CanvasImageLod, CanvasTextSize, Placement, PlacementLayoutItem, RectGeometry,
-    SegmentGeometry,
+    CanvasBackground, CanvasImageLod, CanvasTextSize, Placement, RectGeometry, SegmentGeometry,
 };
+use crate::placement::arrangement::PlacementArrangementInput;
 use eframe::egui;
 use interaction::{
     handle_input, handle_viewport_navigation_input, step_mouse_wheel_zoom_animation,
@@ -19,7 +19,8 @@ use interaction::{
 use render::{
     annotation_style_toolbar_rect, editing_textbox_toolbar_rect, paint_annotation_draft,
     paint_background, paint_canvas_items, paint_crop_marquee, paint_guide_snap_indicators,
-    paint_marquee, paint_selection_bounds, show_annotation_style_toolbar, show_textbox_editor,
+    paint_marquee, paint_provisional_placement_previews, paint_selection_bounds,
+    show_annotation_style_toolbar, show_textbox_editor,
 };
 use state::{CanvasDocumentState, CanvasInteractionState, CanvasRenderState};
 
@@ -311,7 +312,7 @@ impl ImageScaleStart {
 #[derive(Clone)]
 pub(crate) struct DragState {
     pub(crate) pointer_start_world: egui::Pos2,
-    pub(crate) starting_items: Vec<PlacementLayoutItem>,
+    pub(crate) starting_items: Vec<PlacementArrangementInput>,
     pub(crate) snap_preview_rect_world: Option<egui::Rect>,
     pub(crate) started_at_seconds: f64,
     pub(crate) last_movement_seconds: f64,
@@ -549,7 +550,7 @@ impl CanvasState {
     ) -> bool {
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: self.selected_layout_items(),
+            starting_items: self.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -853,6 +854,7 @@ pub fn show(
         allow_lod_promotion,
         debug_labels,
     );
+    paint_provisional_placement_previews(&painter, rect, state);
     paint_selection_bounds(&painter, rect, state);
     paint_guide_snap_indicators(&painter, rect, state);
     paint_crop_marquee(&painter, rect, state);
@@ -950,15 +952,15 @@ mod tests {
     use super::render::{
         annotation_paint_stats_for_annotations, background_lod_layers, background_screen_step,
         background_world_step, editing_textbox_toolbar_rect, layout_textbox_galley,
-        settled_background_lod_level, textbox_content_rect, textbox_empty_hotspot_rect,
-        textbox_font_size, textbox_layout_cache_key, textbox_pointer_region,
-        textbox_required_world_height, textbox_text_interactive_rect_from_galley,
-        unified_canvas_paint_order_for_state,
+        optimized_image_pass_eligible_for_state, settled_background_lod_level,
+        textbox_content_rect, textbox_empty_hotspot_rect, textbox_font_size,
+        textbox_layout_cache_key, textbox_pointer_region, textbox_required_world_height,
+        textbox_text_interactive_rect_from_galley, unified_canvas_paint_order_for_state,
     };
     use super::{
         AnnotationDraftState, CanvasCropRequest, CanvasInputPolicy, CanvasState, CanvasTexture,
         FOCUS_SELECTION_PADDING_SCREEN, ImageResizeHandle, MIN_CANVAS_ZOOM, PixelCropRect,
-        PlacementLayoutItem, RenderedPlacement, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
+        PlacementArrangementInput, RenderedPlacement, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
         TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion, TextboxResizeHandle,
         rotated_display_size,
     };
@@ -1534,11 +1536,17 @@ mod tests {
                 .push(CanvasStackItem::Placement(101));
             state.select_placements(&[101]);
 
-            let layout_items = state.selected_layout_items();
-            assert_eq!(layout_items.len(), 1);
-            assert_eq!(layout_items[0].id, 101);
-            assert_eq!(layout_items[0].center(), eframe::egui::pos2(10.0, 20.0));
-            assert_eq!(layout_items[0].size(), eframe::egui::vec2(240.0, 160.0));
+            let arrangement_inputs = state.selected_arrangement_inputs();
+            assert_eq!(arrangement_inputs.len(), 1);
+            assert_eq!(arrangement_inputs[0].id, 101);
+            assert_eq!(
+                arrangement_inputs[0].center(),
+                eframe::egui::pos2(10.0, 20.0)
+            );
+            assert_eq!(
+                arrangement_inputs[0].size(),
+                eframe::egui::vec2(240.0, 160.0)
+            );
             assert_eq!(
                 state.selected_bounds_world().unwrap(),
                 eframe::egui::Rect::from_center_size(
@@ -1570,7 +1578,7 @@ mod tests {
             eframe::egui::pos2(10.0, 20.0),
         );
         placement.lifecycle = PlacementLifecycle::Provisional;
-        state.add_provisional_unloaded_item(placement);
+        state.add_provisional_unresolved_placement(placement);
         state.select_placements(&[-1]);
         state.center_selected_placements_on(eframe::egui::pos2(40.0, 60.0));
 
@@ -1595,7 +1603,7 @@ mod tests {
             eframe::egui::pos2(10.0, 20.0),
         );
         placement.lifecycle = PlacementLifecycle::Provisional;
-        state.add_provisional_unloaded_item(placement);
+        state.add_provisional_unresolved_placement(placement);
         state.select_placements(&[-1]);
 
         let removed = state.remove_provisional_placements();
@@ -1621,7 +1629,7 @@ mod tests {
                 eframe::egui::pos2(0.0, 0.0),
             );
 
-            let layout_items = state.compact_guided_layout_for_sizes(
+            let arrangement_inputs = state.compact_guided_layout_for_sizes(
                 &[
                     eframe::egui::vec2(100.0, 100.0),
                     eframe::egui::vec2(100.0, 100.0),
@@ -1634,12 +1642,12 @@ mod tests {
                 24.0,
             );
 
-            let bounds = layout_items
+            let bounds = arrangement_inputs
                 .iter()
                 .map(|(center, size)| eframe::egui::Rect::from_center_size(*center, *size))
                 .reduce(|left, right| left.union(right))
                 .expect("preview bounds");
-            assert_eq!(layout_items.len(), 2);
+            assert_eq!(arrangement_inputs.len(), 2);
             assert_eq!(bounds.left(), 50.0);
             assert_eq!(state.guide_snap_indicator_count(), 1);
         });
@@ -3396,9 +3404,9 @@ mod tests {
     #[test]
     fn horizontal_and_vertical_layouts_use_requested_gap() {
         let items = vec![
-            layout_item(1, 80.0, 40.0),
-            layout_item(2, 60.0, 40.0),
-            layout_item(3, 40.0, 40.0),
+            arrangement_input(1, 80.0, 40.0),
+            arrangement_input(2, 60.0, 40.0),
+            arrangement_input(3, 40.0, 40.0),
         ];
         let gap = 18.0;
 
@@ -3412,10 +3420,10 @@ mod tests {
     #[test]
     fn compact_layout_respects_gap() {
         let items = vec![
-            layout_item(1, 80.0, 80.0),
-            layout_item(2, 80.0, 60.0),
-            layout_item(3, 60.0, 80.0),
-            layout_item(4, 60.0, 60.0),
+            arrangement_input(1, 80.0, 80.0),
+            arrangement_input(2, 80.0, 60.0),
+            arrangement_input(3, 60.0, 80.0),
+            arrangement_input(4, 60.0, 60.0),
         ];
         let gap = 12.0;
 
@@ -3436,9 +3444,9 @@ mod tests {
     #[test]
     fn directional_settle_right_moves_sparse_rows_to_wall() {
         let items = vec![
-            positioned_layout_item(1, 50.0, 50.0, 100.0, 40.0),
-            positioned_layout_item(2, 170.0, 50.0, 100.0, 40.0),
-            positioned_layout_item(3, 50.0, 160.0, 100.0, 40.0),
+            positioned_arrangement_input(1, 50.0, 50.0, 100.0, 40.0),
+            positioned_arrangement_input(2, 170.0, 50.0, 100.0, 40.0),
+            positioned_arrangement_input(3, 50.0, 160.0, 100.0, 40.0),
         ];
         let gap = 20.0;
 
@@ -3457,8 +3465,8 @@ mod tests {
     #[test]
     fn directional_settle_uses_gap_expanded_cross_axis_blocking() {
         let items = vec![
-            positioned_layout_item(1, 150.0, 50.0, 80.0, 40.0),
-            positioned_layout_item(2, 20.0, 105.0, 80.0, 40.0),
+            positioned_arrangement_input(1, 150.0, 50.0, 80.0, 40.0),
+            positioned_arrangement_input(2, 20.0, 105.0, 80.0, 40.0),
         ];
         let gap = 20.0;
 
@@ -3474,8 +3482,8 @@ mod tests {
     #[test]
     fn directional_settle_grace_does_not_block_rows_at_exact_gap() {
         let items = vec![
-            positioned_layout_item(1, 150.0, 50.0, 80.0, 40.0),
-            positioned_layout_item(2, 20.0, 110.0, 80.0, 40.0),
+            positioned_arrangement_input(1, 150.0, 50.0, 80.0, 40.0),
+            positioned_arrangement_input(2, 20.0, 110.0, 80.0, 40.0),
         ];
         let gap = 20.0;
 
@@ -3491,8 +3499,8 @@ mod tests {
     #[test]
     fn directional_settle_keeps_target_edge_fixed_and_can_shrink_opposite_edge() {
         let items = vec![
-            positioned_layout_item(1, 50.0, 50.0, 80.0, 40.0),
-            positioned_layout_item(2, 250.0, 50.0, 80.0, 40.0),
+            positioned_arrangement_input(1, 50.0, 50.0, 80.0, 40.0),
+            positioned_arrangement_input(2, 250.0, 50.0, 80.0, 40.0),
         ];
         let original_bounds = layout_bounds_for_items(&items).unwrap();
 
@@ -3502,7 +3510,7 @@ mod tests {
             .iter()
             .map(|(id, center)| {
                 let item = items.iter().find(|item| item.id == *id).unwrap();
-                positioned_layout_item(*id, center.x, center.y, item.width(), item.height())
+                positioned_arrangement_input(*id, center.x, center.y, item.width(), item.height())
             })
             .collect::<Vec<_>>();
         let settled_bounds = layout_bounds_for_items(&settled_items).unwrap();
@@ -3514,9 +3522,9 @@ mod tests {
     #[test]
     fn directional_settle_layout_is_idempotent() {
         let items = vec![
-            positioned_layout_item(1, 10.0, 50.0, 100.0, 40.0),
-            positioned_layout_item(2, 170.0, 50.0, 100.0, 40.0),
-            positioned_layout_item(3, 50.0, 160.0, 100.0, 40.0),
+            positioned_arrangement_input(1, 10.0, 50.0, 100.0, 40.0),
+            positioned_arrangement_input(2, 170.0, 50.0, 100.0, 40.0),
+            positioned_arrangement_input(3, 50.0, 160.0, 100.0, 40.0),
         ];
         let gap = 20.0;
         let first = directional_settle_layout(&items, SettleDirection::Right, gap, 1.0).unwrap();
@@ -3524,7 +3532,7 @@ mod tests {
             .iter()
             .map(|(id, center)| {
                 let item = items.iter().find(|item| item.id == *id).unwrap();
-                positioned_layout_item(*id, center.x, center.y, item.width(), item.height())
+                positioned_arrangement_input(*id, center.x, center.y, item.width(), item.height())
             })
             .collect::<Vec<_>>();
 
@@ -3546,11 +3554,11 @@ mod tests {
     #[test]
     fn compact_layout_is_more_square_than_row_or_column_extremes() {
         let items = vec![
-            layout_item(1, 180.0, 90.0),
-            layout_item(2, 140.0, 80.0),
-            layout_item(3, 110.0, 160.0),
-            layout_item(4, 90.0, 110.0),
-            layout_item(5, 70.0, 70.0),
+            arrangement_input(1, 180.0, 90.0),
+            arrangement_input(2, 140.0, 80.0),
+            arrangement_input(3, 110.0, 160.0),
+            arrangement_input(4, 90.0, 110.0),
+            arrangement_input(5, 70.0, 70.0),
         ];
         let gap = 12.0;
 
@@ -3603,10 +3611,11 @@ mod tests {
             eframe::egui::vec2(140.0, 180.0),
         ];
 
-        let layout_items = compact_layout_for_sizes(&sizes, 12.0, eframe::egui::pos2(100.0, 200.0));
+        let arrangement_inputs =
+            compact_layout_for_sizes(&sizes, 12.0, eframe::egui::pos2(100.0, 200.0));
 
-        assert_eq!(layout_items.len(), sizes.len());
-        for (index, (_, size)) in layout_items.iter().enumerate() {
+        assert_eq!(arrangement_inputs.len(), sizes.len());
+        for (index, (_, size)) in arrangement_inputs.iter().enumerate() {
             assert_eq!(*size, sizes[index]);
         }
     }
@@ -3614,28 +3623,30 @@ mod tests {
     #[test]
     fn balanced_grid_layout_avoids_single_column_for_equal_approximate_batch() {
         let sizes = vec![eframe::egui::vec2(360.0, 240.0); 13];
-        let layout_items =
+        let arrangement_inputs =
             balanced_grid_layout_for_sizes(&sizes, 24.0, eframe::egui::pos2(100.0, 200.0));
-        let distinct_x = layout_items
-            .iter()
-            .fold(Vec::<i32>::new(), |mut values, (center, _)| {
-                let rounded = center.x.round() as i32;
-                if !values.contains(&rounded) {
-                    values.push(rounded);
-                }
-                values
-            });
-        let distinct_y = layout_items
-            .iter()
-            .fold(Vec::<i32>::new(), |mut values, (center, _)| {
-                let rounded = center.y.round() as i32;
-                if !values.contains(&rounded) {
-                    values.push(rounded);
-                }
-                values
-            });
+        let distinct_x =
+            arrangement_inputs
+                .iter()
+                .fold(Vec::<i32>::new(), |mut values, (center, _)| {
+                    let rounded = center.x.round() as i32;
+                    if !values.contains(&rounded) {
+                        values.push(rounded);
+                    }
+                    values
+                });
+        let distinct_y =
+            arrangement_inputs
+                .iter()
+                .fold(Vec::<i32>::new(), |mut values, (center, _)| {
+                    let rounded = center.y.round() as i32;
+                    if !values.contains(&rounded) {
+                        values.push(rounded);
+                    }
+                    values
+                });
 
-        assert_eq!(layout_items.len(), sizes.len());
+        assert_eq!(arrangement_inputs.len(), sizes.len());
         assert!(distinct_x.len() > 1);
         assert!(distinct_y.len() > 1);
     }
@@ -3661,10 +3672,10 @@ mod tests {
     #[test]
     fn compact_layout_prefers_dense_candidate_over_square_with_holes() {
         let items = vec![
-            layout_item(1, 300.0, 300.0),
-            layout_item(2, 40.0, 50.0),
-            layout_item(3, 50.0, 90.0),
-            layout_item(4, 300.0, 60.0),
+            arrangement_input(1, 300.0, 300.0),
+            arrangement_input(2, 40.0, 50.0),
+            arrangement_input(3, 50.0, 90.0),
+            arrangement_input(4, 300.0, 60.0),
         ];
         let gap = 12.0;
 
@@ -3712,7 +3723,7 @@ mod tests {
         ];
         for index in 0..48 {
             let (width, height) = base[index % base.len()];
-            items.push(layout_item(index as i64 + 1, width, height));
+            items.push(arrangement_input(index as i64 + 1, width, height));
         }
 
         let gap = 12.0;
@@ -3885,10 +3896,11 @@ mod tests {
             eframe::egui::vec2(101.0, 100.0),
         ];
 
-        let layout_items = compact_layout_for_sizes(&sizes, 12.0, eframe::egui::pos2(0.0, 0.0));
+        let arrangement_inputs =
+            compact_layout_for_sizes(&sizes, 12.0, eframe::egui::pos2(0.0, 0.0));
 
-        assert_eq!(layout_items[0].1, sizes[0]);
-        assert_eq!(layout_items[1].1, sizes[1]);
+        assert_eq!(arrangement_inputs[0].1, sizes[0]);
+        assert_eq!(arrangement_inputs[1].1, sizes[1]);
     }
 
     #[test]
@@ -4097,6 +4109,42 @@ mod tests {
     }
 
     #[test]
+    fn provisional_placements_use_interleaved_image_painting() {
+        let mut state = CanvasState::default();
+        eframe::egui::__run_test_ui(|ui| {
+            push_test_image(ui, &mut state, 1, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
+        });
+        state.set_canvas_stack_order(vec![CanvasStackItem::Placement(1)]);
+        state.add_provisional_unresolved_placement(Placement {
+            state: PlacementState::with_display_size(
+                -1,
+                Some(7),
+                eframe::egui::pos2(0.0, 0.0),
+                eframe::egui::vec2(80.0, 80.0),
+                1.0,
+                0.0,
+                1,
+                false,
+            ),
+            asset: None,
+            content: PlacementContent::Loading {
+                source: ContentResolutionSource::SearchAsset { asset_id: 7 },
+                status_message: Some("Loading".to_owned()),
+            },
+            lifecycle: PlacementLifecycle::Provisional,
+        });
+
+        assert_eq!(
+            unified_canvas_paint_order_for_state(&state),
+            vec![
+                CanvasStackItem::Placement(1),
+                CanvasStackItem::Placement(-1)
+            ]
+        );
+        assert!(!optimized_image_pass_eligible_for_state(&state));
+    }
+
+    #[test]
     fn selected_canvas_item_moves_to_absolute_front_and_back() {
         let mut state = CanvasState::default();
         eframe::egui::__run_test_ui(|ui| {
@@ -4266,18 +4314,18 @@ mod tests {
         assert!(state.take_context_menu_request().is_some());
     }
 
-    fn layout_item(id: i64, width: f32, height: f32) -> PlacementLayoutItem {
-        positioned_layout_item(id, 0.0, 0.0, width, height)
+    fn arrangement_input(id: i64, width: f32, height: f32) -> PlacementArrangementInput {
+        positioned_arrangement_input(id, 0.0, 0.0, width, height)
     }
 
-    fn positioned_layout_item(
+    fn positioned_arrangement_input(
         id: i64,
         x: f32,
         y: f32,
         width: f32,
         height: f32,
-    ) -> PlacementLayoutItem {
-        PlacementLayoutItem::new(
+    ) -> PlacementArrangementInput {
+        PlacementArrangementInput::new(
             id,
             eframe::egui::pos2(x, y),
             eframe::egui::vec2(width, height),
@@ -4285,7 +4333,7 @@ mod tests {
     }
 
     fn center_gap_x(
-        items: &[PlacementLayoutItem],
+        items: &[PlacementArrangementInput],
         placements: &[(i64, eframe::egui::Pos2)],
         left_id: i64,
         right_id: i64,
@@ -4296,7 +4344,7 @@ mod tests {
     }
 
     fn center_gap_y(
-        items: &[PlacementLayoutItem],
+        items: &[PlacementArrangementInput],
         placements: &[(i64, eframe::egui::Pos2)],
         top_id: i64,
         bottom_id: i64,
@@ -4307,7 +4355,7 @@ mod tests {
     }
 
     fn placement_rect(
-        items: &[PlacementLayoutItem],
+        items: &[PlacementArrangementInput],
         placements: &[(i64, eframe::egui::Pos2)],
         placement_id: i64,
     ) -> eframe::egui::Rect {
@@ -4327,15 +4375,15 @@ mod tests {
         width.max(height) / width.min(height).max(1.0)
     }
 
-    fn hole_prone_items() -> Vec<PlacementLayoutItem> {
+    fn hole_prone_items() -> Vec<PlacementArrangementInput> {
         vec![
-            layout_item(1, 300.0, 520.0),
-            layout_item(2, 180.0, 260.0),
-            layout_item(3, 160.0, 260.0),
-            layout_item(4, 150.0, 220.0),
-            layout_item(5, 150.0, 220.0),
-            layout_item(6, 140.0, 180.0),
-            layout_item(7, 140.0, 180.0),
+            arrangement_input(1, 300.0, 520.0),
+            arrangement_input(2, 180.0, 260.0),
+            arrangement_input(3, 160.0, 260.0),
+            arrangement_input(4, 150.0, 220.0),
+            arrangement_input(5, 150.0, 220.0),
+            arrangement_input(6, 140.0, 180.0),
+            arrangement_input(7, 140.0, 180.0),
         ]
     }
 

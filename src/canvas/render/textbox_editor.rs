@@ -24,7 +24,7 @@ pub(crate) fn textbox_padding() -> egui::Vec2 {
 }
 
 pub(crate) fn textbox_font_size(text_size: CanvasTextSize) -> f32 {
-    let baseline = crate::jobs::default_import_reference_span();
+    let baseline = crate::jobs::placement_target_reference_span();
     match text_size {
         CanvasTextSize::S => baseline * (16.0 / 300.0),
         CanvasTextSize::M => baseline * (20.0 / 300.0),

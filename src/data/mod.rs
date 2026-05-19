@@ -14,10 +14,10 @@ pub use geometry::{RectGeometry, SegmentGeometry};
 pub use placement::AssetId;
 pub use placement::{
     Board, BoardSummary, CanvasStackItem, ContentResolutionSource, Placement, PlacementContent,
-    PlacementId, PlacementLayoutItem, PlacementLifecycle, PlacementState,
+    PlacementId, PlacementLifecycle, PlacementState,
 };
 pub use session::{
-    CanvasImageLod, DEFAULT_CANVAS_IMAGE_MAX_SIDE, DEFAULT_IMPORT_TARGET_CANVAS_AREA,
-    DEFAULT_PLACEMENT_GAP, DEFAULT_ROTATION_SNAP_DEGREES, DEFAULT_VIEWPORT_ZOOM, PointerMode,
-    UserSession, ViewportState, WindowState, WorkspaceSettings,
+    CanvasImageLod, DEFAULT_CANVAS_IMAGE_MAX_SIDE, DEFAULT_PLACEMENT_GAP,
+    DEFAULT_PLACEMENT_TARGET_AREA, DEFAULT_ROTATION_SNAP_DEGREES, DEFAULT_VIEWPORT_ZOOM,
+    PointerMode, UserSession, ViewportState, WindowState, WorkspaceSettings,
 };

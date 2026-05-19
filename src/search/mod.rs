@@ -9,5 +9,5 @@ mod selection;
 
 pub(crate) use backfill::EmbeddingBackfillIdleState;
 pub(crate) use controller::{
-    SearchController, SearchDropRequest, SearchPlacementPreviewConfig, SemanticPerfEvent,
+    SearchController, SearchDropRequest, SearchPlacementCreationConfig, SemanticPerfEvent,
 };

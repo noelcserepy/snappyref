@@ -46,19 +46,23 @@ fn import_size_world(
     width: u32,
     height: u32,
     auto_image_scaling: bool,
-    target_canvas_area: f32,
+    placement_target_area: f32,
 ) -> egui::Vec2 {
-    let scale =
-        crate::jobs::initial_import_scale(width, height, auto_image_scaling, target_canvas_area);
+    let scale = crate::jobs::display_scale_for_placement_target_area(
+        width,
+        height,
+        auto_image_scaling,
+        placement_target_area,
+    );
     egui::vec2(width as f32 * scale, height as f32 * scale)
 }
 
 pub(crate) fn import_preview_size_world(
     width: u32,
     height: u32,
-    target_canvas_area: f32,
+    placement_target_area: f32,
 ) -> egui::Vec2 {
-    import_size_world(width, height, true, target_canvas_area)
+    import_size_world(width, height, true, placement_target_area)
 }
 
 #[cfg(test)]

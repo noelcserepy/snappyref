@@ -10,13 +10,13 @@ pub(crate) struct DocumentHistory {
 #[derive(Clone, Debug)]
 pub(crate) struct HistoryAction {
     pub(crate) label: String,
-    pub(crate) placements: Vec<RowChange<Placement>>,
-    pub(crate) annotations: Vec<RowChange<CanvasAnnotation>>,
-    pub(crate) stack_order: Option<RowChange<Vec<CanvasStackItem>>>,
+    pub(crate) placements: Vec<HistoryChange<Placement>>,
+    pub(crate) annotations: Vec<HistoryChange<CanvasAnnotation>>,
+    pub(crate) stack_order: Option<HistoryChange<Vec<CanvasStackItem>>>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct RowChange<T> {
+pub(crate) struct HistoryChange<T> {
     pub(crate) before: Option<T>,
     pub(crate) after: Option<T>,
 }
@@ -102,7 +102,7 @@ fn apply_history_action(
 
 fn apply_placement_change(
     library: &Library,
-    change: &RowChange<Placement>,
+    change: &HistoryChange<Placement>,
     direction: HistoryDirection,
 ) -> Result<(), String> {
     let target = match direction {
@@ -128,7 +128,7 @@ fn apply_placement_change(
 
 fn apply_annotation_change(
     library: &Library,
-    change: &RowChange<CanvasAnnotation>,
+    change: &HistoryChange<CanvasAnnotation>,
     direction: HistoryDirection,
 ) -> Result<(), String> {
     let target = match direction {
@@ -156,7 +156,7 @@ fn apply_annotation_change(
 mod tests {
     use eframe::egui;
 
-    use super::{DocumentHistory, HistoryAction, RowChange};
+    use super::{DocumentHistory, HistoryAction, HistoryChange};
     use crate::data::{
         CanvasAnnotationColor, CanvasAnnotationKind, CanvasStackItem, CanvasStrokeWidth,
         CanvasTextSize,
@@ -195,7 +195,7 @@ mod tests {
                 HistoryAction {
                     label: "Delete annotation".to_owned(),
                     placements: Vec::new(),
-                    annotations: vec![RowChange {
+                    annotations: vec![HistoryChange {
                         before: Some(annotation.clone()),
                         after: Some(archived),
                     }],
@@ -260,7 +260,7 @@ mod tests {
                 &library,
                 HistoryAction {
                     label: "Delete image".to_owned(),
-                    placements: vec![RowChange {
+                    placements: vec![HistoryChange {
                         before: Some(record.clone()),
                         after: Some(archived),
                     }],
@@ -344,7 +344,7 @@ mod tests {
                     label: "Move to front".to_owned(),
                     placements: Vec::new(),
                     annotations: Vec::new(),
-                    stack_order: Some(RowChange {
+                    stack_order: Some(HistoryChange {
                         before: Some(before.clone()),
                         after: Some(after.clone()),
                     }),
@@ -363,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn undo_and_redo_created_rows_archives_and_restores_existing_rows() {
+    fn undo_and_redo_created_history_entries_archives_and_restores_existing_items() {
         let root = std::env::temp_dir().join(format!(
             "snappyref-history-created-{}",
             std::time::SystemTime::now()
@@ -389,7 +389,7 @@ mod tests {
         history.record_applied(HistoryAction {
             label: "Create annotation".to_owned(),
             placements: Vec::new(),
-            annotations: vec![RowChange {
+            annotations: vec![HistoryChange {
                 before: None,
                 after: Some(annotation.clone()),
             }],

@@ -60,9 +60,14 @@ fn placement_content_state(content: &PlacementContent) -> &'static str {
     }
 }
 
-fn decode_placement_content(state: &str, payload: Option<&str>, asset_id: i64) -> PlacementContent {
-    if let Some(payload) = payload
-        && let Ok(content) = serde_json::from_str::<PlacementContent>(payload)
+fn decode_placement_content(
+    state: &str,
+    content_resolution_source_payload: Option<&str>,
+    asset_id: i64,
+) -> PlacementContent {
+    if let Some(content_resolution_source_payload) = content_resolution_source_payload
+        && let Ok(content) =
+            serde_json::from_str::<PlacementContent>(content_resolution_source_payload)
     {
         return match content {
             PlacementContent::Loading {
@@ -228,7 +233,7 @@ impl Library {
             file_size,
         )?;
         let content = PlacementContent::Loaded { asset_id: asset.id };
-        let content_payload = serde_json::to_string(&content)
+        let content_resolution_source_payload = serde_json::to_string(&content)
             .map_err(|error| format!("failed to encode loaded placement content: {error}"))?;
         let current_size = transaction
             .query_row(
@@ -259,7 +264,7 @@ impl Library {
                    AND archived = 0",
                 params![
                     asset.id,
-                    content_payload,
+                    content_resolution_source_payload,
                     corrected_size.x,
                     corrected_size.y,
                     placement_id,
@@ -334,7 +339,7 @@ impl Library {
             message,
             recoverable: true,
         };
-        let content_payload = serde_json::to_string(&record.content)
+        let content_resolution_source_payload = serde_json::to_string(&record.content)
             .map_err(|error| format!("failed to encode failed placement content: {error}"))?;
         connection
             .execute(
@@ -344,7 +349,7 @@ impl Library {
                  WHERE id = ?2
                    AND board_id = ?3
                    AND archived = 0",
-                params![content_payload, placement_id, board_id],
+                params![content_resolution_source_payload, placement_id, board_id],
             )
             .map_err(|error| format!("failed to mark placement {placement_id} failed: {error}"))?;
         Ok(Some(record))
@@ -413,7 +418,7 @@ impl Library {
             .transaction()
             .map_err(|error| format!("failed to start placement transaction: {error}"))?;
         let content_state = placement_content_state(&content);
-        let content_payload = serde_json::to_string(&content)
+        let content_resolution_source_payload = serde_json::to_string(&content)
             .map_err(|error| format!("failed to encode placement content: {error}"))?;
         transaction
             .execute(
@@ -434,7 +439,7 @@ impl Library {
                     0_i64,
                     content_state,
                     "committed",
-                    content_payload,
+                    content_resolution_source_payload,
                 ],
             )
             .map_err(|error| format!("failed to insert unloaded placement: {error}"))?;
@@ -527,7 +532,7 @@ impl Library {
                 );
                 let content_state: String = row.get(17)?;
                 let lifecycle: String = row.get(18)?;
-                let content_payload: Option<String> = row.get(19)?;
+                let content_resolution_source_payload: Option<String> = row.get(19)?;
                 let asset = if let Some(asset_id) = row.get::<_, Option<i64>>(9)? {
                     Some(ImageAsset {
                         id: asset_id,
@@ -544,7 +549,7 @@ impl Library {
                 };
                 let content = decode_placement_content(
                     &content_state,
-                    content_payload.as_deref(),
+                    content_resolution_source_payload.as_deref(),
                     item.asset_id.unwrap_or(0),
                 );
                 let lifecycle = decode_placement_lifecycle(&lifecycle);
@@ -561,29 +566,31 @@ impl Library {
             .map_err(|error| format!("failed to collect board-items: {error}"))
     }
 
-    pub fn load_placement_layout_items(&self) -> Result<Vec<PlacementLayoutItem>, String> {
+    pub fn load_placement_arrangement_inputs(
+        &self,
+    ) -> Result<Vec<PlacementArrangementInput>, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
-        self.load_placement_layout_items_for_board_id(&connection, active_board_id)
+        self.load_placement_arrangement_inputs_for_board_id(&connection, active_board_id)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn load_placement_layout_items_for_board(
+    pub fn load_placement_arrangement_inputs_for_board(
         &self,
         board_id: i64,
-    ) -> Result<Vec<PlacementLayoutItem>, String> {
+    ) -> Result<Vec<PlacementArrangementInput>, String> {
         let connection = self.connection()?;
         if !board_is_non_archived(&connection, board_id)? {
             return Err(format!("cannot load missing or archived board {board_id}"));
         }
-        self.load_placement_layout_items_for_board_id(&connection, board_id)
+        self.load_placement_arrangement_inputs_for_board_id(&connection, board_id)
     }
 
-    fn load_placement_layout_items_for_board_id(
+    fn load_placement_arrangement_inputs_for_board_id(
         &self,
         connection: &Connection,
         board_id: i64,
-    ) -> Result<Vec<PlacementLayoutItem>, String> {
+    ) -> Result<Vec<PlacementArrangementInput>, String> {
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -599,20 +606,20 @@ impl Library {
                    AND b.board_id = ?1
                  ORDER BY b.z_index ASC, b.id ASC",
             )
-            .map_err(|error| format!("failed to prepare board-layout query: {error}"))?;
+            .map_err(|error| format!("failed to prepare board-arrangement query: {error}"))?;
 
         let rows = statement
             .query_map(params![board_id], |row| {
-                Ok(PlacementLayoutItem::new(
+                Ok(PlacementArrangementInput::new(
                     row.get(0)?,
                     egui::pos2(row.get(1)?, row.get(2)?),
                     egui::vec2(row.get(3)?, row.get(4)?),
                 ))
             })
-            .map_err(|error| format!("failed to read board-layout query: {error}"))?;
+            .map_err(|error| format!("failed to read board-arrangement query: {error}"))?;
 
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("failed to collect board-layout items: {error}"))
+            .map_err(|error| format!("failed to collect board-arrangement inputs: {error}"))
     }
 
     pub fn update_placement_state(&self, item: &PlacementState) -> Result<(), String> {
@@ -833,7 +840,7 @@ impl Library {
         let mut committed = Vec::with_capacity(provisionals.len());
         for provisional in provisionals {
             let content_state = placement_content_state(&provisional.content);
-            let content_payload = serde_json::to_string(&provisional.content)
+            let content_resolution_source_payload = serde_json::to_string(&provisional.content)
                 .map_err(|error| format!("failed to encode placement content: {error}"))?;
             transaction
                 .execute(
@@ -865,7 +872,7 @@ impl Library {
                         0_i64,
                         content_state,
                         "committed",
-                        content_payload,
+                        content_resolution_source_payload,
                     ],
                 )
                 .map_err(|error| {

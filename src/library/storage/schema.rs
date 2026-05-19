@@ -3,6 +3,7 @@ use super::stack_order::ensure_canvas_stack_items_populated;
 use super::*;
 
 const DEFAULT_VIEWPORT_ZOOM_SQL: &str = "0.45";
+const LEGACY_CONTENT_RESOLUTION_INTENT_COLUMN: &str = "content_resolution_intent";
 
 fn ensure_board_items_archived_column(connection: &Connection) -> Result<(), String> {
     let mut statement = connection
@@ -57,7 +58,7 @@ fn ensure_board_items_placement_columns(connection: &Connection) -> Result<(), S
     ensure_column(
         connection,
         "board_items",
-        "content_resolution_intent",
+        LEGACY_CONTENT_RESOLUTION_INTENT_COLUMN,
         "ALTER TABLE board_items ADD COLUMN content_resolution_intent TEXT",
     )
 }

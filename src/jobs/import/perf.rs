@@ -289,7 +289,7 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
         usize::MAX,
         settings,
         true,
-        DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        DEFAULT_PLACEMENT_TARGET_AREA,
         crate::data::DEFAULT_PLACEMENT_GAP,
         Some(trace),
         None,
@@ -494,7 +494,7 @@ fn measure_worker_interactive_import_ms(config: ImagePrepWorkerConfig) -> Result
         max_texture_side: usize::MAX,
         canvas_image_settings: CanvasImageSettings::default(),
         auto_scale: true,
-        target_canvas_area: DEFAULT_IMPORT_TARGET_CANVAS_AREA,
+        placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
         placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
         trace: Some(ImagePrepTrace {
             queued_at: started_at,

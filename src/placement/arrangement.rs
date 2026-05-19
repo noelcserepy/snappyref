@@ -1,11 +1,60 @@
 use eframe::egui;
 
-use crate::data::{Placement, PlacementId, PlacementLayoutItem};
+use crate::data::{Placement, PlacementId, RectGeometry};
 
 pub(crate) const SETTLE_BLOCK_GRACE_SCREEN: f32 = 1.0;
 const COMPACT_NORMALIZE_ABSOLUTE_THRESHOLD: f32 = 1.0;
 const COMPACT_NORMALIZE_RELATIVE_THRESHOLD: f32 = 0.05;
 const COMPACT_NORMALIZE_OCCUPANCY_GAIN: f32 = 0.025;
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PlacementArrangementInput {
+    pub(crate) id: PlacementId,
+    pub(crate) geometry: RectGeometry,
+}
+
+impl PlacementArrangementInput {
+    pub(crate) fn from_rect(id: PlacementId, rect: egui::Rect) -> Self {
+        Self {
+            id,
+            geometry: RectGeometry::from_bounds(rect, 0),
+        }
+    }
+
+    pub(crate) fn new(id: PlacementId, center: egui::Pos2, display_size: egui::Vec2) -> Self {
+        Self {
+            id,
+            geometry: RectGeometry::new(center, display_size, 1.0, 0.0, 0),
+        }
+    }
+
+    pub(crate) fn center(&self) -> egui::Pos2 {
+        self.geometry.center
+    }
+
+    pub(crate) fn size(&self) -> egui::Vec2 {
+        self.geometry.size * self.geometry.scale.max(0.01)
+    }
+
+    pub(crate) fn rect(&self) -> egui::Rect {
+        egui::Rect::from_center_size(self.center(), self.size())
+    }
+
+    pub(crate) fn width(&self) -> f32 {
+        self.size().x
+    }
+
+    pub(crate) fn height(&self) -> f32 {
+        self.size().y
+    }
+
+    pub(crate) fn with_size(&self, display_size: egui::Vec2) -> Self {
+        let mut item = self.clone();
+        item.geometry.size = display_size;
+        item.geometry.scale = 1.0;
+        item
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SettleDirection {
@@ -17,7 +66,7 @@ pub(crate) enum SettleDirection {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CompactInputItem {
-    pub(crate) layout: PlacementLayoutItem,
+    pub(crate) arrangement_input: PlacementArrangementInput,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -27,8 +76,8 @@ pub(crate) struct CompactInput {
 }
 
 impl CompactInput {
-    pub(crate) fn layout_item(self) -> PlacementLayoutItem {
-        PlacementLayoutItem::from_rect(self.placement_id, self.bounds)
+    pub(crate) fn arrangement_input(self) -> PlacementArrangementInput {
+        PlacementArrangementInput::from_rect(self.placement_id, self.bounds)
     }
 }
 
@@ -62,7 +111,7 @@ pub(crate) struct UserCompactLayout {
 }
 
 pub(crate) fn horizontal_layout(
-    items: &[PlacementLayoutItem],
+    items: &[PlacementArrangementInput],
     gap: f32,
 ) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
     if items.is_empty() {
@@ -90,7 +139,7 @@ pub(crate) fn horizontal_layout(
 }
 
 pub(crate) fn vertical_layout(
-    items: &[PlacementLayoutItem],
+    items: &[PlacementArrangementInput],
     gap: f32,
 ) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
     if items.is_empty() {
@@ -115,7 +164,7 @@ pub(crate) fn vertical_layout(
 }
 
 pub(crate) fn directional_settle_layout(
-    items: &[PlacementLayoutItem],
+    items: &[PlacementArrangementInput],
     direction: SettleDirection,
     gap: f32,
     cross_axis_grace: f32,
@@ -141,7 +190,7 @@ pub(crate) fn directional_settle_layout(
     Some(placements)
 }
 
-pub(crate) fn layout_bounds_for_items(items: &[PlacementLayoutItem]) -> Option<egui::Rect> {
+pub(crate) fn layout_bounds_for_items(items: &[PlacementArrangementInput]) -> Option<egui::Rect> {
     let mut bounds = egui::Rect::NOTHING;
     let mut found = false;
     for item in items {
@@ -157,12 +206,12 @@ pub(crate) fn layout_bounds_for_items(items: &[PlacementLayoutItem]) -> Option<e
 }
 
 fn settle_order(
-    left: &PlacementLayoutItem,
-    right: &PlacementLayoutItem,
+    left: &PlacementArrangementInput,
+    right: &PlacementArrangementInput,
     direction: SettleDirection,
 ) -> std::cmp::Ordering {
-    let left_rect = layout_item_rect(left);
-    let right_rect = layout_item_rect(right);
+    let left_rect = arrangement_input_rect(left);
+    let right_rect = arrangement_input_rect(right);
     match direction {
         SettleDirection::Right => right_rect
             .right()
@@ -187,12 +236,12 @@ fn settle_order(
     }
 }
 
-fn layout_item_rect(item: &PlacementLayoutItem) -> egui::Rect {
+fn arrangement_input_rect(item: &PlacementArrangementInput) -> egui::Rect {
     item.rect()
 }
 
 fn settled_center_for_item(
-    item: &PlacementLayoutItem,
+    item: &PlacementArrangementInput,
     direction: SettleDirection,
     bounds: egui::Rect,
     gap: f32,
@@ -310,14 +359,17 @@ struct CompactCandidate {
 }
 
 pub(crate) fn best_compact_layout(
-    items: &[PlacementLayoutItem],
+    items: &[PlacementArrangementInput],
     gap: f32,
 ) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
     best_compact_candidate(items, gap)
         .map(|candidate| (candidate.placements, candidate.width, candidate.height))
 }
 
-fn best_compact_candidate(items: &[PlacementLayoutItem], gap: f32) -> Option<CompactCandidate> {
+fn best_compact_candidate(
+    items: &[PlacementArrangementInput],
+    gap: f32,
+) -> Option<CompactCandidate> {
     if items.is_empty() {
         return None;
     }
@@ -382,7 +434,7 @@ pub(crate) fn best_user_compact_layout(
             .scale_factors
             .into_iter()
             .enumerate()
-            .map(|(index, factor)| (items[index].layout.id, factor))
+            .map(|(index, factor)| (items[index].arrangement_input.id, factor))
             .collect(),
         width: best.candidate.width,
         height: best.candidate.height,
@@ -446,12 +498,15 @@ fn compact_variant_result(
     factors: Vec<(f32, ScaleCandidateKind)>,
     gap: f32,
 ) -> Option<CompactVariantResult> {
-    let layout_items = items
+    let arrangement_inputs = items
         .iter()
         .zip(factors.iter())
-        .map(|(item, (factor, _))| item.layout.with_size(item.layout.size() * *factor))
+        .map(|(item, (factor, _))| {
+            item.arrangement_input
+                .with_size(item.arrangement_input.size() * *factor)
+        })
         .collect::<Vec<_>>();
-    let candidate = best_compact_candidate(&layout_items, gap)?;
+    let candidate = best_compact_candidate(&arrangement_inputs, gap)?;
     let mut changed_count = 0;
     let mut free_changes_only = true;
     let mut total_scale_delta = 0.0;
@@ -604,8 +659,8 @@ fn size_bucket_from_dimensions(dimensions: &[f32]) -> SizeBucket {
 
 fn compact_item_dimension(item: &CompactInputItem, axis: Axis) -> f32 {
     match axis {
-        Axis::Width => item.layout.width(),
-        Axis::Height => item.layout.height(),
+        Axis::Width => item.arrangement_input.width(),
+        Axis::Height => item.arrangement_input.height(),
     }
 }
 
@@ -638,7 +693,7 @@ pub(crate) fn compact_layout_for_sizes(
         .iter()
         .enumerate()
         .map(|(index, size)| {
-            PlacementLayoutItem::new(
+            PlacementArrangementInput::new(
                 index as i64,
                 egui::pos2(0.0, 0.0),
                 egui::vec2(size.x, size.y),
@@ -720,9 +775,9 @@ pub(crate) fn balanced_grid_layout_for_sizes(
 }
 
 fn sorted_compact_items(
-    items: &[PlacementLayoutItem],
+    items: &[PlacementArrangementInput],
     sort: CompactSort,
-) -> Vec<PlacementLayoutItem> {
+) -> Vec<PlacementArrangementInput> {
     let mut sorted = items.to_vec();
     sorted.sort_by(|left, right| match sort {
         CompactSort::MaxSide => right
@@ -757,7 +812,7 @@ fn sorted_compact_items(
     sorted
 }
 
-fn compact_candidate_widths(items: &[PlacementLayoutItem], gap: f32) -> Vec<f32> {
+fn compact_candidate_widths(items: &[PlacementArrangementInput], gap: f32) -> Vec<f32> {
     let total_area = items
         .iter()
         .map(|item| (item.width() + gap) * (item.height() + gap))
@@ -793,7 +848,7 @@ fn compact_candidate_widths(items: &[PlacementLayoutItem], gap: f32) -> Vec<f32>
 }
 
 fn maxrects_pack_layout(
-    items: &[PlacementLayoutItem],
+    items: &[PlacementArrangementInput],
     bin_width: f32,
     gap: f32,
     heuristic: PackHeuristic,
@@ -1106,7 +1161,7 @@ fn merge_adjacent_free_rects(left: PackRect, right: PackRect) -> Option<PackRect
     None
 }
 
-fn padded_item_rect(item: &PlacementLayoutItem, gap: f32) -> PackRect {
+fn padded_item_rect(item: &PlacementArrangementInput, gap: f32) -> PackRect {
     PackRect {
         x: 0.0,
         y: 0.0,
@@ -1116,7 +1171,7 @@ fn padded_item_rect(item: &PlacementLayoutItem, gap: f32) -> PackRect {
 }
 
 fn placed_bounds(
-    items: &[PlacementLayoutItem],
+    items: &[PlacementArrangementInput],
     placements: &[(i64, egui::Pos2)],
 ) -> Option<(f32, f32)> {
     let mut min_x = f32::INFINITY;
@@ -1136,7 +1191,7 @@ fn placed_bounds(
 }
 
 fn normalize_placements_to_origin(
-    items: &[PlacementLayoutItem],
+    items: &[PlacementArrangementInput],
     placements: &mut [(i64, egui::Pos2)],
 ) -> Option<()> {
     let mut min_x = f32::INFINITY;

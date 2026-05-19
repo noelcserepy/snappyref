@@ -14,10 +14,10 @@ pub(super) use rusqlite::{Connection, Transaction, params, params_from_iter};
 pub(super) use crate::data::{
     Board, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
     CanvasImageLod, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, ContentResolutionSource,
-    DEFAULT_VIEWPORT_ZOOM, ImageAsset, Placement, PlacementContent, PlacementLayoutItem,
-    PlacementLifecycle, PlacementState, RectGeometry, UserSession, ViewportState,
-    WorkspaceSettings,
+    DEFAULT_VIEWPORT_ZOOM, ImageAsset, Placement, PlacementContent, PlacementLifecycle,
+    PlacementState, RectGeometry, UserSession, ViewportState, WorkspaceSettings,
 };
+pub(super) use crate::placement::arrangement::PlacementArrangementInput;
 
 pub(super) fn unix_timestamp_seconds() -> i64 {
     SystemTime::now()

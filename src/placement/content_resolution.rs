@@ -21,7 +21,7 @@ pub(crate) struct ContentResolutionRequestConfig {
     pub(crate) max_texture_side: usize,
     pub(crate) canvas_image_max_side: u32,
     pub(crate) auto_image_scaling: bool,
-    pub(crate) import_target_canvas_area: f32,
+    pub(crate) placement_target_area: f32,
     pub(crate) placement_gap: f32,
 }
 
@@ -262,7 +262,7 @@ pub(crate) fn import_path_request(
         max_texture_side: config.max_texture_side,
         canvas_image_settings: canvas_image_settings(config),
         auto_scale: config.auto_image_scaling,
-        target_canvas_area: config.import_target_canvas_area,
+        placement_target_area: config.placement_target_area,
         placement_gap: config.placement_gap,
         trace,
     }
@@ -287,7 +287,7 @@ pub(crate) fn import_url_request(
         max_texture_side: config.max_texture_side,
         canvas_image_settings: canvas_image_settings(config),
         auto_scale: config.auto_image_scaling,
-        target_canvas_area: config.import_target_canvas_area,
+        placement_target_area: config.placement_target_area,
         placement_gap: config.placement_gap,
         trace,
     }
@@ -316,7 +316,7 @@ pub(crate) fn import_clipboard_request(
         max_texture_side: config.max_texture_side,
         canvas_image_settings: canvas_image_settings(config),
         auto_scale: config.auto_image_scaling,
-        target_canvas_area: config.import_target_canvas_area,
+        placement_target_area: config.placement_target_area,
         placement_gap: config.placement_gap,
         trace,
     }
@@ -412,7 +412,7 @@ mod tests {
                 max_texture_side: 512,
                 canvas_image_max_side: 1024,
                 auto_image_scaling: true,
-                import_target_canvas_area: 14400.0,
+                placement_target_area: 14400.0,
                 placement_gap: 18.0,
             },
             None,
@@ -427,7 +427,7 @@ mod tests {
                 max_texture_side,
                 canvas_image_settings,
                 auto_scale,
-                target_canvas_area,
+                placement_target_area,
                 placement_gap,
                 ..
             } => {
@@ -438,7 +438,7 @@ mod tests {
                 assert_eq!(max_texture_side, 512);
                 assert_eq!(canvas_image_settings.max_side, 1024);
                 assert!(auto_scale);
-                assert_eq!(target_canvas_area, 14400.0);
+                assert_eq!(placement_target_area, 14400.0);
                 assert_eq!(placement_gap, 18.0);
             }
             _ => panic!("expected import path request"),

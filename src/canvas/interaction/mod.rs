@@ -903,7 +903,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -936,7 +936,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -975,7 +975,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -1005,7 +1005,7 @@ mod tests {
         let rect = test_screen_rect();
         let mut drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -1036,7 +1036,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -1065,7 +1065,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -1095,7 +1095,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -1129,7 +1129,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -1158,7 +1158,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -1188,7 +1188,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -1224,7 +1224,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -1259,7 +1259,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -1292,7 +1292,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -1324,7 +1324,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -1359,7 +1359,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -1391,7 +1391,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
@@ -1426,7 +1426,7 @@ mod tests {
 
         let drag_state = DragState {
             pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_layout_items(),
+            starting_items: canvas.selected_arrangement_inputs(),
             snap_preview_rect_world: None,
             started_at_seconds: 0.0,
             last_movement_seconds: 0.0,
