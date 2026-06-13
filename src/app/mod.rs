@@ -2916,10 +2916,9 @@ impl SnappyRefApp {
         let mut asset_ids = Vec::new();
         for placement_id in self.canvas.selected_placement_ids() {
             if let Some(placement) = self.canvas.placement_for_id(placement_id)
-                && !asset_ids
-                    .contains(&placement.asset.as_ref().expect("loaded placement asset").id)
+                && !asset_ids.contains(&placement.require_loaded_asset().id)
             {
-                asset_ids.push(placement.asset.as_ref().expect("loaded placement asset").id);
+                asset_ids.push(placement.require_loaded_asset().id);
             }
         }
 
@@ -2946,6 +2945,10 @@ impl SnappyRefApp {
         }
 
         self.canvas.remove_assets(&pending.asset_ids);
+        #[cfg(feature = "semantic-search")]
+        {
+            self.search.invalidate_library_search_cache();
+        }
         self.refresh_board_summaries();
         let noun = if pending.asset_ids.len() == 1 {
             "asset"
@@ -3458,14 +3461,9 @@ impl SnappyRefApp {
                 let metadata = resolution_queue_id
                     .and_then(|queue_id| scenario.asset_by_queue_id.get(&queue_id).cloned());
                 if let Some(metadata) = &metadata {
-                    scenario.asset_by_asset_id.insert(
-                        log.placement
-                            .asset
-                            .as_ref()
-                            .expect("loaded placement asset")
-                            .id,
-                        metadata.clone(),
-                    );
+                    scenario
+                        .asset_by_asset_id
+                        .insert(log.placement.require_loaded_asset().id, metadata.clone());
                 }
                 let (format_value, source_file, animated, bytes) = match &metadata {
                     Some(meta) => (
@@ -3490,10 +3488,10 @@ impl SnappyRefApp {
                     "placement_loaded",
                     serde_json::json!({
                         "loaded": scenario.loaded_imports,
-                        "asset_id": log.placement.asset.as_ref().expect("loaded placement asset").id,
+                        "asset_id": log.placement.require_loaded_asset().id,
                         "placement_id": log.placement.state.id,
-                        "mime_type": log.placement.asset.as_ref().expect("loaded placement asset").mime_type,
-                        "filename": log.placement.asset.as_ref().expect("loaded placement asset").filename,
+                        "mime_type": log.placement.require_loaded_asset().mime_type,
+                        "filename": log.placement.require_loaded_asset().filename,
                         "format": format_value,
                         "file": source_file,
                         "animated": animated,
@@ -4031,11 +4029,7 @@ impl SnappyRefApp {
                     .find(|placement| placement.state.id == after.id)
                     .cloned();
                 let asset = if let Some(before) = &before {
-                    before
-                        .asset
-                        .as_ref()
-                        .expect("loaded placement asset")
-                        .clone()
+                    before.require_loaded_asset().clone()
                 } else {
                     library.load_asset(after.asset_id?).ok()?
                 };
@@ -4606,12 +4600,8 @@ impl SnappyRefApp {
                     format!(
                         " placement_id={} asset_id={} file={}",
                         placement.state.id,
-                        placement.asset.as_ref().expect("loaded placement asset").id,
-                        placement
-                            .asset
-                            .as_ref()
-                            .expect("loaded placement asset")
-                            .filename
+                        placement.require_loaded_asset().id,
+                        placement.require_loaded_asset().filename
                     )
                 });
                 let source = diagnostics.map(|diagnostics| {
@@ -4660,12 +4650,8 @@ impl SnappyRefApp {
         eprintln!(
             "[perf] crop_integrated placement_id={} asset_id={} file={} ui_ms={:.2}",
             placement.state.id,
-            placement.asset.as_ref().expect("loaded placement asset").id,
-            placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .filename,
+            placement.require_loaded_asset().id,
+            placement.require_loaded_asset().filename,
             ui_integration_ms
         );
     }
@@ -5125,17 +5111,17 @@ fn apply_default_average_area_to_selection(
     status: &mut String,
 ) {
     let changed =
-        canvas.apply_target_area_to_selected_images(crate::jobs::DEFAULT_PLACEMENT_TARGET_AREA);
+        canvas.apply_target_area_to_selected_placements(crate::jobs::DEFAULT_PLACEMENT_TARGET_AREA);
     let noun = if changed == 1 { "image" } else { "images" };
     *status = format!("Applied default average area to {changed} {noun}");
 }
 
 fn apply_average_selection_area(canvas: &mut crate::canvas::CanvasState, status: &mut String) {
-    let Some(target_area) = canvas.average_selected_image_area() else {
+    let Some(target_area) = canvas.average_selected_placement_area() else {
         *status = "Select 2 or more images to average their area".to_owned();
         return;
     };
-    let changed = canvas.apply_target_area_to_selected_images(target_area);
+    let changed = canvas.apply_target_area_to_selected_placements(target_area);
     let noun = if changed == 1 { "image" } else { "images" };
     *status = format!("Averaged area across {changed} {noun}");
 }

@@ -4,9 +4,9 @@ use super::super::geometry::{
     image_rotation_handle_screen_pos, image_screen_rect_for_record, min_image_scale,
 };
 use super::super::{
-    CanvasState, IMAGE_RESIZE_HIT_RADIUS, IMAGE_ROTATE_HANDLE_HIT_RADIUS_SCREEN,
-    IMAGE_ROTATE_HANDLE_OFFSET_SCREEN, ImageResizeHandle, ImageScaleStart, ImageTransformState,
-    RenderedPlacement,
+    CanvasState, PLACEMENT_RESIZE_HIT_RADIUS, PLACEMENT_ROTATE_HANDLE_HIT_RADIUS_SCREEN,
+    PLACEMENT_ROTATE_HANDLE_OFFSET_SCREEN, PlacementResizeHandle, PlacementScaleStart,
+    PlacementTransformState, RenderedPlacement,
 };
 
 const IMAGE_DRAG_SCALE_DOUBLING_DISTANCE_SCREEN: f32 = 240.0;
@@ -18,11 +18,11 @@ pub(crate) struct ImageScaleTransform {
     pub(crate) scale: f32,
 }
 
-pub(crate) fn begin_image_resize(
+pub(crate) fn begin_placement_resize(
     state: &mut CanvasState,
     rect: egui::Rect,
     placement_id: i64,
-    handle: ImageResizeHandle,
+    handle: PlacementResizeHandle,
 ) {
     let Some(image) = state.rendered_placement_by_id(placement_id) else {
         return;
@@ -47,7 +47,7 @@ pub(crate) fn begin_image_resize(
     state.interaction.crop_state = None;
     state.interaction.annotation_draft_state = None;
     state.interaction.textbox_transform_state = None;
-    state.interaction.image_transform_state = Some(ImageTransformState::Resizing {
+    state.interaction.placement_transform_state = Some(PlacementTransformState::Resizing {
         placement_id,
         anchor_screen,
         start_handle_screen,
@@ -55,7 +55,7 @@ pub(crate) fn begin_image_resize(
     });
 }
 
-pub(crate) fn begin_image_drag_scale(
+pub(crate) fn begin_placement_drag_scale(
     state: &mut CanvasState,
     rect: egui::Rect,
     hit_item_id: i64,
@@ -69,7 +69,7 @@ pub(crate) fn begin_image_drag_scale(
         return;
     }
     let Some(selection_rect) =
-        selected_image_screen_rect_for_placements(state, rect, &placement_ids)
+        selected_placement_screen_rect_for_placements(state, rect, &placement_ids)
     else {
         return;
     };
@@ -78,7 +78,7 @@ pub(crate) fn begin_image_drag_scale(
         .iter()
         .filter_map(|placement_id| {
             state.rendered_placement_by_id(*placement_id).map(|image| {
-                ImageScaleStart::new(
+                PlacementScaleStart::new(
                     *placement_id,
                     egui::pos2(
                         image.placement.state.geometry.center.x,
@@ -93,13 +93,7 @@ pub(crate) fn begin_image_drag_scale(
                         )
                     },
                     image.placement.state.geometry.scale,
-                    min_image_scale(
-                        image
-                            .placement
-                            .asset
-                            .as_ref()
-                            .expect("loaded placement asset"),
-                    ),
+                    min_image_scale(image.placement.require_loaded_asset()),
                 )
             })
         })
@@ -113,7 +107,7 @@ pub(crate) fn begin_image_drag_scale(
     state.interaction.crop_state = None;
     state.interaction.annotation_draft_state = None;
     state.interaction.textbox_transform_state = None;
-    state.interaction.image_transform_state = Some(ImageTransformState::Scaling {
+    state.interaction.placement_transform_state = Some(PlacementTransformState::Scaling {
         placement_ids,
         pointer_start_screen: pointer_pos,
         group_center_world,
@@ -121,7 +115,7 @@ pub(crate) fn begin_image_drag_scale(
     });
 }
 
-pub(crate) fn begin_image_rotation(
+pub(crate) fn begin_placement_rotation(
     state: &mut CanvasState,
     rect: egui::Rect,
     pointer_pos: egui::Pos2,
@@ -130,7 +124,7 @@ pub(crate) fn begin_image_rotation(
     if placement_ids.is_empty() {
         return;
     }
-    let Some(selection_rect) = selected_image_rotation_screen_rect(state, rect) else {
+    let Some(selection_rect) = selected_placement_rotation_screen_rect(state, rect) else {
         return;
     };
     let center_screen = selection_rect.center();
@@ -164,7 +158,7 @@ pub(crate) fn begin_image_rotation(
     state.interaction.crop_state = None;
     state.interaction.annotation_draft_state = None;
     state.interaction.textbox_transform_state = None;
-    state.interaction.image_transform_state = Some(ImageTransformState::Rotating {
+    state.interaction.placement_transform_state = Some(PlacementTransformState::Rotating {
         placement_ids,
         center_screen,
         center_world,
@@ -173,7 +167,7 @@ pub(crate) fn begin_image_rotation(
     });
 }
 
-fn selected_image_screen_rect_for_placements(
+fn selected_placement_screen_rect_for_placements(
     state: &CanvasState,
     rect: egui::Rect,
     placement_ids: &[i64],
@@ -195,40 +189,40 @@ pub(crate) fn image_screen_rect(
 
 fn image_resize_handle_screen_pos(
     corners: [egui::Pos2; 4],
-    handle: ImageResizeHandle,
+    handle: PlacementResizeHandle,
 ) -> egui::Pos2 {
     match handle {
-        ImageResizeHandle::TopLeft => corners[0],
-        ImageResizeHandle::TopRight => corners[1],
-        ImageResizeHandle::BottomRight => corners[2],
-        ImageResizeHandle::BottomLeft => corners[3],
+        PlacementResizeHandle::TopLeft => corners[0],
+        PlacementResizeHandle::TopRight => corners[1],
+        PlacementResizeHandle::BottomRight => corners[2],
+        PlacementResizeHandle::BottomLeft => corners[3],
     }
 }
 
 fn image_resize_anchor_screen_pos(
     corners: [egui::Pos2; 4],
-    handle: ImageResizeHandle,
+    handle: PlacementResizeHandle,
 ) -> egui::Pos2 {
     match handle {
-        ImageResizeHandle::TopLeft => corners[2],
-        ImageResizeHandle::TopRight => corners[3],
-        ImageResizeHandle::BottomRight => corners[0],
-        ImageResizeHandle::BottomLeft => corners[1],
+        PlacementResizeHandle::TopLeft => corners[2],
+        PlacementResizeHandle::TopRight => corners[3],
+        PlacementResizeHandle::BottomRight => corners[0],
+        PlacementResizeHandle::BottomLeft => corners[1],
     }
 }
 
-pub(crate) fn hit_test_selected_image_rotation_handle(
+pub(crate) fn hit_test_selected_placement_rotation_handle(
     state: &CanvasState,
     rect: egui::Rect,
     pointer_pos: egui::Pos2,
 ) -> bool {
-    let Some((_, handle_pos)) = selected_image_rotation_handle_screen_pos(state, rect) else {
+    let Some((_, handle_pos)) = selected_placement_rotation_handle_screen_pos(state, rect) else {
         return false;
     };
-    handle_pos.distance(pointer_pos) <= IMAGE_ROTATE_HANDLE_HIT_RADIUS_SCREEN
+    handle_pos.distance(pointer_pos) <= PLACEMENT_ROTATE_HANDLE_HIT_RADIUS_SCREEN
 }
 
-pub(crate) fn selected_image_rotation_handle_screen_pos(
+pub(crate) fn selected_placement_rotation_handle_screen_pos(
     state: &CanvasState,
     rect: egui::Rect,
 ) -> Option<(egui::Pos2, egui::Pos2)> {
@@ -246,11 +240,11 @@ pub(crate) fn selected_image_rotation_handle_screen_pos(
     }
 
     let rotation = selected_group_rotation_angle(state)?;
-    selected_image_rotation_screen_rect(state, rect)
+    selected_placement_rotation_screen_rect(state, rect)
         .map(|selection_rect| group_rotation_handle_screen_pos(selection_rect, rotation))
 }
 
-fn selected_image_rotation_screen_rect(
+fn selected_placement_rotation_screen_rect(
     state: &CanvasState,
     rect: egui::Rect,
 ) -> Option<egui::Rect> {
@@ -304,23 +298,27 @@ pub(crate) fn group_rotation_handle_screen_pos(
     }
 
     let line_start = center + outward * distance.max(0.0);
-    let handle_pos = line_start + outward * IMAGE_ROTATE_HANDLE_OFFSET_SCREEN;
+    let handle_pos = line_start + outward * PLACEMENT_ROTATE_HANDLE_OFFSET_SCREEN;
     (line_start, handle_pos)
 }
 
-pub(crate) fn image_resize_cursor_icon(handle: ImageResizeHandle) -> egui::CursorIcon {
+pub(crate) fn placement_resize_cursor_icon(handle: PlacementResizeHandle) -> egui::CursorIcon {
     match handle {
-        ImageResizeHandle::TopLeft | ImageResizeHandle::BottomRight => egui::CursorIcon::ResizeNwSe,
-        ImageResizeHandle::TopRight | ImageResizeHandle::BottomLeft => egui::CursorIcon::ResizeNeSw,
+        PlacementResizeHandle::TopLeft | PlacementResizeHandle::BottomRight => {
+            egui::CursorIcon::ResizeNwSe
+        }
+        PlacementResizeHandle::TopRight | PlacementResizeHandle::BottomLeft => {
+            egui::CursorIcon::ResizeNeSw
+        }
     }
 }
 
-pub(crate) fn hit_test_image_resize_handle(
+pub(crate) fn hit_test_placement_resize_handle(
     state: &CanvasState,
     rect: egui::Rect,
     image: &RenderedPlacement,
     pointer_pos: egui::Pos2,
-) -> Option<ImageResizeHandle> {
+) -> Option<PlacementResizeHandle> {
     let corners = super::super::geometry::image_screen_corners_for_record(
         &image.placement,
         state.pan,
@@ -328,19 +326,19 @@ pub(crate) fn hit_test_image_resize_handle(
         rect.center(),
     );
     [
-        ImageResizeHandle::TopLeft,
-        ImageResizeHandle::TopRight,
-        ImageResizeHandle::BottomLeft,
-        ImageResizeHandle::BottomRight,
+        PlacementResizeHandle::TopLeft,
+        PlacementResizeHandle::TopRight,
+        PlacementResizeHandle::BottomLeft,
+        PlacementResizeHandle::BottomRight,
     ]
     .into_iter()
     .find(|handle| {
         image_resize_handle_screen_pos(corners, *handle).distance(pointer_pos)
-            <= IMAGE_RESIZE_HIT_RADIUS
+            <= PLACEMENT_RESIZE_HIT_RADIUS
     })
 }
 
-pub(crate) fn resized_image_transform(
+pub(crate) fn resized_placement_transform(
     asset: &crate::data::ImageAsset,
     start_scale: f32,
     anchor_screen: egui::Pos2,
@@ -361,13 +359,16 @@ pub(crate) fn resized_image_transform(
     (anchor_screen.lerp(handle_screen, 0.5), scale)
 }
 
-pub(crate) fn image_drag_scale_factor(start_screen: egui::Pos2, pointer_pos: egui::Pos2) -> f32 {
+pub(crate) fn placement_drag_scale_factor(
+    start_screen: egui::Pos2,
+    pointer_pos: egui::Pos2,
+) -> f32 {
     let dx = pointer_pos.x - start_screen.x;
     2.0_f32.powf(dx / IMAGE_DRAG_SCALE_DOUBLING_DISTANCE_SCREEN)
 }
 
-pub(crate) fn scaled_image_transforms(
-    starting_items: &[ImageScaleStart],
+pub(crate) fn scaled_placement_transforms(
+    starting_items: &[PlacementScaleStart],
     group_center_world: egui::Pos2,
     factor: f32,
 ) -> Vec<ImageScaleTransform> {
@@ -385,7 +386,7 @@ pub(crate) fn scaled_image_transforms(
 }
 
 fn scaled_image_bounds(
-    starting_items: &[ImageScaleStart],
+    starting_items: &[PlacementScaleStart],
     group_center_world: egui::Pos2,
     factor: f32,
 ) -> Option<egui::Rect> {
@@ -469,7 +470,7 @@ pub(crate) fn compute_uniform_scale_snap_preview(
     screen_rect: egui::Rect,
     placement_ids: &[i64],
     group_center_world: egui::Pos2,
-    starting_items: &[ImageScaleStart],
+    starting_items: &[PlacementScaleStart],
     desired_factor: f32,
 ) -> Option<f32> {
     let start_rect = scaled_image_bounds(starting_items, group_center_world, 1.0)?;

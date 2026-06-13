@@ -79,14 +79,14 @@ mod tests {
         library.archive_placements(&[unplaced.state.id]).unwrap();
         library
             .upsert_asset_embedding_blob(
-                active.asset.as_ref().expect("loaded placement asset").id,
+                active.require_loaded_asset().id,
                 "test-model",
                 &[0.0, 1.0],
             )
             .unwrap();
         library
             .upsert_asset_embedding_blob(
-                unplaced.asset.as_ref().expect("loaded placement asset").id,
+                unplaced.require_loaded_asset().id,
                 "test-model",
                 &[1.0, 0.0],
             )
@@ -95,14 +95,11 @@ mod tests {
         let library_hits =
             search_library_embeddings(&library, "test-model", &[1.0, 0.0], 5).unwrap();
 
-        assert_eq!(
-            library_hits[0].asset_id,
-            unplaced.asset.as_ref().expect("loaded placement asset").id
-        );
+        assert_eq!(library_hits[0].asset_id, unplaced.require_loaded_asset().id);
         assert!(
-            library_hits.iter().any(
-                |hit| hit.asset_id == active.asset.as_ref().expect("loaded placement asset").id
-            )
+            library_hits
+                .iter()
+                .any(|hit| hit.asset_id == active.require_loaded_asset().id)
         );
 
         let _ = fs::remove_dir_all(root);

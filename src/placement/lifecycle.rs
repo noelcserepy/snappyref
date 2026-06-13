@@ -328,7 +328,7 @@ mod tests {
         let provisional = start_provisional_batch(
             &mut canvas,
             vec![ProvisionalSourceIntent::ExistingAsset {
-                asset_id: source.asset.as_ref().expect("loaded placement asset").id,
+                asset_id: source.require_loaded_asset().id,
                 label: "source".to_owned(),
                 dimensions: (1, 1),
             }],
@@ -344,7 +344,7 @@ mod tests {
             &library,
             &mut canvas,
             CommitSearchProvisionalRequest {
-                asset_ids: vec![source.asset.as_ref().expect("loaded placement asset").id],
+                asset_ids: vec![source.require_loaded_asset().id],
                 provisional_placement_ids: provisional.placement_ids,
             },
             PlacementCreationSettings {

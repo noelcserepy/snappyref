@@ -40,21 +40,9 @@ pub(crate) fn load_existing(
         trace.timings.queue_wait = worker_started_at.saturating_duration_since(trace.queued_at);
     }
 
-    if original_mime_type_is_svg(
-        &placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .mime_type,
-    ) {
+    if original_mime_type_is_svg(&placement.require_loaded_asset().mime_type) {
         let decode_started_at = Instant::now();
-        match read_svg_document(
-            &placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path,
-        ) {
+        match read_svg_document(&placement.require_loaded_asset().original_path) {
             Ok(svg) => {
                 if let Some(trace) = &mut trace {
                     trace.timings.decode_or_load = decode_started_at.elapsed();
@@ -69,26 +57,12 @@ pub(crate) fn load_existing(
                     preview_texture: ImagePrepPreviewTexture::Svg {
                         uri: format!(
                             "bytes://asset-svg-{}.svg",
-                            stable_svg_uri_key(
-                                &placement
-                                    .asset
-                                    .as_ref()
-                                    .expect("loaded placement asset")
-                                    .original_path
-                            )
+                            stable_svg_uri_key(&placement.require_loaded_asset().original_path)
                         ),
                         bytes: Arc::<[u8]>::from(svg.bytes),
                         size: [
-                            placement
-                                .asset
-                                .as_ref()
-                                .expect("loaded placement asset")
-                                .width as usize,
-                            placement
-                                .asset
-                                .as_ref()
-                                .expect("loaded placement asset")
-                                .height as usize,
+                            placement.require_loaded_asset().width as usize,
+                            placement.require_loaded_asset().height as usize,
                         ],
                     },
                     placement,
@@ -105,9 +79,7 @@ pub(crate) fn load_existing(
                     queue_id,
                     placement_id: Some(placement.state.id),
                     context: placement
-                        .asset
-                        .as_ref()
-                        .expect("loaded placement asset")
+                        .require_loaded_asset()
                         .original_path
                         .display()
                         .to_string(),
@@ -139,9 +111,7 @@ pub(crate) fn load_existing(
                             queue_id,
                             placement_id: Some(placement.state.id),
                             context: placement
-                                .asset
-                                .as_ref()
-                                .expect("loaded placement asset")
+                                .require_loaded_asset()
                                 .original_path
                                 .display()
                                 .to_string(),
@@ -175,9 +145,7 @@ pub(crate) fn load_existing(
             queue_id,
             placement_id: Some(placement.state.id),
             context: placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
+                .require_loaded_asset()
                 .original_path
                 .display()
                 .to_string(),
@@ -217,28 +185,11 @@ fn load_existing_preview(
     ),
     String,
 > {
-    if original_mime_type_is_svg(
-        &placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .mime_type,
-    ) {
-        let svg = read_svg_document(
-            &placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path,
-        )?;
+    if original_mime_type_is_svg(&placement.require_loaded_asset().mime_type) {
+        let svg = read_svg_document(&placement.require_loaded_asset().original_path)?;
         let diagnostics = ExistingLoadDiagnostics {
             source_kind: ExistingLoadSourceKind::Original,
-            source_path: placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-                .clone(),
+            source_path: placement.require_loaded_asset().original_path.clone(),
             source_file_size: svg.bytes.len() as u64,
             source_width: svg.width,
             source_height: svg.height,
@@ -256,92 +207,76 @@ fn load_existing_preview(
     }
 
     let lod_settings = lod_settings(canvas_image_settings, target_lod);
-    let (canvas_source, animated_preview, diagnostics) = if original_mime_type_supports_animation(
-        &placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .mime_type,
-    ) {
-        let decoded = decode_image_file(
-            &placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path,
-        )?;
-        let source_file_size = decoded.file_size;
-        (
-            preview_image_from_rgba(
-                decoded.width,
-                decoded.height,
-                &decoded.rgba,
-                lod_settings.max_side.min(max_texture_side as u32) as usize,
-            )?,
-            decoded
-                .animation
-                .as_ref()
-                .map(|animation| {
-                    preview_animation_from_frames(
-                        decoded.width,
-                        decoded.height,
-                        &animation.frames,
-                        lod_settings.max_side.min(max_texture_side as u32) as usize,
-                    )
-                })
-                .transpose()?,
-            ExistingLoadDiagnostics {
-                source_kind: ExistingLoadSourceKind::Original,
-                source_path: placement
-                    .asset
+    let (canvas_source, animated_preview, diagnostics) =
+        if original_mime_type_supports_animation(&placement.require_loaded_asset().mime_type) {
+            let decoded = decode_image_file(&placement.require_loaded_asset().original_path)?;
+            let source_file_size = decoded.file_size;
+            (
+                preview_image_from_rgba(
+                    decoded.width,
+                    decoded.height,
+                    &decoded.rgba,
+                    lod_settings.max_side.min(max_texture_side as u32) as usize,
+                )?,
+                decoded
+                    .animation
                     .as_ref()
-                    .expect("loaded placement asset")
-                    .original_path
-                    .clone(),
-                source_file_size,
-                source_width: decoded.source_width,
-                source_height: decoded.source_height,
-                backfilled_cache: false,
-            },
-        )
-    } else if let Some(cache_path) = library.canvas_image_cache_path_for_lod(
-        placement.asset.as_ref().expect("loaded placement asset").id,
-        lod_settings.max_side,
-        target_lod,
-    ) && cache_path.is_file()
-    {
-        match decode_image_file(&cache_path) {
-            Ok(decoded) => {
-                let source_file_size = decoded.file_size;
-                (
-                    PreviewImage {
-                        rgba: decoded.rgba,
-                        width: decoded.width,
-                        height: decoded.height,
-                    },
-                    None,
-                    ExistingLoadDiagnostics {
-                        source_kind: ExistingLoadSourceKind::Cache,
-                        source_path: cache_path,
-                        source_file_size,
-                        source_width: decoded.width,
-                        source_height: decoded.height,
-                        backfilled_cache: false,
-                    },
-                )
+                    .map(|animation| {
+                        preview_animation_from_frames(
+                            decoded.width,
+                            decoded.height,
+                            &animation.frames,
+                            lod_settings.max_side.min(max_texture_side as u32) as usize,
+                        )
+                    })
+                    .transpose()?,
+                ExistingLoadDiagnostics {
+                    source_kind: ExistingLoadSourceKind::Original,
+                    source_path: placement.require_loaded_asset().original_path.clone(),
+                    source_file_size,
+                    source_width: decoded.source_width,
+                    source_height: decoded.source_height,
+                    backfilled_cache: false,
+                },
+            )
+        } else if let Some(cache_path) = library.canvas_image_cache_path_for_lod(
+            placement.require_loaded_asset().id,
+            lod_settings.max_side,
+            target_lod,
+        ) && cache_path.is_file()
+        {
+            match decode_image_file(&cache_path) {
+                Ok(decoded) => {
+                    let source_file_size = decoded.file_size;
+                    (
+                        PreviewImage {
+                            rgba: decoded.rgba,
+                            width: decoded.width,
+                            height: decoded.height,
+                        },
+                        None,
+                        ExistingLoadDiagnostics {
+                            source_kind: ExistingLoadSourceKind::Cache,
+                            source_path: cache_path,
+                            source_file_size,
+                            source_width: decoded.width,
+                            source_height: decoded.height,
+                            backfilled_cache: false,
+                        },
+                    )
+                }
+                Err(_) => {
+                    let _ = std::fs::remove_file(&cache_path);
+                    let (preview, diagnostics) =
+                        backfill_canvas_image_cache(library, placement, lod_settings, target_lod)?;
+                    (preview, None, diagnostics)
+                }
             }
-            Err(_) => {
-                let _ = std::fs::remove_file(&cache_path);
-                let (preview, diagnostics) =
-                    backfill_canvas_image_cache(library, placement, lod_settings, target_lod)?;
-                (preview, None, diagnostics)
-            }
-        }
-    } else {
-        let (preview, diagnostics) =
-            backfill_canvas_image_cache(library, placement, lod_settings, target_lod)?;
-        (preview, None, diagnostics)
-    };
+        } else {
+            let (preview, diagnostics) =
+                backfill_canvas_image_cache(library, placement, lod_settings, target_lod)?;
+            (preview, None, diagnostics)
+        };
 
     let preview = if let Some(animated_preview) = &animated_preview {
         PreviewImage {
@@ -374,19 +309,13 @@ pub fn load_canvas_snapshot_pixels(
     if target_width == 0 || target_height == 0 {
         return Err("cannot cache zero-sized canvas pixels".to_owned());
     }
-    if original_mime_type_is_svg(
-        &placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .mime_type,
-    ) {
+    if original_mime_type_is_svg(&placement.require_loaded_asset().mime_type) {
         return Err("cannot cache SVG canvas pixels".to_owned());
     }
 
     for path in canvas_snapshot_cache_candidates(
         library,
-        placement.asset.as_ref().expect("loaded placement asset").id,
+        placement.require_loaded_asset().id,
         target_width,
         target_height,
     ) {
@@ -410,11 +339,7 @@ pub fn load_canvas_snapshot_pixels(
     }
 
     let decoded = decode_image_file_with_max_side(
-        &placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .original_path,
+        &placement.require_loaded_asset().original_path,
         Some(target_width.max(target_height)),
     )?;
     resize_rgba_exact(
@@ -476,20 +401,13 @@ fn backfill_canvas_image_cache(
 ) -> Result<(PreviewImage, ExistingLoadDiagnostics), String> {
     let decode_path =
         preferred_backfill_source_path(library, placement, canvas_image_settings, lod)
-            .unwrap_or_else(|| {
-                placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .original_path
-                    .clone()
-            });
+            .unwrap_or_else(|| placement.require_loaded_asset().original_path.clone());
     if let Some(prepared) =
         prepare_image_with_helper(&decode_path, canvas_image_settings).unwrap_or(None)
     {
         let source_path = install_prepared_canvas_cache(
             library,
-            placement.asset.as_ref().expect("loaded placement asset").id,
+            placement.require_loaded_asset().id,
             canvas_image_settings.max_side,
             lod,
             &prepared,
@@ -525,21 +443,14 @@ fn backfill_canvas_image_cache(
     )?;
     let source_path = library
         .store_canvas_image_cache_for_lod(
-            placement.asset.as_ref().expect("loaded placement asset").id,
+            placement.require_loaded_asset().id,
             canvas_image_settings.max_side,
             lod,
             &canvas_source.rgba,
             canvas_source.width,
             canvas_source.height,
         )?
-        .unwrap_or_else(|| {
-            placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-                .clone()
-        });
+        .unwrap_or_else(|| placement.require_loaded_asset().original_path.clone());
     let source_file_size = std::fs::metadata(&source_path)
         .map(|metadata| metadata.len())
         .unwrap_or(0);
@@ -567,7 +478,7 @@ fn preferred_backfill_source_path(
     match lod {
         CanvasImageLod::Working => None,
         CanvasImageLod::Overview => library.canvas_image_cache_path_for_lod(
-            placement.asset.as_ref().expect("loaded placement asset").id,
+            placement.require_loaded_asset().id,
             canvas_image_settings.max_side,
             CanvasImageLod::Working,
         ),
@@ -584,11 +495,11 @@ pub(super) fn backfill_cache_lod(
     let lod_settings = lod_settings(canvas_image_settings, lod);
     match backfill_canvas_image_cache(library, &placement, lod_settings, lod) {
         Ok(_) => ImagePrepResult::CacheLodBackfilled {
-            asset_id: placement.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: placement.require_loaded_asset().id,
             lod,
         },
         Err(error) => ImagePrepResult::CacheLodBackfillFailed {
-            asset_id: placement.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: placement.require_loaded_asset().id,
             lod,
             error,
         },

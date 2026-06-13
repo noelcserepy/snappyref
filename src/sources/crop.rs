@@ -256,11 +256,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
         let mut placement = test_record(42, 42, 8, 8);
-        placement
-            .asset
-            .as_mut()
-            .expect("loaded placement asset")
-            .original_path = source_path.clone();
+        placement.require_loaded_asset_mut().original_path = source_path.clone();
         let preview_rgba = (0..16)
             .flat_map(|index| [index, 0, 0, 255])
             .collect::<Vec<_>>();
@@ -283,7 +279,7 @@ mod tests {
         );
         canvas.set_pending_crop_for_test(CanvasCropRequest {
             placement_id: 42,
-            source_asset: placement.asset.clone().expect("loaded placement asset"),
+            source_asset: placement.require_loaded_asset().clone(),
             crop_rect: PixelCropRect {
                 x: 2,
                 y: 2,
@@ -306,16 +302,8 @@ mod tests {
         let placement = canvas.placement_for_id(42).unwrap();
         assert_eq!(
             (
-                placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .width,
-                placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .height
+                placement.require_loaded_asset().width,
+                placement.require_loaded_asset().height
             ),
             (4, 4)
         );

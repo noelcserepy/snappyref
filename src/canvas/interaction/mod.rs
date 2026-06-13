@@ -13,11 +13,12 @@ pub(super) use annotation::{
 };
 pub(super) use crop::{begin_crop, finish_crop, update_crop};
 pub(super) use placement_transform::{
-    begin_image_drag_scale, begin_image_resize, begin_image_rotation, compute_resize_snap_preview,
-    compute_uniform_scale_snap_preview, hit_test_image_resize_handle,
-    hit_test_selected_image_rotation_handle, image_drag_scale_factor, image_resize_cursor_icon,
-    image_screen_rect, resized_image_transform, rotate_vec2, rotated_image_delta,
-    scaled_image_transforms, selected_image_rotation_handle_screen_pos,
+    begin_placement_drag_scale, begin_placement_resize, begin_placement_rotation,
+    compute_resize_snap_preview, compute_uniform_scale_snap_preview,
+    hit_test_placement_resize_handle, hit_test_selected_placement_rotation_handle,
+    image_screen_rect, placement_drag_scale_factor, placement_resize_cursor_icon,
+    resized_placement_transform, rotate_vec2, rotated_image_delta, scaled_placement_transforms,
+    selected_placement_rotation_handle_screen_pos,
 };
 pub(super) use selection::{
     begin_marquee_selection, hit_test_canvas_item, open_context_menu_at_pointer,
@@ -37,11 +38,11 @@ pub(super) use viewport::{
 };
 
 #[cfg(test)]
-use super::ImageScaleStart;
+use super::PlacementScaleStart;
 use super::geometry::{image_contains_screen_point, min_image_scale};
 use super::render::textbox_pointer_region;
 use super::{
-    AnnotationDraftState, CanvasHit, CanvasState, ImageTransformState,
+    AnnotationDraftState, CanvasHit, CanvasState, PlacementTransformState,
     TEXTBOX_DRAG_THRESHOLD_SCREEN, TextboxPointerRegion, TextboxTransformState,
 };
 use crate::data::CanvasAnnotationKind;
@@ -81,7 +82,7 @@ pub(super) fn handle_input(
     let draw_kind = drawing_annotation_kind(ui);
     let shift_held = ui.input(|i| i.modifiers.shift);
     let alt_held = ui.input(|i| i.modifiers.alt);
-    let image_drag_scale_modifier_held = ui.input(|i| scale_drag_active(i.modifiers));
+    let placement_drag_scale_modifier_held = ui.input(|i| scale_drag_active(i.modifiers));
     let pointer_in_canvas_rect = pointer_pos
         .map(|pointer_pos| {
             input_rect.contains(pointer_pos)
@@ -96,11 +97,11 @@ pub(super) fn handle_input(
 
     if pointer_in_canvas_rect
         && primary_pressed
-        && image_drag_scale_modifier_held
+        && placement_drag_scale_modifier_held
         && let Some(pointer_pos) = pointer_pos
         && let Some(placement_id) = hit_test_image(state, rect, pointer_pos)
     {
-        begin_image_drag_scale(state, rect, placement_id, pointer_pos);
+        begin_placement_drag_scale(state, rect, placement_id, pointer_pos);
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         return;
     }
@@ -118,7 +119,7 @@ pub(super) fn handle_input(
     } else if pointer_in_canvas_rect && primary_pressed && alt_held {
         state.interaction.alt_pan_active = true;
         state.interaction.drag_state = None;
-        state.interaction.image_transform_state = None;
+        state.interaction.placement_transform_state = None;
         state.interaction.textbox_transform_state = None;
         state.interaction.annotation_drag_state = None;
         state.interaction.marquee_state = None;
@@ -143,8 +144,8 @@ pub(super) fn handle_input(
     }
 
     if matches!(
-        state.interaction.image_transform_state.as_ref(),
-        Some(ImageTransformState::Rotating { .. } | ImageTransformState::Scaling { .. })
+        state.interaction.placement_transform_state.as_ref(),
+        Some(PlacementTransformState::Rotating { .. } | PlacementTransformState::Scaling { .. })
     ) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     } else if let Some(pointer_pos) = pointer_pos
@@ -166,18 +167,19 @@ pub(super) fn handle_input(
 
     if let Some(pointer_pos) = pointer_pos
         && let Some(image) = state.selected_single_rendered_placement()
-        && let Some(handle) = hit_test_image_resize_handle(state, rect, image, pointer_pos)
+        && let Some(handle) = hit_test_placement_resize_handle(state, rect, image, pointer_pos)
     {
-        ui.ctx().set_cursor_icon(image_resize_cursor_icon(handle));
+        ui.ctx()
+            .set_cursor_icon(placement_resize_cursor_icon(handle));
     } else if pointer_in_canvas_rect
-        && image_drag_scale_modifier_held
+        && placement_drag_scale_modifier_held
         && let Some(pointer_pos) = pointer_pos
         && hit_test_image(state, rect, pointer_pos).is_some()
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     } else if let Some(pointer_pos) = pointer_pos
         && rotation_handle_key_held
-        && hit_test_selected_image_rotation_handle(state, rect, pointer_pos)
+        && hit_test_selected_placement_rotation_handle(state, rect, pointer_pos)
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
@@ -190,7 +192,7 @@ pub(super) fn handle_input(
             let pointer_world = state.screen_to_world(pointer_pos, rect);
             state.clear_selection();
             state.interaction.drag_state = None;
-            state.interaction.image_transform_state = None;
+            state.interaction.placement_transform_state = None;
             state.interaction.textbox_transform_state = None;
             state.interaction.marquee_state = None;
             state.interaction.crop_state = None;
@@ -204,16 +206,16 @@ pub(super) fn handle_input(
         } else if let Some(image) = state.selected_single_rendered_placement().map(|image| {
             (
                 image.placement.state.id,
-                hit_test_image_resize_handle(state, rect, image, pointer_pos),
+                hit_test_placement_resize_handle(state, rect, image, pointer_pos),
             )
         }) && let (placement_id, Some(handle)) = image
         {
-            begin_image_resize(state, rect, placement_id, handle);
+            begin_placement_resize(state, rect, placement_id, handle);
             return;
         } else if rotation_handle_key_held
-            && hit_test_selected_image_rotation_handle(state, rect, pointer_pos)
+            && hit_test_selected_placement_rotation_handle(state, rect, pointer_pos)
         {
-            begin_image_rotation(state, rect, pointer_pos);
+            begin_placement_rotation(state, rect, pointer_pos);
             return;
         } else if let Some(annotation_id) = state.single_selected_annotation_id()
             && let Some(annotation) = state.annotation_by_id(annotation_id).cloned()
@@ -253,7 +255,7 @@ pub(super) fn handle_input(
                         state.document.selected_placement_ids.clear();
                         state.document.selected_annotation_ids = vec![annotation_id];
                         begin_annotation_drag(state, rect, annotation_id, pointer_pos);
-                        state.interaction.image_transform_state = None;
+                        state.interaction.placement_transform_state = None;
                         state.interaction.marquee_state = None;
                         state.interaction.crop_state = None;
                         state.interaction.annotation_draft_state = None;
@@ -274,7 +276,7 @@ pub(super) fn handle_input(
                         pointer_world,
                         now,
                     );
-                    state.interaction.image_transform_state = None;
+                    state.interaction.placement_transform_state = None;
                     state.interaction.textbox_transform_state = None;
                     state.interaction.annotation_drag_state = None;
                     state.interaction.marquee_state = None;
@@ -382,22 +384,18 @@ pub(super) fn handle_input(
         && state.interaction.annotation_draft_state.is_none()
         && primary_down
         && let Some(pointer_pos) = pointer_pos
-        && let Some(transform_state) = state.interaction.image_transform_state.clone()
+        && let Some(transform_state) = state.interaction.placement_transform_state.clone()
     {
         match transform_state {
-            ImageTransformState::Resizing {
+            PlacementTransformState::Resizing {
                 placement_id,
                 anchor_screen,
                 start_handle_screen,
                 start_scale,
             } => {
                 if let Some(image) = state.rendered_placement_by_id(placement_id).cloned() {
-                    let (center_screen, scale) = resized_image_transform(
-                        image
-                            .placement
-                            .asset
-                            .as_ref()
-                            .expect("loaded placement asset"),
+                    let (center_screen, scale) = resized_placement_transform(
+                        image.placement.require_loaded_asset(),
                         start_scale,
                         anchor_screen,
                         start_handle_screen,
@@ -428,42 +426,29 @@ pub(super) fn handle_input(
                             desired_rect,
                             anchor_world,
                             base_display_size,
-                            min_image_scale(
-                                image
-                                    .placement
-                                    .asset
-                                    .as_ref()
-                                    .expect("loaded placement asset"),
-                            ),
+                            min_image_scale(image.placement.require_loaded_asset()),
                         )
                     };
                     let (center_world, scale) = snap_result
                         .map(|snap_rect| {
                             (
                                 snap_rect.center(),
-                                (snap_rect.width() / base_display_size.x.max(f32::EPSILON)).max(
-                                    min_image_scale(
-                                        image
-                                            .placement
-                                            .asset
-                                            .as_ref()
-                                            .expect("loaded placement asset"),
-                                    ),
-                                ),
+                                (snap_rect.width() / base_display_size.x.max(f32::EPSILON))
+                                    .max(min_image_scale(image.placement.require_loaded_asset())),
                             )
                         })
                         .unwrap_or((center_world, scale));
-                    state.set_image_center_and_scale(placement_id, center_world, scale);
+                    state.set_placement_center_and_scale(placement_id, center_world, scale);
                 }
             }
-            ImageTransformState::Scaling {
+            PlacementTransformState::Scaling {
                 pointer_start_screen,
                 group_center_world,
                 starting_items,
                 placement_ids,
                 ..
             } => {
-                let raw_factor = image_drag_scale_factor(pointer_start_screen, pointer_pos);
+                let raw_factor = placement_drag_scale_factor(pointer_start_screen, pointer_pos);
                 let factor = compute_uniform_scale_snap_preview(
                     state,
                     rect,
@@ -474,16 +459,16 @@ pub(super) fn handle_input(
                 )
                 .unwrap_or(raw_factor);
                 for transform in
-                    scaled_image_transforms(&starting_items, group_center_world, factor)
+                    scaled_placement_transforms(&starting_items, group_center_world, factor)
                 {
-                    state.set_image_center_and_scale(
+                    state.set_placement_center_and_scale(
                         transform.placement_id,
                         transform.center_world,
                         transform.scale,
                     );
                 }
             }
-            ImageTransformState::Rotating {
+            PlacementTransformState::Rotating {
                 placement_ids: _,
                 center_screen,
                 center_world,
@@ -500,7 +485,7 @@ pub(super) fn handle_input(
                 for (placement_id, start_center_world, start_rotation) in starting_items {
                     let offset = start_center_world - center_world;
                     let rotated_offset = rotate_vec2(offset, rotation_delta);
-                    state.set_image_center_and_rotation(
+                    state.set_placement_center_and_rotation(
                         placement_id,
                         center_world + rotated_offset,
                         start_rotation + rotation_delta,
@@ -542,17 +527,17 @@ pub(super) fn handle_input(
         if finish_crop(state, rect) {
         } else if let Some(draft_state) = state.interaction.annotation_draft_state.take() {
             state.interaction.pending_annotation = pending_annotation_from_draft(draft_state);
-        } else if let Some(transform_state) = state.interaction.image_transform_state.take() {
+        } else if let Some(transform_state) = state.interaction.placement_transform_state.take() {
             match transform_state {
-                ImageTransformState::Resizing { placement_id, .. } => {
+                PlacementTransformState::Resizing { placement_id, .. } => {
                     state.mark_dirty(placement_id)
                 }
-                ImageTransformState::Scaling { placement_ids, .. } => {
+                PlacementTransformState::Scaling { placement_ids, .. } => {
                     for placement_id in placement_ids {
                         state.mark_dirty(placement_id);
                     }
                 }
-                ImageTransformState::Rotating { placement_ids, .. } => {
+                PlacementTransformState::Rotating { placement_ids, .. } => {
                     for placement_id in placement_ids {
                         state.mark_dirty(placement_id);
                     }
@@ -695,10 +680,10 @@ pub(crate) fn hit_test_image(
 #[cfg(test)]
 mod tests {
     use super::{
-        ImageTransformState, animate_mouse_wheel_zoom_around_pointer, begin_image_drag_scale,
-        begin_image_rotation, compute_uniform_scale_snap_preview, image_drag_scale_factor,
-        map_mouse_mode_scroll_events, scaled_image_transforms,
-        selected_image_rotation_handle_screen_pos, step_mouse_wheel_zoom_animation,
+        PlacementTransformState, animate_mouse_wheel_zoom_around_pointer,
+        begin_placement_drag_scale, begin_placement_rotation, compute_uniform_scale_snap_preview,
+        map_mouse_mode_scroll_events, placement_drag_scale_factor, scaled_placement_transforms,
+        selected_placement_rotation_handle_screen_pos, step_mouse_wheel_zoom_animation,
     };
     use crate::canvas::{CanvasState, DragState};
     use crate::data::{
@@ -721,7 +706,7 @@ mod tests {
         let selection_rect = canvas.selection_screen_rect(screen_rect).unwrap();
 
         let (line_start, handle_pos) =
-            selected_image_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
+            selected_placement_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
 
         assert_eq!(
             line_start,
@@ -729,7 +714,7 @@ mod tests {
         );
         assert_eq!(
             handle_pos,
-            line_start - egui::vec2(0.0, super::super::IMAGE_ROTATE_HANDLE_OFFSET_SCREEN)
+            line_start - egui::vec2(0.0, super::super::PLACEMENT_ROTATE_HANDLE_OFFSET_SCREEN)
         );
     }
 
@@ -757,25 +742,25 @@ mod tests {
     }
 
     #[test]
-    fn group_rotation_handle_follows_selected_image_rotation() {
+    fn group_rotation_handle_follows_selected_placement_rotation() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 80);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(120.0, 0.0), 100, 80);
         canvas.select_placements(&[1, 2]);
-        let _ = canvas.set_image_rotation(1, std::f32::consts::FRAC_PI_2);
-        let _ = canvas.set_image_rotation(2, std::f32::consts::FRAC_PI_2);
+        let _ = canvas.set_placement_rotation(1, std::f32::consts::FRAC_PI_2);
+        let _ = canvas.set_placement_rotation(2, std::f32::consts::FRAC_PI_2);
         let screen_rect = test_screen_rect();
         let selection_rect = canvas.selection_screen_rect(screen_rect).unwrap();
 
         let (line_start, handle_pos) =
-            selected_image_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
+            selected_placement_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
 
         assert!((line_start.x - selection_rect.right()).abs() < 0.01);
         assert!((line_start.y - selection_rect.center().y).abs() < 0.01);
         assert_eq!(
             handle_pos,
-            line_start + egui::vec2(super::super::IMAGE_ROTATE_HANDLE_OFFSET_SCREEN, 0.0)
+            line_start + egui::vec2(super::super::PLACEMENT_ROTATE_HANDLE_OFFSET_SCREEN, 0.0)
         );
     }
 
@@ -788,13 +773,13 @@ mod tests {
         canvas.select_placements(&[1, 2]);
         let screen_rect = test_screen_rect();
         let (_, handle_pos) =
-            selected_image_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
+            selected_placement_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
 
-        begin_image_rotation(&mut canvas, screen_rect, handle_pos);
+        begin_placement_rotation(&mut canvas, screen_rect, handle_pos);
 
         assert!(matches!(
-            canvas.interaction.image_transform_state,
-            Some(ImageTransformState::Rotating {
+            canvas.interaction.placement_transform_state,
+            Some(PlacementTransformState::Rotating {
                 ref placement_ids,
                 ref starting_items,
                 ..
@@ -803,27 +788,27 @@ mod tests {
     }
 
     #[test]
-    fn horizontal_image_drag_scale_grows_to_the_right_and_shrinks_to_the_left() {
+    fn horizontal_placement_drag_scale_grows_to_the_right_and_shrinks_to_the_left() {
         let start = egui::pos2(200.0, 120.0);
 
-        let grow = image_drag_scale_factor(start, egui::pos2(440.0, 120.0));
-        let shrink = image_drag_scale_factor(start, egui::pos2(-40.0, 120.0));
+        let grow = placement_drag_scale_factor(start, egui::pos2(440.0, 120.0));
+        let shrink = placement_drag_scale_factor(start, egui::pos2(-40.0, 120.0));
 
         assert!((grow - 2.0).abs() < 0.01);
         assert!((shrink - 0.5).abs() < 0.01);
     }
 
     #[test]
-    fn image_drag_scale_preserves_multi_image_layout_around_group_center() {
+    fn placement_drag_scale_preserves_multi_placement_layout_around_group_center() {
         let starting_items = vec![
-            super::ImageScaleStart::new(
+            super::PlacementScaleStart::new(
                 1,
                 egui::pos2(-100.0, 0.0),
                 egui::vec2(100.0, 80.0),
                 1.0,
                 0.1,
             ),
-            super::ImageScaleStart::new(
+            super::PlacementScaleStart::new(
                 2,
                 egui::pos2(100.0, 0.0),
                 egui::vec2(100.0, 80.0),
@@ -832,7 +817,7 @@ mod tests {
             ),
         ];
 
-        let transforms = scaled_image_transforms(&starting_items, egui::pos2(0.0, 0.0), 2.0);
+        let transforms = scaled_placement_transforms(&starting_items, egui::pos2(0.0, 0.0), 2.0);
 
         assert_eq!(transforms[0].placement_id, 1);
         assert_eq!(transforms[0].center_world, egui::pos2(-200.0, 0.0));
@@ -843,18 +828,18 @@ mod tests {
     }
 
     #[test]
-    fn image_drag_scale_state_captures_selected_group() {
+    fn placement_drag_scale_state_captures_selected_group() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(-100.0, 0.0), 100, 80);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(100.0, 0.0), 100, 80);
         canvas.select_placements(&[1, 2]);
 
-        begin_image_drag_scale(&mut canvas, test_screen_rect(), 1, egui::pos2(380.0, 360.0));
+        begin_placement_drag_scale(&mut canvas, test_screen_rect(), 1, egui::pos2(380.0, 360.0));
 
         assert!(matches!(
-            canvas.interaction.image_transform_state,
-            Some(ImageTransformState::Scaling {
+            canvas.interaction.placement_transform_state,
+            Some(PlacementTransformState::Scaling {
                 ref placement_ids,
                 group_center_world,
                 ref starting_items,
@@ -866,7 +851,7 @@ mod tests {
     }
 
     #[test]
-    fn image_drag_scale_snap_preview_returns_snapped_factor() {
+    fn placement_drag_scale_snap_preview_returns_snapped_factor() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
         canvas.set_placement_gap(24.0);
@@ -874,7 +859,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(174.0, 0.0), 100, 100);
         canvas.select_placements(&[1]);
 
-        let starting_items = vec![super::ImageScaleStart::new(
+        let starting_items = vec![super::PlacementScaleStart::new(
             1,
             egui::Pos2::ZERO,
             egui::vec2(100.0, 100.0),

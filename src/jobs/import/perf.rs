@@ -308,12 +308,7 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
         .map(|trace| trace.timings)
         .ok_or_else(|| "missing import trace".to_owned())?;
     let canvas_cache_path = library.canvas_image_cache_path(
-        loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .id,
+        loaded.placement.require_loaded_asset().id,
         settings.max_side,
     );
     let canvas_cache_file_size = canvas_cache_path
@@ -322,30 +317,13 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
         .map(|metadata| metadata.len());
     let source_file_size = std::fs::metadata(&source_path)
         .map(|metadata| metadata.len())
-        .unwrap_or(
-            loaded
-                .placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .file_size,
-        );
+        .unwrap_or(loaded.placement.require_loaded_asset().file_size);
 
     let report = FileImportPerfReport {
         source_path,
         source_file_size,
-        source_width: loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .width,
-        source_height: loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .height,
+        source_width: loaded.placement.require_loaded_asset().width,
+        source_height: loaded.placement.require_loaded_asset().height,
         preview_width: loaded.preview_width,
         preview_height: loaded.preview_height,
         canvas_cache_path,

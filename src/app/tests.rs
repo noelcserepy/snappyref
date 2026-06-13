@@ -80,84 +80,7 @@ fn embedding_phase_markers_report_summary_durations() {
     );
 }
 
-#[test]
-fn persist_settings_if_changed_true_calls_save_once() {
-    let mut calls = 0;
-    SnappyRefApp::persist_settings_if_changed_with(true, || {
-        calls += 1;
-    });
-    assert_eq!(calls, 1);
-}
-
-#[test]
-fn persist_settings_if_changed_false_skips_save() {
-    let mut calls = 0;
-    SnappyRefApp::persist_settings_if_changed_with(false, || {
-        calls += 1;
-    });
-    assert_eq!(calls, 0);
-}
-
-#[test]
-fn save_user_session_round_trips_placement_gap() {
-    let root = temp_library_root("snappyref-app-gap");
-    let library = Library::initialize(root.clone()).unwrap();
-    let mut app = test_app(Some(library.clone()));
-    app.settings.auto_image_scaling = false;
-    app.settings.placement_gap = 37.0;
-    app.settings.placement_target_area = 45_000.0;
-    app.settings.canvas_image_max_side = 4096;
-    app.canvas
-        .set_background(crate::data::CanvasBackground::Grid);
-
-    app.save_user_session();
-
-    let session = library.load_user_session().unwrap();
-    assert!(!session.settings.auto_image_scaling);
-    assert_eq!(session.settings.placement_gap, 37.0);
-    assert_eq!(session.settings.placement_target_area, 45_000.0);
-    assert_eq!(session.settings.canvas_image_max_side, 4096);
-    assert_eq!(
-        session.viewport.canvas_background,
-        crate::data::CanvasBackground::Grid
-    );
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn app_config_restores_always_on_top_workspace_setting() {
-    let root = temp_library_root("snappyref-always-on-top-startup");
-    let library = Library::initialize(root.clone()).unwrap();
-    let mut session = library.load_user_session().unwrap();
-    session.settings.always_on_top = true;
-    library.save_user_session(&session).unwrap();
-
-    let config = AppConfig {
-        library_root: Ok(root.clone()),
-        no_startup_focus: false,
-        perf_log: false,
-        perf_report: false,
-        perf_decode_path: None,
-        perf_import_path: None,
-        perf_embedding_lod: false,
-        perf_embedding_lod_limit: 30,
-        perf_scenario: None,
-        perf_corpus: None,
-        perf_run_dir: None,
-        startup_trace: false,
-        update_smoke_install: false,
-        update_smoke_status_path: None,
-    };
-
-    assert!(
-        config
-            .restored_workspace_settings()
-            .is_some_and(|settings| settings.always_on_top)
-    );
-
-    let _ = fs::remove_dir_all(root);
-}
+mod session_settings;
 
 #[cfg(feature = "semantic-search")]
 #[test]
@@ -695,7 +618,7 @@ fn paste_preserves_mixed_selection_stack_order_and_places_group_at_front() {
         .unwrap();
     let source_item = library
         .create_placement_from_asset(
-            back_item.asset.as_ref().expect("loaded placement asset").id,
+            back_item.require_loaded_asset().id,
             egui::pos2(10.0, 20.0),
             1.0,
             0.0,
@@ -716,7 +639,7 @@ fn paste_preserves_mixed_selection_stack_order_and_places_group_at_front() {
         .unwrap();
     let front_item = library
         .create_placement_from_asset(
-            back_item.asset.as_ref().expect("loaded placement asset").id,
+            back_item.require_loaded_asset().id,
             egui::pos2(100.0, 100.0),
             1.0,
             0.0,
@@ -787,7 +710,7 @@ fn paste_preserves_image_only_stack_order_and_places_group_at_front() {
         .unwrap();
     let lower_selected = library
         .create_placement_from_asset(
-            back_item.asset.as_ref().expect("loaded placement asset").id,
+            back_item.require_loaded_asset().id,
             egui::pos2(10.0, 20.0),
             1.0,
             0.0,
@@ -796,7 +719,7 @@ fn paste_preserves_image_only_stack_order_and_places_group_at_front() {
         .unwrap();
     let upper_selected = library
         .create_placement_from_asset(
-            back_item.asset.as_ref().expect("loaded placement asset").id,
+            back_item.require_loaded_asset().id,
             egui::pos2(30.0, 40.0),
             1.0,
             0.0,
@@ -805,7 +728,7 @@ fn paste_preserves_image_only_stack_order_and_places_group_at_front() {
         .unwrap();
     let front_item = library
         .create_placement_from_asset(
-            back_item.asset.as_ref().expect("loaded placement asset").id,
+            back_item.require_loaded_asset().id,
             egui::pos2(100.0, 100.0),
             1.0,
             0.0,
@@ -1024,7 +947,7 @@ fn duplicate_preserves_image_only_stack_order_and_places_group_at_front() {
         .unwrap();
     let lower_selected = library
         .create_placement_from_asset(
-            back_item.asset.as_ref().expect("loaded placement asset").id,
+            back_item.require_loaded_asset().id,
             egui::pos2(10.0, 20.0),
             1.0,
             0.0,
@@ -1033,7 +956,7 @@ fn duplicate_preserves_image_only_stack_order_and_places_group_at_front() {
         .unwrap();
     let upper_selected = library
         .create_placement_from_asset(
-            back_item.asset.as_ref().expect("loaded placement asset").id,
+            back_item.require_loaded_asset().id,
             egui::pos2(30.0, 40.0),
             1.0,
             0.0,
@@ -1236,18 +1159,8 @@ fn arrow_keys_apply_directional_settle_arrange() {
 
     for (id, x, y) in [(1_i64, 10.0, 50.0), (2, 170.0, 50.0), (3, 50.0, 160.0)] {
         let mut loaded = test_loaded_item(id, 1);
-        loaded
-            .placement
-            .asset
-            .as_mut()
-            .expect("loaded placement asset")
-            .width = 100;
-        loaded
-            .placement
-            .asset
-            .as_mut()
-            .expect("loaded placement asset")
-            .height = 40;
+        loaded.placement.require_loaded_asset_mut().width = 100;
+        loaded.placement.require_loaded_asset_mut().height = 40;
         loaded.placement.state.geometry.size = egui::vec2(100.0, 40.0);
         loaded.placement.state.geometry.center.x = x;
         loaded.placement.state.geometry.center.y = y;
@@ -1648,14 +1561,7 @@ fn remove_from_library_context_action_waits_for_confirmation() {
 
     assert!(app.pending_library_remove.is_none());
     assert!(library.load_placements().unwrap().is_empty());
-    assert!(
-        source_item
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .original_path
-            .exists()
-    );
+    assert!(source_item.require_loaded_asset().original_path.exists());
 
     let _ = fs::remove_dir_all(root);
 }
@@ -1806,19 +1712,9 @@ fn delete_from_board_archives_image_placements_and_annotations() {
     assert!(library.load_placements().unwrap().is_empty());
     assert!(
         library
-            .asset_original_paths_for_assets(&[source_item
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .id])
+            .asset_original_paths_for_assets(&[source_item.require_loaded_asset().id])
             .unwrap()
-            .contains_key(
-                &source_item
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .id
-            )
+            .contains_key(&source_item.require_loaded_asset().id)
     );
     let connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
     let annotation_count: i64 = connection
@@ -2890,20 +2786,9 @@ fn enter_places_unplaced_library_search_result_on_empty_active_board() {
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
     app.search.overlay.results = vec![SearchResultAssetEntry {
-        asset_id: library_item
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .id,
+        asset_id: library_item.require_loaded_asset().id,
         asset_preview_path: None,
-        asset_original_path: Some(
-            library_item
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-                .clone(),
-        ),
+        asset_original_path: Some(library_item.require_loaded_asset().original_path.clone()),
         asset_width: 1,
         asset_height: 1,
         similarity: 0.9,
@@ -2921,16 +2806,8 @@ fn enter_places_unplaced_library_search_result_on_empty_active_board() {
     let active_items = library.load_placements().unwrap();
     assert_eq!(active_items.len(), 1);
     assert_eq!(
-        active_items[0]
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .id,
-        library_item
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .id
+        active_items[0].require_loaded_asset().id,
+        library_item.require_loaded_asset().id
     );
     assert_eq!(
         harness.state().canvas.selected_placement_ids(),
@@ -2976,20 +2853,9 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
     app.search.overlay.results = vec![SearchResultAssetEntry {
-        asset_id: library_item
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .id,
+        asset_id: library_item.require_loaded_asset().id,
         asset_preview_path: None,
-        asset_original_path: Some(
-            library_item
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-                .clone(),
-        ),
+        asset_original_path: Some(library_item.require_loaded_asset().original_path.clone()),
         asset_width: 1,
         asset_height: 1,
         similarity: 0.9,
@@ -3045,20 +2911,9 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
     app.search.overlay.results = vec![SearchResultAssetEntry {
-        asset_id: library_item
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .id,
+        asset_id: library_item.require_loaded_asset().id,
         asset_preview_path: None,
-        asset_original_path: Some(
-            library_item
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-                .clone(),
-        ),
+        asset_original_path: Some(library_item.require_loaded_asset().original_path.clone()),
         asset_width: 1,
         asset_height: 1,
         similarity: 0.9,
@@ -3158,31 +3013,17 @@ fn command_enter_library_search_results_show_pending_cursor_arrangement_inputs()
     app.search.overlay.open = true;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
-            asset_id: first.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: first.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(
-                first
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .original_path
-                    .clone(),
-            ),
+            asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
             similarity: 0.9,
         },
         SearchResultAssetEntry {
-            asset_id: second.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: second.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(
-                second
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .original_path
-                    .clone(),
-            ),
+            asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
             similarity: 0.8,
@@ -3257,23 +3098,19 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
     app.search.overlay.open = true;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
-            asset_id: first.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: first.require_loaded_asset().id,
             asset_preview_path: None,
             asset_original_path: None,
-            asset_width: first.asset.as_ref().expect("loaded placement asset").width,
-            asset_height: first.asset.as_ref().expect("loaded placement asset").height,
+            asset_width: first.require_loaded_asset().width,
+            asset_height: first.require_loaded_asset().height,
             similarity: 0.9,
         },
         SearchResultAssetEntry {
-            asset_id: second.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: second.require_loaded_asset().id,
             asset_preview_path: None,
             asset_original_path: None,
-            asset_width: second.asset.as_ref().expect("loaded placement asset").width,
-            asset_height: second
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .height,
+            asset_width: second.require_loaded_asset().width,
+            asset_height: second.require_loaded_asset().height,
             similarity: 0.8,
         },
     ];
@@ -3301,16 +3138,12 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
         .collect::<Vec<_>>();
     assert_eq!(layout.len(), 2);
     let first_size = harness.state().import_size_world(
-        first.asset.as_ref().expect("loaded placement asset").width,
-        first.asset.as_ref().expect("loaded placement asset").height,
+        first.require_loaded_asset().width,
+        first.require_loaded_asset().height,
     );
     let second_size = harness.state().import_size_world(
-        second.asset.as_ref().expect("loaded placement asset").width,
-        second
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .height,
+        second.require_loaded_asset().width,
+        second.require_loaded_asset().height,
     );
     assert!(layout.iter().any(|item| {
         (item.width() - first_size.x).abs() < 0.1 && (item.height() - first_size.y).abs() < 0.1
@@ -3365,31 +3198,17 @@ fn multi_select_enter_library_search_results_show_pending_cursor_arrangement_inp
     app.search.overlay.open = true;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
-            asset_id: first.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: first.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(
-                first
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .original_path
-                    .clone(),
-            ),
+            asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
             similarity: 0.9,
         },
         SearchResultAssetEntry {
-            asset_id: second.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: second.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(
-                second
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .original_path
-                    .clone(),
-            ),
+            asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
             similarity: 0.8,
@@ -3442,22 +3261,11 @@ fn dragging_library_search_result_out_of_palette_creates_provisional_placement()
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
     app.search.overlay.results = vec![SearchResultAssetEntry {
-        asset_id: source.asset.as_ref().expect("loaded placement asset").id,
+        asset_id: source.require_loaded_asset().id,
         asset_preview_path: None,
-        asset_original_path: Some(
-            source
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-                .clone(),
-        ),
-        asset_width: source.asset.as_ref().expect("loaded placement asset").width,
-        asset_height: source
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .height,
+        asset_original_path: Some(source.require_loaded_asset().original_path.clone()),
+        asset_width: source.require_loaded_asset().width,
+        asset_height: source.require_loaded_asset().height,
         similarity: 0.9,
     }];
     app.search.overlay.result_selection.replace(0);
@@ -3518,22 +3326,11 @@ fn inspect_search_result_drag_to_canvas_writes_artifact() {
     app.active_board_id = empty_board.id;
     app.search.overlay.open = true;
     app.search.overlay.results = vec![SearchResultAssetEntry {
-        asset_id: source.asset.as_ref().expect("loaded placement asset").id,
+        asset_id: source.require_loaded_asset().id,
         asset_preview_path: None,
-        asset_original_path: Some(
-            source
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-                .clone(),
-        ),
-        asset_width: source.asset.as_ref().expect("loaded placement asset").width,
-        asset_height: source
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .height,
+        asset_original_path: Some(source.require_loaded_asset().original_path.clone()),
+        asset_width: source.require_loaded_asset().width,
+        asset_height: source.require_loaded_asset().height,
         similarity: 0.9,
     }];
     app.search.overlay.result_selection.replace(0);
@@ -4516,7 +4313,7 @@ fn inspect_blue_image_search_drag_writes_artifact() {
         "start image search from selected blue image",
         blue_drop_screen,
     );
-    let blue_asset = blue.asset.as_ref().expect("blue asset");
+    let blue_asset = blue.require_loaded_asset();
     harness.state_mut().search.overlay.open = true;
     harness.state_mut().search.overlay.focus_requested = true;
     harness.state_mut().search.overlay.image_pivot =
@@ -4672,37 +4469,19 @@ fn dragging_multiple_library_search_results_centers_provisional_group_on_pointer
     app.search.overlay.open = true;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
-            asset_id: first.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: first.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(
-                first
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .original_path
-                    .clone(),
-            ),
-            asset_width: first.asset.as_ref().expect("loaded placement asset").width,
-            asset_height: first.asset.as_ref().expect("loaded placement asset").height,
+            asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
+            asset_width: first.require_loaded_asset().width,
+            asset_height: first.require_loaded_asset().height,
             similarity: 0.9,
         },
         SearchResultAssetEntry {
-            asset_id: second.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: second.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(
-                second
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .original_path
-                    .clone(),
-            ),
-            asset_width: second.asset.as_ref().expect("loaded placement asset").width,
-            asset_height: second
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .height,
+            asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
+            asset_width: second.require_loaded_asset().width,
+            asset_height: second.require_loaded_asset().height,
             similarity: 0.8,
         },
     ];
@@ -4862,31 +4641,17 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
     app.search.overlay.open = true;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
-            asset_id: first.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: first.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(
-                first
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .original_path
-                    .clone(),
-            ),
+            asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
             similarity: 0.9,
         },
         SearchResultAssetEntry {
-            asset_id: second.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: second.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(
-                second
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .original_path
-                    .clone(),
-            ),
+            asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
             similarity: 0.8,
@@ -4947,12 +4712,12 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
         .load_placements()
         .unwrap()
         .into_iter()
-        .map(|placement| placement.asset.as_ref().expect("loaded placement asset").id)
+        .map(|placement| placement.require_loaded_asset().id)
         .collect::<Vec<_>>();
     asset_ids.sort_unstable();
     let mut expected_asset_ids = vec![
-        first.asset.as_ref().expect("loaded placement asset").id,
-        second.asset.as_ref().expect("loaded placement asset").id,
+        first.require_loaded_asset().id,
+        second.require_loaded_asset().id,
     ];
     expected_asset_ids.sort_unstable();
     assert_eq!(asset_ids, expected_asset_ids);
@@ -4992,31 +4757,17 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
     app.search.overlay.open = true;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
-            asset_id: first.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: first.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(
-                first
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .original_path
-                    .clone(),
-            ),
+            asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
             similarity: 0.9,
         },
         SearchResultAssetEntry {
-            asset_id: second.asset.as_ref().expect("loaded placement asset").id,
+            asset_id: second.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(
-                second
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .original_path
-                    .clone(),
-            ),
+            asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
             similarity: 0.8,
@@ -5044,12 +4795,12 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
         .load_placements()
         .unwrap()
         .into_iter()
-        .map(|placement| placement.asset.as_ref().expect("loaded placement asset").id)
+        .map(|placement| placement.require_loaded_asset().id)
         .collect::<Vec<_>>();
     asset_ids.sort_unstable();
     let mut expected_asset_ids = vec![
-        first.asset.as_ref().expect("loaded placement asset").id,
-        second.asset.as_ref().expect("loaded placement asset").id,
+        first.require_loaded_asset().id,
+        second.require_loaded_asset().id,
     ];
     expected_asset_ids.sort_unstable();
     assert_eq!(asset_ids, expected_asset_ids);
@@ -5121,7 +4872,7 @@ fn context_menu_move_to_front_routes_through_rendered_menu_row() {
         .unwrap();
     let selected_item = library
         .create_placement_from_asset(
-            back_item.asset.as_ref().expect("loaded placement asset").id,
+            back_item.require_loaded_asset().id,
             egui::pos2(10.0, 20.0),
             1.0,
             0.0,
@@ -5315,18 +5066,8 @@ fn completed_import_batch_compacts_loaded_items_after_out_of_order_failures() {
     app.register_import_batch(app.active_board_id, anchor, vec![1, 2, 3]);
 
     let mut third = test_loaded_item(3, app.active_board_id);
-    third
-        .placement
-        .asset
-        .as_mut()
-        .expect("loaded placement asset")
-        .width = 140;
-    third
-        .placement
-        .asset
-        .as_mut()
-        .expect("loaded placement asset")
-        .height = 80;
+    third.placement.require_loaded_asset_mut().width = 140;
+    third.placement.require_loaded_asset_mut().height = 80;
     third.placement.state.geometry.size = egui::vec2(140.0, 80.0);
     third.placement.state.geometry.center.x = 4000.0;
     third.placement.state.geometry.center.y = -1000.0;
@@ -5335,18 +5076,8 @@ fn completed_import_batch_compacts_loaded_items_after_out_of_order_failures() {
     app.finish_import_queue_id_in_batches(Some(app.active_board_id), Some(2), None);
 
     let mut first = test_loaded_item(1, app.active_board_id);
-    first
-        .placement
-        .asset
-        .as_mut()
-        .expect("loaded placement asset")
-        .width = 90;
-    first
-        .placement
-        .asset
-        .as_mut()
-        .expect("loaded placement asset")
-        .height = 170;
+    first.placement.require_loaded_asset_mut().width = 90;
+    first.placement.require_loaded_asset_mut().height = 170;
     first.placement.state.geometry.size = egui::vec2(90.0, 170.0);
     first.placement.state.geometry.center.x = -2500.0;
     first.placement.state.geometry.center.y = 3600.0;
@@ -6319,7 +6050,7 @@ fn inspect_prepared_loaded_placement(
 
 #[cfg(feature = "semantic-search")]
 fn inspect_search_result_entry(placement: &Placement, similarity: f32) -> SearchResultAssetEntry {
-    let asset = placement.asset.as_ref().expect("search result asset");
+    let asset = placement.require_loaded_asset();
     SearchResultAssetEntry {
         asset_id: asset.id,
         asset_preview_path: Some(asset.original_path.clone()),

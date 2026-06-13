@@ -29,7 +29,7 @@ pub(crate) fn open_context_menu_at_pointer(
 
     state.interaction.drag_state = None;
     state.interaction.annotation_drag_state = None;
-    state.interaction.image_transform_state = None;
+    state.interaction.placement_transform_state = None;
     state.interaction.textbox_transform_state = None;
     state.interaction.marquee_state = None;
     state.interaction.crop_state = None;
@@ -74,7 +74,7 @@ pub(crate) fn begin_marquee_selection(
     shift_held: bool,
 ) {
     state.interaction.drag_state = None;
-    state.interaction.image_transform_state = None;
+    state.interaction.placement_transform_state = None;
     state.interaction.textbox_transform_state = None;
     state.interaction.annotation_drag_state = None;
     if !shift_held {

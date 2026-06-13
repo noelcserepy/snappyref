@@ -319,7 +319,7 @@ mod tests {
             .unwrap();
         let second = library
             .create_placement_from_asset(
-                first.asset.as_ref().expect("loaded placement asset").id,
+                first.require_loaded_asset().id,
                 egui::pos2(30.0, 40.0),
                 1.0,
                 0.0,

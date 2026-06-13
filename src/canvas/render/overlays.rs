@@ -3,9 +3,9 @@ use eframe::egui;
 use super::image_pass::selection_border_visible;
 use crate::canvas::geometry::{clamped_crop_screen_rect, image_screen_corners_for_record};
 use crate::canvas::interaction::{
-    hit_test_image, image_screen_rect, selected_image_rotation_handle_screen_pos,
+    hit_test_image, image_screen_rect, selected_placement_rotation_handle_screen_pos,
 };
-use crate::canvas::{CanvasState, IMAGE_CULL_MARGIN_SCREEN, IMAGE_ROTATE_HANDLE_RADIUS_SCREEN};
+use crate::canvas::{CanvasState, IMAGE_CULL_MARGIN_SCREEN, PLACEMENT_ROTATE_HANDLE_RADIUS_SCREEN};
 use crate::data::{CanvasAnnotationKind, CanvasStackItem, PlacementLifecycle};
 
 const SELECTION_BORDER_WIDTH: f32 = 1.0;
@@ -103,7 +103,7 @@ pub(crate) fn paint_hover_hairline(
         || state.interaction.marquee_state.is_some()
         || state.interaction.crop_state.is_some()
         || state.interaction.annotation_draft_state.is_some()
-        || state.interaction.image_transform_state.is_some();
+        || state.interaction.placement_transform_state.is_some();
     let hovered_id = if pointer_interactions_enabled && !interaction_active {
         painter
             .ctx()
@@ -292,7 +292,7 @@ fn paint_rotation_handle(painter: &egui::Painter, rect: egui::Rect, state: &Canv
     let Some((line_start, handle_pos)) = selected_rotation_handle_screen_pos(state, rect) else {
         return;
     };
-    let radius = IMAGE_ROTATE_HANDLE_RADIUS_SCREEN * appear.clamp(0.0, 1.0);
+    let radius = PLACEMENT_ROTATE_HANDLE_RADIUS_SCREEN * appear.clamp(0.0, 1.0);
     painter.line_segment([line_start, handle_pos], crate::ui::theme::stroke_strong());
     painter.circle_filled(handle_pos, radius, crate::ui::theme::SURFACE);
     painter.circle_stroke(handle_pos, radius, crate::ui::theme::stroke_strong());
@@ -302,13 +302,13 @@ fn selected_rotation_handle_screen_pos(
     state: &CanvasState,
     rect: egui::Rect,
 ) -> Option<(egui::Pos2, egui::Pos2)> {
-    selected_image_rotation_handle_screen_pos(state, rect)
+    selected_placement_rotation_handle_screen_pos(state, rect)
 }
 
 fn rotation_handle_visible(ctx: &egui::Context, state: &CanvasState) -> bool {
     crate::canvas::rotation_handle_key_held(ctx)
         || matches!(
-            state.interaction.image_transform_state,
-            Some(crate::canvas::ImageTransformState::Rotating { .. })
+            state.interaction.placement_transform_state,
+            Some(crate::canvas::PlacementTransformState::Rotating { .. })
         )
 }

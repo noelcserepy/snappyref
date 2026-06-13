@@ -119,12 +119,7 @@ impl CanvasState {
             ctx,
             format!(
                 "asset-{}-item-{}",
-                loaded
-                    .placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .id,
+                loaded.placement.require_loaded_asset().id,
                 loaded.placement.state.id
             ),
             &loaded.preview_rgba,
@@ -270,18 +265,12 @@ impl CanvasState {
             .rendered_placements
             .iter()
             .find(|image| {
-                image
-                    .placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .id
-                    == placement.asset.as_ref().expect("loaded placement asset").id
+                image.placement.require_loaded_asset().id == placement.require_loaded_asset().id
             })
             .ok_or_else(|| {
                 format!(
                     "missing source texture for asset {}",
-                    placement.asset.as_ref().expect("loaded placement asset").id
+                    placement.require_loaded_asset().id
                 )
             })?;
         let texture = source.texture.clone();
@@ -324,14 +313,7 @@ impl CanvasState {
         if self
             .render
             .asset_rgba_cache
-            .get(
-                &image
-                    .placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .id,
-            )
+            .get(&image.placement.require_loaded_asset().id)
             .is_some_and(|rgba| rgba.len() == expected_len)
         {
             return Ok(());
@@ -347,10 +329,9 @@ impl CanvasState {
         if loaded_width as usize != width || loaded_height as usize != height {
             return Err("cached canvas pixels did not match texture size".to_owned());
         }
-        self.render.asset_rgba_cache.insert(
-            placement.asset.as_ref().expect("loaded placement asset").id,
-            SharedRgba::from(rgba),
-        );
+        self.render
+            .asset_rgba_cache
+            .insert(placement.require_loaded_asset().id, SharedRgba::from(rgba));
         Ok(())
     }
 
@@ -374,24 +355,12 @@ impl CanvasState {
         let rgba = self
             .render
             .asset_rgba_cache
-            .get(
-                &image
-                    .placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .id,
-            )
+            .get(&image.placement.require_loaded_asset().id)
             .cloned()
             .ok_or_else(|| {
                 format!(
                     "missing cached pixels for asset {}",
-                    image
-                        .placement
-                        .asset
-                        .as_ref()
-                        .expect("loaded placement asset")
-                        .id
+                    image.placement.require_loaded_asset().id
                 )
             })?;
         Ok((
@@ -927,7 +896,7 @@ impl CanvasState {
             self.interaction.editing_text_annotation_id = Some(annotation_id);
             self.interaction.focus_text_editor = true;
             self.document.selected_placement_ids.clear();
-            self.interaction.image_transform_state = None;
+            self.interaction.placement_transform_state = None;
             self.interaction.textbox_transform_state = None;
             self.interaction.annotation_drag_state = None;
         }
@@ -1284,7 +1253,7 @@ impl CanvasState {
             .collect();
         self.document.selected_annotation_ids.clear();
         self.interaction.editing_text_annotation_id = None;
-        self.interaction.image_transform_state = None;
+        self.interaction.placement_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
         self.prune_cached_pixels_to_selected_items();
@@ -1313,7 +1282,7 @@ impl CanvasState {
             })
             .collect();
         self.interaction.editing_text_annotation_id = None;
-        self.interaction.image_transform_state = None;
+        self.interaction.placement_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
         self.prune_cached_pixels_to_selected_items();
@@ -1533,7 +1502,7 @@ impl CanvasState {
             .dirty_placement_ids
             .retain(|placement_id| !removed_ids.contains(placement_id));
         self.interaction.drag_state = None;
-        self.interaction.image_transform_state = None;
+        self.interaction.placement_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
         self.interaction.marquee_state = None;
@@ -1559,16 +1528,7 @@ impl CanvasState {
             .document
             .rendered_placements
             .iter()
-            .filter(|image| {
-                asset_ids.contains(
-                    &image
-                        .placement
-                        .asset
-                        .as_ref()
-                        .expect("loaded placement asset")
-                        .id,
-                )
-            })
+            .filter(|image| asset_ids.contains(&image.placement.require_loaded_asset().id))
             .map(|image| image.placement.state.id)
             .collect::<Vec<_>>();
         self.delete_placements(&placement_ids)
@@ -1606,7 +1566,7 @@ impl CanvasState {
         self.document.selected_placement_ids.push(placement_id);
         self.document.selected_annotation_ids.clear();
         self.interaction.editing_text_annotation_id = None;
-        self.interaction.image_transform_state = None;
+        self.interaction.placement_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
         self.prune_cached_pixels_to_selected_items();
@@ -1617,7 +1577,7 @@ impl CanvasState {
         if !self.document.selected_placement_ids.contains(&placement_id) {
             self.document.selected_placement_ids.push(placement_id);
         }
-        self.interaction.image_transform_state = None;
+        self.interaction.placement_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
         self.prune_cached_pixels_to_selected_items();
@@ -1632,7 +1592,7 @@ impl CanvasState {
         {
             self.document.selected_annotation_ids.push(annotation_id);
         }
-        self.interaction.image_transform_state = None;
+        self.interaction.placement_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
         self.prune_cached_pixels_to_selected_items();
@@ -1643,7 +1603,7 @@ impl CanvasState {
         self.document.selected_placement_ids.clear();
         self.document.selected_annotation_ids.clear();
         self.interaction.editing_text_annotation_id = None;
-        self.interaction.image_transform_state = None;
+        self.interaction.placement_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
         self.prune_cached_pixels_to_selected_items();
@@ -1667,7 +1627,7 @@ impl CanvasState {
             annotation_ids
         };
         self.interaction.editing_text_annotation_id = None;
-        self.interaction.image_transform_state = None;
+        self.interaction.placement_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
         self.prune_cached_pixels_to_selected_items();
@@ -1700,7 +1660,7 @@ impl CanvasState {
             self.interaction.editing_text_annotation_id = None;
         }
         self.interaction.focus_text_editor = false;
-        self.interaction.image_transform_state = None;
+        self.interaction.placement_transform_state = None;
         if self.interaction.textbox_transform_state.is_some() {
             self.interaction.textbox_transform_state = None;
             self.interaction.annotation_drag_state = None;
@@ -1718,7 +1678,7 @@ impl CanvasState {
 
         self.interaction.editing_text_annotation_id = None;
         self.interaction.focus_text_editor = false;
-        self.interaction.image_transform_state = None;
+        self.interaction.placement_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
 
@@ -1752,7 +1712,7 @@ impl CanvasState {
     pub(super) fn stop_textbox_edit_without_cleanup(&mut self) {
         self.interaction.editing_text_annotation_id = None;
         self.interaction.focus_text_editor = false;
-        self.interaction.image_transform_state = None;
+        self.interaction.placement_transform_state = None;
         self.interaction.textbox_transform_state = None;
         self.interaction.annotation_drag_state = None;
     }
@@ -2168,7 +2128,7 @@ impl CanvasState {
         changed_ids.len()
     }
 
-    pub fn apply_target_area_to_selected_images(&mut self, target_area: f32) -> usize {
+    pub fn apply_target_area_to_selected_placements(&mut self, target_area: f32) -> usize {
         if target_area <= 0.0 {
             return 0;
         }
@@ -2186,7 +2146,7 @@ impl CanvasState {
             }
 
             let target_scale = (target_area / source_area).sqrt();
-            if self.set_image_scale(placement_id, target_scale) {
+            if self.set_placement_scale(placement_id, target_scale) {
                 self.mark_dirty(placement_id);
                 changed += 1;
             }
@@ -2195,7 +2155,7 @@ impl CanvasState {
         changed
     }
 
-    pub fn average_selected_image_area(&self) -> Option<f32> {
+    pub fn average_selected_placement_area(&self) -> Option<f32> {
         let items = self.selected_arrangement_inputs();
         if items.is_empty() {
             return None;
@@ -2290,51 +2250,20 @@ impl CanvasState {
         let local_rect = screen_rect_to_local_crop_rect(
             clamped_screen_rect,
             image_rect,
-            image
-                .placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .width,
-            image
-                .placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .height,
+            image.placement.require_loaded_asset().width,
+            image.placement.require_loaded_asset().height,
         )?;
         let crop_rect = pixel_crop_rect_from_local(
             local_rect,
-            image
-                .placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .width,
-            image
-                .placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .height,
+            image.placement.require_loaded_asset().width,
+            image.placement.require_loaded_asset().height,
         )?;
-        let crop_offset_local = crop_center_offset_local(
-            image
-                .placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset"),
-            local_rect,
-        );
+        let crop_offset_local =
+            crop_center_offset_local(image.placement.require_loaded_asset(), local_rect);
 
         Some(CanvasCropRequest {
             placement_id: image.placement.state.id,
-            source_asset: image
-                .placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .clone(),
+            source_asset: image.placement.require_loaded_asset().clone(),
             crop_rect,
             crop_offset_local,
         })
@@ -2348,28 +2277,15 @@ impl CanvasState {
             && self
                 .rendered_placement_by_id(placement_id)
                 .is_some_and(|image| {
-                    !asset_mime_type_is_svg(
-                        &image
-                            .placement
-                            .asset
-                            .as_ref()
-                            .expect("loaded placement asset")
-                            .mime_type,
-                    )
+                    !asset_mime_type_is_svg(&image.placement.require_loaded_asset().mime_type)
                 })
     }
 
-    pub(super) fn set_image_scale(&mut self, placement_id: i64, scale: f32) -> bool {
+    pub(super) fn set_placement_scale(&mut self, placement_id: i64, scale: f32) -> bool {
         let Some(image) = self.rendered_placement_by_id_mut(placement_id) else {
             return false;
         };
-        let min_scale = min_image_scale(
-            image
-                .placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset"),
-        );
+        let min_scale = min_image_scale(image.placement.require_loaded_asset());
         let normalized = scale.max(min_scale);
         if (image.placement.state.geometry.scale - normalized).abs() <= f32::EPSILON {
             return false;
@@ -2378,7 +2294,7 @@ impl CanvasState {
         true
     }
 
-    pub(super) fn set_image_center_and_scale(
+    pub(super) fn set_placement_center_and_scale(
         &mut self,
         placement_id: i64,
         center: egui::Pos2,
@@ -2387,13 +2303,7 @@ impl CanvasState {
         let Some(image) = self.rendered_placement_by_id_mut(placement_id) else {
             return false;
         };
-        let min_scale = min_image_scale(
-            image
-                .placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset"),
-        );
+        let min_scale = min_image_scale(image.placement.require_loaded_asset());
         let normalized_scale = scale.max(min_scale);
         let position_changed = (image.placement.state.geometry.center.x - center.x).abs()
             > f32::EPSILON
@@ -2410,7 +2320,8 @@ impl CanvasState {
         true
     }
 
-    pub fn set_image_rotation(&mut self, placement_id: i64, rotation: f32) -> bool {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn set_placement_rotation(&mut self, placement_id: i64, rotation: f32) -> bool {
         let Some(image) = self.rendered_placement_by_id_mut(placement_id) else {
             return false;
         };
@@ -2421,7 +2332,7 @@ impl CanvasState {
         true
     }
 
-    pub(super) fn set_image_center_and_rotation(
+    pub(super) fn set_placement_center_and_rotation(
         &mut self,
         placement_id: i64,
         center: egui::Pos2,

@@ -5,8 +5,9 @@ use eframe::egui;
 
 use super::{
     AnnotationDraftState, AnnotationDragState, CanvasContextMenuRequest, CanvasCropRequest,
-    CropState, DragState, ImageTransformState, MarqueeState, PendingAnnotation, PendingCropPreview,
-    RenderedPlacement, SharedRgba, TextboxLayoutCacheEntry, TextboxTransformState,
+    CropState, DragState, MarqueeState, PendingAnnotation, PendingCropPreview,
+    PlacementTransformState, RenderedPlacement, SharedRgba, TextboxLayoutCacheEntry,
+    TextboxTransformState,
 };
 use crate::data::{CanvasAnnotation, CanvasImageLod, CanvasStackItem};
 
@@ -38,7 +39,7 @@ pub(crate) struct CanvasInteractionState {
     pub(super) focus_text_editor: bool,
     pub(crate) drag_state: Option<DragState>,
     pub(super) annotation_drag_state: Option<AnnotationDragState>,
-    pub(super) image_transform_state: Option<ImageTransformState>,
+    pub(super) placement_transform_state: Option<PlacementTransformState>,
     pub(super) textbox_transform_state: Option<TextboxTransformState>,
     pub(super) marquee_state: Option<MarqueeState>,
     pub(super) crop_state: Option<CropState>,

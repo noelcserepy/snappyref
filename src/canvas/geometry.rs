@@ -74,7 +74,7 @@ pub(super) fn image_rotation_handle_screen_pos(
     let top_mid = corners[0].lerp(corners[1], 0.5);
     let bottom_mid = corners[3].lerp(corners[2], 0.5);
     let outward = (top_mid - bottom_mid).normalized();
-    let handle = top_mid + outward * super::IMAGE_ROTATE_HANDLE_OFFSET_SCREEN;
+    let handle = top_mid + outward * super::PLACEMENT_ROTATE_HANDLE_OFFSET_SCREEN;
     (top_mid, handle)
 }
 
