@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use eframe::egui;
 
@@ -48,6 +49,8 @@ pub(crate) struct CanvasInteractionState {
     pub(super) pending_context_menu_request: Option<CanvasContextMenuRequest>,
     pub(super) pending_focus_selection_request: bool,
     pub(crate) guide_snap_indicators: Vec<super::GuideSnapIndicator>,
+    pub(super) guide_snap_signature: u64,
+    pub(super) guide_snap_engaged_at: Option<Instant>,
     pub(super) mouse_wheel_zoom_animation: Option<MouseWheelZoomAnimation>,
     pub(super) last_pointer_screen_pos: Option<egui::Pos2>,
     pub(super) alt_pan_active: bool,

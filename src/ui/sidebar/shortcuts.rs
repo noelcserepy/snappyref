@@ -18,17 +18,9 @@ pub(super) fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
 }
 
 fn paint_shortcut_group(ui: &mut egui::Ui, title: &str, shortcuts: &[SupportedShortcut]) {
-    ui.label(
-        egui::RichText::new(title)
-            .text_style(egui::TextStyle::Small)
-            .strong()
-            .color(crate::ui::theme::TEXT_MUTED),
-    );
+    ui.label(crate::ui::theme::editorial_caption(title));
     ui.add_space(crate::ui::theme::SPACE_1);
-    for (index, shortcut) in shortcuts.iter().enumerate() {
-        if index > 0 {
-            paint_shortcut_divider(ui);
-        }
+    for shortcut in shortcuts.iter() {
         paint_shortcut_row(ui, shortcut);
     }
 }
@@ -56,6 +48,8 @@ fn paint_shortcut_row(ui: &mut egui::Ui, shortcut: &SupportedShortcut) {
     ui.add_space(3.0);
 }
 
+/// Shortcut keys read as quiet tabular metadata: bare monospace text with
+/// no pill chrome. The key column stays right-aligned for scanning.
 fn paint_shortcut_pill(ui: &mut egui::Ui, keys: &str) {
     let keys = display_shortcut_label(keys);
     let mut font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
@@ -64,31 +58,12 @@ fn paint_shortcut_pill(ui: &mut egui::Ui, keys: &str) {
     }
     let galley = ui
         .painter()
-        .layout_no_wrap(keys, font, crate::ui::theme::TEXT);
-    let pad = egui::vec2(6.0, 1.0);
+        .layout_no_wrap(keys, font, crate::ui::theme::TEXT_MUTED);
+    let pad = egui::vec2(0.0, 1.0);
     let size = galley.size() + pad * 2.0;
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-    ui.painter().rect(
-        rect,
-        egui::CornerRadius::same(crate::ui::theme::RADIUS_MICRO),
-        egui::Color32::from_white_alpha(15),
-        crate::ui::theme::stroke_subtle(),
-        egui::StrokeKind::Inside,
-    );
     ui.painter()
-        .galley(rect.min + pad, galley, crate::ui::theme::TEXT);
-}
-
-fn paint_shortcut_divider(ui: &mut egui::Ui) {
-    let available = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(available, 1.0), egui::Sense::hover());
-    ui.painter().line_segment(
-        [
-            egui::pos2(rect.left(), rect.center().y),
-            egui::pos2(rect.right(), rect.center().y),
-        ],
-        crate::ui::theme::stroke_subtle(),
-    );
+        .galley(rect.min + pad, galley, crate::ui::theme::TEXT_MUTED);
 }
 
 pub(super) fn sidebar_shortcut_label() -> &'static str {

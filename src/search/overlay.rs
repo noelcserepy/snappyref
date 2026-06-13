@@ -97,20 +97,32 @@ impl SearchController {
                 let painter = ui.painter();
                 painter.rect_filled(screen_rect, 0, egui::Color32::from_black_alpha(scrim_alpha));
             });
+        let overlay_anchor = egui::pos2(
+            screen_rect.center().x,
+            screen_rect.top() + SEARCH_OVERLAY_TOP_MARGIN,
+        );
+        let entrance = crate::ui::motion::entrance_on_appear(
+            ctx,
+            egui::Id::new("semantic_search_overlay_entrance"),
+        );
+        let settle = crate::ui::motion::settle_offset(entrance);
+        let overlay_layer = egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("semantic_search_overlay"),
+        );
+        crate::ui::motion::settle_layer_scale(ctx, overlay_layer, overlay_anchor, entrance);
         let area_response = egui::Area::new(egui::Id::new("semantic_search_overlay"))
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::CENTER_TOP)
-            .fixed_pos(egui::pos2(
-                screen_rect.center().x,
-                screen_rect.top() + SEARCH_OVERLAY_TOP_MARGIN,
-            ))
+            .fixed_pos(overlay_anchor - egui::vec2(0.0, settle))
             .show(ctx, |ui| {
+                ui.set_opacity(entrance.clamp(0.0, 1.0));
                 ui.set_width(width);
                 ui.set_min_width(width);
                 ui.set_max_width(width);
                 egui::Frame::new()
                     .fill(crate::ui::theme::PALETTE_SURFACE)
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(33)))
+                    .stroke(egui::Stroke::NONE)
                     .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_PANEL))
                     .shadow(egui::epaint::Shadow {
                         offset: [0, 12],

@@ -225,6 +225,11 @@ fn expand_textbox_to_height(state: &mut CanvasState, index: usize, required_heig
     true
 }
 pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut CanvasState) {
+    let toolbar_entrance = crate::ui::motion::overlay_entrance(
+        ui.ctx(),
+        egui::Id::new("textbox_editor_toolbar_entrance"),
+        state.interaction.editing_text_annotation_id.is_some(),
+    );
     let Some(annotation_id) = state.interaction.editing_text_annotation_id else {
         return;
     };
@@ -260,7 +265,7 @@ pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut C
         text.is_empty(),
     );
     let toolbar_interacting = toolbar_rect
-        .map(|toolbar_rect| show_textbox_editor_toolbar(ui, toolbar_rect, state))
+        .map(|toolbar_rect| show_textbox_editor_toolbar(ui, toolbar_rect, state, toolbar_entrance))
         .unwrap_or(false);
 
     egui::Area::new(egui::Id::new(("textbox-editor", annotation_id)))
@@ -366,6 +371,7 @@ fn show_textbox_editor_toolbar(
     ui: &egui::Ui,
     toolbar_rect: egui::Rect,
     state: &mut CanvasState,
+    entrance: f32,
 ) -> bool {
     let selected = state.editing_textbox_size();
     let selected_color = state.editing_textbox_color();
@@ -382,10 +388,12 @@ fn show_textbox_editor_toolbar(
         })
     });
 
+    let settle = crate::ui::motion::settle_offset(entrance);
     egui::Area::new(egui::Id::new("textbox-editor-toolbar"))
         .order(egui::Order::Foreground)
-        .fixed_pos(toolbar_rect.min)
+        .fixed_pos(toolbar_rect.min + egui::vec2(0.0, settle))
         .show(ui.ctx(), |ui| {
+            ui.multiply_opacity(entrance);
             ui.set_min_size(toolbar_rect.size());
             ui.spacing_mut().item_spacing.x = TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP;
             ui.horizontal(|ui| {
@@ -487,7 +495,13 @@ pub(crate) fn show_annotation_style_toolbar(
     rect: egui::Rect,
     state: &mut CanvasState,
 ) {
-    let Some(toolbar_rect) = annotation_style_toolbar_rect(ui, state, rect) else {
+    let toolbar_rect = annotation_style_toolbar_rect(ui, state, rect);
+    let entrance = crate::ui::motion::overlay_entrance(
+        ui.ctx(),
+        egui::Id::new("annotation_style_toolbar_entrance"),
+        toolbar_rect.is_some(),
+    );
+    let Some(toolbar_rect) = toolbar_rect else {
         return;
     };
     let selected_width = state.selected_stroke_width();
@@ -495,10 +509,12 @@ pub(crate) fn show_annotation_style_toolbar(
     let mut next_width = None;
     let mut next_color = None;
 
+    let settle = crate::ui::motion::settle_offset(entrance);
     egui::Area::new(egui::Id::new("annotation-style-toolbar"))
         .order(egui::Order::Foreground)
-        .fixed_pos(toolbar_rect.min)
+        .fixed_pos(toolbar_rect.min + egui::vec2(0.0, settle))
         .show(ui.ctx(), |ui| {
+            ui.multiply_opacity(entrance);
             ui.set_min_size(toolbar_rect.size());
             ui.spacing_mut().item_spacing.x = TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP;
             ui.horizontal(|ui| {

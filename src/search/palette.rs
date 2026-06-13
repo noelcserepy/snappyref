@@ -239,26 +239,52 @@ pub(crate) fn search_result_tile(
     } else {
         crate::ui::theme::RADIUS_COMPACT
     };
+    let tile_id = response.id;
+    let hover = crate::ui::motion::hover_amount(ui.ctx(), tile_id, response.hovered());
+    let press = crate::ui::motion::press_amount(
+        ui.ctx(),
+        tile_id,
+        response.is_pointer_button_down_on() || response.dragged(),
+    );
+    let acquire = crate::ui::motion::acquire_amount(ui.ctx(), tile_id, selected);
 
     let preview_rect = egui::Rect::from_min_size(
         rect.min,
         egui::vec2(tile_width, SEARCH_RESULT_TILE_PREVIEW_HEIGHT),
     );
+    let content_rect = crate::ui::motion::pressed_rect(preview_rect, press);
     ui.painter()
-        .rect_filled(preview_rect, tile_radius, crate::ui::theme::SURFACE);
+        .rect_filled(content_rect, tile_radius, crate::ui::theme::SURFACE);
 
     if let Some(path) = &group.asset_preview_path {
         if let Some(preview) =
             search_asset_preview(ui.ctx(), group.asset_id, path, asset_preview_cache)
         {
-            paint_texture_cover(ui, preview_rect, preview.texture.id(), preview.texture_size);
+            paint_texture_cover(ui, content_rect, preview.texture.id(), preview.texture_size);
         }
     } else {
         ui.painter()
-            .rect_filled(preview_rect, tile_radius, crate::ui::theme::BACKGROUND);
+            .rect_filled(content_rect, tile_radius, crate::ui::theme::BACKGROUND);
+    }
+
+    let hover_alpha = (14.0 * hover) as u8;
+    if hover_alpha > 0 {
+        ui.painter().rect_filled(
+            content_rect,
+            tile_radius,
+            egui::Color32::from_white_alpha(hover_alpha),
+        );
     }
 
     if selected {
+        let flash_alpha = (24.0 * (1.0 - acquire).clamp(0.0, 1.0)) as u8;
+        if flash_alpha > 0 {
+            ui.painter().rect_filled(
+                content_rect,
+                crate::ui::theme::RADIUS_NONE,
+                egui::Color32::from_white_alpha(flash_alpha),
+            );
+        }
         ui.painter().rect_stroke(
             preview_rect,
             crate::ui::theme::RADIUS_NONE,
@@ -542,6 +568,8 @@ fn paint_search_icon(ui: &mut egui::Ui, rect: egui::Rect, color: egui::Color32) 
     );
 }
 
+/// Keyboard hints read as bare monospace text; the reserved pill-sized cell
+/// keeps hint rows aligned without any box chrome.
 fn paint_kbd_pill(ui: &mut egui::Ui, label: &str) {
     let label_size = if kbd_label_uses_small_symbol_glyphs(label) {
         14.0
@@ -550,18 +578,6 @@ fn paint_kbd_pill(ui: &mut egui::Ui, label: &str) {
     };
 
     let (rect, _) = ui.allocate_exact_size(KBD_PILL_SIZE, egui::Sense::hover());
-    ui.painter().rect_filled(
-        rect,
-        crate::ui::theme::RADIUS_INLINE,
-        egui::Color32::from_white_alpha(15),
-    );
-    ui.painter().rect_stroke(
-        rect,
-        crate::ui::theme::RADIUS_INLINE,
-        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(15)),
-        egui::StrokeKind::Inside,
-    );
-
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
         egui::FontId::monospace(label_size),
@@ -765,19 +781,40 @@ fn paint_palette_empty_group(
             ui.allocate_exact_size(egui::vec2(row_width, row_height), egui::Sense::click());
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         let active = index == active_recent_search_index;
-        if active || response.hovered() {
+        let hover = crate::ui::motion::hover_amount(
+            ui.ctx(),
+            response.id.with("recent-hover"),
+            response.hovered() && !active,
+        );
+        let press = crate::ui::motion::press_amount(
+            ui.ctx(),
+            response.id.with("recent-press"),
+            response.is_pointer_button_down_on(),
+        );
+        let fill_rect = crate::ui::motion::pressed_rect(rect.shrink2(egui::vec2(2.0, 2.0)), press);
+        if active {
             ui.painter().rect_filled(
-                rect.shrink2(egui::vec2(2.0, 2.0)),
+                fill_rect,
                 crate::ui::theme::RADIUS_COMPACT,
-                if active {
-                    crate::ui::theme::SURFACE_ELEVATED
-                } else {
-                    crate::ui::theme::SURFACE
-                },
+                crate::ui::motion::mix(
+                    crate::ui::theme::SURFACE_ELEVATED,
+                    crate::ui::theme::SURFACE_PRESSED,
+                    press * 0.65,
+                ),
+            );
+        } else if hover > 0.0 || press > 0.0 {
+            ui.painter().rect_filled(
+                fill_rect,
+                crate::ui::theme::RADIUS_COMPACT,
+                crate::ui::motion::mix(
+                    crate::ui::theme::SURFACE.gamma_multiply(hover),
+                    crate::ui::theme::SURFACE_PRESSED,
+                    press * 0.65,
+                ),
             );
         }
         ui.painter().text(
-            egui::pos2(rect.left() + 14.0, rect.center().y),
+            egui::pos2(rect.left() + 14.0, rect.center().y + press * 0.5),
             egui::Align2::LEFT_CENTER,
             row.as_str(),
             egui::TextStyle::Body.resolve(ui.style()),

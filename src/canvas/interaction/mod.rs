@@ -670,7 +670,11 @@ fn drawing_annotation_kind(ui: &egui::Ui) -> Option<CanvasAnnotationKind> {
     }
 }
 
-fn hit_test_image(state: &CanvasState, rect: egui::Rect, pointer_pos: egui::Pos2) -> Option<i64> {
+pub(crate) fn hit_test_image(
+    state: &CanvasState,
+    rect: egui::Rect,
+    pointer_pos: egui::Pos2,
+) -> Option<i64> {
     state
         .document
         .rendered_placements

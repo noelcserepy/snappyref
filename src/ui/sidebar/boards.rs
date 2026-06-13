@@ -24,20 +24,43 @@ pub(super) fn paint_sidebar_boards(
                         egui::pos2(ui.max_rect().right() - indent, ui.max_rect().bottom()),
                     )),
                     |ui| {
+                        let boards_cascade = egui::Id::new("sidebar_boards_cascade");
+                        let list_top = ui.cursor().top();
+                        let mut active_row_rect = None;
                         for (index, summary) in boards.iter().enumerate() {
                             if index > 0 {
                                 ui.add_space(crate::ui::theme::SPACE_1);
                             }
                             let shortcut = board_shortcut_hint(index);
-                            match paint_board_row(
-                                ui,
-                                summary.board.id,
-                                &summary.board.name,
-                                &placement_count_label(summary.placement_count),
-                                summary.board.id == active_board_id,
-                                shortcut.as_deref(),
-                                forced_hover_index == Some(index),
-                            ) {
+                            let active = summary.board.id == active_board_id;
+                            let reveal = crate::ui::motion::cascade_reveal_on_appear(
+                                ui.ctx(),
+                                boards_cascade,
+                                index,
+                            );
+                            let row_top = ui.cursor().top();
+                            let action = ui
+                                .scope(|ui| {
+                                    ui.multiply_opacity(reveal.opacity);
+                                    paint_board_row(
+                                        ui,
+                                        summary.board.id,
+                                        &summary.board.name,
+                                        &placement_count_label(summary.placement_count),
+                                        active,
+                                        shortcut.as_deref(),
+                                        forced_hover_index == Some(index),
+                                        reveal.rise,
+                                    )
+                                })
+                                .inner;
+                            if active {
+                                active_row_rect = Some(egui::Rect::from_min_size(
+                                    egui::pos2(ui.max_rect().left(), row_top),
+                                    egui::vec2(ui.max_rect().width(), BOARD_ROW_HEIGHT),
+                                ));
+                            }
+                            match action {
                                 Some(BoardRowAction::Switch) => {
                                     board_action =
                                         Some(SidebarBoardAction::SwitchBoard(summary.board.id));
@@ -56,6 +79,32 @@ pub(super) fn paint_sidebar_boards(
                                 None => {}
                             }
                         }
+                        // Active-board indicator: one accent rail that slides
+                        // between rows instead of jumping. Animated in
+                        // list-local coordinates so scrolling does not lag.
+                        if let Some(active_rect) = active_row_rect {
+                            let rail_top_relative = crate::ui::motion::slide_indicator(
+                                ui.ctx(),
+                                egui::Id::new("sidebar_board_rail_top"),
+                                active_rect.top() - list_top,
+                            );
+                            let rail_top = list_top + rail_top_relative;
+                            let rail_rect = egui::Rect::from_min_max(
+                                egui::pos2(
+                                    active_rect.left(),
+                                    rail_top + crate::ui::theme::SPACE_2,
+                                ),
+                                egui::pos2(
+                                    active_rect.left() + 2.0,
+                                    rail_top + BOARD_ROW_HEIGHT - crate::ui::theme::SPACE_2,
+                                ),
+                            );
+                            ui.painter().rect_filled(
+                                rail_rect,
+                                egui::CornerRadius::same(crate::ui::theme::RADIUS_MICRO),
+                                crate::ui::theme::ACCENT,
+                            );
+                        }
                         ui.add_space(crate::ui::theme::SPACE_3);
                         if paint_create_board_button(ui) {
                             board_action = Some(SidebarBoardAction::CreateBoard);
@@ -73,6 +122,9 @@ pub(super) enum BoardRowAction {
     Delete,
 }
 
+pub(super) const BOARD_ROW_HEIGHT: f32 = 48.0;
+
+#[allow(clippy::too_many_arguments)]
 pub(super) fn paint_board_row(
     ui: &mut egui::Ui,
     board_id: i64,
@@ -81,8 +133,9 @@ pub(super) fn paint_board_row(
     active: bool,
     shortcut: Option<&str>,
     forced_hover: bool,
+    rise: f32,
 ) -> Option<BoardRowAction> {
-    let height = 48.0;
+    let height = BOARD_ROW_HEIGHT;
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
         egui::Sense::click(),
@@ -96,54 +149,41 @@ pub(super) fn paint_board_row(
             .is_some_and(|pointer_pos| rect.contains(pointer_pos))
     });
     let hot = pointer_in_row || forced_hover || renaming;
-    let fill = if active || hot {
-        crate::ui::theme::SURFACE_ELEVATED
+    let hover = crate::ui::motion::hover_amount(
+        ui.ctx(),
+        ui.make_persistent_id(("board-row-hover", board_id)),
+        hot && !active,
+    );
+    let press = crate::ui::motion::press_amount(
+        ui.ctx(),
+        ui.make_persistent_id(("board-row-press", board_id)),
+        response.is_pointer_button_down_on(),
+    );
+    let fill = if active {
+        crate::ui::theme::QUIET_INLINE_ACTIVE_FILL
+    } else if hover > 0.0 {
+        crate::ui::theme::QUIET_INLINE_HOVER_FILL.gamma_multiply(hover)
     } else {
         egui::Color32::TRANSPARENT
     };
+    let fill = crate::ui::motion::mix(fill, crate::ui::theme::SURFACE_PRESSED, press * 0.65);
+    let paint_rect = crate::ui::motion::pressed_rect(rect, press);
     ui.painter().rect(
-        rect,
+        paint_rect,
         egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT),
         fill,
-        if active {
-            crate::ui::theme::stroke_subtle()
-        } else {
-            egui::Stroke::NONE
-        },
+        egui::Stroke::NONE,
         egui::StrokeKind::Inside,
-    );
-    if active {
-        let rail_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.left(), rect.top() + crate::ui::theme::SPACE_2),
-            egui::pos2(rect.left() + 2.0, rect.bottom() - crate::ui::theme::SPACE_2),
-        );
-        ui.painter().rect_filled(
-            rail_rect,
-            egui::CornerRadius::same(crate::ui::theme::RADIUS_MICRO),
-            crate::ui::theme::ACCENT,
-        );
-    }
-
-    let swatch_size = 24.0;
-    let swatch_rect = egui::Rect::from_min_size(
-        egui::pos2(
-            rect.left() + crate::ui::theme::SPACE_3,
-            rect.center().y - swatch_size * 0.5,
-        ),
-        egui::vec2(swatch_size, swatch_size),
-    );
-    ui.painter().rect_filled(
-        swatch_rect,
-        egui::CornerRadius::same(crate::ui::theme::RADIUS_INLINE),
-        egui::Color32::from_white_alpha(if active { 38 } else { 18 }),
     );
 
     let detail_font = ui.style().text_styles[&egui::TextStyle::Small].clone();
-    let detail_galley =
-        ui.painter()
-            .layout_no_wrap(detail.to_owned(), detail_font, crate::ui::theme::TEXT_MUTED);
+    let detail_galley = ui.painter().layout_no_wrap(
+        detail.to_owned(),
+        detail_font,
+        crate::ui::theme::TEXT_SUBTLE,
+    );
 
-    let text_x = swatch_rect.right() + crate::ui::theme::SPACE_2;
+    let text_x = rect.left() + crate::ui::theme::SPACE_3;
     let action_rect = egui::Rect::from_center_size(
         egui::pos2(rect.right() - 32.0, rect.center().y),
         egui::vec2(56.0, 24.0),
@@ -194,13 +234,16 @@ pub(super) fn paint_board_row(
             egui::TextStyle::Body.resolve(ui.style()),
             crate::ui::theme::TEXT,
         );
-        ui.painter()
-            .galley(name_rect.left_top(), title_galley, crate::ui::theme::TEXT);
+        ui.painter().galley(
+            name_rect.left_top() + egui::vec2(0.0, rise + press * 0.5),
+            title_galley,
+            crate::ui::theme::TEXT,
+        );
     }
 
-    let detail_pos = egui::pos2(text_x, rect.top() + 28.0);
+    let detail_pos = egui::pos2(text_x, rect.top() + 28.0 + rise + press * 0.5);
     ui.painter()
-        .galley(detail_pos, detail_galley, crate::ui::theme::TEXT_MUTED);
+        .galley(detail_pos, detail_galley, crate::ui::theme::TEXT_SUBTLE);
 
     let delete_response = ui.interact(
         action_rect,
@@ -232,7 +275,7 @@ pub(super) fn paint_board_row(
         );
         let pos = egui::pos2(
             action_rect.right() - galley.size().x,
-            rect.center().y - galley.size().y * 0.5,
+            rect.center().y - galley.size().y * 0.5 + rise + press * 0.5,
         );
         ui.painter()
             .galley(pos, galley, crate::ui::theme::TEXT_SUBTLE);
@@ -257,31 +300,42 @@ fn paint_create_board_button(ui: &mut egui::Ui) -> bool {
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "New board")
     });
-    let dash_stroke = egui::Stroke::new(1.0, crate::ui::theme::BORDER);
-    ui.painter().rect(
-        rect,
-        egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT),
-        if response.hovered() {
-            crate::ui::theme::SURFACE_ELEVATED
-        } else {
-            egui::Color32::from_white_alpha(4)
-        },
-        dash_stroke,
-        egui::StrokeKind::Inside,
+    let hover = crate::ui::motion::hover_amount(
+        ui.ctx(),
+        egui::Id::new("create-board-hover"),
+        response.hovered(),
     );
+    let press = crate::ui::motion::press_amount(
+        ui.ctx(),
+        egui::Id::new("create-board-press"),
+        response.is_pointer_button_down_on(),
+    );
+    let button_rect = crate::ui::motion::pressed_rect(rect, press);
+    if hover > 0.0 || press > 0.0 {
+        ui.painter().rect(
+            button_rect,
+            egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT),
+            crate::ui::motion::mix(
+                crate::ui::theme::QUIET_INLINE_HOVER_FILL.gamma_multiply(hover),
+                crate::ui::theme::SURFACE_PRESSED,
+                press * 0.65,
+            ),
+            egui::Stroke::NONE,
+            egui::StrokeKind::Inside,
+        );
+    }
 
+    let label_color =
+        crate::ui::motion::mix(crate::ui::theme::TEXT_SUBTLE, crate::ui::theme::TEXT, hover);
     let plus_font = ui.style().text_styles[&egui::TextStyle::Body].clone();
-    let plus_galley = ui.painter().layout_no_wrap(
-        "+  New board".to_owned(),
-        plus_font,
-        crate::ui::theme::TEXT_SUBTLE,
-    );
+    let plus_galley =
+        ui.painter()
+            .layout_no_wrap("+  New board".to_owned(), plus_font, label_color);
     let pos = egui::pos2(
-        rect.center().x - plus_galley.size().x * 0.5,
-        rect.center().y - plus_galley.size().y * 0.5 - 1.0,
+        rect.left() + crate::ui::theme::SPACE_3,
+        rect.center().y - plus_galley.size().y * 0.5 - 1.0 + press * 0.5,
     );
-    ui.painter()
-        .galley(pos, plus_galley, crate::ui::theme::TEXT_SUBTLE);
+    ui.painter().galley(pos, plus_galley, label_color);
     response.clicked()
 }
 

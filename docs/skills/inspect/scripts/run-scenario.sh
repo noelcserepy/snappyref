@@ -22,6 +22,7 @@ if [[ "$scenario" == "--help" || "$scenario" == "-h" ]]; then
   echo "  semantic-search-real-install"
   echo "  sample-image-import"
   echo "  blue-image-search-drag"
+  echo "  delete-board-modal-flash"
   echo "  search-palette-footer"
   echo "  compact-equal-size-images"
   echo "  compact-mixed-column-images"
@@ -37,6 +38,7 @@ if [[ "$scenario" == "--list" ]]; then
   echo "semantic-search-real-install"
   echo "sample-image-import"
   echo "blue-image-search-drag"
+  echo "delete-board-modal-flash"
   echo "search-palette-footer"
   echo "compact-equal-size-images"
   echo "compact-mixed-column-images"
@@ -65,6 +67,9 @@ case "$scenario" in
     ;;
   blue-image-search-drag)
     test_filter="inspect_blue_image_search_drag_writes_artifact"
+    ;;
+  delete-board-modal-flash)
+    test_filter="inspect_delete_board_modal_flash_writes_artifact"
     ;;
   search-palette-footer)
     test_filter="inspect_search_palette_footer_writes_artifact"

@@ -1,11 +1,26 @@
 use eframe::egui;
 
-pub(super) fn destructive_confirmation_frame(ctx: &egui::Context) -> egui::Frame {
-    egui::Frame::window(&ctx.global_style())
-        .fill(crate::ui::theme::SURFACE)
-        .stroke(egui::Stroke::new(1.0, crate::ui::theme::DESTRUCTIVE_STROKE))
-        .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_PANEL))
-        .inner_margin(egui::Margin::same(0))
+fn fade_frame(frame: egui::Frame, entrance: f32) -> egui::Frame {
+    let mut shadow = frame.shadow;
+    shadow.color = shadow.color.gamma_multiply(entrance);
+    frame
+        .fill(frame.fill.gamma_multiply(entrance))
+        .stroke(egui::Stroke::new(
+            frame.stroke.width,
+            frame.stroke.color.gamma_multiply(entrance),
+        ))
+        .shadow(shadow)
+}
+
+pub(super) fn destructive_confirmation_frame(ctx: &egui::Context, entrance: f32) -> egui::Frame {
+    fade_frame(
+        egui::Frame::window(&ctx.global_style())
+            .fill(crate::ui::theme::SURFACE)
+            .stroke(egui::Stroke::NONE)
+            .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_PANEL))
+            .inner_margin(egui::Margin::same(0)),
+        entrance,
+    )
 }
 
 pub(super) fn destructive_dialog_width() -> f32 {
@@ -18,12 +33,15 @@ pub(super) fn semantic_search_prompt_width() -> f32 {
 }
 
 #[cfg(feature = "semantic-search")]
-pub(super) fn semantic_search_prompt_frame(ctx: &egui::Context) -> egui::Frame {
-    egui::Frame::window(&ctx.global_style())
-        .fill(crate::ui::theme::SURFACE)
-        .stroke(crate::ui::theme::stroke_subtle())
-        .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_PANEL))
-        .inner_margin(egui::Margin::same(0))
+pub(super) fn semantic_search_prompt_frame(ctx: &egui::Context, entrance: f32) -> egui::Frame {
+    fade_frame(
+        egui::Frame::window(&ctx.global_style())
+            .fill(crate::ui::theme::SURFACE)
+            .stroke(egui::Stroke::NONE)
+            .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_PANEL))
+            .inner_margin(egui::Margin::same(0)),
+        entrance,
+    )
 }
 
 #[cfg(feature = "semantic-search")]
