@@ -722,11 +722,14 @@ fn group_hits(
 
     let mut groups = Vec::new();
     for hit in hits {
+        let Some(asset_original_path) = asset_original_paths.get(&hit.asset_id).cloned() else {
+            continue;
+        };
         let asset = library.load_asset(hit.asset_id)?;
         let group = SearchResultAssetEntry {
             asset_id: hit.asset_id,
             asset_preview_path: asset_preview_paths.get(&hit.asset_id).cloned(),
-            asset_original_path: asset_original_paths.get(&hit.asset_id).cloned(),
+            asset_original_path: Some(asset_original_path),
             asset_width: asset.width,
             asset_height: asset.height,
             similarity: hit.similarity,
@@ -1303,6 +1306,84 @@ mod tests {
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].asset_id, inactive.require_loaded_asset().id);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn image_pivot_search_tolerates_archived_asset_from_warmed_cache() {
+        let root = temp_root("snappyref-archived-cache-service-test");
+        let library = Library::initialize(root.join("library")).unwrap();
+        let source_path = library
+            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let result_path = library
+            .store_rgba_image("result", &[0, 255, 0, 255], 1, 1)
+            .unwrap();
+
+        let source = library
+            .persist_imported_image(
+                &source_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let result = library
+            .persist_imported_image(
+                &result_path,
+                "image/png",
+                1,
+                1,
+                4,
+                egui::pos2(10.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(
+                source.require_loaded_asset().id,
+                "test-model",
+                &[1.0, 0.0],
+            )
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(
+                result.require_loaded_asset().id,
+                "test-model",
+                &[0.9, 0.1],
+            )
+            .unwrap();
+
+        let service = SemanticSearchService::new(
+            library.clone(),
+            SemanticSearchConfig {
+                enabled: false,
+                model: test_model_spec(),
+                canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            service
+                .search_with_image_pivot_with_limit(source.require_loaded_asset().id, None, 5)
+                .unwrap()[0]
+                .asset_id,
+            result.require_loaded_asset().id
+        );
+
+        library
+            .archive_assets(&[result.require_loaded_asset().id])
+            .unwrap();
+
+        let results = service
+            .search_with_image_pivot_with_limit(source.require_loaded_asset().id, None, 5)
+            .unwrap();
+        assert!(results.is_empty());
 
         let _ = fs::remove_dir_all(root);
     }

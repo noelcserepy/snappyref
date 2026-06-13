@@ -2945,6 +2945,10 @@ impl SnappyRefApp {
         }
 
         self.canvas.remove_assets(&pending.asset_ids);
+        #[cfg(feature = "semantic-search")]
+        {
+            self.search.invalidate_library_search_cache();
+        }
         self.refresh_board_summaries();
         let noun = if pending.asset_ids.len() == 1 {
             "asset"
