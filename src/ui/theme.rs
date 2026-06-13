@@ -70,6 +70,7 @@ pub const BACKGROUND: egui::Color32 = SHELL_BG;
 pub const SURFACE: egui::Color32 = PANEL_BG;
 pub const PALETTE_SURFACE: egui::Color32 = PANEL_BG_PALETTE;
 pub const SURFACE_ELEVATED: egui::Color32 = PANEL_BG_ELEVATED;
+pub const SURFACE_PRESSED: egui::Color32 = color(0x1B, 0x1A, 0x19);
 
 /// Border and text roles.
 ///
@@ -89,6 +90,7 @@ pub const TEXT: egui::Color32 = color(0xF0, 0xF0, 0xF0);
 pub const TEXT_MUTED: egui::Color32 = color(0x8C, 0x8C, 0x8C);
 pub const TEXT_SUBTLE: egui::Color32 = color(0x66, 0x66, 0x66);
 pub const ACCENT: egui::Color32 = ACCENT_GOLD;
+#[allow(dead_code)]
 pub const ACCENT_BLUE: egui::Color32 = color(0x25, 0x89, 0xBD);
 pub const GREEN: egui::Color32 = color(0x32, 0x9F, 0x5B);
 pub const ACCENT_ORANGE: egui::Color32 = color(0xD1, 0x7B, 0x0F);
@@ -104,6 +106,7 @@ pub const DESTRUCTIVE_FILL: egui::Color32 = egui::Color32::from_rgba_premultipli
 /// - `QUIET_INLINE_ACTIVE_FILL` for selected quiet inline controls and compact input fills
 /// - `QUIET_INLINE_HOVER_FILL` for hover-only quiet inline controls
 /// - `QUIET_INLINE_*` metrics for compact read-heavy settings choices
+#[allow(dead_code)]
 pub const QUIET_INSET_FILL: egui::Color32 = egui::Color32::from_rgba_premultiplied(5, 5, 5, 5);
 pub const QUIET_INLINE_ACTIVE_FILL: egui::Color32 =
     egui::Color32::from_rgba_premultiplied(12, 12, 12, 12);
@@ -113,6 +116,82 @@ pub const QUIET_INLINE_PAD_X: f32 = 10.0;
 pub const QUIET_INLINE_PAD_Y: f32 = 5.0;
 pub const QUIET_INLINE_MIN_WIDTH: f32 = 32.0;
 pub const QUIET_INLINE_HEIGHT: f32 = 24.0;
+
+/// Editorial caption tracking.
+///
+/// `CAPTION_TRACKING` is the extra letter spacing (in points) applied to
+/// uppercase editorial captions produced by [`editorial_caption`] and
+/// [`editorial_caption_galley`]. It exists only to compensate uppercase
+/// microcaps set at `Small` size; do not apply it to body copy, buttons,
+/// or mixed-case labels.
+pub const CAPTION_TRACKING: f32 = 1.0;
+
+/// Motion roles for the chosen flat-plus-fast motion language.
+///
+/// The static visual base is flat and editorial. Motion is reserved for fast
+/// state feedback, tiny settle entrances, canvas acquisition, and sliding
+/// active indicators. Avoid decorative loops and large travel.
+///
+/// Usage:
+/// - `MOTION_REVEAL_SECONDS` per-item duration of a cascade reveal
+///   (ease-out fade + small rise). Not for hover states or loops.
+/// - `MOTION_REVEAL_STAGGER_SECONDS` offset between consecutive cascade
+///   items. Not for delaying unrelated surfaces against each other.
+/// - `MOTION_REVEAL_MAX_STAGGER_STEPS` caps the stagger so long lists do
+///   not make the last rows wait; items past the cap share one window.
+/// - `MOTION_REVEAL_RISE` vertical entrance offset in points for cascade
+///   items. Not a layout offset; it must decay to exactly zero.
+/// - `MOTION_INDICATOR_SECONDS` slide duration for active-tab/selection
+///   indicators moving between positions. Not for content movement.
+/// - `MOTION_SETTLE_SECONDS` and `MOTION_SETTLE_DISTANCE` for dialogs,
+///   sidebar, context menus, and toolbars: opacity plus a tiny settle.
+/// - `MOTION_FEEDBACK_SECONDS` for hover/press/acquire feedback.
+/// - `MOTION_CONTENT_SECONDS` for fast canvas loading/hover fades.
+pub const MOTION_REVEAL_SECONDS: f32 = 0.16;
+pub const MOTION_REVEAL_STAGGER_SECONDS: f32 = 0.02;
+pub const MOTION_REVEAL_MAX_STAGGER_STEPS: usize = 8;
+pub const MOTION_REVEAL_RISE: f32 = 5.0;
+pub const MOTION_INDICATOR_SECONDS: f32 = 0.14;
+pub const MOTION_SETTLE_SECONDS: f32 = 0.14;
+pub const MOTION_FEEDBACK_SECONDS: f32 = 0.12;
+pub const MOTION_CONTENT_SECONDS: f32 = 0.12;
+pub const MOTION_PULSE_SECONDS: f32 = 0.16;
+pub const MOTION_SETTLE_DISTANCE: f32 = 2.0;
+pub const MOTION_PRESS_SCALE: f32 = 0.985;
+pub const MOTION_ENTER_SCALE: f32 = 0.985;
+pub const HOVER_HAIRLINE_OPACITY: f32 = 0.35;
+
+/// Editorial caption text: the quiet uppercase microcap used for section
+/// labels, list group titles, and other structural captions. Captions name
+/// structure; they are never interactive copy, helper text, or values.
+pub fn editorial_caption(text: &str) -> egui::RichText {
+    egui::RichText::new(text.to_uppercase())
+        .text_style(TextStyle::Small)
+        .color(TEXT_SUBTLE)
+        .extra_letter_spacing(CAPTION_TRACKING)
+}
+
+/// Editorial caption laid out as a galley for painter-driven surfaces.
+/// Same role and constraints as [`editorial_caption`].
+pub fn editorial_caption_galley(
+    ui: &egui::Ui,
+    text: &str,
+    color: egui::Color32,
+) -> std::sync::Arc<egui::Galley> {
+    let font_id = TextStyle::Small.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        &text.to_uppercase(),
+        0.0,
+        egui::TextFormat {
+            font_id,
+            color,
+            extra_letter_spacing: CAPTION_TRACKING,
+            ..Default::default()
+        },
+    );
+    ui.fonts_mut(|fonts| fonts.layout_job(job))
+}
 
 pub fn configure_theme(ctx: &egui::Context) {
     configure_fonts(ctx);
@@ -144,9 +223,11 @@ fn configure_fonts(ctx: &egui::Context) {
 }
 
 fn apply_style(style: &mut egui::Style) {
+    // Editorial type scale: wider steps so size alone carries hierarchy
+    // (18 / 14 / 12 / 11 / 10) instead of borders or fills.
     style.text_styles = [
-        (display_text_style(), FontId::proportional(16.0)),
-        (TextStyle::Heading, FontId::proportional(13.0)),
+        (display_text_style(), FontId::proportional(18.0)),
+        (TextStyle::Heading, FontId::proportional(14.0)),
         (TextStyle::Body, FontId::proportional(12.0)),
         (TextStyle::Button, FontId::proportional(11.0)),
         (TextStyle::Small, FontId::proportional(10.0)),
@@ -161,27 +242,43 @@ fn apply_style(style: &mut egui::Style) {
     style.visuals.faint_bg_color = SURFACE;
     style.visuals.code_bg_color = SURFACE;
     style.visuals.window_corner_radius = egui::CornerRadius::same(RADIUS_NONE);
-    style.visuals.menu_corner_radius = egui::CornerRadius::same(RADIUS_NONE);
-    style.visuals.window_stroke = stroke_subtle();
+    style.visuals.menu_corner_radius = egui::CornerRadius::same(RADIUS_COMPACT);
+    // Borders are nearly eliminated: floating chrome separates from the
+    // canvas with surface tone and soft shadow, not outlines.
+    style.visuals.window_stroke = egui::Stroke::NONE;
+    style.visuals.window_shadow = egui::epaint::Shadow {
+        offset: [0, 8],
+        blur: 32,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(140),
+    };
+    style.visuals.popup_shadow = egui::epaint::Shadow {
+        offset: [0, 4],
+        blur: 16,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(120),
+    };
     style.visuals.widgets.noninteractive.bg_fill = BACKGROUND;
     style.visuals.widgets.noninteractive.bg_stroke = stroke_subtle();
     style.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(RADIUS_NONE);
     style.visuals.widgets.noninteractive.fg_stroke = stroke_strong();
     style.visuals.widgets.inactive.bg_fill = SURFACE;
-    style.visuals.widgets.inactive.bg_stroke = stroke_subtle();
+    style.visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
     style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(RADIUS_CONTROL);
     style.visuals.widgets.inactive.fg_stroke = stroke_strong();
     style.visuals.widgets.hovered.bg_fill = SURFACE_ELEVATED;
-    style.visuals.widgets.hovered.bg_stroke = stroke_strong();
+    style.visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
     style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(RADIUS_CONTROL);
     style.visuals.widgets.hovered.fg_stroke = stroke_strong();
-    style.visuals.widgets.active.bg_fill = BORDER;
+    style.visuals.widgets.active.bg_fill = SURFACE_PRESSED;
     style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, ACCENT);
     style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(RADIUS_CONTROL);
     style.visuals.widgets.active.fg_stroke = stroke_strong();
     style.visuals.selection.bg_fill = SURFACE_ELEVATED;
-    style.visuals.selection.stroke = stroke_strong();
+    // Focus carries the single accent thread.
+    style.visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT);
     style.visuals.hyperlink_color = ACCENT;
+    style.animation_time = MOTION_FEEDBACK_SECONDS;
     style.spacing.item_spacing = egui::vec2(SPACE_3, SPACE_3);
     style.spacing.button_padding = egui::vec2(SPACE_3, SPACE_2);
 }
@@ -196,6 +293,10 @@ pub fn stroke_subtle() -> egui::Stroke {
 
 pub fn stroke_strong() -> egui::Stroke {
     egui::Stroke::new(1.0, TEXT)
+}
+
+pub fn motion_easing(t: f32) -> f32 {
+    egui::emath::easing::cubic_out(t)
 }
 
 const fn color(r: u8, g: u8, b: u8) -> egui::Color32 {

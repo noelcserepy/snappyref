@@ -105,7 +105,7 @@ pub(crate) fn block_sidebar_input(ctx: &egui::Context, sidebar_rect: egui::Rect)
     }
 
     egui::Area::new(egui::Id::new("sidebar_blocker"))
-        .order(egui::Order::Middle)
+        .order(egui::Order::Tooltip)
         .fixed_pos(sidebar_rect.min)
         .show(ctx, |ui| {
             ui.set_min_size(sidebar_rect.size());
@@ -154,6 +154,8 @@ pub(crate) fn show_sidebar(
     _update_state: &crate::updater::UpdateState,
     about_updates: AboutUpdatesView,
 ) -> SidebarRenderResult {
+    let entrance =
+        crate::ui::motion::overlay_entrance(ctx, egui::Id::new("sidebar_entrance"), sidebar_open);
     if !sidebar_open {
         return SidebarRenderResult {
             settings_changed: false,
@@ -171,15 +173,17 @@ pub(crate) fn show_sidebar(
 
     let top = screen_rect.top() + SIDEBAR_TOP_MARGIN;
     let bottom = (screen_rect.bottom() - SIDEBAR_BOTTOM_MARGIN).max(top);
+    let settle = crate::ui::motion::settle_offset(entrance);
     let sidebar_rect = egui::Rect::from_min_max(
-        egui::pos2(screen_rect.left(), top),
-        egui::pos2(screen_rect.left() + SIDEBAR_WIDTH, bottom),
+        egui::pos2(screen_rect.left() - settle, top),
+        egui::pos2(screen_rect.left() + SIDEBAR_WIDTH - settle, bottom),
     );
 
     let area_response = egui::Area::new(egui::Id::new("sidebar"))
         .order(egui::Order::Foreground)
         .fixed_pos(sidebar_rect.min)
         .show(ctx, |ui| {
+            ui.set_opacity(entrance.clamp(0.0, 1.0));
             ui.set_min_size(sidebar_rect.size());
             let shape_rect = sidebar_rect;
             let radius = egui::CornerRadius {
@@ -188,14 +192,15 @@ pub(crate) fn show_sidebar(
                 sw: 0,
                 se: crate::ui::theme::RADIUS_PANEL,
             };
+            // No outline: the sidebar separates from the canvas by surface
+            // tone alone.
             ui.painter().rect(
                 shape_rect,
                 radius,
                 crate::ui::theme::SURFACE,
-                crate::ui::theme::stroke_subtle(),
+                egui::Stroke::NONE,
                 egui::StrokeKind::Inside,
             );
-
             let inner_rect = shape_rect;
             let ui_builder = egui::UiBuilder::new().max_rect(inner_rect);
             ui.scope_builder(ui_builder, |ui| {
@@ -223,13 +228,16 @@ pub(crate) fn show_sidebar(
                         }
                     }
                 };
-                if input_enabled {
-                    paint_contents(ui);
-                } else {
-                    ui.add_enabled_ui(false, |ui| paint_contents(ui));
-                }
+                paint_contents(ui);
             });
         });
+
+    if !input_enabled {
+        settings_changed = false;
+        board_action = None;
+        update_action_clicked = false;
+        semantic_search_action = None;
+    }
 
     SidebarRenderResult {
         settings_changed,
@@ -263,42 +271,54 @@ fn paint_sidebar_options(
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-                ui.add_space(crate::ui::theme::SPACE_1);
+                ui.add_space(crate::ui::theme::SPACE_2);
+                let options_cascade = egui::Id::new("sidebar_options_cascade");
                 for (index, section) in
                     sidebar_options_section_order(&about_updates.semantic_search.status)
                         .into_iter()
                         .enumerate()
                 {
                     if index > 0 {
-                        ui.add_space(match section {
-                            SidebarOptionsSection::Shortcuts => crate::ui::theme::SPACE_6,
-                            _ => crate::ui::theme::SPACE_4,
-                        });
+                        ui.add_space(crate::ui::theme::SPACE_6);
                     }
-                    match section {
-                        SidebarOptionsSection::AboutUpdates => {
-                            paint_sidebar_subcard(ui, |ui| {
-                                let about_outcome = paint_about_updates_section(ui, about_updates);
-                                update_action_clicked |= about_outcome.update_action_clicked;
-                            });
+                    // Sections cascade in reading order; two stagger steps
+                    // per section keep the choreography legible.
+                    let reveal = crate::ui::motion::cascade_reveal_on_appear(
+                        ui.ctx(),
+                        options_cascade,
+                        index * 2,
+                    );
+                    ui.scope(|ui| {
+                        ui.multiply_opacity(reveal.opacity);
+                        match section {
+                            SidebarOptionsSection::AboutUpdates => {
+                                paint_sidebar_section_header(ui, "Application", None);
+                                paint_sidebar_subcard(ui, |ui| {
+                                    let about_outcome =
+                                        paint_about_updates_section(ui, about_updates);
+                                    update_action_clicked |= about_outcome.update_action_clicked;
+                                });
+                            }
+                            SidebarOptionsSection::WorkspaceSettings => {
+                                paint_sidebar_section_header(ui, "Workspace", None);
+                                paint_sidebar_subcard(ui, |ui| {
+                                    let settings_outcome = paint_settings_section(
+                                        ui,
+                                        settings,
+                                        canvas,
+                                        &about_updates.semantic_search,
+                                    );
+                                    changed |= settings_outcome.changed;
+                                    semantic_search_action =
+                                        settings_outcome.semantic_search_action;
+                                });
+                            }
+                            SidebarOptionsSection::Shortcuts => {
+                                paint_sidebar_section_header(ui, "Shortcuts", None);
+                                paint_supported_shortcuts_section(ui);
+                            }
                         }
-                        SidebarOptionsSection::WorkspaceSettings => {
-                            paint_sidebar_subcard(ui, |ui| {
-                                let settings_outcome = paint_settings_section(
-                                    ui,
-                                    settings,
-                                    canvas,
-                                    &about_updates.semantic_search,
-                                );
-                                changed |= settings_outcome.changed;
-                                semantic_search_action = settings_outcome.semantic_search_action;
-                            });
-                        }
-                        SidebarOptionsSection::Shortcuts => {
-                            paint_sidebar_section_header(ui, "Shortcuts", None);
-                            paint_supported_shortcuts_section(ui);
-                        }
-                    }
+                    });
                 }
                 ui.add_space(crate::ui::theme::SPACE_4);
             });
@@ -420,7 +440,7 @@ mod tests {
                 let name_edit_id = ui.make_persistent_id(("board-name-edit", 1_i64));
                 ui.memory_mut(|memory| memory.request_focus(name_edit_id));
 
-                paint_board_row(ui, 1, "My Board", "96 images", true, Some("⌘1"), false);
+                paint_board_row(ui, 1, "My Board", "96 images", true, Some("⌘1"), false, 0.0);
                 cursor_after_row = ui.cursor().min.y;
             },
         );

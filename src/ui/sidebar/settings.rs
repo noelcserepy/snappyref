@@ -187,8 +187,8 @@ fn quiet_settings_button(label: &str) -> egui::Button<'_> {
             .text_style(egui::TextStyle::Small)
             .color(crate::ui::theme::TEXT),
     )
-    .fill(crate::ui::theme::SURFACE_ELEVATED)
-    .stroke(crate::ui::theme::stroke_subtle())
+    .fill(crate::ui::theme::QUIET_INLINE_ACTIVE_FILL)
+    .stroke(egui::Stroke::NONE)
     .corner_radius(crate::ui::theme::RADIUS_INLINE)
 }
 
@@ -219,14 +219,9 @@ fn paint_setting_row(
     changed
 }
 
+/// Settings rows separate with spacing alone; no rules between rows.
 fn paint_setting_divider(ui: &mut egui::Ui) {
-    let available = ui.available_width();
-    let pad = crate::ui::theme::SPACE_3;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(available, 1.0), egui::Sense::hover());
-    let from = egui::pos2(rect.left() - pad, rect.center().y);
-    let to = egui::pos2(rect.right() + pad, rect.center().y);
-    ui.painter()
-        .line_segment([from, to], crate::ui::theme::stroke_subtle());
+    ui.add_space(crate::ui::theme::SPACE_1);
 }
 
 fn pointer_mode_detail(mode: crate::data::PointerMode) -> &'static str {
@@ -237,23 +232,11 @@ fn pointer_mode_detail(mode: crate::data::PointerMode) -> &'static str {
 }
 
 fn paint_pointer_mode_control(ui: &mut egui::Ui, mode: &mut crate::data::PointerMode) -> bool {
-    let before = *mode;
     let segments: [(&str, crate::data::PointerMode); 2] = [
         ("Mouse", crate::data::PointerMode::Mouse),
         ("Trackpad", crate::data::PointerMode::Trackpad),
     ];
-
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
-        for (label, value) in segments {
-            let selected = *mode == value;
-            if paint_inline_choice(ui, label, selected) {
-                *mode = value;
-            }
-        }
-    });
-
-    *mode != before
+    paint_inline_choice_group(ui, "pointer-mode", mode, &segments)
 }
 
 fn paint_background_mode_control(
@@ -261,7 +244,6 @@ fn paint_background_mode_control(
     canvas: &mut crate::canvas::CanvasState,
 ) -> bool {
     let mut background = canvas.background();
-    let before = background;
 
     let segments: [(&str, crate::data::CanvasBackground); 3] = [
         ("None", crate::data::CanvasBackground::None),
@@ -269,17 +251,7 @@ fn paint_background_mode_control(
         ("Dots", crate::data::CanvasBackground::Dots),
     ];
 
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
-        for (label, value) in segments {
-            let selected = background == value;
-            if paint_inline_choice(ui, label, selected) {
-                background = value;
-            }
-        }
-    });
-
-    if background != before {
+    if paint_inline_choice_group(ui, "canvas-background", &mut background, &segments) {
         canvas.set_background(background);
         true
     } else {
@@ -287,8 +259,54 @@ fn paint_background_mode_control(
     }
 }
 
-fn paint_inline_choice(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
-    paint_inline_choice_response(ui, label, selected).clicked()
+/// Quiet segmented choices with a single accent underline that slides
+/// between the options when the value changes.
+fn paint_inline_choice_group<T: PartialEq + Copy>(
+    ui: &mut egui::Ui,
+    id_source: &'static str,
+    value: &mut T,
+    segments: &[(&str, T)],
+) -> bool {
+    let before = *value;
+    let mut selected_rect = None;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
+        for (label, segment_value) in segments {
+            let selected = *value == *segment_value;
+            let response = paint_inline_choice_response(ui, label, selected);
+            if selected {
+                selected_rect = Some(response.rect);
+            }
+            if response.clicked() {
+                *value = *segment_value;
+            }
+        }
+    });
+    if let Some(rect) = selected_rect {
+        let center_x = crate::ui::motion::slide_indicator(
+            ui.ctx(),
+            egui::Id::new(("inline-choice-underline-x", id_source)),
+            rect.center().x,
+        );
+        let half_width = crate::ui::motion::slide_indicator(
+            ui.ctx(),
+            egui::Id::new(("inline-choice-underline-w", id_source)),
+            (rect.width() - crate::ui::theme::QUIET_INLINE_PAD_X) * 0.5,
+        );
+        paint_inline_choice_underline(ui, center_x, half_width, rect.bottom());
+    }
+    *value != before
+}
+
+fn paint_inline_choice_underline(ui: &egui::Ui, center_x: f32, half_width: f32, bottom: f32) {
+    let y = bottom - 1.0;
+    ui.painter().line_segment(
+        [
+            egui::pos2(center_x - half_width, y),
+            egui::pos2(center_x + half_width, y),
+        ],
+        egui::Stroke::new(2.0, crate::ui::theme::ACCENT),
+    );
 }
 
 fn paint_inline_choice_response(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
@@ -313,28 +331,45 @@ fn paint_inline_choice_response(ui: &mut egui::Ui, label: &str, selected: bool) 
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
-    let fill = if selected {
-        crate::ui::theme::QUIET_INLINE_ACTIVE_FILL
-    } else if response.hovered() {
-        crate::ui::theme::QUIET_INLINE_HOVER_FILL
-    } else {
-        egui::Color32::TRANSPARENT
-    };
-    if selected || response.hovered() {
+    let hover = crate::ui::motion::hover_amount(
+        ui.ctx(),
+        response.id.with("inline-choice-hover"),
+        response.hovered() && !selected,
+    );
+    let press = crate::ui::motion::press_amount(
+        ui.ctx(),
+        response.id.with("inline-choice-press"),
+        response.is_pointer_button_down_on(),
+    );
+    let acquire = crate::ui::motion::acquire_amount(
+        ui.ctx(),
+        response.id.with("inline-choice-acquire"),
+        selected,
+    );
+    let paint_rect = crate::ui::motion::pressed_rect(rect, press);
+    if !selected && (hover > 0.0 || press > 0.0) {
         ui.painter().rect(
-            rect,
+            paint_rect,
             egui::CornerRadius::same(crate::ui::theme::RADIUS_INLINE),
-            fill,
-            if selected {
-                crate::ui::theme::stroke_subtle()
-            } else {
-                egui::Stroke::NONE
-            },
+            crate::ui::motion::mix(
+                crate::ui::theme::QUIET_INLINE_HOVER_FILL.gamma_multiply(hover),
+                crate::ui::theme::SURFACE_PRESSED,
+                press * 0.65,
+            ),
+            egui::Stroke::NONE,
+            egui::StrokeKind::Inside,
+        );
+    } else if selected && acquire < 1.0 {
+        ui.painter().rect(
+            crate::ui::motion::pressed_rect(rect, 1.0 - acquire),
+            egui::CornerRadius::same(crate::ui::theme::RADIUS_INLINE),
+            crate::ui::theme::QUIET_INLINE_ACTIVE_FILL.gamma_multiply(1.0 - acquire),
+            egui::Stroke::NONE,
             egui::StrokeKind::Inside,
         );
     }
     ui.painter().galley(
-        crate::ui::layout::centered_pos(rect, galley.size()),
+        crate::ui::layout::centered_pos(rect, galley.size()) + egui::vec2(0.0, press * 0.5),
         galley,
         text_color,
     );
@@ -360,7 +395,6 @@ fn paint_number_text_field(
     let mut changed = false;
     let frame = egui::Frame::new()
         .fill(crate::ui::theme::QUIET_INLINE_ACTIVE_FILL)
-        .stroke(crate::ui::theme::stroke_subtle())
         .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_INLINE))
         .inner_margin(egui::Margin {
             left: crate::ui::theme::QUIET_INLINE_PAD_X as i8,
@@ -423,6 +457,15 @@ fn paint_switch(ui: &mut egui::Ui, value: &mut bool) -> egui::Response {
     let label = if *value { "On" } else { "Off" };
     let before = *value;
     let mut response = paint_inline_choice_response(ui, label, before);
+    if before {
+        let rect = response.rect;
+        paint_inline_choice_underline(
+            ui,
+            rect.center().x,
+            (rect.width() - crate::ui::theme::QUIET_INLINE_PAD_X) * 0.5,
+            rect.bottom(),
+        );
+    }
     if response.clicked() {
         *value = !*value;
         response.mark_changed();

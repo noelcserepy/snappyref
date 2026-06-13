@@ -19,8 +19,9 @@ use interaction::{
 use render::{
     annotation_style_toolbar_rect, editing_textbox_toolbar_rect, paint_annotation_draft,
     paint_background, paint_canvas_items, paint_crop_marquee, paint_guide_snap_indicators,
-    paint_marquee, paint_provisional_placement_previews, paint_selection_bounds,
-    show_annotation_style_toolbar, show_textbox_editor,
+    paint_hover_hairline, paint_marquee, paint_provisional_placement_previews,
+    paint_selected_placement_borders, paint_selection_bounds, show_annotation_style_toolbar,
+    show_textbox_editor,
 };
 use state::{CanvasDocumentState, CanvasInteractionState, CanvasRenderState};
 
@@ -809,6 +810,13 @@ pub fn show(
         debug_labels,
     );
     paint_provisional_placement_previews(&painter, rect, state);
+    paint_hover_hairline(
+        &painter,
+        rect,
+        state,
+        input_policy == CanvasInputPolicy::Full,
+    );
+    paint_selected_placement_borders(&painter, rect, state);
     paint_selection_bounds(&painter, rect, state);
     paint_guide_snap_indicators(&painter, rect, state);
     paint_crop_marquee(&painter, rect, state);

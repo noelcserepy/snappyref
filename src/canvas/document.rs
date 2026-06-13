@@ -745,10 +745,25 @@ impl CanvasState {
 
     pub(crate) fn clear_guide_snap_indicators(&mut self) {
         self.interaction.guide_snap_indicators.clear();
+        self.interaction.guide_snap_signature = 0;
+        self.interaction.guide_snap_engaged_at = None;
     }
 
     pub(crate) fn set_guide_snap_indicators(&mut self, indicators: Vec<super::GuideSnapIndicator>) {
+        let signature = guide_snap_signature(&indicators);
+        if signature != self.interaction.guide_snap_signature {
+            self.interaction.guide_snap_signature = signature;
+            self.interaction.guide_snap_engaged_at = if indicators.is_empty() {
+                None
+            } else {
+                Some(std::time::Instant::now())
+            };
+        }
         self.interaction.guide_snap_indicators = indicators;
+    }
+
+    pub(crate) fn guide_snap_pulse_started_at(&self) -> Option<std::time::Instant> {
+        self.interaction.guide_snap_engaged_at
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -2528,4 +2543,23 @@ fn layout_bounds_with_offset(
         }
     }
     found.then_some(bounds)
+}
+
+fn guide_snap_signature(indicators: &[super::GuideSnapIndicator]) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::hash::DefaultHasher::new();
+    indicators.len().hash(&mut hasher);
+    for indicator in indicators {
+        indicator.segments.len().hash(&mut hasher);
+        for (start, end) in &indicator.segments {
+            let snapped_coordinate = if (start.x - end.x).abs() <= f32::EPSILON {
+                start.x
+            } else {
+                start.y
+            };
+            snapped_coordinate.to_bits().hash(&mut hasher);
+        }
+    }
+    hasher.finish()
 }

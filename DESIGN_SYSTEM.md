@@ -18,6 +18,8 @@ SnappyRef uses a dark, layout-first interface. Surfaces are quiet and compact; s
 
 Use emphasis sparingly. Selected items, active focus, and currently actionable state can stand out; generic importance should not create new color roles.
 
+The current polish direction is flat/editorial chrome plus fast functional motion. Static UI should prefer fewer borders, text-first rows, bare shortcut metadata, uppercase microcap section captions, and sliding accent indicators over framed pills or card-like grouping. Destructive confirmation panels stay borderless; use destructive color on the action/control itself, not on the dialog shell. Motion should reinforce state changes: tiny settle entrances, tactile press feedback, sliding active indicators, and canvas acquisition pulses.
+
 Supported mode: dark theme only.
 
 ### Layout And Spacing
@@ -36,7 +38,7 @@ The app favors low-radius rectangular controls, restrained contrast, and concise
 
 Use `RADIUS_NONE` for structural fills and rules, `RADIUS_MICRO` for tiny marks and thumbnails, `RADIUS_INLINE` for quiet inline settings controls, `RADIUS_COMPACT` for rows/chips/hints/inset groups, `RADIUS_CONTROL` for explicit buttons and canvas toolbars, and `RADIUS_PANEL` for floating panels and major overlays.
 
-Prefer spacing before adding new borders.
+Prefer spacing before adding new borders. Raised surfaces should stay flat and quiet; avoid full outlines, warm tint, heavy depth, or decorative edge highlights.
 
 Do not nest cards inside sidebar subcards.
 
@@ -98,7 +100,15 @@ Repeated row-level destructive affordances stay quiet unless hovered or focused.
 
 ### Motion
 
-No reusable motion language is currently documented. Do not add animation as generic decoration.
+Motion is functional, fast, and bounded. Use it only for state feedback, content arrival, active-indicator movement, and canvas manipulation feedback.
+
+Use fade plus a tiny settle for sidebar, dialogs, context menus, search palette, and canvas toolbars. Travel should stay around a couple of pixels; avoid large drawer slides, bounce, or decorative choreography.
+
+Use sliding accent indicators for selected sidebar tabs, active board rail movement, and quiet segmented settings controls. Use tactile press feedback for interactive rows, buttons, and search result tiles when it does not change allocated geometry.
+
+Canvas feedback should stay image-first: loading placements may breathe subtly, unselected hovered placements may show a faint dissolving hairline, Guide Snapping may pulse briefly on new engagement, and the rotation handle may spring in when available. Do not use selection-border expansion as the default selected-placement language; selected image borders remain 1px square `TEXT` and render above every placement regardless of canvas stack order.
+
+Avoid animation that makes images feel slower to load. If a content fade competes with perceived readiness, prefer immediate content display.
 
 ### Responsive And Density
 

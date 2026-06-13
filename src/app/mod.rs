@@ -1578,17 +1578,24 @@ impl SnappyRefApp {
     }
 
     fn show_board_delete_confirmation(&mut self, ctx: &egui::Context) {
+        let entrance = crate::ui::motion::overlay_entrance(
+            ctx,
+            egui::Id::new("board_delete_dialog_entrance"),
+            self.pending_board_delete.is_some(),
+        );
         let Some(pending) = self.pending_board_delete.clone() else {
             return;
         };
 
+        let settle = crate::ui::motion::settle_offset(entrance);
         egui::Window::new("Delete board?")
             .title_bar(false)
             .collapsible(false)
             .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .frame(destructive_confirmation_frame(ctx))
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, settle))
+            .frame(destructive_confirmation_frame(ctx, entrance))
             .show(ctx, |ui| {
+                ui.multiply_opacity(entrance);
                 ui.set_min_width(destructive_dialog_width());
                 destructive_dialog_header(ui, "Delete board?");
                 destructive_dialog_body(ui, |ui| {
@@ -1637,7 +1644,7 @@ impl SnappyRefApp {
     }
 
     fn should_block_sidebar_input(&self) -> bool {
-        self.sidebar_open && !self.modal_open()
+        self.sidebar_open && self.modal_open()
     }
 
     /// Build the Settings Tab "About / Updates" view payload from the
@@ -2957,24 +2964,35 @@ impl SnappyRefApp {
         let Some(pos) = self.context_menu_pos else {
             return;
         };
+        let entrance =
+            crate::ui::motion::entrance_on_appear(ctx, egui::Id::new("board_context_menu"));
+        let settle = crate::ui::motion::settle_offset(entrance);
 
         let mut close_menu = false;
         let menu_response = egui::Area::new(egui::Id::new("board_context_menu"))
             .order(egui::Order::Tooltip)
-            .fixed_pos(pos)
+            .fixed_pos(pos - egui::vec2(0.0, settle))
             .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.set_width(250.0);
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    for item in self.context_menu_items() {
-                        let response = context_menu_row(ui, &item);
-                        if response.clicked() {
-                            self.handle_context_menu_action(item.action, ctx, screen_rect);
-                            close_menu = true;
+                ui.set_opacity(entrance.clamp(0.0, 1.0));
+                egui::Frame::new()
+                    .fill(crate::ui::theme::SURFACE)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT))
+                    .shadow(ui.style().visuals.popup_shadow)
+                    .inner_margin(egui::Margin::same(crate::ui::theme::SPACE_1 as i8))
+                    .show(ui, |ui| {
+                        ui.set_width(250.0);
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        for item in self.context_menu_items() {
+                            let response = context_menu_row(ui, &item);
+                            if response.clicked() {
+                                self.handle_context_menu_action(item.action, ctx, screen_rect);
+                                close_menu = true;
+                            }
                         }
-                    }
-                });
+                    });
             });
+        crate::ui::motion::settle_layer_scale(ctx, menu_response.response.layer_id, pos, entrance);
 
         let should_close = ctx.input(|input| {
             context_menu_should_close(
@@ -3032,6 +3050,11 @@ impl SnappyRefApp {
     }
 
     fn show_library_remove_confirmation(&mut self, ctx: &egui::Context) {
+        let entrance = crate::ui::motion::overlay_entrance(
+            ctx,
+            egui::Id::new("library_remove_dialog_entrance"),
+            self.pending_library_remove.is_some(),
+        );
         let Some(pending) = self.pending_library_remove.clone() else {
             return;
         };
@@ -3041,13 +3064,15 @@ impl SnappyRefApp {
         } else {
             "Remove assets from Library?"
         };
+        let settle = crate::ui::motion::settle_offset(entrance);
         egui::Window::new(title)
             .title_bar(false)
             .collapsible(false)
             .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .frame(destructive_confirmation_frame(ctx))
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, settle))
+            .frame(destructive_confirmation_frame(ctx, entrance))
             .show(ctx, |ui| {
+                ui.multiply_opacity(entrance);
                 ui.set_min_width(destructive_dialog_width());
                 destructive_dialog_header(ui, title);
                 destructive_dialog_body(ui, |ui| {
@@ -3079,17 +3104,24 @@ impl SnappyRefApp {
 
     #[cfg(feature = "semantic-search")]
     fn show_semantic_search_remove_confirmation(&mut self, ctx: &egui::Context) {
+        let entrance = crate::ui::motion::overlay_entrance(
+            ctx,
+            egui::Id::new("semantic_remove_dialog_entrance"),
+            self.pending_semantic_search_remove,
+        );
         if !self.pending_semantic_search_remove {
             return;
         }
 
+        let settle = crate::ui::motion::settle_offset(entrance);
         egui::Window::new("Remove Semantic Search?")
             .title_bar(false)
             .collapsible(false)
             .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .frame(destructive_confirmation_frame(ctx))
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, settle))
+            .frame(destructive_confirmation_frame(ctx, entrance))
             .show(ctx, |ui| {
+                ui.multiply_opacity(entrance);
                 ui.set_min_width(destructive_dialog_width());
                 destructive_dialog_header(ui, "Remove Semantic Search?");
                 destructive_dialog_body(ui, |ui| {
@@ -4226,20 +4258,27 @@ impl SnappyRefApp {
 
     #[cfg(feature = "semantic-search")]
     fn show_semantic_search_first_launch_prompt(&mut self, ctx: &egui::Context) {
+        let entrance = crate::ui::motion::overlay_entrance(
+            ctx,
+            egui::Id::new("semantic_first_launch_prompt_entrance"),
+            self.should_show_semantic_search_first_launch_prompt(),
+        );
         if !self.should_show_semantic_search_first_launch_prompt() {
             return;
         }
 
         let mut decline = false;
         let mut enable = false;
+        let settle = crate::ui::motion::settle_offset(entrance);
         egui::Window::new("Enable Semantic Search?")
             .id(egui::Id::new("semantic_search_first_launch_prompt"))
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, settle))
             .collapsible(false)
             .resizable(false)
             .title_bar(false)
-            .frame(semantic_search_prompt_frame(ctx))
+            .frame(semantic_search_prompt_frame(ctx, entrance))
             .show(ctx, |ui| {
+                ui.multiply_opacity(entrance);
                 ui.set_width(semantic_search_prompt_width());
                 semantic_search_prompt_header(ui, "Enable Semantic Search?");
                 semantic_search_prompt_body(ui, |ui| {
@@ -4669,10 +4708,17 @@ fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egui::Response
         egui::WidgetInfo::labeled(egui::WidgetType::Button, item.enabled, item.label)
     });
 
-    let rounding = egui::CornerRadius::same(4);
-    if response.hovered() && item.enabled {
-        ui.painter()
-            .rect_filled(rect, rounding, egui::Color32::from_white_alpha(18));
+    let hover = crate::ui::motion::hover_amount(
+        ui.ctx(),
+        response.id.with("context-menu-row-hover"),
+        response.hovered() && item.enabled,
+    );
+    if hover > 0.0 {
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT),
+            egui::Color32::from_white_alpha((18.0 * hover) as u8),
+        );
     }
 
     let text_color = if item.enabled && item.action.is_destructive() {
@@ -4702,17 +4748,6 @@ fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egui::Response
         let pill_rect = egui::Rect::from_center_size(
             egui::pos2(rect.right() - 8.0 - pill_size.x * 0.5, rect.center().y),
             pill_size,
-        );
-        ui.painter().rect_filled(
-            pill_rect,
-            egui::CornerRadius::same(4),
-            egui::Color32::from_white_alpha(12),
-        );
-        ui.painter().rect_stroke(
-            pill_rect,
-            egui::CornerRadius::same(4),
-            egui::Stroke::new(1.0, egui::Color32::from_white_alpha(16)),
-            egui::StrokeKind::Inside,
         );
         ui.painter().text(
             pill_rect.center(),

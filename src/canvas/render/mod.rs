@@ -22,8 +22,8 @@ pub(super) use image_pass::{
     optimized_image_pass_eligible_for_state, unified_canvas_paint_order_for_state,
 };
 pub(super) use overlays::{
-    paint_crop_marquee, paint_guide_snap_indicators, paint_marquee,
-    paint_provisional_placement_previews, paint_selection_bounds,
+    paint_crop_marquee, paint_guide_snap_indicators, paint_hover_hairline, paint_marquee,
+    paint_provisional_placement_previews, paint_selected_placement_borders, paint_selection_bounds,
 };
 pub(super) use textbox_editor::{
     annotation_style_toolbar_rect, editing_textbox_toolbar_rect, layout_textbox_galley,
@@ -114,6 +114,44 @@ mod tests {
 
         assert!(!image_pass::selection_border_visible(&state, 11.0));
         assert!(image_pass::selection_border_visible(&state, 12.6));
+    }
+
+    #[test]
+    fn selected_placement_border_top_overlay_includes_lower_z_selection() {
+        let mut state = CanvasState {
+            document: CanvasDocumentState {
+                rendered_placements: vec![
+                    test_image_at(1, CanvasImageLod::Working, [100, 100], egui::Pos2::ZERO),
+                    test_image_at(2, CanvasImageLod::Working, [100, 100], egui::Pos2::ZERO),
+                ],
+                stack_order: vec![
+                    crate::data::CanvasStackItem::Placement(1),
+                    crate::data::CanvasStackItem::Placement(2),
+                ],
+                selected_placement_ids: vec![1],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+
+        assert_eq!(
+            unified_canvas_paint_order_for_state(&state),
+            vec![
+                crate::data::CanvasStackItem::Placement(1),
+                crate::data::CanvasStackItem::Placement(2),
+            ]
+        );
+        assert_eq!(
+            overlays::selected_placement_border_paint_ids(&state, rect, 0.0),
+            vec![1]
+        );
+
+        state.document.selected_placement_ids = vec![2];
+        assert_eq!(
+            overlays::selected_placement_border_paint_ids(&state, rect, 0.0),
+            vec![2]
+        );
     }
 
     fn test_image(

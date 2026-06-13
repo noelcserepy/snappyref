@@ -32,6 +32,17 @@ use std::sync::{
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[test]
+fn destructive_confirmation_shell_has_no_destructive_outline() {
+    let ctx = egui::Context::default();
+    crate::ui::theme::configure_theme(&ctx);
+
+    let frame = super::dialogs::destructive_confirmation_frame(&ctx, 1.0);
+
+    assert_eq!(frame.stroke, egui::Stroke::NONE);
+    assert_eq!(frame.fill, crate::ui::theme::SURFACE);
+}
+
+#[test]
 fn embedding_phase_markers_report_summary_durations() {
     let markers = EmbeddingPhaseMarkers {
         first_embedding_queued_ms: Some(100.0),
@@ -3930,6 +3941,87 @@ fn inspect_sample_image_import_writes_artifact() {
 
 #[cfg(feature = "semantic-search")]
 #[test]
+fn inspect_delete_board_modal_flash_writes_artifact() {
+    let scenario_name = inspect_scenario_name("delete-board-modal-flash");
+    let mut scenario = InspectScenario::new(scenario_name);
+    scenario.event(
+        "scenario.seed",
+        serde_json::json!({
+            "seed": "boards-sidebar-delete-click",
+            "viewport": inspect_rect(test_screen_rect()),
+        }),
+    );
+
+    let root = temp_library_root("snappyref-inspect-delete-board-flash");
+    let library = Library::initialize(root.clone()).unwrap();
+    let second = library.create_board("Second").unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.sidebar_open = true;
+    app.sidebar_tab = SidebarTab::Boards;
+    app.settings.semantic_search_first_launch_prompt_seen = true;
+
+    let mut harness = app_full_harness(app);
+    harness.step();
+    scenario.capture_screen("screen-000-sidebar-open", &mut harness);
+
+    let delete_rect = harness.get_by_label("Delete board Second").rect();
+    scenario.target("snap.sidebar.board-delete", "button", delete_rect);
+
+    harness.hover_at(delete_rect.center());
+    harness.step();
+    scenario.capture_screen("screen-001-delete-hovered", &mut harness);
+
+    scenario.action("click delete board", delete_rect.center());
+    inspect_click_at(&harness, delete_rect.center(), egui::Modifiers::NONE);
+    harness.step();
+    scenario.capture_screen("screen-002-dialog-open-first-frame", &mut harness);
+    let first_modal_frame = scenario
+        .artifact_dir
+        .join("frames/screen-002-dialog-open-first-frame.png");
+    let debug_red_pixels =
+        inspect_bright_red_pixels_in_rect(&first_modal_frame, sidebar_rect(test_screen_rect()));
+    scenario.fact(
+        "delete-board-modal.sidebar-debug-red-pixels",
+        serde_json::json!({
+            "count": debug_red_pixels,
+        }),
+    );
+
+    harness.step();
+    scenario.capture_screen("screen-003-dialog-open-next-frame", &mut harness);
+
+    scenario.fact(
+        "delete-board-modal.state",
+        serde_json::json!({
+            "pending": harness.state().pending_board_delete.is_some(),
+            "sidebar_open": harness.state().sidebar_open,
+            "target_board": second.name,
+        }),
+    );
+    scenario.assertion(
+        "delete board click opens confirmation",
+        harness.state().pending_board_delete.is_some(),
+    );
+    scenario.assertion(
+        "sidebar has no bright debug-red flash on first modal frame",
+        debug_red_pixels == 0,
+    );
+    scenario.assertion(
+        "sidebar remains open behind modal",
+        harness.state().sidebar_open,
+    );
+
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(feature = "semantic-search")]
+#[test]
 fn inspect_compact_windows_column_images_writes_artifact() {
     let scenario_name = inspect_scenario_name("compact-windows-column-images");
     let mut scenario = InspectScenario::new(scenario_name);
@@ -6288,6 +6380,27 @@ fn inspect_click_at(
         },
         modifiers,
     );
+}
+
+#[cfg(feature = "semantic-search")]
+fn inspect_bright_red_pixels_in_rect(path: &PathBuf, rect: egui::Rect) -> usize {
+    let image = image::open(path)
+        .expect("inspect frame should exist")
+        .to_rgba8();
+    let left = rect.left().floor().max(0.0) as u32;
+    let top = rect.top().floor().max(0.0) as u32;
+    let right = rect.right().ceil().min(image.width() as f32) as u32;
+    let bottom = rect.bottom().ceil().min(image.height() as f32) as u32;
+    let mut count = 0;
+    for y in top..bottom {
+        for x in left..right {
+            let [r, g, b, a] = image.get_pixel(x, y).0;
+            if r >= 240 && g <= 40 && b <= 40 && a >= 200 {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 #[cfg(feature = "semantic-search")]
