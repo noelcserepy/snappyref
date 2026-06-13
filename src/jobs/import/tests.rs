@@ -524,38 +524,15 @@ fn url_import_downloads_and_persists_original_bytes() {
     server.join().unwrap();
 
     assert_eq!(
-        loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .mime_type,
+        loaded.placement.require_loaded_asset().mime_type,
         "image/png"
     );
+    assert_eq!(loaded.placement.require_loaded_asset().width, 64);
+    assert_eq!(loaded.placement.require_loaded_asset().height, 48);
     assert_eq!(
         loaded
             .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .width,
-        64
-    );
-    assert_eq!(
-        loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .height,
-        48
-    );
-    assert_eq!(
-        loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
+            .require_loaded_asset()
             .original_path
             .extension()
             .and_then(|value| value.to_str()),
@@ -564,24 +541,14 @@ fn url_import_downloads_and_persists_original_bytes() {
     assert!(
         loaded
             .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
+            .require_loaded_asset()
             .original_path
             .file_name()
             .and_then(|value| value.to_str())
             .is_some_and(|name| name.ends_with("test-image.png"))
     );
     assert_eq!(
-        fs::read(
-            &loaded
-                .placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-        )
-        .unwrap(),
+        fs::read(&loaded.placement.require_loaded_asset().original_path).unwrap(),
         png_bytes
     );
 
@@ -619,60 +586,23 @@ fn url_import_preserves_svg_as_vector_source() {
 
     assert_eq!(loaded.origin, super::ImportOrigin::Url);
     assert_eq!(
-        loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .mime_type,
+        loaded.placement.require_loaded_asset().mime_type,
         "image/svg+xml"
     );
-    assert_eq!(
-        loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .width,
-        128
-    );
-    assert_eq!(
-        loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .height,
-        96
-    );
+    assert_eq!(loaded.placement.require_loaded_asset().width, 128);
+    assert_eq!(loaded.placement.require_loaded_asset().height, 96);
     assert!(loaded.preview_rgba.is_empty());
     assert!(matches!(
         loaded.preview_texture,
         ImagePrepPreviewTexture::Svg { .. }
     ));
     assert_eq!(
-        fs::read(
-            &loaded
-                .placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-        )
-        .unwrap(),
+        fs::read(&loaded.placement.require_loaded_asset().original_path).unwrap(),
         svg_bytes
     );
     assert!(
         library
-            .canvas_image_cache_path(
-                loaded
-                    .placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .id,
-                2000
-            )
+            .canvas_image_cache_path(loaded.placement.require_loaded_asset().id, 2000)
             .is_none()
     );
 
@@ -697,60 +627,23 @@ fn svg_import_preserves_vector_source_and_skips_canvas_cache() {
     .unwrap();
 
     assert_eq!(
-        loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .mime_type,
+        loaded.placement.require_loaded_asset().mime_type,
         "image/svg+xml"
     );
-    assert_eq!(
-        loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .width,
-        320
-    );
-    assert_eq!(
-        loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .height,
-        180
-    );
+    assert_eq!(loaded.placement.require_loaded_asset().width, 320);
+    assert_eq!(loaded.placement.require_loaded_asset().height, 180);
     assert!(loaded.preview_rgba.is_empty());
     assert!(matches!(
         loaded.preview_texture,
         ImagePrepPreviewTexture::Svg { .. }
     ));
     assert_eq!(
-        fs::read_to_string(
-            &loaded
-                .placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-        )
-        .unwrap(),
+        fs::read_to_string(&loaded.placement.require_loaded_asset().original_path).unwrap(),
         fs::read_to_string(&svg_path).unwrap()
     );
     assert!(
         library
-            .canvas_image_cache_path(
-                loaded
-                    .placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .id,
-                2000
-            )
+            .canvas_image_cache_path(loaded.placement.require_loaded_asset().id, 2000)
             .is_none()
     );
 
@@ -786,56 +679,19 @@ static char * sample_xpm[] = {
     .unwrap();
 
     assert_eq!(
-        loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .mime_type,
+        loaded.placement.require_loaded_asset().mime_type,
         "image/x-xpixmap"
     );
-    assert_eq!(
-        loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .width,
-        2
-    );
-    assert_eq!(
-        loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .height,
-        2
-    );
+    assert_eq!(loaded.placement.require_loaded_asset().width, 2);
+    assert_eq!(loaded.placement.require_loaded_asset().height, 2);
     assert_eq!(loaded.preview_rgba.len(), 2 * 2 * 4);
     assert_eq!(
-        fs::read(
-            &loaded
-                .placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-        )
-        .unwrap(),
+        fs::read(&loaded.placement.require_loaded_asset().original_path).unwrap(),
         fs::read(source).unwrap()
     );
     assert!(
         library
-            .canvas_image_cache_path(
-                loaded
-                    .placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .id,
-                2000
-            )
+            .canvas_image_cache_path(loaded.placement.require_loaded_asset().id, 2000)
             .is_some()
     );
 
@@ -862,12 +718,7 @@ fn crop_item_rejects_svg_with_clear_error() {
         &library,
         crate::canvas::CanvasCropRequest {
             placement_id: loaded.placement.state.id,
-            source_asset: loaded
-                .placement
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .clone(),
+            source_asset: loaded.placement.require_loaded_asset().clone(),
             crop_rect: crate::canvas::PixelCropRect {
                 x: 0,
                 y: 0,
@@ -937,15 +788,7 @@ fn load_existing_svg_uses_original_vector_source() {
     ));
     assert!(
         library
-            .canvas_image_cache_path(
-                loaded
-                    .placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .id,
-                2000
-            )
+            .canvas_image_cache_path(loaded.placement.require_loaded_asset().id, 2000)
             .is_none()
     );
 
@@ -1225,10 +1068,7 @@ fn load_existing_backfills_versioned_canvas_cache_and_prefers_it_on_second_load(
     let settings = downscaled_canvas_settings(2000);
     assert!(
         library
-            .canvas_image_cache_path(
-                placement.asset.as_ref().expect("loaded placement asset").id,
-                settings.max_side
-            )
+            .canvas_image_cache_path(placement.require_loaded_asset().id, settings.max_side)
             .is_none()
     );
 
@@ -1247,23 +1087,13 @@ fn load_existing_backfills_versioned_canvas_cache_and_prefers_it_on_second_load(
         other => panic!("expected first load_existing to succeed, got {other:?}"),
     };
     let cache_path = library
-        .canvas_image_cache_path(
-            placement.asset.as_ref().expect("loaded placement asset").id,
-            settings.max_side,
-        )
+        .canvas_image_cache_path(placement.require_loaded_asset().id, settings.max_side)
         .unwrap();
     assert!(cache_path.is_file());
     assert_eq!(first.preview_width, 2000);
     assert_eq!(first.preview_height, 1500);
 
-    fs::remove_file(
-        &placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .original_path,
-    )
-    .unwrap();
+    fs::remove_file(&placement.require_loaded_asset().original_path).unwrap();
 
     let second = match load_existing(
         &library,
@@ -1358,16 +1188,13 @@ fn load_existing_backfills_new_cache_when_canvas_max_side_changes() {
     let second_settings = downscaled_canvas_settings(1000);
     assert!(
         library
-            .canvas_image_cache_path(
-                placement.asset.as_ref().expect("loaded placement asset").id,
-                first_settings.max_side
-            )
+            .canvas_image_cache_path(placement.require_loaded_asset().id, first_settings.max_side)
             .is_none()
     );
     assert!(
         library
             .canvas_image_cache_path(
-                placement.asset.as_ref().expect("loaded placement asset").id,
+                placement.require_loaded_asset().id,
                 second_settings.max_side
             )
             .is_none()
@@ -1388,16 +1215,13 @@ fn load_existing_backfills_new_cache_when_canvas_max_side_changes() {
         other => panic!("expected first cache backfill to succeed, got {other:?}"),
     }
     let first_cache = library
-        .canvas_image_cache_path(
-            placement.asset.as_ref().expect("loaded placement asset").id,
-            first_settings.max_side,
-        )
+        .canvas_image_cache_path(placement.require_loaded_asset().id, first_settings.max_side)
         .unwrap();
     assert!(first_cache.is_file());
     assert!(
         library
             .canvas_image_cache_path(
-                placement.asset.as_ref().expect("loaded placement asset").id,
+                placement.require_loaded_asset().id,
                 second_settings.max_side
             )
             .is_none()
@@ -1421,7 +1245,7 @@ fn load_existing_backfills_new_cache_when_canvas_max_side_changes() {
     assert_eq!(second.preview_height, 750);
     let second_cache = library
         .canvas_image_cache_path(
-            placement.asset.as_ref().expect("loaded placement asset").id,
+            placement.require_loaded_asset().id,
             second_settings.max_side,
         )
         .unwrap();
@@ -1449,8 +1273,7 @@ fn downscale_mode_ignores_legacy_thumb_cache_paths() {
         )
         .unwrap();
 
-    let legacy_thumb_path =
-        library.asset_thumb_path(placement.asset.as_ref().expect("loaded placement asset").id);
+    let legacy_thumb_path = library.asset_thumb_path(placement.require_loaded_asset().id);
     image::save_buffer_with_format(
         &legacy_thumb_path,
         &solid_rgba(64, 64),
@@ -1460,14 +1283,7 @@ fn downscale_mode_ignores_legacy_thumb_cache_paths() {
         ImageFormat::Png,
     )
     .unwrap();
-    fs::remove_file(
-        &placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .original_path,
-    )
-    .unwrap();
+    fs::remove_file(&placement.require_loaded_asset().original_path).unwrap();
 
     match load_existing(
         &library,
@@ -1626,18 +1442,8 @@ fn solid_png_bytes(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
 }
 
 fn displayed_area(loaded: &super::PreparedPlacementImage) -> f32 {
-    loaded
-        .placement
-        .asset
-        .as_ref()
-        .expect("loaded placement asset")
-        .width as f32
-        * loaded
-            .placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .height as f32
+    loaded.placement.require_loaded_asset().width as f32
+        * loaded.placement.require_loaded_asset().height as f32
         * loaded.placement.state.geometry.scale
         * loaded.placement.state.geometry.scale
 }

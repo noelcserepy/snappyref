@@ -60,7 +60,7 @@ pub(crate) fn handle_textbox_primary_press(
                 } else if state.interaction.editing_text_annotation_id.is_some() {
                     state.finish_textbox_edit();
                 }
-                state.interaction.image_transform_state = None;
+                state.interaction.placement_transform_state = None;
                 begin_textbox_pending_move(state, rect, annotation, pointer_pos);
                 return true;
             }
@@ -68,7 +68,7 @@ pub(crate) fn handle_textbox_primary_press(
             state.document.selected_placement_ids.clear();
             state.document.selected_annotation_ids = vec![annotation.id];
             state.interaction.drag_state = None;
-            state.interaction.image_transform_state = None;
+            state.interaction.placement_transform_state = None;
             state.interaction.marquee_state = None;
             state.interaction.crop_state = None;
             state.interaction.annotation_draft_state = None;
@@ -87,7 +87,7 @@ pub(crate) fn handle_textbox_primary_press(
             } else if state.interaction.editing_text_annotation_id.is_some() {
                 state.finish_textbox_edit();
             }
-            state.interaction.image_transform_state = None;
+            state.interaction.placement_transform_state = None;
             begin_textbox_pending_move(state, rect, annotation, pointer_pos);
             true
         }

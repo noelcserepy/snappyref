@@ -1164,21 +1164,21 @@ mod tests {
         library.archive_placements(&[unplaced.state.id]).unwrap();
         library
             .upsert_asset_embedding_blob(
-                source.asset.as_ref().expect("loaded placement asset").id,
+                source.require_loaded_asset().id,
                 "test-model",
                 &[1.0, 0.0],
             )
             .unwrap();
         library
             .upsert_asset_embedding_blob(
-                unplaced.asset.as_ref().expect("loaded placement asset").id,
+                unplaced.require_loaded_asset().id,
                 "test-model",
                 &[0.9, 0.1],
             )
             .unwrap();
         let unplaced_preview_path = library
             .store_canvas_image_cache(
-                unplaced.asset.as_ref().expect("loaded placement asset").id,
+                unplaced.require_loaded_asset().id,
                 crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
                 &[0, 255, 0, 255],
                 1,
@@ -1198,28 +1198,14 @@ mod tests {
         .unwrap();
 
         let results = service
-            .search_with_image_pivot_with_limit(
-                source.asset.as_ref().expect("loaded placement asset").id,
-                None,
-                5,
-            )
+            .search_with_image_pivot_with_limit(source.require_loaded_asset().id, None, 5)
             .unwrap();
 
         assert_eq!(results.len(), 1);
-        assert_eq!(
-            results[0].asset_id,
-            unplaced.asset.as_ref().expect("loaded placement asset").id
-        );
+        assert_eq!(results[0].asset_id, unplaced.require_loaded_asset().id);
         assert_eq!(
             results[0].asset_original_path.as_deref(),
-            Some(
-                unplaced
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .original_path
-                    .as_path()
-            )
+            Some(unplaced.require_loaded_asset().original_path.as_path())
         );
         assert_eq!(
             results[0].asset_preview_path.as_deref(),
@@ -1281,21 +1267,21 @@ mod tests {
             .unwrap();
         library
             .upsert_asset_embedding_blob(
-                source.asset.as_ref().expect("loaded placement asset").id,
+                source.require_loaded_asset().id,
                 "test-model",
                 &[1.0, 0.0],
             )
             .unwrap();
         library
             .upsert_asset_embedding_blob(
-                active.asset.as_ref().expect("loaded placement asset").id,
+                active.require_loaded_asset().id,
                 "test-model",
                 &[0.8, 0.2],
             )
             .unwrap();
         library
             .upsert_asset_embedding_blob(
-                inactive.asset.as_ref().expect("loaded placement asset").id,
+                inactive.require_loaded_asset().id,
                 "test-model",
                 &[0.99, 0.01],
             )
@@ -1312,18 +1298,11 @@ mod tests {
         .unwrap();
 
         let results = service
-            .search_with_image_pivot_with_limit(
-                source.asset.as_ref().expect("loaded placement asset").id,
-                None,
-                5,
-            )
+            .search_with_image_pivot_with_limit(source.require_loaded_asset().id, None, 5)
             .unwrap();
 
         assert_eq!(results.len(), 2);
-        assert_eq!(
-            results[0].asset_id,
-            inactive.asset.as_ref().expect("loaded placement asset").id
-        );
+        assert_eq!(results[0].asset_id, inactive.require_loaded_asset().id);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1348,7 +1327,7 @@ mod tests {
             .unwrap();
         library
             .upsert_asset_embedding_blob(
-                record.asset.as_ref().expect("loaded placement asset").id,
+                record.require_loaded_asset().id,
                 "test-model",
                 &[1.0, 0.0],
             )
@@ -1365,18 +1344,12 @@ mod tests {
         .unwrap();
 
         service
-            .enqueue_asset_index(
-                record.asset.as_ref().expect("loaded placement asset").id,
-                source_path,
-            )
+            .enqueue_asset_index(record.require_loaded_asset().id, source_path)
             .unwrap();
 
         assert!(service.try_recv_all().is_empty());
         let embedding = library
-            .load_asset_embedding(
-                record.asset.as_ref().expect("loaded placement asset").id,
-                "test-model",
-            )
+            .load_asset_embedding(record.require_loaded_asset().id, "test-model")
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -1444,26 +1417,15 @@ mod tests {
 
         let without_lod = embedding_source_path(
             &library,
-            record.asset.as_ref().expect("loaded placement asset").id,
-            &record
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path,
+            record.require_loaded_asset().id,
+            &record.require_loaded_asset().original_path,
             crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
         );
-        assert_eq!(
-            without_lod,
-            record
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-        );
+        assert_eq!(without_lod, record.require_loaded_asset().original_path);
 
         let working_lod = library
             .store_canvas_image_cache(
-                record.asset.as_ref().expect("loaded placement asset").id,
+                record.require_loaded_asset().id,
                 crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
                 &[0, 255, 0, 255],
                 1,
@@ -1474,12 +1436,8 @@ mod tests {
 
         let with_lod = embedding_source_path(
             &library,
-            record.asset.as_ref().expect("loaded placement asset").id,
-            &record
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path,
+            record.require_loaded_asset().id,
+            &record.require_loaded_asset().original_path,
             crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
         );
         assert_eq!(with_lod, working_lod);
@@ -1586,10 +1544,7 @@ mod tests {
         )
         .unwrap();
         service
-            .enqueue_asset_index(
-                record.asset.as_ref().expect("loaded placement asset").id,
-                stored_path.clone(),
-            )
+            .enqueue_asset_index(record.require_loaded_asset().id, stored_path.clone())
             .unwrap();
 
         let deadline = Instant::now() + Duration::from_secs(180);
@@ -1619,10 +1574,7 @@ mod tests {
 
         let results = service.search_with_limit("cat", 5).unwrap();
         assert!(!results.is_empty());
-        assert_eq!(
-            results[0].asset_id,
-            record.asset.as_ref().expect("loaded placement asset").id
-        );
+        assert_eq!(results[0].asset_id, record.require_loaded_asset().id);
 
         let _ = fs::remove_dir_all(root);
     }

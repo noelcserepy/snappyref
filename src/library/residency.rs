@@ -165,26 +165,14 @@ impl ImageResidencyCoordinator {
 
         let indexed_asset = (settings.semantic_search_enabled
             && asset_mime_type_supports_raster_derivatives(
-                &loaded
-                    .placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .mime_type,
+                &loaded.placement.require_loaded_asset().mime_type,
             ))
         .then(|| {
             (
+                loaded.placement.require_loaded_asset().id,
                 loaded
                     .placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .id,
-                loaded
-                    .placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
+                    .require_loaded_asset()
                     .original_path
                     .clone(),
             )
@@ -273,10 +261,10 @@ impl ImageResidencyCoordinator {
         let Some(import_worker) = import_worker else {
             return None;
         };
-        if !self.pending_cache_backfills.insert((
-            placement.asset.as_ref().expect("loaded placement asset").id,
-            lod,
-        )) {
+        if !self
+            .pending_cache_backfills
+            .insert((placement.require_loaded_asset().id, lod))
+        {
             return None;
         }
         if let Err(error) = import_worker.enqueue(ImagePrepRequest::BackfillLod {
@@ -284,10 +272,8 @@ impl ImageResidencyCoordinator {
             canvas_image_settings: canvas_image_settings(settings),
             lod,
         }) {
-            self.pending_cache_backfills.remove(&(
-                placement.asset.as_ref().expect("loaded placement asset").id,
-                lod,
-            ));
+            self.pending_cache_backfills
+                .remove(&(placement.require_loaded_asset().id, lod));
             return Some(error);
         }
         None
@@ -302,11 +288,7 @@ impl ImageResidencyCoordinator {
     ) -> Option<String> {
         if loaded_lod != CanvasImageLod::Working
             || !asset_mime_type_supports_raster_derivatives(
-                &placement
-                    .asset
-                    .as_ref()
-                    .expect("loaded placement asset")
-                    .mime_type,
+                &placement.require_loaded_asset().mime_type,
             )
         {
             return None;

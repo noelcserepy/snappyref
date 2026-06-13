@@ -88,16 +88,8 @@ fn record_intersects_viewport_world(placement: &Placement, viewport_world: egui:
 
 fn record_world_rect(placement: &Placement) -> egui::Rect {
     let size = egui::vec2(
-        placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .width as f32,
-        placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .height as f32,
+        placement.require_loaded_asset().width as f32,
+        placement.require_loaded_asset().height as f32,
     ) * placement.state.geometry.scale.max(0.01);
     egui::Rect::from_center_size(
         egui::pos2(

@@ -1003,7 +1003,7 @@ fn selected_image_pivot(
         return None;
     }
     let record = canvas.placement_for_id(selected[0])?;
-    let asset_id = record.asset.as_ref().expect("loaded placement asset").id;
+    let asset_id = record.require_loaded_asset().id;
     let asset_preview_path = library
         .map(|library| library.asset_search_preview_paths_for_assets(&[asset_id]))
         .and_then(|mut paths| paths.remove(&asset_id));

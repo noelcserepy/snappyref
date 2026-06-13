@@ -50,16 +50,8 @@ fn external_image_for_selection(
         .placement_for_id(selected_placement_ids[0])
         .ok_or_else(|| "missing selected placement".to_owned())?;
     let byte_len = external_image_byte_len(
-        placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .width,
-        placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .height,
+        placement.require_loaded_asset().width,
+        placement.require_loaded_asset().height,
     )?;
     if byte_len > MAX_EXTERNAL_CLIPBOARD_IMAGE_BYTES {
         return Ok(None);
@@ -68,16 +60,8 @@ fn external_image_for_selection(
     let Ok((rgba, width, height)) = crate::jobs::load_canvas_snapshot_pixels(
         library,
         &placement,
-        placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .width,
-        placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .height,
+        placement.require_loaded_asset().width,
+        placement.require_loaded_asset().height,
     ) else {
         return Ok(None);
     };
@@ -291,16 +275,8 @@ mod tests {
         let library = crate::library::storage::Library::initialize(root).unwrap();
         let mut canvas = crate::canvas::CanvasState::default();
         let mut placement = test_record(1, 1);
-        placement
-            .asset
-            .as_mut()
-            .expect("loaded placement asset")
-            .width = 20_000;
-        placement
-            .asset
-            .as_mut()
-            .expect("loaded placement asset")
-            .height = 20_000;
+        placement.require_loaded_asset_mut().width = 20_000;
+        placement.require_loaded_asset_mut().height = 20_000;
         placement.state.geometry.size = eframe::egui::vec2(20_000.0, 20_000.0);
         canvas.add_prepared_placement_image(
             &ctx,
@@ -322,11 +298,7 @@ mod tests {
         let root = temp_library_root("snappyref-copy-unsupported-image");
         let library = crate::library::storage::Library::initialize(root).unwrap();
         let mut placement = test_record(1, 1);
-        placement
-            .asset
-            .as_mut()
-            .expect("loaded placement asset")
-            .mime_type = "image/svg+xml".to_owned();
+        placement.require_loaded_asset_mut().mime_type = "image/svg+xml".to_owned();
 
         let mut canvas = crate::canvas::CanvasState::default();
         canvas.add_prepared_placement_image(

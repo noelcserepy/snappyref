@@ -134,6 +134,26 @@ impl Placement {
         matches!(self.content, PlacementContent::Loaded { .. })
     }
 
+    pub fn loaded_asset(&self) -> Option<&super::ImageAsset> {
+        self.asset.as_ref()
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn loaded_asset_mut(&mut self) -> Option<&mut super::ImageAsset> {
+        self.asset.as_mut()
+    }
+
+    pub fn require_loaded_asset(&self) -> &super::ImageAsset {
+        self.loaded_asset()
+            .expect("loaded Placement should carry its Asset")
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn require_loaded_asset_mut(&mut self) -> &mut super::ImageAsset {
+        self.loaded_asset_mut()
+            .expect("loaded Placement should carry its Asset")
+    }
+
     pub fn id(&self) -> PlacementId {
         self.state.id
     }

@@ -616,9 +616,9 @@ pub(crate) fn image_texture_group_count_for_records(
         if !image_rect.intersects(cull_rect) {
             continue;
         }
-        if previous_asset_id != Some(placement.asset.as_ref().expect("loaded placement asset").id) {
+        if previous_asset_id != Some(placement.require_loaded_asset().id) {
             groups += 1;
-            previous_asset_id = Some(placement.asset.as_ref().expect("loaded placement asset").id);
+            previous_asset_id = Some(placement.require_loaded_asset().id);
         }
     }
     groups

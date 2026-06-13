@@ -36,7 +36,7 @@ fn loaded_placements_load_as_committed_loaded_content() {
     assert_eq!(
         reloaded[0].content,
         PlacementContent::Loaded {
-            asset_id: placement.asset.as_ref().expect("loaded placement asset").id
+            asset_id: placement.require_loaded_asset().id
         }
     );
     assert!(reloaded[0].asset.is_some());
@@ -375,14 +375,7 @@ fn update_preservation_smoke() {
     session.sidebar_open = true;
     session.sidebar_tab = "boards".to_owned();
     library.save_user_session(&session).unwrap();
-    let stored_original_bytes = fs::read(
-        &imported
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .original_path,
-    )
-    .unwrap();
+    let stored_original_bytes = fs::read(&imported.require_loaded_asset().original_path).unwrap();
     drop(library);
 
     fs::remove_file(app_root.join("SnappyRef.app")).unwrap();
@@ -420,41 +413,19 @@ fn update_preservation_smoke() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].state.id, imported.state.id);
     assert_eq!(
-        items[0].asset.as_ref().expect("loaded placement asset").id,
-        imported.asset.as_ref().expect("loaded placement asset").id
+        items[0].require_loaded_asset().id,
+        imported.require_loaded_asset().id
     );
     assert_eq!(items[0].state.geometry.center.x, 42.0);
     assert_eq!(items[0].state.geometry.center.y, 24.0);
     assert_eq!(items[0].state.geometry.scale, 1.5);
     assert_eq!(
-        items[0]
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .original_path,
-        imported
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .original_path
+        items[0].require_loaded_asset().original_path,
+        imported.require_loaded_asset().original_path
     );
-    assert!(
-        items[0]
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .original_path
-            .exists()
-    );
+    assert!(items[0].require_loaded_asset().original_path.exists());
     assert_eq!(
-        fs::read(
-            &items[0]
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .original_path
-        )
-        .unwrap(),
+        fs::read(&items[0].require_loaded_asset().original_path).unwrap(),
         stored_original_bytes
     );
 
@@ -917,13 +888,9 @@ fn delete_board_archives_board_preserves_assets_and_archives_board_content() {
     assert!(library.load_placements_for_board(second.id).is_err());
     assert!(
         library
-            .asset_original_paths_for_assets(&[item
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .id])
+            .asset_original_paths_for_assets(&[item.require_loaded_asset().id])
             .unwrap()
-            .contains_key(&item.asset.as_ref().expect("loaded placement asset").id)
+            .contains_key(&item.require_loaded_asset().id)
     );
     {
         let connection = Connection::open(root.join("library.db")).unwrap();
@@ -979,11 +946,7 @@ fn archive_assets_removes_their_placements_from_all_boards_and_preserves_files()
     library.set_active_board(second.id).unwrap();
     let second_placement = library
         .create_placement_from_asset(
-            first_item
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .id,
+            first_item.require_loaded_asset().id,
             egui::pos2(50.0, 60.0),
             1.0,
             0.0,
@@ -992,44 +955,27 @@ fn archive_assets_removes_their_placements_from_all_boards_and_preserves_files()
         .unwrap();
     library
         .upsert_asset_embedding_blob(
-            first_item
-                .asset
-                .as_ref()
-                .expect("loaded placement asset")
-                .id,
+            first_item.require_loaded_asset().id,
             "test-model",
             &[1.0, 0.0],
         )
         .unwrap();
     library
         .upsert_asset_embedding_blob(
-            kept_item.asset.as_ref().expect("loaded placement asset").id,
+            kept_item.require_loaded_asset().id,
             "test-model",
             &[0.0, 1.0],
         )
         .unwrap();
 
     library
-        .archive_assets(&[first_item
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .id])
+        .archive_assets(&[first_item.require_loaded_asset().id])
         .unwrap();
 
-    assert!(
-        first_item
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .original_path
-            .exists()
-    );
+    assert!(first_item.require_loaded_asset().original_path.exists());
     assert!(
         second_placement
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
+            .require_loaded_asset()
             .original_path
             .exists()
     );
@@ -1037,12 +983,8 @@ fn archive_assets_removes_their_placements_from_all_boards_and_preserves_files()
     let first_placements = library.load_placements().unwrap();
     assert_eq!(first_placements.len(), 1);
     assert_eq!(
-        first_placements[0]
-            .asset
-            .as_ref()
-            .expect("loaded placement asset")
-            .id,
-        kept_item.asset.as_ref().expect("loaded placement asset").id
+        first_placements[0].require_loaded_asset().id,
+        kept_item.require_loaded_asset().id
     );
     library.set_active_board(second.id).unwrap();
     assert!(library.load_placements().unwrap().is_empty());
@@ -1052,7 +994,7 @@ fn archive_assets_removes_their_placements_from_all_boards_and_preserves_files()
             .iter()
             .map(|embedding| embedding.asset_id)
             .collect::<Vec<_>>(),
-        vec![kept_item.asset.as_ref().expect("loaded placement asset").id]
+        vec![kept_item.require_loaded_asset().id]
     );
 
     let _ = fs::remove_dir_all(root);
@@ -1093,14 +1035,9 @@ fn exact_dedupe_relinks_placements_to_first_asset_and_deletes_duplicates() {
             1.0,
         )
         .unwrap();
-    let first_asset_id = first.asset.as_ref().expect("loaded placement asset").id;
-    let duplicate_asset_id = duplicate.asset.as_ref().expect("loaded placement asset").id;
-    let duplicate_original_path = duplicate
-        .asset
-        .as_ref()
-        .expect("loaded placement asset")
-        .original_path
-        .clone();
+    let first_asset_id = first.require_loaded_asset().id;
+    let duplicate_asset_id = duplicate.require_loaded_asset().id;
+    let duplicate_original_path = duplicate.require_loaded_asset().original_path.clone();
     library
         .upsert_asset_embedding_blob(first_asset_id, "test-model", &[1.0, 0.0])
         .unwrap();
@@ -1639,7 +1576,7 @@ fn embedding_backfill_includes_unplaced_library_assets() {
     library.archive_placements(&[unplaced.state.id]).unwrap();
     library
         .upsert_asset_embedding_blob(
-            ready.asset.as_ref().expect("loaded placement asset").id,
+            ready.require_loaded_asset().id,
             "mobileclip_s0",
             &[1.0, 0.0],
         )
@@ -1653,8 +1590,8 @@ fn embedding_backfill_includes_unplaced_library_assets() {
     assert_eq!(
         job_asset_ids,
         vec![
-            pending.asset.as_ref().expect("loaded placement asset").id,
-            unplaced.asset.as_ref().expect("loaded placement asset").id
+            pending.require_loaded_asset().id,
+            unplaced.require_loaded_asset().id
         ]
     );
 
@@ -1710,21 +1647,21 @@ fn embedding_backfill_skips_svg_assets() {
             .iter()
             .map(|job| job.asset_id)
             .collect::<Vec<_>>(),
-        vec![raster.asset.as_ref().expect("loaded placement asset").id]
+        vec![raster.require_loaded_asset().id]
     );
     assert_eq!(
         live_jobs.iter().map(|job| job.asset_id).collect::<Vec<_>>(),
-        vec![raster.asset.as_ref().expect("loaded placement asset").id]
+        vec![raster.require_loaded_asset().id]
     );
     assert!(
         !active_jobs
             .iter()
-            .any(|job| job.asset_id == svg.asset.as_ref().expect("loaded placement asset").id)
+            .any(|job| job.asset_id == svg.require_loaded_asset().id)
     );
     assert!(
         !live_jobs
             .iter()
-            .any(|job| job.asset_id == svg.asset.as_ref().expect("loaded placement asset").id)
+            .any(|job| job.asset_id == svg.require_loaded_asset().id)
     );
 
     let _ = fs::remove_dir_all(root);
@@ -1761,7 +1698,7 @@ fn active_board_embedding_backfill_jobs_include_active_placements_only() {
         .unwrap();
     library
         .upsert_asset_embedding_blob(
-            ready.asset.as_ref().expect("loaded placement asset").id,
+            ready.require_loaded_asset().id,
             "mobileclip_s0",
             &[1.0, 0.0],
         )
@@ -1786,12 +1723,9 @@ fn active_board_embedding_backfill_jobs_include_active_placements_only() {
         .unwrap();
 
     let job_asset_ids = jobs.iter().map(|job| job.asset_id).collect::<Vec<_>>();
-    assert_eq!(
-        job_asset_ids,
-        vec![active.asset.as_ref().expect("loaded placement asset").id]
-    );
-    assert!(!job_asset_ids.contains(&ready.asset.as_ref().expect("loaded placement asset").id));
-    assert!(!job_asset_ids.contains(&inactive.asset.as_ref().expect("loaded placement asset").id));
+    assert_eq!(job_asset_ids, vec![active.require_loaded_asset().id]);
+    assert!(!job_asset_ids.contains(&ready.require_loaded_asset().id));
+    assert!(!job_asset_ids.contains(&inactive.require_loaded_asset().id));
 
     let _ = fs::remove_dir_all(root);
 }
@@ -1816,7 +1750,7 @@ fn embedding_backfill_retries_failed_assets_after_never_tried_assets() {
 
     library
         .record_retryable_asset_embedding_failure(
-            retry.asset.as_ref().expect("loaded placement asset").id,
+            retry.require_loaded_asset().id,
             "mobileclip_s0",
             768,
             "temporary failure",
@@ -1832,7 +1766,7 @@ fn embedding_backfill_retries_failed_assets_after_never_tried_assets() {
             .iter()
             .map(|job| job.asset_id)
             .collect::<Vec<_>>(),
-        vec![fresh.asset.as_ref().expect("loaded placement asset").id]
+        vec![fresh.require_loaded_asset().id]
     );
 
     let retry_jobs = library
@@ -1843,7 +1777,7 @@ fn embedding_backfill_retries_failed_assets_after_never_tried_assets() {
             .iter()
             .map(|job| job.asset_id)
             .collect::<Vec<_>>(),
-        vec![retry.asset.as_ref().expect("loaded placement asset").id]
+        vec![retry.require_loaded_asset().id]
     );
 
     let _ = fs::remove_dir_all(root);
@@ -1862,7 +1796,7 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
 
     library
         .record_retryable_asset_embedding_failure(
-            placement.asset.as_ref().expect("loaded placement asset").id,
+            placement.require_loaded_asset().id,
             "mobileclip_s0",
             768,
             "temporary failure",
@@ -1879,7 +1813,7 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
 
     library
         .record_retryable_asset_embedding_failure(
-            placement.asset.as_ref().expect("loaded placement asset").id,
+            placement.require_loaded_asset().id,
             "mobileclip_s0",
             768,
             "temporary failure again",
@@ -1902,7 +1836,7 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
 
     library
         .record_retryable_asset_embedding_failure(
-            placement.asset.as_ref().expect("loaded placement asset").id,
+            placement.require_loaded_asset().id,
             "mobileclip_s0",
             768,
             "temporary failure exhausted",
@@ -1932,7 +1866,7 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
 
     library
         .record_retryable_asset_embedding_failure(
-            placement.asset.as_ref().expect("loaded placement asset").id,
+            placement.require_loaded_asset().id,
             "mobileclip_s0",
             768,
             "temporary failure",
@@ -1941,7 +1875,7 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
         .unwrap();
     library
         .upsert_asset_embedding_status(
-            placement.asset.as_ref().expect("loaded placement asset").id,
+            placement.require_loaded_asset().id,
             "mobileclip_s0",
             768,
             EmbeddingStatus::Pending,
@@ -1950,7 +1884,7 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
         .unwrap();
     library
         .record_retryable_asset_embedding_failure(
-            placement.asset.as_ref().expect("loaded placement asset").id,
+            placement.require_loaded_asset().id,
             "mobileclip_s0",
             768,
             "temporary failure again",
@@ -1974,7 +1908,7 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
 
     library
         .upsert_asset_embedding_blob(
-            placement.asset.as_ref().expect("loaded placement asset").id,
+            placement.require_loaded_asset().id,
             "mobileclip_s0",
             &[1.0, 0.0],
         )
@@ -2002,7 +1936,7 @@ fn terminal_embedding_failures_are_not_automatic_retry_jobs() {
 
     library
         .record_terminal_asset_embedding_failure(
-            placement.asset.as_ref().expect("loaded placement asset").id,
+            placement.require_loaded_asset().id,
             "mobileclip_s0",
             768,
             "failed to open image",
@@ -2044,7 +1978,7 @@ fn next_embedding_backfill_job_prefers_never_tried_assets_before_retries() {
         .unwrap();
     library
         .record_retryable_asset_embedding_failure(
-            retry.asset.as_ref().expect("loaded placement asset").id,
+            retry.require_loaded_asset().id,
             "mobileclip_s0",
             768,
             "temporary failure",
@@ -2056,14 +1990,11 @@ fn next_embedding_backfill_job_prefers_never_tried_assets_before_retries() {
         .next_embedding_backfill_job_for_model("mobileclip_s0", 1_000)
         .unwrap()
         .unwrap();
-    assert_eq!(
-        job.asset_id,
-        fresh.asset.as_ref().expect("loaded placement asset").id
-    );
+    assert_eq!(job.asset_id, fresh.require_loaded_asset().id);
 
     library
         .upsert_asset_embedding_blob(
-            fresh.asset.as_ref().expect("loaded placement asset").id,
+            fresh.require_loaded_asset().id,
             "mobileclip_s0",
             &[1.0, 0.0],
         )
@@ -2072,10 +2003,7 @@ fn next_embedding_backfill_job_prefers_never_tried_assets_before_retries() {
         .next_embedding_backfill_job_for_model("mobileclip_s0", 1_000)
         .unwrap()
         .unwrap();
-    assert_eq!(
-        retry_job.asset_id,
-        retry.asset.as_ref().expect("loaded placement asset").id
-    );
+    assert_eq!(retry_job.asset_id, retry.require_loaded_asset().id);
 
     let _ = fs::remove_dir_all(root);
 }
@@ -2112,7 +2040,7 @@ fn cropped_relink_requires_new_asset_embedding() {
         .unwrap();
     library
         .upsert_asset_embedding_blob(
-            placement.asset.as_ref().expect("loaded placement asset").id,
+            placement.require_loaded_asset().id,
             "mobileclip_s0",
             &[1.0, 0.0],
         )
@@ -2191,42 +2119,24 @@ fn embedding_helpers_scope_to_requested_model_key() {
         .unwrap();
 
     library
-        .upsert_asset_embedding_blob(
-            first.asset.as_ref().expect("loaded placement asset").id,
-            "clip_key",
-            &[1.0, 0.0],
-        )
+        .upsert_asset_embedding_blob(first.require_loaded_asset().id, "clip_key", &[1.0, 0.0])
         .unwrap();
     library
-        .upsert_asset_embedding_blob(
-            second.asset.as_ref().expect("loaded placement asset").id,
-            "clip_key",
-            &[0.0, 1.0],
-        )
+        .upsert_asset_embedding_blob(second.require_loaded_asset().id, "clip_key", &[0.0, 1.0])
         .unwrap();
     library
-        .upsert_asset_embedding_blob(
-            first.asset.as_ref().expect("loaded placement asset").id,
-            "siglip_key",
-            &[0.5, 0.5],
-        )
+        .upsert_asset_embedding_blob(first.require_loaded_asset().id, "siglip_key", &[0.5, 0.5])
         .unwrap();
 
     let jobs = library
         .missing_live_canvas_asset_jobs_for_model("siglip_key")
         .unwrap();
     assert_eq!(jobs.len(), 1);
-    assert_eq!(
-        jobs[0].asset_id,
-        second.asset.as_ref().expect("loaded placement asset").id
-    );
+    assert_eq!(jobs[0].asset_id, second.require_loaded_asset().id);
 
     let embeddings = library.load_active_canvas_embeddings("siglip_key").unwrap();
     assert_eq!(embeddings.len(), 1);
-    assert_eq!(
-        embeddings[0].asset_id,
-        first.asset.as_ref().expect("loaded placement asset").id
-    );
+    assert_eq!(embeddings[0].asset_id, first.require_loaded_asset().id);
 
     let _ = fs::remove_dir_all(root);
 }
