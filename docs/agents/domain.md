@@ -12,7 +12,7 @@ Before normal planning or issue drafting, read:
 - `docs/skills/perf-profiling/SKILL.md` when the work involves startup, import, embedding, idle CPU, or memory performance
 - `docs/skills/patchnotes/SKILL.md` when the work involves writing user-facing patchnotes, release notes, changelog copy, or a release summary from PRs since the last version release
 - `docs/skills/use-windows/SKILL.md` when the work needs Windows-native checks, builds, tests, or sync from the Mac development checkout
-- `DESIGN_SYSTEM.md` when the work involves shared UI semantics
+- `src/ui/theme.rs`, `src/ui/motion.rs`, and the relevant UI/component module when the work involves shared UI semantics
 
 If a file does not exist, proceed silently. Do not create new domain docs upfront. `grill-with-docs` creates or updates domain docs lazily when terms or durable decisions are resolved.
 

@@ -13,6 +13,8 @@ const IMAGE_SELECTION_BORDER_COLOR: egui::Color32 = crate::ui::theme::TEXT;
 const GUIDE_SNAP_COLOR: egui::Color32 = crate::ui::theme::ACCENT_ORANGE;
 const GUIDE_SNAP_X_RADIUS: f32 = 2.0;
 
+/// Provisional search/import previews use the same square 1px image-selection
+/// border as selected canvas Placements and selected search-result thumbnails.
 pub(crate) fn paint_provisional_placement_previews(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -170,6 +172,11 @@ pub(crate) fn paint_selected_placement_borders(
     }
 }
 
+/// Selected placement borders are painted in a dedicated top overlay pass.
+///
+/// The selected Placement's own Stack Order still controls its image content,
+/// but the selection border must remain visible above every Placement,
+/// including higher-z neighbors that overlap the selected image.
 pub(super) fn selected_placement_border_paint_ids(
     state: &CanvasState,
     rect: egui::Rect,

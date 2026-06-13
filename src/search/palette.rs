@@ -7,6 +7,13 @@ use eframe::egui;
 
 use crate::search::semantic::SearchResultAssetEntry;
 
+// Search palette chrome is an overlay workflow, not a second sidebar.
+//
+// It uses one fixed panel width, a text-first input row, bare keyboard hints,
+// library-wide Asset Result tiles, and compact footer metadata. Selected
+// result thumbnails share the same square 1px `TEXT` border language as
+// selected canvas Placements and search drag previews; selecting a result
+// does not imply an existing canvas Placement is selected.
 pub(crate) const SEARCH_DEBOUNCE_MS: f32 = 120.0;
 pub(crate) const SEARCH_OVERLAY_TOP_MARGIN: f32 = 56.0;
 pub(crate) const PALETTE_WIDTH: f32 = 660.0;
@@ -16,7 +23,7 @@ pub(crate) const SEARCH_RESULT_PAGE_SIZE: usize = 5;
 
 const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 144.0;
 const SEARCH_RESULT_LIBRARY_PREVIEW_MAX_SIDE: u32 = 512;
-const KBD_PILL_SIZE: egui::Vec2 = egui::vec2(28.0, 28.0);
+const KBD_HINT_CELL_SIZE: egui::Vec2 = egui::vec2(28.0, 28.0);
 const PALETTE_CHROME_Y_MARGIN: i8 = crate::ui::theme::SPACE_3 as i8;
 const PALETTE_FOOTER_STATUS_WIDTH: f32 = 96.0;
 const PALETTE_FOOTER_STATUS_DOT_SIZE: f32 = 6.0;
@@ -223,6 +230,11 @@ pub(crate) fn search_result_grid_content_height(result_count: usize, columns: us
         + (rows.saturating_sub(1) as f32) * crate::ui::theme::SPACE_2
 }
 
+/// Paint one library-wide Asset Result tile.
+///
+/// Hover, press/drag, and selected acquisition feedback is tactile but bounded
+/// to painting: allocated grid size does not change, and the selected image
+/// border stays square, 1px, and image-aligned.
 pub(crate) fn search_result_tile(
     ui: &mut egui::Ui,
     group: &SearchResultAssetEntry,
@@ -427,7 +439,7 @@ pub(crate) fn paint_palette_input_row(
         })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.set_min_height(KBD_PILL_SIZE.y);
+                ui.set_min_height(KBD_HINT_CELL_SIZE.y);
                 ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
                 let placeholder = if let Some(pivot) = pivot {
                     if paint_image_pivot_pill(ui, pivot, asset_preview_cache) {
@@ -436,7 +448,7 @@ pub(crate) fn paint_palette_input_row(
                     "Refine with a term..."
                 } else {
                     let (icon_rect, _) =
-                        ui.allocate_exact_size(KBD_PILL_SIZE, egui::Sense::hover());
+                        ui.allocate_exact_size(KBD_HINT_CELL_SIZE, egui::Sense::hover());
                     let search_icon_rect =
                         egui::Rect::from_center_size(icon_rect.center(), egui::vec2(16.0, 16.0));
                     paint_search_icon(ui, search_icon_rect, crate::ui::theme::TEXT_SUBTLE);
@@ -463,7 +475,7 @@ pub(crate) fn paint_palette_input_row(
                         .vertical_align(egui::Align::Center)
                         .frame(egui::Frame::NONE),
                 );
-                paint_kbd_pill(ui, "esc");
+                paint_kbd_hint(ui, "esc");
                 response = Some(resp);
             });
         });
@@ -568,16 +580,16 @@ fn paint_search_icon(ui: &mut egui::Ui, rect: egui::Rect, color: egui::Color32) 
     );
 }
 
-/// Keyboard hints read as bare monospace text; the reserved pill-sized cell
+/// Keyboard hints read as bare monospace text; the reserved fixed-size cell
 /// keeps hint rows aligned without any box chrome.
-fn paint_kbd_pill(ui: &mut egui::Ui, label: &str) {
+fn paint_kbd_hint(ui: &mut egui::Ui, label: &str) {
     let label_size = if kbd_label_uses_small_symbol_glyphs(label) {
         14.0
     } else {
         10.0
     };
 
-    let (rect, _) = ui.allocate_exact_size(KBD_PILL_SIZE, egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(KBD_HINT_CELL_SIZE, egui::Sense::hover());
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
         egui::FontId::monospace(label_size),
@@ -615,7 +627,7 @@ fn footer_hint_label(ui: &mut egui::Ui, label: &str) {
         crate::ui::theme::TEXT_SUBTLE,
     );
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(galley.size().x, KBD_PILL_SIZE.y),
+        egui::vec2(galley.size().x, KBD_HINT_CELL_SIZE.y),
         egui::Sense::hover(),
     );
     ui.painter().galley(
@@ -844,21 +856,21 @@ pub(crate) fn paint_palette_footer(
         })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.set_min_height(KBD_PILL_SIZE.y);
+                ui.set_min_height(KBD_HINT_CELL_SIZE.y);
                 ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
                 if result_count == 0 {
                     let idle_text = palette_status_text(status, "Ready");
                     paint_palette_footer_status(ui, &idle_text);
                 } else if has_more_results {
-                    let more_hint_width = KBD_PILL_SIZE.x
+                    let more_hint_width = KBD_HINT_CELL_SIZE.x
                         + crate::ui::theme::SPACE_2
                         + footer_hint_label_width(ui, "More");
                     ui.allocate_ui_with_layout(
-                        egui::vec2(more_hint_width, KBD_PILL_SIZE.y),
+                        egui::vec2(more_hint_width, KBD_HINT_CELL_SIZE.y),
                         crate::ui::layout::row_center_y_layout(),
                         |ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
-                            paint_kbd_pill(ui, "↓");
+                            paint_kbd_hint(ui, "↓");
                             ui.add_space(crate::ui::theme::SPACE_2);
                             footer_hint_label(ui, "More");
                         },
@@ -868,18 +880,18 @@ pub(crate) fn paint_palette_footer(
                     ui.spacing_mut().item_spacing.x = 4.0;
                     if result_count == 0 {
                         footer_hint_label(ui, "Select");
-                        paint_kbd_pill(ui, "↵");
+                        paint_kbd_hint(ui, "↵");
                         ui.add_space(8.0);
                         footer_hint_label(ui, "Navigate");
-                        paint_kbd_pill(ui, "↓");
-                        paint_kbd_pill(ui, "↑");
+                        paint_kbd_hint(ui, "↓");
+                        paint_kbd_hint(ui, "↑");
                     } else {
                         footer_hint_label(ui, "Place All");
-                        paint_kbd_pill(ui, "↵");
-                        paint_kbd_pill(ui, command_modifier_key_label());
+                        paint_kbd_hint(ui, "↵");
+                        paint_kbd_hint(ui, command_modifier_key_label());
                         ui.add_space(8.0);
                         footer_hint_label(ui, "Place");
-                        paint_kbd_pill(ui, "↵");
+                        paint_kbd_hint(ui, "↵");
                     }
                 });
             });
@@ -888,7 +900,7 @@ pub(crate) fn paint_palette_footer(
 
 fn paint_palette_footer_status(ui: &mut egui::Ui, label: &str) {
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(PALETTE_FOOTER_STATUS_WIDTH, KBD_PILL_SIZE.y),
+        egui::vec2(PALETTE_FOOTER_STATUS_WIDTH, KBD_HINT_CELL_SIZE.y),
         egui::Sense::hover(),
     );
     let dot_center = egui::pos2(
@@ -928,12 +940,12 @@ fn palette_status_text(status: &SearchOverlayStatus, idle_text: &'static str) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{KBD_PILL_SIZE, PALETTE_CHROME_Y_MARGIN, PALETTE_FOOTER_STATUS_WIDTH};
+    use super::{KBD_HINT_CELL_SIZE, PALETTE_CHROME_Y_MARGIN, PALETTE_FOOTER_STATUS_WIDTH};
 
     #[test]
     fn palette_header_and_footer_share_chrome_height() {
-        let header_height = KBD_PILL_SIZE.y + f32::from(PALETTE_CHROME_Y_MARGIN) * 2.0;
-        let footer_height = KBD_PILL_SIZE.y + f32::from(PALETTE_CHROME_Y_MARGIN) * 2.0;
+        let header_height = KBD_HINT_CELL_SIZE.y + f32::from(PALETTE_CHROME_Y_MARGIN) * 2.0;
+        let footer_height = KBD_HINT_CELL_SIZE.y + f32::from(PALETTE_CHROME_Y_MARGIN) * 2.0;
 
         assert_eq!(header_height, footer_height);
     }

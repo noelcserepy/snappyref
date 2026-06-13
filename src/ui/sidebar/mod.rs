@@ -104,6 +104,8 @@ pub(crate) fn block_sidebar_input(ctx: &egui::Context, sidebar_rect: egui::Rect)
         return;
     }
 
+    // Modal dialogs must block sidebar interaction without painting anything.
+    // A visible frame here reads as a transient sidebar outline.
     egui::Area::new(egui::Id::new("sidebar_blocker"))
         .order(egui::Order::Tooltip)
         .fixed_pos(sidebar_rect.min)

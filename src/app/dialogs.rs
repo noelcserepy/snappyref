@@ -13,6 +13,8 @@ fn fade_frame(frame: egui::Frame, entrance: f32) -> egui::Frame {
 }
 
 pub(super) fn destructive_confirmation_frame(ctx: &egui::Context, entrance: f32) -> egui::Frame {
+    // Destructive dialogs keep the shell neutral. The destructive color belongs
+    // on the irreversible action, not on the panel edge behind the sidebar.
     fade_frame(
         egui::Frame::window(&ctx.global_style())
             .fill(crate::ui::theme::SURFACE)
@@ -122,7 +124,7 @@ pub(super) fn destructive_action_button(label: &str) -> egui::Button<'_> {
             .color(crate::ui::theme::TEXT),
     )
     .fill(crate::ui::theme::DESTRUCTIVE_FILL)
-    .stroke(egui::Stroke::new(1.0, crate::ui::theme::DESTRUCTIVE_STROKE))
+    .stroke(egui::Stroke::new(1.0, crate::ui::theme::DESTRUCTIVE_EDGE))
     .corner_radius(crate::ui::theme::RADIUS_INLINE)
 }
 

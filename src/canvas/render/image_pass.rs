@@ -381,7 +381,7 @@ fn paint_unloaded_placement(
         ),
         crate::data::PlacementContent::Failed { .. } => (
             crate::ui::theme::DESTRUCTIVE_FILL,
-            egui::Stroke::new(1.0, crate::ui::theme::DESTRUCTIVE_STROKE),
+            egui::Stroke::new(1.0, crate::ui::theme::DESTRUCTIVE_EDGE),
             Some("Failed"),
             false,
         ),
@@ -412,6 +412,8 @@ fn paint_unloaded_placement(
         );
     }
     if loading {
+        // Loading Placements are already real canvas content. The breathing
+        // overlay says "resolving" without delaying the image once it is ready.
         const BREATH_PERIOD_SECS: f32 = 1.6;
         const BREATH_MIN: f32 = 0.015;
         const BREATH_MAX: f32 = 0.07;
