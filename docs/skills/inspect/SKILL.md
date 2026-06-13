@@ -83,6 +83,13 @@ docs/skills/inspect/scripts/check-harness.sh
   states.
 - `blue-image-search-drag`: select/move image, open image search, select three
   results, drag provisional placements, drop and verify loaded placements.
+- `delete-board-modal-flash`: opens the delete-board confirmation and captures
+  the first modal frame to prove the sidebar blocker stays invisible.
+- `search-palette-footer`: captures empty and populated search-palette footer
+  states with fixed-width result/status metadata.
+- `compact-equal-size-images`, `compact-mixed-column-images`, and
+  `compact-windows-column-images`: screenshot-backed compact-arrange examples
+  for equal, mixed, and window-shaped placement groups.
 
 Use these as examples, not as a closed set.
 

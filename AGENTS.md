@@ -41,7 +41,13 @@ Use [use-windows](docs/skills/use-windows/SKILL.md) when checking, building, tes
 
 Use the design-system skill before planning or editing any UI, visual semantics, shared components, tokens, styling, layout, motion, or design-system behavior.
 
-Read `DESIGN_SYSTEM.md` before UI work. Treat it as the canonical visual vocabulary for this project.
+There is no standalone design-system document. Treat the code as the canonical visual vocabulary:
+
+- start with `src/ui/theme.rs` for shared tokens, spacing, radius, type, color, and motion constants
+- read `src/ui/motion.rs` for shared motion semantics
+- read the relevant component/module before changing a pattern
+- use inspect scenarios/artifacts as runtime visual evidence
+- when visual semantics change, update the owning token/component comment, API name, test, or inspect scenario in the same change
 
 ## Testing Notes
 

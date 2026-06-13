@@ -27,6 +27,11 @@ const SEARCH_RESULT_SCROLL_ANIMATION: egui::style::ScrollAnimation = egui::style
 const SEARCH_RESULT_SCROLL_MARGIN: f32 = 12.0;
 
 impl SearchController {
+    /// Show the Semantic Search overlay.
+    ///
+    /// The palette is anchored from the top of the app and enters with the
+    /// shared fast settle motion. It stays modal to search/library recall, but
+    /// should not borrow sidebar behavior or become persistent navigation.
     pub(crate) fn show_overlay(
         &mut self,
         ctx: &egui::Context,

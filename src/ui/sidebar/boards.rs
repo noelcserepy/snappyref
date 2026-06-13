@@ -2,6 +2,13 @@ use eframe::egui;
 
 use super::{SidebarBoardAction, shortcuts};
 
+/// Paints the Boards Tab navigation list.
+///
+/// Board rows are a product-specific navigation pattern: text-first, compact,
+/// active rail + quiet fill, bare shortcut metadata, and a destructive delete
+/// affordance that stays quiet until the row is hot. Do not reuse this row
+/// painter for generic lists; it assumes board switching, renaming, deletion,
+/// and stable row geometry are all part of the same interaction.
 pub(super) fn paint_sidebar_boards(
     ui: &mut egui::Ui,
     boards: &[crate::data::BoardSummary],
@@ -124,6 +131,9 @@ pub(super) enum BoardRowAction {
 
 pub(super) const BOARD_ROW_HEIGHT: f32 = 48.0;
 
+/// Board navigation rows allocate a fixed rect and paint text/action states
+/// manually so hover, press, shortcut replacement, and rename focus cannot
+/// shift list geometry.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn paint_board_row(
     ui: &mut egui::Ui,

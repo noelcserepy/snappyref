@@ -259,8 +259,12 @@ fn paint_background_mode_control(
     }
 }
 
-/// Quiet segmented choices with a single accent underline that slides
-/// between the options when the value changes.
+/// Quiet segmented choices for read-heavy settings rows.
+///
+/// Only the selected value gets a persistent mark: a sliding accent underline.
+/// Idle choices should read as available text, not boxed pills. Keep this
+/// pattern inside sidebar/settings surfaces; canvas toolbars need more
+/// explicit targets.
 fn paint_inline_choice_group<T: PartialEq + Copy>(
     ui: &mut egui::Ui,
     id_source: &'static str,
