@@ -1,7 +1,45 @@
-use super::assets::insert_asset_row;
+use super::assets::{insert_asset_row, load_exact_asset_for_original};
 use super::boards::{active_board_id, board_is_non_archived};
 use super::stack_order::append_canvas_stack_item;
 use super::*;
+
+struct ExactAssetPersistResult {
+    asset: ImageAsset,
+    inserted: bool,
+}
+
+fn load_or_insert_exact_asset(
+    transaction: &Transaction<'_>,
+    stored_path: &Path,
+    mime_type: &str,
+    width: u32,
+    height: u32,
+    file_size: u64,
+    original_sha256: Option<&str>,
+) -> Result<ExactAssetPersistResult, String> {
+    if let Some(original_sha256) = original_sha256
+        && let Some(asset) = load_exact_asset_for_original(transaction, file_size, original_sha256)?
+    {
+        return Ok(ExactAssetPersistResult {
+            asset,
+            inserted: false,
+        });
+    }
+
+    let asset = insert_asset_row(
+        transaction,
+        stored_path,
+        mime_type,
+        width,
+        height,
+        file_size,
+        original_sha256,
+    )?;
+    Ok(ExactAssetPersistResult {
+        asset,
+        inserted: true,
+    })
+}
 
 fn insert_placement_row(
     transaction: &Transaction<'_>,
@@ -120,6 +158,7 @@ fn decode_placement_lifecycle(value: &str) -> PlacementLifecycle {
 }
 
 impl Library {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn persist_imported_image(
         &self,
         stored_path: &Path,
@@ -144,6 +183,7 @@ impl Library {
         )
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn persist_imported_image_to_board(
         &self,
         board_id: i64,
@@ -155,6 +195,31 @@ impl Library {
         desired_world: egui::Pos2,
         initial_scale: f32,
     ) -> Result<Placement, String> {
+        self.persist_imported_image_to_board_with_hash(
+            board_id,
+            stored_path,
+            mime_type,
+            width,
+            height,
+            file_size,
+            None,
+            desired_world,
+            initial_scale,
+        )
+    }
+
+    pub fn persist_imported_image_to_board_with_hash(
+        &self,
+        board_id: i64,
+        stored_path: &Path,
+        mime_type: &str,
+        width: u32,
+        height: u32,
+        file_size: u64,
+        original_sha256: Option<&str>,
+        desired_world: egui::Pos2,
+        initial_scale: f32,
+    ) -> Result<Placement, String> {
         let mut connection = self.connection()?;
         if !board_is_non_archived(&connection, board_id)? {
             return Err(format!(
@@ -162,23 +227,25 @@ impl Library {
             ));
         }
         let transaction = connection
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("failed to start transaction: {error}"))?;
 
-        let asset = insert_asset_row(
+        let persisted_asset = load_or_insert_exact_asset(
             &transaction,
             stored_path,
             mime_type,
             width,
             height,
             file_size,
+            original_sha256,
         )?;
+        let asset = persisted_asset.asset;
         let item = insert_placement_row(
             &transaction,
             board_id,
             asset.id,
             desired_world,
-            egui::vec2(width as f32, height as f32),
+            egui::vec2(asset.width as f32, asset.height as f32),
             initial_scale,
         )?;
         append_canvas_stack_item(&transaction, board_id, CanvasStackItem::Placement(item.id))?;
@@ -190,6 +257,7 @@ impl Library {
         Ok(Placement::loaded(item, asset))
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn persist_imported_image_resolving_placement(
         &self,
         board_id: i64,
@@ -202,14 +270,42 @@ impl Library {
         desired_world: egui::Pos2,
         initial_scale: f32,
     ) -> Result<Placement, String> {
+        self.persist_imported_image_resolving_placement_with_hash(
+            board_id,
+            placement_id,
+            stored_path,
+            mime_type,
+            width,
+            height,
+            file_size,
+            None,
+            desired_world,
+            initial_scale,
+        )
+    }
+
+    pub fn persist_imported_image_resolving_placement_with_hash(
+        &self,
+        board_id: i64,
+        placement_id: Option<i64>,
+        stored_path: &Path,
+        mime_type: &str,
+        width: u32,
+        height: u32,
+        file_size: u64,
+        original_sha256: Option<&str>,
+        desired_world: egui::Pos2,
+        initial_scale: f32,
+    ) -> Result<Placement, String> {
         let Some(placement_id) = placement_id else {
-            return self.persist_imported_image_to_board(
+            return self.persist_imported_image_to_board_with_hash(
                 board_id,
                 stored_path,
                 mime_type,
                 width,
                 height,
                 file_size,
+                original_sha256,
                 desired_world,
                 initial_scale,
             );
@@ -221,17 +317,21 @@ impl Library {
                 "cannot import to missing or archived board {board_id}"
             ));
         }
-        let transaction = connection.transaction().map_err(|error| {
-            format!("failed to start placement resolution transaction: {error}")
-        })?;
-        let asset = insert_asset_row(
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| {
+                format!("failed to start placement resolution transaction: {error}")
+            })?;
+        let persisted_asset = load_or_insert_exact_asset(
             &transaction,
             stored_path,
             mime_type,
             width,
             height,
             file_size,
+            original_sha256,
         )?;
+        let asset = persisted_asset.asset;
         let content = PlacementContent::Loaded { asset_id: asset.id };
         let content_resolution_source_payload = serde_json::to_string(&content)
             .map_err(|error| format!("failed to encode loaded placement content: {error}"))?;
@@ -249,7 +349,7 @@ impl Library {
                 format!("failed to load placement {placement_id} size before resolution: {error}")
             })?;
         let corrected_size =
-            RectGeometry::size_preserving_area_for_aspect(current_size, width, height);
+            RectGeometry::size_preserving_area_for_aspect(current_size, asset.width, asset.height);
         let changed = transaction
             .execute(
                 "UPDATE board_items
@@ -273,9 +373,11 @@ impl Library {
             )
             .map_err(|error| format!("failed to resolve placement {placement_id}: {error}"))?;
         if changed == 0 {
-            transaction
-                .execute("DELETE FROM assets WHERE id = ?1", params![asset.id])
-                .map_err(|error| format!("failed to remove stale imported asset: {error}"))?;
+            if persisted_asset.inserted {
+                transaction
+                    .execute("DELETE FROM assets WHERE id = ?1", params![asset.id])
+                    .map_err(|error| format!("failed to remove stale imported asset: {error}"))?;
+            }
             transaction
                 .commit()
                 .map_err(|error| format!("failed to commit stale placement resolution: {error}"))?;

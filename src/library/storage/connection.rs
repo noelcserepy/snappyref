@@ -1,4 +1,7 @@
 use super::*;
+use std::time::Duration;
+
+const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug)]
 pub struct Library {
@@ -28,7 +31,11 @@ impl Library {
     }
 
     pub(super) fn connection(&self) -> Result<Connection, String> {
-        Connection::open(&self.db_path)
-            .map_err(|error| format!("failed to open library database: {error}"))
+        let connection = Connection::open(&self.db_path)
+            .map_err(|error| format!("failed to open library database: {error}"))?;
+        connection
+            .busy_timeout(SQLITE_BUSY_TIMEOUT)
+            .map_err(|error| format!("failed to configure library database timeout: {error}"))?;
+        Ok(connection)
     }
 }

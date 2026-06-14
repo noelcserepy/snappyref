@@ -23,6 +23,7 @@ pub(super) fn insert_asset_row(
     width: u32,
     height: u32,
     file_size: u64,
+    original_sha256: Option<&str>,
 ) -> Result<ImageAsset, String> {
     let filename = stored_path
         .file_name()
@@ -42,8 +43,9 @@ pub(super) fn insert_asset_row(
                 width,
                 height,
                 file_size,
-                imported_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                imported_at,
+                original_sha256
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 original_path,
                 filename,
@@ -52,6 +54,7 @@ pub(super) fn insert_asset_row(
                 i64::from(height),
                 file_size as i64,
                 imported_at,
+                original_sha256,
             ],
         )
         .map_err(|error| format!("failed to insert asset: {error}"))?;
@@ -68,6 +71,67 @@ pub(super) fn insert_asset_row(
     })
 }
 
+pub(super) fn load_exact_asset_for_original(
+    transaction: &Transaction<'_>,
+    file_size: u64,
+    original_sha256: &str,
+) -> Result<Option<ImageAsset>, String> {
+    let mut statement = transaction
+        .prepare(
+            "SELECT
+                id,
+                original_path,
+                filename,
+                mime_type,
+                width,
+                height,
+                file_size,
+                imported_at
+             FROM assets
+             WHERE archived = 0
+               AND file_size = ?1
+               AND original_sha256 = ?2
+             ORDER BY id ASC
+             LIMIT 1",
+        )
+        .map_err(|error| format!("failed to prepare exact-asset lookup: {error}"))?;
+    let mut rows = statement
+        .query(params![file_size as i64, original_sha256])
+        .map_err(|error| format!("failed to query exact-asset lookup: {error}"))?;
+    let Some(row) = rows
+        .next()
+        .map_err(|error| format!("failed to read exact-asset lookup: {error}"))?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(ImageAsset {
+        id: row.get(0).map_err(|error| {
+            format!("failed to read exact-asset id for {original_sha256}: {error}")
+        })?,
+        original_path: PathBuf::from(row.get::<_, String>(1).map_err(|error| {
+            format!("failed to read exact-asset path for {original_sha256}: {error}")
+        })?),
+        filename: row.get(2).map_err(|error| {
+            format!("failed to read exact-asset filename for {original_sha256}: {error}")
+        })?,
+        mime_type: row.get(3).map_err(|error| {
+            format!("failed to read exact-asset MIME type for {original_sha256}: {error}")
+        })?,
+        width: row.get::<_, u32>(4).map_err(|error| {
+            format!("failed to read exact-asset width for {original_sha256}: {error}")
+        })?,
+        height: row.get::<_, u32>(5).map_err(|error| {
+            format!("failed to read exact-asset height for {original_sha256}: {error}")
+        })?,
+        file_size: row.get::<_, i64>(6).map_err(|error| {
+            format!("failed to read exact-asset file size for {original_sha256}: {error}")
+        })? as u64,
+        imported_at: row.get(7).map_err(|error| {
+            format!("failed to read exact-asset import time for {original_sha256}: {error}")
+        })?,
+    }))
+}
+
 #[derive(Clone, Debug)]
 struct AssetHashJob {
     id: i64,
@@ -80,7 +144,7 @@ struct DuplicateAsset {
     original_path: PathBuf,
 }
 
-fn sha256_file(path: &Path) -> Result<String, String> {
+pub(crate) fn sha256_file(path: &Path) -> Result<String, String> {
     let file =
         File::open(path).map_err(|error| format!("failed to open {}: {error}", path.display()))?;
     let mut reader = BufReader::new(file);
@@ -96,6 +160,12 @@ fn sha256_file(path: &Path) -> Result<String, String> {
         hasher.update(&buffer[..read]);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub(crate) fn sha256_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
 }
 
 fn sqlite_limit(limit: usize) -> i64 {
@@ -410,6 +480,7 @@ impl Library {
             width,
             height,
             file_size,
+            None,
         )?;
         transaction
             .execute(

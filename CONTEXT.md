@@ -18,6 +18,10 @@ _Avoid_: Image file, photo, source image
 The library repair flow that treats Assets with identical managed-original SHA-256 hashes as one Asset identity. The first-added Asset is the canonical Asset, defined by the lowest Asset id. Duplicate Placements are preserved by relinking them to the canonical Asset; duplicate Asset rows, embeddings, managed originals, and canvas cache files are removed.
 _Avoid_: Search filtering, visual similarity dedupe, embedding merge
 
+**Import-Time Exact Asset Reuse**:
+The import persistence flow that computes an imported managed original's SHA-256 before Asset insertion and reuses an existing non-archived Asset with the same file size and hash. The new Placement points at the canonical Asset, and the redundant just-copied managed original is removed. This keeps exact duplicate imports out of Library-wide Search without requiring a full-library repair pass.
+_Avoid_: Search result filtering, visual similarity merge, post-import cleanup
+
 **Board**:
 A separate canvas workspace over the shared library.
 _Avoid_: Scene, project, collection, nested board

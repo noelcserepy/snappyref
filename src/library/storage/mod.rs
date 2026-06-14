@@ -15,6 +15,7 @@ mod stack_order;
 mod tests;
 
 pub use assets::ExactDedupeReport;
+pub(crate) use assets::{sha256_bytes, sha256_file};
 pub use connection::Library;
 #[cfg(test)]
 pub use embeddings::ActiveCanvasEmbedding;
