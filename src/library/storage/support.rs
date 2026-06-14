@@ -9,7 +9,7 @@ pub(super) use image::codecs::jpeg::JpegEncoder;
 pub(super) use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 pub(super) use image::codecs::webp::WebPEncoder;
 pub(super) use image::{ColorType, ExtendedColorType, ImageEncoder, ImageFormat};
-pub(super) use rusqlite::{Connection, Transaction, params, params_from_iter};
+pub(super) use rusqlite::{Connection, Transaction, TransactionBehavior, params, params_from_iter};
 pub(super) use sha2::{Digest, Sha256};
 
 pub(super) use crate::data::{

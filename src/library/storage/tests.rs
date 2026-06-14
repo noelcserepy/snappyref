@@ -6,6 +6,7 @@ use crate::data::{
 use eframe::egui;
 use rusqlite::Connection;
 use std::fs;
+use std::sync::{Arc, Barrier};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn temp_root(prefix: &str) -> std::path::PathBuf {
@@ -1122,6 +1123,155 @@ fn exact_dedupe_relinks_placements_to_first_asset_and_deletes_duplicates() {
         )
         .unwrap();
     assert_eq!(duplicate_embedding_rows, 0);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn hash_aware_import_reuses_existing_exact_asset() {
+    let root = temp_root("snappyref-hash-aware-import-reuse-test");
+    let library = Library::initialize(root.clone()).unwrap();
+    let first_path = library
+        .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let duplicate_path = library
+        .store_rgba_image("duplicate", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let original_sha256 = crate::library::storage::sha256_file(&first_path).unwrap();
+
+    let first = library
+        .persist_imported_image_resolving_placement_with_hash(
+            1,
+            None,
+            &first_path,
+            "image/png",
+            1,
+            1,
+            fs::metadata(&first_path).unwrap().len(),
+            Some(&original_sha256),
+            egui::pos2(0.0, 0.0),
+            1.0,
+        )
+        .unwrap();
+    let duplicate = library
+        .persist_imported_image_resolving_placement_with_hash(
+            1,
+            None,
+            &duplicate_path,
+            "image/png",
+            1,
+            1,
+            fs::metadata(&duplicate_path).unwrap().len(),
+            Some(&original_sha256),
+            egui::pos2(10.0, 0.0),
+            1.0,
+        )
+        .unwrap();
+
+    assert_eq!(
+        duplicate.require_loaded_asset().id,
+        first.require_loaded_asset().id
+    );
+    assert_eq!(
+        duplicate.require_loaded_asset().original_path,
+        first.require_loaded_asset().original_path
+    );
+    let placements = library.load_placements().unwrap();
+    assert_eq!(placements.len(), 2);
+    assert!(
+        placements
+            .iter()
+            .all(|placement| placement.state.asset_id == Some(first.require_loaded_asset().id))
+    );
+
+    let connection = Connection::open(root.join("library.db")).unwrap();
+    let live_assets: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM assets WHERE archived = 0",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(live_assets, 1);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn parallel_hash_aware_imports_converge_on_one_exact_asset() {
+    let root = temp_root("snappyref-parallel-hash-aware-import-reuse-test");
+    let library = Library::initialize(root.clone()).unwrap();
+    let first_path = library
+        .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let duplicate_path = library
+        .store_rgba_image("duplicate", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let original_sha256 = crate::library::storage::sha256_file(&first_path).unwrap();
+    let barrier = Arc::new(Barrier::new(2));
+
+    let first_thread = {
+        let library = library.clone();
+        let barrier = Arc::clone(&barrier);
+        let original_sha256 = original_sha256.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            library
+                .persist_imported_image_resolving_placement_with_hash(
+                    1,
+                    None,
+                    &first_path,
+                    "image/png",
+                    1,
+                    1,
+                    fs::metadata(&first_path).unwrap().len(),
+                    Some(&original_sha256),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                )
+                .unwrap()
+                .require_loaded_asset()
+                .id
+        })
+    };
+    let duplicate_thread = {
+        let library = library.clone();
+        let barrier = Arc::clone(&barrier);
+        std::thread::spawn(move || {
+            barrier.wait();
+            library
+                .persist_imported_image_resolving_placement_with_hash(
+                    1,
+                    None,
+                    &duplicate_path,
+                    "image/png",
+                    1,
+                    1,
+                    fs::metadata(&duplicate_path).unwrap().len(),
+                    Some(&original_sha256),
+                    egui::pos2(10.0, 0.0),
+                    1.0,
+                )
+                .unwrap()
+                .require_loaded_asset()
+                .id
+        })
+    };
+
+    let first_asset_id = first_thread.join().unwrap();
+    let duplicate_asset_id = duplicate_thread.join().unwrap();
+    assert_eq!(duplicate_asset_id, first_asset_id);
+
+    let connection = Connection::open(root.join("library.db")).unwrap();
+    let live_assets: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM assets WHERE archived = 0",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(live_assets, 1);
+    assert_eq!(library.load_placements().unwrap().len(), 2);
 
     let _ = fs::remove_dir_all(root);
 }

@@ -9,6 +9,7 @@ use crate::data::CanvasImageLod;
 use crate::library::storage::Library;
 use image::{ColorType, ImageFormat};
 use pollster::block_on;
+use rusqlite::Connection;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -551,6 +552,68 @@ fn url_import_downloads_and_persists_original_bytes() {
         fs::read(&loaded.placement.require_loaded_asset().original_path).unwrap(),
         png_bytes
     );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn path_import_reuses_existing_exact_asset_and_removes_duplicate_original() {
+    let root = temp_library_root("path-import-exact-reuse");
+    fs::create_dir_all(&root).unwrap();
+    let library = Library::initialize(root.clone()).unwrap();
+    let source = write_png(&root, "source.png", 64, 48);
+
+    let first = import_path_sync(
+        &library,
+        source.clone(),
+        eframe::egui::Pos2::ZERO,
+        test_viewport_world(),
+        false,
+        crate::data::DEFAULT_PLACEMENT_GAP,
+    )
+    .unwrap();
+    let second = import_path_sync(
+        &library,
+        source,
+        eframe::egui::pos2(100.0, 0.0),
+        test_viewport_world(),
+        false,
+        crate::data::DEFAULT_PLACEMENT_GAP,
+    )
+    .unwrap();
+
+    assert_eq!(
+        second.placement.require_loaded_asset().id,
+        first.placement.require_loaded_asset().id
+    );
+    assert_eq!(
+        second.placement.require_loaded_asset().original_path,
+        first.placement.require_loaded_asset().original_path
+    );
+    assert!(
+        first
+            .placement
+            .require_loaded_asset()
+            .original_path
+            .exists()
+    );
+    assert_eq!(fs::read_dir(root.join("originals")).unwrap().count(), 1);
+
+    let connection = Connection::open(root.join("library.db")).unwrap();
+    let live_assets: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM assets WHERE archived = 0",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(live_assets, 1);
+
+    let placements = library.load_placements().unwrap();
+    assert_eq!(placements.len(), 2);
+    assert!(placements.iter().all(|placement| {
+        placement.state.asset_id == Some(first.placement.require_loaded_asset().id)
+    }));
 
     let _ = fs::remove_dir_all(root);
 }

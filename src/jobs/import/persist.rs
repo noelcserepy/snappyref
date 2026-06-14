@@ -10,7 +10,7 @@ use crate::jobs::image_formats::{
     PreviewImage, decode_image_bytes_with_max_side, decode_image_file_with_max_side,
     preview_animation_from_frames, preview_image_from_rgba,
 };
-use crate::library::storage::Library;
+use crate::library::storage::{Library, sha256_bytes, sha256_file};
 
 use super::arrangement::resolve_import_world;
 use super::decode::{install_prepared_canvas_cache, prepare_image_with_helper};
@@ -25,6 +25,47 @@ use super::{
 const URL_IMPORT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const URL_IMPORT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const URL_IMPORT_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
+
+struct ImportedImagePersistRequest<'a> {
+    library: &'a Library,
+    target_board_id: i64,
+    placement_id: Option<i64>,
+    stored_path: &'a std::path::Path,
+    mime_type: &'a str,
+    width: u32,
+    height: u32,
+    file_size: u64,
+    original_sha256: &'a str,
+    arranged_world: egui::Pos2,
+    initial_scale: f32,
+}
+
+fn persist_imported_image_with_exact_reuse(
+    request: ImportedImagePersistRequest<'_>,
+) -> Result<crate::data::Placement, String> {
+    let placement = request
+        .library
+        .persist_imported_image_resolving_placement_with_hash(
+            request.target_board_id,
+            request.placement_id,
+            request.stored_path,
+            request.mime_type,
+            request.width,
+            request.height,
+            request.file_size,
+            Some(request.original_sha256),
+            request.arranged_world,
+            request.initial_scale,
+        )?;
+    if placement.require_loaded_asset().original_path != request.stored_path {
+        match std::fs::remove_file(request.stored_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("failed to remove duplicate original: {error}")),
+        }
+    }
+    Ok(placement)
+}
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn import_path_sync(
@@ -156,20 +197,22 @@ pub(crate) fn import_path_sync_traced(
         let stored_path = library
             .store_original(&source_path)
             .map_err(|error| format!("{}: {error}", source_path.display()))?;
+        let original_sha256 = sha256_file(&stored_path)?;
 
-        let placement = library
-            .persist_imported_image_resolving_placement(
-                target_board_id,
-                placement_id,
-                &stored_path,
-                &prepared.mime_type,
-                prepared.source_width,
-                prepared.source_height,
-                prepared.file_size,
-                arranged_world,
-                initial_scale,
-            )
-            .map_err(|error| format!("{}: {error}", stored_path.display()))?;
+        let placement = persist_imported_image_with_exact_reuse(ImportedImagePersistRequest {
+            library,
+            target_board_id,
+            placement_id,
+            stored_path: &stored_path,
+            mime_type: &prepared.mime_type,
+            width: prepared.source_width,
+            height: prepared.source_height,
+            file_size: prepared.file_size,
+            original_sha256: &original_sha256,
+            arranged_world,
+            initial_scale,
+        })
+        .map_err(|error| format!("{}: {error}", stored_path.display()))?;
         let store_and_persist = store_started_at.elapsed();
         let preview_started_at = Instant::now();
         install_prepared_canvas_cache(
@@ -236,20 +279,22 @@ pub(crate) fn import_path_sync_traced(
     let stored_path = library
         .store_original(&source_path)
         .map_err(|error| format!("{}: {error}", source_path.display()))?;
+    let original_sha256 = sha256_file(&stored_path)?;
 
-    let placement = library
-        .persist_imported_image_resolving_placement(
-            target_board_id,
-            placement_id,
-            &stored_path,
-            &decoded.mime_type,
-            decoded.source_width,
-            decoded.source_height,
-            decoded.file_size,
-            arranged_world,
-            initial_scale,
-        )
-        .map_err(|error| format!("{}: {error}", stored_path.display()))?;
+    let placement = persist_imported_image_with_exact_reuse(ImportedImagePersistRequest {
+        library,
+        target_board_id,
+        placement_id,
+        stored_path: &stored_path,
+        mime_type: &decoded.mime_type,
+        width: decoded.source_width,
+        height: decoded.source_height,
+        file_size: decoded.file_size,
+        original_sha256: &original_sha256,
+        arranged_world,
+        initial_scale,
+    })
+    .map_err(|error| format!("{}: {error}", stored_path.display()))?;
     let store_and_persist = store_started_at.elapsed();
     let preview_started_at = Instant::now();
     let canvas_source = canvas_source_image_from_rgba(
@@ -355,25 +400,31 @@ fn import_svg_path_sync_traced(
     let file_size = std::fs::metadata(&stored_path)
         .map_err(|error| format!("failed to read stored SVG metadata: {error}"))?
         .len();
-    let placement = library
-        .persist_imported_image_resolving_placement(
-            target_board_id,
-            placement_id,
-            &stored_path,
-            SVG_MIME_TYPE,
-            svg.width,
-            svg.height,
-            file_size,
-            arranged_world,
-            initial_scale,
-        )
-        .map_err(|error| format!("{}: {error}", stored_path.display()))?;
+    let original_sha256 = sha256_file(&stored_path)?;
+    let placement = persist_imported_image_with_exact_reuse(ImportedImagePersistRequest {
+        library,
+        target_board_id,
+        placement_id,
+        stored_path: &stored_path,
+        mime_type: SVG_MIME_TYPE,
+        width: svg.width,
+        height: svg.height,
+        file_size,
+        original_sha256: &original_sha256,
+        arranged_world,
+        initial_scale,
+    })
+    .map_err(|error| format!("{}: {error}", stored_path.display()))?;
     let store_and_persist = store_started_at.elapsed();
 
     if let Some(trace) = &mut trace {
         trace.timings.store_and_persist = store_and_persist;
         trace.timings.worker_total = worker_started_at.elapsed();
     }
+    let svg_uri = format!(
+        "bytes://asset-svg-{}.svg",
+        stable_svg_uri_key(&placement.require_loaded_asset().original_path)
+    );
 
     Ok(PreparedPlacementImage {
         target_board_id,
@@ -384,7 +435,7 @@ fn import_svg_path_sync_traced(
         preview_height: svg.height,
         animated_preview: None,
         preview_texture: ImagePrepPreviewTexture::Svg {
-            uri: format!("bytes://asset-svg-{}.svg", stable_svg_uri_key(&stored_path)),
+            uri: svg_uri,
             bytes: Arc::<[u8]>::from(svg.bytes),
             size: [svg.width as usize, svg.height as usize],
         },
@@ -620,17 +671,20 @@ pub(crate) fn import_url_sync_traced(
     let source_name = remote_image_source_name(&downloaded.url);
     let stored_path =
         library.store_original_bytes(&source_name, &decoded.extension, &downloaded.bytes)?;
-    let placement = library.persist_imported_image_resolving_placement(
+    let original_sha256 = sha256_bytes(&downloaded.bytes);
+    let placement = persist_imported_image_with_exact_reuse(ImportedImagePersistRequest {
+        library,
         target_board_id,
         placement_id,
-        &stored_path,
-        &decoded.mime_type,
-        decoded.source_width,
-        decoded.source_height,
-        downloaded.bytes.len() as u64,
+        stored_path: &stored_path,
+        mime_type: &decoded.mime_type,
+        width: decoded.source_width,
+        height: decoded.source_height,
+        file_size: downloaded.bytes.len() as u64,
+        original_sha256: &original_sha256,
         arranged_world,
         initial_scale,
-    )?;
+    })?;
     let store_and_persist = store_started_at.elapsed();
 
     let preview_started_at = Instant::now();
@@ -744,23 +798,30 @@ fn import_downloaded_svg_sync_traced(
     let store_started_at = Instant::now();
     let source_name = remote_image_source_name(&downloaded.url);
     let stored_path = library.store_original_bytes(&source_name, "svg", &svg.bytes)?;
-    let placement = library.persist_imported_image_resolving_placement(
+    let original_sha256 = sha256_bytes(&svg.bytes);
+    let placement = persist_imported_image_with_exact_reuse(ImportedImagePersistRequest {
+        library,
         target_board_id,
         placement_id,
-        &stored_path,
-        SVG_MIME_TYPE,
-        svg.width,
-        svg.height,
-        svg.bytes.len() as u64,
+        stored_path: &stored_path,
+        mime_type: SVG_MIME_TYPE,
+        width: svg.width,
+        height: svg.height,
+        file_size: svg.bytes.len() as u64,
+        original_sha256: &original_sha256,
         arranged_world,
         initial_scale,
-    )?;
+    })?;
     let store_and_persist = store_started_at.elapsed();
 
     if let Some(trace) = &mut trace {
         trace.timings.store_and_persist = store_and_persist;
         trace.timings.worker_total = worker_started_at.elapsed();
     }
+    let svg_uri = format!(
+        "bytes://asset-svg-{}.svg",
+        stable_svg_uri_key(&placement.require_loaded_asset().original_path)
+    );
 
     Ok(PreparedPlacementImage {
         target_board_id,
@@ -771,7 +832,7 @@ fn import_downloaded_svg_sync_traced(
         preview_height: svg.height,
         animated_preview: None,
         preview_texture: ImagePrepPreviewTexture::Svg {
-            uri: format!("bytes://asset-svg-{}.svg", stable_svg_uri_key(&stored_path)),
+            uri: svg_uri,
             bytes: Arc::<[u8]>::from(svg.bytes),
             size: [svg.width as usize, svg.height as usize],
         },
@@ -812,6 +873,7 @@ pub(crate) fn import_clipboard_sync_traced(
     let file_size = std::fs::metadata(&stored_path)
         .map_err(|error| format!("failed to read clipboard image metadata: {error}"))?
         .len();
+    let original_sha256 = sha256_file(&stored_path)?;
     let initial_scale =
         display_scale_for_placement_target_area(width, height, auto_scale, placement_target_area);
     let arranged_world = resolve_import_world(
@@ -824,17 +886,19 @@ pub(crate) fn import_clipboard_sync_traced(
         height as f32 * initial_scale.max(0.01),
         placement_gap,
     )?;
-    let placement = library.persist_imported_image_resolving_placement(
+    let placement = persist_imported_image_with_exact_reuse(ImportedImagePersistRequest {
+        library,
         target_board_id,
         placement_id,
-        &stored_path,
-        image::ImageFormat::Png.to_mime_type(),
+        stored_path: &stored_path,
+        mime_type: image::ImageFormat::Png.to_mime_type(),
         width,
         height,
         file_size,
+        original_sha256: &original_sha256,
         arranged_world,
         initial_scale,
-    )?;
+    })?;
     let store_and_persist = store_started_at.elapsed();
     let preview_started_at = Instant::now();
     let canvas_source = canvas_source_image_from_rgba(width, height, &rgba, canvas_image_settings)?;
