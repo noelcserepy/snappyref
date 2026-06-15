@@ -4428,6 +4428,119 @@ fn inspect_blue_image_search_drag_writes_artifact() {
 
 #[cfg(feature = "semantic-search")]
 #[test]
+fn inspect_placement_click_hold_flash_writes_artifact() {
+    let scenario_name = inspect_scenario_name("placement-click-hold-flash");
+    let mut scenario = InspectScenario::new(scenario_name);
+    scenario.event(
+        "seed",
+        serde_json::json!({
+            "seed": "single-blue-placement-click-hold",
+            "purpose": "capture frames around primary-click selection held past movement debounce",
+        }),
+    );
+
+    let root = temp_library_root("snappyref-inspect-placement-click-hold-flash");
+    let library = Library::initialize(root.clone()).unwrap();
+    let blue_path = library
+        .store_rgba_image(
+            "blue-click-hold",
+            &solid_rgba([78, 126, 226, 255], 140, 240),
+            140,
+            240,
+        )
+        .unwrap();
+    let blue = library
+        .persist_imported_image(
+            &blue_path,
+            "image/png",
+            140,
+            240,
+            140 * 240 * 4,
+            egui::pos2(0.0, 0.0),
+            1.0,
+        )
+        .unwrap();
+
+    let app = test_app(Some(library.clone()));
+    let mut harness = app_full_harness_with_step_dt(app, 1.0 / 60.0);
+    let blue_prepared = inspect_prepared_loaded_placement(
+        blue.clone(),
+        [78, 126, 226, 255],
+        140,
+        240,
+        None,
+        crate::jobs::ImportOrigin::Existing,
+    );
+    let ctx = harness.ctx.clone();
+    harness
+        .state_mut()
+        .canvas
+        .add_prepared_placement_image(&ctx, blue_prepared);
+    harness.step();
+
+    let placement_id = blue.state.id;
+    let click_screen = inspect_world_to_screen(egui::pos2(0.0, 0.0), test_screen_rect());
+    let placement_screen_rect =
+        egui::Rect::from_center_size(click_screen, egui::vec2(140.0, 240.0));
+    scenario.target("blue placement", "placement", placement_screen_rect);
+    scenario.capture_click_hold_fact("screen-000-before-press", &harness, placement_id);
+    scenario.capture_screen("screen-000-before-press", &mut harness);
+
+    scenario.action("primary press on blue placement", click_screen);
+    harness.event(egui::Event::PointerButton {
+        pos: click_screen,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+    scenario.capture_click_hold_fact("screen-001-pressed-selected", &harness, placement_id);
+    scenario.capture_screen("screen-001-pressed-selected", &mut harness);
+
+    for index in 2..=8 {
+        harness.step();
+        let name = format!("screen-{index:03}-held");
+        scenario.capture_click_hold_fact(&name, &harness, placement_id);
+        scenario.capture_screen(&name, &mut harness);
+    }
+    let held_time_seconds = harness.ctx.input(|input| input.time);
+    scenario.assertion(
+        "selection border stays visible during stationary held click",
+        harness
+            .state()
+            .canvas
+            .selection_border_visible_for_test(held_time_seconds),
+    );
+
+    scenario.action("primary release on blue placement", click_screen);
+    harness.event(egui::Event::PointerButton {
+        pos: click_screen,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+    scenario.capture_click_hold_fact("screen-009-released", &harness, placement_id);
+    scenario.capture_screen("screen-009-released", &mut harness);
+
+    let selected = harness.state().canvas.selected_placement_ids();
+    scenario.assertion(
+        "blue placement remains selected after click hold",
+        selected == vec![placement_id],
+    );
+
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(feature = "semantic-search")]
+#[test]
 fn dragging_multiple_library_search_results_centers_provisional_group_on_pointer() {
     let root = temp_library_root("snappyref-library-search-pointer-drag-multi-center");
     let library = Library::initialize(root.clone()).unwrap();
@@ -5483,12 +5596,20 @@ fn app_harness<'a>(
 }
 
 fn app_full_harness(app: SnappyRefApp) -> Harness<'static, SnappyRefApp> {
+    app_full_harness_with_step_dt(app, 1.0 / 4.0)
+}
+
+fn app_full_harness_with_step_dt(
+    app: SnappyRefApp,
+    step_dt: f32,
+) -> Harness<'static, SnappyRefApp> {
     Harness::builder()
         .with_size(egui::vec2(1200.0, 800.0))
         .with_pixels_per_point(1.0)
         .with_os(egui::os::OperatingSystem::Nix)
         .with_theme(egui::Theme::Dark)
         .with_max_steps(4)
+        .with_step_dt(step_dt)
         .build_eframe(move |cc| {
             crate::ui::theme::configure_theme(&cc.egui_ctx);
             app
@@ -5598,6 +5719,31 @@ impl InspectScenario {
             serde_json::json!({
                 "name": name,
                 "value": value,
+            }),
+        );
+    }
+
+    fn capture_click_hold_fact(
+        &mut self,
+        frame_name: &str,
+        harness: &Harness<'_, SnappyRefApp>,
+        placement_id: i64,
+    ) {
+        let now_seconds = harness.ctx.input(|input| input.time);
+        let placement = harness.state().canvas.placement_for_id(placement_id);
+        self.fact(
+            "placement-click-hold.frame-state",
+            serde_json::json!({
+                "frame": frame_name,
+                "time_seconds": now_seconds,
+                "selected_placement_ids": harness.state().canvas.selected_placement_ids(),
+                "placement_center": placement
+                    .as_ref()
+                    .map(|placement| inspect_pos(placement.state.geometry.center)),
+                "selection_border_visible": harness
+                    .state()
+                    .canvas
+                    .selection_border_visible_for_test(now_seconds),
             }),
         );
     }
