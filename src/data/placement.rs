@@ -70,6 +70,12 @@ impl PlacementState {
     }
 }
 
+/// What a board-local Placement currently renders and resolves to.
+///
+/// A Placement is the canonical canvas object even while content is still
+/// loading or has failed. Async import/search/clipboard work updates this
+/// state in place so selection, movement, history, and stack order do not
+/// need a separate placeholder model.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum PlacementContent {
     Loaded {
@@ -101,23 +107,28 @@ pub enum ContentResolutionSource {
     Unknown { description: String },
 }
 
+/// Whether a Placement is already part of the persisted board document or is
+/// a preview that can still be canceled without a history entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub enum PlacementLifecycle {
     Provisional,
     Committed,
 }
 
+/// Board-local visual object. Loaded Placements carry their Library Asset;
+/// loading/failed Placements carry the source needed to resolve or explain
+/// their content.
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Debug)]
 pub struct Placement {
     pub state: PlacementState,
-    pub asset: Option<super::ImageAsset>,
+    pub asset: Option<super::Asset>,
     pub content: PlacementContent,
     pub lifecycle: PlacementLifecycle,
 }
 
 impl Placement {
-    pub fn loaded(mut state: PlacementState, asset: super::ImageAsset) -> Self {
+    pub fn loaded(mut state: PlacementState, asset: super::Asset) -> Self {
         state.asset_id = Some(asset.id);
         if state.geometry.size.x <= 0.0 || state.geometry.size.y <= 0.0 {
             state.geometry.size = vec2(asset.width as f32, asset.height as f32);
@@ -134,22 +145,22 @@ impl Placement {
         matches!(self.content, PlacementContent::Loaded { .. })
     }
 
-    pub fn loaded_asset(&self) -> Option<&super::ImageAsset> {
+    pub fn loaded_asset(&self) -> Option<&super::Asset> {
         self.asset.as_ref()
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn loaded_asset_mut(&mut self) -> Option<&mut super::ImageAsset> {
+    pub fn loaded_asset_mut(&mut self) -> Option<&mut super::Asset> {
         self.asset.as_mut()
     }
 
-    pub fn require_loaded_asset(&self) -> &super::ImageAsset {
+    pub fn require_loaded_asset(&self) -> &super::Asset {
         self.loaded_asset()
             .expect("loaded Placement should carry its Asset")
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn require_loaded_asset_mut(&mut self) -> &mut super::ImageAsset {
+    pub fn require_loaded_asset_mut(&mut self) -> &mut super::Asset {
         self.loaded_asset_mut()
             .expect("loaded Placement should carry its Asset")
     }

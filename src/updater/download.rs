@@ -1,10 +1,11 @@
-//! Download half of slice 5: fetch the platform-appropriate zip referenced
+//! Download the platform-appropriate zip referenced
 //! by the verified manifest, write it into `<install_root>/updates/` with
 //! progress callbacks, and verify the sha256 against the manifest.
 //!
-//! ADR-0015 demands strict verification: a mismatched hash never reaches
-//! staging and the partial file is cleaned up. The pill state machine
-//! treats a download failure exactly like a discovery failure (Failed).
+//! Strict verification is the handoff contract: a mismatched hash never
+//! reaches staging and the partial file is cleaned up. The update state
+//! machine treats a download failure exactly like a discovery failure
+//! (`Failed`).
 //!
 //! The module is structured around two layers so production code can use
 //! `reqwest` while unit tests drive a local HTTP fixture:
@@ -33,7 +34,7 @@ pub(crate) const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 const READ_CHUNK: usize = 64 * 1024;
 
 /// Failure modes for [`download_from_reader`]. The caller logs and
-/// transitions the pill to `Failed`; the partial file is unlinked before
+/// transitions the update state to `Failed`; the partial file is unlinked before
 /// returning.
 #[derive(Debug)]
 pub(crate) enum DownloadError {
@@ -256,7 +257,7 @@ fn sha_equal(a: &str, b: &str) -> bool {
 }
 
 /// Compute the sha256 of `bytes`, returned as lowercase hex. Exposed for
-/// the test harness and slice 5's "already-staged" startup check.
+/// the test harness and the download/staging startup check.
 #[allow(dead_code)]
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();

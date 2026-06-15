@@ -1,5 +1,11 @@
 # Keep Windows drop target ABI correct
 
+Carryover note: not absorbed by the ADR cleanup yet. Current
+`src/platform/native_drop/mod.rs` still appears to use `*const POINTL` in the
+manual `IDropTarget` vtable, while this note says the ABI should pass `POINTL`
+by value. Verify the current `windows` crate ABI on a real Windows checkout
+before either fixing the bridge or deleting this file.
+
 SnappyRef has a Windows native drop bridge so dragged URLs can be extracted from richer shell/browser payloads. That bridge implements `IDropTarget` manually, so its vtable must exactly match the COM ABI. `IDropTarget::DragEnter`, `DragOver`, and `Drop` pass `POINTL` by value. Treating that argument as a pointer is undefined behavior.
 
 The incorrect pointer signature existed while the point was ignored. Once drop placement started using the native drop coordinates, Windows Explorer file drops could fail before import enqueueing.

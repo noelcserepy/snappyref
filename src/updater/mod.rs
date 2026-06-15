@@ -1,7 +1,6 @@
-//! Auto-update client discovery.
+//! Auto-update discovery, download, staging, and restart-apply orchestration.
 //!
-//! This module hosts the discovery half of the auto-updater described in
-//! ADR-0015. The runtime [`UpdateService`] runs on the egui update loop:
+//! The runtime [`UpdateService`] runs on the egui update loop:
 //!
 //! 1. After the app reaches Settled Idle, it fetches `latest.json` from
 //!    the configured manifest URL on a background thread so startup is
@@ -9,12 +8,9 @@
 //! 2. The response bytes are signature-verified against the public key
 //!    embedded at compile time, then parsed.
 //! 3. If the manifest version is greater than the running version, the
-//!    pill enters Available; otherwise we stay Hidden.
+//!    update state enters Available; otherwise it stays Hidden.
 //! 4. Failures back off exponentially up to 6 hours and never raise a
-//!    popup; the pill state stays in its last known value.
-//!
-//! Download/staging belongs to slice 5. In slice 4 the "Install" button is
-//! a stopgap that opens the release page in the user's default browser.
+//!    popup; the update state stays in its last known value.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -48,7 +44,7 @@ use state::{CheckOutcome, InstallProgress};
 pub(crate) const DEFAULT_MANIFEST_URL: &str =
     "https://github.com/noelcserepy/snappyref-dist/releases/latest/download/latest.json";
 
-/// Release page opened by the slice-4 stopgap Install button.
+/// Release page offered by Settings alongside the in-app updater.
 pub(crate) const DEFAULT_RELEASE_PAGE_URL: &str =
     "https://github.com/noelcserepy/snappyref-dist/releases/latest";
 
@@ -175,7 +171,7 @@ impl UpdateService {
     }
 
     /// Build the pending-update descriptor for the currently-staged
-    /// version, if the pill is in `Ready` state. Returns `None` if there
+    /// version, if the update UI is in `Ready` state. Returns `None` if there
     /// is nothing to restart into, the host platform has no release
     /// shape, or the install root cannot be resolved.
     ///
@@ -235,18 +231,18 @@ impl UpdateService {
     }
 
     /// Start the real download + verify + stage flow for the current
-    /// Available update. Called by the popover's Install button.
+    /// Available update. Called when the user clicks Install in Settings.
     pub(crate) fn start_install(&mut self) {
-        // Only allowed while we have a verified manifest and the pill
+        // Only allowed while we have a verified manifest and the update UI
         // is showing Available.
         let manifest = match (&self.last_manifest, self.state.clone()) {
             (Some(manifest), UpdateState::Available { .. }) => manifest.clone(),
             _ => return,
         };
         let Some(platform) = TargetPlatform::current() else {
-            // No platform entry for the running OS; the pill stays
+            // No platform entry for the running OS; the update UI stays
             // Available so the user can still open the release page
-            // manually via the popover's release-notes link.
+            // manually via the Settings release-notes link.
             return;
         };
         let entry = manifest.entry_for(platform);
@@ -285,7 +281,7 @@ impl UpdateService {
     }
 
     /// Check whether a verified staged bundle for `manifest.version` is
-    /// already on disk and, if so, mark the pill Ready directly. Called
+    /// already on disk and, if so, mark the update UI Ready directly. Called
     /// from the discovery hook so it runs once per verified manifest.
     ///
     /// Also sweeps stale `staging-{other-version}/` directories left
@@ -304,9 +300,9 @@ impl UpdateService {
         if !staging.is_dir() {
             return;
         }
-        // Validate the staged layout matches what slice 6 will swap into
+        // Validate the staged layout matches what restart-apply will swap into
         // place. We only accept a structurally-valid bundle as Ready;
-        // otherwise leave the pill alone.
+        // otherwise leave the update UI alone.
         if validate_existing_staging(&staging, platform).is_err() {
             // Stale or corrupt staging directory — clean it up so the
             // next download has a clean target.
@@ -420,7 +416,7 @@ impl UpdateService {
                     self.write_diagnostic(&format!("state_after={:?}", self.state));
                     // On a confirmed new version, see if a previously
                     // staged bundle is already on disk for it and the
-                    // pill can short-circuit to Ready.
+                    // update UI can short-circuit to Ready.
                     if let Some(manifest) = self.last_manifest.clone() {
                         if newer_available {
                             self.detect_existing_staging(&manifest);
@@ -574,7 +570,7 @@ impl UpdateService {
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     // Worker exited without sending Staged/Failed. Treat
-                    // as a failure so the pill is not stuck mid-progress.
+                    // as a failure so the update UI is not stuck mid-progress.
                     if matches!(self.state, UpdateState::Downloading { .. }) {
                         self.state.apply_progress(InstallProgress::Failed {
                             reason: "install worker exited".to_owned(),
@@ -802,7 +798,7 @@ fn current_unix_millis() -> Option<u64> {
 }
 
 fn log_failure(stage: &str, error: &dyn std::fmt::Display) {
-    // ADR-0015: failures must never raise a popup; logging only.
+    // Update discovery failures are quiet: logging only, no popup.
     eprintln!("update discovery {stage} failed: {error}");
 }
 

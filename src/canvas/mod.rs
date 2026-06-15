@@ -513,7 +513,7 @@ pub struct PixelCropRect {
 #[derive(Clone, Debug)]
 pub struct CanvasCropRequest {
     pub placement_id: i64,
-    pub source_asset: crate::data::ImageAsset,
+    pub source_asset: crate::data::Asset,
     pub crop_rect: PixelCropRect,
     pub crop_offset_local: egui::Vec2,
 }
@@ -865,7 +865,7 @@ pub fn paint_perf_report() -> PaintPerfReport {
                     index as i32,
                     false,
                 ),
-                crate::data::ImageAsset {
+                crate::data::Asset {
                     id: index as i64 + 1,
                     original_path: std::path::PathBuf::new(),
                     filename: format!("perf-{index}.png"),

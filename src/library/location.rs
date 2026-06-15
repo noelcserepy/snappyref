@@ -2,6 +2,12 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// Root vocabulary:
+// - install root: where the portable app lives.
+// - data root: writable app-owned state; usually the install root, falling
+//   back to the platform user-data folder for protected installs.
+// - library root: the managed Library folder under the data root unless tests
+//   or tools explicitly override it.
 pub(crate) const SNAPPYREF_LIBRARY_ROOT_ENV: &str = "SNAPPYREF_LIBRARY_ROOT";
 pub(crate) const SNAPPYREF_DATA_ROOT_ENV: &str = "SNAPPYREF_DATA_ROOT";
 

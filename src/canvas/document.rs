@@ -3,11 +3,11 @@ use std::sync::Arc;
 use eframe::egui;
 
 use super::geometry::{
-    clamped_crop_screen_rect, crop_center_offset_local, merge_cropped_item_fields, min_image_scale,
-    pixel_crop_rect_from_local, screen_rect_to_local_crop_rect,
+    clamped_crop_screen_rect, crop_center_offset_local, merge_cropped_item_fields,
+    min_loaded_placement_scale, pixel_crop_rect_from_local, screen_rect_to_local_crop_rect,
 };
 use super::interaction::{
-    annotation_screen_rect, annotation_world_rect, image_screen_rect, normalized_textbox_rect,
+    annotation_screen_rect, annotation_world_rect, normalized_textbox_rect, placement_screen_rect,
     textbox_world_rect,
 };
 use super::render::{
@@ -475,7 +475,7 @@ impl CanvasState {
         &mut self,
         ctx: &egui::Context,
         cropped: PreparedCropPreview,
-        asset: crate::data::ImageAsset,
+        asset: crate::data::Asset,
         updated_item: crate::data::PlacementState,
     ) -> Result<(), String> {
         let placement_id = cropped.placement_id;
@@ -547,10 +547,10 @@ impl CanvasState {
     }
 
     pub fn has_selection(&self) -> bool {
-        self.has_image_selection() || !self.document.selected_annotation_ids.is_empty()
+        self.has_placement_selection() || !self.document.selected_annotation_ids.is_empty()
     }
 
-    pub fn has_image_selection(&self) -> bool {
+    pub fn has_placement_selection(&self) -> bool {
         !self.document.selected_placement_ids.is_empty()
     }
 
@@ -1065,7 +1065,7 @@ impl CanvasState {
                 continue;
             }
 
-            let image_rect = image_screen_rect(self, rect, image);
+            let image_rect = placement_screen_rect(self, rect, image);
             selected_rect = Some(match selected_rect {
                 Some(rect) => rect.union(image_rect),
                 None => image_rect,
@@ -1462,7 +1462,7 @@ impl CanvasState {
     }
 
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub fn delete_selected_images(&mut self) -> Vec<i64> {
+    pub fn delete_selected_placements(&mut self) -> Vec<i64> {
         let selected_ids = self.document.selected_placement_ids.clone();
         self.delete_placements(&selected_ids)
     }
@@ -2241,7 +2241,7 @@ impl CanvasState {
         crop_state: &CropState,
     ) -> Option<CanvasCropRequest> {
         let image = self.rendered_placement_by_id(crop_state.placement_id)?;
-        let image_rect = image_screen_rect(self, rect, image);
+        let image_rect = placement_screen_rect(self, rect, image);
         let clamped_screen_rect = clamped_crop_screen_rect(
             crop_state.start_screen,
             crop_state.current_screen,
@@ -2285,7 +2285,7 @@ impl CanvasState {
         let Some(image) = self.rendered_placement_by_id_mut(placement_id) else {
             return false;
         };
-        let min_scale = min_image_scale(image.placement.require_loaded_asset());
+        let min_scale = min_loaded_placement_scale(image.placement.require_loaded_asset());
         let normalized = scale.max(min_scale);
         if (image.placement.state.geometry.scale - normalized).abs() <= f32::EPSILON {
             return false;
@@ -2303,7 +2303,7 @@ impl CanvasState {
         let Some(image) = self.rendered_placement_by_id_mut(placement_id) else {
             return false;
         };
-        let min_scale = min_image_scale(image.placement.require_loaded_asset());
+        let min_scale = min_loaded_placement_scale(image.placement.require_loaded_asset());
         let normalized_scale = scale.max(min_scale);
         let position_changed = (image.placement.state.geometry.center.x - center.x).abs()
             > f32::EPSILON

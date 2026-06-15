@@ -5,7 +5,7 @@
 //! failure count. The scheduler returns a [`NextAction`] which the caller
 //! converts into "fetch now" or "wait".
 //!
-//! Cadence per ADR-0015:
+//! Polling cadence:
 //!
 //! * First check after Settled Idle following startup (never blocks
 //!   startup).

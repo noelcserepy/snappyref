@@ -1,8 +1,8 @@
 //! Local Model Store: resolves and migrates the on-disk model directory that
-//! lives outside the app bundle at `<install_root>/models/`.
+//! lives outside the app bundle at `<data_root>/models/`.
 //!
 //! This module is the single source of truth for:
-//! - resolving `<install_root>/models/` across macOS `.app` and plain-binary layouts
+//! - resolving `<data_root>/models/` across macOS `.app` and plain-binary layouts
 //! - detecting an in-bundle model directory left over from older installs
 //! - performing a one-shot, idempotent migration that moves the in-bundle model
 //!   into the Local Model Store
@@ -14,9 +14,9 @@
 
 use std::path::{Path, PathBuf};
 
-/// The on-disk root of the Local Model Store relative to a given install root.
-pub(crate) fn model_store_root(install_root: &Path) -> PathBuf {
-    install_root.join("models")
+/// The on-disk root of the Local Model Store relative to a given data root.
+pub(crate) fn model_store_root(data_root: &Path) -> PathBuf {
+    data_root.join("models")
 }
 
 /// The location of an in-bundle model directory if the running executable
@@ -45,10 +45,10 @@ pub(crate) enum MigrationOutcome {
     Migrated,
 }
 
-/// Status of model availability for a given install root + executable layout.
+/// Status of model availability for a given data root + executable layout.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ModelAvailability {
-    /// A Local Model Store exists at `<install_root>/models/`.
+    /// A Local Model Store exists at `<data_root>/models/`.
     LocalStore,
     /// No Local Model Store exists, but an in-bundle model dir is present and
     /// can be migrated.
@@ -76,11 +76,8 @@ impl LocalModelStoreStatus {
 }
 
 /// Inspect the filesystem and classify model availability.
-pub(crate) fn classify_availability(
-    install_root: &Path,
-    executable_dir: &Path,
-) -> ModelAvailability {
-    let store = model_store_root(install_root);
+pub(crate) fn classify_availability(data_root: &Path, executable_dir: &Path) -> ModelAvailability {
+    let store = model_store_root(data_root);
     if dir_has_entries(&store) {
         return ModelAvailability::LocalStore;
     }
@@ -93,22 +90,22 @@ pub(crate) fn classify_availability(
 }
 
 pub(crate) fn refresh_local_model_store_status(
-    install_root: &Path,
+    data_root: &Path,
     executable_dir: &Path,
     model_key: &str,
     required_files: &[&str],
 ) -> LocalModelStoreStatus {
-    let migration = match migrate_bundled_model(install_root, executable_dir) {
+    let migration = match migrate_bundled_model(data_root, executable_dir) {
         Ok(outcome) => outcome,
         Err(error) => {
-            if !required_model_files_present(install_root, model_key, required_files) {
+            if !required_model_files_present(data_root, model_key, required_files) {
                 return LocalModelStoreStatus::Failed(error);
             }
             MigrationOutcome::AlreadyMigrated
         }
     };
 
-    if required_model_files_present(install_root, model_key, required_files) {
+    if required_model_files_present(data_root, model_key, required_files) {
         return match migration {
             MigrationOutcome::Migrated => LocalModelStoreStatus::InstalledViaMigration,
             MigrationOutcome::NoBundledModel | MigrationOutcome::AlreadyMigrated => {
@@ -118,25 +115,25 @@ pub(crate) fn refresh_local_model_store_status(
     }
 
     if matches!(
-        classify_availability(install_root, executable_dir),
+        classify_availability(data_root, executable_dir),
         ModelAvailability::LocalStore | ModelAvailability::BundledOnly
     ) {
         return LocalModelStoreStatus::Failed(format!(
             "Semantic Search assets are incomplete in {}.",
-            model_store_root(install_root).display()
+            model_store_root(data_root).display()
         ));
     }
 
     LocalModelStoreStatus::Missing
 }
 
-/// Move the in-bundle `models/` directory (if any) to `<install_root>/models/`.
+/// Move the in-bundle `models/` directory (if any) to `<data_root>/models/`.
 ///
-/// This is idempotent: if `<install_root>/models/` already has content it is
+/// This is idempotent: if `<data_root>/models/` already has content it is
 /// left alone and the in-bundle directory is removed. If no in-bundle model
 /// exists, the function returns `NoBundledModel`.
 pub(crate) fn migrate_bundled_model(
-    install_root: &Path,
+    data_root: &Path,
     executable_dir: &Path,
 ) -> Result<MigrationOutcome, String> {
     let Some(bundled) = bundled_model_dir(executable_dir) else {
@@ -146,7 +143,7 @@ pub(crate) fn migrate_bundled_model(
         return Ok(MigrationOutcome::NoBundledModel);
     }
 
-    let store = model_store_root(install_root);
+    let store = model_store_root(data_root);
     if dir_has_entries(&store) {
         // Local Model Store already exists; remove the stale in-bundle copy and
         // report idempotent success.
@@ -180,11 +177,11 @@ fn dir_has_entries(path: &Path) -> bool {
 }
 
 fn required_model_files_present(
-    install_root: &Path,
+    data_root: &Path,
     model_key: &str,
     required_files: &[&str],
 ) -> bool {
-    let model_root = model_store_root(install_root).join(model_key);
+    let model_root = model_store_root(data_root).join(model_key);
     required_files.iter().all(|relative| {
         model_root
             .join(relative)
@@ -284,21 +281,21 @@ mod tests {
 
     #[test]
     fn model_store_root_is_sibling_of_library_for_plain_binary() {
-        let install_root = PathBuf::from("/fake/SnappyRef");
+        let data_root = PathBuf::from("/fake/SnappyRef");
         assert_eq!(
-            model_store_root(&install_root),
+            model_store_root(&data_root),
             PathBuf::from("/fake/SnappyRef/models"),
         );
     }
 
     #[test]
-    fn model_store_root_for_macos_install_root_is_outside_app_bundle() {
-        // On macOS the install root is the parent of SnappyRef.app — same shape
-        // as the plain-binary case, so `<install_root>/models/` is a sibling of
+    fn model_store_root_for_macos_data_root_is_outside_app_bundle() {
+        // On macOS the data root is the parent of SnappyRef.app — same shape
+        // as the plain-binary case, so `<data_root>/models/` is a sibling of
         // SnappyRef.app, not nested inside it.
-        let install_root = PathBuf::from("/Users/alice/SnappyRef");
+        let data_root = PathBuf::from("/Users/alice/SnappyRef");
         assert_eq!(
-            model_store_root(&install_root),
+            model_store_root(&data_root),
             PathBuf::from("/Users/alice/SnappyRef/models"),
         );
     }
@@ -323,12 +320,12 @@ mod tests {
     #[test]
     fn classify_availability_reports_local_store_when_present() {
         let root = unique_temp_root("availability-local");
-        let install_root = root.join("SnappyRef");
-        let executable_dir = install_root.clone();
-        write_file(&install_root.join("models").join("marker.bin"), "data");
+        let data_root = root.join("SnappyRef");
+        let executable_dir = data_root.clone();
+        write_file(&data_root.join("models").join("marker.bin"), "data");
 
         assert_eq!(
-            classify_availability(&install_root, &executable_dir),
+            classify_availability(&data_root, &executable_dir),
             ModelAvailability::LocalStore,
         );
 
@@ -338,14 +335,14 @@ mod tests {
     #[test]
     fn classify_availability_reports_bundled_only_for_macos_app_layout() {
         let root = unique_temp_root("availability-bundled");
-        let install_root = root.join("SnappyRef");
-        let executable_dir = install_root.join("SnappyRef.app/Contents/MacOS");
+        let data_root = root.join("SnappyRef");
+        let executable_dir = data_root.join("SnappyRef.app/Contents/MacOS");
         std::fs::create_dir_all(&executable_dir).unwrap();
-        let bundled = install_root.join("SnappyRef.app/Contents/Resources/models");
+        let bundled = data_root.join("SnappyRef.app/Contents/Resources/models");
         write_file(&bundled.join("siglip2/marker.bin"), "data");
 
         assert_eq!(
-            classify_availability(&install_root, &executable_dir),
+            classify_availability(&data_root, &executable_dir),
             ModelAvailability::BundledOnly,
         );
 
@@ -355,12 +352,12 @@ mod tests {
     #[test]
     fn classify_availability_reports_missing_when_nothing_present() {
         let root = unique_temp_root("availability-missing");
-        let install_root = root.join("SnappyRef");
-        let executable_dir = install_root.join("SnappyRef.app/Contents/MacOS");
+        let data_root = root.join("SnappyRef");
+        let executable_dir = data_root.join("SnappyRef.app/Contents/MacOS");
         std::fs::create_dir_all(&executable_dir).unwrap();
 
         assert_eq!(
-            classify_availability(&install_root, &executable_dir),
+            classify_availability(&data_root, &executable_dir),
             ModelAvailability::Missing,
         );
 
@@ -370,19 +367,19 @@ mod tests {
     #[test]
     fn local_model_store_status_reports_missing_without_creating_store() {
         let root = unique_temp_root("status-missing");
-        let install_root = root.join("SnappyRef");
-        let executable_dir = install_root.clone();
-        std::fs::create_dir_all(&install_root).unwrap();
+        let data_root = root.join("SnappyRef");
+        let executable_dir = data_root.clone();
+        std::fs::create_dir_all(&data_root).unwrap();
 
         let status = refresh_local_model_store_status(
-            &install_root,
+            &data_root,
             &executable_dir,
             TEST_MODEL_KEY,
             TEST_REQUIRED_FILES,
         );
 
         assert_eq!(status, LocalModelStoreStatus::Missing);
-        assert!(!install_root.join("models").exists());
+        assert!(!data_root.join("models").exists());
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -390,12 +387,12 @@ mod tests {
     #[test]
     fn local_model_store_status_reports_installed_for_complete_store() {
         let root = unique_temp_root("status-installed");
-        let install_root = root.join("SnappyRef");
-        let executable_dir = install_root.clone();
-        write_required_model_files(&install_root.join("models"));
+        let data_root = root.join("SnappyRef");
+        let executable_dir = data_root.clone();
+        write_required_model_files(&data_root.join("models"));
 
         let status = refresh_local_model_store_status(
-            &install_root,
+            &data_root,
             &executable_dir,
             TEST_MODEL_KEY,
             TEST_REQUIRED_FILES,
@@ -409,21 +406,21 @@ mod tests {
     #[test]
     fn local_model_store_status_reports_installed_via_migration() {
         let root = unique_temp_root("status-migrated");
-        let install_root = root.join("SnappyRef");
-        let executable_dir = install_root.join("SnappyRef.app/Contents/MacOS");
+        let data_root = root.join("SnappyRef");
+        let executable_dir = data_root.join("SnappyRef.app/Contents/MacOS");
         std::fs::create_dir_all(&executable_dir).unwrap();
-        let bundled = install_root.join("SnappyRef.app/Contents/Resources/models");
+        let bundled = data_root.join("SnappyRef.app/Contents/Resources/models");
         write_required_model_files(&bundled);
 
         let status = refresh_local_model_store_status(
-            &install_root,
+            &data_root,
             &executable_dir,
             TEST_MODEL_KEY,
             TEST_REQUIRED_FILES,
         );
 
         assert_eq!(status, LocalModelStoreStatus::InstalledViaMigration);
-        assert!(install_root.join("models").join(TEST_MODEL_KEY).exists());
+        assert!(data_root.join("models").join(TEST_MODEL_KEY).exists());
         assert!(!bundled.exists());
 
         let _ = std::fs::remove_dir_all(&root);
@@ -432,10 +429,10 @@ mod tests {
     #[test]
     fn local_model_store_status_reports_failed_for_incomplete_store() {
         let root = unique_temp_root("status-incomplete");
-        let install_root = root.join("SnappyRef");
-        let executable_dir = install_root.clone();
+        let data_root = root.join("SnappyRef");
+        let executable_dir = data_root.clone();
         write_file(
-            &install_root
+            &data_root
                 .join("models")
                 .join(TEST_MODEL_KEY)
                 .join("tokenizer.json"),
@@ -443,7 +440,7 @@ mod tests {
         );
 
         let status = refresh_local_model_store_status(
-            &install_root,
+            &data_root,
             &executable_dir,
             TEST_MODEL_KEY,
             TEST_REQUIRED_FILES,
@@ -457,17 +454,17 @@ mod tests {
     #[test]
     fn migrate_bundled_model_moves_files_to_local_store_once() {
         let root = unique_temp_root("migrate-once");
-        let install_root = root.join("SnappyRef");
-        let executable_dir = install_root.join("SnappyRef.app/Contents/MacOS");
+        let data_root = root.join("SnappyRef");
+        let executable_dir = data_root.join("SnappyRef.app/Contents/MacOS");
         std::fs::create_dir_all(&executable_dir).unwrap();
-        let bundled = install_root.join("SnappyRef.app/Contents/Resources/models");
+        let bundled = data_root.join("SnappyRef.app/Contents/Resources/models");
         write_file(&bundled.join("siglip2/tokenizer.json"), "{}");
         write_file(&bundled.join("siglip2/onnx/text_model.onnx"), "weights");
 
-        let outcome = migrate_bundled_model(&install_root, &executable_dir).unwrap();
+        let outcome = migrate_bundled_model(&data_root, &executable_dir).unwrap();
 
         assert_eq!(outcome, MigrationOutcome::Migrated);
-        let store = install_root.join("models");
+        let store = data_root.join("models");
         assert!(store.join("siglip2/tokenizer.json").exists());
         assert!(store.join("siglip2/onnx/text_model.onnx").exists());
         // Source must be gone after a successful migration.
@@ -479,25 +476,25 @@ mod tests {
     #[test]
     fn migrate_bundled_model_is_idempotent_when_store_already_present() {
         let root = unique_temp_root("migrate-idempotent");
-        let install_root = root.join("SnappyRef");
-        let executable_dir = install_root.join("SnappyRef.app/Contents/MacOS");
+        let data_root = root.join("SnappyRef");
+        let executable_dir = data_root.join("SnappyRef.app/Contents/MacOS");
         std::fs::create_dir_all(&executable_dir).unwrap();
 
         // Pre-existing Local Model Store with a known marker.
         write_file(
-            &install_root.join("models/siglip2/tokenizer.json"),
+            &data_root.join("models/siglip2/tokenizer.json"),
             "preserved",
         );
         // Stale in-bundle copy with different contents.
-        let bundled = install_root.join("SnappyRef.app/Contents/Resources/models");
+        let bundled = data_root.join("SnappyRef.app/Contents/Resources/models");
         write_file(&bundled.join("siglip2/tokenizer.json"), "stale");
 
-        let outcome = migrate_bundled_model(&install_root, &executable_dir).unwrap();
+        let outcome = migrate_bundled_model(&data_root, &executable_dir).unwrap();
 
         assert_eq!(outcome, MigrationOutcome::AlreadyMigrated);
         // Local Model Store contents are preserved (not overwritten).
         assert_eq!(
-            std::fs::read_to_string(install_root.join("models/siglip2/tokenizer.json")).unwrap(),
+            std::fs::read_to_string(data_root.join("models/siglip2/tokenizer.json")).unwrap(),
             "preserved",
         );
         // Stale bundled copy is cleaned up so the next migration is a no-op.
@@ -509,15 +506,15 @@ mod tests {
     #[test]
     fn migrate_bundled_model_returns_no_bundled_for_plain_binary() {
         let root = unique_temp_root("migrate-noop");
-        let install_root = root.join("SnappyRef");
-        // Plain-binary layout: executable lives directly under the install root.
-        let executable_dir = install_root.clone();
-        std::fs::create_dir_all(&install_root).unwrap();
+        let data_root = root.join("SnappyRef");
+        // Plain-binary layout: executable lives directly under the data root.
+        let executable_dir = data_root.clone();
+        std::fs::create_dir_all(&data_root).unwrap();
 
-        let outcome = migrate_bundled_model(&install_root, &executable_dir).unwrap();
+        let outcome = migrate_bundled_model(&data_root, &executable_dir).unwrap();
 
         assert_eq!(outcome, MigrationOutcome::NoBundledModel);
-        assert!(!install_root.join("models").exists());
+        assert!(!data_root.join("models").exists());
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -528,19 +525,19 @@ mod tests {
         // the second call must not find a bundled directory and must not touch
         // the migrated store.
         let root = unique_temp_root("migrate-twice");
-        let install_root = root.join("SnappyRef");
-        let executable_dir = install_root.join("SnappyRef.app/Contents/MacOS");
+        let data_root = root.join("SnappyRef");
+        let executable_dir = data_root.join("SnappyRef.app/Contents/MacOS");
         std::fs::create_dir_all(&executable_dir).unwrap();
-        let bundled = install_root.join("SnappyRef.app/Contents/Resources/models");
+        let bundled = data_root.join("SnappyRef.app/Contents/Resources/models");
         write_file(&bundled.join("siglip2/tokenizer.json"), "{}");
 
-        let first = migrate_bundled_model(&install_root, &executable_dir).unwrap();
-        let second = migrate_bundled_model(&install_root, &executable_dir).unwrap();
+        let first = migrate_bundled_model(&data_root, &executable_dir).unwrap();
+        let second = migrate_bundled_model(&data_root, &executable_dir).unwrap();
 
         assert_eq!(first, MigrationOutcome::Migrated);
         assert_eq!(second, MigrationOutcome::NoBundledModel);
         // Migrated content still present.
-        assert!(install_root.join("models/siglip2/tokenizer.json").exists());
+        assert!(data_root.join("models/siglip2/tokenizer.json").exists());
 
         let _ = std::fs::remove_dir_all(&root);
     }

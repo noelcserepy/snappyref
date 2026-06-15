@@ -4,19 +4,22 @@
 
 Read these before normal work:
 
-1. `CONTEXT.md`, if it exists.
-2. `docs/adr/*.md`, if any exist.
-3. `docs/skills/inspect/SKILL.md`, if it exists.
-4. `docs/skills/perf-profiling/SKILL.md`, if it exists.
-5. `docs/skills/patchnotes/SKILL.md`, if it exists.
+1. `docs/skills/inspect/SKILL.md`, if it exists.
+2. `docs/skills/perf-profiling/SKILL.md`, if it exists.
+3. `docs/skills/patchnotes/SKILL.md`, if it exists.
 
-## Project Memory Maintenance
+## Project Language Maintenance
 
-Keep `CONTEXT.md` and `docs/adr/` current as part of normal work.
+There is no standalone project glossary. Treat the codebase as the canonical domain language:
 
-Use `CONTEXT.md` for domain language: terms, relationships, examples, and resolved ambiguities. If a task introduces or changes project language, update `CONTEXT.md` in the same change.
+- use domain names in modules, types, functions, tests, and inspect scenarios
+- add short local comments only where naming cannot carry the rationale
+- keep legacy persistence or compatibility vocabulary inside adapter modules
 
-Use `docs/adr/` for durable decisions only. Create an ADR when a decision is hard to reverse, surprising without context, and the result of a real trade-off.
+Do not create new ADRs for normal work. Put durable choices in the owning
+module interface, tests, inspect scenarios, repo-local skills, or Telos memory.
+Any remaining `docs/adr/` files are carryover notes to absorb or delete, not the
+normal project memory source.
 
 Use `grill-with-docs` when language, boundaries, lifecycle, storage, release/update behavior, or architecture decisions are unclear. Ask one question at a time; if the repo answers the question, inspect the repo instead of asking.
 
@@ -71,17 +74,3 @@ git config core.hooksPath .githooks
 The hook is the local backstop for formatting and cargo checks.
 Bypass with `git push --no-verify` when you genuinely need to (e.g. debugging
 branches that you know will not merge).
-
-## Agent skills
-
-### Issue tracker
-
-GitHub Issues are the canonical implementation backlog. Private draft backlog notes can live in `.scratch/backlog/` until they are ready to become GitHub issues. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Use the standard Matt Pocock triage state labels plus `bug` / `enhancement` category labels. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-This is a single-context repo: use root `CONTEXT.md` plus `docs/adr/`. See `docs/agents/domain.md`.

@@ -22,14 +22,14 @@ use crate::updater::platform::TargetPlatform;
 ///   | tail -c 32 | xxd -i
 /// ```
 ///
-/// Provisioned by issue #79.
 const SIGNING_PUBLIC_KEY: [u8; 32] = [
     0xad, 0xfd, 0x89, 0xd7, 0xb3, 0x3b, 0xb0, 0x75, 0x24, 0x01, 0x7f, 0x72, 0xbe, 0xe2, 0x8d, 0x16,
     0xa5, 0x2b, 0x83, 0xf9, 0xf7, 0xf5, 0xc4, 0x6f, 0x46, 0x9a, 0xb3, 0x27, 0x0f, 0x89, 0xa5, 0xb5,
 ];
 
-/// "stable" is the only channel that exists at runtime. The field is
-/// reserved for future beta/insider channels (ADR-0015).
+/// "stable" is the only channel that exists at runtime. The manifest keeps
+/// the field so future beta/insider channels can be rejected explicitly by
+/// older stable builds.
 const EXPECTED_CHANNEL: &str = "stable";
 
 /// Verified platform entry from a parsed manifest.

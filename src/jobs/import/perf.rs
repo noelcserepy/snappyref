@@ -527,7 +527,7 @@ fn perf_record(
         placement_id as i32,
         false,
     );
-    let asset = crate::data::ImageAsset {
+    let asset = crate::data::Asset {
         id: placement_id,
         original_path: path.to_path_buf(),
         filename: path

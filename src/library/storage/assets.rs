@@ -24,7 +24,7 @@ pub(super) fn insert_asset_row(
     height: u32,
     file_size: u64,
     original_sha256: Option<&str>,
-) -> Result<ImageAsset, String> {
+) -> Result<Asset, String> {
     let filename = stored_path
         .file_name()
         .and_then(|value| value.to_str())
@@ -59,7 +59,7 @@ pub(super) fn insert_asset_row(
         )
         .map_err(|error| format!("failed to insert asset: {error}"))?;
 
-    Ok(ImageAsset {
+    Ok(Asset {
         id: transaction.last_insert_rowid(),
         original_path: stored_path.to_path_buf(),
         filename,
@@ -75,7 +75,7 @@ pub(super) fn load_exact_asset_for_original(
     transaction: &Transaction<'_>,
     file_size: u64,
     original_sha256: &str,
-) -> Result<Option<ImageAsset>, String> {
+) -> Result<Option<Asset>, String> {
     let mut statement = transaction
         .prepare(
             "SELECT
@@ -104,7 +104,7 @@ pub(super) fn load_exact_asset_for_original(
     else {
         return Ok(None);
     };
-    Ok(Some(ImageAsset {
+    Ok(Some(Asset {
         id: row.get(0).map_err(|error| {
             format!("failed to read exact-asset id for {original_sha256}: {error}")
         })?,
@@ -467,7 +467,7 @@ impl Library {
         height: u32,
         file_size: u64,
         desired_world: egui::Pos2,
-    ) -> Result<ImageAsset, String> {
+    ) -> Result<Asset, String> {
         let mut connection = self.connection()?;
         let transaction = connection
             .transaction()
@@ -568,7 +568,7 @@ impl Library {
         Ok(removed_asset_path)
     }
 
-    pub fn load_asset(&self, asset_id: i64) -> Result<ImageAsset, String> {
+    pub fn load_asset(&self, asset_id: i64) -> Result<Asset, String> {
         let connection = self.connection()?;
         connection
             .query_row(
@@ -586,7 +586,7 @@ impl Library {
                    AND archived = 0",
                 params![asset_id],
                 |row| {
-                    Ok(ImageAsset {
+                    Ok(Asset {
                         id: row.get(0)?,
                         original_path: PathBuf::from(row.get::<_, String>(1)?),
                         filename: row.get(2)?,

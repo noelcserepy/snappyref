@@ -16,8 +16,8 @@ pub(super) use placement_transform::{
     begin_placement_drag_scale, begin_placement_resize, begin_placement_rotation,
     compute_resize_snap_preview, compute_uniform_scale_snap_preview,
     hit_test_placement_resize_handle, hit_test_selected_placement_rotation_handle,
-    image_screen_rect, placement_drag_scale_factor, placement_resize_cursor_icon,
-    resized_placement_transform, rotate_vec2, rotated_image_delta, scaled_placement_transforms,
+    placement_drag_scale_factor, placement_resize_cursor_icon, placement_screen_rect,
+    resized_placement_transform, rotate_vec2, rotated_placement_delta, scaled_placement_transforms,
     selected_placement_rotation_handle_screen_pos,
 };
 pub(super) use selection::{
@@ -39,7 +39,7 @@ pub(super) use viewport::{
 
 #[cfg(test)]
 use super::PlacementScaleStart;
-use super::geometry::{image_contains_screen_point, min_image_scale};
+use super::geometry::{min_loaded_placement_scale, placement_contains_screen_point};
 use super::render::textbox_pointer_region;
 use super::{
     AnnotationDraftState, CanvasHit, CanvasState, PLACEMENT_DRAG_THRESHOLD_SCREEN,
@@ -49,9 +49,9 @@ use super::{
 use crate::data::CanvasAnnotationKind;
 
 // Suppresses drag movement (and guide snapping) for the first 90ms after
-// primary-press on a placement so click-to-select doesn't jerk the image via
+// primary-press on a placement so click-to-select doesn't jerk the placement via
 // snap.
-const IMAGE_MOVE_DEBOUNCE_SECONDS: f64 = 0.090;
+const PLACEMENT_MOVE_DEBOUNCE_SECONDS: f64 = 0.090;
 
 fn scale_drag_active(modifiers: egui::Modifiers) -> bool {
     modifiers.command && modifiers.alt
@@ -100,7 +100,7 @@ pub(super) fn handle_input(
         && primary_pressed
         && placement_drag_scale_modifier_held
         && let Some(pointer_pos) = pointer_pos
-        && let Some(placement_id) = hit_test_image(state, rect, pointer_pos)
+        && let Some(placement_id) = hit_test_placement(state, rect, pointer_pos)
     {
         begin_placement_drag_scale(state, rect, placement_id, pointer_pos);
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
@@ -175,7 +175,7 @@ pub(super) fn handle_input(
     } else if pointer_in_canvas_rect
         && placement_drag_scale_modifier_held
         && let Some(pointer_pos) = pointer_pos
-        && hit_test_image(state, rect, pointer_pos).is_some()
+        && hit_test_placement(state, rect, pointer_pos).is_some()
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     } else if let Some(pointer_pos) = pointer_pos
@@ -199,7 +199,8 @@ pub(super) fn handle_input(
             state.interaction.crop_state = None;
             state.interaction.annotation_draft_state =
                 Some(AnnotationDraftState::new(kind, pointer_world));
-        } else if crop_key_held && let Some(placement_id) = hit_test_image(state, rect, pointer_pos)
+        } else if crop_key_held
+            && let Some(placement_id) = hit_test_placement(state, rect, pointer_pos)
         {
             if !begin_crop(state, placement_id, pointer_pos) {
                 return;
@@ -427,15 +428,18 @@ pub(super) fn handle_input(
                             desired_rect,
                             anchor_world,
                             base_display_size,
-                            min_image_scale(image.placement.require_loaded_asset()),
+                            min_loaded_placement_scale(image.placement.require_loaded_asset()),
                         )
                     };
                     let (center_world, scale) = snap_result
                         .map(|snap_rect| {
                             (
                                 snap_rect.center(),
-                                (snap_rect.width() / base_display_size.x.max(f32::EPSILON))
-                                    .max(min_image_scale(image.placement.require_loaded_asset())),
+                                (snap_rect.width() / base_display_size.x.max(f32::EPSILON)).max(
+                                    min_loaded_placement_scale(
+                                        image.placement.require_loaded_asset(),
+                                    ),
+                                ),
                             )
                         })
                         .unwrap_or((center_world, scale));
@@ -476,7 +480,7 @@ pub(super) fn handle_input(
                 start_pointer_angle,
                 starting_items,
             } => {
-                let rotation_delta = rotated_image_delta(
+                let rotation_delta = rotated_placement_delta(
                     center_screen,
                     pointer_pos,
                     start_pointer_angle,
@@ -503,9 +507,9 @@ pub(super) fn handle_input(
         && let Some(pointer_pos) = pointer_pos
     {
         let elapsed_seconds = ui.input(|input| input.time) - drag_state.started_at_seconds;
-        if elapsed_seconds < IMAGE_MOVE_DEBOUNCE_SECONDS {
+        if elapsed_seconds < PLACEMENT_MOVE_DEBOUNCE_SECONDS {
             ui.ctx().request_repaint_after(Duration::from_secs_f64(
-                IMAGE_MOVE_DEBOUNCE_SECONDS - elapsed_seconds,
+                PLACEMENT_MOVE_DEBOUNCE_SECONDS - elapsed_seconds,
             ));
             return;
         }
@@ -581,7 +585,7 @@ pub(super) fn handle_input(
         && primary_double_clicked
         && pointer_in_canvas_rect
         && let Some(pointer_pos) = pointer_pos
-        && let Some(placement_id) = hit_test_image(state, rect, pointer_pos)
+        && let Some(placement_id) = hit_test_placement(state, rect, pointer_pos)
     {
         if !state.is_selected(placement_id) {
             state.set_single_selection(placement_id);
@@ -662,7 +666,7 @@ fn drawing_annotation_kind(ui: &egui::Ui) -> Option<CanvasAnnotationKind> {
     }
 }
 
-pub(crate) fn hit_test_image(
+pub(crate) fn hit_test_placement(
     state: &CanvasState,
     rect: egui::Rect,
     pointer_pos: egui::Pos2,
@@ -673,7 +677,7 @@ pub(crate) fn hit_test_image(
         .iter()
         .rev()
         .find(|image| {
-            image_contains_screen_point(
+            placement_contains_screen_point(
                 &image.placement,
                 pointer_pos,
                 state.pan,
@@ -694,8 +698,8 @@ mod tests {
     };
     use crate::canvas::{CanvasState, DragState};
     use crate::data::{
-        CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
-        CanvasStrokeWidth, CanvasTextSize, ImageAsset, Placement, PlacementState,
+        Asset, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
+        CanvasStrokeWidth, CanvasTextSize, Placement, PlacementState,
     };
     use crate::jobs::{ImagePrepPreviewTexture, ImportOrigin, PreparedPlacementImage};
     use crate::placement::movement::{compute_drag_snap_preview, layout_bounds_with_offset};
@@ -703,7 +707,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn multi_image_selection_uses_group_rotation_handle() {
+    fn multi_placement_selection_uses_group_rotation_handle() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 80);
@@ -772,7 +776,7 @@ mod tests {
     }
 
     #[test]
-    fn image_rotation_state_captures_selected_group() {
+    fn placement_rotation_state_captures_selected_group() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 80);
@@ -1451,7 +1455,7 @@ mod tests {
         width: u32,
         height: u32,
     ) {
-        let asset = ImageAsset {
+        let asset = Asset {
             id,
             original_path: PathBuf::from(format!("fixture-{id}.png")),
             filename: format!("fixture-{id}.png"),

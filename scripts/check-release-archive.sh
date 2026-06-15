@@ -54,7 +54,7 @@ case "$binary_name" in
     install_prefix="SnappyRef"
     require_entry "$install_prefix/SnappyRef.app/Contents/Info.plist"
     require_entry "$install_prefix/SnappyRef.app/Contents/Resources/snappyref.icns"
-    # ADR-0015: macOS keeps a helper inside the bundle for app-bundle swaps.
+    # macOS keeps a helper inside the bundle for app-bundle swaps.
     require_entry "$install_prefix/SnappyRef.app/Contents/MacOS/snappyref-updater"
     ;;
   SnappyRef/*)

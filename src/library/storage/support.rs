@@ -13,10 +13,10 @@ pub(super) use rusqlite::{Connection, Transaction, TransactionBehavior, params, 
 pub(super) use sha2::{Digest, Sha256};
 
 pub(super) use crate::data::{
-    Board, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
+    Asset, Board, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
     CanvasImageLod, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, ContentResolutionSource,
-    DEFAULT_VIEWPORT_ZOOM, ImageAsset, Placement, PlacementContent, PlacementLifecycle,
-    PlacementState, RectGeometry, UserSession, ViewportState, WorkspaceSettings,
+    DEFAULT_VIEWPORT_ZOOM, Placement, PlacementContent, PlacementLifecycle, PlacementState,
+    RectGeometry, UserSession, ViewportState, WorkspaceSettings,
 };
 pub(super) use crate::placement::arrangement::PlacementArrangementInput;
 

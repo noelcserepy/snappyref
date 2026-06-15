@@ -238,7 +238,7 @@ mod tests {
 
     use super::CropFlow;
     use crate::canvas::{CanvasCropRequest, CanvasState, PixelCropRect};
-    use crate::data::{CanvasImageLod, ImageAsset, Placement, PlacementState};
+    use crate::data::{Asset, CanvasImageLod, Placement, PlacementState};
     use crate::jobs::{
         ImagePrepPreviewTexture, ImagePrepWorker, ImportOrigin, PreparedPlacementImage,
     };
@@ -332,7 +332,7 @@ mod tests {
                 ),
                 archived: false,
             },
-            ImageAsset {
+            Asset {
                 id: asset_id,
                 original_path: PathBuf::from(format!("image-{asset_id}.png")),
                 filename: format!("image-{asset_id}.png"),

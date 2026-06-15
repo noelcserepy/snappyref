@@ -2,6 +2,10 @@ use eframe::egui;
 
 use crate::data::{Placement, PlacementId, RectGeometry};
 
+// Arrangement is a domain module because the same geometry rules are used by
+// import placement, user compacting, and keyboard settle commands. It operates
+// on Placement-shaped geometry without owning persistence, selection, or
+// source-specific import behavior.
 pub(crate) const SETTLE_BLOCK_GRACE_SCREEN: f32 = 1.0;
 const COMPACT_NORMALIZE_ABSOLUTE_THRESHOLD: f32 = 1.0;
 const COMPACT_NORMALIZE_RELATIVE_THRESHOLD: f32 = 0.05;

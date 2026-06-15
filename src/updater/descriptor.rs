@@ -6,7 +6,7 @@
 //! helper reads it, waits for the app's PID to exit, swaps the bundle in
 //! place, and relaunches the new version.
 //!
-//! Layout decisions (ADR-0015):
+//! Descriptor layout contract:
 //!
 //! * Every path is absolute so the helper does not need to inherit the
 //!   app's working directory.

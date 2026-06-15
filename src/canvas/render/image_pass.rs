@@ -4,8 +4,10 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 use super::annotations::{annotation_should_paint, paint_annotation, paint_annotations};
-use crate::canvas::geometry::{image_screen_corners_for_record, image_screen_rect_for_record};
-use crate::canvas::interaction::image_screen_rect;
+use crate::canvas::geometry::{
+    placement_screen_corners_for_record, placement_screen_rect_for_record,
+};
+use crate::canvas::interaction::placement_screen_rect;
 use crate::canvas::{
     ANNOTATION_CULL_MARGIN_SCREEN, CanvasImageLod, CanvasState, CanvasTexture,
     IMAGE_CULL_MARGIN_SCREEN, IMAGE_DETAIL_PROMOTION_THRESHOLD, ImagePaintStats, ImagePassBatch,
@@ -30,7 +32,7 @@ pub(crate) fn paint_images(
         .rendered_placements
         .iter()
         .filter_map(|image| {
-            let image_rect = image_screen_rect(state, rect, image);
+            let image_rect = placement_screen_rect(state, rect, image);
             image_rect
                 .intersects(cull_rect)
                 .then_some((image.placement.state.id, image_rect))
@@ -49,6 +51,9 @@ pub(crate) fn paint_images(
     let mut next_animation_repaint = None;
 
     for (placement_id, image_rect) in &visible_images {
+        // Visible animated images stay paintable while idle. They advance
+        // frames only when the user is explicitly interacting with them, so a
+        // quiet board does not schedule animation repaint work forever.
         let animation_active = state.is_selected(*placement_id)
             || pointer_hover_pos.is_some_and(|pos| image_rect.contains(pos));
         if animation_active
@@ -160,7 +165,7 @@ pub(crate) fn paint_images(
         if image.placement.is_loaded() {
             paint_image_mesh(painter, state, rect, image);
         } else {
-            let image_rect = image_screen_rect(state, rect, image);
+            let image_rect = placement_screen_rect(state, rect, image);
             paint_unloaded_placement(painter, image, image_rect);
         }
     }
@@ -180,7 +185,7 @@ pub(crate) fn paint_images(
     }
 
     for image in &state.document.rendered_placements {
-        let image_rect = image_screen_rect(state, rect, image);
+        let image_rect = placement_screen_rect(state, rect, image);
         if !image_rect.intersects(cull_rect) {
             continue;
         }
@@ -284,7 +289,7 @@ fn paint_canvas_items_interleaved(
                 let Some(image) = state.rendered_placement_by_id(placement_id) else {
                     continue;
                 };
-                let image_rect = image_screen_rect(state, rect, image);
+                let image_rect = placement_screen_rect(state, rect, image);
                 if !image_rect.intersects(image_cull_rect) {
                     continue;
                 }
@@ -484,7 +489,7 @@ pub(crate) fn desired_image_lod(
     if image.loaded_lod >= CanvasImageLod::Detail {
         return None;
     }
-    let image_rect = image_screen_rect(state, rect, image);
+    let image_rect = placement_screen_rect(state, rect, image);
     let on_screen_max_side = image_rect.width().max(image_rect.height());
     let texture_max_side = image.texture.size()[0].max(image.texture.size()[1]) as f32;
     (texture_max_side > 0.0
@@ -531,7 +536,7 @@ fn paint_image_mesh(
     image: &RenderedPlacement,
 ) {
     let corners =
-        image_screen_corners_for_record(&image.placement, state.pan, state.zoom, rect.center());
+        placement_screen_corners_for_record(&image.placement, state.pan, state.zoom, rect.center());
     let mut mesh = egui::Mesh::with_texture(image.texture.id());
     let left_top = mesh.vertices.len() as u32;
     mesh.vertices.push(egui::epaint::Vertex {
@@ -594,7 +599,8 @@ pub(crate) fn image_paint_stats_for_records(
     let cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
     for placement in placements {
         stats.considered += 1;
-        let image_rect = image_screen_rect_for_record(placement, rect, pan, zoom, rect.center());
+        let image_rect =
+            placement_screen_rect_for_record(placement, rect, pan, zoom, rect.center());
         if !cull_offscreen || image_rect.intersects(cull_rect) {
             stats.drawn += 1;
         }
@@ -612,7 +618,8 @@ pub(crate) fn image_texture_group_count_for_records(
     let mut groups = 0;
     let mut previous_asset_id = None;
     for placement in placements {
-        let image_rect = image_screen_rect_for_record(placement, rect, pan, zoom, rect.center());
+        let image_rect =
+            placement_screen_rect_for_record(placement, rect, pan, zoom, rect.center());
         if !image_rect.intersects(cull_rect) {
             continue;
         }

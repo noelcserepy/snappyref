@@ -3,6 +3,12 @@ use std::time::Duration;
 
 const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Managed Library filesystem layout.
+///
+/// The database and app-owned derivatives live together under the Library
+/// root. User-owned originals are copied into `originals/`; canvas thumbnails
+/// and raster caches live under `thumbs/`; the SQLite catalog is
+/// `library.db`.
 #[derive(Clone, Debug)]
 pub struct Library {
     pub(super) originals_dir: PathBuf,
