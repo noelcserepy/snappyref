@@ -1,16 +1,17 @@
-//! The small `UpdateState` machine that drives the Update Pill.
+//! The small `UpdateState` machine behind the Settings update controls.
 //!
-//! After slice 5 the pill has five observable states:
+//! The update UI has five observable states:
 //!
 //! * `Hidden`      – no Available Update is known.
 //! * `Available`   – a verified manifest reports a version newer than
-//!   the running app. The pill is shown and clicking opens the popover.
-//! * `Downloading` – the user has clicked Install. The pill renders the
-//!   percent-complete in place; the popover is closed.
+//!   the running app.
+//! * `Downloading` – the user has clicked Install. The update UI renders
+//!   percent-complete in place.
 //! * `Ready`       – the downloaded bundle has been verified and staged.
-//!   The pill shows "Restart"; slice 6 wires the relaunch.
+//!   The Settings action offers Restart.
 //! * `Failed`      – the last check, download, or staging step failed.
-//!   ADR-0015 calls for a quiet failure indicator and no popup.
+//!   Settings shows a quiet failure indicator; discovery/download/staging
+//!   failures never raise a popup.
 
 /// Outcome of a single discovery attempt, fed to [`UpdateState::apply`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,7 +30,7 @@ pub(crate) enum CheckOutcome {
     Failed,
 }
 
-/// The pill state.
+/// The update state rendered by Settings.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum UpdateState {
     Hidden,
@@ -40,15 +41,13 @@ pub(crate) enum UpdateState {
     },
     /// User has clicked Install and the download is in flight. Percent is
     /// in `0..=100`; the version is captured so a manifest swap mid-flight
-    /// cannot relabel the pill.
+    /// cannot relabel the update UI.
     Downloading {
         version: String,
         percent: u8,
     },
-    /// Download is verified, zip is extracted into
-    /// `<install_root>/updates/staging-{version}/`. Slice 6 wires the
-    /// "Restart" click to a real swap; until then this is the resting
-    /// state for a successful update.
+    /// Download is verified and extracted into
+    /// `<install_root>/updates/staging-{version}/`; Restart can now apply it.
     Ready {
         version: String,
     },
@@ -77,7 +76,7 @@ impl UpdateState {
             } => {
                 // Discovery should never overwrite an in-flight download
                 // or a ready bundle for the same or newer version — the
-                // user is mid-install and the pill must keep showing the
+                // user is mid-install and the update UI must keep showing the
                 // current progress/ready state.
                 match self {
                     UpdateState::Downloading { version: v, .. }
@@ -98,8 +97,8 @@ impl UpdateState {
             CheckOutcome::UpToDate => {
                 // Up-to-date never overwrites a previously-discovered
                 // Available — a manifest server briefly serving an old
-                // version must not retract the pill mid-session. It also
-                // never retracts Downloading or Ready. The pill clears
+                // version must not retract the update UI mid-session. It also
+                // never retracts Downloading or Ready. The update UI clears
                 // Failed when we recover.
                 if matches!(self, UpdateState::Failed) {
                     *self = UpdateState::Hidden;
@@ -107,8 +106,8 @@ impl UpdateState {
             }
             CheckOutcome::Failed => {
                 // A failure must not clobber an already-known Available
-                // Update, in-flight download, or staged bundle. ADR-0015:
-                // "the pill stays in its last known state." Otherwise
+                // Update, in-flight download, or staged bundle. The update
+                // UI stays in its last known actionable state. Otherwise
                 // surface Failed.
                 if matches!(self, UpdateState::Hidden) {
                     *self = UpdateState::Failed;
@@ -117,8 +116,8 @@ impl UpdateState {
         }
     }
 
-    /// Begin the download phase for `version`. Called when the user
-    /// clicks the popover's Install button.
+    /// Begin the download phase for `version`. Called when the user clicks
+    /// Install in Settings.
     pub(crate) fn begin_install(&mut self, version: String) {
         *self = UpdateState::Downloading {
             version,
@@ -127,7 +126,7 @@ impl UpdateState {
     }
 
     /// Apply a progress event from the install worker. Only relevant
-    /// while the pill is in `Downloading` for the same version; later
+    /// while the update UI is in `Downloading` for the same version; later
     /// progress on a stale download is silently ignored.
     pub(crate) fn apply_progress(&mut self, event: InstallProgress) {
         match event {
@@ -162,7 +161,7 @@ impl UpdateState {
 
     /// Promote to Ready directly. Used at startup when a verified staged
     /// bundle is already on disk and the manifest still points at that
-    /// version, per the slice-5 spec.
+    /// version, per the download-staging spec.
     ///
     /// Refuses to clobber an in-flight `Downloading` whose version is the
     /// same or newer than what is being marked: the install worker owns

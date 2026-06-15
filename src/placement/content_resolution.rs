@@ -8,6 +8,9 @@ use crate::data::Placement;
 use crate::jobs::{ExistingLoadDiagnostics, ImagePrepTrace, ImportOrigin};
 use crate::library::storage::Library;
 
+// Content Resolution correlates async worker results back to the Placement
+// that reserved a canvas position. The queue id is the runtime handle; the
+// Placement id is the durable object updated when loading succeeds or fails.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ContentResolutionReservation {
     pub(crate) target_board_id: i64,

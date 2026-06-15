@@ -167,9 +167,9 @@ impl SearchController {
         self.semantic_install.force_stop();
         #[cfg(not(test))]
         match crate::library::location::resolve_data_root() {
-            Ok(install_root) => {
+            Ok(data_root) => {
                 let descriptor = default_semantic_search_asset_descriptor();
-                match remove_semantic_search_assets(&install_root, &descriptor) {
+                match remove_semantic_search_assets(&data_root, &descriptor) {
                     Ok(()) => {
                         self.service = None;
                         self.local_model_store_status = Some(LocalModelStoreStatus::Missing);
@@ -1125,14 +1125,14 @@ mod tests {
         let mut status = "Ready".to_owned();
 
         search.sync_model_store_status(
-            LocalModelStoreStatus::Failed("install root is not writable".to_owned()),
+            LocalModelStoreStatus::Failed("data root is not writable".to_owned()),
             &mut status,
             None,
         );
 
         assert_eq!(
             status,
-            "Semantic Search install failed: install root is not writable"
+            "Semantic Search install failed: data root is not writable"
         );
     }
 
@@ -1470,7 +1470,7 @@ mod tests {
         for (index, position) in source_positions.iter().enumerate() {
             let item_id = 100 + index as i64;
             let asset_id = 10 + index as i64;
-            let asset = crate::data::ImageAsset {
+            let asset = crate::data::Asset {
                 id: asset_id,
                 original_path: std::path::PathBuf::from("search-result"),
                 filename: "search-result".to_owned(),
@@ -1568,7 +1568,7 @@ mod tests {
     fn search_drag_updates_snap_guides_after_provisional_placement_exists() {
         let mut canvas = CanvasState::default();
         canvas.set_placement_gap(24.0);
-        let target_asset = crate::data::ImageAsset {
+        let target_asset = crate::data::Asset {
             id: 900,
             original_path: std::path::PathBuf::from("snap-target"),
             filename: "snap-target".to_owned(),

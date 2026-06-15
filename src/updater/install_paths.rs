@@ -1,13 +1,12 @@
 //! Install-root–relative paths for auto-update download/staging.
 //!
-//! ADR-0015 keeps all SnappyRef-related state inside the user's portable
-//! install folder. For auto-update we need two locations relative to the
-//! install root:
+//! Auto-update state stays inside the user's portable install folder. The
+//! updater uses two locations relative to the install root:
 //!
 //! * `<install_root>/updates/` — the download bucket. Partial downloads,
 //!   verified zips, and staging subdirectories all live here.
 //! * `<install_root>/updates/staging-{version}/` — the extracted, verified
-//!   bundle for a specific manifest version, used by slice 6's swap step.
+//!   bundle for a specific manifest version, used by the restart-apply step.
 //!
 //! The install-root resolution itself reuses
 //! [`crate::library::location::install_root_from_exe_path`] so plain-binary
@@ -82,9 +81,8 @@ mod tests {
     fn updates_dir_is_outside_app_bundle_for_macos_layout() {
         // On macOS the install root is the *parent* of SnappyRef.app, so
         // `<install_root>/updates/` is a sibling of the app bundle just
-        // like `library/` and `models/`. ADR-0015 requires this so the
-        // swap step can write inside the user's portable folder without
-        // descending into the bundle.
+        // like `library/` and `models/`, so the swap step writes inside
+        // the user's portable folder without descending into the bundle.
         let install_root = Path::new("/Users/alice/SnappyRef");
         assert_eq!(
             updates_dir(install_root),

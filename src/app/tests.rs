@@ -3,8 +3,8 @@ use super::{
     ModelLoadTimingSummary, SUPPORTED_SHORTCUTS, SnappyRefApp, apply_arrangement_action,
 };
 use crate::data::{
-    CanvasAnnotationKind, CanvasBackground, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize,
-    ImageAsset, Placement, PlacementState,
+    Asset, CanvasAnnotationKind, CanvasBackground, CanvasStackItem, CanvasStrokeWidth,
+    CanvasTextSize, Placement, PlacementState,
 };
 use crate::jobs::PreparedPlacementImage;
 use crate::library::storage::Library;
@@ -339,7 +339,7 @@ fn compact_arrangement_action_uses_dense_compact_layout() {
     let gap = 12.0;
 
     for (index, (id, width, height)) in fixture.iter().enumerate() {
-        let asset = ImageAsset {
+        let asset = Asset {
             id: *id,
             original_path: PathBuf::from(format!("fixture-{id}.png")),
             filename: format!("fixture-{id}.png"),
@@ -1289,7 +1289,7 @@ fn copy_selection_payload_preserves_internal_json_for_mixed_selection() {
         payload.kind,
         crate::active_board::commands::COPY_PAYLOAD_KIND
     );
-    assert_eq!(payload.items.len(), 1);
+    assert_eq!(payload.placements.len(), 1);
     assert_eq!(payload.annotations.len(), 1);
     assert_eq!(
         payload
@@ -2537,7 +2537,7 @@ fn switching_boards_clears_selection_search_and_transient_undo() {
     let library = Library::initialize(root.clone()).unwrap();
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
-    let asset = ImageAsset {
+    let asset = Asset {
         id: 1,
         original_path: PathBuf::from("fixture.png"),
         filename: "fixture.png".to_owned(),
@@ -3591,7 +3591,7 @@ fn inspect_semantic_search_real_install_writes_artifact() {
         .set_local_model_store_status_for_test(initial_status.clone());
     app.search.set_semantic_install_for_test(|tx| {
         std::thread::spawn(move || {
-            let install_root = match crate::library::location::resolve_data_root() {
+            let data_root = match crate::library::location::resolve_data_root() {
                 Ok(root) => root,
                 Err(error) => {
                     let _ = tx.send(
@@ -3603,7 +3603,7 @@ fn inspect_semantic_search_real_install_writes_artifact() {
             let descriptor = crate::search::semantic::default_semantic_search_asset_descriptor();
             let canceled = std::sync::atomic::AtomicBool::new(false);
             let _ = crate::search::semantic::install_semantic_search_asset(
-                &install_root,
+                &data_root,
                 &descriptor,
                 &canceled,
                 |progress| {
@@ -4040,7 +4040,7 @@ fn inspect_compact_equal_size_images_writes_artifact() {
     ];
 
     for id in 1_i64..=6 {
-        let asset = ImageAsset {
+        let asset = Asset {
             id,
             original_path: PathBuf::from(format!("compact-equal-{id}.png")),
             filename: format!("compact-equal-{id}.png"),
@@ -5076,7 +5076,7 @@ fn search_drop_source_center_uses_image_extents() {
     let mut app = test_app(None);
 
     for (id, x, width) in [(1_i64, 0.0_f32, 100_u32), (2, 200.0, 300)] {
-        let asset = ImageAsset {
+        let asset = Asset {
             id,
             original_path: PathBuf::from(format!("fixture-{id}.png")),
             filename: format!("fixture-{id}.png"),
@@ -5121,7 +5121,7 @@ fn completed_multi_file_import_batch_selects_and_compacts_loaded_geometry() {
     app.register_import_batch(app.active_board_id, egui::pos2(120.0, 80.0), vec![1, 2, 3]);
 
     for (id, width, height) in [(1_i64, 180_u32, 80_u32), (2, 70, 210), (3, 140, 120)] {
-        let asset = ImageAsset {
+        let asset = Asset {
             id,
             original_path: PathBuf::from(format!("fixture-{id}.png")),
             filename: format!("fixture-{id}.png"),
@@ -6142,7 +6142,7 @@ fn inspect_sample_loaded_item(
 ) -> PreparedPlacementImage {
     let asset_id = state.id;
     state.asset_id = Some(asset_id);
-    let asset = ImageAsset {
+    let asset = Asset {
         id: asset_id,
         original_path: PathBuf::from(name),
         filename: name.to_owned(),
@@ -6381,7 +6381,7 @@ fn add_inspect_compact_image(
     color: [u8; 4],
     center: egui::Pos2,
 ) {
-    let asset = ImageAsset {
+    let asset = Asset {
         id,
         original_path: PathBuf::from(format!("compact-fixture-{id}.png")),
         filename: format!("compact-fixture-{id}.png"),
@@ -6469,7 +6469,7 @@ fn item_enabled(items: &[super::ContextMenuItem], action: super::ContextMenuActi
 }
 
 fn test_loaded_item(placement_id: i64, target_board_id: i64) -> PreparedPlacementImage {
-    let asset = ImageAsset {
+    let asset = Asset {
         id: placement_id,
         original_path: PathBuf::from(format!("fixture-{placement_id}.png")),
         filename: format!("fixture-{placement_id}.png"),

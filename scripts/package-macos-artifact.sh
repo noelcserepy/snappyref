@@ -46,8 +46,8 @@ PY
 mkdir -p "$macos_root" "$resources_root"
 cp target/release/snappyref "$macos_root/"
 chmod +x "$macos_root/snappyref"
-# Ship the auto-update helper alongside the main binary. ADR-0015: the
-# helper lives at SnappyRef.app/Contents/MacOS/snappyref-updater.
+# Ship the auto-update helper alongside the main binary at
+# SnappyRef.app/Contents/MacOS/snappyref-updater.
 cp target/release/snappyref-updater "$macos_root/"
 chmod +x "$macos_root/snappyref-updater"
 cp assets/app-icon/snappyref.icns "$resources_root/"

@@ -4,6 +4,10 @@ use super::controller::SearchController;
 
 const EMBEDDING_BACKFILL_IDLE_QUIET_MS: u64 = 750;
 
+// Embedding backfill is idle-only background work. Demand embeddings for an
+// import/search action run through the service immediately; this scheduler
+// waits for app work and search work to drain before filling missing Library
+// embeddings so interactive frames stay storage-light.
 #[derive(Default)]
 pub(super) struct EmbeddingBackfillScheduler {
     pub(super) quiet_since: Option<Instant>,

@@ -31,9 +31,9 @@ use crate::updater::{UpdateConfig, UpdateService, UpdateState};
 const STARTUP_VIEWPORT_SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
 const MAX_IMPORT_RESULTS_PER_FRAME: usize = 4;
 const USER_SESSION_SAVE_DEBOUNCE: Duration = Duration::from_millis(750);
-/// Minimum wall time between Settings Tab update-check clicks.
-/// ADR-0015: discovery is opportunistic and the manual button is a
-/// convenience, not a way to hammer the manifest endpoint.
+/// Minimum wall time between Settings Tab update-check clicks. Discovery is
+/// opportunistic; the manual button is a convenience, not a way to hammer the
+/// manifest endpoint.
 const MANUAL_UPDATE_CHECK_THROTTLE: Duration = Duration::from_secs(60);
 const BOARD_LOAD_DEDUPE_HASH_LIMIT: usize = 32;
 const BOARD_LOAD_DEDUPE_GROUP_LIMIT: usize = 8;
@@ -1333,7 +1333,7 @@ impl SnappyRefApp {
     fn app_settled_idle(&self) -> bool {
         if self.library.is_none() {
             // Storage failed at startup; treat as settled so the user
-            // still gets an Available Update pill if one exists.
+            // still gets Available Update controls if one exists.
             return true;
         }
         let worker_stats = self
@@ -1880,10 +1880,10 @@ impl SnappyRefApp {
         }
     }
 
-    /// Drive the swap-and-relaunch flow when the user clicks the Ready
-    /// pill. Sequence (ADR-0015):
+    /// Drive the swap-and-relaunch flow when the user clicks Restart in
+    /// Settings:
     ///
-    /// 1. close any open popover.
+    /// 1. close any open update affordance.
     /// 2. save the User Session — the new app's first launch reads it back.
     /// 3. drop worker child processes (embedding helper, import worker)
     ///    so the swap is not racing live filesystem writers.
@@ -3783,7 +3783,7 @@ impl SnappyRefApp {
                     }
                 }
                 SupportedShortcutAction::ApplyDefaultAverageArea => {
-                    if !self.canvas.has_image_selection() {
+                    if !self.canvas.has_placement_selection() {
                         continue;
                     }
                     apply_default_average_area_to_selection(&mut self.canvas, &mut self.status);

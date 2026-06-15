@@ -1,8 +1,8 @@
 use eframe::egui;
 
-use super::super::geometry::image_contains_screen_point;
+use super::super::geometry::placement_contains_screen_point;
 use super::super::{CanvasContextMenuRequest, CanvasHit, CanvasState, MarqueeState};
-use super::{annotation_hit_test, annotation_screen_rect, image_screen_rect};
+use super::{annotation_hit_test, annotation_screen_rect, placement_screen_rect};
 use crate::data::CanvasStackItem;
 
 pub(crate) fn open_context_menu_at_pointer(
@@ -52,7 +52,7 @@ pub(crate) fn hit_test_canvas_item(
             CanvasStackItem::Placement(placement_id) => state
                 .rendered_placement_by_id(placement_id)
                 .filter(|image| {
-                    image_contains_screen_point(
+                    placement_contains_screen_point(
                         &image.placement,
                         pointer_pos,
                         state.pan,
@@ -104,7 +104,7 @@ pub(crate) fn update_marquee_selection(
         .document
         .rendered_placements
         .iter()
-        .filter(|image| image_screen_rect(state, rect, image).intersects(selection_rect))
+        .filter(|image| placement_screen_rect(state, rect, image).intersects(selection_rect))
         .map(|image| image.placement.state.id)
         .collect::<Vec<_>>();
     let selected_annotation_ids = state

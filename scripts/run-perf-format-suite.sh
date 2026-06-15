@@ -5,8 +5,8 @@
 #
 # This wraps `scripts/run-perf-scenario.sh` for each corpus format and
 # then calls `scripts/summarize-perf-by-format.py` on the resulting run
-# directories. It is the easiest way to satisfy the "easy to compare"
-# acceptance criterion of issue #71.
+# directories. Use it when a mixed-corpus import result needs a per-format
+# breakdown before attributing a regression to a decoder or source format.
 #
 # Usage:
 #

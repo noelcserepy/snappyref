@@ -1,7 +1,7 @@
 //! Rollback to the previous version retained at `<install_root>`.
 //!
 //! After a successful update the swap step renames the prior binary to a
-//! `.previous` / `.old` sibling next to the live binary (ADR-0015). This
+//! `.previous` / `.old` sibling next to the live binary. This
 //! module owns the inverse operation: detect that backup, restore it into
 //! place, and demote the live binary to the backup slot in the same
 //! atomic-ish swap. User-facing rollback is deferred for v1; this module

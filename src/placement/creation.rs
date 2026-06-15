@@ -12,6 +12,9 @@ use crate::placement::content_resolution::{
     ContentResolutionReservation, ContentResolutionRuntime,
 };
 
+// Placement Creation converts user source intent into real Placements. It owns
+// preview geometry and initial loading state; source-specific adapters
+// (import, clipboard, search) only describe intent and later resolve content.
 const FALLBACK_IMPORT_WIDTH: u32 = 360;
 const FALLBACK_IMPORT_HEIGHT: u32 = 240;
 
@@ -546,6 +549,8 @@ impl PlacementCreationBatchTracker {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn active_placement_creation_keeps_viewport_navigation_available() {
         assert_eq!(
@@ -580,5 +585,110 @@ mod tests {
             visible_rect,
         ));
         assert!(canvas.viewport_state().camera_zoom < 1.0);
+    }
+
+    #[test]
+    fn source_intent_preview_has_geometry_before_content_resolves() {
+        let mut canvas = crate::canvas::CanvasState::default();
+        let settings = PlacementCreationSettings {
+            placement_target_area: 36_000.0,
+            gap: 12.0,
+        };
+
+        let previews = plan_source_intent_previews(
+            &mut canvas,
+            &[SourceIntent {
+                label: "clipboard".to_owned(),
+                dimensions: None,
+                approximate_dimensions: false,
+                content: ContentResolutionSource::Clipboard,
+            }],
+            eframe::egui::pos2(120.0, 80.0),
+            eframe::egui::Rect::from_min_size(
+                eframe::egui::Pos2::ZERO,
+                eframe::egui::vec2(800.0, 600.0),
+            ),
+            settings,
+        );
+
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].label, "clipboard");
+        assert_eq!(
+            previews[0].geometry.size,
+            display_size_for_dimensions(
+                FALLBACK_IMPORT_WIDTH,
+                FALLBACK_IMPORT_HEIGHT,
+                settings.placement_target_area,
+            )
+        );
+    }
+
+    #[test]
+    fn provisional_source_intent_creates_real_loading_placement() {
+        let mut canvas = crate::canvas::CanvasState::default();
+        let ids = create_provisional_placements(
+            &mut canvas,
+            vec![ProvisionalSourceIntent::SourceIntent(SourceIntent {
+                label: "clipboard".to_owned(),
+                dimensions: Some((320, 240)),
+                approximate_dimensions: false,
+                content: ContentResolutionSource::Clipboard,
+            })],
+            eframe::egui::pos2(120.0, 80.0),
+            eframe::egui::Rect::from_min_size(
+                eframe::egui::Pos2::ZERO,
+                eframe::egui::vec2(800.0, 600.0),
+            ),
+            PlacementCreationSettings {
+                placement_target_area: 36_000.0,
+                gap: 12.0,
+            },
+        );
+
+        assert_eq!(canvas.selected_placement_ids(), ids);
+        let placement = canvas.placement_for_id(ids[0]).unwrap();
+        assert_eq!(placement.lifecycle, PlacementLifecycle::Provisional);
+        assert!(placement.asset.is_none());
+        assert!(matches!(
+            placement.content,
+            PlacementContent::Loading {
+                source: ContentResolutionSource::Clipboard,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn provisional_existing_asset_intent_reuses_asset_as_loading_placement() {
+        let mut canvas = crate::canvas::CanvasState::default();
+        let ids = create_provisional_placements(
+            &mut canvas,
+            vec![ProvisionalSourceIntent::ExistingAsset {
+                asset_id: 42,
+                label: "existing.png".to_owned(),
+                dimensions: (640, 480),
+            }],
+            eframe::egui::pos2(120.0, 80.0),
+            eframe::egui::Rect::from_min_size(
+                eframe::egui::Pos2::ZERO,
+                eframe::egui::vec2(800.0, 600.0),
+            ),
+            PlacementCreationSettings {
+                placement_target_area: 36_000.0,
+                gap: 12.0,
+            },
+        );
+
+        let placement = canvas.placement_for_id(ids[0]).unwrap();
+        assert_eq!(placement.lifecycle, PlacementLifecycle::Provisional);
+        assert_eq!(placement.state.asset_id, Some(42));
+        assert!(placement.asset.is_none());
+        assert!(matches!(
+            placement.content,
+            PlacementContent::Loading {
+                source: ContentResolutionSource::SearchAsset { asset_id: 42 },
+                ..
+            }
+        ));
     }
 }

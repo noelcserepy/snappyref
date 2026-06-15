@@ -9,6 +9,8 @@ use crate::data::{
 };
 use crate::library::storage::Library;
 
+// The clipboard kind string is compatibility data. The typed payload below
+// distinguishes Placements from Annotations even though old JSON says "items".
 pub(crate) const COPY_PAYLOAD_KIND: &str = "snappyref-board-items";
 
 pub(crate) struct ActiveBoardCommandContext<'a> {
@@ -38,7 +40,8 @@ pub(crate) struct ClipboardBoardSelection {
     pub(crate) kind: String,
     pub(crate) source_center_x: f32,
     pub(crate) source_center_y: f32,
-    pub(crate) items: Vec<ClipboardPlacementState>,
+    #[serde(rename = "items")]
+    pub(crate) placements: Vec<ClipboardPlacementState>,
     pub(crate) annotations: Vec<ClipboardAnnotation>,
     #[serde(default)]
     pub(crate) stack_order: Vec<ClipboardStackEntry>,
@@ -122,7 +125,7 @@ pub(crate) fn copy_selection_to_json(
     let Some(payload) = copy_selected_board_payload(canvas) else {
         return Ok(None);
     };
-    let item_count = payload.items.len() + payload.annotations.len();
+    let item_count = payload.placements.len() + payload.annotations.len();
     let payload_json = serde_json::to_string(&payload)
         .map_err(|error| format!("Failed to serialize clipboard payload: {error}"))?;
     Ok(Some(CopyCommandOutcome {
@@ -133,14 +136,14 @@ pub(crate) fn copy_selection_to_json(
 
 pub(crate) fn copy_selected_board_payload(canvas: &CanvasState) -> Option<ClipboardBoardSelection> {
     let source_bounds = canvas.selected_world_bounds()?;
-    let mut items = Vec::new();
+    let mut placements = Vec::new();
     let mut placement_ids = Vec::new();
     for placement_id in canvas.selected_placement_ids() {
         let placement = canvas.placement_for_id(placement_id)?;
         let asset = placement.asset.as_ref()?;
         let asset_id = placement.state.asset_id?;
         placement_ids.push(placement_id);
-        items.push(ClipboardPlacementState {
+        placements.push(ClipboardPlacementState {
             asset_id,
             center_x: placement.state.geometry.center.x,
             center_y: placement.state.geometry.center.y,
@@ -192,11 +195,11 @@ pub(crate) fn copy_selected_board_payload(canvas: &CanvasState) -> Option<Clipbo
         })
         .collect();
 
-    (!items.is_empty() || !annotations.is_empty()).then(|| ClipboardBoardSelection {
+    (!placements.is_empty() || !annotations.is_empty()).then(|| ClipboardBoardSelection {
         kind: COPY_PAYLOAD_KIND.to_owned(),
         source_center_x: source_bounds.center().x,
         source_center_y: source_bounds.center().y,
-        items,
+        placements,
         annotations,
         stack_order,
     })
@@ -211,7 +214,7 @@ pub(crate) fn paste_json_at(
         return Ok(None);
     };
     if payload.kind != COPY_PAYLOAD_KIND
-        || (payload.items.is_empty() && payload.annotations.is_empty())
+        || (payload.placements.is_empty() && payload.annotations.is_empty())
     {
         return Ok(None);
     }
@@ -239,10 +242,10 @@ pub(crate) fn paste_board_payload_at(
     let mut needs_existing_reload = false;
 
     let mut pasted_placement_ids = Vec::new();
-    for item in &payload.items {
-        let geometry = item.translated_geometry(delta);
+    for placement in &payload.placements {
+        let geometry = placement.translated_geometry(delta);
         let placement = library.create_placement_from_asset(
-            item.asset_id,
+            placement.asset_id,
             geometry.center,
             geometry.scale,
             geometry.rotation,
@@ -336,7 +339,7 @@ pub(crate) fn delete_selected_from_board(
         status = Some(format!("Deleted {} {noun}", annotation_ids.len()));
     }
 
-    let archived_ids = context.canvas.delete_selected_images();
+    let archived_ids = context.canvas.delete_selected_placements();
     if archived_ids.is_empty() {
         if status.is_some() {
             commit_document_changes(context)?;
@@ -442,8 +445,8 @@ fn placement_anchor_for_payload(
 pub(crate) fn clipboard_payload_bounds(payload: &ClipboardBoardSelection) -> Option<egui::Rect> {
     let mut bounds: Option<egui::Rect> = None;
 
-    for item in &payload.items {
-        let rect = item.geometry().unrotated_bounds();
+    for placement in &payload.placements {
+        let rect = placement.geometry().unrotated_bounds();
         bounds = Some(match bounds {
             Some(existing) => existing.union(rect),
             None => rect,

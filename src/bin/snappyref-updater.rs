@@ -15,9 +15,9 @@
 //! 7. removes the staging directory.
 //!
 //! Failures are written to stderr and exit with a non-zero code, never to a
-//! GUI dialog — the helper is a console process. ADR-0015: the auto-update
-//! flow stays inside the user's portable install folder and never touches
-//! `library/` or `models/`.
+//! GUI dialog — the helper is a console process. The auto-update flow stays
+//! inside the user's portable install folder and never touches `library/` or
+//! `models/`.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -88,8 +88,8 @@ fn resolve_parent_wait_timeout() -> Duration {
 
 /// Poll `parent_pid` until it no longer exists or `timeout` elapses.
 /// Returns whether the parent actually exited within the timeout; the
-/// helper still proceeds with the swap either way per ADR-0015's "timeout
-/// fallback" clause — a wedged GUI process must not block the relaunch.
+/// helper still proceeds with the swap either way. A wedged GUI process
+/// must not block the relaunch forever.
 pub fn wait_for_parent_exit(parent_pid: u32, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
@@ -147,9 +147,9 @@ fn is_process_running(pid: u32) -> bool {
     }
 }
 
-/// Perform the platform swap described in ADR-0015. The current bundle is
-/// renamed to its `.previous` / `.old` backup (overwriting any prior
-/// backup), and the staged bundle is moved into the slot left behind.
+/// Perform the platform swap. The current bundle is renamed to its
+/// `.previous` / `.old` backup (overwriting any prior backup), and the
+/// staged bundle is moved into the slot left behind.
 pub fn apply_swap(descriptor: &PendingUpdateDescriptor) -> Result<(), String> {
     if !descriptor.staged_bundle.exists() {
         return Err(format!(
@@ -219,7 +219,7 @@ fn backup_path_for(current: &Path) -> PathBuf {
 fn strip_quarantine_xattr(bundle: &Path) {
     // Best-effort: xattr(1) ships with macOS. A failure is non-fatal —
     // in-process reqwest downloads don't set the quarantine bit in the
-    // first place, so this is defense-in-depth per ADR-0015.
+    // first place, so this is defense-in-depth.
     let _ = Command::new("/usr/bin/xattr")
         .arg("-dr")
         .arg("com.apple.quarantine")

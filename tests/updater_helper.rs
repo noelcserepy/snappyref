@@ -253,7 +253,7 @@ fn helper_swaps_bundle_and_relaunches_after_parent_exits() {
 }
 
 /// A pre-existing backup must be overwritten by the swap, not nested
-/// inside the new one. Only one prior version is retained per ADR-0015.
+/// inside the new one. Only one prior version is retained.
 #[test]
 fn helper_overwrites_existing_backup() {
     let fixture = Fixture::new("1.2.4");

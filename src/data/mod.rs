@@ -8,7 +8,7 @@ pub use annotation::{
     CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationGeometry, CanvasAnnotationKind,
     CanvasBackground, CanvasStrokeWidth, CanvasTextSize,
 };
-pub use asset::ImageAsset;
+pub use asset::Asset;
 pub use geometry::{RectGeometry, SegmentGeometry};
 #[allow(unused_imports)]
 pub use placement::AssetId;

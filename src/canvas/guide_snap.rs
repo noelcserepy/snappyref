@@ -2,6 +2,9 @@ use eframe::egui;
 
 use super::GuideSnapIndicator;
 
+// Guide snapping is a pure geometry module. Callers provide visual candidate
+// bounds and the current gap preference; this module returns a snapped rect and
+// guide indicators for move, resize, and uniform-scale interactions.
 pub(crate) const ACQUIRE_DISTANCE_SCREEN: f32 = 8.0;
 pub(crate) const RELEASE_DISTANCE_SCREEN: f32 = 12.0;
 pub(crate) const VIEWPORT_PADDING_SCREEN: f32 = 64.0;

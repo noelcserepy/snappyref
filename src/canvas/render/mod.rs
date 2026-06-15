@@ -43,7 +43,7 @@ mod tests {
         CanvasDocumentState, CanvasImageLod, CanvasRenderState, CanvasState, CanvasTexture,
         RenderedPlacement,
     };
-    use crate::data::{ImageAsset, Placement, PlacementState};
+    use crate::data::{Asset, Placement, PlacementState};
     use eframe::egui;
     use std::path::PathBuf;
 
@@ -179,7 +179,7 @@ mod tests {
                     placement_id as i32,
                     false,
                 ),
-                ImageAsset {
+                Asset {
                     id: placement_id,
                     original_path: PathBuf::from(format!("image-{placement_id}.png")),
                     filename: format!("image-{placement_id}.png"),

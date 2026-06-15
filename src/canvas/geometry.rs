@@ -2,7 +2,7 @@ use eframe::egui;
 
 use super::PixelCropRect;
 
-pub(super) fn image_screen_center_for_record(
+pub(super) fn placement_screen_center_for_record(
     placement: &crate::data::Placement,
     pan: egui::Vec2,
     zoom: f32,
@@ -16,21 +16,21 @@ pub(super) fn image_screen_center_for_record(
         ) * zoom
 }
 
-pub(super) fn image_screen_size_for_record(
+pub(super) fn placement_screen_size_for_record(
     placement: &crate::data::Placement,
     zoom: f32,
 ) -> egui::Vec2 {
     placement.scaled_display_size() * zoom
 }
 
-pub(super) fn image_screen_corners_for_record(
+pub(super) fn placement_screen_corners_for_record(
     placement: &crate::data::Placement,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> [egui::Pos2; 4] {
-    let center = image_screen_center_for_record(placement, pan, zoom, screen_center);
-    let half_size = image_screen_size_for_record(placement, zoom) * 0.5;
+    let center = placement_screen_center_for_record(placement, pan, zoom, screen_center);
+    let half_size = placement_screen_size_for_record(placement, zoom) * 0.5;
     let sin = placement.state.geometry.rotation.sin();
     let cos = placement.state.geometry.rotation.cos();
     let rotate = |offset: egui::Vec2| {
@@ -48,7 +48,7 @@ pub(super) fn image_screen_corners_for_record(
     ]
 }
 
-pub(super) fn image_screen_rect_for_record(
+pub(super) fn placement_screen_rect_for_record(
     placement: &crate::data::Placement,
     rect: egui::Rect,
     pan: egui::Vec2,
@@ -56,7 +56,7 @@ pub(super) fn image_screen_rect_for_record(
     screen_center: egui::Pos2,
 ) -> egui::Rect {
     let _ = rect;
-    image_screen_corners_for_record(placement, pan, zoom, screen_center)
+    placement_screen_corners_for_record(placement, pan, zoom, screen_center)
         .into_iter()
         .fold(egui::Rect::NOTHING, |mut bounds, corner| {
             bounds.extend_with(corner);
@@ -64,13 +64,13 @@ pub(super) fn image_screen_rect_for_record(
         })
 }
 
-pub(super) fn image_rotation_handle_screen_pos(
+pub(super) fn placement_rotation_handle_screen_pos(
     placement: &crate::data::Placement,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> (egui::Pos2, egui::Pos2) {
-    let corners = image_screen_corners_for_record(placement, pan, zoom, screen_center);
+    let corners = placement_screen_corners_for_record(placement, pan, zoom, screen_center);
     let top_mid = corners[0].lerp(corners[1], 0.5);
     let bottom_mid = corners[3].lerp(corners[2], 0.5);
     let outward = (top_mid - bottom_mid).normalized();
@@ -78,25 +78,25 @@ pub(super) fn image_rotation_handle_screen_pos(
     (top_mid, handle)
 }
 
-pub(super) fn min_image_scale(asset: &crate::data::ImageAsset) -> f32 {
+pub(super) fn min_loaded_placement_scale(asset: &crate::data::Asset) -> f32 {
     let width_scale = super::MIN_IMAGE_WORLD_SIZE / asset.width.max(1) as f32;
     let height_scale = super::MIN_IMAGE_WORLD_SIZE / asset.height.max(1) as f32;
     width_scale.max(height_scale)
 }
 
-pub(super) fn image_contains_screen_point(
+pub(super) fn placement_contains_screen_point(
     placement: &crate::data::Placement,
     pointer_pos: egui::Pos2,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> bool {
-    let center = image_screen_center_for_record(placement, pan, zoom, screen_center);
+    let center = placement_screen_center_for_record(placement, pan, zoom, screen_center);
     let local = pointer_pos - center;
     let sin = (-placement.state.geometry.rotation).sin();
     let cos = (-placement.state.geometry.rotation).cos();
     let unrotated = egui::vec2(local.x * cos - local.y * sin, local.x * sin + local.y * cos);
-    let half_size = image_screen_size_for_record(placement, zoom) * 0.5;
+    let half_size = placement_screen_size_for_record(placement, zoom) * 0.5;
 
     unrotated.x.abs() <= half_size.x && unrotated.y.abs() <= half_size.y
 }
@@ -166,7 +166,7 @@ pub(super) fn pixel_crop_rect_from_local(
 }
 
 pub(super) fn crop_center_offset_local(
-    asset: &crate::data::ImageAsset,
+    asset: &crate::data::Asset,
     local_rect: egui::Rect,
 ) -> egui::Vec2 {
     let asset_center = egui::pos2(asset.width as f32 * 0.5, asset.height as f32 * 0.5);

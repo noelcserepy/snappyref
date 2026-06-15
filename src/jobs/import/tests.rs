@@ -1381,7 +1381,7 @@ fn crop_redecodes_original_path_and_preserves_exact_pixels() {
     let file_size = fs::metadata(&stored_path).unwrap().len();
     let request = crate::canvas::CanvasCropRequest {
         placement_id: 1,
-        source_asset: crate::data::ImageAsset {
+        source_asset: crate::data::Asset {
             id: 1,
             original_path: stored_path.clone(),
             filename: "crop-source.png".to_owned(),

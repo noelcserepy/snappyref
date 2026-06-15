@@ -8,7 +8,7 @@
 # publish workflow never uploads a manifest the embedded public key cannot
 # verify.
 #
-# See ADR-0015 (Automatic app updates) and docs/release-operations.md.
+# See docs/release-operations.md for the publishing workflow.
 set -euo pipefail
 
 usage() {

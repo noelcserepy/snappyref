@@ -213,7 +213,7 @@ Use stable, permissive, low-risk sources such as Wikimedia Commons, public-domai
 5. Change one variable.
 6. Re-run the same scenario and compare the same windows.
 7. Remove throwaway instrumentation.
-8. Update `CONTEXT.md`, `docs/adr/`, or this skill when the result changes durable project language or perf process.
+8. Update the owning code comments/tests or this skill when the result changes durable project language or perf process.
 
 If the perf issue starts as a user interaction bug, first create or run an
 inspect scenario that reproduces the behavior. Then run or add a perf scenario

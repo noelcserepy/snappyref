@@ -1,12 +1,12 @@
-//! Staging half of slice 5: extract a verified update zip into
+//! Extract a verified update zip into
 //! `<install_root>/updates/staging-{version}/`, then validate that the
 //! result looks like a real SnappyRef app folder for the target platform.
 //!
-//! ADR-0015 mandates the zip layout: each platform zip contains a single
-//! top-level `SnappyRef/` folder. On macOS the folder contains
+//! Each platform zip contains a single top-level `SnappyRef/` folder. On
+//! macOS the folder contains
 //! `SnappyRef.app/`; on Windows it contains `snappyref.exe`. The
 //! validation step here is what stops a corrupted or malicious zip from
-//! ever reaching the slice-6 swap step.
+//! ever reaching the restart-apply swap step.
 //!
 //! Security: every zip entry name is checked for `..` segments and for
 //! absolute paths before any filesystem write. A traversal attempt
@@ -20,16 +20,15 @@ use zip::ZipArchive;
 
 use crate::updater::platform::TargetPlatform;
 
-/// Top-level folder name expected inside every release zip. ADR-0015:
-/// "Each platform zip contains a single top-level `SnappyRef/` folder so
-/// the user's 'drag the folder anywhere' model is uniform across macOS
-/// and Windows."
+/// Top-level folder name expected inside every release zip. Keeping this
+/// uniform across macOS and Windows preserves the user's "drag the folder
+/// anywhere" install model.
 pub(crate) const EXPECTED_TOP_LEVEL: &str = "SnappyRef";
 
 /// Sidecar file written next to a staged bundle recording the sha256 of
 /// the source zip that produced it. Used at startup to verify a staging
 /// directory left behind by a previous session still matches the
-/// manifest's expected hash before promoting the pill to `Ready`.
+/// manifest's expected hash before promoting the update state to `Ready`.
 pub(crate) const STAGED_SHA_FILE: &str = ".staged-sha256";
 
 /// Failure modes for [`extract_and_validate`].
@@ -463,7 +462,8 @@ mod tests {
     fn rejects_zip_missing_top_level_folder() {
         let dir = unique_temp_dir("no-top");
         let zip_path = dir.join("flat.zip");
-        // Note: no `SnappyRef/` prefix. ADR-0015 mandates one.
+        // Note: no `SnappyRef/` prefix; valid archives always have one
+        // portable install root.
         write_zip(&zip_path, &[("snappyref.exe", b"fake")]);
         let staging = dir.join("staging-flat");
 

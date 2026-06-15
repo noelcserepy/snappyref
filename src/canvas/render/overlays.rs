@@ -1,9 +1,9 @@
 use eframe::egui;
 
 use super::image_pass::selection_border_visible;
-use crate::canvas::geometry::{clamped_crop_screen_rect, image_screen_corners_for_record};
+use crate::canvas::geometry::{clamped_crop_screen_rect, placement_screen_corners_for_record};
 use crate::canvas::interaction::{
-    hit_test_image, image_screen_rect, selected_placement_rotation_handle_screen_pos,
+    hit_test_placement, placement_screen_rect, selected_placement_rotation_handle_screen_pos,
 };
 use crate::canvas::{CanvasState, IMAGE_CULL_MARGIN_SCREEN, PLACEMENT_ROTATE_HANDLE_RADIUS_SCREEN};
 use crate::data::{CanvasAnnotationKind, CanvasStackItem, PlacementLifecycle};
@@ -31,7 +31,7 @@ pub(crate) fn paint_provisional_placement_previews(
         if state.is_selected(image.placement.state.id) {
             continue;
         }
-        let image_rect = image_screen_rect(state, rect, image);
+        let image_rect = placement_screen_rect(state, rect, image);
         painted.push((image.placement.state.id, image_rect));
         painter.rect_stroke(
             image_rect,
@@ -70,7 +70,7 @@ pub(crate) fn paint_crop_marquee(painter: &egui::Painter, rect: egui::Rect, stat
         return;
     };
 
-    let image_rect = image_screen_rect(state, rect, image);
+    let image_rect = placement_screen_rect(state, rect, image);
     let Some(crop_rect) = clamped_crop_screen_rect(
         crop_state.start_screen,
         crop_state.current_screen,
@@ -109,7 +109,7 @@ pub(crate) fn paint_hover_hairline(
             .ctx()
             .input(|input| input.pointer.hover_pos())
             .filter(|pos| rect.contains(*pos))
-            .and_then(|pos| hit_test_image(state, rect, pos))
+            .and_then(|pos| hit_test_placement(state, rect, pos))
     } else {
         None
     };
@@ -117,7 +117,7 @@ pub(crate) fn paint_hover_hairline(
     let cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
     for image in &state.document.rendered_placements {
         let placement_id = image.placement.state.id;
-        let image_rect = image_screen_rect(state, rect, image);
+        let image_rect = placement_screen_rect(state, rect, image);
         if !image_rect.intersects(cull_rect) {
             continue;
         }
@@ -132,7 +132,7 @@ pub(crate) fn paint_hover_hairline(
         if fade <= 0.0 || state.is_selected(placement_id) {
             continue;
         }
-        let corners = image_screen_corners_for_record(
+        let corners = placement_screen_corners_for_record(
             &image.placement,
             state.pan,
             state.zoom,
@@ -159,7 +159,7 @@ pub(crate) fn paint_selected_placement_borders(
         let Some(image) = state.rendered_placement_by_id(placement_id) else {
             continue;
         };
-        let corners = image_screen_corners_for_record(
+        let corners = placement_screen_corners_for_record(
             &image.placement,
             state.pan,
             state.zoom,
@@ -195,7 +195,7 @@ pub(super) fn selected_placement_border_paint_ids(
                 return false;
             };
             state.is_selected(*placement_id)
-                && image_screen_rect(state, rect, image).intersects(cull_rect)
+                && placement_screen_rect(state, rect, image).intersects(cull_rect)
                 && (image.placement.lifecycle == PlacementLifecycle::Provisional
                     || selection_border_visible(state, now_seconds))
         })

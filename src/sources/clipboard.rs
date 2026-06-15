@@ -191,7 +191,7 @@ fn append_internal_text(_text: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::build_selection_copy_payload;
-    use crate::data::{ImageAsset, Placement, PlacementState};
+    use crate::data::{Asset, Placement, PlacementState};
 
     #[test]
     fn single_selected_placement_copies_internal_json_and_external_image() {
@@ -351,7 +351,7 @@ mod tests {
                 ),
                 archived: false,
             },
-            ImageAsset {
+            Asset {
                 id: asset_id,
                 original_path: std::path::PathBuf::from(format!("fixture-{asset_id}.png")),
                 filename: format!("fixture-{asset_id}.png"),

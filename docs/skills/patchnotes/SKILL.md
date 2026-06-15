@@ -26,7 +26,7 @@ Avoid:
 
 - internal refactors, architecture, implementation details, test-only work, CI, release tooling, dependency bumps, docs-only work, and agent/process changes
 - PR numbers in the final copy unless the user asks for traceability
-- contributor names, branch names, commit hashes, or internal terminology from `CONTEXT.md` when a plain user-facing phrase is clearer
+- contributor names, branch names, commit hashes, or internal code/ADR terminology when a plain user-facing phrase is clearer
 - promising a fix more broadly than the PR evidence supports
 
 ## Inputs

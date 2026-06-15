@@ -1,12 +1,12 @@
 use super::geometry::{
     crop_center_offset_local, lattice_phase_screen, lattice_phase_world, merge_cropped_item_fields,
-    min_image_scale, pixel_crop_rect_from_local, screen_rect_to_local_crop_rect,
+    min_loaded_placement_scale, pixel_crop_rect_from_local, screen_rect_to_local_crop_rect,
 };
 use super::interaction::{
     handle_textbox_primary_press, hit_test_canvas_item, hit_test_placement_resize_handle,
-    hit_test_textbox_resize_handle, image_screen_rect, moved_textbox_rect, normalized_textbox_rect,
-    open_context_menu_at_pointer, pending_annotation_from_draft, resized_placement_transform,
-    resized_textbox_rect, textbox_screen_rect,
+    hit_test_textbox_resize_handle, moved_textbox_rect, normalized_textbox_rect,
+    open_context_menu_at_pointer, pending_annotation_from_draft, placement_screen_rect,
+    resized_placement_transform, resized_textbox_rect, textbox_screen_rect,
 };
 use super::render::{
     annotation_paint_stats_for_annotations, background_lod_layers, background_screen_step,
@@ -24,8 +24,8 @@ use super::{
     rotated_display_size,
 };
 use crate::data::{
-    CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod, CanvasStackItem,
-    CanvasStrokeWidth, CanvasTextSize, ContentResolutionSource, ImageAsset, Placement,
+    Asset, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
+    CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, ContentResolutionSource, Placement,
     PlacementContent, PlacementLifecycle, PlacementState,
 };
 use crate::placement::arrangement::{
@@ -65,7 +65,7 @@ fn push_test_image(
                 0,
                 false,
             ),
-            ImageAsset {
+            Asset {
                 id: placement_id,
                 original_path: PathBuf::from(format!("image-{placement_id}.png")),
                 filename: format!("image-{placement_id}.png"),
@@ -143,7 +143,7 @@ fn test_record(placement_id: i64, asset_id: i64, width: u32, height: u32) -> Pla
             ),
             archived: false,
         },
-        ImageAsset {
+        Asset {
             id: asset_id,
             original_path: PathBuf::from(format!("image-{asset_id}.png")),
             filename: format!("image-{asset_id}.png"),
@@ -317,7 +317,7 @@ fn crop_replacement_keeps_old_native_texture_until_last_shared_reference_drops()
                 loaded_lod: CanvasImageLod::Working,
                 crop_offset_local: eframe::egui::Vec2::ZERO,
             },
-            ImageAsset {
+            Asset {
                 id: 2,
                 original_path: PathBuf::from("crop.png"),
                 filename: "crop.png".to_owned(),
@@ -401,7 +401,7 @@ fn converts_drag_rect_to_crop_pixels_and_live_scale_position() {
         0,
         false,
     );
-    let asset = ImageAsset {
+    let asset = Asset {
         id: 1,
         original_path: PathBuf::from("image.png"),
         filename: "image.png".to_owned(),
@@ -589,7 +589,7 @@ fn unloaded_placements_use_visual_bounds_for_layout_hit_test_and_delete() {
             hit_test_canvas_item(&state, canvas_rect, canvas_rect.center()),
             Some(super::CanvasHit::Placement(101))
         );
-        assert_eq!(state.delete_selected_images(), vec![101]);
+        assert_eq!(state.delete_selected_placements(), vec![101]);
         assert!(state.placement_for_id(101).is_none());
     });
 }
@@ -1140,7 +1140,7 @@ fn placement_resize_hit_test_matches_corner_zone() {
             eframe::egui::pos2(200.0, 160.0),
         );
         let image = state.rendered_placement_by_id(21).unwrap();
-        let image_rect = image_screen_rect(&state, canvas_rect, image);
+        let image_rect = placement_screen_rect(&state, canvas_rect, image);
         let pointer_pos = image_rect.right_bottom() + eframe::egui::vec2(8.0, 8.0);
 
         assert_eq!(
@@ -1151,8 +1151,8 @@ fn placement_resize_hit_test_matches_corner_zone() {
 }
 
 #[test]
-fn image_resize_scales_proportionally_from_opposite_corner() {
-    let asset = ImageAsset {
+fn placement_resize_scales_proportionally_from_opposite_corner() {
+    let asset = Asset {
         id: 22,
         original_path: PathBuf::from("image-22.png"),
         filename: "image-22.png".to_owned(),
@@ -1174,8 +1174,8 @@ fn image_resize_scales_proportionally_from_opposite_corner() {
 }
 
 #[test]
-fn image_resize_respects_minimum_scale() {
-    let asset = ImageAsset {
+fn placement_resize_respects_minimum_scale() {
+    let asset = Asset {
         id: 23,
         original_path: PathBuf::from("image-23.png"),
         filename: "image-23.png".to_owned(),
@@ -1194,7 +1194,7 @@ fn image_resize_respects_minimum_scale() {
         eframe::egui::pos2(100.5, 100.5),
     );
 
-    assert_eq!(scale, min_image_scale(&asset));
+    assert_eq!(scale, min_loaded_placement_scale(&asset));
 }
 
 #[test]

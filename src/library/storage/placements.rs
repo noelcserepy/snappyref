@@ -3,8 +3,11 @@ use super::boards::{active_board_id, board_is_non_archived};
 use super::stack_order::append_canvas_stack_item;
 use super::*;
 
+// The SQLite table is still named `board_items` for migration compatibility.
+// This adapter translates that legacy persistence vocabulary to the domain
+// object exposed everywhere else: Placement.
 struct ExactAssetPersistResult {
-    asset: ImageAsset,
+    asset: Asset,
     inserted: bool,
 }
 
@@ -636,7 +639,7 @@ impl Library {
                 let lifecycle: String = row.get(18)?;
                 let content_resolution_source_payload: Option<String> = row.get(19)?;
                 let asset = if let Some(asset_id) = row.get::<_, Option<i64>>(9)? {
-                    Some(ImageAsset {
+                    Some(Asset {
                         id: asset_id,
                         original_path: PathBuf::from(row.get::<_, String>(10)?),
                         filename: row.get(11)?,

@@ -7,6 +7,9 @@ use crate::placement::creation::{
     PlacementCreationSettings, ProvisionalSourceIntent, create_provisional_placements,
 };
 
+// Provisional Placement batches are real canvas Placements with negative
+// temporary ids. Commit swaps them in place for persisted ids; cancel removes
+// them without touching history.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ProvisionalPlacementBatch {
     pub(crate) placement_ids: Vec<i64>,
