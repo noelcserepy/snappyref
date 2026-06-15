@@ -42,8 +42,9 @@ use super::PlacementScaleStart;
 use super::geometry::{image_contains_screen_point, min_image_scale};
 use super::render::textbox_pointer_region;
 use super::{
-    AnnotationDraftState, CanvasHit, CanvasState, PlacementTransformState,
-    TEXTBOX_DRAG_THRESHOLD_SCREEN, TextboxPointerRegion, TextboxTransformState,
+    AnnotationDraftState, CanvasHit, CanvasState, PLACEMENT_DRAG_THRESHOLD_SCREEN,
+    PlacementTransformState, TEXTBOX_DRAG_THRESHOLD_SCREEN, TextboxPointerRegion,
+    TextboxTransformState,
 };
 use crate::data::CanvasAnnotationKind;
 
@@ -506,6 +507,12 @@ pub(super) fn handle_input(
             ui.ctx().request_repaint_after(Duration::from_secs_f64(
                 IMAGE_MOVE_DEBOUNCE_SECONDS - elapsed_seconds,
             ));
+            return;
+        }
+        let pointer_start_screen = state.world_to_screen(drag_state.pointer_start_world, rect);
+        if !drag_state.moved
+            && pointer_pos.distance(pointer_start_screen) < PLACEMENT_DRAG_THRESHOLD_SCREEN
+        {
             return;
         }
         let pointer_world = state.screen_to_world(pointer_pos, rect);
