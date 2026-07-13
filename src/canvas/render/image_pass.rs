@@ -599,8 +599,7 @@ pub(crate) fn image_paint_stats_for_records(
     let cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
     for placement in placements {
         stats.considered += 1;
-        let image_rect =
-            placement_screen_rect_for_record(placement, rect, pan, zoom, rect.center());
+        let image_rect = placement_screen_rect_for_record(placement, pan, zoom, rect.center());
         if !cull_offscreen || image_rect.intersects(cull_rect) {
             stats.drawn += 1;
         }
@@ -618,8 +617,7 @@ pub(crate) fn image_texture_group_count_for_records(
     let mut groups = 0;
     let mut previous_asset_id = None;
     for placement in placements {
-        let image_rect =
-            placement_screen_rect_for_record(placement, rect, pan, zoom, rect.center());
+        let image_rect = placement_screen_rect_for_record(placement, pan, zoom, rect.center());
         if !image_rect.intersects(cull_rect) {
             continue;
         }

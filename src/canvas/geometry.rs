@@ -50,12 +50,10 @@ pub(super) fn placement_screen_corners_for_record(
 
 pub(super) fn placement_screen_rect_for_record(
     placement: &crate::data::Placement,
-    rect: egui::Rect,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> egui::Rect {
-    let _ = rect;
     placement_screen_corners_for_record(placement, pan, zoom, screen_center)
         .into_iter()
         .fold(egui::Rect::NOTHING, |mut bounds, corner| {

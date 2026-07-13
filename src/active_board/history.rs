@@ -34,7 +34,7 @@ impl DocumentHistory {
         self.redo_stack.clear();
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn apply(&mut self, library: &Library, action: HistoryAction) -> Result<(), String> {
         apply_history_action(library, &action, HistoryDirection::Forward)?;
         self.undo_stack.push(action);

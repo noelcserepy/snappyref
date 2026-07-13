@@ -20,7 +20,7 @@ pub(crate) fn hovered(ui: &egui::Ui) -> ExternalDragIntake {
     let sources = merge_sources(
         raw_hovered_files
             .into_iter()
-            .filter_map(|file| source_from_hovered_file(file)),
+            .filter_map(|file| file.path.map(source_from_path_or_url_name)),
         native_paths.into_iter().map(ExternalImportSource::Path),
         native_urls.into_iter().map(ExternalImportSource::Url),
     );
@@ -60,11 +60,6 @@ pub(crate) fn resolve_screen_pos(
     egui_latest_pos: Option<egui::Pos2>,
 ) -> Option<egui::Pos2> {
     native_drag_pos.or(os_cursor_pos).or(egui_latest_pos)
-}
-
-fn source_from_hovered_file(file: egui::HoveredFile) -> Option<ExternalImportSource> {
-    let path = file.path?;
-    Some(source_from_path_or_url_name(path))
 }
 
 fn source_from_dropped_file(file: egui::DroppedFile) -> Option<ExternalImportSource> {

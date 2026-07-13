@@ -169,16 +169,6 @@ impl Placement {
         self.state.id
     }
 
-    #[allow(dead_code)]
-    pub fn asset_id(&self) -> Option<AssetId> {
-        self.state.asset_id
-    }
-
-    #[allow(dead_code)]
-    pub fn center(&self) -> Pos2 {
-        self.state.geometry.center
-    }
-
     pub fn base_display_size(&self) -> eframe::egui::Vec2 {
         vec2(
             self.state.geometry.size.x.max(1.0),
