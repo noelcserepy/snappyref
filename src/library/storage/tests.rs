@@ -2214,22 +2214,16 @@ fn cropped_relink_requires_new_asset_embedding() {
             .unwrap(),
         None
     );
-    assert!(
-        library
-            .load_active_canvas_embeddings("mobileclip_s0")
-            .unwrap()
-            .is_empty()
-    );
 
     library
         .upsert_asset_embedding_blob(relinked_asset.id, "mobileclip_s0", &[0.0, 1.0])
         .unwrap();
-    let embeddings = library
-        .load_active_canvas_embeddings("mobileclip_s0")
-        .unwrap();
-
-    assert_eq!(embeddings.len(), 1);
-    assert_eq!(embeddings[0].asset_id, relinked_asset.id);
+    assert!(
+        library
+            .load_asset_embedding(relinked_asset.id, "mobileclip_s0")
+            .unwrap()
+            .is_some()
+    );
 
     let _ = fs::remove_dir_all(root);
 }
@@ -2284,7 +2278,7 @@ fn embedding_helpers_scope_to_requested_model_key() {
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].asset_id, second.require_loaded_asset().id);
 
-    let embeddings = library.load_active_canvas_embeddings("siglip_key").unwrap();
+    let embeddings = library.load_library_embeddings("siglip_key").unwrap();
     assert_eq!(embeddings.len(), 1);
     assert_eq!(embeddings[0].asset_id, first.require_loaded_asset().id);
 

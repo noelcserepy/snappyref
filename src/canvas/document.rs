@@ -1405,30 +1405,6 @@ impl CanvasState {
         self.apply_arrangement_if_changed(placements, egui::Vec2::ZERO)
     }
 
-    #[allow(dead_code)]
-    pub fn center_selected_placements_on(&mut self, center_world: egui::Pos2) -> usize {
-        let items = self.selected_arrangement_inputs();
-        let Some(bounds) = layout_bounds_with_offset(&items, egui::Vec2::ZERO) else {
-            return 0;
-        };
-        let delta = center_world - bounds.center();
-        let mut moved_ids = Vec::with_capacity(items.len());
-
-        for item in items {
-            if let Some(image) = self.rendered_placement_by_id_mut(item.id) {
-                image.placement.state.geometry.center.x += delta.x;
-                image.placement.state.geometry.center.y += delta.y;
-                moved_ids.push(item.id);
-            }
-        }
-
-        for placement_id in &moved_ids {
-            self.mark_dirty(*placement_id);
-        }
-
-        moved_ids.len()
-    }
-
     pub fn move_selected_placement_group_to_center(
         &mut self,
         center_world: egui::Pos2,

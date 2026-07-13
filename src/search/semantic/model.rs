@@ -19,13 +19,6 @@ pub trait EmbeddingModel: Send + Sync {
     fn embed_image_path(&self, path: &Path) -> Result<Vec<f32>, String>;
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug)]
-pub enum ResizeStrategy {
-    ShortestEdgeCenterCrop,
-    Exact,
-}
-
 #[derive(Clone, Debug)]
 pub struct ModelSpec {
     pub model_key: &'static str,
@@ -46,7 +39,6 @@ pub struct ModelSpec {
     pub normalize_mean: Option<[f32; 3]>,
     pub normalize_std: Option<[f32; 3]>,
     pub resize_filter: FilterType,
-    pub resize_strategy: ResizeStrategy,
 }
 
 pub const SIGLIP2_BASE_PATCH16_224_INT8: ModelSpec = ModelSpec {
@@ -65,7 +57,6 @@ pub const SIGLIP2_BASE_PATCH16_224_INT8: ModelSpec = ModelSpec {
     normalize_mean: Some([0.5, 0.5, 0.5]),
     normalize_std: Some([0.5, 0.5, 0.5]),
     resize_filter: FilterType::Triangle,
-    resize_strategy: ResizeStrategy::Exact,
 };
 
 #[allow(dead_code)]
@@ -470,8 +461,7 @@ fn preprocess_image_timed(
     let (width, height) = image.dimensions();
     timing.source_width = width;
     timing.source_height = height;
-    let shortest_edge = width.min(height);
-    if shortest_edge == 0 {
+    if width == 0 || height == 0 {
         return Err(format!(
             "image {} has zero-sized dimensions",
             path.display()
@@ -479,28 +469,14 @@ fn preprocess_image_timed(
     }
 
     let resize_start = Instant::now();
-    let cropped = match spec.resize_strategy {
-        ResizeStrategy::ShortestEdgeCenterCrop => {
-            let scale = spec.input_size as f32 / shortest_edge as f32;
-            let resized_width = ((width as f32 * scale).round() as u32).max(spec.input_size);
-            let resized_height = ((height as f32 * scale).round() as u32).max(spec.input_size);
-            let resized =
-                image::imageops::resize(&image, resized_width, resized_height, spec.resize_filter);
-            let crop_x = (resized.width().saturating_sub(spec.input_size)) / 2;
-            let crop_y = (resized.height().saturating_sub(spec.input_size)) / 2;
-            image::imageops::crop_imm(&resized, crop_x, crop_y, spec.input_size, spec.input_size)
-                .to_image()
-        }
-        ResizeStrategy::Exact => {
-            image::imageops::resize(&image, spec.input_size, spec.input_size, spec.resize_filter)
-        }
-    };
+    let resized =
+        image::imageops::resize(&image, spec.input_size, spec.input_size, spec.resize_filter);
     timing.resize_crop = resize_start.elapsed();
 
     let tensor_start = Instant::now();
     let size = spec.input_size as usize;
     let mut array = Array4::<f32>::zeros((1, 3, size, size));
-    for (x, y, pixel) in cropped.enumerate_pixels() {
+    for (x, y, pixel) in resized.enumerate_pixels() {
         let [r, g, b] = pixel.0;
         let mut channels = [
             f32::from(r) / 255.0,

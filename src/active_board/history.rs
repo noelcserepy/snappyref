@@ -116,9 +116,7 @@ fn apply_placement_change(
     let Some(item) = target.or(fallback) else {
         return Ok(());
     };
-    if item.state.archived {
-        library.archive_placements(&[item.state.id])
-    } else if target.is_none() {
+    if item.state.archived || target.is_none() {
         library.archive_placements(&[item.state.id])
     } else {
         library.restore_placements(&[item.state.id])?;
@@ -142,9 +140,7 @@ fn apply_annotation_change(
     let Some(annotation) = target.or(fallback) else {
         return Ok(());
     };
-    if annotation.archived {
-        library.archive_canvas_annotations(&[annotation.id])
-    } else if target.is_none() {
+    if annotation.archived || target.is_none() {
         library.archive_canvas_annotations(&[annotation.id])
     } else {
         library.restore_canvas_annotations(&[annotation.id])?;

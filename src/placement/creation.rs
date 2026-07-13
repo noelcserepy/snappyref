@@ -53,12 +53,6 @@ pub(crate) struct CompletedPlacementCreationBatch {
     pub(crate) placement_ids: Vec<i64>,
 }
 
-#[allow(dead_code)]
-pub(crate) struct CreatedLoadedPlacement {
-    pub(crate) reservation: Option<ContentResolutionReservation>,
-    pub(crate) placement: Placement,
-}
-
 pub(crate) struct CreatedLoadingPlacement {
     pub(crate) reservation: ContentResolutionReservation,
     pub(crate) placement: Placement,
@@ -391,72 +385,6 @@ fn provisional_asset_placement(
         },
         lifecycle: PlacementLifecycle::Provisional,
     }
-}
-
-#[allow(dead_code)]
-pub(crate) fn create_existing_asset_placements(
-    library: &Library,
-    canvas: &mut CanvasState,
-    layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
-    _target_board_id: i64,
-    asset_ids: Vec<i64>,
-    preferred_centers: Vec<egui::Pos2>,
-    anchor_world: egui::Pos2,
-    screen_rect: egui::Rect,
-    settings: PlacementCreationSettings,
-) -> Result<Vec<CreatedLoadedPlacement>, String> {
-    let assets = asset_ids
-        .into_iter()
-        .map(|asset_id| library.load_asset(asset_id))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let centers = if preferred_centers.len() == assets.len() {
-        preferred_centers
-    } else {
-        let source_intents = assets
-            .iter()
-            .map(|asset| SourceIntent {
-                label: asset.filename.clone(),
-                dimensions: Some((asset.width, asset.height)),
-                approximate_dimensions: false,
-                content: ContentResolutionSource::SearchAsset { asset_id: asset.id },
-            })
-            .collect::<Vec<_>>();
-        plan_source_intent_previews(canvas, &source_intents, anchor_world, screen_rect, settings)
-            .into_iter()
-            .map(|preview| preview.center_world())
-            .collect()
-    };
-
-    let mut placements = Vec::with_capacity(assets.len());
-    for (asset_index, asset) in assets.into_iter().enumerate() {
-        let center_world = centers.get(asset_index).copied().unwrap_or(anchor_world);
-        let scale = crate::jobs::display_scale_for_placement_target_area(
-            asset.width,
-            asset.height,
-            true,
-            settings.placement_target_area,
-        );
-        let placement =
-            match library.create_placement_from_asset(asset.id, center_world, scale, 0.0, 0) {
-                Ok(placement) => placement,
-                Err(error) => return Err(error),
-            };
-        layout.push(
-            crate::placement::arrangement::PlacementArrangementInput::new(
-                placement.state.id,
-                placement.state.geometry.center,
-                placement.state.geometry.scaled_size(),
-            ),
-        );
-        canvas.add_unresolved_placement(placement.clone());
-        placements.push(CreatedLoadedPlacement {
-            reservation: None,
-            placement,
-        });
-    }
-
-    Ok(placements)
 }
 
 impl PlacementCreationBatchTracker {

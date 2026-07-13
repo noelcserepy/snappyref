@@ -39,8 +39,6 @@ pub(crate) struct ContentResolutionCompletion {
     pub(crate) target_board_id: Option<i64>,
     pub(crate) queue_id: Option<u64>,
     pub(crate) placement_id: Option<i64>,
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) reserved_world: Option<egui::Pos2>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,7 +94,6 @@ pub(crate) struct FinishedFailedContentResolution {
 struct PendingContentResolution {
     target_board_id: i64,
     placement_id: i64,
-    reserved_world: egui::Pos2,
 }
 
 impl ContentResolutionRuntime {
@@ -119,7 +116,6 @@ impl ContentResolutionRuntime {
             PendingContentResolution {
                 target_board_id,
                 placement_id,
-                reserved_world,
             },
         );
         ContentResolutionReservation {
@@ -160,7 +156,6 @@ impl ContentResolutionRuntime {
             queue_id,
             placement_id: placement_id
                 .or_else(|| finished.as_ref().map(|pending| pending.placement_id)),
-            reserved_world: finished.map(|pending| pending.reserved_world),
         }
     }
 
@@ -361,10 +356,6 @@ mod tests {
         assert_eq!(completion.target_board_id, Some(2));
         assert_eq!(completion.queue_id, Some(1));
         assert_eq!(completion.placement_id, Some(41));
-        assert_eq!(
-            completion.reserved_world,
-            Some(eframe::egui::pos2(10.0, 20.0))
-        );
         assert_eq!(runtime.pending_len(), 0);
     }
 
@@ -378,7 +369,6 @@ mod tests {
         let completion = runtime.resolve_completion(Some(reservation.queue_id), None, None);
         assert_eq!(completion.placement_id, None);
         assert_eq!(completion.target_board_id, None);
-        assert_eq!(completion.reserved_world, None);
     }
 
     #[test]
@@ -390,10 +380,6 @@ mod tests {
 
         assert_eq!(completion.target_board_id, Some(3));
         assert_eq!(completion.placement_id, Some(42));
-        assert_eq!(
-            completion.reserved_world,
-            Some(eframe::egui::pos2(10.0, 20.0))
-        );
         assert_eq!(runtime.pending_len(), 0);
     }
 

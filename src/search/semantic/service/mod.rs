@@ -1119,7 +1119,7 @@ mod tests {
     };
     use crate::library::storage::Library;
     use crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
-    use crate::search::semantic::model::{ModelSpec, ResizeStrategy};
+    use crate::search::semantic::model::ModelSpec;
     use eframe::egui;
     use image::imageops::FilterType;
     use std::fs;
@@ -1559,7 +1559,6 @@ mod tests {
             normalize_mean: None,
             normalize_std: None,
             resize_filter: FilterType::Nearest,
-            resize_strategy: ResizeStrategy::Exact,
         }
     }
 

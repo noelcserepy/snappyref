@@ -28,8 +28,6 @@ pub struct DecodedImage {
     pub source_width: u32,
     pub source_height: u32,
     pub file_size: u64,
-    #[allow(dead_code)]
-    pub format: ImageFormat,
     pub format_name: String,
     pub mime_type: String,
     pub extension: String,
@@ -546,7 +544,6 @@ fn decoded_image_from_rgba(
         source_width: width,
         source_height: height,
         file_size,
-        format,
         format_name: format_name(format),
         mime_type: image_format_mime_type(format).to_owned(),
         extension: image_format_extension(format).to_owned(),
@@ -570,7 +567,6 @@ fn decoded_custom_image_from_rgba(
         source_width: width,
         source_height: height,
         file_size,
-        format: ImageFormat::Png,
         format_name: format_name.to_owned(),
         mime_type: mime_type.to_owned(),
         extension: extension.to_owned(),
@@ -596,7 +592,6 @@ fn decoded_custom_image_from_rgba_with_source_dimensions(
         source_width,
         source_height,
         file_size,
-        format: ImageFormat::Png,
         format_name: format_name.to_owned(),
         mime_type: mime_type.to_owned(),
         extension: extension.to_owned(),
@@ -1301,7 +1296,7 @@ mod tests {
             .unwrap();
 
         let decoded = decode_image_file(&path).unwrap();
-        assert_eq!(decoded.format, image::ImageFormat::Jpeg);
+        assert_eq!(decoded.format_name, "JPEG");
         assert_eq!(decoded.width, 2);
         assert_eq!(decoded.height, 2);
         assert_eq!(decoded.rgba.len(), 16);
@@ -1315,7 +1310,7 @@ mod tests {
 
         let decoded = decode_image_file(&path).unwrap();
 
-        assert_eq!(decoded.format, image::ImageFormat::Pnm);
+        assert_eq!(decoded.format_name, "PNM");
         assert_eq!(decoded.width, 2);
         assert_eq!(decoded.height, 2);
         assert_eq!(decoded.rgba.len(), 2 * 2 * 4);
@@ -1636,7 +1631,7 @@ static unsigned char sample_bits[] = { 0x01 };
 
         let decoded = decode_image_file(&path).unwrap();
 
-        assert_eq!(decoded.format, image::ImageFormat::Tga);
+        assert_eq!(decoded.format_name, "TGA");
         assert_eq!(decoded.width, 2);
         assert_eq!(decoded.height, 2);
         assert_eq!(decoded.rgba.len(), 2 * 2 * 4);
@@ -1801,7 +1796,7 @@ static unsigned char sample_bits[] = { 0x01 };
         drop(encoder);
 
         let decoded = decode_image_file(&path).unwrap();
-        assert_eq!(decoded.format, image::ImageFormat::Gif);
+        assert_eq!(decoded.format_name, "GIF");
         let animation = decoded.animation.expect("expected animation metadata");
         assert_eq!(animation.frames.len(), 2);
         assert!(animation.frames[0].delay_seconds > 0.0);
@@ -1823,7 +1818,7 @@ static unsigned char sample_bits[] = { 0x01 };
         std::fs::write(&path, ANIMATED_WEBP_2X2_2_FRAMES).unwrap();
 
         let decoded = decode_image_file(&path).unwrap();
-        assert_eq!(decoded.format, image::ImageFormat::WebP);
+        assert_eq!(decoded.format_name, "WebP");
         assert_eq!(decoded.width, 2);
         assert_eq!(decoded.height, 2);
         let animation = decoded.animation.expect("expected animation metadata");
