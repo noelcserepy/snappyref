@@ -81,7 +81,6 @@ impl CropFlow {
         canvas: &mut crate::canvas::CanvasState,
         library: Option<&crate::library::storage::Library>,
         cropped: crate::jobs::PreparedCropPreview,
-        _canvas_image_max_side: u32,
         semantic_search_enabled: bool,
     ) -> Result<CroppedImageIntegration, String> {
         let placement_id = cropped.placement_id;

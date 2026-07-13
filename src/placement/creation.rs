@@ -102,17 +102,6 @@ pub(crate) fn display_size_for_dimensions(
     egui::vec2(width as f32 * scale, height as f32 * scale)
 }
 
-#[allow(dead_code)]
-pub(crate) fn canvas_input_policy(
-    placement_creation_active: bool,
-) -> crate::canvas::CanvasInputPolicy {
-    if placement_creation_active {
-        crate::canvas::CanvasInputPolicy::ViewportOnly
-    } else {
-        crate::canvas::CanvasInputPolicy::Full
-    }
-}
-
 pub(crate) fn fit_selection_bounds_if_needed(
     canvas: &mut CanvasState,
     bounds: egui::Rect,
@@ -550,18 +539,6 @@ impl PlacementCreationBatchTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn active_placement_creation_keeps_viewport_navigation_available() {
-        assert_eq!(
-            super::canvas_input_policy(true),
-            crate::canvas::CanvasInputPolicy::ViewportOnly
-        );
-        assert_eq!(
-            super::canvas_input_policy(false),
-            crate::canvas::CanvasInputPolicy::Full
-        );
-    }
 
     #[test]
     fn oversized_placement_creation_selection_zooms_out_to_fit_visible_canvas() {

@@ -3364,7 +3364,6 @@ impl SnappyRefApp {
             &mut self.canvas,
             self.library.as_ref(),
             cropped,
-            self.settings.canvas_image_max_side,
             self.settings.semantic_search_enabled,
         ) {
             Ok(integration) => {

@@ -14,14 +14,7 @@ use semver::Version;
 /// trigger the Available state.
 pub(crate) fn is_newer(current: &str, candidate: &str) -> bool {
     match (Version::parse(current), Version::parse(candidate)) {
-        (Ok(mut current), Ok(mut candidate)) => {
-            // Per semver §10, build metadata MUST be ignored when
-            // determining precedence. The `semver` crate's `Ord` impl
-            // includes build metadata, so we strip it here.
-            current.build = semver::BuildMetadata::EMPTY;
-            candidate.build = semver::BuildMetadata::EMPTY;
-            candidate > current
-        }
+        (Ok(current), Ok(candidate)) => candidate.cmp_precedence(&current).is_gt(),
         _ => false,
     }
 }

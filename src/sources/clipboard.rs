@@ -183,11 +183,6 @@ fn append_internal_text(text: &str) -> Result<(), String> {
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn append_internal_text(_text: &str) -> Result<(), String> {
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::build_selection_copy_payload;

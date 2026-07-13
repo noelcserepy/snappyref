@@ -45,7 +45,6 @@ pub(crate) struct SearchController {
     pub(super) pending_result_selection: Option<PendingResultSelection>,
     pub(super) embedding_backfill: EmbeddingBackfillScheduler,
     pending_demand_embeddings: HashSet<i64>,
-    completed_demand_embeddings: usize,
     next_search_request_id: u64,
     pub(super) recent_searches: Vec<String>,
     recent_searches_dirty: bool,
@@ -457,7 +456,6 @@ impl SearchController {
             }
             SearchIndexResult::Indexed { asset_id } => {
                 if self.pending_demand_embeddings.remove(&asset_id) {
-                    self.completed_demand_embeddings += 1;
                     self.perf_events
                         .push(SemanticPerfEvent::ImportEmbeddingFinished { asset_id });
                     if self.pending_demand_embeddings.is_empty() {
@@ -492,7 +490,6 @@ impl SearchController {
                 if let Some(asset_id) = asset_id
                     && self.pending_demand_embeddings.remove(&asset_id)
                 {
-                    self.completed_demand_embeddings += 1;
                     self.perf_events
                         .push(SemanticPerfEvent::ImportEmbeddingFinished { asset_id });
                     if self.pending_demand_embeddings.is_empty() {
@@ -694,11 +691,6 @@ impl SearchController {
         if self.overlay.open {
             self.overlay.last_submitted_query.clear();
         }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn completed_demand_embedding_count(&self) -> usize {
-        self.completed_demand_embeddings
     }
 
     pub(crate) fn embedding_backfill_is_idle(&self) -> bool {

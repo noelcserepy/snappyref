@@ -1,7 +1,9 @@
 mod image_formats;
 mod import;
 
-pub use image_formats::{AnimatedPreview, AnimatedPreviewFrame, decode_image_file_perf_report};
+pub use image_formats::decode_image_file_perf_report;
+#[cfg(test)]
+pub(crate) use image_formats::{AnimatedPreview, AnimatedPreviewFrame};
 pub(crate) use import::load_existing;
 pub(crate) use import::print_imageprep_output_from_args;
 pub use import::{

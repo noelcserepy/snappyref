@@ -53,15 +53,10 @@ pub(crate) fn staging_dir(install_root: &Path, version: &str) -> PathBuf {
     updates_dir(install_root).join(format!("staging-{version}"))
 }
 
-/// Conservative download filename for the manifest's zip. We do not trust
+/// Full path of the in-flight download file for `version`. We do not trust
 /// the URL's basename because it is publisher-controlled; the version is.
-pub(crate) fn download_file_name(version: &str) -> String {
-    format!("download-{version}.zip")
-}
-
-/// Full path of the in-flight download file for `version`.
 pub(crate) fn download_file_path(install_root: &Path, version: &str) -> PathBuf {
-    updates_dir(install_root).join(download_file_name(version))
+    updates_dir(install_root).join(format!("download-{version}.zip"))
 }
 
 #[cfg(test)]

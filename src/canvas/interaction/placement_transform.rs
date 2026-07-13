@@ -185,7 +185,7 @@ pub(crate) fn placement_screen_rect(
     rect: egui::Rect,
     image: &RenderedPlacement,
 ) -> egui::Rect {
-    placement_screen_rect_for_record(&image.placement, rect, state.pan, state.zoom, rect.center())
+    placement_screen_rect_for_record(&image.placement, state.pan, state.zoom, rect.center())
 }
 
 fn placement_resize_handle_screen_pos(
