@@ -49,23 +49,6 @@ pub(crate) fn restart_cascade(ctx: &egui::Context, list_id: egui::Id) {
     ctx.data_mut(|data| data.insert_temp(cascade_start_key(list_id), Instant::now()));
 }
 
-/// Restart the cascade when `fingerprint` differs from the one recorded for
-/// `list_id`. Use for surfaces whose content is replaced in place (for
-/// example a result grid after a new query).
-#[allow(dead_code)]
-pub(crate) fn restart_cascade_on_change(
-    ctx: &egui::Context,
-    list_id: egui::Id,
-    fingerprint: egui::Id,
-) {
-    let key = list_id.with("cascade_fingerprint");
-    let previous = ctx.data(|data| data.get_temp::<egui::Id>(key));
-    if previous != Some(fingerprint) {
-        ctx.data_mut(|data| data.insert_temp(key, fingerprint));
-        restart_cascade(ctx, list_id);
-    }
-}
-
 /// Entrance progress for item `index` of cascade `list_id`. Items fade and
 /// rise in reading order with [`theme::MOTION_REVEAL_STAGGER_SECONDS`]
 /// offsets, capped at [`theme::MOTION_REVEAL_MAX_STAGGER_STEPS`] steps. If

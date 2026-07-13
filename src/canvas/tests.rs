@@ -610,8 +610,7 @@ fn provisional_placements_are_filtered_from_document_changes() {
     );
     placement.lifecycle = PlacementLifecycle::Provisional;
     state.add_provisional_unresolved_placement(placement);
-    state.select_placements(&[-1]);
-    state.center_selected_placements_on(eframe::egui::pos2(40.0, 60.0));
+    state.mark_dirty(-1);
 
     let changes = state.take_document_changes();
 

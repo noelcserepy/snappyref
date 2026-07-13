@@ -4486,17 +4486,6 @@ impl SnappyRefApp {
         self.search.close_overlay(Some(&mut self.canvas));
     }
 
-    #[cfg(feature = "semantic-search")]
-    #[cfg_attr(not(test), allow(dead_code))]
-    fn source_center_for_placement_ids(&self, placement_ids: &[i64]) -> Option<egui::Pos2> {
-        source_center_for_placements(
-            &placement_ids
-                .iter()
-                .filter_map(|placement_id| self.canvas.placement_for_id(*placement_id))
-                .collect::<Vec<_>>(),
-        )
-    }
-
     fn persist_settings_if_changed(&mut self, settings_changed: bool) {
         Self::persist_settings_if_changed_with(settings_changed, || self.save_user_session());
     }
@@ -4765,25 +4754,6 @@ fn semantic_search_settings_status(
             SemanticSearchSettingsStatus::Failed
         }
     }
-}
-
-#[cfg(feature = "semantic-search")]
-#[cfg_attr(not(test), allow(dead_code))]
-fn source_center_for_placements(placements: &[crate::data::Placement]) -> Option<egui::Pos2> {
-    let mut min = egui::Pos2::new(f32::INFINITY, f32::INFINITY);
-    let mut max = egui::Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
-    let mut found = false;
-
-    for placement in placements {
-        found = true;
-        let half_size = placement.scaled_display_size() * 0.5;
-        min.x = min.x.min(placement.state.geometry.center.x - half_size.x);
-        min.y = min.y.min(placement.state.geometry.center.y - half_size.y);
-        max.x = max.x.max(placement.state.geometry.center.x + half_size.x);
-        max.y = max.y.max(placement.state.geometry.center.y + half_size.y);
-    }
-
-    found.then(|| egui::pos2((min.x + max.x) * 0.5, (min.y + max.y) * 0.5))
 }
 
 impl eframe::App for SnappyRefApp {

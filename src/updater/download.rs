@@ -10,11 +10,12 @@
 //! The module is structured around two layers so production code can use
 //! `reqwest` while unit tests drive a local HTTP fixture:
 //!
-//! * [`download_from_reader`] streams an arbitrary `Read` into the target
-//!   path while invoking the progress callback, then verifies sha256.
+//! * [`download_from_reader_cancellable`] streams an arbitrary `Read` into
+//!   the target path while invoking the progress callback, then verifies
+//!   sha256.
 //! * [`download_from_url`] wraps the production path: build a blocking
 //!   `reqwest` client, stream the response body, delegate to
-//!   `download_from_reader`.
+//!   `download_from_reader_cancellable`.
 
 use std::fs::{self, File};
 use std::io::{self, BufReader, Read, Write};
@@ -33,7 +34,7 @@ pub(crate) const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 /// fires the progress callback ~160 times during the download.
 const READ_CHUNK: usize = 64 * 1024;
 
-/// Failure modes for [`download_from_reader`]. The caller logs and
+/// Failure modes for [`download_from_reader_cancellable`]. The caller logs and
 /// transitions the update state to `Failed`; the partial file is unlinked before
 /// returning.
 #[derive(Debug)]
@@ -96,7 +97,7 @@ pub(crate) type ProgressCallback<'a> = dyn FnMut(u64, u64) + 'a;
 /// On any failure the destination file is removed before returning so a
 /// half-written partial download cannot be mistaken for a verified zip
 /// on the next launch.
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn download_from_reader(
     source: &mut dyn Read,
     destination: &Path,
@@ -198,7 +199,7 @@ pub(crate) fn download_from_reader_cancellable(
 }
 
 /// Production entry point: fetch `url` over HTTPS and delegate to
-/// [`download_from_reader`].
+/// [`download_from_reader_cancellable`].
 pub(crate) fn download_from_url(
     url: &str,
     destination: &Path,
@@ -256,9 +257,8 @@ fn sha_equal(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b)
 }
 
-/// Compute the sha256 of `bytes`, returned as lowercase hex. Exposed for
-/// the test harness and the download/staging startup check.
-#[allow(dead_code)]
+/// Compute the sha256 of `bytes`, returned as lowercase hex for test fixtures.
+#[cfg(test)]
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);

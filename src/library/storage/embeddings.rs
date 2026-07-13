@@ -452,45 +452,6 @@ impl Library {
             .map(|jobs| jobs.into_iter().next())
     }
 
-    #[allow(dead_code)]
-    pub fn load_active_canvas_embeddings(
-        &self,
-        model_key: &str,
-    ) -> Result<Vec<ActiveCanvasEmbedding>, String> {
-        let connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let mut statement = connection
-            .prepare(
-                "SELECT
-                    e.asset_id,
-                    e.embedding_blob
-                 FROM asset_embeddings e
-                 JOIN board_items b ON b.asset_id = e.asset_id
-                 JOIN assets a ON a.id = e.asset_id
-                 WHERE b.archived = 0
-                   AND b.board_id = ?2
-                   AND a.archived = 0
-                   AND e.model_key = ?1
-                   AND e.status = 'ready'
-                   AND e.embedding_blob IS NOT NULL
-                 GROUP BY e.asset_id, e.embedding_blob
-                 ORDER BY e.asset_id ASC",
-            )
-            .map_err(|error| format!("failed to prepare active-embedding query: {error}"))?;
-
-        let rows = statement
-            .query_map(params![model_key, active_board_id], |row| {
-                Ok(ActiveCanvasEmbedding {
-                    asset_id: row.get(0)?,
-                    embedding_blob: row.get(1)?,
-                })
-            })
-            .map_err(|error| format!("failed to read active-embedding query: {error}"))?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("failed to collect active embeddings: {error}"))
-    }
-
     #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn load_library_embeddings(
         &self,

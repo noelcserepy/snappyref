@@ -5069,51 +5069,6 @@ fn search_result_grid_content_height_grows_by_rows() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
-#[test]
-fn search_drop_source_center_uses_image_extents() {
-    let ctx = egui::Context::default();
-    let mut app = test_app(None);
-
-    for (id, x, width) in [(1_i64, 0.0_f32, 100_u32), (2, 200.0, 300)] {
-        let asset = Asset {
-            id,
-            original_path: PathBuf::from(format!("fixture-{id}.png")),
-            filename: format!("fixture-{id}.png"),
-            mime_type: "image/png".to_owned(),
-            width,
-            height: 100,
-            file_size: 0,
-            imported_at: 0,
-        };
-        let placement = Placement::loaded(
-            PlacementState::new(id, Some(id), egui::pos2(x, 0.0), 1.0, 0.0, id as i32, false),
-            asset,
-        );
-        app.canvas.add_prepared_placement_image(
-            &ctx,
-            PreparedPlacementImage {
-                target_board_id: 1,
-                queue_id: None,
-                placement,
-                preview_rgba: vec![255; width as usize * 100 * 4],
-                preview_width: width,
-                preview_height: 100,
-                animated_preview: None,
-                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-                loaded_lod: crate::data::CanvasImageLod::Working,
-                existing_load_diagnostics: None,
-                origin: crate::jobs::ImportOrigin::Existing,
-                trace: None,
-            },
-        );
-    }
-
-    let center = app.source_center_for_placement_ids(&[1, 2]).unwrap();
-
-    assert_eq!(center, egui::pos2(150.0, 0.0));
-}
-
 #[test]
 fn completed_multi_file_import_batch_selects_and_compacts_loaded_geometry() {
     let ctx = egui::Context::default();
