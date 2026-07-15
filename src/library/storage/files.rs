@@ -163,11 +163,6 @@ impl Library {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn asset_thumb_path(&self, asset_id: i64) -> PathBuf {
-        self.thumbs_dir.join(format!("asset-{asset_id}.png"))
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn canvas_image_cache_path(&self, asset_id: i64, max_side: u32) -> Option<PathBuf> {
         self.canvas_image_cache_path_for_lod(asset_id, max_side, CanvasImageLod::Working)
     }

@@ -184,7 +184,8 @@ pub(crate) fn download_from_reader_cancellable(
     }
 
     let actual = hex::encode(hasher.finalize());
-    if !sha_equal(&actual, expected_sha256) {
+    // Manifest hex casing is the publisher's choice.
+    if !actual.eq_ignore_ascii_case(expected_sha256) {
         let _ = fs::remove_file(destination);
         return Err(DownloadError::HashMismatch {
             expected: expected_sha256.to_owned(),
@@ -248,13 +249,6 @@ pub(crate) fn download_from_url_cancellable(
         progress,
         should_cancel,
     )
-}
-
-/// Case-insensitive equality on hex digests. The manifest hex casing is
-/// the publisher's choice; do not require it match our `hex::encode`
-/// output exactly.
-fn sha_equal(a: &str, b: &str) -> bool {
-    a.eq_ignore_ascii_case(b)
 }
 
 /// Compute the sha256 of `bytes`, returned as lowercase hex for test fixtures.

@@ -136,20 +136,18 @@ impl UpdateState {
                     version: current,
                     percent: current_pct,
                 } = self
+                    && *current == version
                 {
-                    if *current == version {
-                        *current_pct = percent.min(100);
-                    }
+                    *current_pct = percent.min(100);
                 }
             }
             InstallProgress::Staged { version } => {
                 if let UpdateState::Downloading {
                     version: current, ..
                 } = self
+                    && *current == version
                 {
-                    if *current == version {
-                        *self = UpdateState::Ready { version };
-                    }
+                    *self = UpdateState::Ready { version };
                 }
             }
             InstallProgress::Failed { reason: _ } => {

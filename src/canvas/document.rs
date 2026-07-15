@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use eframe::egui;
 
+#[cfg(test)]
+use super::CanvasImagePreview;
 use super::geometry::{
     clamped_crop_screen_rect, crop_center_offset_local, merge_cropped_item_fields,
     min_loaded_placement_scale, pixel_crop_rect_from_local, screen_rect_to_local_crop_rect,
@@ -16,9 +18,9 @@ use super::render::{
 };
 use super::{
     AnimatedCanvasFrame, AnimatedCanvasImage, CanvasCropRequest, CanvasDocumentChanges,
-    CanvasImagePreview, CanvasState, CanvasTexture, CropState, FOCUS_SELECTION_PADDING_SCREEN,
-    MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, PendingAnnotation, RenderedPlacement, SharedRgba,
-    TextboxLayoutCacheEntry, merge_ids,
+    CanvasState, CanvasTexture, CropState, FOCUS_SELECTION_PADDING_SCREEN, MAX_CANVAS_ZOOM,
+    MIN_CANVAS_ZOOM, PendingAnnotation, RenderedPlacement, SharedRgba, TextboxLayoutCacheEntry,
+    merge_ids,
 };
 use crate::data::{
     CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
@@ -594,7 +596,7 @@ impl CanvasState {
             .map(|image| image.placement.clone())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn preview_for_placement_id(&self, placement_id: i64) -> Option<CanvasImagePreview> {
         let image = self.rendered_placement_by_id(placement_id)?;
         let [width, height] = image.texture.size();
