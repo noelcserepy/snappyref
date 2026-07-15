@@ -173,29 +173,29 @@ fn decode_image_bytes_with_path_hint(
 
     #[cfg(feature = "turbojpeg-native")]
     let decoded = if format == ImageFormat::Gif {
-        decode_gif(&bytes, file_size)
+        decode_gif(bytes, file_size)
     } else if format == ImageFormat::WebP {
-        decode_webp(&bytes, file_size)
+        decode_webp(bytes, file_size)
     } else if format == ImageFormat::OpenExr {
-        decode_exr(&bytes, file_size)
+        decode_exr(bytes, file_size)
     } else if format == ImageFormat::Jpeg {
-        decode_jpeg_with_turbojpeg(&bytes, file_size, target_max_side)
-            .or_else(|_| decode_with_image_crate(&bytes, file_size, format))
+        decode_jpeg_with_turbojpeg(bytes, file_size, target_max_side)
+            .or_else(|_| decode_with_image_crate(bytes, file_size, format))
     } else {
-        decode_with_image_crate(&bytes, file_size, format)
+        decode_with_image_crate(bytes, file_size, format)
     }?;
 
     #[cfg(not(feature = "turbojpeg-native"))]
     let decoded = {
         let _ = target_max_side;
         if format == ImageFormat::Gif {
-            decode_gif(&bytes, file_size)
+            decode_gif(bytes, file_size)
         } else if format == ImageFormat::WebP {
-            decode_webp(&bytes, file_size)
+            decode_webp(bytes, file_size)
         } else if format == ImageFormat::OpenExr {
-            decode_exr(&bytes, file_size)
+            decode_exr(bytes, file_size)
         } else {
-            decode_with_image_crate(&bytes, file_size, format)
+            decode_with_image_crate(bytes, file_size, format)
         }?
     };
 

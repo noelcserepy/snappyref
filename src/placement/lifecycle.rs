@@ -204,7 +204,6 @@ mod tests {
             &mut canvas,
             vec![ProvisionalSourceIntent::ExistingAsset {
                 asset_id: 7,
-                label: "asset-7".to_owned(),
                 dimensions: (100, 50),
             }],
             egui::Pos2::ZERO,
@@ -247,12 +246,10 @@ mod tests {
             vec![
                 ProvisionalSourceIntent::ExistingAsset {
                     asset_id: 7,
-                    label: "asset-7".to_owned(),
                     dimensions: (100, 50),
                 },
                 ProvisionalSourceIntent::ExistingAsset {
                     asset_id: 8,
-                    label: "asset-8".to_owned(),
                     dimensions: (100, 50),
                 },
             ],
@@ -295,7 +292,6 @@ mod tests {
             &mut canvas,
             vec![ProvisionalSourceIntent::ExistingAsset {
                 asset_id: 7,
-                label: "asset-7".to_owned(),
                 dimensions: (100, 50),
             }],
             egui::Pos2::ZERO,
@@ -332,7 +328,6 @@ mod tests {
             &mut canvas,
             vec![ProvisionalSourceIntent::ExistingAsset {
                 asset_id: source.require_loaded_asset().id,
-                label: "source".to_owned(),
                 dimensions: (1, 1),
             }],
             egui::pos2(42.0, 24.0),

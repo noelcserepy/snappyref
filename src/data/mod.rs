@@ -10,8 +10,6 @@ pub use annotation::{
 };
 pub use asset::Asset;
 pub use geometry::{RectGeometry, SegmentGeometry};
-#[allow(unused_imports)]
-pub use placement::AssetId;
 pub use placement::{
     Board, BoardSummary, CanvasStackItem, ContentResolutionSource, Placement, PlacementContent,
     PlacementId, PlacementLifecycle, PlacementState,

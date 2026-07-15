@@ -1341,12 +1341,7 @@ impl CanvasState {
         }
 
         let current_center = self
-            .source_center_for_arrangement_inputs(
-                &items
-                    .iter()
-                    .map(|item| item.arrangement_input.clone())
-                    .collect::<Vec<_>>(),
-            )
+            .source_center_for_arrangement_inputs(&items)
             .unwrap_or(egui::Pos2::ZERO);
 
         let Some(layout) = crate::placement::arrangement::best_user_compact_layout(&items, gap)
@@ -1973,17 +1968,12 @@ impl CanvasState {
             .collect()
     }
 
-    fn selected_compact_input_items(&self) -> Vec<crate::placement::arrangement::CompactInputItem> {
+    fn selected_compact_input_items(&self) -> Vec<PlacementArrangementInput> {
         self.document
             .rendered_placements
             .iter()
             .filter(|image| self.is_selected(image.placement.state.id))
-            .map(|image| {
-                let input = image.placement.compact_input();
-                crate::placement::arrangement::CompactInputItem {
-                    arrangement_input: input.arrangement_input(),
-                }
-            })
+            .map(|image| image.placement.compact_input().arrangement_input())
             .collect()
     }
 

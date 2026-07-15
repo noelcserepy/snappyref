@@ -140,7 +140,6 @@ impl SearchController {
                     .unwrap_or((1, 1));
                 crate::placement::creation::ProvisionalSourceIntent::ExistingAsset {
                     asset_id: *asset_id,
-                    label: format!("search-asset-{asset_id}"),
                     dimensions: (width, height),
                 }
             })

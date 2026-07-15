@@ -315,9 +315,9 @@ pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut C
             if output.response.changed() {
                 state.mark_annotation_dirty(annotation_id);
             }
-            if ui.input(|i| i.key_pressed(egui::Key::Escape)) && output.response.has_focus() {
-                state.finish_textbox_edit();
-            } else if output.response.lost_focus() && !toolbar_interacting {
+            if (ui.input(|i| i.key_pressed(egui::Key::Escape)) && output.response.has_focus())
+                || (output.response.lost_focus() && !toolbar_interacting)
+            {
                 state.finish_textbox_edit();
             }
         });

@@ -24,10 +24,6 @@ pub struct ModelSpec {
     pub model_key: &'static str,
     pub dimension: usize,
     pub input_size: u32,
-    // Retained for the model publisher identity even though runtime loads
-    // assets from the Local Model Store only.
-    #[allow(dead_code)]
-    pub repo_id: &'static str,
     pub text_model_file: &'static str,
     pub vision_model_file: &'static str,
     pub tokenizer_file: &'static str,
@@ -45,7 +41,6 @@ pub const SIGLIP2_BASE_PATCH16_224_INT8: ModelSpec = ModelSpec {
     model_key: "siglip2_base_patch16_224_int8",
     dimension: 768,
     input_size: 224,
-    repo_id: "onnx-community/siglip2-base-patch16-224-ONNX",
     text_model_file: "onnx/text_model_int8.onnx",
     vision_model_file: "onnx/vision_model_int8.onnx",
     tokenizer_file: "tokenizer.json",

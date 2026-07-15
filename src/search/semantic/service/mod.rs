@@ -1547,7 +1547,6 @@ mod tests {
             model_key: "test-model",
             dimension: 2,
             input_size: 1,
-            repo_id: "test",
             text_model_file: "text.onnx",
             vision_model_file: "vision.onnx",
             tokenizer_file: "tokenizer.json",
