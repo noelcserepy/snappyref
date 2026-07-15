@@ -31,8 +31,9 @@ pub(crate) enum CheckOutcome {
 }
 
 /// The update state rendered by Settings.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) enum UpdateState {
+    #[default]
     Hidden,
     Available {
         version: String,
@@ -193,12 +194,6 @@ impl UpdateState {
     #[cfg(test)]
     pub(crate) fn is_ready(&self) -> bool {
         matches!(self, UpdateState::Ready { .. })
-    }
-}
-
-impl Default for UpdateState {
-    fn default() -> Self {
-        UpdateState::Hidden
     }
 }
 

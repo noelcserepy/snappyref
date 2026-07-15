@@ -4664,7 +4664,6 @@ fn empty_external_hover_does_not_cancel_search_provisional_placement() {
         vec![
             crate::placement::creation::ProvisionalSourceIntent::ExistingAsset {
                 asset_id: 10,
-                label: "search-asset-10".to_owned(),
                 dimensions: (100, 100),
             },
         ],

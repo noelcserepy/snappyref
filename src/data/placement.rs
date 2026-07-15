@@ -149,11 +149,6 @@ impl Placement {
         self.asset.as_ref()
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn loaded_asset_mut(&mut self) -> Option<&mut super::Asset> {
-        self.asset.as_mut()
-    }
-
     pub fn require_loaded_asset(&self) -> &super::Asset {
         self.loaded_asset()
             .expect("loaded Placement should carry its Asset")
@@ -161,7 +156,8 @@ impl Placement {
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn require_loaded_asset_mut(&mut self) -> &mut super::Asset {
-        self.loaded_asset_mut()
+        self.asset
+            .as_mut()
             .expect("loaded Placement should carry its Asset")
     }
 

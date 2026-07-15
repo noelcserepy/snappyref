@@ -68,11 +68,6 @@ pub(crate) enum SettleDirection {
     Down,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct CompactInputItem {
-    pub(crate) arrangement_input: PlacementArrangementInput,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CompactInput {
     pub(crate) placement_id: PlacementId,
@@ -411,7 +406,7 @@ fn best_compact_candidate(
 }
 
 pub(crate) fn best_user_compact_layout(
-    items: &[CompactInputItem],
+    items: &[PlacementArrangementInput],
     gap: f32,
 ) -> Option<UserCompactLayout> {
     let baseline = compact_variant_result(
@@ -435,7 +430,7 @@ pub(crate) fn best_user_compact_layout(
             .scale_factors
             .into_iter()
             .enumerate()
-            .map(|(index, factor)| (items[index].arrangement_input.id, factor))
+            .map(|(index, factor)| (items[index].id, factor))
             .collect(),
         width: best.candidate.width,
         height: best.candidate.height,
@@ -473,7 +468,7 @@ struct SizeBucket {
 }
 
 fn compact_axis_normalized_variant(
-    items: &[CompactInputItem],
+    items: &[PlacementArrangementInput],
     axis: Axis,
     gap: f32,
 ) -> Option<CompactVariantResult> {
@@ -495,17 +490,14 @@ fn compact_axis_normalized_variant(
 }
 
 fn compact_variant_result(
-    items: &[CompactInputItem],
+    items: &[PlacementArrangementInput],
     factors: Vec<(f32, ScaleCandidateKind)>,
     gap: f32,
 ) -> Option<CompactVariantResult> {
     let arrangement_inputs = items
         .iter()
         .zip(factors.iter())
-        .map(|(item, (factor, _))| {
-            item.arrangement_input
-                .with_size(item.arrangement_input.size() * *factor)
-        })
+        .map(|(item, (factor, _))| item.with_size(item.size() * *factor))
         .collect::<Vec<_>>();
     let candidate = best_compact_candidate(&arrangement_inputs, gap)?;
     let mut changed_count = 0;
@@ -567,7 +559,7 @@ fn compact_normalized_variant_beats(
 }
 
 fn compact_axis_scale_factor(
-    item: &CompactInputItem,
+    item: &PlacementArrangementInput,
     axis: Axis,
     axis_buckets: &[SizeBucket],
     other_buckets: &[SizeBucket],
@@ -606,7 +598,7 @@ fn compact_axis_scale_factor(
 }
 
 fn compact_other_axis_remains_stable(
-    item: &CompactInputItem,
+    item: &PlacementArrangementInput,
     other_axis: Axis,
     factor: f32,
     other_buckets: &[SizeBucket],
@@ -620,7 +612,7 @@ fn compact_other_axis_remains_stable(
             .any(|bucket| compact_dimensions_near(normalized, bucket.preferred))
 }
 
-fn compact_size_buckets(items: &[CompactInputItem], axis: Axis) -> Vec<SizeBucket> {
+fn compact_size_buckets(items: &[PlacementArrangementInput], axis: Axis) -> Vec<SizeBucket> {
     let mut dimensions = items
         .iter()
         .map(|item| compact_item_dimension(item, axis))
@@ -658,10 +650,10 @@ fn size_bucket_from_dimensions(dimensions: &[f32]) -> SizeBucket {
     }
 }
 
-fn compact_item_dimension(item: &CompactInputItem, axis: Axis) -> f32 {
+fn compact_item_dimension(item: &PlacementArrangementInput, axis: Axis) -> f32 {
     match axis {
-        Axis::Width => item.arrangement_input.width(),
-        Axis::Height => item.arrangement_input.height(),
+        Axis::Width => item.width(),
+        Axis::Height => item.height(),
     }
 }
 

@@ -28,9 +28,10 @@ impl CanvasAnnotationKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CanvasTextSize {
     S,
+    #[default]
     M,
     L,
     Xl,
@@ -66,15 +67,10 @@ impl CanvasTextSize {
     }
 }
 
-impl Default for CanvasTextSize {
-    fn default() -> Self {
-        Self::M
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CanvasStrokeWidth {
     S,
+    #[default]
     M,
     L,
 }
@@ -106,14 +102,9 @@ impl CanvasStrokeWidth {
     }
 }
 
-impl Default for CanvasStrokeWidth {
-    fn default() -> Self {
-        Self::M
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CanvasAnnotationColor {
+    #[default]
     Default,
     Coral,
     Gold,
@@ -141,12 +132,6 @@ impl CanvasAnnotationColor {
             "sky" => Some(Self::Sky),
             _ => None,
         }
-    }
-}
-
-impl Default for CanvasAnnotationColor {
-    fn default() -> Self {
-        Self::Default
     }
 }
 
@@ -231,10 +216,11 @@ impl CanvasAnnotation {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CanvasBackground {
     Dots,
     Grid,
+    #[default]
     None,
 }
 
@@ -254,11 +240,5 @@ impl CanvasBackground {
             "none" => Some(Self::None),
             _ => None,
         }
-    }
-}
-
-impl Default for CanvasBackground {
-    fn default() -> Self {
-        Self::None
     }
 }

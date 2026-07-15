@@ -62,7 +62,6 @@ pub(crate) enum ProvisionalSourceIntent {
     SourceIntent(SourceIntent),
     ExistingAsset {
         asset_id: i64,
-        label: String,
         dimensions: (u32, u32),
     },
 }
@@ -280,13 +279,11 @@ pub(crate) fn create_provisional_placements(
             }
             ProvisionalSourceIntent::ExistingAsset {
                 asset_id,
-                label,
                 dimensions,
             } => {
                 let placement = provisional_asset_placement(
                     next_id,
                     asset_id,
-                    label,
                     dimensions,
                     center_world,
                     next_z_index,
@@ -353,7 +350,6 @@ fn provisional_loading_placement(
 fn provisional_asset_placement(
     placement_id: i64,
     asset_id: i64,
-    label: String,
     dimensions: (u32, u32),
     center_world: egui::Pos2,
     z_index: i32,
@@ -366,7 +362,6 @@ fn provisional_asset_placement(
         true,
         settings.placement_target_area,
     );
-    let _ = label;
     Placement {
         state: PlacementState::with_display_size(
             placement_id,
@@ -558,7 +553,6 @@ mod tests {
             &mut canvas,
             vec![ProvisionalSourceIntent::ExistingAsset {
                 asset_id: 42,
-                label: "existing.png".to_owned(),
                 dimensions: (640, 480),
             }],
             eframe::egui::pos2(120.0, 80.0),

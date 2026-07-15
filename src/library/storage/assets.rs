@@ -170,26 +170,12 @@ fn sqlite_limit(limit: usize) -> i64 {
 fn remap_placement_content_asset_ids(payload: &str, remaps: &HashMap<i64, i64>) -> Option<String> {
     let mut content = serde_json::from_str::<PlacementContent>(payload).ok()?;
     let changed = match &mut content {
-        PlacementContent::Loaded { asset_id } => {
-            if let Some(canonical_id) = remaps.get(asset_id) {
-                *asset_id = *canonical_id;
-                true
-            } else {
-                false
-            }
-        }
-        PlacementContent::Loading {
+        PlacementContent::Loaded { asset_id }
+        | PlacementContent::Loading {
             source: ContentResolutionSource::SearchAsset { asset_id },
             ..
-        } => {
-            if let Some(canonical_id) = remaps.get(asset_id) {
-                *asset_id = *canonical_id;
-                true
-            } else {
-                false
-            }
         }
-        PlacementContent::Failed {
+        | PlacementContent::Failed {
             source: Some(ContentResolutionSource::SearchAsset { asset_id }),
             ..
         } => {
