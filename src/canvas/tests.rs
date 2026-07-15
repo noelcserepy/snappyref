@@ -21,12 +21,11 @@ use super::{
     FOCUS_SELECTION_PADDING_SCREEN, MIN_CANVAS_ZOOM, PixelCropRect, PlacementArrangementInput,
     PlacementResizeHandle, RenderedPlacement, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
     TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion, TextboxResizeHandle,
-    rotated_display_size,
 };
 use crate::data::{
     Asset, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
     CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, ContentResolutionSource, Placement,
-    PlacementContent, PlacementLifecycle, PlacementState,
+    PlacementContent, PlacementLifecycle, PlacementState, rotated_display_size,
 };
 use crate::placement::arrangement::{
     SettleDirection, balanced_grid_layout_for_sizes, best_compact_layout, compact_layout_for_sizes,
@@ -3354,10 +3353,12 @@ fn rectangles_respect_gap(left: eframe::egui::Rect, right: eframe::egui::Rect, g
 
 fn placement_visual_bounds_world(image: &RenderedPlacement) -> eframe::egui::Rect {
     let display_size = rotated_display_size(
-        image.placement.require_loaded_asset().width as f32
-            * image.placement.state.geometry.scale.max(0.01),
-        image.placement.require_loaded_asset().height as f32
-            * image.placement.state.geometry.scale.max(0.01),
+        eframe::egui::vec2(
+            image.placement.require_loaded_asset().width as f32
+                * image.placement.state.geometry.scale.max(0.01),
+            image.placement.require_loaded_asset().height as f32
+                * image.placement.state.geometry.scale.max(0.01),
+        ),
         image.placement.state.geometry.rotation,
     );
     eframe::egui::Rect::from_center_size(

@@ -545,12 +545,6 @@ impl CanvasState {
     }
 }
 
-pub(crate) fn rotated_display_size(width: f32, height: f32, rotation: f32) -> egui::Vec2 {
-    let sin = rotation.sin().abs();
-    let cos = rotation.cos().abs();
-    egui::vec2(width * cos + height * sin, width * sin + height * cos)
-}
-
 fn merge_ids(existing: &[i64], incoming: &[i64]) -> Vec<i64> {
     let mut merged = existing.to_vec();
     for id in incoming {

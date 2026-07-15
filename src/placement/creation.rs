@@ -362,12 +362,12 @@ fn provisional_asset_placement(
 }
 
 impl PlacementCreationBatchTracker {
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.batches.len()
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
         self.batches.is_empty()
     }

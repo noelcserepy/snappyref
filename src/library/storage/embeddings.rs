@@ -6,8 +6,6 @@ use super::*;
 pub enum EmbeddingStatus {
     Pending,
     Ready,
-    #[allow(dead_code)]
-    Failed,
 }
 
 impl EmbeddingStatus {
@@ -16,7 +14,6 @@ impl EmbeddingStatus {
         match self {
             Self::Pending => "pending",
             Self::Ready => "ready",
-            Self::Failed => "failed",
         }
     }
 }

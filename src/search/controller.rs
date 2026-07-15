@@ -1334,7 +1334,6 @@ mod tests {
             .map(|asset_id| SearchResultAssetEntry {
                 asset_id,
                 asset_preview_path: None,
-                asset_original_path: None,
                 asset_width: 100,
                 asset_height: 100,
             })
@@ -1393,7 +1392,6 @@ mod tests {
             .map(|asset_id| SearchResultAssetEntry {
                 asset_id,
                 asset_preview_path: None,
-                asset_original_path: None,
                 asset_width: 1600,
                 asset_height: 1200,
             })
@@ -1487,7 +1485,6 @@ mod tests {
             search.overlay.results.push(SearchResultAssetEntry {
                 asset_id,
                 asset_preview_path: None,
-                asset_original_path: None,
                 asset_width: 200,
                 asset_height: 100,
             });
@@ -1535,7 +1532,6 @@ mod tests {
         search.overlay.results = vec![SearchResultAssetEntry {
             asset_id: 10,
             asset_preview_path: None,
-            asset_original_path: None,
             asset_width: 4000,
             asset_height: 3000,
         }];
@@ -1583,7 +1579,6 @@ mod tests {
             .map(|asset_id| SearchResultAssetEntry {
                 asset_id,
                 asset_preview_path: None,
-                asset_original_path: None,
                 asset_width: 100,
                 asset_height: 100,
             })
@@ -1640,20 +1635,17 @@ mod tests {
 
     #[test]
     fn keyboard_search_placement_creates_selected_provisional_placements() {
-        let ctx = egui::Context::default();
         let mut search = SearchController::default();
         let mut canvas = CanvasState::default();
         search.overlay.results = vec![SearchResultAssetEntry {
             asset_id: 10,
             asset_preview_path: None,
-            asset_original_path: None,
             asset_width: 200,
             asset_height: 100,
         }];
         search.overlay.result_selection.replace(0);
 
         search.start_keyboard_placement_for_selected_results(
-            &ctx,
             &mut canvas,
             Some(egui::pos2(400.0, 300.0)),
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)),
@@ -1697,7 +1689,6 @@ mod tests {
         search.overlay.results = vec![SearchResultAssetEntry {
             asset_id: 1,
             asset_preview_path: None,
-            asset_original_path: None,
             asset_width: 100,
             asset_height: 100,
         }];
@@ -1761,13 +1752,11 @@ mod tests {
         search.overlay.results = vec![SearchResultAssetEntry {
             asset_id: 10,
             asset_preview_path: None,
-            asset_original_path: None,
             asset_width: 200,
             asset_height: 100,
         }];
 
         search.start_keyboard_placement_for_selected_results(
-            &ctx,
             &mut canvas,
             Some(egui::pos2(200.0, 200.0)),
             screen_rect,
@@ -1810,7 +1799,6 @@ mod tests {
         search.overlay.results = vec![SearchResultAssetEntry {
             asset_id: 10,
             asset_preview_path: None,
-            asset_original_path: None,
             asset_width: 1,
             asset_height: 1,
         }];
@@ -1937,7 +1925,6 @@ mod tests {
             .map(|index| SearchResultAssetEntry {
                 asset_id: index,
                 asset_preview_path: None,
-                asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
             })
@@ -1956,14 +1943,12 @@ mod tests {
             SearchResultAssetEntry {
                 asset_id: 10,
                 asset_preview_path: None,
-                asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
             },
             SearchResultAssetEntry {
                 asset_id: 11,
                 asset_preview_path: None,
-                asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
             },
@@ -1984,14 +1969,12 @@ mod tests {
             SearchResultAssetEntry {
                 asset_id: 10,
                 asset_preview_path: None,
-                asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
             },
             SearchResultAssetEntry {
                 asset_id: 11,
                 asset_preview_path: None,
-                asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
             },
@@ -2008,14 +1991,12 @@ mod tests {
             SearchResultAssetEntry {
                 asset_id: 10,
                 asset_preview_path: None,
-                asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
             },
             SearchResultAssetEntry {
                 asset_id: 11,
                 asset_preview_path: None,
-                asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
             },
@@ -2029,7 +2010,6 @@ mod tests {
             .map(|index| SearchResultAssetEntry {
                 asset_id: index as i64,
                 asset_preview_path: None,
-                asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
             })

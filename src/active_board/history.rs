@@ -21,6 +21,17 @@ pub(crate) struct HistoryChange<T> {
     pub(crate) after: Option<T>,
 }
 
+impl<T> HistoryChange<T> {
+    fn replay_target(&self, direction: HistoryDirection) -> Option<(&T, bool)> {
+        let (target, fallback) = match direction {
+            HistoryDirection::Forward => (self.after.as_ref(), self.before.as_ref()),
+            HistoryDirection::Backward => (self.before.as_ref(), self.after.as_ref()),
+        };
+        let target_missing = target.is_none();
+        target.or(fallback).map(|item| (item, target_missing))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct HistoryApplied {
     pub(crate) label: String,
@@ -105,18 +116,10 @@ fn apply_placement_change(
     change: &HistoryChange<Placement>,
     direction: HistoryDirection,
 ) -> Result<(), String> {
-    let target = match direction {
-        HistoryDirection::Forward => change.after.as_ref(),
-        HistoryDirection::Backward => change.before.as_ref(),
-    };
-    let fallback = match direction {
-        HistoryDirection::Forward => change.before.as_ref(),
-        HistoryDirection::Backward => change.after.as_ref(),
-    };
-    let Some(item) = target.or(fallback) else {
+    let Some((item, target_missing)) = change.replay_target(direction) else {
         return Ok(());
     };
-    if item.state.archived || target.is_none() {
+    if item.state.archived || target_missing {
         library.archive_placements(&[item.state.id])
     } else {
         library.restore_placements(&[item.state.id])?;
@@ -129,18 +132,10 @@ fn apply_annotation_change(
     change: &HistoryChange<CanvasAnnotation>,
     direction: HistoryDirection,
 ) -> Result<(), String> {
-    let target = match direction {
-        HistoryDirection::Forward => change.after.as_ref(),
-        HistoryDirection::Backward => change.before.as_ref(),
-    };
-    let fallback = match direction {
-        HistoryDirection::Forward => change.before.as_ref(),
-        HistoryDirection::Backward => change.after.as_ref(),
-    };
-    let Some(annotation) = target.or(fallback) else {
+    let Some((annotation, target_missing)) = change.replay_target(direction) else {
         return Ok(());
     };
-    if annotation.archived || target.is_none() {
+    if annotation.archived || target_missing {
         library.archive_canvas_annotations(&[annotation.id])
     } else {
         library.restore_canvas_annotations(&[annotation.id])?;

@@ -26,8 +26,6 @@ pub struct SearchResultAssetEntry {
     #[allow(dead_code)]
     pub asset_id: i64,
     pub asset_preview_path: Option<PathBuf>,
-    #[allow(dead_code)]
-    pub asset_original_path: Option<PathBuf>,
     pub asset_width: u32,
     pub asset_height: u32,
 }
@@ -714,18 +712,17 @@ fn group_hits(
 ) -> Result<Vec<SearchResultAssetEntry>, String> {
     let asset_ids = hits.iter().map(|hit| hit.asset_id).collect::<Vec<_>>();
     let asset_preview_paths = library.asset_search_preview_paths_for_assets(&asset_ids);
-    let asset_original_paths = library.asset_original_paths_for_assets(&asset_ids)?;
+    let active_asset_paths = library.asset_original_paths_for_assets(&asset_ids)?;
 
     let mut groups = Vec::new();
     for hit in hits {
-        let Some(asset_original_path) = asset_original_paths.get(&hit.asset_id).cloned() else {
+        if !active_asset_paths.contains_key(&hit.asset_id) {
             continue;
-        };
+        }
         let asset = library.load_asset(hit.asset_id)?;
         let group = SearchResultAssetEntry {
             asset_id: hit.asset_id,
             asset_preview_path: asset_preview_paths.get(&hit.asset_id).cloned(),
-            asset_original_path: Some(asset_original_path),
             asset_width: asset.width,
             asset_height: asset.height,
         };
@@ -1200,10 +1197,6 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].asset_id, unplaced.require_loaded_asset().id);
-        assert_eq!(
-            results[0].asset_original_path.as_deref(),
-            Some(unplaced.require_loaded_asset().original_path.as_path())
-        );
         assert_eq!(
             results[0].asset_preview_path.as_deref(),
             Some(unplaced_preview_path.as_path())

@@ -2792,7 +2792,6 @@ fn enter_places_unplaced_library_search_result_on_empty_active_board() {
     app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: library_item.require_loaded_asset().id,
         asset_preview_path: None,
-        asset_original_path: Some(library_item.require_loaded_asset().original_path.clone()),
         asset_width: 1,
         asset_height: 1,
     }];
@@ -2858,7 +2857,6 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
     app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: library_item.require_loaded_asset().id,
         asset_preview_path: None,
-        asset_original_path: Some(library_item.require_loaded_asset().original_path.clone()),
         asset_width: 1,
         asset_height: 1,
     }];
@@ -2915,7 +2913,6 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
     app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: library_item.require_loaded_asset().id,
         asset_preview_path: None,
-        asset_original_path: Some(library_item.require_loaded_asset().original_path.clone()),
         asset_width: 1,
         asset_height: 1,
     }];
@@ -3016,14 +3013,12 @@ fn command_enter_library_search_results_show_pending_cursor_arrangement_inputs()
         SearchResultAssetEntry {
             asset_id: first.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
         },
         SearchResultAssetEntry {
             asset_id: second.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
         },
@@ -3099,14 +3094,12 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
         SearchResultAssetEntry {
             asset_id: first.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: None,
             asset_width: first.require_loaded_asset().width,
             asset_height: first.require_loaded_asset().height,
         },
         SearchResultAssetEntry {
             asset_id: second.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: None,
             asset_width: second.require_loaded_asset().width,
             asset_height: second.require_loaded_asset().height,
         },
@@ -3197,14 +3190,12 @@ fn multi_select_enter_library_search_results_show_pending_cursor_arrangement_inp
         SearchResultAssetEntry {
             asset_id: first.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
         },
         SearchResultAssetEntry {
             asset_id: second.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
         },
@@ -3258,7 +3249,6 @@ fn dragging_library_search_result_out_of_palette_creates_provisional_placement()
     app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: source.require_loaded_asset().id,
         asset_preview_path: None,
-        asset_original_path: Some(source.require_loaded_asset().original_path.clone()),
         asset_width: source.require_loaded_asset().width,
         asset_height: source.require_loaded_asset().height,
     }];
@@ -3322,7 +3312,6 @@ fn inspect_search_result_drag_to_canvas_writes_artifact() {
     app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: source.require_loaded_asset().id,
         asset_preview_path: None,
-        asset_original_path: Some(source.require_loaded_asset().original_path.clone()),
         asset_width: source.require_loaded_asset().width,
         asset_height: source.require_loaded_asset().height,
     }];
@@ -4570,14 +4559,12 @@ fn dragging_multiple_library_search_results_centers_provisional_group_on_pointer
         SearchResultAssetEntry {
             asset_id: first.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
             asset_width: first.require_loaded_asset().width,
             asset_height: first.require_loaded_asset().height,
         },
         SearchResultAssetEntry {
             asset_id: second.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
             asset_width: second.require_loaded_asset().width,
             asset_height: second.require_loaded_asset().height,
         },
@@ -4739,14 +4726,12 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
         SearchResultAssetEntry {
             asset_id: first.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
         },
         SearchResultAssetEntry {
             asset_id: second.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
         },
@@ -4853,14 +4838,12 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
         SearchResultAssetEntry {
             asset_id: first.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
         },
         SearchResultAssetEntry {
             asset_id: second.require_loaded_asset().id,
             asset_preview_path: None,
-            asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
         },
@@ -6113,7 +6096,6 @@ fn inspect_search_result_entry(placement: &Placement) -> SearchResultAssetEntry 
     SearchResultAssetEntry {
         asset_id: asset.id,
         asset_preview_path: Some(asset.original_path.clone()),
-        asset_original_path: Some(asset.original_path.clone()),
         asset_width: asset.width,
         asset_height: asset.height,
     }

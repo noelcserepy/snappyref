@@ -86,9 +86,8 @@ pub(crate) fn begin_placement_drag_scale(
                     ),
                     {
                         let base_size = image.placement.base_display_size();
-                        super::super::rotated_display_size(
-                            base_size.x,
-                            base_size.y,
+                        crate::data::rotated_display_size(
+                            base_size,
                             image.placement.state.geometry.rotation,
                         )
                     },
@@ -517,9 +516,8 @@ fn guide_snap_candidate_rects(
         .filter(|image| !excluded_placement_ids.contains(&image.placement.state.id))
         .filter_map(|image| {
             let scaled_size = image.placement.scaled_display_size();
-            let display_size = super::super::rotated_display_size(
-                scaled_size.x,
-                scaled_size.y,
+            let display_size = crate::data::rotated_display_size(
+                scaled_size,
                 image.placement.state.geometry.rotation,
             );
             let rect = egui::Rect::from_center_size(

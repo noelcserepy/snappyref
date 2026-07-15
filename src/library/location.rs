@@ -87,13 +87,13 @@ fn install_root_is_writable(install_root: &Path) -> bool {
 fn platform_user_data_root() -> Result<PathBuf, String> {
     #[cfg(target_os = "macos")]
     {
-        return home_dir()
+        home_dir()
             .map(|home| {
                 home.join("Library")
                     .join("Application Support")
                     .join("SnappyRef")
             })
-            .ok_or_else(|| "Failed to resolve user data directory: HOME is not set".to_owned());
+            .ok_or_else(|| "Failed to resolve user data directory: HOME is not set".to_owned())
     }
 
     #[cfg(target_os = "windows")]

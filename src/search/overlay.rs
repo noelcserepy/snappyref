@@ -501,7 +501,6 @@ impl SearchController {
             if ctx.input(|input| input.key_pressed(egui::Key::Enter)) {
                 if ctx.input(|input| input.modifiers.command) {
                     self.start_keyboard_placement_for_all_results(
-                        ctx,
                         canvas,
                         pointer_pos,
                         screen_rect,
@@ -509,7 +508,6 @@ impl SearchController {
                     );
                 } else {
                     self.start_keyboard_placement_for_selected_results(
-                        ctx,
                         canvas,
                         pointer_pos,
                         screen_rect,

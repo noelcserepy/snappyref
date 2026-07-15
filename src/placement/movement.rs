@@ -163,9 +163,8 @@ fn guide_snap_candidate_rects(
         .filter(|image| !excluded_placement_ids.contains(&image.placement.state.id))
         .filter_map(|image| {
             let display_size = image.placement.state.geometry.scaled_size();
-            let rotated_display_size = crate::canvas::rotated_display_size(
-                display_size.x,
-                display_size.y,
+            let rotated_display_size = crate::data::rotated_display_size(
+                display_size,
                 image.placement.state.geometry.rotation,
             );
             let rect = egui::Rect::from_center_size(
