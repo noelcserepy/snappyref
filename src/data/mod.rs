@@ -9,6 +9,7 @@ pub use annotation::{
     CanvasBackground, CanvasStrokeWidth, CanvasTextSize,
 };
 pub use asset::Asset;
+pub(crate) use geometry::rotated_display_size;
 pub use geometry::{RectGeometry, SegmentGeometry};
 pub use placement::{
     Board, BoardSummary, CanvasStackItem, ContentResolutionSource, Placement, PlacementContent,

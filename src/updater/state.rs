@@ -171,10 +171,9 @@ impl UpdateState {
         if let UpdateState::Downloading {
             version: in_flight, ..
         } = self
+            && !crate::updater::version::is_newer_than(&version, in_flight)
         {
-            if !crate::updater::version::is_newer_than(&version, in_flight) {
-                return;
-            }
+            return;
         }
         *self = UpdateState::Ready { version };
     }

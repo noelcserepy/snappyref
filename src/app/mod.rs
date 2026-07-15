@@ -551,14 +551,6 @@ impl AppConfig {
         self.perf_scenario_requested()
     }
 
-    fn open_sidebar_on_start(&self) -> bool {
-        false
-    }
-
-    fn open_sidebar_boards_on_start(&self) -> bool {
-        false
-    }
-
     pub(crate) fn startup_viewport_size(&self) -> egui::Vec2 {
         STARTUP_VIEWPORT_SIZE
     }
@@ -733,12 +725,8 @@ impl SnappyRefApp {
                     settings: crate::data::WorkspaceSettings::default(),
                     #[cfg(feature = "semantic-search")]
                     search: SearchController::default(),
-                    sidebar_open: config.open_sidebar_on_start(),
-                    sidebar_tab: if config.open_sidebar_boards_on_start() {
-                        SidebarTab::Boards
-                    } else {
-                        SidebarTab::Options
-                    },
+                    sidebar_open: false,
+                    sidebar_tab: SidebarTab::Options,
                     pending_board_delete: None,
                     pending_library_remove: None,
                     #[cfg(feature = "semantic-search")]
@@ -770,12 +758,6 @@ impl SnappyRefApp {
                 };
                 app.load_user_session();
                 app.refresh_board_summaries();
-                if config.open_sidebar_on_start() {
-                    app.sidebar_open = true;
-                }
-                if config.open_sidebar_boards_on_start() {
-                    app.sidebar_tab = SidebarTab::Boards;
-                }
                 #[cfg(feature = "semantic-search")]
                 app.sync_semantic_search_service();
                 if !config.skip_existing_items_on_start() {
@@ -797,12 +779,8 @@ impl SnappyRefApp {
                 settings: crate::data::WorkspaceSettings::default(),
                 #[cfg(feature = "semantic-search")]
                 search: SearchController::default(),
-                sidebar_open: config.open_sidebar_on_start(),
-                sidebar_tab: if config.open_sidebar_boards_on_start() {
-                    SidebarTab::Boards
-                } else {
-                    SidebarTab::Options
-                },
+                sidebar_open: false,
+                sidebar_tab: SidebarTab::Options,
                 pending_board_delete: None,
                 pending_library_remove: None,
                 #[cfg(feature = "semantic-search")]

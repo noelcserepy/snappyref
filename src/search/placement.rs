@@ -36,7 +36,6 @@ impl SearchController {
 
     pub(super) fn start_keyboard_placement_for_selected_results(
         &mut self,
-        ctx: &egui::Context,
         canvas: &mut CanvasState,
         pointer_pos: Option<egui::Pos2>,
         screen_rect: egui::Rect,
@@ -45,7 +44,6 @@ impl SearchController {
         let asset_ids = self.selected_result_asset_ids();
         self.start_keyboard_placement(
             asset_ids,
-            ctx,
             canvas,
             pointer_pos,
             screen_rect,
@@ -55,7 +53,6 @@ impl SearchController {
 
     pub(super) fn start_keyboard_placement_for_all_results(
         &mut self,
-        ctx: &egui::Context,
         canvas: &mut CanvasState,
         pointer_pos: Option<egui::Pos2>,
         screen_rect: egui::Rect,
@@ -64,7 +61,6 @@ impl SearchController {
         let asset_ids = self.all_result_asset_ids();
         self.start_keyboard_placement(
             asset_ids,
-            ctx,
             canvas,
             pointer_pos,
             screen_rect,
@@ -75,7 +71,6 @@ impl SearchController {
     fn start_keyboard_placement(
         &mut self,
         asset_ids: Vec<i64>,
-        ctx: &egui::Context,
         canvas: &mut CanvasState,
         pointer_pos: Option<egui::Pos2>,
         screen_rect: egui::Rect,
@@ -104,7 +99,6 @@ impl SearchController {
             provisional_batch_active: true,
             auto_fit_applied: false,
         });
-        let _ = ctx;
     }
 
     pub(super) fn cancel_search_provisional_batch(&mut self, canvas: &mut CanvasState) {

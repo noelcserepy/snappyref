@@ -1953,9 +1953,8 @@ impl CanvasState {
             .filter(|image| self.is_selected(image.placement.state.id))
             .map(|image| {
                 let display_size = image.placement.state.geometry.scaled_size();
-                let rotated_display_size = super::rotated_display_size(
-                    display_size.x,
-                    display_size.y,
+                let rotated_display_size = crate::data::rotated_display_size(
+                    display_size,
                     image.placement.state.geometry.rotation,
                 );
                 PlacementArrangementInput::new(
@@ -1964,7 +1963,7 @@ impl CanvasState {
                         image.placement.state.geometry.center.x,
                         image.placement.state.geometry.center.y,
                     ),
-                    egui::vec2(rotated_display_size.x, rotated_display_size.y),
+                    rotated_display_size,
                 )
             })
             .collect()

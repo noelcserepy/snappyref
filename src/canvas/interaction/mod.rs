@@ -406,9 +406,8 @@ pub(super) fn handle_input(
                     let center_world = state.screen_to_world(center_screen, rect);
                     let anchor_world = state.screen_to_world(anchor_screen, rect);
                     let base_size = image.placement.base_display_size();
-                    let base_display_size = super::rotated_display_size(
-                        base_size.x,
-                        base_size.y,
+                    let base_display_size = crate::data::rotated_display_size(
+                        base_size,
                         image.placement.state.geometry.rotation,
                     );
                     let desired_rect = egui::Rect::from_center_size(
