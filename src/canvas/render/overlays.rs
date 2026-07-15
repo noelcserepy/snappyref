@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use super::image_pass::selection_border_visible;
-use crate::canvas::geometry::{clamped_crop_screen_rect, placement_screen_corners_for_record};
+use crate::canvas::geometry::{clamped_crop_screen_rect, screen_corners_for_placement};
 use crate::canvas::interaction::{
     hit_test_placement, placement_screen_rect, selected_placement_rotation_handle_screen_pos,
 };
@@ -132,7 +132,7 @@ pub(crate) fn paint_hover_hairline(
         if fade <= 0.0 || state.is_selected(placement_id) {
             continue;
         }
-        let corners = placement_screen_corners_for_record(
+        let corners = screen_corners_for_placement(
             &image.placement,
             state.pan,
             state.zoom,
@@ -159,7 +159,7 @@ pub(crate) fn paint_selected_placement_borders(
         let Some(image) = state.rendered_placement_by_id(placement_id) else {
             continue;
         };
-        let corners = placement_screen_corners_for_record(
+        let corners = screen_corners_for_placement(
             &image.placement,
             state.pan,
             state.zoom,

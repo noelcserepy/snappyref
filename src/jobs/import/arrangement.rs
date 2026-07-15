@@ -15,11 +15,6 @@ struct PlacementCandidate {
     generation_index: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct ArrangementCandidate {
-    pub center: egui::Pos2,
-}
-
 pub fn arrange_rect_world(
     library: &Library,
     desired_world: egui::Pos2,
@@ -84,18 +79,17 @@ pub fn arrange_rect_with_existing_layout(
         item_height,
         placement_gap,
     )
-    .map(|candidate| candidate.center)
     .unwrap_or(desired_world)
 }
 
-pub fn best_arrangement_candidate_with_existing_layout(
+fn best_arrangement_candidate_with_existing_layout(
     existing_items: &[PlacementArrangementInput],
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
     item_width: f32,
     item_height: f32,
     placement_gap: f32,
-) -> Option<ArrangementCandidate> {
+) -> Option<egui::Pos2> {
     let new_rect = egui::Rect::from_center_size(
         desired_world,
         egui::vec2(item_width.max(0.0), item_height.max(0.0)),
@@ -169,7 +163,7 @@ pub fn best_arrangement_candidate_with_existing_layout(
         }
     }
 
-    best_candidate.map(|(_, _, _, _, center)| ArrangementCandidate { center })
+    best_candidate.map(|(_, _, _, _, center)| center)
 }
 
 fn viewport_distance_score(candidate_center: egui::Pos2, viewport_world: egui::Rect) -> f32 {

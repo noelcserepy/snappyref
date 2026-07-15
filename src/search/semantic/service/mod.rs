@@ -490,7 +490,6 @@ fn process_index_request(
         } => {
             if let Err(error) = index_asset(
                 worker_library,
-                worker_state,
                 model_spec,
                 result_tx,
                 canvas_image_max_side,
@@ -533,7 +532,6 @@ fn process_index_request(
 
             match index_asset(
                 worker_library,
-                worker_state,
                 model_spec,
                 result_tx,
                 canvas_image_max_side,
@@ -780,7 +778,6 @@ fn ready_model(model_state: &Arc<Mutex<ModelState>>) -> Result<Arc<OrtDualEncode
 
 fn index_asset(
     library: &Library,
-    _model_state: &Arc<Mutex<ModelState>>,
     model_spec: &ModelSpec,
     result_tx: &mpsc::Sender<IndexResult>,
     canvas_image_max_side: u32,

@@ -2,7 +2,7 @@ use eframe::egui;
 
 use super::PixelCropRect;
 
-pub(super) fn placement_screen_center_for_record(
+pub(super) fn screen_center_for_placement(
     placement: &crate::data::Placement,
     pan: egui::Vec2,
     zoom: f32,
@@ -16,21 +16,21 @@ pub(super) fn placement_screen_center_for_record(
         ) * zoom
 }
 
-pub(super) fn placement_screen_size_for_record(
+pub(super) fn screen_size_for_placement(
     placement: &crate::data::Placement,
     zoom: f32,
 ) -> egui::Vec2 {
     placement.scaled_display_size() * zoom
 }
 
-pub(super) fn placement_screen_corners_for_record(
+pub(super) fn screen_corners_for_placement(
     placement: &crate::data::Placement,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> [egui::Pos2; 4] {
-    let center = placement_screen_center_for_record(placement, pan, zoom, screen_center);
-    let half_size = placement_screen_size_for_record(placement, zoom) * 0.5;
+    let center = screen_center_for_placement(placement, pan, zoom, screen_center);
+    let half_size = screen_size_for_placement(placement, zoom) * 0.5;
     let sin = placement.state.geometry.rotation.sin();
     let cos = placement.state.geometry.rotation.cos();
     let rotate = |offset: egui::Vec2| {
@@ -48,13 +48,13 @@ pub(super) fn placement_screen_corners_for_record(
     ]
 }
 
-pub(super) fn placement_screen_rect_for_record(
+pub(super) fn screen_rect_for_placement(
     placement: &crate::data::Placement,
     pan: egui::Vec2,
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> egui::Rect {
-    placement_screen_corners_for_record(placement, pan, zoom, screen_center)
+    screen_corners_for_placement(placement, pan, zoom, screen_center)
         .into_iter()
         .fold(egui::Rect::NOTHING, |mut bounds, corner| {
             bounds.extend_with(corner);
@@ -68,7 +68,7 @@ pub(super) fn placement_rotation_handle_screen_pos(
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> (egui::Pos2, egui::Pos2) {
-    let corners = placement_screen_corners_for_record(placement, pan, zoom, screen_center);
+    let corners = screen_corners_for_placement(placement, pan, zoom, screen_center);
     let top_mid = corners[0].lerp(corners[1], 0.5);
     let bottom_mid = corners[3].lerp(corners[2], 0.5);
     let outward = (top_mid - bottom_mid).normalized();
@@ -89,12 +89,12 @@ pub(super) fn placement_contains_screen_point(
     zoom: f32,
     screen_center: egui::Pos2,
 ) -> bool {
-    let center = placement_screen_center_for_record(placement, pan, zoom, screen_center);
+    let center = screen_center_for_placement(placement, pan, zoom, screen_center);
     let local = pointer_pos - center;
     let sin = (-placement.state.geometry.rotation).sin();
     let cos = (-placement.state.geometry.rotation).cos();
     let unrotated = egui::vec2(local.x * cos - local.y * sin, local.x * sin + local.y * cos);
-    let half_size = placement_screen_size_for_record(placement, zoom) * 0.5;
+    let half_size = screen_size_for_placement(placement, zoom) * 0.5;
 
     unrotated.x.abs() <= half_size.x && unrotated.y.abs() <= half_size.y
 }

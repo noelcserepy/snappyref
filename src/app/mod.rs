@@ -983,10 +983,6 @@ impl SnappyRefApp {
         let dimensions = image::image_dimensions(&path).ok();
         let reservation = self.reserve_import(
             layout,
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("perf-image")
-                .to_owned(),
             dimensions,
             desired_world,
             viewport_world,
@@ -2070,7 +2066,6 @@ impl SnappyRefApp {
     fn reserve_import(
         &mut self,
         layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
-        label: String,
         dimensions: Option<(u32, u32)>,
         desired_world: egui::Pos2,
         viewport_world: egui::Rect,
@@ -2080,7 +2075,6 @@ impl SnappyRefApp {
         self.create_committed_loading_import(
             layout,
             crate::placement::creation::SourceIntent {
-                label,
                 dimensions,
                 approximate_dimensions: dimensions.is_none(),
                 content: source,
@@ -2187,7 +2181,6 @@ impl SnappyRefApp {
             intents.push(
                 crate::placement::creation::ProvisionalSourceIntent::SourceIntent(
                     crate::placement::creation::SourceIntent {
-                        label: crate::sources::import::import_source_label(source),
                         dimensions: Some(dimensions.unwrap_or((FALLBACK_WIDTH, FALLBACK_HEIGHT))),
                         approximate_dimensions: dimensions.is_none(),
                         content: Self::placement_content_intent_for_external_source(source),
@@ -2239,13 +2232,11 @@ impl SnappyRefApp {
     fn source_intent_for_external_source(
         source: &ExternalImportSource,
     ) -> crate::placement::creation::SourceIntent {
-        let label = crate::sources::import::import_source_label(source);
         let dimensions = match source {
             ExternalImportSource::Path(path) => image::image_dimensions(path).ok(),
             ExternalImportSource::Url(_) => None,
         };
         crate::placement::creation::SourceIntent {
-            label,
             dimensions,
             approximate_dimensions: dimensions.is_none(),
             content: Self::placement_content_intent_for_external_source(source),
@@ -2467,7 +2458,6 @@ impl SnappyRefApp {
         };
         let reservation = self.reserve_import(
             &mut layout,
-            "Clipboard".to_owned(),
             Some((width, height)),
             desired_world,
             viewport_world,
@@ -2522,7 +2512,6 @@ impl SnappyRefApp {
         };
         let reservation = self.reserve_import(
             &mut layout,
-            crate::sources::import::import_source_label(&ExternalImportSource::Url(url.clone())),
             Some((360, 240)),
             desired_world,
             viewport_world,
@@ -2994,11 +2983,6 @@ impl SnappyRefApp {
         if should_close {
             self.context_menu_pos = None;
         }
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    fn blocks_canvas_input(&self, ctx: &egui::Context) -> bool {
-        self.canvas_input_policy(ctx) != crate::canvas::CanvasInputPolicy::Full
     }
 
     fn canvas_input_policy(&self, ctx: &egui::Context) -> crate::canvas::CanvasInputPolicy {
