@@ -1337,7 +1337,6 @@ mod tests {
                 asset_original_path: None,
                 asset_width: 100,
                 asset_height: 100,
-                similarity: 0.9,
             })
             .collect();
         let mut drag = crate::search::palette::SearchResultDragState {
@@ -1397,7 +1396,6 @@ mod tests {
                 asset_original_path: None,
                 asset_width: 1600,
                 asset_height: 1200,
-                similarity: 0.9,
             })
             .collect();
         let mut drag = crate::search::palette::SearchResultDragState {
@@ -1492,7 +1490,6 @@ mod tests {
                 asset_original_path: None,
                 asset_width: 200,
                 asset_height: 100,
-                similarity: 0.9,
             });
         }
         search.overlay.result_selection.range_to(4);
@@ -1541,7 +1538,6 @@ mod tests {
             asset_original_path: None,
             asset_width: 4000,
             asset_height: 3000,
-            similarity: 0.9,
         }];
         search.overlay.result_selection.replace(0);
 
@@ -1590,7 +1586,6 @@ mod tests {
                 asset_original_path: None,
                 asset_width: 100,
                 asset_height: 100,
-                similarity: 0.9,
             })
             .collect();
         let mut drag = crate::search::palette::SearchResultDragState {
@@ -1654,7 +1649,6 @@ mod tests {
             asset_original_path: None,
             asset_width: 200,
             asset_height: 100,
-            similarity: 0.9,
         }];
         search.overlay.result_selection.replace(0);
 
@@ -1706,7 +1700,6 @@ mod tests {
             asset_original_path: None,
             asset_width: 100,
             asset_height: 100,
-            similarity: 0.9,
         }];
         search.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
             asset_ids: vec![1],
@@ -1771,7 +1764,6 @@ mod tests {
             asset_original_path: None,
             asset_width: 200,
             asset_height: 100,
-            similarity: 0.9,
         }];
 
         search.start_keyboard_placement_for_selected_results(
@@ -1821,7 +1813,6 @@ mod tests {
             asset_original_path: None,
             asset_width: 1,
             asset_height: 1,
-            similarity: 0.9,
         }];
 
         let should_refresh =
@@ -1949,7 +1940,6 @@ mod tests {
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
-                similarity: 0.9,
             })
             .collect();
 
@@ -1969,7 +1959,6 @@ mod tests {
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
-                similarity: 0.9,
             },
             SearchResultAssetEntry {
                 asset_id: 11,
@@ -1977,7 +1966,6 @@ mod tests {
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
-                similarity: 0.8,
             },
         ];
         search.overlay.result_selection.replace(0);
@@ -1999,7 +1987,6 @@ mod tests {
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
-                similarity: 0.9,
             },
             SearchResultAssetEntry {
                 asset_id: 11,
@@ -2007,7 +1994,6 @@ mod tests {
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
-                similarity: 0.8,
             },
         ];
         search.overlay.result_selection.replace(1);
@@ -2025,7 +2011,6 @@ mod tests {
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
-                similarity: 0.9,
             },
             SearchResultAssetEntry {
                 asset_id: 11,
@@ -2033,7 +2018,6 @@ mod tests {
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
-                similarity: 0.8,
             },
         ];
 
@@ -2048,7 +2032,6 @@ mod tests {
                 asset_original_path: None,
                 asset_width: 1,
                 asset_height: 1,
-                similarity: 0.9,
             })
             .collect()
     }

@@ -108,14 +108,16 @@ impl ClipboardAnnotation {
         ))
     }
 
-    fn translated_geometry(&self, delta: egui::Vec2) -> Result<CanvasAnnotationGeometry, String> {
-        let geometry = self.geometry()?;
-        Ok(CanvasAnnotationGeometry::from_kind(
-            CanvasAnnotationKind::from_str(&self.kind)
-                .ok_or_else(|| format!("unknown copied annotation kind: {}", self.kind))?,
-            geometry.start() + delta,
-            geometry.end() + delta,
-        ))
+    fn translated_geometry(
+        &self,
+        kind: CanvasAnnotationKind,
+        delta: egui::Vec2,
+    ) -> CanvasAnnotationGeometry {
+        CanvasAnnotationGeometry::from_kind(
+            kind,
+            egui::pos2(self.start_x, self.start_y) + delta,
+            egui::pos2(self.end_x, self.end_y) + delta,
+        )
     }
 }
 
@@ -271,7 +273,7 @@ pub(crate) fn paste_board_payload_at(
             .ok_or_else(|| format!("unknown copied stroke width: {}", annotation.stroke_width))?;
         let color = crate::data::CanvasAnnotationColor::from_str(&annotation.color)
             .ok_or_else(|| format!("unknown copied annotation color: {}", annotation.color))?;
-        let geometry = annotation.translated_geometry(delta)?;
+        let geometry = annotation.translated_geometry(kind, delta);
         let pasted = library.create_canvas_annotation(
             kind,
             geometry.start(),

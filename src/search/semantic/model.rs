@@ -15,8 +15,6 @@ use super::model_store::{
 
 pub trait EmbeddingModel: Send + Sync {
     fn embed_text(&self, query: &str) -> Result<Vec<f32>, String>;
-    #[allow(dead_code)]
-    fn embed_image_path(&self, path: &Path) -> Result<Vec<f32>, String>;
 }
 
 #[derive(Clone, Debug)]
@@ -381,22 +379,6 @@ impl EmbeddingModel for OrtDualEncoderModel {
             .try_extract_array::<f32>()
             .map_err(|error| format!("failed to extract text embedding: {error}"))?;
         Ok(normalize(array.iter().copied().collect()))
-    }
-
-    fn embed_image_path(&self, path: &Path) -> Result<Vec<f32>, String> {
-        self.embed_image_path_timed(path)
-            .map(|(embedding, _timing)| embedding)
-    }
-}
-
-impl EmbeddingModel for OrtImageEmbeddingModel {
-    fn embed_text(&self, _query: &str) -> Result<Vec<f32>, String> {
-        Err("image embedding model cannot embed text".to_owned())
-    }
-
-    fn embed_image_path(&self, path: &Path) -> Result<Vec<f32>, String> {
-        self.embed_image_path_timed(path)
-            .map(|(embedding, _timing)| embedding)
     }
 }
 

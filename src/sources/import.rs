@@ -30,12 +30,7 @@ pub(crate) fn import_source_label(source: &ExternalImportSource) -> String {
                         .and_then(Iterator::last)
                         .filter(|segment| !segment.is_empty())
                         .map(str::to_owned)
-                })
-                .or_else(|| {
-                    parsed
-                        .as_ref()
-                        .and_then(|parsed| parsed.host_str())
-                        .map(str::to_owned)
+                        .or_else(|| parsed.host_str().map(str::to_owned))
                 })
                 .unwrap_or_else(|| "image-url".to_owned())
         }

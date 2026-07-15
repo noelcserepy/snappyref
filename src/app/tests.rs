@@ -2789,7 +2789,6 @@ fn enter_places_unplaced_library_search_result_on_empty_active_board() {
         asset_original_path: Some(library_item.require_loaded_asset().original_path.clone()),
         asset_width: 1,
         asset_height: 1,
-        similarity: 0.9,
     }];
     app.search.overlay.result_selection.replace(0);
     let mut harness = app_full_harness(app);
@@ -2856,7 +2855,6 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
         asset_original_path: Some(library_item.require_loaded_asset().original_path.clone()),
         asset_width: 1,
         asset_height: 1,
-        similarity: 0.9,
     }];
     app.search.overlay.result_selection.replace(0);
     let mut harness = app_harness(app, |ctx, app| {
@@ -2914,7 +2912,6 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
         asset_original_path: Some(library_item.require_loaded_asset().original_path.clone()),
         asset_width: 1,
         asset_height: 1,
-        similarity: 0.9,
     }];
     app.search.overlay.result_selection.replace(0);
     let mut harness = app_harness(app, |ctx, app| {
@@ -3016,7 +3013,6 @@ fn command_enter_library_search_results_show_pending_cursor_arrangement_inputs()
             asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
-            similarity: 0.9,
         },
         SearchResultAssetEntry {
             asset_id: second.require_loaded_asset().id,
@@ -3024,7 +3020,6 @@ fn command_enter_library_search_results_show_pending_cursor_arrangement_inputs()
             asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
-            similarity: 0.8,
         },
     ];
     app.search.overlay.result_selection.replace(0);
@@ -3101,7 +3096,6 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
             asset_original_path: None,
             asset_width: first.require_loaded_asset().width,
             asset_height: first.require_loaded_asset().height,
-            similarity: 0.9,
         },
         SearchResultAssetEntry {
             asset_id: second.require_loaded_asset().id,
@@ -3109,7 +3103,6 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
             asset_original_path: None,
             asset_width: second.require_loaded_asset().width,
             asset_height: second.require_loaded_asset().height,
-            similarity: 0.8,
         },
     ];
     app.search.overlay.result_selection.replace(0);
@@ -3201,7 +3194,6 @@ fn multi_select_enter_library_search_results_show_pending_cursor_arrangement_inp
             asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
-            similarity: 0.9,
         },
         SearchResultAssetEntry {
             asset_id: second.require_loaded_asset().id,
@@ -3209,7 +3201,6 @@ fn multi_select_enter_library_search_results_show_pending_cursor_arrangement_inp
             asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
-            similarity: 0.8,
         },
     ];
     app.search.overlay.result_selection.replace(0);
@@ -3264,7 +3255,6 @@ fn dragging_library_search_result_out_of_palette_creates_provisional_placement()
         asset_original_path: Some(source.require_loaded_asset().original_path.clone()),
         asset_width: source.require_loaded_asset().width,
         asset_height: source.require_loaded_asset().height,
-        similarity: 0.9,
     }];
     app.search.overlay.result_selection.replace(0);
     let mut harness = app_harness(app, |ctx, app| {
@@ -3329,7 +3319,6 @@ fn inspect_search_result_drag_to_canvas_writes_artifact() {
         asset_original_path: Some(source.require_loaded_asset().original_path.clone()),
         asset_width: source.require_loaded_asset().width,
         asset_height: source.require_loaded_asset().height,
-        similarity: 0.9,
     }];
     app.search.overlay.result_selection.replace(0);
     let mut harness = app_harness(app, |ctx, app| {
@@ -4171,10 +4160,7 @@ fn inspect_search_palette_footer_writes_artifact() {
 
     let results = result_placements
         .iter()
-        .enumerate()
-        .map(|(index, placement)| {
-            inspect_search_result_entry(placement, 0.88 - index as f32 * 0.06)
-        })
+        .map(inspect_search_result_entry)
         .collect::<Vec<_>>();
     harness.state_mut().search.overlay.results = results;
     harness.state_mut().search.overlay.has_more_results = true;
@@ -4325,10 +4311,7 @@ fn inspect_blue_image_search_drag_writes_artifact() {
 
     let results = result_placements
         .iter()
-        .enumerate()
-        .map(|(index, placement)| {
-            inspect_search_result_entry(placement, 0.91 - index as f32 * 0.07)
-        })
+        .map(inspect_search_result_entry)
         .collect::<Vec<_>>();
     harness.state_mut().search.overlay.results = results;
     harness.state_mut().search.overlay.status = crate::search::palette::SearchOverlayStatus::Ready;
@@ -4584,7 +4567,6 @@ fn dragging_multiple_library_search_results_centers_provisional_group_on_pointer
             asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
             asset_width: first.require_loaded_asset().width,
             asset_height: first.require_loaded_asset().height,
-            similarity: 0.9,
         },
         SearchResultAssetEntry {
             asset_id: second.require_loaded_asset().id,
@@ -4592,7 +4574,6 @@ fn dragging_multiple_library_search_results_centers_provisional_group_on_pointer
             asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
             asset_width: second.require_loaded_asset().width,
             asset_height: second.require_loaded_asset().height,
-            similarity: 0.8,
         },
     ];
     app.search.overlay.result_selection.replace(0);
@@ -4755,7 +4736,6 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
             asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
-            similarity: 0.9,
         },
         SearchResultAssetEntry {
             asset_id: second.require_loaded_asset().id,
@@ -4763,7 +4743,6 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
             asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
-            similarity: 0.8,
         },
     ];
     app.search.overlay.result_selection.replace(0);
@@ -4871,7 +4850,6 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
             asset_original_path: Some(first.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
-            similarity: 0.9,
         },
         SearchResultAssetEntry {
             asset_id: second.require_loaded_asset().id,
@@ -4879,7 +4857,6 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
             asset_original_path: Some(second.require_loaded_asset().original_path.clone()),
             asset_width: 1,
             asset_height: 1,
-            similarity: 0.8,
         },
     ];
     app.search.overlay.result_selection.replace(0);
@@ -6144,7 +6121,7 @@ fn inspect_prepared_loaded_placement(
 }
 
 #[cfg(feature = "semantic-search")]
-fn inspect_search_result_entry(placement: &Placement, similarity: f32) -> SearchResultAssetEntry {
+fn inspect_search_result_entry(placement: &Placement) -> SearchResultAssetEntry {
     let asset = placement.require_loaded_asset();
     SearchResultAssetEntry {
         asset_id: asset.id,
@@ -6152,7 +6129,6 @@ fn inspect_search_result_entry(placement: &Placement, similarity: f32) -> Search
         asset_original_path: Some(asset.original_path.clone()),
         asset_width: asset.width,
         asset_height: asset.height,
-        similarity,
     }
 }
 

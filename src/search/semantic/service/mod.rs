@@ -30,8 +30,6 @@ pub struct SearchResultAssetEntry {
     pub asset_original_path: Option<PathBuf>,
     pub asset_width: u32,
     pub asset_height: u32,
-    #[allow(dead_code)]
-    pub similarity: f32,
 }
 
 enum IndexRequest {
@@ -732,7 +730,6 @@ fn group_hits(
             asset_original_path: Some(asset_original_path),
             asset_width: asset.width,
             asset_height: asset.height,
-            similarity: hit.similarity,
         };
         groups.push(group);
     }

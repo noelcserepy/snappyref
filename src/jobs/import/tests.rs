@@ -1336,7 +1336,9 @@ fn downscale_mode_ignores_legacy_thumb_cache_paths() {
         )
         .unwrap();
 
-    let legacy_thumb_path = library.asset_thumb_path(placement.require_loaded_asset().id);
+    let legacy_thumb_path = root
+        .join("thumbs")
+        .join(format!("asset-{}.png", placement.require_loaded_asset().id));
     image::save_buffer_with_format(
         &legacy_thumb_path,
         &solid_rgba(64, 64),

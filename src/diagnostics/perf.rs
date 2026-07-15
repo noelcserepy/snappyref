@@ -157,7 +157,7 @@ pub fn print_embedding_lod_report(
             "embedding_lod_delta asset_id={} total_saved_ms={:.2} total_speedup={:.2}x preprocess_saved_ms={:.2} preprocess_speedup={:.2}x model_saved_ms={:.2} model_speedup={:.2}x",
             report.asset_id,
             ms(report.original.timing.total) - ms(report.working_lod.timing.total),
-            speedup(
+            speedup_duration(
                 report.original.timing.total,
                 report.working_lod.timing.total
             ),
@@ -167,7 +167,7 @@ pub fn print_embedding_lod_report(
                 preprocess_duration(report.working_lod.timing)
             ),
             ms(report.original.timing.model_run) - ms(report.working_lod.timing.model_run),
-            speedup(
+            speedup_duration(
                 report.original.timing.model_run,
                 report.working_lod.timing.model_run
             ),
@@ -293,11 +293,6 @@ fn preprocess_ms(timing: crate::search::semantic::ImageEmbeddingTiming) -> f64 {
 #[cfg(feature = "semantic-search")]
 fn ms(duration: std::time::Duration) -> f64 {
     duration.as_secs_f64() * 1000.0
-}
-
-#[cfg(feature = "semantic-search")]
-fn speedup(before: std::time::Duration, after: std::time::Duration) -> f64 {
-    speedup_duration(before, after)
 }
 
 #[cfg(feature = "semantic-search")]

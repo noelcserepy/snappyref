@@ -16,29 +16,12 @@ const DISPLAY_TEXT_STYLE_NAME: &str = "display";
 /// Usage:
 /// - `SPACE_1` / `SPACE_2` for dense control gaps, optical insets, and inline rhythm
 /// - `SPACE_3` / `SPACE_4` for default control padding and compact panel rhythm
-/// - `SPACE_6` / `SPACE_8` for section spacing, overlays, and canvas-adjacent offsets
-#[allow(dead_code)]
+/// - `SPACE_6` for section spacing, overlays, and canvas-adjacent offsets
 pub const SPACE_1: f32 = 4.0;
 pub const SPACE_2: f32 = 8.0;
 pub const SPACE_3: f32 = 12.0;
 pub const SPACE_4: f32 = 16.0;
-#[allow(dead_code)]
 pub const SPACE_6: f32 = 24.0;
-#[allow(dead_code)]
-pub const SPACE_8: f32 = 32.0;
-
-/// Standard drawer and panel padding.
-#[allow(dead_code)]
-pub const PANEL_PADDING: egui::Margin = egui::Margin {
-    left: SPACE_4 as i8,
-    right: SPACE_4 as i8,
-    top: SPACE_4 as i8,
-    bottom: SPACE_4 as i8,
-};
-
-/// Preferred gap between stacked sections.
-#[allow(dead_code)]
-pub const SECTION_GAP: f32 = SPACE_6;
 
 /// Standard control height for compact toolbar and drawer controls.
 pub const CONTROL_HEIGHT: f32 = 28.0;
@@ -91,8 +74,6 @@ pub const TEXT: egui::Color32 = color(0xF0, 0xF0, 0xF0);
 pub const TEXT_MUTED: egui::Color32 = color(0x8C, 0x8C, 0x8C);
 pub const TEXT_SUBTLE: egui::Color32 = color(0x66, 0x66, 0x66);
 pub const ACCENT: egui::Color32 = ACCENT_GOLD;
-#[allow(dead_code)]
-pub const ACCENT_BLUE: egui::Color32 = color(0x25, 0x89, 0xBD);
 pub const GREEN: egui::Color32 = color(0x32, 0x9F, 0x5B);
 pub const ACCENT_ORANGE: egui::Color32 = color(0xD1, 0x7B, 0x0F);
 pub const DESTRUCTIVE: egui::Color32 = DESTRUCTIVE_RED;
@@ -103,7 +84,6 @@ pub const DESTRUCTIVE_FILL: egui::Color32 = egui::Color32::from_rgba_premultipli
 /// Quiet settings and inset-group roles.
 ///
 /// Usage:
-/// - `QUIET_INSET_FILL` for low-contrast grouped sidebar interiors when spacing alone is not enough
 /// - `QUIET_INLINE_ACTIVE_FILL` for selected quiet inline controls and compact input fills
 /// - `QUIET_INLINE_HOVER_FILL` for hover-only quiet inline controls
 /// - `QUIET_INLINE_*` metrics for compact read-heavy settings choices
@@ -111,8 +91,6 @@ pub const DESTRUCTIVE_FILL: egui::Color32 = egui::Color32::from_rgba_premultipli
 /// Quiet inline controls belong in settings/read-heavy panels. Canvas
 /// toolbars should stay visually explicit because they are direct
 /// manipulation targets.
-#[allow(dead_code)]
-pub const QUIET_INSET_FILL: egui::Color32 = egui::Color32::from_rgba_premultiplied(5, 5, 5, 5);
 pub const QUIET_INLINE_ACTIVE_FILL: egui::Color32 =
     egui::Color32::from_rgba_premultiplied(12, 12, 12, 12);
 pub const QUIET_INLINE_HOVER_FILL: egui::Color32 =
