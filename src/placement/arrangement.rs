@@ -214,8 +214,8 @@ fn settle_order(
     right: &PlacementArrangementInput,
     direction: SettleDirection,
 ) -> std::cmp::Ordering {
-    let left_rect = arrangement_input_rect(left);
-    let right_rect = arrangement_input_rect(right);
+    let left_rect = left.rect();
+    let right_rect = right.rect();
     match direction {
         SettleDirection::Right => right_rect
             .right()
@@ -238,10 +238,6 @@ fn settle_order(
             .then_with(|| left.center().y.total_cmp(&right.center().y))
             .then_with(|| left.id.cmp(&right.id)),
     }
-}
-
-fn arrangement_input_rect(item: &PlacementArrangementInput) -> egui::Rect {
-    item.rect()
 }
 
 fn settled_center_for_item(

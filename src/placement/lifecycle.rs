@@ -95,7 +95,7 @@ pub(crate) fn commit_search_provisional_batch(
     library: &Library,
     canvas: &mut CanvasState,
     request: CommitSearchProvisionalRequest,
-    _settings: PlacementCreationSettings,
+    settings: PlacementCreationSettings,
 ) -> Result<CommittedSearchProvisionalBatch, String> {
     if request.asset_ids.is_empty() {
         return Ok(CommittedSearchProvisionalBatch {
@@ -131,7 +131,7 @@ pub(crate) fn commit_search_provisional_batch(
             asset.width,
             asset.height,
             true,
-            _settings.placement_target_area,
+            settings.placement_target_area,
         );
     }
 

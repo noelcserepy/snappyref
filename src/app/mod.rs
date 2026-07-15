@@ -2301,20 +2301,6 @@ impl SnappyRefApp {
         );
     }
 
-    #[allow(dead_code)]
-    fn register_search_import_batch(
-        &mut self,
-        target_board_id: i64,
-        anchor_world: egui::Pos2,
-        queue_ids: Vec<u64>,
-    ) {
-        self.pending_import_batches.register_any_item_batch(
-            target_board_id,
-            anchor_world,
-            queue_ids,
-        );
-    }
-
     fn finish_import_queue_id_in_batches(
         &mut self,
         target_board_id: Option<i64>,

@@ -42,7 +42,7 @@ pub(crate) fn take_drop(ui: &egui::Ui) -> ExternalDragIntake {
     let sources = merge_sources(
         raw_dropped_files
             .into_iter()
-            .filter_map(|file| source_from_dropped_file(file)),
+            .filter_map(source_from_dropped_file),
         native_paths.into_iter().map(ExternalImportSource::Path),
         native_urls.into_iter().map(ExternalImportSource::Url),
     );

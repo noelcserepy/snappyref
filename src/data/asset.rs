@@ -11,5 +11,4 @@ pub struct Asset {
     pub width: u32,
     pub height: u32,
     pub file_size: u64,
-    pub imported_at: i64,
 }

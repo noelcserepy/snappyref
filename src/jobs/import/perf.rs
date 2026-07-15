@@ -541,7 +541,6 @@ fn perf_record(
         file_size: std::fs::metadata(path)
             .map(|metadata| metadata.len())
             .unwrap_or(0),
-        imported_at: 0,
     };
     Placement::loaded(item, asset)
 }

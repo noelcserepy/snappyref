@@ -23,7 +23,6 @@ pub(crate) mod download;
 pub(crate) mod install_paths;
 pub(crate) mod manifest;
 pub(crate) mod platform;
-pub mod rollback;
 pub(crate) mod stager;
 pub(crate) mod state;
 pub(crate) mod version;

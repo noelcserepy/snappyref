@@ -407,18 +407,6 @@ impl PlacementCreationBatchTracker {
         if queue_ids.len() <= 1 {
             return;
         }
-        self.register_any_item_batch(target_board_id, anchor_world, queue_ids);
-    }
-
-    pub(crate) fn register_any_item_batch(
-        &mut self,
-        target_board_id: i64,
-        anchor_world: egui::Pos2,
-        queue_ids: Vec<u64>,
-    ) {
-        if queue_ids.is_empty() {
-            return;
-        }
         self.batches.push(PendingPlacementCreationBatch {
             target_board_id,
             anchor_world,

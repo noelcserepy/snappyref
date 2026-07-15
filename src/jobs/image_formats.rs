@@ -123,15 +123,6 @@ pub fn decode_image_file_perf_report(path: &Path) -> Result<DecodePerfReport, St
     })
 }
 
-#[allow(dead_code)]
-pub fn decode_image_bytes(
-    bytes: &[u8],
-    source_label: Option<String>,
-    mime_hint: Option<&str>,
-) -> Result<DecodedImage, String> {
-    decode_image_bytes_with_path_hint(bytes, source_label, mime_hint, None, None)
-}
-
 /// Decode in-memory image bytes, optionally hinting the target maximum side
 /// length so JPEG decoding can scale during IDCT. `None` means full resolution.
 pub fn decode_image_bytes_with_max_side(
@@ -1250,8 +1241,8 @@ fn decode_jpeg_with_turbojpeg(
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_image_bytes, decode_image_file, decode_image_file_perf_report, fitted_texture_size,
-        native_fallback_metadata_for_path, preview_image_from_rgba,
+        decode_image_bytes_with_max_side, decode_image_file, decode_image_file_perf_report,
+        fitted_texture_size, native_fallback_metadata_for_path, preview_image_from_rgba,
     };
     use image::codecs::gif::{GifEncoder, Repeat};
     use image::codecs::jpeg::JpegEncoder;
@@ -1582,9 +1573,10 @@ mod tests {
 static unsigned char sample_bits[] = { 0x01 };
 "#;
 
-        let decoded = decode_image_bytes(
+        let decoded = decode_image_bytes_with_max_side(
             xbm,
             Some("https://example.test/sample.xbm".to_owned()),
+            None,
             None,
         )
         .unwrap();

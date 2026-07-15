@@ -42,27 +42,18 @@ pub(crate) fn import_source_label(source: &ExternalImportSource) -> String {
     }
 }
 
-fn import_size_world(
-    width: u32,
-    height: u32,
-    auto_image_scaling: bool,
-    placement_target_area: f32,
-) -> egui::Vec2 {
-    let scale = crate::jobs::display_scale_for_placement_target_area(
-        width,
-        height,
-        auto_image_scaling,
-        placement_target_area,
-    );
-    egui::vec2(width as f32 * scale, height as f32 * scale)
-}
-
 pub(crate) fn import_preview_size_world(
     width: u32,
     height: u32,
     placement_target_area: f32,
 ) -> egui::Vec2 {
-    import_size_world(width, height, true, placement_target_area)
+    let scale = crate::jobs::display_scale_for_placement_target_area(
+        width,
+        height,
+        true,
+        placement_target_area,
+    );
+    egui::vec2(width as f32 * scale, height as f32 * scale)
 }
 
 #[cfg(test)]
