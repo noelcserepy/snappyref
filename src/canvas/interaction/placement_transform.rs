@@ -1,8 +1,7 @@
 use eframe::egui;
 
 use super::super::geometry::{
-    min_loaded_placement_scale, placement_rotation_handle_screen_pos,
-    placement_screen_rect_for_record,
+    min_loaded_placement_scale, placement_rotation_handle_screen_pos, screen_rect_for_placement,
 };
 use super::super::{
     CanvasState, PLACEMENT_RESIZE_HIT_RADIUS, PLACEMENT_ROTATE_HANDLE_HIT_RADIUS_SCREEN,
@@ -28,7 +27,7 @@ pub(crate) fn begin_placement_resize(
     let Some(image) = state.rendered_placement_by_id(placement_id) else {
         return;
     };
-    let corners = super::super::geometry::placement_screen_corners_for_record(
+    let corners = super::super::geometry::screen_corners_for_placement(
         &image.placement,
         state.pan,
         state.zoom,
@@ -185,7 +184,7 @@ pub(crate) fn placement_screen_rect(
     rect: egui::Rect,
     image: &RenderedPlacement,
 ) -> egui::Rect {
-    placement_screen_rect_for_record(&image.placement, state.pan, state.zoom, rect.center())
+    screen_rect_for_placement(&image.placement, state.pan, state.zoom, rect.center())
 }
 
 fn placement_resize_handle_screen_pos(
@@ -320,7 +319,7 @@ pub(crate) fn hit_test_placement_resize_handle(
     image: &RenderedPlacement,
     pointer_pos: egui::Pos2,
 ) -> Option<PlacementResizeHandle> {
-    let corners = super::super::geometry::placement_screen_corners_for_record(
+    let corners = super::super::geometry::screen_corners_for_placement(
         &image.placement,
         state.pan,
         state.zoom,

@@ -53,8 +53,8 @@ pub fn sort_records_by_viewport_proximity(
     viewport_world: egui::Rect,
 ) {
     placements.sort_by(|left, right| {
-        record_viewport_distance_sq(left, viewport_world)
-            .total_cmp(&record_viewport_distance_sq(right, viewport_world))
+        placement_viewport_distance_sq(left, viewport_world)
+            .total_cmp(&placement_viewport_distance_sq(right, viewport_world))
             .then_with(|| {
                 left.state
                     .geometry
@@ -65,8 +65,8 @@ pub fn sort_records_by_viewport_proximity(
     });
 }
 
-fn record_viewport_distance_sq(placement: &Placement, viewport_world: egui::Rect) -> f32 {
-    let rect = record_world_rect(placement);
+fn placement_viewport_distance_sq(placement: &Placement, viewport_world: egui::Rect) -> f32 {
+    let rect = placement_world_rect(placement);
     if rect.intersects(viewport_world) {
         return 0.0;
     }
@@ -82,11 +82,11 @@ fn record_viewport_distance_sq(placement: &Placement, viewport_world: egui::Rect
     center.distance_sq(clamped)
 }
 
-fn record_intersects_viewport_world(placement: &Placement, viewport_world: egui::Rect) -> bool {
-    record_world_rect(placement).intersects(viewport_world)
+fn placement_intersects_viewport_world(placement: &Placement, viewport_world: egui::Rect) -> bool {
+    placement_world_rect(placement).intersects(viewport_world)
 }
 
-fn record_world_rect(placement: &Placement) -> egui::Rect {
+fn placement_world_rect(placement: &Placement) -> egui::Rect {
     let size = egui::vec2(
         placement.require_loaded_asset().width as f32,
         placement.require_loaded_asset().height as f32,

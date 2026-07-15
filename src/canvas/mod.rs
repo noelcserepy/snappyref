@@ -879,13 +879,15 @@ pub fn paint_perf_report() -> PaintPerfReport {
         .collect::<Vec<_>>();
 
     let legacy_started_at = std::time::Instant::now();
-    let legacy_stats = render::image_paint_stats_for_records(&placements, rect, pan, zoom, false);
+    let legacy_stats =
+        render::image_paint_stats_for_placements(&placements, rect, pan, zoom, false);
     let legacy_visibility_pass_ms = legacy_started_at.elapsed().as_secs_f64() * 1000.0;
     let current_started_at = std::time::Instant::now();
-    let current_stats = render::image_paint_stats_for_records(&placements, rect, pan, zoom, true);
+    let current_stats =
+        render::image_paint_stats_for_placements(&placements, rect, pan, zoom, true);
     let current_visibility_pass_ms = current_started_at.elapsed().as_secs_f64() * 1000.0;
     let current_texture_groups =
-        render::image_texture_group_count_for_records(&placements, rect, pan, zoom);
+        render::image_texture_group_count_for_placements(&placements, rect, pan, zoom);
 
     PaintPerfReport {
         legacy_visibility_pass_ms,

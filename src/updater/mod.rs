@@ -822,7 +822,7 @@ pub(crate) fn classify(
     current_version: &str,
     release_page_url: &str,
 ) -> CheckOutcome {
-    if version::is_newer(current_version, &manifest.version) {
+    if version::is_newer_than(&manifest.version, current_version) {
         CheckOutcome::NewerAvailable {
             version: manifest.version.clone(),
             notes_url: manifest.notes_url.clone(),

@@ -360,7 +360,7 @@ fn measure_first_visible_load_ms(
         );
         match loaded {
             ImagePrepResult::Loaded(loaded) => {
-                if record_intersects_viewport_world(&loaded.placement, viewport_world) {
+                if placement_intersects_viewport_world(&loaded.placement, viewport_world) {
                     return Ok(started_at.elapsed().as_secs_f64() * 1000.0);
                 }
             }

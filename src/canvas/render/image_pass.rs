@@ -4,9 +4,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 use super::annotations::{annotation_should_paint, paint_annotation, paint_annotations};
-use crate::canvas::geometry::{
-    placement_screen_corners_for_record, placement_screen_rect_for_record,
-};
+use crate::canvas::geometry::{screen_corners_for_placement, screen_rect_for_placement};
 use crate::canvas::interaction::placement_screen_rect;
 use crate::canvas::{
     ANNOTATION_CULL_MARGIN_SCREEN, CanvasImageLod, CanvasState, CanvasTexture,
@@ -536,7 +534,7 @@ fn paint_image_mesh(
     image: &RenderedPlacement,
 ) {
     let corners =
-        placement_screen_corners_for_record(&image.placement, state.pan, state.zoom, rect.center());
+        screen_corners_for_placement(&image.placement, state.pan, state.zoom, rect.center());
     let mut mesh = egui::Mesh::with_texture(image.texture.id());
     let left_top = mesh.vertices.len() as u32;
     mesh.vertices.push(egui::epaint::Vertex {
@@ -588,7 +586,7 @@ pub(crate) fn canvas_texture_from_preview(
     }
 }
 
-pub(crate) fn image_paint_stats_for_records(
+pub(crate) fn image_paint_stats_for_placements(
     placements: &[crate::data::Placement],
     rect: egui::Rect,
     pan: egui::Vec2,
@@ -599,7 +597,7 @@ pub(crate) fn image_paint_stats_for_records(
     let cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
     for placement in placements {
         stats.considered += 1;
-        let image_rect = placement_screen_rect_for_record(placement, pan, zoom, rect.center());
+        let image_rect = screen_rect_for_placement(placement, pan, zoom, rect.center());
         if !cull_offscreen || image_rect.intersects(cull_rect) {
             stats.drawn += 1;
         }
@@ -607,7 +605,7 @@ pub(crate) fn image_paint_stats_for_records(
     stats
 }
 
-pub(crate) fn image_texture_group_count_for_records(
+pub(crate) fn image_texture_group_count_for_placements(
     placements: &[crate::data::Placement],
     rect: egui::Rect,
     pan: egui::Vec2,
@@ -617,7 +615,7 @@ pub(crate) fn image_texture_group_count_for_records(
     let mut groups = 0;
     let mut previous_asset_id = None;
     for placement in placements {
-        let image_rect = placement_screen_rect_for_record(placement, pan, zoom, rect.center());
+        let image_rect = screen_rect_for_placement(placement, pan, zoom, rect.center());
         if !image_rect.intersects(cull_rect) {
             continue;
         }

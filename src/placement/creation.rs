@@ -20,7 +20,6 @@ const FALLBACK_IMPORT_HEIGHT: u32 = 240;
 
 #[derive(Clone, Debug)]
 pub(crate) struct SourceIntent {
-    pub(crate) label: String,
     pub(crate) dimensions: Option<(u32, u32)>,
     pub(crate) approximate_dimensions: bool,
     pub(crate) content: ContentResolutionSource,
@@ -306,7 +305,6 @@ fn provisional_loading_placement(
 ) -> Placement {
     let (width, height) = normalized_dimensions(&intent);
     let size_world = display_size_for_dimensions(width, height, settings.placement_target_area);
-    let _ = intent.label;
     let _ = intent.approximate_dimensions;
     Placement {
         state: PlacementState::with_display_size(
@@ -467,7 +465,6 @@ mod tests {
         let geometry = plan_source_intent_geometries(
             &mut canvas,
             &[SourceIntent {
-                label: "clipboard".to_owned(),
                 dimensions: None,
                 approximate_dimensions: false,
                 content: ContentResolutionSource::Clipboard,
@@ -497,7 +494,6 @@ mod tests {
         let ids = create_provisional_placements(
             &mut canvas,
             vec![ProvisionalSourceIntent::SourceIntent(SourceIntent {
-                label: "clipboard".to_owned(),
                 dimensions: Some((320, 240)),
                 approximate_dimensions: false,
                 content: ContentResolutionSource::Clipboard,

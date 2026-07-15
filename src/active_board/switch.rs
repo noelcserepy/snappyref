@@ -1,9 +1,3 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BoardSwitchResult {
-    Unchanged,
-    Switched { active_board_id: i64 },
-}
-
 pub(crate) trait BoardSwitchHost {
     fn active_board_id(&self) -> i64;
 
@@ -15,23 +9,21 @@ pub(crate) trait BoardSwitchHost {
 pub(crate) fn switch_to_board(
     host: &mut impl BoardSwitchHost,
     target_board_id: i64,
-) -> Result<BoardSwitchResult, String> {
+) -> Result<(), String> {
     if host.active_board_id() == target_board_id {
-        return Ok(BoardSwitchResult::Unchanged);
+        return Ok(());
     }
 
     host.persist_active_board_before_switch();
     host.set_active_board_in_library(target_board_id)?;
     host.load_active_board();
 
-    Ok(BoardSwitchResult::Switched {
-        active_board_id: host.active_board_id(),
-    })
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BoardSwitchHost, BoardSwitchResult, switch_to_board};
+    use super::{BoardSwitchHost, switch_to_board};
 
     #[derive(Default)]
     struct FakeHost {
@@ -70,9 +62,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = switch_to_board(&mut host, 7).unwrap();
+        switch_to_board(&mut host, 7).unwrap();
 
-        assert_eq!(result, BoardSwitchResult::Unchanged);
         assert!(host.calls.is_empty());
     }
 
@@ -83,9 +74,9 @@ mod tests {
             ..Default::default()
         };
 
-        let result = switch_to_board(&mut host, 2).unwrap();
+        switch_to_board(&mut host, 2).unwrap();
 
-        assert_eq!(result, BoardSwitchResult::Switched { active_board_id: 2 });
+        assert_eq!(host.active_board_id, 2);
         assert_eq!(
             host.calls,
             vec!["persist", "set_active", "load_active_board"]

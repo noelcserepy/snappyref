@@ -82,7 +82,7 @@ impl UpdateState {
                 match self {
                     UpdateState::Downloading { version: v, .. }
                     | UpdateState::Ready { version: v }
-                        if !crate::updater::version::is_newer(v, &version) =>
+                        if !crate::updater::version::is_newer_than(&version, v) =>
                     {
                         // Ignore: we already know about this version.
                     }
@@ -172,7 +172,7 @@ impl UpdateState {
             version: in_flight, ..
         } = self
         {
-            if !crate::updater::version::is_newer(in_flight, &version) {
+            if !crate::updater::version::is_newer_than(&version, in_flight) {
                 return;
             }
         }

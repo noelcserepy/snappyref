@@ -258,13 +258,9 @@ impl ImageResidencyCoordinator {
         settings: &WorkspaceSettings,
         lod: CanvasImageLod,
     ) -> Option<String> {
-        let Some(import_worker) = import_worker else {
-            return None;
-        };
-        if !self
-            .pending_cache_backfills
-            .insert((placement.require_loaded_asset().id, lod))
-        {
+        let import_worker = import_worker?;
+        let backfill_key = (placement.require_loaded_asset().id, lod);
+        if !self.pending_cache_backfills.insert(backfill_key) {
             return None;
         }
         if let Err(error) = import_worker.enqueue(ImagePrepRequest::BackfillLod {
@@ -272,8 +268,7 @@ impl ImageResidencyCoordinator {
             canvas_image_settings: canvas_image_settings(settings),
             lod,
         }) {
-            self.pending_cache_backfills
-                .remove(&(placement.require_loaded_asset().id, lod));
+            self.pending_cache_backfills.remove(&backfill_key);
             return Some(error);
         }
         None

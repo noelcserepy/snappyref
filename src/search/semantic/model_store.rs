@@ -81,10 +81,8 @@ pub(crate) fn classify_availability(data_root: &Path, executable_dir: &Path) -> 
     if dir_has_entries(&store) {
         return ModelAvailability::LocalStore;
     }
-    if let Some(bundled) = bundled_model_dir(executable_dir) {
-        if dir_has_entries(&bundled) {
-            return ModelAvailability::BundledOnly;
-        }
+    if bundled_model_dir(executable_dir).is_some_and(|bundled| dir_has_entries(&bundled)) {
+        return ModelAvailability::BundledOnly;
     }
     ModelAvailability::Missing
 }

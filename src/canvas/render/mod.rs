@@ -14,8 +14,8 @@ pub(super) use background::{
     settled_background_lod_level,
 };
 pub(super) use image_pass::{
-    canvas_texture_from_preview, image_paint_stats_for_records,
-    image_texture_group_count_for_records, paint_canvas_items,
+    canvas_texture_from_preview, image_paint_stats_for_placements,
+    image_texture_group_count_for_placements, paint_canvas_items,
 };
 #[cfg(test)]
 pub(super) use image_pass::{

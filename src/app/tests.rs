@@ -1424,11 +1424,17 @@ fn open_context_menu_blocks_canvas_input_behind_menu() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
 
-    assert!(!app.blocks_canvas_input(&ctx));
+    assert_eq!(
+        app.canvas_input_policy(&ctx),
+        crate::canvas::CanvasInputPolicy::Full
+    );
 
     app.context_menu_pos = Some(egui::pos2(520.0, 260.0));
 
-    assert!(app.blocks_canvas_input(&ctx));
+    assert_eq!(
+        app.canvas_input_policy(&ctx),
+        crate::canvas::CanvasInputPolicy::Blocked
+    );
 }
 
 #[test]
@@ -5173,7 +5179,6 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
 
     let known = app.reserve_import(
         &mut layout,
-        "known".to_owned(),
         Some((100, 80)),
         egui::Pos2::ZERO,
         test_viewport_world(),
@@ -5183,7 +5188,6 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
     );
     let unknown = app.reserve_import(
         &mut layout,
-        "unknown".to_owned(),
         None,
         egui::pos2(200.0, 0.0),
         test_viewport_world(),
@@ -5253,22 +5257,6 @@ fn normalize_import_url_accepts_http_and_https_only() {
     assert_eq!(
         crate::sources::import::normalize_import_url("not a url"),
         None
-    );
-}
-
-#[test]
-fn import_source_label_prefers_url_path_basename_then_host() {
-    assert_eq!(
-        crate::sources::import::import_source_label(&super::ExternalImportSource::Url(
-            "https://images.example.com/path/cat.gif?size=large".to_owned()
-        )),
-        "cat.gif"
-    );
-    assert_eq!(
-        crate::sources::import::import_source_label(&super::ExternalImportSource::Url(
-            "https://images.example.com".to_owned()
-        )),
-        "images.example.com"
     );
 }
 
@@ -5863,7 +5851,6 @@ impl InspectScenario {
         for sample in samples {
             let reservation = harness.state_mut().reserve_import(
                 &mut layout,
-                sample.name.to_owned(),
                 Some((sample.width, sample.height)),
                 sample.center,
                 test_viewport_world(),
