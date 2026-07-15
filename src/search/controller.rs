@@ -1470,7 +1470,6 @@ mod tests {
                 width: 200,
                 height: 100,
                 file_size: 0,
-                imported_at: 0,
             };
             canvas.add_unresolved_placement(Placement::loaded(
                 PlacementState {
@@ -1568,7 +1567,6 @@ mod tests {
             width: 100,
             height: 100,
             file_size: 0,
-            imported_at: 0,
         };
         canvas.add_unresolved_placement(Placement::loaded(
             PlacementState::with_display_size(

@@ -187,7 +187,6 @@ mod tests {
                     width: texture_size[0] as u32,
                     height: texture_size[1] as u32,
                     file_size: 0,
-                    imported_at: 0,
                 },
             ),
             texture: CanvasTexture::Svg {

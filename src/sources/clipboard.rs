@@ -354,7 +354,6 @@ mod tests {
                 width: 1,
                 height: 1,
                 file_size: 4,
-                imported_at: 0,
             },
         )
     }

@@ -347,7 +347,6 @@ fn compact_arrangement_action_uses_dense_compact_layout() {
             width: *width,
             height: *height,
             file_size: 0,
-            imported_at: 0,
         };
         let placement = Placement::loaded(
             PlacementState::new(
@@ -2545,7 +2544,6 @@ fn switching_boards_clears_selection_search_and_transient_undo() {
         width: 1,
         height: 1,
         file_size: 4,
-        imported_at: 0,
     };
     let placement = Placement::loaded(
         PlacementState::new(1, Some(1), eframe::egui::pos2(0.0, 0.0), 1.0, 0.0, 0, false),
@@ -4048,7 +4046,6 @@ fn inspect_compact_equal_size_images_writes_artifact() {
             width: 150,
             height: 40,
             file_size: 150 * 40 * 4,
-            imported_at: 0,
         };
         let placement = Placement::loaded(
             PlacementState::with_display_size(
@@ -5084,7 +5081,6 @@ fn completed_multi_file_import_batch_selects_and_compacts_loaded_geometry() {
             width,
             height,
             file_size: 4,
-            imported_at: 0,
         };
         let placement = Placement::loaded(
             PlacementState::new(
@@ -6105,7 +6101,6 @@ fn inspect_sample_loaded_item(
         width,
         height,
         file_size: width as u64 * height as u64 * 4,
-        imported_at: 0,
     };
     let pixel_count = width as usize * height as usize;
     PreparedPlacementImage {
@@ -6344,7 +6339,6 @@ fn add_inspect_compact_image(
         width,
         height,
         file_size: width as u64 * height as u64 * 4,
-        imported_at: 0,
     };
     let placement = Placement::loaded(
         PlacementState::with_display_size(
@@ -6432,7 +6426,6 @@ fn test_loaded_item(placement_id: i64, target_board_id: i64) -> PreparedPlacemen
         width: 1,
         height: 1,
         file_size: 4,
-        imported_at: 0,
     };
     let placement = Placement::loaded(
         PlacementState::new(

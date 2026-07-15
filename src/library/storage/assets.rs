@@ -67,7 +67,6 @@ pub(super) fn insert_asset_row(
         width,
         height,
         file_size,
-        imported_at,
     })
 }
 
@@ -85,8 +84,7 @@ pub(super) fn load_exact_asset_for_original(
                 mime_type,
                 width,
                 height,
-                file_size,
-                imported_at
+                file_size
              FROM assets
              WHERE archived = 0
                AND file_size = ?1
@@ -126,9 +124,6 @@ pub(super) fn load_exact_asset_for_original(
         file_size: row.get::<_, i64>(6).map_err(|error| {
             format!("failed to read exact-asset file size for {original_sha256}: {error}")
         })? as u64,
-        imported_at: row.get(7).map_err(|error| {
-            format!("failed to read exact-asset import time for {original_sha256}: {error}")
-        })?,
     }))
 }
 
@@ -579,8 +574,7 @@ impl Library {
                     mime_type,
                     width,
                     height,
-                    file_size,
-                    imported_at
+                    file_size
                  FROM assets
                  WHERE id = ?1
                    AND archived = 0",
@@ -594,7 +588,6 @@ impl Library {
                         width: row.get::<_, u32>(4)?,
                         height: row.get::<_, u32>(5)?,
                         file_size: row.get::<_, i64>(6)? as u64,
-                        imported_at: row.get(7)?,
                     })
                 },
             )

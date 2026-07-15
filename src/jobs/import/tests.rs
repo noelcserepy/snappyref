@@ -1389,7 +1389,6 @@ fn crop_redecodes_original_path_and_preserves_exact_pixels() {
             width: 4,
             height: 4,
             file_size,
-            imported_at: 0,
         },
         crop_rect: crate::canvas::PixelCropRect {
             x: 1,

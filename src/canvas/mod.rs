@@ -873,7 +873,6 @@ pub fn paint_perf_report() -> PaintPerfReport {
                     width: 512,
                     height: 512,
                     file_size: 0,
-                    imported_at: 0,
                 },
             )
         })

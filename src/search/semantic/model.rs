@@ -59,9 +59,6 @@ pub const SIGLIP2_BASE_PATCH16_224_INT8: ModelSpec = ModelSpec {
     resize_filter: FilterType::Triangle,
 };
 
-#[allow(dead_code)]
-pub const AVAILABLE_SEMANTIC_SEARCH_MODELS: &[ModelSpec] = &[SIGLIP2_BASE_PATCH16_224_INT8];
-
 pub const DEFAULT_SEMANTIC_SEARCH_MODEL: ModelSpec = SIGLIP2_BASE_PATCH16_224_INT8;
 
 pub(crate) struct ResolvedModelAssets {

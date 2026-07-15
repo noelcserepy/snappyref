@@ -12,8 +12,6 @@ pub(crate) use install::{default_semantic_search_asset_descriptor, install_seman
 pub(crate) use install_controller::{
     SemanticSearchInstallController, SemanticSearchInstallDisplay, SemanticSearchInstallSnapshot,
 };
-#[allow(unused_imports)]
-pub use model::AVAILABLE_SEMANTIC_SEARCH_MODELS;
 pub use model::DEFAULT_SEMANTIC_SEARCH_MODEL;
 pub(crate) use model::{
     ImageEmbeddingTiming, ModelLoadTiming, OrtDualEncoderModel, default_local_model_store_status,
