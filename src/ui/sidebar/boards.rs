@@ -279,7 +279,7 @@ pub(super) fn paint_board_row(
     } else if let Some(shortcut) = shortcut {
         let font = ui.style().text_styles[&egui::TextStyle::Small].clone();
         let galley = ui.painter().layout_no_wrap(
-            shortcuts::display_shortcut_label(shortcut).to_owned(),
+            shortcuts::display_shortcut_label(shortcut),
             font,
             crate::ui::theme::TEXT_SUBTLE,
         );

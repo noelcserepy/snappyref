@@ -286,7 +286,7 @@ impl SemanticSearchService {
             .map_err(|error| format!("failed to queue semantic image search: {error}"))
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn search_with_image_pivot_with_limit(
         &self,
         source_asset_id: i64,
@@ -306,7 +306,7 @@ impl SemanticSearchService {
         )
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn search_with_limit(
         &self,
         query: &str,

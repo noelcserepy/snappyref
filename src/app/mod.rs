@@ -2209,19 +2209,19 @@ impl SnappyRefApp {
         self.external_hover_provisional_placement_ids = batch.placement_ids;
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     fn dropped_import_previews(
         &mut self,
         sources: &[ExternalImportSource],
         desired_world: egui::Pos2,
         screen_rect: egui::Rect,
-    ) -> Vec<(String, Option<(u32, u32)>, egui::Pos2)> {
+    ) -> Vec<egui::Pos2> {
         let specs = sources
             .iter()
             .map(Self::source_intent_for_external_source)
             .collect::<Vec<_>>();
 
-        crate::placement::creation::plan_source_intent_previews(
+        crate::placement::creation::plan_source_intent_geometries(
             &mut self.canvas,
             &specs,
             desired_world,
@@ -2232,10 +2232,7 @@ impl SnappyRefApp {
             },
         )
         .into_iter()
-        .map(|preview| {
-            let center_world = preview.center_world();
-            (preview.label, preview.dimensions, center_world)
-        })
+        .map(|geometry| geometry.center)
         .collect()
     }
 

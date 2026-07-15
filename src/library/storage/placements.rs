@@ -427,24 +427,24 @@ impl Library {
         message: String,
     ) -> Result<Option<Placement>, String> {
         let connection = self.connection()?;
-        let existing = self
+        let Some(mut placement) = self
             .load_placements_for_board_id(&connection, board_id)?
             .into_iter()
-            .find(|record| record.state.id == placement_id);
-        let Some(mut record) = existing else {
+            .find(|placement| placement.state.id == placement_id)
+        else {
             return Ok(None);
         };
-        let source = match &record.content {
+        let source = match &placement.content {
             PlacementContent::Loading { source, .. } => Some(source.clone()),
             PlacementContent::Failed { source, .. } => source.clone(),
             PlacementContent::Loaded { .. } => None,
         };
-        record.content = PlacementContent::Failed {
+        placement.content = PlacementContent::Failed {
             source,
             message,
             recoverable: true,
         };
-        let content_resolution_source_payload = serde_json::to_string(&record.content)
+        let content_resolution_source_payload = serde_json::to_string(&placement.content)
             .map_err(|error| format!("failed to encode failed placement content: {error}"))?;
         connection
             .execute(
@@ -457,7 +457,7 @@ impl Library {
                 params![content_resolution_source_payload, placement_id, board_id],
             )
             .map_err(|error| format!("failed to mark placement {placement_id} failed: {error}"))?;
-        Ok(Some(record))
+        Ok(Some(placement))
     }
 
     pub fn load_placements(&self) -> Result<Vec<Placement>, String> {

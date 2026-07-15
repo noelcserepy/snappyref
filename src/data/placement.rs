@@ -145,12 +145,9 @@ impl Placement {
         matches!(self.content, PlacementContent::Loaded { .. })
     }
 
-    pub fn loaded_asset(&self) -> Option<&super::Asset> {
-        self.asset.as_ref()
-    }
-
     pub fn require_loaded_asset(&self) -> &super::Asset {
-        self.loaded_asset()
+        self.asset
+            .as_ref()
             .expect("loaded Placement should carry its Asset")
     }
 

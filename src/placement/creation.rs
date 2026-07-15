@@ -26,20 +26,6 @@ pub(crate) struct SourceIntent {
     pub(crate) content: ContentResolutionSource,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Clone, Debug)]
-pub(crate) struct SourceIntentPreview {
-    pub(crate) label: String,
-    pub(crate) dimensions: Option<(u32, u32)>,
-    pub(crate) geometry: RectGeometry,
-}
-
-impl SourceIntentPreview {
-    pub(crate) fn center_world(&self) -> egui::Pos2 {
-        self.geometry.center
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PlacementCreationSettings {
     pub(crate) placement_target_area: f32,
@@ -125,13 +111,13 @@ pub(crate) fn placement_bounds(placements: &[(egui::Pos2, egui::Vec2)]) -> Optio
     found.then(|| egui::Rect::from_min_max(min, max))
 }
 
-pub(crate) fn plan_source_intent_previews(
+pub(crate) fn plan_source_intent_geometries(
     canvas: &mut CanvasState,
     intents: &[SourceIntent],
     anchor_world: egui::Pos2,
     screen_rect: egui::Rect,
     settings: PlacementCreationSettings,
-) -> Vec<SourceIntentPreview> {
+) -> Vec<RectGeometry> {
     let uses_approximate_dimensions = intents.iter().any(|intent| intent.approximate_dimensions);
     let sizes = intents
         .iter()
@@ -146,14 +132,9 @@ pub(crate) fn plan_source_intent_previews(
         canvas.compact_guided_layout_for_sizes(&sizes, anchor_world, screen_rect, settings.gap)
     };
 
-    intents
-        .iter()
-        .zip(centers)
-        .map(|(intent, (center_world, size_world))| SourceIntentPreview {
-            label: intent.label.clone(),
-            dimensions: Some(normalized_dimensions(intent)),
-            geometry: RectGeometry::new(center_world, size_world, 1.0, 0.0, 0),
-        })
+    centers
+        .into_iter()
+        .map(|(center_world, size_world)| RectGeometry::new(center_world, size_world, 1.0, 0.0, 0))
         .collect()
 }
 
@@ -207,10 +188,10 @@ pub(crate) fn create_committed_loading_placements(
     screen_rect: egui::Rect,
     settings: PlacementCreationSettings,
 ) -> Result<Vec<CreatedLoadingPlacement>, String> {
-    let previews =
-        plan_source_intent_previews(canvas, &intents, anchor_world, screen_rect, settings);
+    let geometry =
+        plan_source_intent_geometries(canvas, &intents, anchor_world, screen_rect, settings);
     let mut created = Vec::with_capacity(intents.len());
-    for (intent, preview) in intents.into_iter().zip(previews) {
+    for (intent, geometry) in intents.into_iter().zip(geometry) {
         created.push(create_committed_loading_placement(
             library,
             content_resolution,
@@ -218,7 +199,7 @@ pub(crate) fn create_committed_loading_placements(
             layout,
             target_board_id,
             intent,
-            preview.center_world(),
+            geometry.center,
             settings,
         )?);
     }
@@ -476,14 +457,14 @@ mod tests {
     }
 
     #[test]
-    fn source_intent_preview_has_geometry_before_content_resolves() {
+    fn source_intent_has_geometry_before_content_resolves() {
         let mut canvas = crate::canvas::CanvasState::default();
         let settings = PlacementCreationSettings {
             placement_target_area: 36_000.0,
             gap: 12.0,
         };
 
-        let previews = plan_source_intent_previews(
+        let geometry = plan_source_intent_geometries(
             &mut canvas,
             &[SourceIntent {
                 label: "clipboard".to_owned(),
@@ -499,10 +480,9 @@ mod tests {
             settings,
         );
 
-        assert_eq!(previews.len(), 1);
-        assert_eq!(previews[0].label, "clipboard");
+        assert_eq!(geometry.len(), 1);
         assert_eq!(
-            previews[0].geometry.size,
+            geometry[0].size,
             display_size_for_dimensions(
                 FALLBACK_IMPORT_WIDTH,
                 FALLBACK_IMPORT_HEIGHT,

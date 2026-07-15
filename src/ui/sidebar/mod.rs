@@ -17,16 +17,11 @@ pub(crate) const SIDEBAR_WIDTH: f32 = 268.0;
 pub(crate) const SIDEBAR_TOP_MARGIN: f32 = 40.0;
 pub(crate) const SIDEBAR_BOTTOM_MARGIN: f32 = 16.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum SidebarTab {
     Boards,
+    #[default]
     Options,
-}
-
-impl Default for SidebarTab {
-    fn default() -> Self {
-        SidebarTab::Options
-    }
 }
 
 pub(crate) struct SidebarRenderResult {

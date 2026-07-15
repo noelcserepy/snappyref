@@ -18,20 +18,11 @@ pub(super) fn sanitize_filename(input: &str) -> String {
         })
         .collect();
 
-    sanitized.trim_matches('-').to_owned().if_empty("image")
-}
-
-trait StringFallback {
-    fn if_empty(self, fallback: &str) -> String;
-}
-
-impl StringFallback for String {
-    fn if_empty(self, fallback: &str) -> String {
-        if self.is_empty() {
-            fallback.to_owned()
-        } else {
-            self
-        }
+    let sanitized = sanitized.trim_matches('-');
+    if sanitized.is_empty() {
+        "image".to_owned()
+    } else {
+        sanitized.to_owned()
     }
 }
 

@@ -18,13 +18,6 @@ pub(crate) struct PlacementArrangementInput {
 }
 
 impl PlacementArrangementInput {
-    pub(crate) fn from_rect(id: PlacementId, rect: egui::Rect) -> Self {
-        Self {
-            id,
-            geometry: RectGeometry::from_bounds(rect, 0),
-        }
-    }
-
     pub(crate) fn new(id: PlacementId, center: egui::Pos2, display_size: egui::Vec2) -> Self {
         Self {
             id,
@@ -69,28 +62,16 @@ pub(crate) enum SettleDirection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct CompactInput {
-    pub(crate) placement_id: PlacementId,
-    pub(crate) bounds: egui::Rect,
-}
-
-impl CompactInput {
-    pub(crate) fn arrangement_input(self) -> PlacementArrangementInput {
-        PlacementArrangementInput::from_rect(self.placement_id, self.bounds)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CompactOutput {
     pub(crate) placement_id: PlacementId,
     pub(crate) center: egui::Pos2,
 }
 
 impl Placement {
-    pub(crate) fn compact_input(&self) -> CompactInput {
-        CompactInput {
-            placement_id: self.id(),
-            bounds: self.visual_bounds(),
+    pub(crate) fn compact_arrangement_input(&self) -> PlacementArrangementInput {
+        PlacementArrangementInput {
+            id: self.id(),
+            geometry: RectGeometry::from_bounds(self.visual_bounds(), 0),
         }
     }
 
@@ -1329,14 +1310,14 @@ mod tests {
     }
 
     #[test]
-    fn compact_input_is_ephemeral_geometry_for_a_placement() {
+    fn compact_arrangement_input_uses_visual_bounds() {
         let record = placement(7, egui::pos2(50.0, 30.0));
 
-        let input = record.compact_input();
+        let input = record.compact_arrangement_input();
 
-        assert_eq!(input.placement_id, 7);
-        assert_eq!(input.bounds.center(), egui::pos2(50.0, 30.0));
-        assert_eq!(input.bounds.size(), egui::vec2(40.0, 20.0));
+        assert_eq!(input.id, 7);
+        assert_eq!(input.rect().center(), egui::pos2(50.0, 30.0));
+        assert_eq!(input.rect().size(), egui::vec2(40.0, 20.0));
     }
 
     #[test]

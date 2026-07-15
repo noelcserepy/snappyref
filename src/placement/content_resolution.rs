@@ -226,7 +226,7 @@ impl ContentResolutionRuntime {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn pending_len(&self) -> usize {
         self.pending.len()
     }
