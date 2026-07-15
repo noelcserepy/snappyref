@@ -68,9 +68,7 @@ impl SemanticSearchInstallController {
     }
 
     pub(crate) fn request_cancel(&mut self) -> Option<SemanticSearchInstallSnapshot> {
-        let Some(canceled) = self.cancel.take() else {
-            return None;
-        };
+        let canceled = self.cancel.take()?;
         canceled.store(true, Ordering::Relaxed);
         self.rx = None;
         Some(snapshot_for_event(SemanticSearchInstallProgress::Canceled))
@@ -84,9 +82,7 @@ impl SemanticSearchInstallController {
     }
 
     pub(crate) fn drain(&mut self) -> Option<SemanticSearchInstallSnapshot> {
-        let Some(rx) = self.rx.take() else {
-            return None;
-        };
+        let rx = self.rx.take()?;
 
         let mut snapshot = None;
         let mut keep_rx = true;

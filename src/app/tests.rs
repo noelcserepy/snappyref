@@ -5285,7 +5285,7 @@ fn url_batch_previews_use_balanced_layout_for_approximate_dimensions() {
         app.dropped_import_previews(&sources, egui::pos2(100.0, 200.0), test_screen_rect());
     let distinct_x = previews
         .iter()
-        .fold(Vec::<i32>::new(), |mut values, (_, _, center)| {
+        .fold(Vec::<i32>::new(), |mut values, center| {
             let rounded = center.x.round() as i32;
             if !values.contains(&rounded) {
                 values.push(rounded);
@@ -5294,7 +5294,7 @@ fn url_batch_previews_use_balanced_layout_for_approximate_dimensions() {
         });
     let distinct_y = previews
         .iter()
-        .fold(Vec::<i32>::new(), |mut values, (_, _, center)| {
+        .fold(Vec::<i32>::new(), |mut values, center| {
             let rounded = center.y.round() as i32;
             if !values.contains(&rounded) {
                 values.push(rounded);

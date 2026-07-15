@@ -1975,7 +1975,7 @@ impl CanvasState {
             .rendered_placements
             .iter()
             .filter(|image| self.is_selected(image.placement.state.id))
-            .map(|image| image.placement.compact_input().arrangement_input())
+            .map(|image| image.placement.compact_arrangement_input())
             .collect()
     }
 
