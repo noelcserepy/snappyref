@@ -80,7 +80,7 @@ pub(crate) fn commit_loading_provisional_batch(
         });
     }
 
-    let stack_before = library.load_canvas_stack_order().unwrap_or_default();
+    let stack_before = canvas.canvas_stack_order();
     let committed_pairs = library.commit_provisional_loading_placements(&provisional_placements)?;
     let placements = canvas.commit_provisional_placements_in_place(committed_pairs);
     let stack_after = canvas.canvas_stack_order();
@@ -381,6 +381,64 @@ mod tests {
             canvas.selected_placement_ids(),
             committed.added_placement_ids
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn loading_provisional_history_uses_current_canvas_stack() {
+        let root = temp_root("snappyref-loading-provisional-history-stack");
+        let library = Library::initialize(root.clone()).unwrap();
+        let mut canvas = CanvasState::default();
+        let existing = (1..=2)
+            .map(|index| {
+                library
+                    .persist_committed_loading_placement(
+                        egui::pos2(index as f32 * 10.0, 0.0),
+                        1.0,
+                        100.0,
+                        50.0,
+                        crate::data::ContentResolutionSource::Unknown {
+                            description: format!("existing placement {index}"),
+                        },
+                        None,
+                    )
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        for placement in &existing {
+            canvas.add_unresolved_placement(placement.clone());
+        }
+        let in_memory_stack = vec![
+            CanvasStackItem::Placement(existing[1].state.id),
+            CanvasStackItem::Placement(existing[0].state.id),
+        ];
+        canvas.set_canvas_stack_order(in_memory_stack.clone());
+        let provisional = start_provisional_batch(
+            &mut canvas,
+            vec![ProvisionalSourceIntent::SourceIntent(
+                crate::placement::creation::SourceIntent {
+                    dimensions: Some((80, 60)),
+                    approximate_dimensions: false,
+                    content: crate::data::ContentResolutionSource::Unknown {
+                        description: "dropped image".to_owned(),
+                    },
+                },
+            )],
+            egui::pos2(42.0, 24.0),
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)),
+            PlacementCreationSettings {
+                placement_target_area: 10_000.0,
+                gap: 16.0,
+            },
+        );
+
+        let committed =
+            commit_loading_provisional_batch(&library, &mut canvas, &provisional.placement_ids)
+                .unwrap();
+        let stack_change = committed.history_action.unwrap().stack_order.unwrap();
+
+        assert_eq!(stack_change.before, Some(in_memory_stack));
 
         let _ = std::fs::remove_dir_all(root);
     }

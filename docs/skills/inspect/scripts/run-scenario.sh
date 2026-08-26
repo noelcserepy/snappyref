@@ -21,6 +21,7 @@ if [[ "$scenario" == "--help" || "$scenario" == "-h" ]]; then
   echo "  semantic-search-sidebar-status"
   echo "  semantic-search-real-install"
   echo "  sample-image-import"
+  echo "  pending-drop-batch-undo"
   echo "  blue-image-search-drag"
   echo "  delete-board-modal-flash"
   echo "  search-palette-footer"
@@ -40,6 +41,7 @@ if [[ "$scenario" == "--list" ]]; then
   echo "semantic-search-sidebar-status"
   echo "semantic-search-real-install"
   echo "sample-image-import"
+  echo "pending-drop-batch-undo"
   echo "blue-image-search-drag"
   echo "delete-board-modal-flash"
   echo "search-palette-footer"
@@ -70,6 +72,9 @@ case "$scenario" in
     ;;
   sample-image-import)
     test_filter="inspect_sample_image_import_writes_artifact"
+    ;;
+  pending-drop-batch-undo)
+    test_filter="inspect_pending_drop_batch_undo_writes_artifact"
     ;;
   blue-image-search-drag)
     test_filter="inspect_blue_image_search_drag_writes_artifact"

@@ -81,6 +81,8 @@ docs/skills/inspect/scripts/check-harness.sh
   Semantic Search installer to installed or failed.
 - `sample-image-import`: captures before, loading, and loaded image import
   states.
+- `pending-drop-batch-undo`: drops two files, undoes the accepted Loading
+  batch, then drains controlled late Loaded and Failed results.
 - `blue-image-search-drag`: select/move image, open image search, select three
   results, drag provisional placements, drop and verify loaded placements.
 - `delete-board-modal-flash`: opens the delete-board confirmation and captures
