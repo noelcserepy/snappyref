@@ -716,6 +716,69 @@ fn late_undo_content_failure_is_ignored_after_newer_replay() {
 }
 
 #[test]
+fn completed_history_content_replay_preserves_history_command_status() {
+    let ctx = egui::Context::default();
+    let mut app = test_app(None);
+    let placement_id = 7;
+
+    for (asset_id, command_status) in [(101, "Undid Crop image"), (202, "Redid Crop image")] {
+        let mut loaded = test_loaded_item(placement_id, app.active_board_id);
+        loaded.placement.state.asset_id = Some(asset_id);
+        loaded.placement.asset.as_mut().unwrap().id = asset_id;
+        loaded.placement.content = crate::data::PlacementContent::Loaded { asset_id };
+        loaded.origin = crate::jobs::ImportOrigin::Existing;
+        app.canvas
+            .add_unresolved_placement(loaded.placement.clone());
+        let reservation = app
+            .content_resolution
+            .reserve_history_placement(app.active_board_id, placement_id);
+        loaded.queue_id = Some(reservation.queue_id);
+        app.status = command_status.to_owned();
+
+        let result = crate::jobs::ImagePrepResult::Loaded(loaded);
+        assert!(!app.discard_stale_history_content_result(&result));
+        let outcome = app.residency.process_import_result(
+            &ctx,
+            &mut app.canvas,
+            app.import_worker.as_ref(),
+            app.active_board_id,
+            &app.settings,
+            result,
+        );
+        app.apply_import_result_residency_outcome(&ctx, outcome);
+
+        assert_eq!(app.status, command_status);
+        assert_eq!(
+            app.canvas
+                .placement_for_id(placement_id)
+                .unwrap()
+                .require_loaded_asset()
+                .id,
+            asset_id
+        );
+        assert_eq!(app.content_resolution.pending_len(), 0);
+
+        let mut detail = test_loaded_item(placement_id, app.active_board_id);
+        detail.placement.state.asset_id = Some(asset_id);
+        detail.placement.asset.as_mut().unwrap().id = asset_id;
+        detail.placement.content = crate::data::PlacementContent::Loaded { asset_id };
+        detail.origin = crate::jobs::ImportOrigin::Existing;
+        detail.queue_id = None;
+        let outcome = app.residency.process_import_result(
+            &ctx,
+            &mut app.canvas,
+            app.import_worker.as_ref(),
+            app.active_board_id,
+            &app.settings,
+            crate::jobs::ImagePrepResult::Loaded(detail),
+        );
+        app.apply_import_result_residency_outcome(&ctx, outcome);
+
+        assert_eq!(app.status, command_status);
+    }
+}
+
+#[test]
 fn undo_and_redo_defer_storage_until_explicit_flush() {
     let ctx = egui::Context::default();
     let root = temp_library_root("snappyref-history-deferred-persistence");
@@ -5232,7 +5295,8 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
     );
     scenario.assertion(
         "one Undo restores the source Asset",
-        after_undo.require_loaded_asset().id == source_asset_id,
+        after_undo.require_loaded_asset().id == source_asset_id
+            && harness.state().status == "Undid Crop image",
     );
     scenario.capture_screen("screen-004-undone", &mut harness);
 
@@ -5242,6 +5306,19 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
     );
     harness.key_press_modifiers(inspect_command_modifier(), egui::Key::Z);
     harness.step();
+    scenario.fact(
+        "placement.after-second-undo",
+        serde_json::json!({
+            "asset_id": harness
+                .state()
+                .canvas
+                .placement_for_id(placement_id)
+                .unwrap()
+                .require_loaded_asset()
+                .id,
+            "status": harness.state().status,
+        }),
+    );
     scenario.assertion(
         "second Undo does not reverse the crop again",
         harness
@@ -5251,7 +5328,8 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
             .unwrap()
             .require_loaded_asset()
             .id
-            == source_asset_id,
+            == source_asset_id
+            && harness.state().status == "Undid Crop image",
     );
     scenario.capture_screen("screen-005-second-undo", &mut harness);
 
@@ -5276,9 +5354,17 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
         .canvas
         .placement_for_id(placement_id)
         .unwrap();
+    scenario.fact(
+        "placement.after-redo",
+        serde_json::json!({
+            "asset_id": after_redo.require_loaded_asset().id,
+            "status": harness.state().status,
+        }),
+    );
     scenario.assertion(
         "Redo restores the same cropped Asset",
-        after_redo.require_loaded_asset().id == cropped_asset_id,
+        after_redo.require_loaded_asset().id == cropped_asset_id
+            && harness.state().status == "Redid Crop image",
     );
     scenario.capture_screen("screen-006-redone", &mut harness);
 

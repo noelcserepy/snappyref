@@ -217,19 +217,32 @@ impl ContentResolutionRuntime {
             .resolution_ticket
             .as_ref()
             .map(|ticket| ticket.queue_id);
+        let history_replay = queue_id.is_some_and(|queue_id| {
+            self.pending.get(&queue_id).is_some_and(|pending| {
+                matches!(
+                    pending.source,
+                    PendingContentResolutionSource::HistoryReplay { .. }
+                )
+            })
+        });
         let completion = self.resolve_completion(
             queue_id,
             target_board_id,
             outcome.log.as_ref().map(|log| log.placement.state.id),
         );
+        let (status, indexed_asset, log) = if history_replay {
+            (None, None, None)
+        } else {
+            (outcome.status, outcome.indexed_asset, outcome.log)
+        };
         FinishedLoadedContentResolution {
             resolution_ticket: outcome.resolution_ticket,
             batch_target_board_id: completion.target_board_id,
             batch_queue_id: completion.queue_id,
             loaded_placement_id: completion.placement_id,
-            status: outcome.status,
-            indexed_asset: outcome.indexed_asset,
-            log: outcome.log,
+            status,
+            indexed_asset,
+            log,
         }
     }
 
