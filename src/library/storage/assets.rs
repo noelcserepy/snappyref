@@ -463,12 +463,17 @@ impl Library {
             file_size,
             None,
         )?;
+        let content = encode_loaded_placement_content(asset.id)?;
         transaction
             .execute(
                 "UPDATE board_items
-                 SET asset_id = ?1, x = ?2, y = ?3
-                 WHERE id = ?4",
-                params![asset.id, desired_world.x, desired_world.y, item_id],
+                 SET asset_id = ?1,
+                     x = ?2,
+                     y = ?3,
+                     placement_content_state = 'loaded',
+                     content_resolution_intent = ?4
+                 WHERE id = ?5",
+                params![asset.id, desired_world.x, desired_world.y, content, item_id],
             )
             .map_err(|error| format!("failed to relink placement {item_id}: {error}"))?;
 

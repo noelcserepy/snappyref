@@ -5,128 +5,121 @@ pub(crate) struct CroppedImageIntegration {
     pub(crate) indexed_asset: Option<(i64, std::path::PathBuf)>,
 }
 
-#[derive(Default)]
-pub(crate) struct CropFlow;
+pub(crate) fn enqueue_pending_requests(
+    ctx: &eframe::egui::Context,
+    canvas: &mut crate::canvas::CanvasState,
+    library: Option<&crate::library::storage::Library>,
+    import_worker: Option<&crate::jobs::ImagePrepWorker>,
+    max_texture_side: usize,
+    canvas_image_max_side: u32,
+) -> Result<bool, String> {
+    let Some(import_worker) = import_worker else {
+        return Ok(false);
+    };
+    let Some(library) = library else {
+        return Err("Storage unavailable".to_owned());
+    };
 
-impl CropFlow {
-    pub(crate) fn enqueue_pending_requests(
-        &self,
-        ctx: &eframe::egui::Context,
-        canvas: &mut crate::canvas::CanvasState,
-        library: Option<&crate::library::storage::Library>,
-        import_worker: Option<&crate::jobs::ImagePrepWorker>,
-        max_texture_side: usize,
-        canvas_image_max_side: u32,
-    ) -> Result<bool, String> {
-        let Some(import_worker) = import_worker else {
-            return Ok(false);
-        };
-        let Some(library) = library else {
-            return Err("Storage unavailable".to_owned());
-        };
-
-        let mut enqueued = false;
-        while let Some(request) = canvas.take_pending_crop() {
-            let placement_id = request.placement_id;
-            canvas.mark_crop_pending(placement_id);
-            if let Err(error) = canvas.warm_cached_pixels_for_item(library, placement_id) {
-                canvas.clear_crop_pending(placement_id);
-                return Err(error);
-            }
-            if let Err(error) = canvas.apply_pending_crop_preview(ctx, &request) {
-                canvas.clear_crop_pending(placement_id);
-                return Err(error);
-            }
-            if let Err(error) = import_worker.enqueue(crate::jobs::ImagePrepRequest::Crop {
-                request,
-                max_texture_side,
-                canvas_image_settings: crate::jobs::CanvasImageSettings {
-                    max_side: canvas_image_max_side,
-                },
-            }) {
-                canvas.clear_crop_pending(placement_id);
-                return Err(error);
-            }
-            enqueued = true;
+    let mut enqueued = false;
+    while let Some(request) = canvas.take_pending_crop() {
+        let placement_id = request.placement_id;
+        canvas.mark_crop_pending(placement_id);
+        if let Err(error) = canvas.warm_cached_pixels_for_item(library, placement_id) {
+            canvas.clear_crop_pending(placement_id);
+            return Err(error);
         }
-
-        Ok(enqueued)
+        if let Err(error) = canvas.apply_pending_crop_preview(ctx, &request) {
+            canvas.clear_crop_pending(placement_id);
+            return Err(error);
+        }
+        if let Err(error) = import_worker.enqueue(crate::jobs::ImagePrepRequest::Crop {
+            request,
+            max_texture_side,
+            canvas_image_settings: crate::jobs::CanvasImageSettings {
+                max_side: canvas_image_max_side,
+            },
+        }) {
+            canvas.clear_crop_pending(placement_id);
+            return Err(error);
+        }
+        enqueued = true;
     }
 
-    pub(crate) fn integrate_cropped_result(
-        &self,
-        ctx: &eframe::egui::Context,
-        canvas: &mut crate::canvas::CanvasState,
-        library: Option<&crate::library::storage::Library>,
-        cropped: crate::jobs::PreparedCropPreview,
-        semantic_search_enabled: bool,
-    ) -> Result<CroppedImageIntegration, String> {
-        let placement_id = cropped.placement_id;
-        let stored_path = cropped.stored_path.clone();
-        let previous_snapshot = match canvas.snapshot_item_image(placement_id) {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                cleanup_failed_crop(&stored_path);
-                canvas.clear_crop_pending(placement_id);
-                return Err(error);
-            }
-        };
+    Ok(enqueued)
+}
 
-        let Some(library) = library else {
+pub(crate) fn integrate_cropped_result(
+    ctx: &eframe::egui::Context,
+    canvas: &mut crate::canvas::CanvasState,
+    library: Option<&crate::library::storage::Library>,
+    cropped: crate::jobs::PreparedCropPreview,
+    semantic_search_enabled: bool,
+) -> Result<CroppedImageIntegration, String> {
+    let placement_id = cropped.placement_id;
+    let stored_path = cropped.stored_path.clone();
+    let previous_snapshot = match canvas.snapshot_item_image(placement_id) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
             cleanup_failed_crop(&stored_path);
             canvas.clear_crop_pending(placement_id);
-            return Err("Storage unavailable".to_owned());
-        };
+            return Err(error);
+        }
+    };
 
-        let mut updated_item = match canvas.projected_cropped_item(&cropped) {
-            Ok(item) => item,
-            Err(error) => {
-                cleanup_failed_crop(&stored_path);
-                canvas.clear_crop_pending(placement_id);
-                return Err(error);
-            }
-        };
+    let Some(library) = library else {
+        cleanup_failed_crop(&stored_path);
+        canvas.clear_crop_pending(placement_id);
+        return Err("Storage unavailable".to_owned());
+    };
 
-        let asset = match library.create_asset_and_relink_placement(
-            updated_item.id,
-            &stored_path,
-            image::ImageFormat::Png.to_mime_type(),
-            cropped.width,
-            cropped.height,
-            cropped.file_size,
-            updated_item.geometry.center,
-        ) {
-            Ok(asset) => asset,
-            Err(error) => {
-                cleanup_failed_crop(&stored_path);
-                canvas.clear_crop_pending(placement_id);
-                return Err(error);
-            }
-        };
+    let mut updated_item = match canvas.projected_cropped_item(&cropped) {
+        Ok(item) => item,
+        Err(error) => {
+            cleanup_failed_crop(&stored_path);
+            canvas.clear_crop_pending(placement_id);
+            return Err(error);
+        }
+    };
 
-        updated_item.asset_id = Some(asset.id);
+    let asset = match library.create_asset_and_relink_placement(
+        updated_item.id,
+        &stored_path,
+        image::ImageFormat::Png.to_mime_type(),
+        cropped.width,
+        cropped.height,
+        cropped.file_size,
+        updated_item.geometry.center,
+    ) {
+        Ok(asset) => asset,
+        Err(error) => {
+            cleanup_failed_crop(&stored_path);
+            canvas.clear_crop_pending(placement_id);
+            return Err(error);
+        }
+    };
 
-        let updated_item_id = updated_item.id;
-        let updated_record = crate::data::Placement::loaded(updated_item.clone(), asset.clone());
+    updated_item.asset_id = Some(asset.id);
 
-        match canvas.apply_cropped_item(ctx, cropped, asset.clone(), updated_item) {
-            Ok(()) => {
-                canvas.clear_crop_pending(updated_item_id);
-                let indexed_asset = (semantic_search_enabled
-                    && crate::library::residency::asset_mime_type_supports_raster_derivatives(
-                        &asset.mime_type,
-                    ))
-                .then(|| (asset.id, asset.original_path.clone()));
-                Ok(CroppedImageIntegration {
-                    updated_record,
-                    previous_record: previous_snapshot.0,
-                    indexed_asset,
-                })
-            }
-            Err(error) => {
-                canvas.clear_crop_pending(updated_item_id);
-                Err(error)
-            }
+    let updated_item_id = updated_item.id;
+    let updated_record = crate::data::Placement::loaded(updated_item.clone(), asset.clone());
+
+    match canvas.apply_cropped_item(ctx, cropped, asset.clone(), updated_item) {
+        Ok(()) => {
+            canvas.clear_crop_pending(updated_item_id);
+            let indexed_asset = (semantic_search_enabled
+                && crate::library::residency::asset_mime_type_supports_raster_derivatives(
+                    &asset.mime_type,
+                ))
+            .then(|| (asset.id, asset.original_path.clone()));
+            Ok(CroppedImageIntegration {
+                updated_record,
+                previous_record: previous_snapshot.0,
+                indexed_asset,
+            })
+        }
+        Err(error) => {
+            canvas.clear_crop_pending(updated_item_id);
+            Err(error)
         }
     }
 }
@@ -142,7 +135,6 @@ mod tests {
 
     use eframe::egui;
 
-    use super::CropFlow;
     use crate::canvas::{CanvasCropRequest, CanvasState, PixelCropRect};
     use crate::data::{Asset, CanvasImageLod, Placement, PlacementState};
     use crate::jobs::{
@@ -196,9 +188,15 @@ mod tests {
         });
         let worker = ImagePrepWorker::new(library.clone(), ctx.clone(), None);
 
-        let enqueued = CropFlow::default()
-            .enqueue_pending_requests(&ctx, &mut canvas, Some(&library), Some(&worker), 4096, 2000)
-            .unwrap();
+        let enqueued = super::enqueue_pending_requests(
+            &ctx,
+            &mut canvas,
+            Some(&library),
+            Some(&worker),
+            4096,
+            2000,
+        )
+        .unwrap();
 
         assert!(enqueued);
         assert_eq!(

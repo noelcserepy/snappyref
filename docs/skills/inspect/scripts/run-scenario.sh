@@ -26,6 +26,7 @@ if [[ "$scenario" == "--help" || "$scenario" == "-h" ]]; then
   echo "  search-palette-footer"
   echo "  placement-click-hold-flash"
   echo "  delete-undo-redo-placement"
+  echo "  crop-undo-redo-placement"
   echo "  compact-equal-size-images"
   echo "  compact-mixed-column-images"
   echo "  compact-windows-column-images"
@@ -44,6 +45,7 @@ if [[ "$scenario" == "--list" ]]; then
   echo "search-palette-footer"
   echo "placement-click-hold-flash"
   echo "delete-undo-redo-placement"
+  echo "crop-undo-redo-placement"
   echo "compact-equal-size-images"
   echo "compact-mixed-column-images"
   echo "compact-windows-column-images"
@@ -83,6 +85,9 @@ case "$scenario" in
     ;;
   delete-undo-redo-placement)
     test_filter="inspect_delete_undo_redo_placement_writes_artifact"
+    ;;
+  crop-undo-redo-placement)
+    test_filter="inspect_crop_undo_redo_placement_writes_artifact"
     ;;
   compact-equal-size-images)
     test_filter="inspect_compact_equal_size_images_writes_artifact"

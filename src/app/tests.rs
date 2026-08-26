@@ -802,8 +802,22 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
     let source_path = library
         .store_rgba_image("source", &[255; 2 * 2 * 4], 2, 2)
         .unwrap();
+    let loading = library
+        .persist_committed_loading_placement(
+            egui::Pos2::ZERO,
+            1.0,
+            2.0,
+            2.0,
+            crate::data::ContentResolutionSource::ExternalPath {
+                path: source_path.to_string_lossy().into_owned(),
+            },
+            Some("Loading".to_owned()),
+        )
+        .unwrap();
     let source = library
-        .persist_imported_image(
+        .persist_imported_image_resolving_placement(
+            library.load_user_session().unwrap().active_board_id,
+            Some(loading.state.id),
             &source_path,
             "image/png",
             2,
@@ -864,8 +878,20 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
         .require_loaded_asset()
         .id;
     assert_ne!(cropped_asset_id, source_asset_id);
+    let stored_after_crop = &library.load_placements().unwrap()[0];
+    assert_eq!(
+        stored_after_crop.require_loaded_asset().id,
+        cropped_asset_id
+    );
+    assert_eq!(
+        stored_after_crop.content,
+        crate::data::PlacementContent::Loaded {
+            asset_id: cropped_asset_id
+        }
+    );
 
     app.undo_document_history(&ctx);
+    app.flush_persistence();
     let status_after_undo = app.status.clone();
     assert_eq!(status_after_undo, "Undid Crop image");
     assert_eq!(
@@ -882,6 +908,14 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
             .unwrap()
             .texture_size,
         egui::vec2(2.0, 2.0)
+    );
+    let stored_after_undo = &library.load_placements().unwrap()[0];
+    assert_eq!(stored_after_undo.require_loaded_asset().id, source_asset_id);
+    assert_eq!(
+        stored_after_undo.content,
+        crate::data::PlacementContent::Loaded {
+            asset_id: source_asset_id
+        }
     );
 
     app.undo_document_history(&ctx);
@@ -914,11 +948,13 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
             .texture_size,
         egui::vec2(1.0, 1.0)
     );
+    let stored = &library.load_placements().unwrap()[0];
+    assert_eq!(stored.require_loaded_asset().id, cropped_asset_id);
     assert_eq!(
-        library.load_placements().unwrap()[0]
-            .require_loaded_asset()
-            .id,
-        cropped_asset_id
+        stored.content,
+        crate::data::PlacementContent::Loaded {
+            asset_id: cropped_asset_id
+        }
     );
     assert_eq!(
         library.load_asset(cropped_asset_id).unwrap().id,
@@ -5016,6 +5052,259 @@ fn inspect_delete_undo_redo_placement_writes_artifact() {
 
 #[cfg(feature = "semantic-search")]
 #[test]
+fn inspect_crop_undo_redo_placement_writes_artifact() {
+    let scenario_name = inspect_scenario_name("crop-undo-redo-placement");
+    let mut scenario = InspectScenario::new(scenario_name);
+    scenario.event(
+        "seed",
+        serde_json::json!({
+            "seed": "single-loaded-placement",
+            "purpose": "select the image, crop with C plus a pointer drag, then exercise Undo and Redo",
+        }),
+    );
+
+    let root = temp_library_root("snappyref-inspect-crop-undo-redo-placement");
+    let library = Library::initialize(root.clone()).unwrap();
+    let width = 160;
+    let height = 120;
+    let source_rgba = (0..height)
+        .flat_map(|y| {
+            (0..width).flat_map(move |x| {
+                let red = (x * 255 / width) as u8;
+                let blue = (y * 255 / height) as u8;
+                [red, 96, blue, 255]
+            })
+        })
+        .collect::<Vec<_>>();
+    let source_path = library
+        .store_rgba_image("crop-source", &source_rgba, width, height)
+        .unwrap();
+    let loading = library
+        .persist_committed_loading_placement(
+            egui::Pos2::ZERO,
+            1.0,
+            width as f32,
+            height as f32,
+            crate::data::ContentResolutionSource::ExternalPath {
+                path: source_path.to_string_lossy().into_owned(),
+            },
+            Some("Loading".to_owned()),
+        )
+        .unwrap();
+    let source = library
+        .persist_imported_image_resolving_placement(
+            library.load_user_session().unwrap().active_board_id,
+            Some(loading.state.id),
+            &source_path,
+            "image/png",
+            width,
+            height,
+            source_rgba.len() as u64,
+            egui::Pos2::ZERO,
+            1.0,
+        )
+        .unwrap();
+    let source_asset_id = source.require_loaded_asset().id;
+
+    let mut app = test_app(Some(library.clone()));
+    app.settings.semantic_search_enabled = false;
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    let mut harness = app_full_harness(app);
+    let ctx = harness.ctx.clone();
+    harness.state_mut().import_worker = Some(crate::jobs::ImagePrepWorker::new(
+        library.clone(),
+        ctx.clone(),
+        None,
+    ));
+    let active_board_id = harness.state().active_board_id;
+    harness.state_mut().canvas.add_prepared_placement_image(
+        &ctx,
+        PreparedPlacementImage {
+            target_board_id: active_board_id,
+            queue_id: None,
+            placement: source.clone(),
+            preview_rgba: source_rgba,
+            preview_width: width,
+            preview_height: height,
+            animated_preview: None,
+            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
+            loaded_lod: crate::data::CanvasImageLod::Working,
+            existing_load_diagnostics: None,
+            origin: crate::jobs::ImportOrigin::Existing,
+            trace: None,
+        },
+    );
+    harness.step();
+
+    let placement_id = source.state.id;
+    let image_center = inspect_world_to_screen(source.state.geometry.center, test_screen_rect());
+    let crop_start = image_center + egui::vec2(-55.0, -40.0);
+    let crop_end = image_center + egui::vec2(45.0, 30.0);
+    scenario.target(
+        "source image",
+        "placement",
+        egui::Rect::from_center_size(image_center, egui::vec2(width as f32, height as f32)),
+    );
+    scenario.capture_screen("screen-000-source", &mut harness);
+
+    scenario.action("click source image", image_center);
+    inspect_click_at(&harness, image_center, egui::Modifiers::NONE);
+    harness.step();
+    scenario.assertion(
+        "pointer click selects source image",
+        harness.state().canvas.selected_placement_ids() == vec![placement_id],
+    );
+    scenario.capture_screen("screen-001-selected", &mut harness);
+
+    scenario.event(
+        "action",
+        serde_json::json!({
+            "name": "hold C and pointer-drag crop rectangle",
+            "start": inspect_pos(crop_start),
+            "end": inspect_pos(crop_end),
+        }),
+    );
+    harness.key_down(egui::Key::C);
+    harness.hover_at(crop_start);
+    harness.drag_at(crop_start);
+    harness.step();
+    harness.hover_at(crop_end);
+    harness.step();
+    scenario.capture_screen("screen-002-crop-drag", &mut harness);
+    harness.drop_at(crop_end);
+    harness.key_up(egui::Key::C);
+    harness.step();
+
+    let crop_deadline = Instant::now() + Duration::from_secs(5);
+    while harness
+        .state()
+        .canvas
+        .placement_for_id(placement_id)
+        .is_some_and(|placement| placement.require_loaded_asset().id == source_asset_id)
+        && Instant::now() < crop_deadline
+    {
+        std::thread::sleep(Duration::from_millis(10));
+        harness.step();
+    }
+    let cropped = harness
+        .state()
+        .canvas
+        .placement_for_id(placement_id)
+        .unwrap();
+    let cropped_asset_id = cropped.require_loaded_asset().id;
+    scenario.fact(
+        "placement.after-crop",
+        serde_json::json!({
+            "source_asset_id": source_asset_id,
+            "asset_id": cropped_asset_id,
+            "asset_dimensions": [cropped.require_loaded_asset().width, cropped.require_loaded_asset().height],
+            "status": harness.state().status,
+        }),
+    );
+    scenario.assertion(
+        "pointer crop creates one derived Asset",
+        cropped_asset_id != source_asset_id,
+    );
+    scenario.capture_screen("screen-003-cropped", &mut harness);
+
+    scenario.event(
+        "action",
+        serde_json::json!({"name": "press Command-Z Undo shortcut"}),
+    );
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::Z);
+    harness.step();
+    let undo_deadline = Instant::now() + Duration::from_secs(5);
+    while harness.state().content_resolution.pending_len() > 0 && Instant::now() < undo_deadline {
+        std::thread::sleep(Duration::from_millis(10));
+        harness.step();
+    }
+    let after_undo = harness
+        .state()
+        .canvas
+        .placement_for_id(placement_id)
+        .unwrap();
+    scenario.fact(
+        "placement.after-undo",
+        serde_json::json!({
+            "asset_id": after_undo.require_loaded_asset().id,
+            "status": harness.state().status,
+        }),
+    );
+    scenario.assertion(
+        "one Undo restores the source Asset",
+        after_undo.require_loaded_asset().id == source_asset_id,
+    );
+    scenario.capture_screen("screen-004-undone", &mut harness);
+
+    scenario.event(
+        "action",
+        serde_json::json!({"name": "press Command-Z a second time"}),
+    );
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::Z);
+    harness.step();
+    scenario.assertion(
+        "second Undo does not reverse the crop again",
+        harness
+            .state()
+            .canvas
+            .placement_for_id(placement_id)
+            .unwrap()
+            .require_loaded_asset()
+            .id
+            == source_asset_id,
+    );
+    scenario.capture_screen("screen-005-second-undo", &mut harness);
+
+    let redo_modifiers = egui::Modifiers {
+        command: true,
+        shift: true,
+        ..Default::default()
+    };
+    scenario.event(
+        "action",
+        serde_json::json!({"name": "press Command-Shift-Z Redo shortcut"}),
+    );
+    harness.key_press_modifiers(redo_modifiers, egui::Key::Z);
+    harness.step();
+    let redo_deadline = Instant::now() + Duration::from_secs(5);
+    while harness.state().content_resolution.pending_len() > 0 && Instant::now() < redo_deadline {
+        std::thread::sleep(Duration::from_millis(10));
+        harness.step();
+    }
+    let after_redo = harness
+        .state()
+        .canvas
+        .placement_for_id(placement_id)
+        .unwrap();
+    scenario.assertion(
+        "Redo restores the same cropped Asset",
+        after_redo.require_loaded_asset().id == cropped_asset_id,
+    );
+    scenario.capture_screen("screen-006-redone", &mut harness);
+
+    harness.state_mut().flush_persistence();
+    let durable = &library.load_placements().unwrap()[0];
+    scenario.assertion(
+        "explicit flush preserves the cropped Asset relation",
+        durable.require_loaded_asset().id == cropped_asset_id
+            && durable.content
+                == crate::data::PlacementContent::Loaded {
+                    asset_id: cropped_asset_id,
+                },
+    );
+
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(feature = "semantic-search")]
+#[test]
 fn dragging_multiple_library_search_results_centers_provisional_group_on_pointer() {
     let root = temp_library_root("snappyref-library-search-pointer-drag-multi-center");
     let library = Library::initialize(root.clone()).unwrap();
@@ -5945,7 +6234,6 @@ fn test_app(library: Option<Library>) -> SnappyRefApp {
         active_board_id: 1,
         window_state: crate::data::WindowState::default(),
         persist_window_state: true,
-        crop_flow: super::CropFlow::default(),
         document_history: super::DocumentHistory::default(),
         max_texture_side: 8192,
         settings: crate::data::WorkspaceSettings::default(),

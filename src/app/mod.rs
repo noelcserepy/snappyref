@@ -19,7 +19,7 @@ use crate::placement::content_resolution::{
 };
 #[cfg(feature = "semantic-search")]
 use crate::search::SearchController;
-use crate::sources::crop::CropFlow;
+use crate::sources::crop;
 use crate::sources::import::ExternalImportSource;
 use crate::ui::sidebar::{
     SemanticSearchSettingsAction, SemanticSearchSettingsStatus, SidebarBoardAction, SidebarTab,
@@ -635,7 +635,6 @@ pub struct SnappyRefApp {
     active_board_id: i64,
     window_state: crate::data::WindowState,
     persist_window_state: bool,
-    crop_flow: CropFlow,
     document_history: DocumentHistory,
     max_texture_side: usize,
     settings: crate::data::WorkspaceSettings,
@@ -724,7 +723,6 @@ impl SnappyRefApp {
                     active_board_id: 1,
                     window_state: crate::data::WindowState::default(),
                     persist_window_state: config.persist_window_state_enabled(),
-                    crop_flow: CropFlow::default(),
                     document_history: DocumentHistory::default(),
                     max_texture_side,
                     settings: crate::data::WorkspaceSettings::default(),
@@ -778,7 +776,6 @@ impl SnappyRefApp {
                 active_board_id: 1,
                 window_state: crate::data::WindowState::default(),
                 persist_window_state: config.persist_window_state_enabled(),
-                crop_flow: CropFlow::default(),
                 document_history: DocumentHistory::default(),
                 max_texture_side,
                 settings: crate::data::WorkspaceSettings::default(),
@@ -3364,7 +3361,7 @@ impl SnappyRefApp {
         cropped: crate::jobs::PreparedCropPreview,
     ) {
         let ui_integration_started_at = Instant::now();
-        match self.crop_flow.integrate_cropped_result(
+        match crop::integrate_cropped_result(
             ctx,
             &mut self.canvas,
             self.library.as_ref(),
@@ -3929,7 +3926,7 @@ impl SnappyRefApp {
     }
 
     fn handle_pending_crop_requests(&mut self, ctx: &egui::Context) {
-        match self.crop_flow.enqueue_pending_requests(
+        match crop::enqueue_pending_requests(
             ctx,
             &mut self.canvas,
             self.library.as_ref(),

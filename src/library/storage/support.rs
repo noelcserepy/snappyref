@@ -26,3 +26,8 @@ pub(super) fn unix_timestamp_seconds() -> i64 {
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or(0)
 }
+
+pub(super) fn encode_loaded_placement_content(asset_id: i64) -> Result<String, String> {
+    serde_json::to_string(&PlacementContent::Loaded { asset_id })
+        .map_err(|error| format!("failed to encode loaded placement content: {error}"))
+}
