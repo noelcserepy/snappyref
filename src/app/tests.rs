@@ -663,16 +663,17 @@ fn late_undo_content_failure_is_ignored_after_newer_replay() {
     redo_placement.state.asset_id = Some(202);
     redo_placement.asset.as_mut().unwrap().id = 202;
     redo_placement.content = crate::data::PlacementContent::Loaded { asset_id: 202 };
+    let action = super::HistoryAction::document(
+        "Crop image".to_owned(),
+        vec![super::HistoryChange {
+            before: None,
+            after: Some(redo_placement),
+        }],
+        Vec::new(),
+        None,
+    );
     let replay = app.apply_history_to_active_canvas(
-        &super::HistoryAction {
-            label: "Crop image".to_owned(),
-            placements: vec![super::HistoryChange {
-                before: None,
-                after: Some(redo_placement),
-            }],
-            annotations: Vec::new(),
-            stack_order: None,
-        },
+        action.document_action().unwrap(),
         super::HistoryDirection::Forward,
     );
     assert_eq!(replay.placements_needing_content.len(), 1);
@@ -798,18 +799,18 @@ fn undo_and_redo_defer_storage_until_explicit_flush() {
     app.canvas.add_annotation(annotation.clone());
     app.document_history.record_applied(
         app.active_board_id,
-        super::HistoryAction {
-            label: "Added textbox".to_owned(),
-            placements: Vec::new(),
-            annotations: vec![super::HistoryChange {
+        super::HistoryAction::document(
+            "Added textbox".to_owned(),
+            Vec::new(),
+            vec![super::HistoryChange {
                 before: None,
                 after: Some(annotation.clone()),
             }],
-            stack_order: Some(super::HistoryChange {
+            Some(super::HistoryChange {
                 before: Some(Vec::new()),
                 after: Some(vec![CanvasStackItem::Annotation(annotation.id)]),
             }),
-        },
+        ),
     );
     let storage_lock = rusqlite::Connection::open(root.join("library.db")).unwrap();
 
@@ -2244,6 +2245,159 @@ fn sidebar_create_board_generates_name_switches_and_stays_open() {
 }
 
 #[test]
+fn board_create_undo_and_redo_restore_the_same_identity_once() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-create-board-history");
+    let library = Library::initialize(root.clone()).unwrap();
+    let original_id = library.list_boards().unwrap()[0].id;
+    let other = library.create_board("Other").unwrap();
+    let mut app = test_app(Some(library.clone()));
+
+    app.create_and_switch_board(false);
+    let created = library
+        .list_boards()
+        .unwrap()
+        .into_iter()
+        .find(|board| board.id != original_id && board.id != other.id)
+        .unwrap();
+
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    let storage_lock = rusqlite::Connection::open(root.join("library.db")).unwrap();
+    storage_lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+    app.undo_document_history(&ctx);
+    assert_eq!(app.active_board_id, original_id);
+    assert_eq!(
+        app.board_summaries()
+            .iter()
+            .map(|summary| summary.board.id)
+            .collect::<Vec<_>>(),
+        vec![original_id, other.id]
+    );
+    let archived_before_flush: i64 = storage_lock
+        .query_row(
+            "SELECT archived FROM boards WHERE id = ?1",
+            [created.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(archived_before_flush, 0);
+
+    storage_lock.execute_batch("COMMIT").unwrap();
+    app.flush_persistence();
+    assert!(!app.status.contains("failed"), "{}", app.status);
+    assert_eq!(
+        storage_lock
+            .query_row(
+                "SELECT archived FROM boards WHERE id = ?1",
+                [created.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        1,
+        "queued create Undo must archive the created Board"
+    );
+    assert_eq!(
+        library
+            .list_boards()
+            .unwrap()
+            .iter()
+            .map(|board| board.id)
+            .collect::<Vec<_>>(),
+        vec![original_id, other.id]
+    );
+    assert_eq!(app.active_board_id, original_id);
+
+    let status_after_undo = app.status.clone();
+    app.undo_document_history(&ctx);
+    assert_eq!(app.status, status_after_undo, "create records one entry");
+
+    app.redo_document_history(&ctx);
+    app.flush_persistence();
+    assert_eq!(
+        library.list_boards().unwrap(),
+        vec![
+            crate::data::Board {
+                id: original_id,
+                name: "My Board".to_owned(),
+                archived: false,
+            },
+            other,
+            created.clone(),
+        ]
+    );
+    assert_eq!(app.active_board_id, created.id);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn board_rename_undo_and_redo_restore_exact_names_once() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-rename-board-history");
+    let library = Library::initialize(root.clone()).unwrap();
+    let board = library.list_boards().unwrap()[0].clone();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    let storage_lock = rusqlite::Connection::open(root.join("library.db")).unwrap();
+    storage_lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+    app.handle_board_action(Some(crate::ui::sidebar::SidebarBoardAction::RenameBoard(
+        board.id,
+        "  Reference Board  ".to_owned(),
+    )));
+    assert_eq!(app.board_summaries()[0].board.name, "Reference Board");
+    app.handle_board_action(Some(crate::ui::sidebar::SidebarBoardAction::RenameBoard(
+        board.id,
+        "Final Board".to_owned(),
+    )));
+    assert_eq!(app.board_summaries()[0].board.name, "Final Board");
+    assert_eq!(
+        storage_lock
+            .query_row("SELECT name FROM boards WHERE id = ?1", [board.id], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+        "My Board"
+    );
+    storage_lock.execute_batch("COMMIT").unwrap();
+    app.flush_persistence();
+    assert_eq!(library.list_boards().unwrap()[0].name, "Final Board");
+
+    storage_lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+    app.undo_document_history(&ctx);
+    assert_eq!(app.board_summaries()[0].board.name, "Reference Board");
+    assert_eq!(
+        storage_lock
+            .query_row("SELECT name FROM boards WHERE id = ?1", [board.id], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+        "Final Board"
+    );
+    storage_lock.execute_batch("COMMIT").unwrap();
+    app.flush_persistence();
+    assert_eq!(library.list_boards().unwrap()[0].name, "Reference Board");
+
+    app.undo_document_history(&ctx);
+    app.flush_persistence();
+    assert_eq!(library.list_boards().unwrap()[0].name, "My Board");
+
+    let status_after_undo = app.status.clone();
+    app.undo_document_history(&ctx);
+    assert_eq!(app.status, status_after_undo, "rename records one entry");
+
+    app.redo_document_history(&ctx);
+    app.flush_persistence();
+    assert_eq!(library.list_boards().unwrap()[0].name, "Reference Board");
+    app.redo_document_history(&ctx);
+    app.flush_persistence();
+    assert_eq!(library.list_boards().unwrap()[0].name, "Final Board");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn generated_board_names_fill_smallest_visible_gap() {
     let root = temp_library_root("snappyref-board-name-gap");
     let library = Library::initialize(root.clone()).unwrap();
@@ -2490,6 +2644,7 @@ fn active_board_load_applies_viewport_without_reloading_global_settings() {
 
 #[test]
 fn board_delete_requires_confirmation_before_archiving_active_board() {
+    let ctx = egui::Context::default();
     let root = temp_library_root("snappyref-confirm-delete-board");
     let library = Library::initialize(root.clone()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
@@ -2504,7 +2659,7 @@ fn board_delete_requires_confirmation_before_archiving_active_board() {
     assert!(app.pending_board_delete.is_some());
     assert_eq!(library.list_boards().unwrap().len(), 2);
 
-    app.confirm_pending_board_delete();
+    app.confirm_pending_board_delete(&ctx);
 
     assert!(app.pending_board_delete.is_none());
     assert!(app.sidebar_open);
@@ -2524,6 +2679,7 @@ fn board_delete_requires_confirmation_before_archiving_active_board() {
 
 #[test]
 fn board_delete_confirmation_keeps_sidebar_open_and_removes_inactive_board() {
+    let ctx = egui::Context::default();
     let root = temp_library_root("snappyref-delete-inactive-board");
     let library = Library::initialize(root.clone()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
@@ -2533,7 +2689,7 @@ fn board_delete_confirmation_keeps_sidebar_open_and_removes_inactive_board() {
     app.sidebar_open = true;
 
     app.request_board_delete(second.id, second.name.clone());
-    app.confirm_pending_board_delete();
+    app.confirm_pending_board_delete(&ctx);
 
     assert!(app.pending_board_delete.is_none());
     assert!(app.sidebar_open);
@@ -2547,6 +2703,150 @@ fn board_delete_confirmation_keeps_sidebar_open_and_removes_inactive_board() {
             .collect::<Vec<_>>(),
         vec![first.id]
     );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn board_delete_undo_restores_document_view_history_and_active_fallback() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-delete-board-history");
+    let library = Library::initialize(root.clone()).unwrap();
+    let first = library.list_boards().unwrap()[0].clone();
+    let second = library.create_board("Reference").unwrap();
+    library.set_active_board(second.id).unwrap();
+    let image_path = library
+        .store_rgba_image("board-history", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let placement = library
+        .persist_imported_image(
+            &image_path,
+            "image/png",
+            1,
+            1,
+            4,
+            egui::pos2(40.0, 60.0),
+            1.5,
+        )
+        .unwrap();
+    let annotation = library
+        .create_canvas_annotation(
+            CanvasAnnotationKind::Textbox,
+            egui::pos2(10.0, 20.0),
+            egui::pos2(110.0, 80.0),
+            "kept note",
+            CanvasTextSize::L,
+            CanvasStrokeWidth::M,
+            crate::data::CanvasAnnotationColor::Sky,
+            true,
+        )
+        .unwrap();
+    let mixed_stack = vec![
+        CanvasStackItem::Annotation(annotation.id),
+        CanvasStackItem::Placement(placement.state.id),
+    ];
+    library.save_canvas_stack_order(&mixed_stack).unwrap();
+    let mut session = library.load_user_session().unwrap();
+    session.viewport = crate::data::ViewportState {
+        camera_pan_x: 125.0,
+        camera_pan_y: -48.0,
+        camera_zoom: 1.75,
+        canvas_background: CanvasBackground::Grid,
+    };
+    library.save_user_session(&session).unwrap();
+
+    let mut app = test_app(Some(library.clone()));
+    app.active_board_id = second.id;
+    app.canvas.apply_viewport_state(&session.viewport);
+    app.sidebar_open = true;
+    app.context_menu_pos = Some(egui::pos2(12.0, 18.0));
+    app.document_history.record_applied(
+        second.id,
+        crate::active_board::history::HistoryAction::document(
+            "Earlier document change".to_owned(),
+            Vec::new(),
+            Vec::new(),
+            None,
+        ),
+    );
+
+    app.request_board_delete(second.id, second.name.clone());
+    app.confirm_pending_board_delete(&ctx);
+
+    assert_eq!(app.active_board_id, first.id);
+    assert_eq!(library.list_boards().unwrap(), vec![first.clone()]);
+    app.sidebar_open = false;
+    app.window_state.inner_width = Some(777.0);
+    app.context_menu_pos = None;
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    let storage_lock = rusqlite::Connection::open(root.join("library.db")).unwrap();
+    storage_lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+    app.undo_document_history(&ctx);
+
+    assert_eq!(app.active_board_id, second.id);
+    assert_eq!(app.board_summaries().len(), 2);
+    let archived_before_flush: i64 = storage_lock
+        .query_row(
+            "SELECT archived FROM boards WHERE id = ?1",
+            [second.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(archived_before_flush, 1);
+    storage_lock.execute_batch("COMMIT").unwrap();
+    app.flush_persistence();
+    assert_eq!(
+        library.list_boards().unwrap(),
+        vec![first.clone(), second.clone()]
+    );
+    let restored_placements = library.load_placements().unwrap();
+    assert_eq!(restored_placements.len(), 1);
+    assert_eq!(restored_placements[0].state.id, placement.state.id);
+    assert_eq!(
+        restored_placements[0].state.geometry,
+        placement.state.geometry
+    );
+    assert_eq!(restored_placements[0].content, placement.content);
+    assert_eq!(library.load_canvas_annotations().unwrap(), vec![annotation]);
+    assert_eq!(library.load_canvas_stack_order().unwrap(), mixed_stack);
+    assert_eq!(
+        library.load_user_session().unwrap().viewport,
+        session.viewport
+    );
+    assert!(!app.sidebar_open, "sidebar state is not Board history");
+    assert_eq!(app.window_state.inner_width, Some(777.0));
+    assert!(
+        app.context_menu_pos.is_none(),
+        "Canvas transients are cleared"
+    );
+
+    let active_assets: i64 = storage_lock
+        .query_row(
+            "SELECT COUNT(*) FROM assets WHERE archived = 0",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(active_assets, 1);
+
+    app.undo_document_history(&ctx);
+    assert_eq!(app.status, "Undid Earlier document change");
+    app.redo_document_history(&ctx);
+    assert_eq!(app.status, "Redid Earlier document change");
+    app.redo_document_history(&ctx);
+    app.flush_persistence();
+
+    assert_eq!(app.active_board_id, first.id);
+    assert_eq!(library.list_boards().unwrap(), vec![first]);
+    let active_assets: i64 = storage_lock
+        .query_row(
+            "SELECT COUNT(*) FROM assets WHERE archived = 0",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(active_assets, 1);
 
     let _ = fs::remove_dir_all(root);
 }

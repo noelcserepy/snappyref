@@ -870,7 +870,8 @@ fn delete_board_archives_board_preserves_assets_and_archives_board_content() {
         )
         .unwrap();
 
-    let remaining_active = library.delete_board(second.id).unwrap();
+    let remaining_active = library.active_board_after_delete(second.id).unwrap();
+    library.archive_board(second.id, remaining_active).unwrap();
 
     assert_eq!(remaining_active, first.id);
     assert_eq!(
@@ -905,8 +906,9 @@ fn delete_board_archives_board_preserves_assets_and_archives_board_content() {
         assert_eq!(annotation_count, 1);
     }
 
-    assert!(library.delete_board(first.id).is_ok());
-    assert!(library.delete_board(third.id).is_err());
+    let remaining_active = library.active_board_after_delete(first.id).unwrap();
+    library.archive_board(first.id, remaining_active).unwrap();
+    assert!(library.active_board_after_delete(third.id).is_err());
 
     let _ = fs::remove_dir_all(root);
 }

@@ -584,7 +584,7 @@ impl Library {
         self.load_placements_for_board_id(&connection, board_id)
     }
 
-    fn load_placements_for_board_id(
+    pub(super) fn load_placements_for_board_id(
         &self,
         connection: &Connection,
         board_id: i64,

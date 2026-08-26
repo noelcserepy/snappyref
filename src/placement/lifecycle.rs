@@ -158,9 +158,9 @@ pub(crate) fn commit_search_provisional_batch(
         .collect::<Vec<_>>();
     canvas.select_placements(&added_placement_ids);
     let load_existing_placements = committed_placements.clone();
-    let history_action = Some(crate::active_board::history::HistoryAction {
-        label: "Add search images".to_owned(),
-        placements: committed_placements
+    let history_action = Some(crate::active_board::history::HistoryAction::document(
+        "Add search images".to_owned(),
+        committed_placements
             .iter()
             .cloned()
             .map(|placement| crate::active_board::history::HistoryChange {
@@ -168,8 +168,8 @@ pub(crate) fn commit_search_provisional_batch(
                 after: Some(placement),
             })
             .collect(),
-        annotations: Vec::new(),
-        stack_order: stack_before.map(|before| crate::active_board::history::HistoryChange {
+        Vec::new(),
+        stack_before.map(|before| crate::active_board::history::HistoryChange {
             before: Some(before),
             after: Some(
                 stack_after
@@ -183,7 +183,7 @@ pub(crate) fn commit_search_provisional_batch(
                     .collect(),
             ),
         }),
-    });
+    ));
 
     Ok(CommittedSearchProvisionalBatch {
         added_placement_ids,
@@ -436,7 +436,13 @@ mod tests {
         let committed =
             commit_loading_provisional_batch(&library, &mut canvas, &provisional.placement_ids)
                 .unwrap();
-        let stack_change = committed.history_action.unwrap().stack_order.unwrap();
+        let history_action = committed.history_action.unwrap();
+        let stack_change = history_action
+            .document_action()
+            .unwrap()
+            .stack_order
+            .as_ref()
+            .unwrap();
 
         assert_eq!(stack_change.before, Some(in_memory_stack));
 
