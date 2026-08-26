@@ -5059,6 +5059,7 @@ dependencies = [
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
  "ort",
+ "png 0.18.1",
  "pollster",
  "raw-window-handle",
  "reqwest",

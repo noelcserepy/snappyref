@@ -71,9 +71,8 @@ pub fn decode_image_file(path: &Path) -> Result<DecodedImage, String> {
     decode_image_file_with_max_side(path, None)
 }
 
-/// Decode an image file, optionally hinting the target maximum side length so
-/// JPEG decoding can scale during IDCT to save time and memory. `None` means
-/// "decode at full resolution"; other formats currently ignore the hint.
+/// Decode an image file, optionally limiting JPEG and PNG work to the target
+/// maximum side length. `None` decodes at full resolution.
 pub fn decode_image_file_with_max_side(
     path: &Path,
     target_max_side: Option<u32>,
@@ -123,8 +122,8 @@ pub fn decode_image_file_perf_report(path: &Path) -> Result<DecodePerfReport, St
     })
 }
 
-/// Decode in-memory image bytes, optionally hinting the target maximum side
-/// length so JPEG decoding can scale during IDCT. `None` means full resolution.
+/// Decode in-memory image bytes, optionally limiting JPEG and PNG work to the
+/// target maximum side length. `None` decodes at full resolution.
 pub fn decode_image_bytes_with_max_side(
     bytes: &[u8],
     source_label: Option<String>,
@@ -181,19 +180,24 @@ fn decode_image_bytes_with_path_hint(
     } else if format == ImageFormat::Jpeg {
         decode_jpeg_with_turbojpeg(bytes, file_size, target_max_side)
             .or_else(|_| decode_with_image_crate(bytes, file_size, format))
+    } else if format == ImageFormat::Png {
+        decode_png_with_streaming_resize(bytes, file_size, target_max_side)
+            .or_else(|_| decode_with_image_crate(bytes, file_size, format))
     } else {
         decode_with_image_crate(bytes, file_size, format)
     }?;
 
     #[cfg(not(feature = "turbojpeg-native"))]
     let decoded = {
-        let _ = target_max_side;
         if format == ImageFormat::Gif {
             decode_gif(bytes, file_size)
         } else if format == ImageFormat::WebP {
             decode_webp(bytes, file_size)
         } else if format == ImageFormat::OpenExr {
             decode_exr(bytes, file_size)
+        } else if format == ImageFormat::Png {
+            decode_png_with_streaming_resize(bytes, file_size, target_max_side)
+                .or_else(|_| decode_with_image_crate(bytes, file_size, format))
         } else {
             decode_with_image_crate(bytes, file_size, format)
         }?
@@ -790,6 +794,185 @@ fn decode_with_image_crate(
         format,
         None,
     ))
+}
+
+#[derive(Clone, Copy)]
+struct AxisSample {
+    low: u32,
+    high: u32,
+    high_weight: f32,
+}
+
+fn bilinear_axis_samples(source_len: u32, target_len: u32) -> Vec<AxisSample> {
+    let ratio = source_len as f64 / target_len as f64;
+    (0..target_len)
+        .map(|target| {
+            let source = ((target as f64 + 0.5) * ratio - 0.5)
+                .clamp(0.0, source_len.saturating_sub(1) as f64);
+            let low = source.floor() as u32;
+            AxisSample {
+                low,
+                high: (low + 1).min(source_len - 1),
+                high_weight: (source - low as f64) as f32,
+            }
+        })
+        .collect()
+}
+
+fn nearest_axis_indices(source_len: u32, target_len: u32) -> Vec<u32> {
+    let ratio = source_len as f64 / target_len as f64;
+    (0..target_len)
+        .map(|target| {
+            ((target as f64 + 0.5) * ratio - 0.5)
+                .round()
+                .clamp(0.0, source_len.saturating_sub(1) as f64) as u32
+        })
+        .collect()
+}
+
+fn interpolate_channel(low: u8, high: u8, high_weight: f32) -> u8 {
+    (low as f32 + (high as f32 - low as f32) * high_weight).round() as u8
+}
+
+fn resize_png_row(
+    row: &[u8],
+    color_type: png::ColorType,
+    x_samples: &[AxisSample],
+) -> Result<Vec<u8>, String> {
+    let mut resized = Vec::with_capacity(x_samples.len() * 4);
+    match color_type {
+        png::ColorType::Rgb => {
+            for sample in x_samples {
+                let low = sample.low as usize * 3;
+                let high = sample.high as usize * 3;
+                for channel in 0..3 {
+                    resized.push(interpolate_channel(
+                        row[low + channel],
+                        row[high + channel],
+                        sample.high_weight,
+                    ));
+                }
+                resized.push(255);
+            }
+        }
+        png::ColorType::Rgba => {
+            for sample in x_samples {
+                let low = sample.low as usize * 4;
+                let high = sample.high as usize * 4;
+                for channel in 0..4 {
+                    resized.push(interpolate_channel(
+                        row[low + channel],
+                        row[high + channel],
+                        sample.high_weight,
+                    ));
+                }
+            }
+        }
+        png::ColorType::Grayscale => {
+            for sample in x_samples {
+                let value = interpolate_channel(
+                    row[sample.low as usize],
+                    row[sample.high as usize],
+                    sample.high_weight,
+                );
+                resized.extend_from_slice(&[value, value, value, 255]);
+            }
+        }
+        png::ColorType::GrayscaleAlpha => {
+            for sample in x_samples {
+                let low = sample.low as usize * 2;
+                let high = sample.high as usize * 2;
+                let value = interpolate_channel(row[low], row[high], sample.high_weight);
+                let alpha = interpolate_channel(row[low + 1], row[high + 1], sample.high_weight);
+                resized.extend_from_slice(&[value, value, value, alpha]);
+            }
+        }
+        png::ColorType::Indexed => {
+            return Err("PNG row normalization left indexed output".to_owned());
+        }
+    }
+    Ok(resized)
+}
+
+/// Stream a static, non-interlaced PNG into its canvas-sized output without
+/// materializing the full source-sized RGB or RGBA image.
+fn decode_png_with_streaming_resize(
+    bytes: &[u8],
+    file_size: u64,
+    target_max_side: Option<u32>,
+) -> Result<DecodedImage, String> {
+    let target_max_side = target_max_side
+        .filter(|side| *side > 0)
+        .ok_or_else(|| "PNG streaming resize needs a target size".to_owned())?;
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder
+        .read_info()
+        .map_err(|error| format!("failed to read PNG header: {error}"))?;
+    let source_width = reader.info().width;
+    let source_height = reader.info().height;
+
+    if reader.info().interlaced
+        || reader.info().animation_control.is_some()
+        || source_width.max(source_height) <= target_max_side
+    {
+        return Err("PNG does not need the streaming resize path".to_owned());
+    }
+    let (target_width, target_height) = fitted_texture_size(
+        source_width as usize,
+        source_height as usize,
+        target_max_side as usize,
+    );
+    let target_width = target_width as u32;
+    let target_height = target_height as u32;
+    // Horizontal interpolation keeps screenshot text and edges close to the
+    // existing resize. One sampled source row per output row avoids a second
+    // interpolation pass on the hot path; the pixel-distance test bounds the
+    // resulting difference.
+    let x_samples = bilinear_axis_samples(source_width, target_width);
+    let y_indices = nearest_axis_indices(source_height, target_height);
+    let (color_type, bit_depth) = reader.output_color_type();
+    if bit_depth != png::BitDepth::Eight {
+        return Err(format!(
+            "PNG row normalization produced unsupported {bit_depth:?} output"
+        ));
+    }
+    let output_len = target_width as usize * target_height as usize * 4;
+    let mut rgba = vec![0; output_len];
+    let mut target_y = 0usize;
+
+    let row_len = target_width as usize * 4;
+    let mut source_y = 0u32;
+    while let Some(row) = reader
+        .next_row()
+        .map_err(|error| format!("failed to decode PNG row: {error}"))?
+    {
+        if y_indices.get(target_y).copied() == Some(source_y) {
+            let resized = resize_png_row(row.data(), color_type, &x_samples)?;
+            while y_indices.get(target_y).copied() == Some(source_y) {
+                let start = target_y * row_len;
+                rgba[start..start + row_len].copy_from_slice(&resized);
+                target_y += 1;
+            }
+        }
+        source_y += 1;
+    }
+
+    if target_y != target_height as usize {
+        return Err(format!(
+            "PNG resize produced {target_y} of {target_height} rows"
+        ));
+    }
+
+    Ok(decoded_image_from_rgba(
+        rgba,
+        target_width,
+        target_height,
+        file_size,
+        ImageFormat::Png,
+        None,
+    )
+    .with_source_dimensions(source_width, source_height))
 }
 
 fn decode_gif(bytes: &[u8], file_size: u64) -> Result<DecodedImage, String> {
@@ -1755,6 +1938,63 @@ static unsigned char sample_bits[] = { 0x01 };
         assert!(
             mean_delta <= 12.0,
             "scaled-decode vs full-resize mean per-channel delta too large: {mean_delta}",
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn decode_png_with_max_side_streams_canvas_sized_pixels_close_to_full_resize() {
+        use super::decode_image_file_with_max_side;
+
+        let root = temp_test_dir("snappyref-png-streaming-resize");
+        let source_side: u32 = 256;
+        let mut rgb = Vec::with_capacity((source_side * source_side * 3) as usize);
+        for y in 0..source_side {
+            for x in 0..source_side {
+                rgb.push(x as u8);
+                rgb.push(y as u8);
+                rgb.push(((x + y) % 256) as u8);
+            }
+        }
+        let path = root.join("gradient.png");
+        image::codecs::png::PngEncoder::new(std::fs::File::create(&path).unwrap())
+            .write_image(&rgb, source_side, source_side, ExtendedColorType::Rgb8)
+            .unwrap();
+
+        let full = decode_image_file_with_max_side(&path, None).unwrap();
+        let canvas = decode_image_file_with_max_side(&path, Some(32)).unwrap();
+        assert_eq!((canvas.width, canvas.height), (32, 32));
+        assert_eq!(
+            (canvas.source_width, canvas.source_height),
+            (source_side, source_side)
+        );
+
+        let detail = decode_image_file_with_max_side(&path, Some(200)).unwrap();
+        assert_eq!((detail.width, detail.height), (200, 200));
+        assert_eq!(
+            (detail.source_width, detail.source_height),
+            (source_side, source_side)
+        );
+
+        let resized_from_full =
+            super::preview_image_from_rgba(full.width, full.height, &full.rgba, 32).unwrap();
+        assert_eq!(canvas.rgba.len(), resized_from_full.rgba.len());
+        let mut max_delta = 0u32;
+        let mut sum_delta = 0u64;
+        for (streamed, resized) in canvas.rgba.iter().zip(&resized_from_full.rgba) {
+            let delta = (*streamed as i32 - *resized as i32).unsigned_abs();
+            max_delta = max_delta.max(delta);
+            sum_delta += delta as u64;
+        }
+        let mean_delta = sum_delta as f64 / canvas.rgba.len() as f64;
+        assert!(
+            max_delta <= 64,
+            "streaming PNG resize max per-channel delta too large: {max_delta}"
+        );
+        assert!(
+            mean_delta <= 12.0,
+            "streaming PNG resize mean per-channel delta too large: {mean_delta}"
         );
 
         let _ = std::fs::remove_dir_all(root);
