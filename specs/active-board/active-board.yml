@@ -1,0 +1,160 @@
+schema: v0.1
+
+purpose:
+  outcome: Keep exactly one usable Board active while Board switches preserve each Board's durable content and view context.
+  owns:
+    - Active Board selection and activation order.
+    - Board-switch persistence and transient-state cleanup.
+    - Canvas opening and visible-image preparation for the target Board.
+    - Fallback activation when the requested Board is unavailable.
+  excludes:
+    - Board document, view-state, and history ownership.
+    - Canvas gesture and editing semantics.
+    - Global workspace settings and window restoration.
+    - Image decoding and residency policy.
+
+interface:
+  operations:
+    restore:
+      description: Establishes a usable active Board from restored workspace identity and the current Board catalog.
+
+      input:
+        preferred:
+          type: BoardId?
+          description: The Board identity restored from Workspace Continuity, when present.
+
+      outcomes:
+        activated:
+          board: BoardSummary
+          document: BoardDocument
+        created-and-activated:
+          board: BoardSummary
+          document: BoardDocument
+        unavailable:
+          reason: ActiveBoardFailure
+
+      behavior:
+        preferred-first: A valid preferred Board must be activated.
+        missing-fallback: A missing preferred Board must fall back to a deterministic active Board without rejecting the whole restored workspace.
+        empty-catalog-created: If no active Board exists, restore must create and activate one default Board.
+        complete-activation: A successful outcome must complete the same activation lifecycle as an explicit Board switch.
+
+      caller_obligations: {}
+
+    activate:
+      description: Switches from the current Board to one target Board.
+
+      input:
+        board:
+          type: BoardId
+          description: The Board to make active.
+
+      outcomes:
+        activated:
+          board: BoardSummary
+          document: BoardDocument
+        unchanged:
+          board: BoardSummary
+        missing: {}
+        unavailable:
+          reason: ActiveBoardFailure
+
+      behavior:
+        current-board-flushed: Before switching, queued document and Board-view persistence for the current Board must reach its explicit flush seam.
+        transient-state-cleared: Switching must cancel provisional content and clear selection, crop, text editing, guide, drag, and other active interaction state.
+        board-identity-switched-once: The active identity must change exactly once after the target Board is known to be openable.
+        board-view-restored: activated must open the target Board with its own viewport and background.
+        startup-visible-prepared: activated must request image preparation needed to present the target Board before background promotion or backfill.
+        failure-preserves-current: A missing or unavailable target must not partially replace the usable current Board.
+
+      caller_obligations: {}
+
+    record-view:
+      description: Records the active Board's latest viewport and background without entering document history.
+
+      input:
+        view:
+          type: BoardViewState
+          description: The active Board viewport and background.
+
+      outcomes:
+        accepted: {}
+        unchanged: {}
+        no-active-board: {}
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        active-board-scoped: accepted must apply only to the current Board identity.
+        history-neutral: accepted must not add a Board Document history entry.
+        deferred-persistence: accepted must return before durable storage completes.
+        latest-state-wins: Equivalent pending view writes may coalesce, but the latest accepted state must become durable.
+
+      caller_obligations: {}
+
+    flush:
+      description: Waits for queued document and Board-view persistence at an explicit lifecycle seam.
+
+      input:
+        reason:
+          type: ActiveBoardFlushReason
+          description: Board switch, app exit, update restart, or destructive action.
+
+      outcomes:
+        durable: {}
+        unavailable:
+          reason: ActiveBoardFailure
+
+      behavior:
+        ordered-durability: durable must preserve the semantic order of accepted document and view changes.
+        repeat-safe: Repeating flush after durability is reached must produce durable without another change.
+
+      caller_obligations: {}
+
+  guarantees:
+    exactly-one-when-usable: A usable workspace has exactly one active Board.
+    activation-is-a-lifecycle: Board activation is one ordered capability rather than independent identity, Canvas, and image-loading calls.
+    switch-does-not-mix-boards: Content, history, view state, transient interaction, and image results from one Board must not be presented as another Board.
+    interaction-persistence-deferred: Ordinary active Board edits and view changes use memory first and queued persistence.
+    explicit-flush-seams: Board switch, app exit, update restart, and destructive actions may wait for queued durability.
+
+  requires:
+    board-creation:
+      target: "[[board-document#/interface/operations/create-board/outcomes/created]]"
+      reason: Creates the default Board when restoration finds no active Board.
+    board-open:
+      target: "[[board-document#/interface/operations/open-board/outcomes/opened]]"
+      reason: Supplies the target Board document and Board-owned view state.
+    board-view-recording:
+      target: "[[board-document#/interface/operations/record-view/outcomes/accepted]]"
+      reason: Persists the active Board's view state outside document history.
+    canvas-open:
+      target: "[[canvas-interaction#/interface/operations/open/outcomes/ready]]"
+      reason: Opens the interactive view after the target Board is resolved.
+    visible-image-preparation:
+      target: "[[image-preparation#/interface/operations/request-residency/outcomes/accepted]]"
+      reason: Prioritizes image content needed to present the activated Board.
+
+decisions:
+  activation-boundary:
+    current: Treat Board activation as one ordered lifecycle that flushes the previous Board, clears transient interaction, restores the target Board's content and view, and requests visible image preparation.
+    affects:
+      - "[[#/interface/operations/restore]]"
+      - "[[#/interface/operations/activate]]"
+      - "[[#/interface/guarantees/activation-is-a-lifecycle]]"
+    reasons:
+      - Independent switching steps can mix Board identity, view, transient state, and late image work.
+      - The previous Board needs a known durability seam before its active context is replaced.
+    consequences:
+      - Activation failure leaves the current usable Board intact.
+      - A new workspace always gets one created and activated default Board.
+      - View persistence is Board-scoped but remains outside Undo and Redo.
+    reconsider_when:
+      - SnappyRef supports simultaneous active Board views in one workspace.
+    explored_paths:
+      identity-only-switch:
+        status: rejected
+        reason: It leaves Canvas, transient interaction, and image preparation to drift across Board identity.
+    sources:
+      - label: Move active Board persistence off interaction frames
+        url: https://github.com/noelcserepy/snappyref/pull/114

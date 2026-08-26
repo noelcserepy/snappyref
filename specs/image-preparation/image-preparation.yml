@@ -1,0 +1,233 @@
+schema: v0.1
+
+purpose:
+  outcome: Produce display-ready image content without making frame-continuous canvas interaction wait for pixel work.
+  owns:
+    - Image decoding and orientation normalization.
+    - Prepared image output for external sources and existing Assets.
+    - Crop output.
+    - Vector-source preservation and animated-frame preparation.
+    - Working, overview, and detail image levels.
+    - Reusable derivative generation and memory residency requests.
+  excludes:
+    - Asset identity and original-file ownership.
+    - Placement lifecycle and geometry.
+    - Import batch commit and cancellation.
+    - Semantic embedding generation.
+
+interface:
+  operations:
+    prepare-source:
+      description: Prepares external image content for Library registration and display.
+
+      input:
+        source:
+          type: ImageSourceIntent
+          description: A validated file, URL, clipboard image, or extracted reference.
+        use:
+          type: PreparedImageUse
+          description: The requested display or registration use.
+
+      outcomes:
+        prepared:
+          image: PreparedImage
+          original: LibraryOriginal
+        unsupported:
+          reason: UnsupportedImageReason
+        failed:
+          reason: ImagePreparationFailure
+
+      behavior:
+        orientation-normalized: prepared must present the image in its intended visual orientation.
+        dimensions-known: prepared must include validated intrinsic dimensions after orientation normalization.
+        invalid-boundary-rejected: Malformed, unsafe, or unsupported source content must not enter internal image processing as trusted data.
+
+      caller_obligations:
+        source-normalized: Supply a normalized ImageSourceIntent rather than raw platform or transport data.
+
+    prepare-asset:
+      description: Produces the requested display level for an existing Asset.
+
+      input:
+        asset:
+          type: AssetId
+          description: The Asset whose image content to prepare.
+        level:
+          type: ImageLevel
+          description: Overview, Working, or Detail content requested by the caller.
+
+      outcomes:
+        available:
+          image: PreparedImage
+        asset-missing: {}
+        failed:
+          reason: ImagePreparationFailure
+
+      behavior:
+        smallest-sufficient-level: available must not require a larger decoded image level than the requested use needs.
+        derivative-reused: A valid reusable derivative must be reused instead of regenerated.
+        original-preserved: Preparing an Asset must not modify its managed original.
+
+      caller_obligations: {}
+
+    preview-crop:
+      description: Produces an immediate non-durable crop preview from available source pixels.
+
+      input:
+        request:
+          type: ImageCropRequest
+          description: The source Asset and crop region in source-image coordinates.
+
+      outcomes:
+        previewed:
+          image: PreparedImage
+        pixels-required: {}
+        invalid-region: {}
+        unsupported:
+          reason: UnsupportedImageReason
+
+      behavior:
+        non-durable: previewed must not register an Asset, write an original, or enter Board history.
+        source-preserved: previewed must not alter the source Asset or its original.
+        svg-explicitly-unsupported: SVG crop requests produce unsupported until vector cropping has an accepted contract.
+
+      caller_obligations: {}
+
+    crop:
+      description: Produces a new prepared original from a non-destructive crop request.
+
+      input:
+        request:
+          type: ImageCropRequest
+          description: The source Asset and crop region in source-image coordinates.
+
+      outcomes:
+        prepared:
+          image: PreparedImage
+          original: LibraryOriginal
+        invalid-region: {}
+        asset-missing: {}
+        failed:
+          reason: ImagePreparationFailure
+
+      behavior:
+        source-preserved: prepared must not alter the source Asset or its original.
+        region-exact: prepared must represent the validated crop region.
+        raster-output: A successful crop must produce a new PNG original suitable for Library registration and Placement relinking.
+        preview-replaced: prepared must replace any non-durable preview for the request.
+        invalid-region-safe: invalid-region must not create Library content.
+        failure-restores-source-view: failed must remove incomplete crop output and restore the Placement's pre-preview image state.
+        svg-explicitly-unsupported: Cropping an SVG produces failed with a clear unsupported-format reason.
+
+      caller_obligations: {}
+
+    request-residency:
+      description: Requests the image levels needed for current and near-future canvas use.
+
+      input:
+        demand:
+          type: ImageResidencyDemand
+          description: Assets, desired levels, and the startup, interactive, or background work class.
+
+      outcomes:
+        accepted: {}
+        unchanged: {}
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        startup-visible-first: Image levels needed to present the opened Board must take priority over background promotion and backfill.
+        background-work-last: Background promotion and backfill must not displace startup-visible or interactive preparation.
+        no-eager-full-cache: accepted must not decode every Asset at full resolution.
+        demand-reconciled: Repeated demand must converge on the latest requested levels without duplicating equivalent work.
+
+      caller_obligations: {}
+
+  guarantees:
+    continuous-interaction-nonblocking: Image preparation must not block pan, zoom, drag, resize, rotate, or paint-frame updates.
+    durable-work-off-thread: Import preparation, derivative generation, durable crop output, promotion, and backfill must run outside the interaction thread.
+    on-demand-crop-snapshot: The first crop may synchronously warm pixels for the source Asset when no reusable CPU snapshot exists.
+    small-interactive-imports-first: Interactive import preparation with known source sizes must prepare smaller sources first without changing their planned layout.
+    bounded-memory-intent: Image levels and residency must avoid retaining full decoded content for the whole Library.
+    one-preparation-capability: Imported images, existing Assets, crop output, and display levels use the same Image Preparation capability.
+    svg-vector-preserved: SVG file and URL sources must retain their validated vector original and render from that vector content rather than a raster cache.
+    animation-timing-preserved: Animated GIF and animated WebP preparation must preserve frame order and per-frame timing.
+    supported-raster-family: Supported raster intake includes AVIF, BMP, DDS, farbfeld, GIF, HDR, ICO, JPEG, OpenEXR, PNG, PNM, QOI, TGA, TIFF, and WebP, plus explicit platform-native fallback formats.
+    decoder-aware-scaling: A request for bounded output promises bounded or streaming decode only for formats whose supported decoder exposes that path; other formats may require full decode before reduction.
+
+  requires:
+    asset-original:
+      target: "[[local-library#/interface/operations/resolve-asset/outcomes/available]]"
+      reason: Supplies managed original content for existing Asset preparation.
+
+decisions:
+  image-level-policy:
+    current: Prepare Overview, Working, or Detail content according to startup, interactive, and background demand instead of keeping every full decoded image resident.
+    affects:
+      - "[[#/interface/operations/prepare-source]]"
+      - "[[#/interface/operations/prepare-asset]]"
+      - "[[#/interface/operations/request-residency]]"
+      - "[[#/interface/guarantees/bounded-memory-intent]]"
+    reasons:
+      - Eager full-resolution decoding caused avoidable startup and memory cost.
+      - Startup, interactive, and background work have different latency requirements.
+      - Preparing smaller interactive imports first shows useful results sooner while reserved geometry preserves layout.
+    consequences:
+      - Startup may begin with Overview content.
+      - Crop warms selected CPU pixels on demand instead of keeping every full decoded image resident.
+      - Interactive imports with known sizes may complete out of source order while retaining their planned layout.
+    reconsider_when:
+      - Measured interaction latency or image quality requires a different level policy.
+    explored_paths:
+      eager-full-decoded-cache:
+        status: rejected
+        reason: It scaled memory use with the full Library and delayed useful work.
+    sources:
+      - label: On-demand canvas pixel snapshots
+        url: https://github.com/noelcserepy/snappyref/blob/ca1ab5ce46bb0d1d99bbac7bc281bc56911827ef/docs/adr/0008-on-demand-canvas-pixel-snapshots.md
+      - label: Prioritize small assets first in the import queue
+        url: https://github.com/noelcserepy/snappyref/blob/93bd3ddf84f1c612f910fe7985863538a19eb38f/docs/adr/0016-prioritize-small-assets-first-in-import-queue.md
+
+  orientation-policy:
+    current: Normalize supported image orientation metadata before reporting prepared pixels and intrinsic dimensions.
+    affects:
+      - "[[#/purpose/owns]]"
+      - "[[#/interface/operations/prepare-source]]"
+    reasons:
+      - Prepared pixels and reported dimensions must describe the same visual orientation.
+    consequences:
+      - Placement geometry planning receives post-orientation dimensions.
+      - A decoder must define which orientation metadata it supports.
+    reconsider_when:
+      - A supported format cannot expose orientation metadata safely or consistently.
+    explored_paths: {}
+    sources: []
+
+  source-format-policy:
+    current: Preserve SVG as vector content, preserve animation for GIF and WebP, and use format-specific decode paths without promising scaled decode where the decoder cannot provide it.
+    affects:
+      - "[[#/interface/operations/prepare-source]]"
+      - "[[#/interface/operations/prepare-asset]]"
+      - "[[#/interface/guarantees/svg-vector-preserved]]"
+      - "[[#/interface/guarantees/animation-timing-preserved]]"
+      - "[[#/interface/guarantees/decoder-aware-scaling]]"
+    reasons:
+      - Vector and animated sources lose essential behavior when flattened into one static raster contract.
+      - Decode-time memory behavior depends on capabilities of the format-specific decoder.
+    consequences:
+      - SVG skips raster canvas-cache generation and cannot currently be cropped.
+      - Animated GIF and WebP retain frames for engagement-driven Canvas playback.
+      - Large-image memory work targets decoders with real scaled or streaming paths instead of claiming a universal bound.
+    reconsider_when:
+      - A common decoder can provide bounded decode for every supported raster format.
+      - Vector crop gains an accepted output and identity policy.
+    explored_paths:
+      flatten-all-sources:
+        status: rejected
+        reason: It discards vector fidelity and animation semantics.
+      universal-scaled-decode-promise:
+        status: rejected
+        reason: Several supported decoders require full source decode before reduction.
+    sources:
+      - label: Expand image import format support
+        url: https://github.com/noelcserepy/snappyref/commit/149e609d14583164dd7026bdba173ec57f8bbad3

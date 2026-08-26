@@ -1,0 +1,112 @@
+schema: v0.1
+
+purpose:
+  outcome: Exchange Board content with the system clipboard without losing SnappyRef structure or blocking ordinary external image paste.
+  owns:
+    - SnappyRef internal clipboard representation.
+    - Native clipboard read precedence and normalization.
+    - Native single-image export policy.
+    - Clipboard payload size and validity boundaries.
+  excludes:
+    - Canvas command and paste-position behavior.
+    - Placement Creation and image preparation.
+    - Board persistence and history.
+    - Platform drag-and-drop interaction.
+
+interface:
+  operations:
+    read:
+      description: Reads the system clipboard into one normalized internal or external content intent.
+
+      input: {}
+
+      outcomes:
+        content:
+          clipboard: ClipboardContentIntent
+        empty: {}
+        rejected:
+          reason: ClipboardRejection
+        unavailable:
+          reason: ClipboardFailure
+
+      behavior:
+        internal-first: Valid SnappyRef document metadata must take precedence over all external clipboard representations.
+        url-before-binary: A supported image URL in text must take precedence over path, PureRef binary, and native image fallback.
+        paths-before-pureref: Supported platform clipboard paths must take precedence over PureRef binary and native image fallback.
+        pureref-before-native-image: Valid PureRef binary content must take precedence over native image fallback.
+        native-image-last: Native raster image content is the final supported fallback.
+        malformed-internal-contained: Invalid SnappyRef metadata must not enter Board content as trusted internal state.
+
+      caller_obligations: {}
+
+    write:
+      description: Writes selected Board content as durable SnappyRef metadata and, when safe, a native image.
+
+      input:
+        content:
+          type: ClipboardExportContent
+          description: Selected Placements, annotations, relative geometry, and shared stack order.
+
+      outcomes:
+        written:
+          item_count: Integer
+          native_image: Boolean
+        empty: {}
+        unavailable:
+          reason: ClipboardFailure
+
+      behavior:
+        internal-always: Every non-empty write must include the SnappyRef representation needed for lossless in-app paste.
+        structure-preserved: Internal metadata must preserve supported mixed items, relative geometry, and relative stack order.
+        single-image-native: Exactly one loaded Placement with no selected annotations may also publish native RGBA image content.
+        multi-or-mixed-metadata-only: Multi-item or mixed Placement and annotation selections must publish only internal metadata.
+        native-image-bounded: Native image export must be omitted when its RGBA payload exceeds 200 MiB or its dimensions overflow.
+
+      caller_obligations: {}
+
+  guarantees:
+    internal-round-trip: Copy and paste within SnappyRef must preserve supported item kinds, relative geometry, and relative stack order while assigning new durable identities at paste.
+    external-content-normalized: Paths, URLs, PureRef content, and native pixels leave Clipboard Exchange as typed source or document intent.
+    system-clipboard-boundary: Platform clipboard formats and ownership remain inside Clipboard Exchange.
+    empty-repeat-safe: Reading or writing an empty clipboard selection makes no Board change.
+
+  requires: {}
+
+decisions:
+  dual-representation-copy:
+    current: Always write lossless SnappyRef metadata and add native pixels only for one safely bounded loaded image.
+    affects:
+      - "[[#/interface/operations/write]]"
+      - "[[#/interface/guarantees/internal-round-trip]]"
+    reasons:
+      - Internal metadata preserves mixed content and Board-space relationships.
+      - Native pixels let one copied image work in other applications.
+      - Rasterizing a mixed selection would invent flattening and bounds behavior.
+    consequences:
+      - Multi-item and mixed selections remain fully useful inside SnappyRef but expose metadata to other apps.
+      - A single image can paste into both SnappyRef and native image consumers.
+    reconsider_when:
+      - SnappyRef accepts an explicit flatten-selection export contract.
+    explored_paths:
+      native-image-for-every-selection:
+        status: rejected
+        reason: It requires unapproved flattening, annotation rendering, and selection-bounds semantics.
+      internal-only-copy:
+        status: rejected
+        reason: A single copied image should remain useful outside SnappyRef.
+    sources: []
+
+  paste-precedence:
+    current: Prefer valid SnappyRef metadata, then image URL text, platform paths, PureRef binary, and finally native image pixels.
+    affects:
+      - "[[#/interface/operations/read]]"
+    reasons:
+      - The richest trusted representation should win when the clipboard exposes several formats for the same content.
+      - Explicit textual or file source identity is preferable to a flattened native bitmap.
+    consequences:
+      - One paste action creates one interpretation instead of duplicating equivalent clipboard formats.
+      - Invalid internal metadata cannot shadow a valid supported external representation unless the clipboard is rejected as unsafe.
+    reconsider_when:
+      - A platform exposes a richer interoperable image-document format with stable semantics.
+    explored_paths: {}
+    sources: []

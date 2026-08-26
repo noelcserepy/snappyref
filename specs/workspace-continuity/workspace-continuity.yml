@@ -1,0 +1,142 @@
+schema: v0.1
+
+purpose:
+  outcome: Reopen SnappyRef in a usable workspace that preserves the user's last context and global interaction choices.
+  owns:
+    - Persisted active Board identity and restoration request.
+    - Window, sidebar, and recent Search state.
+    - Global user settings.
+    - Defaults for a new or incomplete workspace session.
+  excludes:
+    - Board document content and history.
+    - Canvas action behavior.
+    - Semantic Search model and query behavior.
+    - App update state.
+
+interface:
+  operations:
+    restore:
+      description: Restores the latest valid workspace session or supplies usable defaults.
+
+      input:
+        available_boards:
+          type: BoardCatalog
+          description: The Boards available in the current workspace.
+
+      outcomes:
+        restored:
+          workspace: WorkspaceState
+        defaulted:
+          workspace: WorkspaceState
+        unavailable:
+          reason: WorkspaceContinuityFailure
+
+      behavior:
+        versioned-payload-selection: restored must use the newest supported workspace payload that parses successfully as one unit.
+        missing-fields-default: Fields absent from an older supported payload must use their schema defaults.
+        invalid-payload-defaulted: A payload that cannot be parsed or whose version is unsupported must fall back to legacy session values or fresh defaults as one unit.
+        stale-reference-contained: After payload restoration, a missing Board or unusable window bounds may fall back without discarding the other restored session state.
+        usable-default: defaulted must provide a coherent active Board identity or a restoration request that Active Board can resolve.
+
+      caller_obligations:
+        current-board-catalog: Supply the current Board catalog before restoration.
+
+    record:
+      description: Records the latest workspace state without blocking interaction.
+
+      input:
+        workspace:
+          type: WorkspaceState
+          description: The active Board identity, window, sidebar, recent searches, and global settings to preserve.
+
+      outcomes:
+        accepted: {}
+        unchanged: {}
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        deferred-persistence: accepted must return before durable session storage completes.
+        latest-state-wins: Pending equivalent session writes may coalesce, but the latest accepted state must become durable.
+        repeat-safe: Recording the same state again produces unchanged or converges on the same durable state.
+
+      caller_obligations: {}
+
+    change-settings:
+      description: Applies one validated global workspace setting change.
+
+      input:
+        change:
+          type: WorkspaceSettingChange
+          description: A closed change to pointer mode, Placement Gap, automatic image scaling, rotation snapping, colors, text-box background, or always-on-top behavior.
+
+      outcomes:
+        changed:
+          settings: WorkspaceSettings
+        unchanged:
+          settings: WorkspaceSettings
+        rejected:
+          reason: WorkspaceSettingRejection
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        global-effect: changed must apply to later relevant interactions across Boards.
+        invalid-setting-rejected: Out-of-range or malformed setting values produce rejected without changing settings.
+        repeat-safe: Reapplying the current value produces unchanged.
+
+      caller_obligations: {}
+
+  guarantees:
+    session-separate-from-document: Workspace and window state must not enter Board undo history.
+    interaction-nonblocking: Session persistence must not block canvas interaction.
+    zero-default-placement-gap: A workspace without a saved Placement Gap starts at 0 board-space units.
+    mouse-default-pointer-mode: A workspace without a saved Pointer Mode starts in Mouse mode.
+    board-view-excluded: Workspace payloads must not own per-Board viewport or background state.
+
+  requires:
+    board-catalog:
+      target: "[[board-document#/interface/operations/list-boards/outcomes/listed]]"
+      reason: Supplies valid Board identities for active Board restoration.
+    active-board-restoration:
+      target: "[[active-board#/interface/operations/activate/outcomes/activated]]"
+      reason: Resolves the restored Board identity and opens its Board-owned view and document.
+
+decisions:
+  session-payload-recovery:
+    current: Restore a supported parseable workspace payload as one unit, default missing schema fields, and fall back as one unit when the payload cannot be parsed.
+    affects:
+      - "[[#/interface/operations/restore]]"
+    reasons:
+      - One versioned payload keeps related workspace settings consistent.
+      - Schema defaults let older payloads omit fields added later.
+    consequences:
+      - Present malformed setting fields do not receive independent salvage during payload parsing.
+      - Missing Board identities and unusable window bounds are repaired after payload selection.
+    reconsider_when:
+      - Stored workspace corruption shows that field-level salvage preserves more valid state without admitting contradictory settings.
+    explored_paths:
+      field-by-field-payload-salvage:
+        status: rejected
+        reason: No accepted recovery policy defines validity and fallback for every persisted field independently.
+    sources:
+      - label: Store user session preferences in payload
+        url: https://github.com/noelcserepy/snappyref/commit/c3a09f29f9780e1075ec9e6b7e59bbc0182b9c34
+
+  fresh-workspace-defaults:
+    current: Start a workspace without saved global state in Mouse Pointer Mode with Placement Gap 0; the initial Board supplies its own default view.
+    affects:
+      - "[[#/interface/operations/restore]]"
+      - "[[#/interface/guarantees/zero-default-placement-gap]]"
+      - "[[#/interface/guarantees/mouse-default-pointer-mode]]"
+    reasons:
+      - Zero Placement Gap avoids adding spacing unless the user asks for it.
+      - Mouse mode matches the default wheel-navigation contract when no choice has been saved.
+    consequences:
+      - Saved global values override these defaults.
+      - New automatic layouts can place images edge to edge.
+      - Board Document owns the initial Board viewport and background.
+    reconsider_when:
+      - Measured first-session behavior shows that another default reduces immediate correction work.
+    explored_paths: {}
+    sources: []
