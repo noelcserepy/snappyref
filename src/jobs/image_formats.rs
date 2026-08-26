@@ -834,7 +834,11 @@ fn interpolate_channel(low: u8, high: u8, high_weight: f32) -> u8 {
     (low as f32 + (high as f32 - low as f32) * high_weight).round() as u8
 }
 
-fn resize_png_row(row: &[u8], color_type: png::ColorType, x_samples: &[AxisSample]) -> Vec<u8> {
+fn resize_png_row(
+    row: &[u8],
+    color_type: png::ColorType,
+    x_samples: &[AxisSample],
+) -> Result<Vec<u8>, String> {
     let mut resized = Vec::with_capacity(x_samples.len() * 4);
     match color_type {
         png::ColorType::Rgb => {
@@ -883,9 +887,11 @@ fn resize_png_row(row: &[u8], color_type: png::ColorType, x_samples: &[AxisSampl
                 resized.extend_from_slice(&[value, value, value, alpha]);
             }
         }
-        png::ColorType::Indexed => unreachable!("normalized PNG rows are not indexed"),
+        png::ColorType::Indexed => {
+            return Err("PNG row normalization left indexed output".to_owned());
+        }
     }
-    resized
+    Ok(resized)
 }
 
 /// Stream a static, non-interlaced PNG into its canvas-sized output without
@@ -942,7 +948,7 @@ fn decode_png_with_streaming_resize(
         .map_err(|error| format!("failed to decode PNG row: {error}"))?
     {
         if y_indices.get(target_y).copied() == Some(source_y) {
-            let resized = resize_png_row(row.data(), color_type, &x_samples);
+            let resized = resize_png_row(row.data(), color_type, &x_samples)?;
             while y_indices.get(target_y).copied() == Some(source_y) {
                 let start = target_y * row_len;
                 rgba[start..start + row_len].copy_from_slice(&resized);
