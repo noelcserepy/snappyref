@@ -5211,6 +5211,50 @@ fn completed_import_for_inactive_board_does_not_enter_active_canvas() {
 }
 
 #[test]
+fn completed_import_for_inactive_board_records_history_for_target_board() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-inactive-import-history");
+    let library = Library::initialize(root.clone()).unwrap();
+    let first = library.list_boards().unwrap().remove(0);
+    let image_path = library
+        .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let placement = library
+        .persist_imported_image(&image_path, "image/png", 1, 1, 4, egui::Pos2::ZERO, 1.0)
+        .unwrap();
+    let placement_id = placement.state.id;
+    let second = library.create_board("Second").unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.switch_to_board(second.id);
+
+    let mut loaded = test_loaded_item(placement_id, first.id);
+    loaded.placement = placement;
+    app.integrate_loaded_import(&ctx, loaded);
+
+    assert!(app.canvas.placement_for_id(placement_id).is_none());
+    app.switch_to_board(first.id);
+    app.undo_document_history(&ctx);
+
+    assert!(
+        library
+            .load_placements_for_board(first.id)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(app.status, "Undid Import image");
+
+    app.redo_document_history();
+
+    assert_eq!(
+        library.load_placements_for_board(first.id).unwrap().len(),
+        1
+    );
+    assert_eq!(app.status, "Redid Import image");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn completed_import_for_active_board_enters_active_canvas() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
