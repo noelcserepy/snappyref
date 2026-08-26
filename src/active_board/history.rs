@@ -5,7 +5,7 @@ use crate::library::storage::Library;
 
 #[derive(Default)]
 pub(crate) struct DocumentHistory {
-    boards: HashMap<i64, BoardHistory>,
+    histories_by_board: HashMap<i64, BoardHistory>,
 }
 
 #[derive(Default)]
@@ -48,7 +48,7 @@ pub(crate) struct HistoryApplied {
 
 impl DocumentHistory {
     pub(crate) fn record_applied(&mut self, board_id: i64, action: HistoryAction) {
-        let history = self.boards.entry(board_id).or_default();
+        let history = self.histories_by_board.entry(board_id).or_default();
         history.undo_stack.push(action);
         history.redo_stack.clear();
     }
@@ -70,7 +70,7 @@ impl DocumentHistory {
         board_id: i64,
         library: &Library,
     ) -> Result<Option<HistoryApplied>, String> {
-        let Some(history) = self.boards.get_mut(&board_id) else {
+        let Some(history) = self.histories_by_board.get_mut(&board_id) else {
             return Ok(None);
         };
         let Some(action) = history.undo_stack.pop() else {
@@ -91,7 +91,7 @@ impl DocumentHistory {
         board_id: i64,
         library: &Library,
     ) -> Result<Option<HistoryApplied>, String> {
-        let Some(history) = self.boards.get_mut(&board_id) else {
+        let Some(history) = self.histories_by_board.get_mut(&board_id) else {
             return Ok(None);
         };
         let Some(action) = history.redo_stack.pop() else {
