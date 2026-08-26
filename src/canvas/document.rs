@@ -855,10 +855,6 @@ impl CanvasState {
         self.render.pending_image_lod_loads.remove(&placement_id);
     }
 
-    pub fn evict_cached_asset(&mut self, asset_id: i64) {
-        self.render.asset_rgba_cache.remove(&asset_id);
-    }
-
     pub fn prune_cached_pixels_to_selected_items(&mut self) {
         let selected_asset_ids = self
             .document
@@ -935,6 +931,11 @@ impl CanvasState {
             return None;
         }
         if let Some(image) = self.rendered_placement_by_id_mut(placement.state.id) {
+            let content_changed = image.placement.state.asset_id != placement.state.asset_id;
+            if content_changed {
+                self.add_unresolved_placement(placement.clone());
+                return Some(placement);
+            }
             image.placement = placement;
             self.document
                 .rendered_placements

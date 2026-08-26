@@ -1553,7 +1553,6 @@ impl SnappyRefApp {
             self.search.close_overlay(Some(&mut self.canvas));
             self.search.reset_embedding_backfill();
         }
-        self.crop_flow.clear_undo_stack();
     }
 
     fn show_board_delete_confirmation(&mut self, ctx: &egui::Context) {
@@ -3601,7 +3600,6 @@ impl SnappyRefApp {
             return;
         }
         let Some(applied) = self.document_history.undo(self.active_board_id) else {
-            self.undo_crop_fallback(ctx);
             return;
         };
         let replay = self.apply_history_to_active_canvas(&applied.action, applied.direction);
@@ -3739,19 +3737,6 @@ impl SnappyRefApp {
             }
         }
         Ok(())
-    }
-
-    fn undo_crop_fallback(&mut self, ctx: &egui::Context) {
-        match self.crop_flow.undo_last_crop(
-            ctx,
-            &mut self.canvas,
-            self.library.as_ref(),
-            self.active_board_id,
-        ) {
-            Ok(true) => self.status = "Undid crop".to_owned(),
-            Ok(false) => {}
-            Err(error) => self.status = error,
-        }
     }
 
     fn handle_selection_shortcuts(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {

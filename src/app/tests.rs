@@ -15,8 +15,6 @@ use crate::search::palette::{
 };
 #[cfg(feature = "semantic-search")]
 use crate::search::semantic::{LocalModelStoreStatus, SearchResultAssetEntry};
-#[cfg(feature = "semantic-search")]
-use crate::sources::crop::CropUndoEntry;
 use crate::ui::sidebar::{
     SidebarTab, block_sidebar_input, should_close_sidebar, show_sidebar, sidebar_rect,
 };
@@ -679,7 +677,11 @@ fn late_undo_content_failure_is_ignored_after_newer_replay() {
         },
         super::HistoryDirection::Forward,
     );
-    assert!(replay.placements_needing_content.is_empty());
+    assert_eq!(replay.placements_needing_content.len(), 1);
+    assert_eq!(
+        replay.placements_needing_content[0].state.asset_id,
+        Some(202)
+    );
     app.status = "Redid Crop image".to_owned();
 
     let result = crate::jobs::ImagePrepResult::Failed {
@@ -788,6 +790,141 @@ fn undo_and_redo_defer_storage_until_explicit_flush() {
     storage_lock.execute_batch("COMMIT").unwrap();
     app.flush_persistence();
     assert_eq!(library.load_canvas_annotations().unwrap(), vec![annotation]);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-crop-document-history");
+    let library = Library::initialize(root.clone()).unwrap();
+    let source_path = library
+        .store_rgba_image("source", &[255; 2 * 2 * 4], 2, 2)
+        .unwrap();
+    let source = library
+        .persist_imported_image(
+            &source_path,
+            "image/png",
+            2,
+            2,
+            2 * 2 * 4,
+            egui::Pos2::ZERO,
+            1.0,
+        )
+        .unwrap();
+    let source_asset_id = source.require_loaded_asset().id;
+    let cropped_path = library
+        .store_cropped_rgba_image("source-crop", &[0, 255, 0, 255], 1, 1)
+        .unwrap();
+    let cropped_file_size = fs::metadata(&cropped_path).unwrap().len();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    app.canvas.add_prepared_placement_image(
+        &ctx,
+        PreparedPlacementImage {
+            target_board_id: app.active_board_id,
+            queue_id: None,
+            placement: source.clone(),
+            preview_rgba: vec![255; 2 * 2 * 4],
+            preview_width: 2,
+            preview_height: 2,
+            animated_preview: None,
+            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
+            loaded_lod: crate::data::CanvasImageLod::Working,
+            existing_load_diagnostics: None,
+            origin: crate::jobs::ImportOrigin::Existing,
+            trace: None,
+        },
+    );
+    app.canvas
+        .warm_cached_pixels_for_item(&library, source.state.id)
+        .unwrap();
+
+    app.integrate_cropped_import_result(
+        &ctx,
+        crate::jobs::PreparedCropPreview {
+            placement_id: source.state.id,
+            stored_path: cropped_path.clone(),
+            width: 1,
+            height: 1,
+            file_size: cropped_file_size,
+            preview_rgba: vec![0, 255, 0, 255],
+            preview_width: 1,
+            preview_height: 1,
+            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
+            loaded_lod: crate::data::CanvasImageLod::Working,
+            crop_offset_local: egui::vec2(0.5, 0.5),
+        },
+    );
+    let cropped_asset_id = app
+        .canvas
+        .placement_for_id(source.state.id)
+        .unwrap()
+        .require_loaded_asset()
+        .id;
+    assert_ne!(cropped_asset_id, source_asset_id);
+
+    app.undo_document_history(&ctx);
+    let status_after_undo = app.status.clone();
+    assert_eq!(status_after_undo, "Undid Crop image");
+    assert_eq!(
+        app.canvas
+            .placement_for_id(source.state.id)
+            .unwrap()
+            .require_loaded_asset()
+            .id,
+        source_asset_id
+    );
+    assert_eq!(
+        app.canvas
+            .preview_for_placement_id(source.state.id)
+            .unwrap()
+            .texture_size,
+        egui::vec2(2.0, 2.0)
+    );
+
+    app.undo_document_history(&ctx);
+    assert_eq!(app.status, status_after_undo);
+    assert_eq!(
+        app.canvas
+            .placement_for_id(source.state.id)
+            .unwrap()
+            .require_loaded_asset()
+            .id,
+        source_asset_id
+    );
+
+    app.redo_document_history(&ctx);
+    app.flush_persistence();
+
+    assert_eq!(app.status, "Redid Crop image");
+    assert_eq!(
+        app.canvas
+            .placement_for_id(source.state.id)
+            .unwrap()
+            .require_loaded_asset()
+            .id,
+        cropped_asset_id
+    );
+    assert_eq!(
+        app.canvas
+            .preview_for_placement_id(source.state.id)
+            .unwrap()
+            .texture_size,
+        egui::vec2(1.0, 1.0)
+    );
+    assert_eq!(
+        library.load_placements().unwrap()[0]
+            .require_loaded_asset()
+            .id,
+        cropped_asset_id
+    );
+    assert_eq!(
+        library.load_asset(cropped_asset_id).unwrap().id,
+        cropped_asset_id
+    );
+    assert!(cropped_path.exists());
 
     let _ = fs::remove_dir_all(root);
 }
@@ -2724,7 +2861,7 @@ fn rapid_board_switches_ignore_stale_import_completions_and_last_switch_wins() {
 
 #[cfg(feature = "semantic-search")]
 #[test]
-fn switching_boards_clears_selection_search_and_transient_undo() {
+fn switching_boards_clears_selection_and_search() {
     let ctx = egui::Context::default();
     let root = temp_library_root("snappyref-board-switch-cleanup");
     let library = Library::initialize(root.clone()).unwrap();
@@ -2762,19 +2899,10 @@ fn switching_boards_clears_selection_search_and_transient_undo() {
     );
     app.canvas.select_placements(&[1]);
     app.search.overlay.open = true;
-    app.crop_flow.push_test_undo_entry(CropUndoEntry {
-        previous_record: placement,
-        previous_rgba: vec![255, 255, 255, 255].into(),
-        previous_preview_width: 1,
-        previous_preview_height: 1,
-        removed_asset_id: 2,
-    });
-
     app.switch_to_board(second.id);
 
     assert!(!app.canvas.has_selection());
     assert!(!app.search.is_open());
-    assert!(app.crop_flow.undo_stack_is_empty());
 
     let _ = fs::remove_dir_all(root);
 }
