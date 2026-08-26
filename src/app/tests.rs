@@ -605,6 +605,39 @@ fn undo_delete_annotation_patches_active_canvas_without_board_reload() {
 }
 
 #[test]
+fn undo_delete_restores_last_placement_to_active_canvas() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-undo-delete-last-placement");
+    let library = Library::initialize(root.clone()).unwrap();
+    let source = library
+        .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let placement = library
+        .persist_imported_image(&source, "image/png", 1, 1, 4, egui::pos2(40.0, 60.0), 1.0)
+        .unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    add_loaded_record(&mut app, &ctx, placement.clone());
+    app.canvas.select_placements(&[placement.state.id]);
+
+    app.delete_selected_items_from_board(test_screen_rect());
+    assert!(app.canvas.placement_for_id(placement.state.id).is_none());
+
+    app.undo_document_history(&ctx);
+    app.flush_persistence();
+
+    assert_eq!(app.status, "Undid Deleted 1 image from board");
+    assert!(
+        app.canvas
+            .placement_for_id(placement.state.id)
+            .is_some_and(|placement| placement.is_loaded())
+    );
+    assert_eq!(library.load_placements().unwrap().len(), 1);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn undo_and_redo_defer_storage_until_explicit_flush() {
     let ctx = egui::Context::default();
     let root = temp_library_root("snappyref-history-deferred-persistence");
@@ -660,7 +693,7 @@ fn undo_and_redo_defer_storage_until_explicit_flush() {
     assert!(library.load_canvas_annotations().unwrap().is_empty());
 
     storage_lock.execute_batch("BEGIN IMMEDIATE").unwrap();
-    app.redo_document_history();
+    app.redo_document_history(&ctx);
 
     assert_eq!(app.status, "Redid Added textbox");
     assert_eq!(
@@ -4595,6 +4628,190 @@ fn inspect_placement_click_hold_flash_writes_artifact() {
 
 #[cfg(feature = "semantic-search")]
 #[test]
+fn inspect_delete_undo_redo_placement_writes_artifact() {
+    let scenario_name = inspect_scenario_name("delete-undo-redo-placement");
+    let mut scenario = InspectScenario::new(scenario_name);
+    scenario.event(
+        "seed",
+        serde_json::json!({
+            "seed": "single-blue-placement",
+            "purpose": "click placement, delete it, then exercise Undo and Redo shortcuts",
+        }),
+    );
+
+    let root = temp_library_root("snappyref-inspect-delete-undo-redo-placement");
+    let library = Library::initialize(root.clone()).unwrap();
+    let blue_path = library
+        .store_rgba_image(
+            "blue-undo-redo",
+            &solid_rgba([78, 126, 226, 255], 140, 100),
+            140,
+            100,
+        )
+        .unwrap();
+    let blue = library
+        .persist_imported_image(
+            &blue_path,
+            "image/png",
+            140,
+            100,
+            140 * 100 * 4,
+            egui::pos2(0.0, 0.0),
+            1.0,
+        )
+        .unwrap();
+
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    let mut harness = app_full_harness(app);
+    let ctx = harness.ctx.clone();
+    harness.state_mut().canvas.add_prepared_placement_image(
+        &ctx,
+        inspect_prepared_loaded_placement(
+            blue.clone(),
+            [78, 126, 226, 255],
+            140,
+            100,
+            None,
+            crate::jobs::ImportOrigin::Existing,
+        ),
+    );
+    harness.step();
+
+    let placement_id = blue.state.id;
+    let click_screen = inspect_world_to_screen(blue.state.geometry.center, test_screen_rect());
+    scenario.target(
+        "blue placement",
+        "placement",
+        egui::Rect::from_center_size(click_screen, egui::vec2(140.0, 100.0)),
+    );
+    scenario.capture_screen("screen-000-before-click", &mut harness);
+
+    scenario.action("click blue placement", click_screen);
+    inspect_click_at(&harness, click_screen, egui::Modifiers::NONE);
+    harness.step();
+    scenario.assertion(
+        "pointer click selects placement",
+        harness.state().canvas.selected_placement_ids() == vec![placement_id],
+    );
+    scenario.capture_screen("screen-001-selected", &mut harness);
+
+    scenario.event(
+        "action",
+        serde_json::json!({"name": "press Delete shortcut"}),
+    );
+    harness.key_press(egui::Key::Backspace);
+    harness.step();
+    scenario.fact(
+        "placement.after-delete",
+        serde_json::json!({
+            "present": harness.state().canvas.placement_for_id(placement_id).is_some(),
+            "status": harness.state().status,
+        }),
+    );
+    scenario.assertion(
+        "Delete removes placement from active canvas",
+        harness
+            .state()
+            .canvas
+            .placement_for_id(placement_id)
+            .is_none(),
+    );
+    scenario.capture_screen("screen-002-deleted", &mut harness);
+
+    let undo_modifiers = egui::Modifiers {
+        command: true,
+        ..Default::default()
+    };
+    scenario.event(
+        "action",
+        serde_json::json!({"name": "press Command-Z Undo shortcut"}),
+    );
+    for pressed in [true, false] {
+        harness.event_modifiers(
+            egui::Event::Key {
+                key: egui::Key::Z,
+                physical_key: Some(egui::Key::Z),
+                pressed,
+                repeat: false,
+                modifiers: undo_modifiers,
+            },
+            undo_modifiers,
+        );
+    }
+    harness.step();
+    let restored = harness.state().canvas.placement_for_id(placement_id);
+    scenario.fact(
+        "placement.after-undo",
+        serde_json::json!({
+            "present": restored.is_some(),
+            "loaded": restored.as_ref().is_some_and(|placement| placement.is_loaded()),
+            "status": harness.state().status,
+        }),
+    );
+    scenario.assertion(
+        "Undo restores loaded placement to active canvas",
+        restored.is_some_and(|placement| placement.is_loaded()),
+    );
+    scenario.capture_screen("screen-003-undone", &mut harness);
+
+    let redo_modifiers = egui::Modifiers {
+        command: true,
+        shift: true,
+        ..Default::default()
+    };
+    scenario.event(
+        "action",
+        serde_json::json!({"name": "press Command-Shift-Z Redo shortcut"}),
+    );
+    for pressed in [true, false] {
+        harness.event_modifiers(
+            egui::Event::Key {
+                key: egui::Key::Z,
+                physical_key: Some(egui::Key::Z),
+                pressed,
+                repeat: false,
+                modifiers: redo_modifiers,
+            },
+            redo_modifiers,
+        );
+    }
+    harness.step();
+    scenario.fact(
+        "placement.after-redo",
+        serde_json::json!({
+            "present": harness.state().canvas.placement_for_id(placement_id).is_some(),
+            "status": harness.state().status,
+        }),
+    );
+    scenario.assertion(
+        "Redo removes placement from active canvas again",
+        harness
+            .state()
+            .canvas
+            .placement_for_id(placement_id)
+            .is_none(),
+    );
+    scenario.capture_screen("screen-004-redone", &mut harness);
+
+    harness.state_mut().flush_persistence();
+    scenario.assertion(
+        "explicit flush makes final Redo durable",
+        library.load_placements().unwrap().is_empty(),
+    );
+
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(feature = "semantic-search")]
+#[test]
 fn dragging_multiple_library_search_results_centers_provisional_group_on_pointer() {
     let root = temp_library_root("snappyref-library-search-pointer-drag-multi-center");
     let library = Library::initialize(root.clone()).unwrap();
@@ -5324,7 +5541,7 @@ fn completed_import_for_inactive_board_records_history_for_target_board() {
     );
     assert_eq!(app.status, "Undid Import image");
 
-    app.redo_document_history();
+    app.redo_document_history(&ctx);
     app.flush_persistence();
 
     assert_eq!(

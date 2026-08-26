@@ -25,6 +25,7 @@ if [[ "$scenario" == "--help" || "$scenario" == "-h" ]]; then
   echo "  delete-board-modal-flash"
   echo "  search-palette-footer"
   echo "  placement-click-hold-flash"
+  echo "  delete-undo-redo-placement"
   echo "  compact-equal-size-images"
   echo "  compact-mixed-column-images"
   echo "  compact-windows-column-images"
@@ -42,6 +43,7 @@ if [[ "$scenario" == "--list" ]]; then
   echo "delete-board-modal-flash"
   echo "search-palette-footer"
   echo "placement-click-hold-flash"
+  echo "delete-undo-redo-placement"
   echo "compact-equal-size-images"
   echo "compact-mixed-column-images"
   echo "compact-windows-column-images"
@@ -78,6 +80,9 @@ case "$scenario" in
     ;;
   placement-click-hold-flash)
     test_filter="inspect_placement_click_hold_flash_writes_artifact"
+    ;;
+  delete-undo-redo-placement)
+    test_filter="inspect_delete_undo_redo_placement_writes_artifact"
     ;;
   compact-equal-size-images)
     test_filter="inspect_compact_equal_size_images_writes_artifact"

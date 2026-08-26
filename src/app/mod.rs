@@ -677,6 +677,11 @@ struct BoardSummariesCache {
     summaries: Vec<crate::data::BoardSummary>,
 }
 
+struct HistoryCanvasReplay {
+    document_changes: crate::canvas::CanvasDocumentChanges,
+    placements_needing_content: Vec<crate::data::Placement>,
+}
+
 impl BoardSummariesCache {
     fn summaries(&self) -> Vec<crate::data::BoardSummary> {
         self.summaries.clone()
@@ -3534,7 +3539,7 @@ impl SnappyRefApp {
             input.modifiers.command && input.modifiers.shift && input.key_pressed(egui::Key::Z)
         });
         if redo_requested {
-            self.redo_document_history();
+            self.redo_document_history(ctx);
         } else if undo_requested {
             self.undo_document_history(ctx);
         }
@@ -3549,15 +3554,22 @@ impl SnappyRefApp {
             self.undo_crop_fallback(ctx);
             return;
         };
-        let changes = self.apply_history_to_active_canvas(&applied.action, applied.direction);
-        if let Err(error) = self.document_persistence.enqueue_document_changes(changes) {
+        let replay = self.apply_history_to_active_canvas(&applied.action, applied.direction);
+        let persistence_error = self
+            .document_persistence
+            .enqueue_document_changes(replay.document_changes)
+            .err();
+        let content_error = self
+            .load_history_placement_content(ctx, replay.placements_needing_content)
+            .err();
+        if let Some(error) = persistence_error.or(content_error) {
             self.status = error;
             return;
         }
         self.status = format!("Undid {}", applied.label);
     }
 
-    fn redo_document_history(&mut self) {
+    fn redo_document_history(&mut self, ctx: &egui::Context) {
         if self.library.is_none() {
             self.status = "Storage unavailable".to_owned();
             return;
@@ -3565,8 +3577,15 @@ impl SnappyRefApp {
         let Some(applied) = self.document_history.redo(self.active_board_id) else {
             return;
         };
-        let changes = self.apply_history_to_active_canvas(&applied.action, applied.direction);
-        if let Err(error) = self.document_persistence.enqueue_document_changes(changes) {
+        let replay = self.apply_history_to_active_canvas(&applied.action, applied.direction);
+        let persistence_error = self
+            .document_persistence
+            .enqueue_document_changes(replay.document_changes)
+            .err();
+        let content_error = self
+            .load_history_placement_content(ctx, replay.placements_needing_content)
+            .err();
+        if let Some(error) = persistence_error.or(content_error) {
             self.status = error;
             return;
         }
@@ -3577,8 +3596,9 @@ impl SnappyRefApp {
         &mut self,
         action: &HistoryAction,
         direction: HistoryDirection,
-    ) -> crate::canvas::CanvasDocumentChanges {
+    ) -> HistoryCanvasReplay {
         let mut document_changes = crate::canvas::CanvasDocumentChanges::default();
+        let mut placements_needing_content = Vec::new();
         for change in &action.annotations {
             let Some(target) = change.annotation_target(direction) else {
                 continue;
@@ -3592,8 +3612,12 @@ impl SnappyRefApp {
             let Some(target) = change.placement_target(direction) else {
                 continue;
             };
-            self.canvas
-                .apply_placement_history_state(Some(target.clone()));
+            if let Some(placement) = self
+                .canvas
+                .apply_placement_history_state(Some(target.clone()))
+            {
+                placements_needing_content.push(placement);
+            }
             document_changes.updated_placements.push(target.state);
         }
 
@@ -3604,7 +3628,57 @@ impl SnappyRefApp {
                 document_changes.stack_order = Some(stack_order);
             }
         }
-        document_changes
+        HistoryCanvasReplay {
+            document_changes,
+            placements_needing_content,
+        }
+    }
+
+    fn load_history_placement_content(
+        &mut self,
+        ctx: &egui::Context,
+        placements: Vec<crate::data::Placement>,
+    ) -> Result<(), String> {
+        let Some(library) = self.library.clone() else {
+            return Err("Storage unavailable".to_owned());
+        };
+        for placement in placements {
+            if let Some(import_worker) = &self.import_worker {
+                import_worker.enqueue(crate::jobs::ImagePrepRequest::LoadExisting {
+                    target_board_id: self.active_board_id,
+                    queue_id: None,
+                    placement,
+                    max_texture_side: self.max_texture_side,
+                    canvas_image_settings: crate::jobs::CanvasImageSettings {
+                        max_side: self.settings.canvas_image_max_side,
+                    },
+                    target_lod: crate::data::CanvasImageLod::Working,
+                    priority: crate::jobs::ExistingLoadPriority::Background,
+                    trace: None,
+                })?;
+                continue;
+            }
+            match crate::jobs::load_existing(
+                &library,
+                self.active_board_id,
+                None,
+                placement,
+                self.max_texture_side,
+                crate::jobs::CanvasImageSettings {
+                    max_side: self.settings.canvas_image_max_side,
+                },
+                crate::data::CanvasImageLod::Working,
+                None,
+                self.wgpu_render_state.as_ref(),
+            ) {
+                crate::jobs::ImagePrepResult::Loaded(loaded) => {
+                    self.integrate_loaded_import(ctx, loaded);
+                }
+                crate::jobs::ImagePrepResult::Failed { error, .. } => return Err(error),
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     fn undo_crop_fallback(&mut self, ctx: &egui::Context) {
