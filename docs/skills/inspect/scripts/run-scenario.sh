@@ -24,6 +24,7 @@ if [[ "$scenario" == "--help" || "$scenario" == "-h" ]]; then
   echo "  pending-drop-batch-undo"
   echo "  blue-image-search-drag"
   echo "  delete-board-modal-flash"
+  echo "  board-lifecycle-undo-redo"
   echo "  search-palette-footer"
   echo "  placement-click-hold-flash"
   echo "  delete-undo-redo-placement"
@@ -44,6 +45,7 @@ if [[ "$scenario" == "--list" ]]; then
   echo "pending-drop-batch-undo"
   echo "blue-image-search-drag"
   echo "delete-board-modal-flash"
+  echo "board-lifecycle-undo-redo"
   echo "search-palette-footer"
   echo "placement-click-hold-flash"
   echo "delete-undo-redo-placement"
@@ -81,6 +83,9 @@ case "$scenario" in
     ;;
   delete-board-modal-flash)
     test_filter="inspect_delete_board_modal_flash_writes_artifact"
+    ;;
+  board-lifecycle-undo-redo)
+    test_filter="inspect_board_lifecycle_undo_redo_writes_artifact"
     ;;
   search-palette-footer)
     test_filter="inspect_search_palette_footer_writes_artifact"

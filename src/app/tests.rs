@@ -672,10 +672,10 @@ fn late_undo_content_failure_is_ignored_after_newer_replay() {
         Vec::new(),
         None,
     );
-    let replay = app.apply_history_to_active_canvas(
-        action.document_action().unwrap(),
-        super::HistoryDirection::Forward,
-    );
+    let super::HistoryAction::Document(action) = action else {
+        panic!("expected document history action");
+    };
+    let replay = app.apply_history_to_active_canvas(&action, super::HistoryDirection::Forward);
     assert_eq!(replay.placements_needing_content.len(), 1);
     assert_eq!(
         replay.placements_needing_content[0].state.asset_id,
@@ -4501,6 +4501,295 @@ fn inspect_delete_board_modal_flash_writes_artifact() {
     scenario.assertion(
         "sidebar remains open behind modal",
         harness.state().sidebar_open,
+    );
+
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(feature = "semantic-search")]
+#[test]
+fn inspect_board_lifecycle_undo_redo_writes_artifact() {
+    let scenario_name = inspect_scenario_name("board-lifecycle-undo-redo");
+    let mut scenario = InspectScenario::new(scenario_name);
+    scenario.event(
+        "scenario.seed",
+        serde_json::json!({
+            "seed": "one-initial-board",
+            "purpose": "pointer-create, pointer-rename, confirmed pointer-delete, then keyboard lifecycle replay",
+        }),
+    );
+
+    let root = temp_library_root("snappyref-inspect-board-lifecycle");
+    let library = Library::initialize(root.clone()).unwrap();
+    let first = library.list_boards().unwrap()[0].clone();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    app.sidebar_open = true;
+    app.sidebar_tab = SidebarTab::Boards;
+    app.settings.semantic_search_first_launch_prompt_seen = true;
+    let mut harness = app_full_harness_with_step_dt(app, 0.1);
+    harness.step();
+    scenario.capture_screen("screen-000-initial-board", &mut harness);
+
+    let create_rect = harness.get_by_label("New board").rect();
+    scenario.target("sidebar.new-board", "button", create_rect);
+    scenario.action("pointer click New board", create_rect.center());
+    inspect_click_at(&harness, create_rect.center(), egui::Modifiers::NONE);
+    harness.step();
+    let created = library
+        .list_boards()
+        .unwrap()
+        .into_iter()
+        .find(|board| board.id != first.id)
+        .unwrap();
+    scenario.assertion(
+        "pointer create activates one exact new Board",
+        created.name == "Board 2" && harness.state().active_board_id == created.id,
+    );
+    scenario.capture_screen("screen-001-created-board", &mut harness);
+
+    let source = library
+        .store_rgba_image(
+            "lifecycle-blue",
+            &solid_rgba([78, 126, 226, 255], 140, 100),
+            140,
+            100,
+        )
+        .unwrap();
+    let placement = library
+        .persist_imported_image(
+            &source,
+            "image/png",
+            140,
+            100,
+            140 * 100 * 4,
+            egui::pos2(80.0, -30.0),
+            1.0,
+        )
+        .unwrap();
+    let expected_view = crate::data::ViewportState {
+        camera_pan_x: 90.0,
+        camera_pan_y: -45.0,
+        camera_zoom: 1.25,
+        canvas_background: CanvasBackground::Grid,
+    };
+    harness
+        .state_mut()
+        .canvas
+        .apply_viewport_state(&expected_view);
+    let ctx = harness.ctx.clone();
+    harness.state_mut().canvas.add_prepared_placement_image(
+        &ctx,
+        inspect_prepared_loaded_placement(
+            placement.clone(),
+            [78, 126, 226, 255],
+            140,
+            100,
+            None,
+            crate::jobs::ImportOrigin::Existing,
+        ),
+    );
+    for _ in 0..7 {
+        harness.step();
+    }
+
+    let board_name_rect = harness.get_by_label("Board Board 2").rect();
+    scenario.target("sidebar.created-board-name", "button", board_name_rect);
+    scenario.action(
+        "pointer double-click Board 2 name",
+        board_name_rect.center(),
+    );
+    harness.get_by_label("Board Board 2").click();
+    harness.step();
+    harness.get_by_label("Board Board 2").click();
+    harness.step();
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::A);
+    harness.event(egui::Event::Text("Lifecycle Board".to_owned()));
+    harness.key_press(egui::Key::Enter);
+    harness.step();
+    let pointer_rename_committed =
+        harness.state().board_summaries().iter().any(|summary| {
+            summary.board.id == created.id && summary.board.name == "Lifecycle Board"
+        });
+    scenario.fact(
+        "board-lifecycle.rename-harness",
+        serde_json::json!({
+            "pointer_double_click_committed": pointer_rename_committed,
+            "limitation": "egui_kittest did not expose the overlapping board-row title response as a double click",
+        }),
+    );
+    if !pointer_rename_committed {
+        harness.state_mut().handle_board_action(Some(
+            crate::ui::sidebar::SidebarBoardAction::RenameBoard(
+                created.id,
+                "Lifecycle Board".to_owned(),
+            ),
+        ));
+        harness.step();
+    }
+    scenario.assertion(
+        "rename action commits the exact requested name",
+        harness.state().board_summaries().iter().any(|summary| {
+            summary.board.id == created.id && summary.board.name == "Lifecycle Board"
+        }),
+    );
+    scenario.capture_screen("screen-002-renamed-board-with-content", &mut harness);
+
+    let delete_rect = harness.get_by_label("Delete board Lifecycle Board").rect();
+    scenario.action("pointer click Board delete", delete_rect.center());
+    inspect_click_at(&harness, delete_rect.center(), egui::Modifiers::NONE);
+    harness.step();
+    scenario.capture_screen("screen-003-delete-confirmation", &mut harness);
+    let confirm_rect = harness.get_by_label("Delete board").rect();
+    scenario.action("pointer click delete confirmation", confirm_rect.center());
+    inspect_click_at(&harness, confirm_rect.center(), egui::Modifiers::NONE);
+    harness.step();
+    scenario.assertion(
+        "confirmed delete activates the valid fallback",
+        harness.state().active_board_id == first.id
+            && !harness
+                .state()
+                .board_summaries()
+                .iter()
+                .any(|summary| summary.board.id == created.id),
+    );
+    scenario.capture_screen("screen-004-deleted-fallback-active", &mut harness);
+
+    scenario.event(
+        "action",
+        serde_json::json!({"name": "press Command-Z to restore deleted Board"}),
+    );
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::Z);
+    harness.step();
+    let restored = harness.state().canvas.placement_for_id(placement.state.id);
+    scenario.fact(
+        "board-lifecycle.after-delete-undo",
+        serde_json::json!({
+            "expected_board_id": created.id,
+            "active_board_id": harness.state().active_board_id,
+            "name": harness.state().board_summaries().iter()
+                .find(|summary| summary.board.id == created.id)
+                .map(|summary| summary.board.name.clone()),
+            "placement_id": restored.as_ref().map(|placement| placement.state.id),
+            "viewport": {
+                "pan_x": harness.state().canvas.viewport_state().camera_pan_x,
+                "pan_y": harness.state().canvas.viewport_state().camera_pan_y,
+                "zoom": harness.state().canvas.viewport_state().camera_zoom,
+                "background": harness.state().canvas.viewport_state().canvas_background.as_str(),
+            },
+        }),
+    );
+    scenario.assertion(
+        "Undo restores exact Board identity, name, content, and view",
+        harness.state().active_board_id == created.id
+            && harness.state().board_summaries().iter().any(|summary| {
+                summary.board.id == created.id && summary.board.name == "Lifecycle Board"
+            })
+            && restored.is_some_and(|placement| placement.is_loaded())
+            && harness.state().canvas.viewport_state() == expected_view,
+    );
+    scenario.capture_screen("screen-005-delete-undone-content-restored", &mut harness);
+
+    scenario.event(
+        "action",
+        serde_json::json!({"name": "press Command-Shift-Z to delete Board again"}),
+    );
+    harness.key_press_modifiers(
+        egui::Modifiers {
+            command: true,
+            shift: true,
+            ..Default::default()
+        },
+        egui::Key::Z,
+    );
+    harness.step();
+    scenario.assertion(
+        "Redo deletes the same Board and restores fallback",
+        harness.state().active_board_id == first.id
+            && !harness
+                .state()
+                .board_summaries()
+                .iter()
+                .any(|summary| summary.board.id == created.id),
+    );
+
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::Z);
+    harness.step();
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::Z);
+    harness.step();
+    scenario.assertion(
+        "second Undo restores the exact pre-rename name",
+        harness.state().active_board_id == created.id
+            && harness
+                .state()
+                .board_summaries()
+                .iter()
+                .any(|summary| summary.board.id == created.id && summary.board.name == "Board 2"),
+    );
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::Z);
+    harness.step();
+    scenario.assertion(
+        "third Undo reverses creation to the exact prior active Board",
+        harness.state().active_board_id == first.id
+            && !harness
+                .state()
+                .board_summaries()
+                .iter()
+                .any(|summary| summary.board.id == created.id),
+    );
+
+    let redo = egui::Modifiers {
+        command: true,
+        shift: true,
+        ..Default::default()
+    };
+    harness.key_press_modifiers(redo, egui::Key::Z);
+    harness.step();
+    scenario.assertion(
+        "creation Redo restores the same Board ID",
+        harness.state().active_board_id == created.id
+            && harness
+                .state()
+                .board_summaries()
+                .iter()
+                .any(|summary| summary.board.id == created.id && summary.board.name == "Board 2"),
+    );
+    harness.key_press_modifiers(redo, egui::Key::Z);
+    harness.step();
+    scenario.assertion(
+        "rename Redo restores the exact final name",
+        harness.state().board_summaries().iter().any(|summary| {
+            summary.board.id == created.id && summary.board.name == "Lifecycle Board"
+        }),
+    );
+    harness.key_press_modifiers(redo, egui::Key::Z);
+    harness.step();
+    scenario.assertion(
+        "delete Redo ends on the same fallback Board",
+        harness.state().active_board_id == first.id
+            && !harness
+                .state()
+                .board_summaries()
+                .iter()
+                .any(|summary| summary.board.id == created.id),
+    );
+    scenario.capture_screen("screen-006-full-lifecycle-redone", &mut harness);
+
+    harness.state_mut().flush_persistence();
+    scenario.assertion(
+        "final lifecycle replay is durable",
+        library.load_user_session().unwrap().active_board_id == first.id
+            && library
+                .list_boards()
+                .unwrap()
+                .iter()
+                .all(|board| board.id != created.id),
     );
 
     let report = scenario.finish();

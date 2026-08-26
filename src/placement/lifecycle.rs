@@ -436,13 +436,12 @@ mod tests {
         let committed =
             commit_loading_provisional_batch(&library, &mut canvas, &provisional.placement_ids)
                 .unwrap();
-        let history_action = committed.history_action.unwrap();
-        let stack_change = history_action
-            .document_action()
-            .unwrap()
-            .stack_order
-            .as_ref()
-            .unwrap();
+        let crate::active_board::history::HistoryAction::Document(history_action) =
+            committed.history_action.unwrap()
+        else {
+            panic!("expected document history action");
+        };
+        let stack_change = history_action.stack_order.as_ref().unwrap();
 
         assert_eq!(stack_change.before, Some(in_memory_stack));
 

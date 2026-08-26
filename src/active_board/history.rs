@@ -16,16 +16,21 @@ struct BoardHistory {
 #[derive(Clone, Debug)]
 pub(crate) enum HistoryAction {
     Document(DocumentHistoryAction),
-    BoardCreated {
+    Board(BoardLifecycleHistoryAction),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum BoardLifecycleHistoryAction {
+    Created {
         document: crate::data::BoardDocumentSnapshot,
         active_before: i64,
     },
-    BoardRenamed {
+    Renamed {
         board_id: i64,
         before_name: String,
         after_name: String,
     },
-    BoardDeleted {
+    Deleted {
         document: crate::data::BoardDocumentSnapshot,
         active_before: i64,
         active_after: i64,
@@ -58,18 +63,9 @@ impl HistoryAction {
     pub(crate) fn label(&self) -> &str {
         match self {
             Self::Document(action) => &action.label,
-            Self::BoardCreated { .. } => "Create board",
-            Self::BoardRenamed { .. } => "Rename board",
-            Self::BoardDeleted { .. } => "Delete board",
-        }
-    }
-
-    pub(crate) fn document_action(&self) -> Option<&DocumentHistoryAction> {
-        match self {
-            Self::Document(action) => Some(action),
-            Self::BoardCreated { .. } | Self::BoardRenamed { .. } | Self::BoardDeleted { .. } => {
-                None
-            }
+            Self::Board(BoardLifecycleHistoryAction::Created { .. }) => "Create board",
+            Self::Board(BoardLifecycleHistoryAction::Renamed { .. }) => "Rename board",
+            Self::Board(BoardLifecycleHistoryAction::Deleted { .. }) => "Delete board",
         }
     }
 }

@@ -9,7 +9,7 @@ use crate::active_board::commands::{
     ActiveBoardCommandContext, ClipboardBoardSelection, PasteCommandOutcome,
 };
 use crate::active_board::history::{
-    DocumentHistory, HistoryAction, HistoryChange, HistoryDirection,
+    BoardLifecycleHistoryAction, DocumentHistory, HistoryAction, HistoryChange, HistoryDirection,
 };
 use crate::active_board::persistence::DocumentPersistence;
 use crate::library::residency::{ImagePrepResultResidencyOutcome, ImageResidencyCoordinator};
@@ -1405,10 +1405,10 @@ impl SnappyRefApp {
         if self.active_board_id == board.id {
             self.document_history.record_applied(
                 board.id,
-                HistoryAction::BoardCreated {
+                HistoryAction::Board(BoardLifecycleHistoryAction::Created {
                     document,
                     active_before,
-                },
+                }),
             );
         }
         self.refresh_board_summaries();
@@ -1456,11 +1456,11 @@ impl SnappyRefApp {
                     Ok(()) => {
                         self.document_history.record_applied(
                             self.active_board_id,
-                            HistoryAction::BoardRenamed {
+                            HistoryAction::Board(BoardLifecycleHistoryAction::Renamed {
                                 board_id,
                                 before_name: before,
                                 after_name: after.clone(),
-                            },
+                            }),
                         );
                         self.board_summaries_cache.rename(board_id, &after);
                         self.status = "Renamed board".to_owned();
@@ -1583,11 +1583,11 @@ impl SnappyRefApp {
         }
         self.document_history.record_applied(
             active_after,
-            HistoryAction::BoardDeleted {
+            HistoryAction::Board(BoardLifecycleHistoryAction::Deleted {
                 document,
                 active_before,
                 active_after,
-            },
+            }),
         );
         self.status = format!("Deleted {}", pending.board_name);
     }
@@ -3753,20 +3753,23 @@ impl SnappyRefApp {
         action: &HistoryAction,
         direction: HistoryDirection,
     ) -> Result<(), String> {
-        if let Some(document_action) = action.document_action() {
-            let replay = self.apply_history_to_active_canvas(document_action, direction);
-            self.document_persistence
-                .enqueue_document_changes(replay.document_changes)?;
-            return self.load_history_placement_content(ctx, replay.placements_needing_content);
+        match action {
+            HistoryAction::Document(document_action) => {
+                let replay = self.apply_history_to_active_canvas(document_action, direction);
+                self.document_persistence
+                    .enqueue_document_changes(replay.document_changes)?;
+                self.load_history_placement_content(ctx, replay.placements_needing_content)
+            }
+            HistoryAction::Board(lifecycle_action) => {
+                self.apply_board_lifecycle_history(ctx, lifecycle_action, direction)
+            }
         }
-
-        self.apply_board_lifecycle_history(ctx, action, direction)
     }
 
     fn apply_board_lifecycle_history(
         &mut self,
         ctx: &egui::Context,
-        action: &HistoryAction,
+        action: &BoardLifecycleHistoryAction,
         direction: HistoryDirection,
     ) -> Result<(), String> {
         let Some(library) = self.library.clone() else {
@@ -3775,7 +3778,7 @@ impl SnappyRefApp {
         let active_before_replay = self.active_board_id;
         match (action, direction) {
             (
-                HistoryAction::BoardCreated {
+                BoardLifecycleHistoryAction::Created {
                     document,
                     active_before,
                 },
@@ -3792,7 +3795,7 @@ impl SnappyRefApp {
                 self.board_summaries_cache.archive(document.board.id);
                 self.open_board_document_snapshot(ctx, &active_document)?;
             }
-            (HistoryAction::BoardCreated { document, .. }, HistoryDirection::Forward) => {
+            (BoardLifecycleHistoryAction::Created { document, .. }, HistoryDirection::Forward) => {
                 self.document_persistence.apply_board_lifecycle(
                     Some(&library),
                     crate::active_board::persistence::BoardLifecyclePersistence::Restore {
@@ -3804,7 +3807,7 @@ impl SnappyRefApp {
                 self.open_board_document_snapshot(ctx, document)?;
             }
             (
-                HistoryAction::BoardRenamed {
+                BoardLifecycleHistoryAction::Renamed {
                     board_id,
                     before_name,
                     ..
@@ -3821,7 +3824,7 @@ impl SnappyRefApp {
                 self.board_summaries_cache.rename(*board_id, before_name);
             }
             (
-                HistoryAction::BoardRenamed {
+                BoardLifecycleHistoryAction::Renamed {
                     board_id,
                     after_name,
                     ..
@@ -3838,7 +3841,7 @@ impl SnappyRefApp {
                 self.board_summaries_cache.rename(*board_id, after_name);
             }
             (
-                HistoryAction::BoardDeleted {
+                BoardLifecycleHistoryAction::Deleted {
                     document,
                     active_before,
                     ..
@@ -3858,7 +3861,7 @@ impl SnappyRefApp {
                 }
             }
             (
-                HistoryAction::BoardDeleted {
+                BoardLifecycleHistoryAction::Deleted {
                     document,
                     active_after,
                     ..
@@ -3882,7 +3885,6 @@ impl SnappyRefApp {
                     self.open_board_document_snapshot(ctx, &active_document)?;
                 }
             }
-            (HistoryAction::Document(_), _) => unreachable!("document history handled above"),
         }
 
         Ok(())

@@ -914,6 +914,58 @@ fn delete_board_archives_board_preserves_assets_and_archives_board_content() {
 }
 
 #[test]
+fn restoring_board_snapshot_restores_loading_placement_content_exactly() {
+    let root = temp_root("snappyref-board-restore-loading-content");
+    let library = Library::initialize(root.clone()).unwrap();
+    let first = library.list_boards().unwrap()[0].clone();
+    let second = library.create_board("Second").unwrap();
+    library.set_active_board(second.id).unwrap();
+    let source = root.join("source.png");
+    fs::write(&source, [255, 0, 0, 255]).unwrap();
+    let loading = library
+        .persist_committed_loading_placement(
+            egui::pos2(12.0, 24.0),
+            1.5,
+            320.0,
+            180.0,
+            ContentResolutionSource::ExternalPath {
+                path: source.to_string_lossy().into_owned(),
+            },
+            Some("Queued".to_owned()),
+        )
+        .unwrap();
+    let snapshot = library.load_board_document(second.id).unwrap();
+
+    library
+        .persist_imported_image_resolving_placement(
+            second.id,
+            Some(loading.state.id),
+            &source,
+            "image/png",
+            1,
+            1,
+            4,
+            loading.state.geometry.center,
+            loading.state.geometry.scale,
+        )
+        .unwrap();
+    library.archive_board(second.id, first.id).unwrap();
+    library
+        .restore_board_document(&snapshot, second.id)
+        .unwrap();
+
+    let restored = library.load_placements().unwrap();
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].state.asset_id, loading.state.asset_id);
+    assert_eq!(restored[0].state.geometry, loading.state.geometry);
+    assert_eq!(restored[0].content, loading.content);
+    assert_eq!(restored[0].lifecycle, loading.lifecycle);
+    assert!(restored[0].asset.is_none());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn archive_assets_removes_their_placements_from_all_boards_and_preserves_files() {
     let root = temp_root("snappyref-archive-assets-test");
     let library = Library::initialize(root.clone()).unwrap();

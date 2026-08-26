@@ -195,8 +195,11 @@ impl Library {
         &self,
         board_id: i64,
     ) -> Result<crate::data::BoardDocumentSnapshot, String> {
-        let connection = self.connection()?;
-        let board = connection
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start board snapshot transaction: {error}"))?;
+        let board = transaction
             .query_row(
                 "SELECT id, name, archived
                  FROM boards
@@ -212,21 +215,25 @@ impl Library {
                 },
             )
             .map_err(|error| format!("failed to load board {board_id}: {error}"))?;
-        let viewport = super::session::board_viewport_state(&connection, board_id)
+        let viewport = super::session::board_viewport_state(&transaction, board_id)
             .map_err(|error| format!("failed to load board {board_id} viewport: {error}"))?;
-        let placements = self.load_placements_for_board_id(&connection, board_id)?;
+        let placements = self.load_placements_for_board_id(&transaction, board_id)?;
         let annotations =
-            super::annotations::load_canvas_annotations_for_board_id(&connection, board_id)?;
+            super::annotations::load_canvas_annotations_for_board_id(&transaction, board_id)?;
         let stack_order =
-            super::stack_order::load_canvas_stack_order_for_board_id(&connection, board_id)?;
+            super::stack_order::load_canvas_stack_order_for_board_id(&transaction, board_id)?;
 
-        Ok(crate::data::BoardDocumentSnapshot {
+        let snapshot = crate::data::BoardDocumentSnapshot {
             board,
             placements,
             annotations,
             stack_order,
             viewport,
-        })
+        };
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to finish board snapshot transaction: {error}"))?;
+        Ok(snapshot)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -359,45 +366,7 @@ impl Library {
                 )
             })?;
         for placement in &snapshot.placements {
-            let changed = transaction
-                .execute(
-                    "UPDATE board_items
-                     SET asset_id = ?1,
-                         x = ?2,
-                         y = ?3,
-                         width = ?4,
-                         height = ?5,
-                         scale = ?6,
-                         rotation = ?7,
-                         z_index = ?8,
-                         archived = 0
-                     WHERE id = ?9
-                       AND board_id = ?10",
-                    params![
-                        placement.state.asset_id,
-                        placement.state.geometry.center.x,
-                        placement.state.geometry.center.y,
-                        placement.state.geometry.size.x,
-                        placement.state.geometry.size.y,
-                        placement.state.geometry.scale,
-                        placement.state.geometry.rotation,
-                        placement.state.geometry.z_index,
-                        placement.state.id,
-                        snapshot.board.id,
-                    ],
-                )
-                .map_err(|error| {
-                    format!(
-                        "failed to restore placement {}: {error}",
-                        placement.state.id
-                    )
-                })?;
-            if changed != 1 {
-                return Err(format!(
-                    "cannot restore missing placement {}",
-                    placement.state.id
-                ));
-            }
+            super::placements::restore_board_placement(&transaction, snapshot.board.id, placement)?;
         }
 
         transaction
