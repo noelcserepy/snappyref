@@ -3176,15 +3176,18 @@ impl SnappyRefApp {
         label: &str,
         before_stack_order: Vec<crate::data::CanvasStackItem>,
     ) {
-        self.document_history.record_applied(HistoryAction {
-            label: label.to_owned(),
-            placements: Vec::new(),
-            annotations: Vec::new(),
-            stack_order: Some(HistoryChange {
-                before: Some(before_stack_order),
-                after: Some(self.canvas.canvas_stack_order()),
-            }),
-        });
+        self.document_history.record_applied(
+            self.active_board_id,
+            HistoryAction {
+                label: label.to_owned(),
+                placements: Vec::new(),
+                annotations: Vec::new(),
+                stack_order: Some(HistoryChange {
+                    before: Some(before_stack_order),
+                    after: Some(self.canvas.canvas_stack_order()),
+                }),
+            },
+        );
     }
 
     fn record_created_selection_history(
@@ -3212,15 +3215,18 @@ impl SnappyRefApp {
                 after: Some(annotation),
             })
             .collect();
-        self.document_history.record_applied(HistoryAction {
-            label,
-            placements: placement_changes,
-            annotations: annotation_changes,
-            stack_order: Some(HistoryChange {
-                before: Some(before_stack_order),
-                after: Some(self.canvas.canvas_stack_order()),
-            }),
-        });
+        self.document_history.record_applied(
+            self.active_board_id,
+            HistoryAction {
+                label,
+                placements: placement_changes,
+                annotations: annotation_changes,
+                stack_order: Some(HistoryChange {
+                    before: Some(before_stack_order),
+                    after: Some(self.canvas.canvas_stack_order()),
+                }),
+            },
+        );
     }
 
     fn apply_paste_command_outcome(&mut self, outcome: PasteCommandOutcome) {
@@ -3315,15 +3321,18 @@ impl SnappyRefApp {
                 let ui_integration_ms = ui_integration_started_at.elapsed().as_secs_f64() * 1000.0;
                 self.residency
                     .note_loaded_placement(integration.updated_record.state.id);
-                self.document_history.record_applied(HistoryAction {
-                    label: "Crop image".to_owned(),
-                    placements: vec![HistoryChange {
-                        before: Some(integration.previous_record.clone()),
-                        after: Some(integration.updated_record.clone()),
-                    }],
-                    annotations: Vec::new(),
-                    stack_order: None,
-                });
+                self.document_history.record_applied(
+                    self.active_board_id,
+                    HistoryAction {
+                        label: "Crop image".to_owned(),
+                        placements: vec![HistoryChange {
+                            before: Some(integration.previous_record.clone()),
+                            after: Some(integration.updated_record.clone()),
+                        }],
+                        annotations: Vec::new(),
+                        stack_order: None,
+                    },
+                );
                 let mut status = "Cropped image".to_owned();
                 #[cfg(feature = "semantic-search")]
                 if let Some((asset_id, original_path)) = integration.indexed_asset {
@@ -3389,15 +3398,20 @@ impl SnappyRefApp {
             && let Some(log) = finished.log.as_ref()
             && log.placement.state.archived == false
         {
-            self.document_history.record_applied(HistoryAction {
-                label: "Import image".to_owned(),
-                placements: vec![HistoryChange {
-                    before: None,
-                    after: Some(log.placement.clone()),
-                }],
-                annotations: Vec::new(),
-                stack_order: None,
-            });
+            self.document_history.record_applied(
+                finished
+                    .batch_target_board_id
+                    .unwrap_or(self.active_board_id),
+                HistoryAction {
+                    label: "Import image".to_owned(),
+                    placements: vec![HistoryChange {
+                        before: None,
+                        after: Some(log.placement.clone()),
+                    }],
+                    annotations: Vec::new(),
+                    stack_order: None,
+                },
+            );
         }
         if let Some(log) = finished.log {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
@@ -3531,7 +3545,7 @@ impl SnappyRefApp {
             self.status = "Storage unavailable".to_owned();
             return;
         };
-        match self.document_history.undo(&library) {
+        match self.document_history.undo(self.active_board_id, &library) {
             Ok(Some(applied)) => {
                 self.apply_history_to_active_canvas(&applied.action, applied.direction);
                 self.status = format!("Undid {}", applied.label);
@@ -3546,7 +3560,7 @@ impl SnappyRefApp {
             self.status = "Storage unavailable".to_owned();
             return;
         };
-        match self.document_history.redo(&library) {
+        match self.document_history.redo(self.active_board_id, &library) {
             Ok(Some(applied)) => {
                 self.apply_history_to_active_canvas(&applied.action, applied.direction);
                 self.status = format!("Redid {}", applied.label);
@@ -3850,23 +3864,26 @@ impl SnappyRefApp {
                     let annotation_id = annotation.id;
                     self.canvas.add_annotation(annotation);
                     if let Some(created) = self.canvas.annotation_for_id(annotation_id) {
-                        self.document_history.record_applied(HistoryAction {
-                            label: match request.kind {
-                                crate::data::CanvasAnnotationKind::Arrow => "Added arrow",
-                                crate::data::CanvasAnnotationKind::Line => "Added line",
-                                crate::data::CanvasAnnotationKind::Textbox => "Added textbox",
-                            }
-                            .to_owned(),
-                            placements: Vec::new(),
-                            annotations: vec![HistoryChange {
-                                before: None,
-                                after: Some(created),
-                            }],
-                            stack_order: Some(HistoryChange {
-                                before: Some(before_stack_order),
-                                after: Some(self.canvas.canvas_stack_order()),
-                            }),
-                        });
+                        self.document_history.record_applied(
+                            self.active_board_id,
+                            HistoryAction {
+                                label: match request.kind {
+                                    crate::data::CanvasAnnotationKind::Arrow => "Added arrow",
+                                    crate::data::CanvasAnnotationKind::Line => "Added line",
+                                    crate::data::CanvasAnnotationKind::Textbox => "Added textbox",
+                                }
+                                .to_owned(),
+                                placements: Vec::new(),
+                                annotations: vec![HistoryChange {
+                                    before: None,
+                                    after: Some(created),
+                                }],
+                                stack_order: Some(HistoryChange {
+                                    before: Some(before_stack_order),
+                                    after: Some(self.canvas.canvas_stack_order()),
+                                }),
+                            },
+                        );
                     }
                     if should_focus_text {
                         self.canvas.begin_textbox_edit(annotation_id);
@@ -4002,12 +4019,15 @@ impl SnappyRefApp {
             after: Some(after),
         });
 
-        self.document_history.record_applied(HistoryAction {
-            label: label.to_owned(),
-            placements: placement_changes,
-            annotations: annotation_changes,
-            stack_order,
-        });
+        self.document_history.record_applied(
+            self.active_board_id,
+            HistoryAction {
+                label: label.to_owned(),
+                placements: placement_changes,
+                annotations: annotation_changes,
+                stack_order,
+            },
+        );
     }
 
     fn update_window_state(&mut self, ctx: &egui::Context) {
@@ -4101,15 +4121,18 @@ impl SnappyRefApp {
                         }
                     })
                     .collect();
-                self.document_history.record_applied(HistoryAction {
-                    label: status.clone(),
-                    placements: placement_changes,
-                    annotations: annotation_changes,
-                    stack_order: Some(HistoryChange {
-                        before: Some(before_stack_order),
-                        after: Some(self.canvas.canvas_stack_order()),
-                    }),
-                });
+                self.document_history.record_applied(
+                    self.active_board_id,
+                    HistoryAction {
+                        label: status.clone(),
+                        placements: placement_changes,
+                        annotations: annotation_changes,
+                        stack_order: Some(HistoryChange {
+                            before: Some(before_stack_order),
+                            after: Some(self.canvas.canvas_stack_order()),
+                        }),
+                    },
+                );
                 self.flush_persistence();
                 self.refresh_board_summaries();
                 self.status = status;
@@ -4416,7 +4439,8 @@ impl SnappyRefApp {
 
         if !committed.added_placement_ids.is_empty() {
             if let Some(history_action) = committed.history_action.clone() {
-                self.document_history.record_applied(history_action);
+                self.document_history
+                    .record_applied(self.active_board_id, history_action);
             }
             self.save_user_session();
             self.refresh_board_summaries();

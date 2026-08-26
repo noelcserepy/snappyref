@@ -558,7 +558,7 @@ fn delete_selected_annotation_records_undo_history() {
 
     assert_eq!(
         app.document_history
-            .undo(&library)
+            .undo(app.active_board_id, &library)
             .unwrap()
             .map(|applied| applied.label),
         Some("Deleted 1 annotation".to_owned())
