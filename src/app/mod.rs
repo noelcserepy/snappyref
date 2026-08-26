@@ -3254,6 +3254,9 @@ impl SnappyRefApp {
         let hit_result_cap = results.len() == MAX_IMPORT_RESULTS_PER_FRAME;
 
         for result in results {
+            if self.discard_stale_history_content_result(&result) {
+                continue;
+            }
             let outcome = self.residency.process_import_result(
                 ctx,
                 &mut self.canvas,
@@ -3285,6 +3288,51 @@ impl SnappyRefApp {
         if hit_result_cap {
             ctx.request_repaint();
         }
+    }
+
+    fn discard_stale_history_content_result(
+        &mut self,
+        result: &crate::jobs::ImagePrepResult,
+    ) -> bool {
+        let (queue_id, target_board_id, placement_id, loaded_result) = match result {
+            crate::jobs::ImagePrepResult::Loaded(loaded) => {
+                let Some(queue_id) = loaded.queue_id else {
+                    return false;
+                };
+                (
+                    queue_id,
+                    loaded.target_board_id,
+                    loaded.placement.state.id,
+                    true,
+                )
+            }
+            crate::jobs::ImagePrepResult::Failed {
+                queue_id: Some(queue_id),
+                target_board_id: Some(target_board_id),
+                placement_id: Some(placement_id),
+                ..
+            } => (*queue_id, *target_board_id, *placement_id, false),
+            _ => return false,
+        };
+        if !self
+            .content_resolution
+            .tracks_history_placement(queue_id, placement_id)
+            || self.canvas.placement_for_id(placement_id).is_some()
+        {
+            return false;
+        }
+        self.content_resolution.resolve_completion(
+            Some(queue_id),
+            Some(target_board_id),
+            Some(placement_id),
+        );
+        if loaded_result {
+            self.residency.note_loaded_placement(placement_id);
+        } else {
+            self.residency
+                .note_failed_placement(&mut self.canvas, Some(placement_id));
+        }
+        true
     }
 
     fn apply_import_result_residency_outcome(
@@ -3644,18 +3692,26 @@ impl SnappyRefApp {
         };
         for placement in placements {
             if let Some(import_worker) = &self.import_worker {
-                import_worker.enqueue(crate::jobs::ImagePrepRequest::LoadExisting {
-                    target_board_id: self.active_board_id,
-                    queue_id: None,
-                    placement,
-                    max_texture_side: self.max_texture_side,
-                    canvas_image_settings: crate::jobs::CanvasImageSettings {
-                        max_side: self.settings.canvas_image_max_side,
-                    },
-                    target_lod: crate::data::CanvasImageLod::Working,
-                    priority: crate::jobs::ExistingLoadPriority::Background,
-                    trace: None,
-                })?;
+                let reservation = self
+                    .content_resolution
+                    .reserve_history_placement(self.active_board_id, placement.state.id);
+                if let Err(error) =
+                    import_worker.enqueue(crate::jobs::ImagePrepRequest::LoadExisting {
+                        target_board_id: self.active_board_id,
+                        queue_id: Some(reservation.queue_id),
+                        placement,
+                        max_texture_side: self.max_texture_side,
+                        canvas_image_settings: crate::jobs::CanvasImageSettings {
+                            max_side: self.settings.canvas_image_max_side,
+                        },
+                        target_lod: crate::data::CanvasImageLod::Working,
+                        priority: crate::jobs::ExistingLoadPriority::Background,
+                        trace: None,
+                    })
+                {
+                    self.content_resolution.cancel(reservation);
+                    return Err(error);
+                }
                 continue;
             }
             match crate::jobs::load_existing(

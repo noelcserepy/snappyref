@@ -94,6 +94,13 @@ pub(crate) struct FinishedFailedContentResolution {
 struct PendingContentResolution {
     target_board_id: i64,
     placement_id: i64,
+    source: PendingContentResolutionSource,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingContentResolutionSource {
+    Import,
+    HistoryReplay,
 }
 
 impl ContentResolutionRuntime {
@@ -116,6 +123,7 @@ impl ContentResolutionRuntime {
             PendingContentResolution {
                 target_board_id,
                 placement_id,
+                source: PendingContentResolutionSource::Import,
             },
         );
         ContentResolutionReservation {
@@ -124,6 +132,26 @@ impl ContentResolutionRuntime {
             placement_id: Some(placement_id),
             reserved_world: Some(reserved_world),
         }
+    }
+
+    pub(crate) fn reserve_history_placement(
+        &mut self,
+        target_board_id: i64,
+        placement_id: i64,
+    ) -> ContentResolutionReservation {
+        let reservation = self.reserve_placement(target_board_id, placement_id, egui::Pos2::ZERO);
+        self.pending
+            .get_mut(&reservation.queue_id)
+            .expect("new content-resolution reservation should exist")
+            .source = PendingContentResolutionSource::HistoryReplay;
+        reservation
+    }
+
+    pub(crate) fn tracks_history_placement(&self, queue_id: u64, placement_id: i64) -> bool {
+        self.pending.get(&queue_id).is_some_and(|pending| {
+            pending.placement_id == placement_id
+                && pending.source == PendingContentResolutionSource::HistoryReplay
+        })
     }
 
     pub(crate) fn reserve_untracked(

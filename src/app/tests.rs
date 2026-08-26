@@ -638,6 +638,22 @@ fn undo_delete_restores_last_placement_to_active_canvas() {
 }
 
 #[test]
+fn late_history_content_result_does_not_restore_redone_deletion() {
+    let mut app = test_app(None);
+    let reservation = app
+        .content_resolution
+        .reserve_history_placement(app.active_board_id, 7);
+    let mut loaded = test_loaded_item(7, app.active_board_id);
+    loaded.queue_id = Some(reservation.queue_id);
+
+    assert!(
+        app.discard_stale_history_content_result(&crate::jobs::ImagePrepResult::Loaded(loaded))
+    );
+    assert!(app.canvas.placement_for_id(7).is_none());
+    assert_eq!(app.content_resolution.pending_len(), 0);
+}
+
+#[test]
 fn undo_and_redo_defer_storage_until_explicit_flush() {
     let ctx = egui::Context::default();
     let root = temp_library_root("snappyref-history-deferred-persistence");
