@@ -654,6 +654,66 @@ fn late_history_content_result_does_not_restore_redone_deletion() {
 }
 
 #[test]
+fn late_undo_content_failure_is_ignored_after_newer_replay() {
+    let ctx = egui::Context::default();
+    let mut app = test_app(None);
+    let placement_id = 7;
+    let undo_placement = test_loaded_item(placement_id, app.active_board_id).placement;
+    app.canvas.add_unresolved_placement(undo_placement.clone());
+    let reservation = app
+        .content_resolution
+        .reserve_history_placement(app.active_board_id, placement_id);
+    let mut redo_placement = undo_placement;
+    redo_placement.state.asset_id = Some(202);
+    redo_placement.asset.as_mut().unwrap().id = 202;
+    redo_placement.content = crate::data::PlacementContent::Loaded { asset_id: 202 };
+    let replay = app.apply_history_to_active_canvas(
+        &super::HistoryAction {
+            label: "Crop image".to_owned(),
+            placements: vec![super::HistoryChange {
+                before: None,
+                after: Some(redo_placement),
+            }],
+            annotations: Vec::new(),
+            stack_order: None,
+        },
+        super::HistoryDirection::Forward,
+    );
+    assert!(replay.placements_needing_content.is_empty());
+    app.status = "Redid Crop image".to_owned();
+
+    let result = crate::jobs::ImagePrepResult::Failed {
+        target_board_id: Some(app.active_board_id),
+        queue_id: Some(reservation.queue_id),
+        placement_id: Some(placement_id),
+        context: "fixture-7.png".to_owned(),
+        error: "decode failed".to_owned(),
+    };
+    if !app.discard_stale_history_content_result(&result) {
+        let outcome = app.residency.process_import_result(
+            &ctx,
+            &mut app.canvas,
+            app.import_worker.as_ref(),
+            app.active_board_id,
+            &app.settings,
+            result,
+        );
+        app.apply_import_result_residency_outcome(&ctx, outcome);
+    }
+
+    assert_eq!(app.status, "Redid Crop image");
+    assert_eq!(
+        app.canvas
+            .placement_for_id(placement_id)
+            .unwrap()
+            .state
+            .asset_id,
+        Some(202)
+    );
+    assert_eq!(app.content_resolution.pending_len(), 0);
+}
+
+#[test]
 fn undo_and_redo_defer_storage_until_explicit_flush() {
     let ctx = egui::Context::default();
     let root = temp_library_root("snappyref-history-deferred-persistence");

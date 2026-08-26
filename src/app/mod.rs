@@ -3314,11 +3314,13 @@ impl SnappyRefApp {
             } => (*queue_id, *target_board_id, *placement_id, false),
             _ => return false,
         };
-        if !self
+        let Some(stale_history_replay) = self
             .content_resolution
-            .tracks_history_placement(queue_id, placement_id)
-            || self.canvas.placement_for_id(placement_id).is_some()
-        {
+            .history_placement_is_stale(queue_id, placement_id)
+        else {
+            return false;
+        };
+        if !stale_history_replay && self.canvas.placement_for_id(placement_id).is_some() {
             return false;
         }
         self.content_resolution.resolve_completion(
@@ -3660,6 +3662,8 @@ impl SnappyRefApp {
             let Some(target) = change.placement_target(direction) else {
                 continue;
             };
+            self.content_resolution
+                .invalidate_history_placement(target.state.id);
             if let Some(placement) = self
                 .canvas
                 .apply_placement_history_state(Some(target.clone()))
