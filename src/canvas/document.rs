@@ -942,14 +942,18 @@ impl CanvasState {
                 .sort_by_key(|image| image.placement.state.geometry.z_index);
             return None;
         }
-        if self
-            .add_loaded_reference_placement(placement.clone())
-            .is_ok()
-        {
-            return None;
+        if placement.is_loaded() {
+            if self
+                .add_loaded_reference_placement(placement.clone())
+                .is_ok()
+            {
+                return None;
+            }
+            self.add_unresolved_placement(placement.clone());
+            return Some(placement);
         }
-        self.add_unresolved_placement(placement.clone());
-        Some(placement)
+        self.add_unresolved_placement(placement);
+        None
     }
 
     pub fn set_canvas_stack_order(&mut self, stack_order: Vec<CanvasStackItem>) {

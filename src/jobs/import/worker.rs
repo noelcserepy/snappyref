@@ -65,6 +65,19 @@ impl ImagePrepWorker {
         )
     }
 
+    #[cfg(all(test, feature = "semantic-search"))]
+    pub(crate) fn controlled() -> (Self, mpsc::Sender<ImagePrepResult>) {
+        let (result_tx, receiver) = mpsc::channel();
+        (
+            Self {
+                queue: Arc::new(RequestQueue::default()),
+                receiver,
+                workers: Vec::new(),
+            },
+            result_tx,
+        )
+    }
+
     pub(super) fn new_with_config(
         library: Library,
         ctx: egui::Context,

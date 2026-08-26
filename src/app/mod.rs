@@ -2086,9 +2086,17 @@ impl SnappyRefApp {
             center_world,
             settings,
         ) {
-            Ok(created) => {
+            Ok(mut batch) => {
+                if let Some(history_action) = batch.history_action.take() {
+                    self.document_history
+                        .record_applied(self.active_board_id, history_action);
+                }
                 self.persist_canvas_changes();
-                created.reservation
+                batch
+                    .created
+                    .pop()
+                    .expect("single committed creation should return one placement")
+                    .reservation
             }
             Err(error) => {
                 self.status = error;
@@ -2294,7 +2302,14 @@ impl SnappyRefApp {
         anchor_world: egui::Pos2,
         placement_ids: Vec<i64>,
     ) {
-        if placement_ids.is_empty() || target_board_id != self.active_board_id {
+        if target_board_id != self.active_board_id {
+            return;
+        }
+        let placement_ids = placement_ids
+            .into_iter()
+            .filter(|placement_id| self.canvas.placement_for_id(*placement_id).is_some())
+            .collect::<Vec<_>>();
+        if placement_ids.is_empty() {
             return;
         }
         self.canvas.select_placements(&placement_ids);
@@ -2539,7 +2554,7 @@ impl SnappyRefApp {
         };
 
         let placement_creation_settings = self.placement_creation_settings();
-        let created = match self.library.clone().map_or_else(
+        let (created, history_action) = match self.library.clone().map_or_else(
             || Err("Storage unavailable".to_owned()),
             |library| {
                 if self.external_hover_provisional_placement_ids.len() == sources.len() {
@@ -2567,14 +2582,14 @@ impl SnappyRefApp {
                             placement,
                         });
                     }
-                    return Ok(created);
+                    return Ok((created, committed.history_action));
                 }
 
                 let source_intents = sources
                     .iter()
                     .map(Self::source_intent_for_external_source)
                     .collect::<Vec<_>>();
-                crate::placement::creation::create_committed_loading_placements(
+                let batch = crate::placement::creation::create_committed_loading_placements(
                     &library,
                     &mut self.content_resolution,
                     &mut self.canvas,
@@ -2584,15 +2599,20 @@ impl SnappyRefApp {
                     desired_world,
                     screen_rect,
                     placement_creation_settings,
-                )
+                )?;
+                Ok((batch.created, batch.history_action))
             },
         ) {
-            Ok(created) => created,
+            Ok(batch) => batch,
             Err(error) => {
                 self.status = error;
                 return;
             }
         };
+        if let Some(history_action) = history_action {
+            self.document_history
+                .record_applied(self.active_board_id, history_action);
+        }
         self.persist_canvas_changes();
 
         let mut queued_batch_ids = Vec::new();
@@ -3250,7 +3270,7 @@ impl SnappyRefApp {
         let hit_result_cap = results.len() == MAX_IMPORT_RESULTS_PER_FRAME;
 
         for result in results {
-            if self.discard_stale_history_content_result(&result) {
+            if self.discard_stale_content_result(&result) {
                 continue;
             }
             let outcome = self.residency.process_import_result(
@@ -3286,10 +3306,7 @@ impl SnappyRefApp {
         }
     }
 
-    fn discard_stale_history_content_result(
-        &mut self,
-        result: &crate::jobs::ImagePrepResult,
-    ) -> bool {
+    fn discard_stale_content_result(&mut self, result: &crate::jobs::ImagePrepResult) -> bool {
         let (queue_id, target_board_id, placement_id, loaded_result) = match result {
             crate::jobs::ImagePrepResult::Loaded(loaded) => {
                 let Some(queue_id) = loaded.queue_id else {
@@ -3310,19 +3327,27 @@ impl SnappyRefApp {
             } => (*queue_id, *target_board_id, *placement_id, false),
             _ => return false,
         };
-        let Some(stale_history_replay) = self
+        let Some(stale) = self
             .content_resolution
-            .history_placement_is_stale(queue_id, placement_id)
+            .placement_is_stale(queue_id, placement_id)
         else {
             return false;
         };
-        if !stale_history_replay && self.canvas.placement_for_id(placement_id).is_some() {
+        if !stale
+            && (target_board_id != self.active_board_id
+                || self.canvas.placement_for_id(placement_id).is_some())
+        {
             return false;
         }
-        self.content_resolution.resolve_completion(
+        let completion = self.content_resolution.resolve_completion(
             Some(queue_id),
             Some(target_board_id),
             Some(placement_id),
+        );
+        self.finish_import_queue_id_in_batches(
+            completion.target_board_id,
+            completion.queue_id,
+            None,
         );
         if loaded_result {
             self.residency.note_loaded_placement(placement_id);
@@ -3445,25 +3470,6 @@ impl SnappyRefApp {
             finished.batch_queue_id,
             finished.loaded_placement_id,
         );
-        if perf_counts_as_import
-            && let Some(log) = finished.log.as_ref()
-            && log.placement.state.archived == false
-        {
-            self.document_history.record_applied(
-                finished
-                    .batch_target_board_id
-                    .unwrap_or(self.active_board_id),
-                HistoryAction {
-                    label: "Import image".to_owned(),
-                    placements: vec![HistoryChange {
-                        before: None,
-                        after: Some(log.placement.clone()),
-                    }],
-                    annotations: Vec::new(),
-                    stack_order: None,
-                },
-            );
-        }
         if let Some(log) = finished.log {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
                 scenario.loaded_imports += 1;
@@ -3658,7 +3664,7 @@ impl SnappyRefApp {
                 continue;
             };
             self.content_resolution
-                .invalidate_history_placement(target.state.id);
+                .invalidate_placement(target.state.id);
             if let Some(placement) = self
                 .canvas
                 .apply_placement_history_state(Some(target.clone()))

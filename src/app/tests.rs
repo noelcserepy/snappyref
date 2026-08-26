@@ -644,9 +644,7 @@ fn late_history_content_result_does_not_restore_redone_deletion() {
     let mut loaded = test_loaded_item(7, app.active_board_id);
     loaded.queue_id = Some(reservation.queue_id);
 
-    assert!(
-        app.discard_stale_history_content_result(&crate::jobs::ImagePrepResult::Loaded(loaded))
-    );
+    assert!(app.discard_stale_content_result(&crate::jobs::ImagePrepResult::Loaded(loaded)));
     assert!(app.canvas.placement_for_id(7).is_none());
     assert_eq!(app.content_resolution.pending_len(), 0);
 }
@@ -691,7 +689,7 @@ fn late_undo_content_failure_is_ignored_after_newer_replay() {
         context: "fixture-7.png".to_owned(),
         error: "decode failed".to_owned(),
     };
-    if !app.discard_stale_history_content_result(&result) {
+    if !app.discard_stale_content_result(&result) {
         let outcome = app.residency.process_import_result(
             &ctx,
             &mut app.canvas,
@@ -736,7 +734,7 @@ fn completed_history_content_replay_preserves_history_command_status() {
         app.status = command_status.to_owned();
 
         let result = crate::jobs::ImagePrepResult::Loaded(loaded);
-        assert!(!app.discard_stale_history_content_result(&result));
+        assert!(!app.discard_stale_content_result(&result));
         let outcome = app.residency.process_import_result(
             &ctx,
             &mut app.canvas,
@@ -6012,6 +6010,103 @@ fn completed_import_batch_compacts_loaded_items_after_out_of_order_failures() {
 }
 
 #[test]
+fn accepted_loading_batch_is_one_history_action_despite_out_of_order_results() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-accepted-loading-batch-history");
+    let library = Library::initialize(root.clone()).unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    app.import_worker = Some(crate::jobs::ImagePrepWorker::new(
+        library.clone(),
+        ctx.clone(),
+        None,
+    ));
+    app.enqueue_external_import_sources(
+        (1..=3)
+            .map(|index| {
+                crate::sources::import::ExternalImportSource::Path(
+                    root.join(format!("missing-{index}.png")),
+                )
+            })
+            .collect(),
+        test_screen_rect(),
+        egui::pos2(120.0, 80.0),
+    );
+    let placement_ids = app.canvas.selected_placement_ids();
+    assert_eq!(placement_ids.len(), 3);
+
+    let mut loaded = test_loaded_item(placement_ids[2], app.active_board_id);
+    loaded.queue_id = Some(3);
+    loaded.origin = crate::jobs::ImportOrigin::Path;
+    let loaded_result = crate::jobs::ImagePrepResult::Loaded(loaded);
+    assert!(!app.discard_stale_content_result(&loaded_result));
+    let outcome = app.residency.process_import_result(
+        &ctx,
+        &mut app.canvas,
+        app.import_worker.as_ref(),
+        app.active_board_id,
+        &app.settings,
+        loaded_result,
+    );
+    app.apply_import_result_residency_outcome(&ctx, outcome);
+
+    let failed_result = crate::jobs::ImagePrepResult::Failed {
+        target_board_id: Some(app.active_board_id),
+        queue_id: Some(1),
+        placement_id: Some(placement_ids[0]),
+        context: "missing-1.png".to_owned(),
+        error: "decode failed".to_owned(),
+    };
+    assert!(!app.discard_stale_content_result(&failed_result));
+    let outcome = app.residency.process_import_result(
+        &ctx,
+        &mut app.canvas,
+        app.import_worker.as_ref(),
+        app.active_board_id,
+        &app.settings,
+        failed_result,
+    );
+    app.apply_import_result_residency_outcome(&ctx, outcome);
+
+    app.undo_document_history(&ctx);
+    let undo_status = app.status.clone();
+    assert_eq!(undo_status, "Undid Import images");
+    assert!(
+        placement_ids
+            .iter()
+            .all(|placement_id| app.canvas.placement_for_id(*placement_id).is_none())
+    );
+
+    let mut late_loaded = test_loaded_item(placement_ids[1], app.active_board_id);
+    late_loaded.queue_id = Some(2);
+    late_loaded.origin = crate::jobs::ImportOrigin::Path;
+    let late_result = crate::jobs::ImagePrepResult::Loaded(late_loaded);
+    if !app.discard_stale_content_result(&late_result) {
+        let outcome = app.residency.process_import_result(
+            &ctx,
+            &mut app.canvas,
+            app.import_worker.as_ref(),
+            app.active_board_id,
+            &app.settings,
+            late_result,
+        );
+        app.apply_import_result_residency_outcome(&ctx, outcome);
+    }
+    assert!(
+        placement_ids
+            .iter()
+            .all(|placement_id| app.canvas.placement_for_id(*placement_id).is_none())
+    );
+
+    app.undo_document_history(&ctx);
+    assert_eq!(app.status, undo_status);
+    app.flush_persistence();
+    assert!(library.load_placements().unwrap().is_empty());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn completed_inactive_board_import_batch_does_not_mutate_active_canvas() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
@@ -6086,25 +6181,29 @@ fn completed_import_for_inactive_board_does_not_enter_active_canvas() {
 }
 
 #[test]
-fn completed_import_for_inactive_board_records_history_for_target_board() {
+fn accepted_import_for_inactive_board_keeps_history_on_target_board() {
     let ctx = egui::Context::default();
     let root = temp_library_root("snappyref-inactive-import-history");
     let library = Library::initialize(root.clone()).unwrap();
     let first = library.list_boards().unwrap().remove(0);
-    let image_path = library
-        .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
-        .unwrap();
-    let placement = library
-        .persist_imported_image(&image_path, "image/png", 1, 1, 4, egui::Pos2::ZERO, 1.0)
-        .unwrap();
-    let placement_id = placement.state.id;
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    let reservation = app.reserve_import(
+        &mut Vec::new(),
+        Some((1, 1)),
+        egui::Pos2::ZERO,
+        test_viewport_world(),
+        crate::data::ContentResolutionSource::Unknown {
+            description: "inactive Board import".to_owned(),
+        },
+    );
+    let placement_id = reservation.placement_id.unwrap();
     app.switch_to_board(second.id);
 
     let mut loaded = test_loaded_item(placement_id, first.id);
-    loaded.placement = placement;
+    loaded.queue_id = Some(reservation.queue_id);
+    loaded.origin = crate::jobs::ImportOrigin::Path;
     app.integrate_loaded_import(&ctx, loaded);
 
     assert!(app.canvas.placement_for_id(placement_id).is_none());
@@ -6219,6 +6318,7 @@ fn raw_dropped_file_enqueues_external_import() {
         .store_rgba_image("drop-source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
     app.import_worker = Some(crate::jobs::ImagePrepWorker::new(
         library.clone(),
         ctx.clone(),
@@ -6285,6 +6385,257 @@ fn raw_dropped_file_enqueues_external_import() {
         )
         .distance(expected_world)
             < 1.0
+    );
+
+    harness.state_mut().undo_document_history(&ctx);
+    assert_eq!(harness.state().status, "Undid Import image");
+    assert!(
+        harness
+            .state()
+            .canvas
+            .placement_for_id(placement.state.id)
+            .is_none()
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(feature = "semantic-search")]
+#[test]
+fn inspect_pending_drop_batch_undo_writes_artifact() {
+    let scenario_name = inspect_scenario_name("pending-drop-batch-undo");
+    let mut scenario = InspectScenario::new(scenario_name);
+    scenario.event(
+        "seed",
+        serde_json::json!({
+            "seed": "two-local-png-files-and-controlled-image-preparation",
+            "purpose": "drop one committed batch, Undo while both Placements are Loading, then drain late results",
+        }),
+    );
+
+    let root = temp_library_root("snappyref-inspect-pending-drop-batch-undo");
+    let library = Library::initialize(root.clone()).unwrap();
+    let sources = [
+        (
+            library
+                .store_rgba_image(
+                    "pending-drop-blue",
+                    &solid_rgba([78, 126, 226, 255], 160, 100),
+                    160,
+                    100,
+                )
+                .unwrap(),
+            [78, 126, 226, 255],
+            160,
+            100,
+        ),
+        (
+            library
+                .store_rgba_image(
+                    "pending-drop-gold",
+                    &solid_rgba([224, 168, 72, 255], 100, 140),
+                    100,
+                    140,
+                )
+                .unwrap(),
+            [224, 168, 72, 255],
+            100,
+            140,
+        ),
+    ];
+    let (worker, result_tx) = crate::jobs::ImagePrepWorker::controlled();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    app.import_worker = Some(worker);
+    let mut harness = app_full_harness(app);
+    let drop_pos = egui::pos2(900.0, 600.0);
+    scenario.target(
+        "canvas drop point",
+        "canvas",
+        egui::Rect::from_center_size(drop_pos, egui::vec2(24.0, 24.0)),
+    );
+    scenario.capture_screen("screen-000-before-drop", &mut harness);
+
+    scenario.action("hover two files over canvas", drop_pos);
+    harness.hover_at(drop_pos);
+    harness.input_mut().hovered_files = sources
+        .iter()
+        .map(|(path, _, _, _)| egui::HoveredFile {
+            path: Some(path.clone()),
+            ..Default::default()
+        })
+        .collect();
+    harness.step();
+    scenario.fact(
+        "drop.provisional",
+        serde_json::json!({
+            "count": harness.state().canvas.provisional_placements_in_selection_order().len(),
+        }),
+    );
+    scenario.assertion(
+        "hover creates two provisional Placements",
+        harness
+            .state()
+            .canvas
+            .provisional_placements_in_selection_order()
+            .len()
+            == 2,
+    );
+    scenario.capture_screen("screen-001-hover-provisional", &mut harness);
+
+    scenario.action("drop two files on canvas", drop_pos);
+    harness.input_mut().hovered_files.clear();
+    harness.input_mut().dropped_files = sources
+        .iter()
+        .map(|(path, _, _, _)| egui::DroppedFile {
+            path: Some(path.clone()),
+            name: path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("dropped-image.png")
+                .to_owned(),
+            ..Default::default()
+        })
+        .collect();
+    harness.step();
+    let placement_ids = harness.state().canvas.selected_placement_ids();
+    let worker_stats = harness.state().import_worker.as_ref().unwrap().stats();
+    scenario.fact(
+        "drop.accepted",
+        serde_json::json!({
+            "placement_ids": placement_ids,
+            "pending": harness.state().content_resolution.pending_len(),
+            "queued_worker_requests": worker_stats.queued_startup
+                + worker_stats.queued_interactive
+                + worker_stats.queued_background,
+        }),
+    );
+    scenario.assertion(
+        "drop accepts one two-Placement Loading batch",
+        placement_ids.len() == 2 && harness.state().content_resolution.pending_len() == 2,
+    );
+    scenario.capture_screen("screen-002-accepted-loading-batch", &mut harness);
+
+    let loaded_placement = library
+        .persist_imported_image_resolving_placement(
+            harness.state().active_board_id,
+            Some(placement_ids[0]),
+            &sources[0].0,
+            "image/png",
+            sources[0].2,
+            sources[0].3,
+            std::fs::metadata(&sources[0].0).unwrap().len(),
+            harness
+                .state()
+                .canvas
+                .placement_for_id(placement_ids[0])
+                .unwrap()
+                .state
+                .geometry
+                .center,
+            1.0,
+        )
+        .unwrap();
+    let late_loaded = inspect_prepared_loaded_placement(
+        loaded_placement,
+        sources[0].1,
+        sources[0].2,
+        sources[0].3,
+        Some(1),
+        crate::jobs::ImportOrigin::Path,
+    );
+
+    let undo_modifiers = egui::Modifiers {
+        command: true,
+        ..Default::default()
+    };
+    scenario.event(
+        "action",
+        serde_json::json!({"name": "press Command-Z while both preparations are pending"}),
+    );
+    for pressed in [true, false] {
+        harness.event_modifiers(
+            egui::Event::Key {
+                key: egui::Key::Z,
+                physical_key: Some(egui::Key::Z),
+                pressed,
+                repeat: false,
+                modifiers: undo_modifiers,
+            },
+            undo_modifiers,
+        );
+    }
+    harness.step();
+    scenario.fact(
+        "drop.after-undo",
+        serde_json::json!({
+            "present_count": placement_ids
+                .iter()
+                .filter(|id| harness.state().canvas.placement_for_id(**id).is_some())
+                .count(),
+            "pending": harness.state().content_resolution.pending_len(),
+            "status": harness.state().status,
+        }),
+    );
+    scenario.assertion(
+        "one Undo removes the whole accepted batch while work remains pending",
+        placement_ids
+            .iter()
+            .all(|id| harness.state().canvas.placement_for_id(*id).is_none())
+            && harness.state().content_resolution.pending_len() == 2
+            && harness.state().status == "Undid Import images",
+    );
+    scenario.capture_screen("screen-003-undone-while-pending", &mut harness);
+
+    result_tx
+        .send(crate::jobs::ImagePrepResult::Loaded(late_loaded))
+        .unwrap();
+    result_tx
+        .send(crate::jobs::ImagePrepResult::Failed {
+            target_board_id: Some(harness.state().active_board_id),
+            queue_id: Some(2),
+            placement_id: Some(placement_ids[1]),
+            context: sources[1].0.display().to_string(),
+            error: "controlled late decode failure".to_owned(),
+        })
+        .unwrap();
+    scenario.event(
+        "wait",
+        serde_json::json!({"name": "drain late Loaded and Failed worker results"}),
+    );
+    harness.step();
+    scenario.fact(
+        "drop.after-late-results",
+        serde_json::json!({
+            "present_count": placement_ids
+                .iter()
+                .filter(|id| harness.state().canvas.placement_for_id(**id).is_some())
+                .count(),
+            "pending": harness.state().content_resolution.pending_len(),
+            "status": harness.state().status,
+        }),
+    );
+    scenario.assertion(
+        "late results drain without restoring the undone batch",
+        placement_ids
+            .iter()
+            .all(|id| harness.state().canvas.placement_for_id(*id).is_none())
+            && harness.state().content_resolution.pending_len() == 0
+            && harness.state().status == "Undid Import images",
+    );
+    scenario.capture_screen("screen-004-late-results-discarded", &mut harness);
+
+    harness.state_mut().flush_persistence();
+    scenario.assertion(
+        "the undone batch stays absent from durable Board state",
+        library.load_placements().unwrap().is_empty(),
+    );
+
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
     );
 
     let _ = fs::remove_dir_all(root);

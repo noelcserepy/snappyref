@@ -43,6 +43,11 @@ pub(crate) struct CreatedLoadingPlacement {
     pub(crate) placement: Placement,
 }
 
+pub(crate) struct CommittedLoadingPlacementBatch {
+    pub(crate) created: Vec<CreatedLoadingPlacement>,
+    pub(crate) history_action: Option<crate::active_board::history::HistoryAction>,
+}
+
 pub(crate) enum ProvisionalSourceIntent {
     SourceIntent(SourceIntent),
     ExistingAsset {
@@ -137,7 +142,7 @@ pub(crate) fn plan_source_intent_geometries(
         .collect()
 }
 
-pub(crate) fn create_committed_loading_placement(
+fn create_one_committed_loading_placement(
     library: &Library,
     content_resolution: &mut ContentResolutionRuntime,
     canvas: &mut CanvasState,
@@ -176,6 +181,38 @@ pub(crate) fn create_committed_loading_placement(
     })
 }
 
+pub(crate) fn create_committed_loading_placement(
+    library: &Library,
+    content_resolution: &mut ContentResolutionRuntime,
+    canvas: &mut CanvasState,
+    layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
+    target_board_id: i64,
+    intent: SourceIntent,
+    center_world: egui::Pos2,
+    settings: PlacementCreationSettings,
+) -> Result<CommittedLoadingPlacementBatch, String> {
+    let stack_before = canvas.canvas_stack_order();
+    let created = create_one_committed_loading_placement(
+        library,
+        content_resolution,
+        canvas,
+        layout,
+        target_board_id,
+        intent,
+        center_world,
+        settings,
+    )?;
+    let history_action = committed_loading_batch_history_action(
+        std::slice::from_ref(&created.placement),
+        stack_before,
+        canvas.canvas_stack_order(),
+    );
+    Ok(CommittedLoadingPlacementBatch {
+        created: vec![created],
+        history_action,
+    })
+}
+
 pub(crate) fn create_committed_loading_placements(
     library: &Library,
     content_resolution: &mut ContentResolutionRuntime,
@@ -186,12 +223,13 @@ pub(crate) fn create_committed_loading_placements(
     anchor_world: egui::Pos2,
     screen_rect: egui::Rect,
     settings: PlacementCreationSettings,
-) -> Result<Vec<CreatedLoadingPlacement>, String> {
+) -> Result<CommittedLoadingPlacementBatch, String> {
+    let stack_before = canvas.canvas_stack_order();
     let geometry =
         plan_source_intent_geometries(canvas, &intents, anchor_world, screen_rect, settings);
     let mut created = Vec::with_capacity(intents.len());
     for (intent, geometry) in intents.into_iter().zip(geometry) {
-        created.push(create_committed_loading_placement(
+        created.push(create_one_committed_loading_placement(
             library,
             content_resolution,
             canvas,
@@ -207,7 +245,59 @@ pub(crate) fn create_committed_loading_placements(
         .map(|created| created.placement.state.id)
         .collect::<Vec<_>>();
     canvas.select_placements(&placement_ids);
-    Ok(created)
+    let placements = created
+        .iter()
+        .map(|created| created.placement.clone())
+        .collect::<Vec<_>>();
+    let history_action = committed_loading_batch_history_action(
+        &placements,
+        stack_before,
+        canvas.canvas_stack_order(),
+    );
+    Ok(CommittedLoadingPlacementBatch {
+        created,
+        history_action,
+    })
+}
+
+pub(crate) fn committed_loading_batch_history_action(
+    placements: &[Placement],
+    stack_before: Vec<CanvasStackItem>,
+    stack_after: Vec<CanvasStackItem>,
+) -> Option<crate::active_board::history::HistoryAction> {
+    if placements.is_empty() {
+        return None;
+    }
+    let label = if placements.len() == 1 {
+        "Import image"
+    } else {
+        "Import images"
+    };
+    let committed_stack = |stack: Vec<CanvasStackItem>| {
+        stack
+            .into_iter()
+            .filter(|item| match item {
+                CanvasStackItem::Placement(placement_id) => *placement_id > 0,
+                CanvasStackItem::Annotation(_) => true,
+            })
+            .collect::<Vec<_>>()
+    };
+    Some(crate::active_board::history::HistoryAction {
+        label: label.to_owned(),
+        placements: placements
+            .iter()
+            .cloned()
+            .map(|placement| crate::active_board::history::HistoryChange {
+                before: None,
+                after: Some(placement),
+            })
+            .collect(),
+        annotations: Vec::new(),
+        stack_order: Some(crate::active_board::history::HistoryChange {
+            before: Some(committed_stack(stack_before)),
+            after: Some(committed_stack(stack_after)),
+        }),
+    })
 }
 
 fn normalized_dimensions(intent: &SourceIntent) -> (u32, u32) {
