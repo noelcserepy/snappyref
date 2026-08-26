@@ -3566,7 +3566,7 @@ impl SnappyRefApp {
             self.status = error;
             return;
         }
-        self.status = format!("Undid {}", applied.label);
+        self.status = format!("Undid {}", applied.action.label);
     }
 
     fn redo_document_history(&mut self, ctx: &egui::Context) {
@@ -3589,7 +3589,7 @@ impl SnappyRefApp {
             self.status = error;
             return;
         }
-        self.status = format!("Redid {}", applied.label);
+        self.status = format!("Redid {}", applied.action.label);
     }
 
     fn apply_history_to_active_canvas(

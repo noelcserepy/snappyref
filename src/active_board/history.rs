@@ -63,7 +63,6 @@ impl HistoryChange<CanvasAnnotation> {
 
 #[derive(Clone, Debug)]
 pub(crate) struct HistoryApplied {
-    pub(crate) label: String,
     pub(crate) action: HistoryAction,
     pub(crate) direction: HistoryDirection,
 }
@@ -78,10 +77,8 @@ impl DocumentHistory {
     pub(crate) fn undo(&mut self, board_id: i64) -> Option<HistoryApplied> {
         let history = self.histories_by_board.get_mut(&board_id)?;
         let action = history.undo_stack.pop()?;
-        let label = action.label.clone();
         history.redo_stack.push(action.clone());
         Some(HistoryApplied {
-            label,
             action,
             direction: HistoryDirection::Backward,
         })
@@ -90,10 +87,8 @@ impl DocumentHistory {
     pub(crate) fn redo(&mut self, board_id: i64) -> Option<HistoryApplied> {
         let history = self.histories_by_board.get_mut(&board_id)?;
         let action = history.redo_stack.pop()?;
-        let label = action.label.clone();
         history.undo_stack.push(action.clone());
         Some(HistoryApplied {
-            label,
             action,
             direction: HistoryDirection::Forward,
         })
@@ -141,11 +136,11 @@ mod tests {
         history.record_applied(1, action("Second"));
 
         let undone = history.undo(1).unwrap();
-        assert_eq!(undone.label, "Second");
+        assert_eq!(undone.action.label, "Second");
         assert_eq!(undone.direction, HistoryDirection::Backward);
 
         let redone = history.redo(1).unwrap();
-        assert_eq!(redone.label, "Second");
+        assert_eq!(redone.action.label, "Second");
         assert_eq!(redone.direction, HistoryDirection::Forward);
     }
 
@@ -188,7 +183,7 @@ mod tests {
         history.record_applied(1, action("Board A"));
 
         assert!(history.undo(2).is_none());
-        assert_eq!(history.undo(1).unwrap().label, "Board A");
+        assert_eq!(history.undo(1).unwrap().action.label, "Board A");
     }
 
     #[test]
@@ -197,9 +192,9 @@ mod tests {
         history.record_applied(1, action("Board A"));
         history.record_applied(2, action("Board B"));
 
-        assert_eq!(history.undo(2).unwrap().label, "Board B");
-        assert_eq!(history.undo(1).unwrap().label, "Board A");
-        assert_eq!(history.redo(1).unwrap().label, "Board A");
-        assert_eq!(history.redo(2).unwrap().label, "Board B");
+        assert_eq!(history.undo(2).unwrap().action.label, "Board B");
+        assert_eq!(history.undo(1).unwrap().action.label, "Board A");
+        assert_eq!(history.redo(1).unwrap().action.label, "Board A");
+        assert_eq!(history.redo(2).unwrap().action.label, "Board B");
     }
 }
