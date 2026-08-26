@@ -2325,16 +2325,6 @@ fn canvas_annotations_round_trip_and_archive() {
     library.archive_canvas_annotations(&[created.id]).unwrap();
     assert!(library.load_canvas_annotations().unwrap().is_empty());
 
-    library.restore_canvas_annotations(&[created.id]).unwrap();
-    let restored = library.load_canvas_annotations().unwrap();
-    assert_eq!(restored.len(), 1);
-    assert_eq!(restored[0].id, created.id);
-    assert_eq!(restored[0].text, "updated");
-    assert_eq!(
-        library.load_canvas_stack_order().unwrap(),
-        vec![CanvasStackItem::Annotation(created.id)]
-    );
-
     let _ = fs::remove_dir_all(root);
 }
 

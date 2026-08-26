@@ -535,6 +535,7 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
 
 #[test]
 fn delete_selected_annotation_records_undo_history() {
+    let ctx = egui::Context::default();
     let root = temp_library_root("snappyref-delete-annotation-history");
     let library = Library::initialize(root.clone()).unwrap();
     let annotation = library
@@ -550,19 +551,17 @@ fn delete_selected_annotation_records_undo_history() {
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
     app.canvas.add_annotation(annotation.clone());
     app.canvas.select_content(&[], &[annotation.id]);
 
     app.delete_selected_items_from_board(test_screen_rect());
     assert!(library.load_canvas_annotations().unwrap().is_empty());
 
-    assert_eq!(
-        app.document_history
-            .undo(app.active_board_id, &library)
-            .unwrap()
-            .map(|applied| applied.label),
-        Some("Deleted 1 annotation".to_owned())
-    );
+    app.undo_document_history(&ctx);
+    app.flush_persistence();
+
+    assert_eq!(app.status, "Undid Deleted 1 annotation");
     assert_eq!(library.load_canvas_annotations().unwrap(), vec![annotation]);
 
     let _ = fs::remove_dir_all(root);
@@ -586,6 +585,7 @@ fn undo_delete_annotation_patches_active_canvas_without_board_reload() {
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
     app.import_worker = None;
     app.canvas.add_annotation(annotation.clone());
     app.canvas.select_content(&[], &[annotation.id]);
@@ -600,6 +600,85 @@ fn undo_delete_annotation_patches_active_canvas_without_board_reload() {
         Some(annotation)
     );
     assert_eq!(app.status, "Undid Deleted 1 annotation");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn undo_and_redo_defer_storage_until_explicit_flush() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-history-deferred-persistence");
+    let library = Library::initialize(root.clone()).unwrap();
+    let annotation = library
+        .create_canvas_annotation(
+            CanvasAnnotationKind::Textbox,
+            egui::pos2(40.0, 60.0),
+            egui::pos2(140.0, 100.0),
+            "note",
+            CanvasTextSize::M,
+            CanvasStrokeWidth::M,
+            crate::data::CanvasAnnotationColor::Sky,
+            true,
+        )
+        .unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    app.canvas.add_annotation(annotation.clone());
+    app.document_history.record_applied(
+        app.active_board_id,
+        super::HistoryAction {
+            label: "Added textbox".to_owned(),
+            placements: Vec::new(),
+            annotations: vec![super::HistoryChange {
+                before: None,
+                after: Some(annotation.clone()),
+            }],
+            stack_order: Some(super::HistoryChange {
+                before: Some(Vec::new()),
+                after: Some(vec![CanvasStackItem::Annotation(annotation.id)]),
+            }),
+        },
+    );
+    let storage_lock = rusqlite::Connection::open(root.join("library.db")).unwrap();
+
+    storage_lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+    app.undo_document_history(&ctx);
+
+    assert_eq!(app.status, "Undid Added textbox");
+    assert!(app.canvas.annotation_for_id(annotation.id).is_none());
+    let archived_before_flush: i64 = storage_lock
+        .query_row(
+            "SELECT archived FROM canvas_annotations WHERE id = ?1",
+            [annotation.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(archived_before_flush, 0);
+
+    storage_lock.execute_batch("COMMIT").unwrap();
+    app.flush_persistence();
+    assert!(library.load_canvas_annotations().unwrap().is_empty());
+
+    storage_lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+    app.redo_document_history();
+
+    assert_eq!(app.status, "Redid Added textbox");
+    assert_eq!(
+        app.canvas.annotation_for_id(annotation.id),
+        Some(annotation.clone())
+    );
+    let archived_before_flush: i64 = storage_lock
+        .query_row(
+            "SELECT archived FROM canvas_annotations WHERE id = ?1",
+            [annotation.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(archived_before_flush, 1);
+
+    storage_lock.execute_batch("COMMIT").unwrap();
+    app.flush_persistence();
+    assert_eq!(library.load_canvas_annotations().unwrap(), vec![annotation]);
 
     let _ = fs::remove_dir_all(root);
 }
@@ -5225,6 +5304,7 @@ fn completed_import_for_inactive_board_records_history_for_target_board() {
     let placement_id = placement.state.id;
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
     app.switch_to_board(second.id);
 
     let mut loaded = test_loaded_item(placement_id, first.id);
@@ -5234,6 +5314,7 @@ fn completed_import_for_inactive_board_records_history_for_target_board() {
     assert!(app.canvas.placement_for_id(placement_id).is_none());
     app.switch_to_board(first.id);
     app.undo_document_history(&ctx);
+    app.flush_persistence();
 
     assert!(
         library
@@ -5244,6 +5325,7 @@ fn completed_import_for_inactive_board_records_history_for_target_board() {
     assert_eq!(app.status, "Undid Import image");
 
     app.redo_document_history();
+    app.flush_persistence();
 
     assert_eq!(
         library.load_placements_for_board(first.id).unwrap().len(),

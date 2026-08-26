@@ -238,41 +238,4 @@ impl Library {
 
         Ok(())
     }
-
-    pub fn restore_canvas_annotations(&self, annotation_ids: &[i64]) -> Result<(), String> {
-        if annotation_ids.is_empty() {
-            return Ok(());
-        }
-
-        let mut connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("failed to start annotation restore transaction: {error}"))?;
-
-        for annotation_id in annotation_ids {
-            transaction
-                .execute(
-                    "UPDATE canvas_annotations
-                     SET archived = 0
-                     WHERE id = ?1
-                       AND board_id = ?2",
-                    params![annotation_id, active_board_id],
-                )
-                .map_err(|error| {
-                    format!("failed to restore canvas annotation {annotation_id}: {error}")
-                })?;
-            append_canvas_stack_item(
-                &transaction,
-                active_board_id,
-                CanvasStackItem::Annotation(*annotation_id),
-            )?;
-        }
-
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit annotation restore transaction: {error}"))?;
-
-        Ok(())
-    }
 }

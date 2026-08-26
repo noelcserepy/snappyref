@@ -3541,85 +3541,70 @@ impl SnappyRefApp {
     }
 
     fn undo_document_history(&mut self, ctx: &egui::Context) {
-        let Some(library) = self.library.clone() else {
+        if self.library.is_none() {
             self.status = "Storage unavailable".to_owned();
             return;
-        };
-        match self.document_history.undo(self.active_board_id, &library) {
-            Ok(Some(applied)) => {
-                self.apply_history_to_active_canvas(&applied.action, applied.direction);
-                self.status = format!("Undid {}", applied.label);
-            }
-            Ok(None) => self.undo_crop_fallback(ctx),
-            Err(error) => self.status = error,
         }
+        let Some(applied) = self.document_history.undo(self.active_board_id) else {
+            self.undo_crop_fallback(ctx);
+            return;
+        };
+        let changes = self.apply_history_to_active_canvas(&applied.action, applied.direction);
+        if let Err(error) = self.document_persistence.enqueue_document_changes(changes) {
+            self.status = error;
+            return;
+        }
+        self.status = format!("Undid {}", applied.label);
     }
 
     fn redo_document_history(&mut self) {
-        let Some(library) = self.library.clone() else {
+        if self.library.is_none() {
             self.status = "Storage unavailable".to_owned();
             return;
-        };
-        match self.document_history.redo(self.active_board_id, &library) {
-            Ok(Some(applied)) => {
-                self.apply_history_to_active_canvas(&applied.action, applied.direction);
-                self.status = format!("Redid {}", applied.label);
-            }
-            Ok(None) => {}
-            Err(error) => self.status = error,
         }
+        let Some(applied) = self.document_history.redo(self.active_board_id) else {
+            return;
+        };
+        let changes = self.apply_history_to_active_canvas(&applied.action, applied.direction);
+        if let Err(error) = self.document_persistence.enqueue_document_changes(changes) {
+            self.status = error;
+            return;
+        }
+        self.status = format!("Redid {}", applied.label);
     }
 
     fn apply_history_to_active_canvas(
         &mut self,
         action: &HistoryAction,
         direction: HistoryDirection,
-    ) {
+    ) -> crate::canvas::CanvasDocumentChanges {
+        let mut document_changes = crate::canvas::CanvasDocumentChanges::default();
         for change in &action.annotations {
-            let target = match direction {
-                HistoryDirection::Forward => change.after.clone(),
-                HistoryDirection::Backward => change.before.clone(),
-            }
-            .or_else(|| match direction {
-                HistoryDirection::Forward => change.before.clone().map(|mut annotation| {
-                    annotation.archived = true;
-                    annotation
-                }),
-                HistoryDirection::Backward => change.after.clone().map(|mut annotation| {
-                    annotation.archived = true;
-                    annotation
-                }),
-            });
-            self.canvas.apply_annotation_history_state(target);
+            let Some(target) = change.annotation_target(direction) else {
+                continue;
+            };
+            self.canvas
+                .apply_annotation_history_state(Some(target.clone()));
+            document_changes.updated_annotations.push(target);
         }
 
         for change in &action.placements {
-            let target = match direction {
-                HistoryDirection::Forward => change.after.clone(),
-                HistoryDirection::Backward => change.before.clone(),
-            }
-            .or_else(|| match direction {
-                HistoryDirection::Forward => change.before.clone().map(|mut placement| {
-                    placement.state.archived = true;
-                    placement
-                }),
-                HistoryDirection::Backward => change.after.clone().map(|mut placement| {
-                    placement.state.archived = true;
-                    placement
-                }),
-            });
-            self.canvas.apply_placement_history_state(target);
+            let Some(target) = change.placement_target(direction) else {
+                continue;
+            };
+            self.canvas
+                .apply_placement_history_state(Some(target.clone()));
+            document_changes.updated_placements.push(target.state);
         }
 
         if let Some(change) = &action.stack_order {
-            let target = match direction {
-                HistoryDirection::Forward => change.after.clone(),
-                HistoryDirection::Backward => change.before.clone(),
-            };
+            let target = change.target(direction);
             if let Some(stack_order) = target {
-                self.canvas.restore_canvas_stack_order(stack_order);
+                self.canvas.restore_canvas_stack_order(stack_order.clone());
+                document_changes.stack_order = Some(stack_order);
             }
         }
+        document_changes
     }
 
     fn undo_crop_fallback(&mut self, ctx: &egui::Context) {
