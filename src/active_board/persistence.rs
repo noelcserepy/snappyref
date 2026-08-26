@@ -161,14 +161,12 @@ impl PersistenceQueue {
     }
 
     fn enqueue(&self, command: PersistenceCommand) -> Result<(), String> {
-        self.drain_errors()?;
         self.tx
             .send(command)
             .map_err(|error| format!("failed to enqueue persistence work: {error}"))
     }
 
     fn flush(&self) -> Result<(), String> {
-        self.drain_errors()?;
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         self.tx
             .send(PersistenceCommand::Flush(done_tx))
@@ -477,6 +475,61 @@ mod tests {
         let stored = library.load_placements().unwrap();
         assert_eq!(stored[0].state.geometry.center.x, 30.0);
         assert_eq!(stored[0].state.geometry.center.y, 40.0);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn queued_failure_does_not_reject_later_changes_or_skip_flush() {
+        let root = std::env::temp_dir().join(format!(
+            "snappyref-queued-failure-recovery-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let library = crate::library::storage::Library::initialize(root.clone()).unwrap();
+        let source = root.join("source.png");
+        std::fs::write(&source, [255, 255, 255, 255]).unwrap();
+        let record = library
+            .persist_imported_image(
+                &source,
+                "image/png",
+                1,
+                1,
+                4,
+                eframe::egui::pos2(0.0, 0.0),
+                1.0,
+            )
+            .unwrap();
+        let mut persistence = DocumentPersistence::queued(library.clone());
+
+        let mut invalid = record.state.clone();
+        invalid.asset_id = Some(i64::MAX);
+        persistence
+            .enqueue_document_changes(crate::canvas::CanvasDocumentChanges {
+                updated_placements: vec![invalid],
+                ..Default::default()
+            })
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let mut valid = record.state.clone();
+        valid.geometry.center.x = 42.0;
+        persistence
+            .enqueue_document_changes(crate::canvas::CanvasDocumentChanges {
+                updated_placements: vec![valid],
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert!(persistence.flush().is_err());
+        assert_eq!(
+            library.load_placements().unwrap()[0]
+                .state
+                .geometry
+                .center
+                .x,
+            42.0
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }
