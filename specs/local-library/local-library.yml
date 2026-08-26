@@ -1,0 +1,186 @@
+schema: v0.1
+
+purpose:
+  outcome: Keep every reusable image reference in one local collection that remains independent of any board.
+  owns:
+    - Asset identity and metadata.
+    - Managed original files and reusable image derivatives.
+    - Exact duplicate reuse and reconciliation.
+    - Library-wide Asset enumeration.
+    - Asset archival and its cross-Board reference effects.
+  excludes:
+    - Placement geometry and board membership.
+    - Image decoding and derivative generation.
+    - Semantic embeddings and search ranking.
+
+interface:
+  operations:
+    register-original:
+      description: Registers one prepared original image in the Library.
+
+      input:
+        original:
+          type: LibraryOriginal
+          description: A validated image and its source metadata.
+
+      outcomes:
+        registered:
+          asset: Asset
+        reused:
+          asset: Asset
+        rejected:
+          reason: LibraryRejection
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        new-content-registered: New image content produces registered with a stable Asset identity.
+        exact-content-reused: Content that exactly matches an existing Asset produces reused with the canonical Asset.
+        managed-copy: A successful registration must not depend on the continued availability of the source file.
+        invalid-input-rejected: Invalid or unsupported image content produces rejected without changing the Library.
+
+      caller_obligations:
+        validated-original: Supply a LibraryOriginal produced from validated image content.
+
+    resolve-asset:
+      description: Resolves an Asset identity to its current Library record.
+
+      input:
+        asset:
+          type: AssetId
+          description: The Asset identity to resolve.
+
+      outcomes:
+        available:
+          asset: Asset
+        missing: {}
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        exact-identity: available must return the Asset identified by the supplied AssetId.
+        missing-explicit: An unknown or removed Asset produces missing.
+
+      caller_obligations: {}
+
+    enumerate-assets:
+      description: Supplies active Library Assets to Search, backfill, and repair callers.
+
+      input: {}
+
+      outcomes:
+        listed:
+          assets: AssetSet
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        board-independent: listed must include active Assets whether or not a Placement currently references them.
+        legacy-duplicates-visible: listed may contain legacy exact duplicates until reconciliation reaches them.
+
+      caller_obligations: {}
+
+    reconcile-exact-duplicates:
+      description: Replaces previously stored exact duplicates with their canonical Assets.
+
+      input: {}
+
+      outcomes:
+        reconciled:
+          reconciliation: AssetReconciliation
+        unchanged: {}
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        first-asset-canonical: The earliest registered Asset for identical content remains canonical.
+        references-preserved: Reconciliation must redirect stored references before it removes duplicate records or files.
+        asset-remaps-reported: reconciled must report duplicate-to-canonical Asset remaps for owners of derived state.
+        no-partial-removal: A failed reconciliation must not leave stored references pointing to removed Assets.
+
+      caller_obligations: {}
+
+    archive-assets:
+      description: Removes active Assets from the Library while retaining recoverable managed files and records.
+
+      input:
+        assets:
+          type: AssetIdSet
+          description: The Assets to archive.
+
+      outcomes:
+        archived:
+          assets: AssetIdSet
+          placements: PlacementIdSet
+        unchanged: {}
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        cross-board-reference-archive: archived must also archive every Placement that references an archived Asset on every Board.
+        managed-files-retained: archived must retain managed originals and durable records for recovery or later cleanup policy.
+        active-enumeration-excluded: Archived Assets must not appear in active enumeration or Search indexing.
+        repeat-safe: Repeating the same archive request produces unchanged without another change.
+
+      caller_obligations:
+        destructive-flush: Flush queued Board persistence before archiving Assets whose Placement references may change.
+
+  guarantees:
+    local-ownership: The Library and its originals remain in user-owned local storage.
+    board-independent-assets: An Asset exists independently of any Board or Placement.
+    known-content-stable-identity: Registering content with a known matching file size and SHA-256 must reuse the existing active canonical Asset.
+    legacy-duplicates-possible: A Library created before import-time exact reuse may contain duplicate Assets until reconciliation completes.
+    original-durability: Removing a source file after successful registration must not make the Asset unavailable.
+    archive-not-physical-delete: Ordinary Library deletion archives Asset records, managed files, and affected Placement references instead of physically deleting them.
+
+  requires:
+    library-root:
+      target: "[[local-data-location#/interface/operations/resolve-library-root/outcomes/resolved]]"
+      reason: Supplies the managed local root for Library storage.
+
+decisions:
+  exact-image-identity:
+    current: Reuse a known active exact-content match during registration and repair legacy duplicates by retaining the earliest registered Asset.
+    affects:
+      - "[[#/interface/operations/register-original]]"
+      - "[[#/interface/operations/reconcile-exact-duplicates]]"
+      - "[[#/interface/guarantees/known-content-stable-identity]]"
+      - "[[#/interface/guarantees/legacy-duplicates-possible]]"
+    reasons:
+      - Duplicate Assets reduce Semantic Search quality and waste local storage.
+      - Reusing the first Asset preserves stable references.
+    consequences:
+      - A later import with a known matching file size and SHA-256 reuses the canonical Asset.
+      - Reconciliation redirects existing references before removing duplicates.
+      - Enumeration may include legacy duplicates until bounded or full repair reaches them.
+    reconsider_when:
+      - Two byte-distinct originals need a stronger notion of visual equivalence.
+    explored_paths:
+      keep-duplicate-assets:
+        status: rejected
+        reason: Exact duplicates polluted search results and duplicated stored work.
+    sources:
+      - label: Reconcile exact duplicate Assets
+        url: https://github.com/noelcserepy/snappyref/pull/134
+      - label: Reuse exact Assets during import
+        url: https://github.com/noelcserepy/snappyref/pull/138
+
+  deletion-means-archive:
+    current: Treat ordinary Library deletion as archival, remove references from every active Board, and retain managed originals and records.
+    affects:
+      - "[[#/interface/operations/archive-assets]]"
+      - "[[#/interface/guarantees/archive-not-physical-delete]]"
+    reasons:
+      - Library Assets are shared across Boards, so deletion cannot be scoped to the active Board.
+      - Retaining managed content prevents ordinary UI deletion from becoming irreversible file destruction.
+    consequences:
+      - Every Placement referencing an archived Asset leaves active Board content.
+      - Archived Assets leave enumeration and Semantic Search.
+      - Physical reclamation is a separate maintenance policy.
+    reconsider_when:
+      - SnappyRef adds an explicit permanent-delete or trash-emptying workflow.
+    explored_paths:
+      immediate-file-deletion:
+        status: rejected
+        reason: It made ordinary Library deletion irreversible and could invalidate cross-Board references.
+    sources: []

@@ -1,0 +1,162 @@
+schema: v0.1
+
+purpose:
+  outcome: Let users navigate and edit the active Board through fast, shortcut-driven spatial interaction.
+  owns:
+    - Canvas viewport and selection interaction.
+    - Pointer and keyboard interpretation.
+    - Move, resize, uniform scale, rotation, and crop interaction.
+    - Annotation and text-box editing interaction.
+    - Copy, paste, duplicate, delete, focus, arrangement, and stack-order commands.
+    - Presentation of provisional, loading, loaded, and failed Placements.
+  excludes:
+    - Durable Board ownership and history rules.
+    - Asset and image-content storage.
+    - Spatial layout calculations.
+    - Placement batch lifecycle.
+    - Clipboard representation and platform exchange.
+
+interface:
+  operations:
+    open:
+      description: Opens an interactive canvas view for one Board document and viewport.
+
+      input:
+        document:
+          type: BoardDocument
+          description: The durable Board content to present.
+        viewport:
+          type: CanvasViewport
+          description: The initial board-space view.
+        provisional_batch:
+          type: ProvisionalPlacementBatch?
+          description: The active provisional Placement batch, when one exists.
+
+      outcomes:
+        ready:
+          view: CanvasView
+        unavailable:
+          reason: CanvasUnavailableReason
+
+      behavior:
+        complete-document: ready must present Placements and annotations in their shared stack order.
+        content-state-visible: ready must present provisional, loading, loaded, and failed Placement states without changing their identity.
+        viewport-applied: ready must use the supplied viewport without changing document geometry.
+
+      caller_obligations: {}
+
+    perform:
+      description: Handles one normalized Canvas interaction against the current view and Board document.
+
+      input:
+        interaction:
+          type: CanvasInteraction
+          description: A normalized pointer, keyboard, or command interaction with the current selection and viewport.
+
+      outcomes:
+        document-changed:
+          view: CanvasView
+        view-changed:
+          view: CanvasView
+        copied:
+          content: CanvasClipboardContent
+        creation-started:
+          placements: PlacementBatch
+        unchanged:
+          view: CanvasView
+        blocked:
+          reason: CanvasActionBlock
+
+      behavior:
+        selection-coherent: Multi-item transforms must preserve relative geometry unless the selected action explicitly rearranges the items.
+        layout-delegated: Move, resize, uniform scale, arrange, and settle actions must use Spatial Layout for relevant geometry proposals.
+        precise-modifiers: Precision modifiers must suppress or refine snapping without changing the underlying action.
+        pointer-mode-explicit: Mouse mode must map wheel notches to pointer-centered zoom and high-resolution scroll to pan; Trackpad mode must map pinch to pointer-centered zoom and translation to pan.
+        source-preserving-crop: Crop actions must not alter the source Asset.
+        clipboard-delegated: Copy and paste must use Clipboard Exchange so internal mixed content and native external image content follow one boundary policy.
+        external-paste-creates: Accepted external image clipboard content must use Placement Creation's committed creation path.
+        accepted-intake-view-neutral: Accepted import, paste, URL, and drop intake must not pan, focus, zoom, or otherwise change the viewport.
+        search-preview-one-shot-fit: A provisional Search result group may zoom out once when it does not fit, but must not zoom in or repeatedly refit as results resolve.
+        search-preview-pointer-anchor: After a Search preview fit, the provisional group must remain positioned at the user's pointer.
+        animation-on-engagement: A visible animated image advances while hovered or selected and stays on its current frame while unengaged.
+        history-delegated: Undo and redo actions must use Board Document history rather than private Canvas history.
+
+      caller_obligations: {}
+
+  guarantees:
+    continuous-interaction-storage-free: Pan, zoom, drag, resize, rotate, and other frame-continuous interaction must not wait for durable storage.
+    queued-document-edits: Ordinary Board edits must change memory first and queue durable persistence.
+    explicit-flush-seams: Board switch, app exit, update restart, and destructive Board or Library actions may wait for queued durability.
+    shortcut-driven: Core editing and navigation actions must be available without opening a command menu.
+    provisional-interaction: Provisional Placements support the same selection and transform interactions as committed Placements.
+    document-change-routing: Canvas Interaction must route durable Board edits through Active Board command and document handling rather than write storage during continuous input handling.
+    board-view-routing: Canvas viewport and background changes must be recorded as the active Board's view state without entering Board undo history.
+
+  requires:
+    board-document-change:
+      target: "[[board-document#/interface/operations/apply-change/outcomes/applied]]"
+      reason: Owns durable document mutation and history.
+    provisional-placement-batch:
+      target: "[[placement-creation#/interface/operations/begin-provisional/outcomes/started]]"
+      reason: Creates movable, cancellable Placements for preview and positioning interactions.
+    committed-placement-creation:
+      target: "[[placement-creation#/interface/operations/create-committed/outcomes/created]]"
+      reason: Creates committed Placements for accepted external paste, drop, and import content.
+    clipboard-read:
+      target: "[[clipboard-exchange#/interface/operations/read/outcomes/content]]"
+      reason: Normalizes internal and native clipboard data before paste creates content.
+    clipboard-write:
+      target: "[[clipboard-exchange#/interface/operations/write/outcomes/written]]"
+      reason: Publishes copied Board content with the correct internal and native representations.
+    spatial-transform:
+      target: "[[spatial-layout#/interface/operations/snap/outcomes/snapped]]"
+      reason: Supplies snapping and layout geometry for Canvas actions.
+
+decisions:
+  interaction-persistence-boundary:
+    current: Keep frame-continuous interaction storage-free, queue ordinary document edits, and wait for durability only at explicit lifecycle and destructive seams.
+    affects:
+      - "[[#/interface/operations/perform]]"
+      - "[[#/interface/guarantees/continuous-interaction-storage-free]]"
+      - "[[#/interface/guarantees/queued-document-edits]]"
+      - "[[#/interface/guarantees/explicit-flush-seams]]"
+    reasons:
+      - Storage latency must not interrupt pan, zoom, drag, resize, or rotate frames.
+      - Board switch, shutdown, update restart, and destructive actions need a known durability boundary.
+    consequences:
+      - Active Board command handling owns persistence coordination for discrete edits.
+      - Continuous input handling never coordinates durable storage.
+    reconsider_when:
+      - Measured storage behavior shows that an explicit flush seam causes unacceptable interaction delay.
+    explored_paths:
+      synchronous-interaction-writes:
+        status: rejected
+        reason: Storage waits caused visible interaction stutter.
+    sources:
+      - label: Keep interaction frames storage-free
+        url: https://github.com/noelcserepy/snappyref/blob/7411e46bd3e747b6401aef763ca5105b4aab9204/docs/adr/0023-keep-interaction-frames-storage-free.md
+      - label: Move active Board persistence off interaction frames
+        url: https://github.com/noelcserepy/snappyref/pull/114
+
+  navigation-side-effects:
+    current: Keep accepted source intake viewport-neutral, but allow a one-shot zoom-out for provisional Search positioning when the result group does not fit.
+    affects:
+      - "[[#/interface/operations/perform/behavior/accepted-intake-view-neutral]]"
+      - "[[#/interface/operations/perform/behavior/search-preview-one-shot-fit]]"
+      - "[[#/interface/operations/perform/behavior/search-preview-pointer-anchor]]"
+    reasons:
+      - Accepted intake should not unexpectedly move the user's Board view.
+      - Search positioning is an active preview gesture and needs the whole candidate group to remain placeable.
+    consequences:
+      - Imports can appear offscreen without forcing focus or zoom.
+      - Search preview can zoom out once, stays under the pointer, and never zooms in automatically.
+    reconsider_when:
+      - Search gains a positioning flow that does not use an on-canvas provisional group.
+    explored_paths:
+      auto-fit-all-intake:
+        status: superseded
+        reason: It made committed imports change viewport context without an explicit navigation action.
+      no-search-fit:
+        status: rejected
+        reason: Oversized Search preview groups could not be positioned coherently.
+    sources: []

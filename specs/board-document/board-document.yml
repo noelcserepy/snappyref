@@ -1,0 +1,326 @@
+schema: v0.1
+
+purpose:
+  outcome: Keep each named Board as a durable, undoable document with its own content, view, and history.
+  owns:
+    - Board identity and naming.
+    - Placement and annotation membership.
+    - Stack order across Board items.
+    - Per-Board viewport and background state.
+    - Document persistence.
+    - Undo and redo history for committed document changes.
+  excludes:
+    - Asset storage.
+    - Canvas input and visual interaction.
+    - Provisional batch orchestration.
+    - Window, sidebar, recent Search, and global setting restoration.
+
+interface:
+  operations:
+    create-board:
+      description: Creates an empty named Board.
+
+      input:
+        name:
+          type: BoardName
+          description: The user-visible Board name.
+
+      outcomes:
+        created:
+          board: BoardSummary
+        rejected:
+          reason: BoardRejection
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        empty-document: created must produce a Board with no Placements or annotations.
+        durable-identity: created must assign a stable BoardId.
+        default-view: created must include a usable default viewport at zoom 0.45 and a default Board background.
+        history-recorded-once: created must add one undoable Board lifecycle history entry.
+
+      caller_obligations: {}
+
+    rename-board:
+      description: Changes the user-visible name of one Board.
+
+      input:
+        board:
+          type: BoardId
+          description: The Board to rename.
+        name:
+          type: BoardName
+          description: The new user-visible Board name.
+
+      outcomes:
+        renamed:
+          board: BoardSummary
+          history_entry: DocumentHistoryEntry
+        unchanged:
+          board: BoardSummary
+        missing: {}
+        rejected:
+          reason: BoardRejection
+
+      behavior:
+        identity-preserved: renamed must preserve the BoardId and document content.
+        history-recorded-once: renamed must add one undoable Board lifecycle history entry.
+        no-history-for-noop: unchanged must not add a history entry.
+        persistence-deferred: renamed must not wait for durable storage before returning.
+
+      caller_obligations: {}
+
+    list-boards:
+      description: Lists the Boards in the workspace.
+
+      input: {}
+
+      outcomes:
+        listed:
+          boards: BoardCatalog
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        stable-identities: listed must preserve each BoardId across restarts.
+
+      caller_obligations: {}
+
+    open-board:
+      description: Opens the durable document for one Board.
+
+      input:
+        board:
+          type: BoardId
+          description: The Board to open.
+
+      outcomes:
+        opened:
+          document: BoardDocument
+        missing: {}
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        complete-document: opened must include Placements, annotations, their shared stack order, and the Board's viewport and background.
+        transient-state-excluded: opened must not restore provisional Placements or active interaction state.
+
+      caller_obligations: {}
+
+    record-view:
+      description: Records one Board's latest viewport and background outside document history.
+
+      input:
+        board:
+          type: BoardId
+          description: The Board whose view state changed.
+        view:
+          type: BoardViewState
+          description: The latest viewport and background for the Board.
+
+      outcomes:
+        accepted: {}
+        unchanged: {}
+        missing: {}
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        board-scoped: accepted must update only the supplied Board.
+        history-neutral: accepted must not add a Document History entry.
+        deferred-persistence: accepted must return before durable storage completes.
+        latest-state-wins: Equivalent pending view writes may coalesce, but the latest accepted state must become durable.
+
+      caller_obligations: {}
+
+    apply-change:
+      description: Applies one committed document change to a Board.
+
+      input:
+        board:
+          type: BoardId
+          description: The Board to change.
+        change:
+          type: BoardDocumentChange
+          description: A closed document change over Placements, annotations, or stack order.
+
+      outcomes:
+        applied:
+          document: BoardDocument
+          history_entry: DocumentHistoryEntry
+        unchanged:
+          document: BoardDocument
+        rejected:
+          reason: BoardRejection
+        missing: {}
+
+      behavior:
+        atomic-in-memory-change: applied must expose the whole logical change or none of it.
+        history-recorded-once: applied must add one undoable history entry.
+        no-history-for-noop: unchanged must not add a history entry.
+        persistence-deferred: applied must not wait for durable storage before returning the changed document.
+
+      caller_obligations: {}
+
+    undo:
+      description: Reverses the latest committed document change.
+
+      input:
+        board:
+          type: BoardId
+          description: The Board whose latest change to reverse.
+
+      outcomes:
+        undone:
+          document: BoardDocument
+        nothing-to-undo:
+          document: BoardDocument
+        missing: {}
+
+      behavior:
+        exact-reversal: undone must restore the document state before the reverted history entry.
+        redo-created: undone must make the reverted entry available to redo.
+        persistence-deferred: undone must return after the in-memory reversal and queue durable persistence.
+
+      caller_obligations: {}
+
+    redo:
+      description: Reapplies the latest undone document change.
+
+      input:
+        board:
+          type: BoardId
+          description: The Board whose latest undone change to reapply.
+
+      outcomes:
+        redone:
+          document: BoardDocument
+        nothing-to-redo:
+          document: BoardDocument
+        missing: {}
+
+      behavior:
+        exact-reapplication: redone must restore the document state produced by the reapplied history entry.
+        persistence-deferred: redone must return after the in-memory reapplication and queue durable persistence.
+
+      caller_obligations: {}
+
+    delete-board:
+      description: Archives a Board and its document without removing Assets from the Library.
+
+      input:
+        board:
+          type: BoardId
+          description: The Board to remove.
+
+      outcomes:
+        deleted:
+          history_entry: DocumentHistoryEntry
+        missing: {}
+        rejected:
+          reason: BoardRejection
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        assets-preserved: deleted must not remove Assets referenced by the Board.
+        document-preserved: deleted must retain the archived Board identity, Placements, annotations, stack order, view state, and history for exact undo.
+        history-recorded-once: deleted must add one undoable Board lifecycle history entry.
+        repeat-safe: Deleting an already missing Board produces missing without another change.
+        persistence-deferred: deleted must not wait for durable storage before returning.
+
+      caller_obligations: {}
+
+  guarantees:
+    persistence-off-interaction-path: Durable writes must not block canvas interaction frames.
+    latest-document-eventually-durable: The latest accepted document state must become durable, and coalescing must preserve the semantic order of changes.
+    mixed-item-stack: Placements and annotations share one durable stack order.
+    stable-total-stack-order: Every active Board item has one stable position in a total back-to-front order; creating an item places it at the front unless an explicit reorder is part of the same change.
+    relative-order-preserved: Reordering a multi-item selection must preserve the selected items' relative order.
+    provisional-history-neutral: Provisional Placements must not enter persistence or history before commit.
+    history-isolated-per-board: Undo and redo for one Board must not consume entries created for another Board.
+    history-survives-restart: Committed Board and Board-lifecycle history must remain available after app restart.
+    archived-content-recoverable: Deleting a Board or Board item archives its durable content so Undo can restore the same identities.
+    new-board-zoom: A Board without saved view state starts at zoom 0.45.
+
+  requires:
+    placement-definition:
+      target: "[[placement#/interface/operations/create/outcomes/created]]"
+      reason: Defines the image-shaped document objects stored by a Board.
+
+decisions:
+  history-scope:
+    current: Keep committed document history isolated by Board, include Board create, rename, and delete as lifecycle entries, and exclude transient canvas and workspace session state.
+    affects:
+      - "[[#/interface/operations/apply-change]]"
+      - "[[#/interface/operations/undo]]"
+      - "[[#/interface/operations/redo]]"
+      - "[[#/interface/operations/create-board]]"
+      - "[[#/interface/operations/rename-board]]"
+      - "[[#/interface/operations/delete-board]]"
+      - "[[#/interface/guarantees/provisional-history-neutral]]"
+      - "[[#/interface/guarantees/history-isolated-per-board]]"
+    reasons:
+      - Undo must restore meaningful document states.
+      - Transient previews and view changes must not pollute document history.
+    consequences:
+      - Committing a provisional batch creates history.
+      - One accepted multi-item addition creates one history entry.
+      - Cancelling a provisional batch creates no history.
+      - Switching Boards cannot expose history entries from the previous Board.
+      - Board lifecycle actions can be undone without turning view or window changes into document history.
+    reconsider_when:
+      - A transient interaction gains durable user meaning that users expect Undo to restore.
+    explored_paths: {}
+    sources:
+      - label: Add document undo history
+        url: https://github.com/noelcserepy/snappyref/pull/119
+      - label: Document history
+        url: https://github.com/noelcserepy/snappyref/blob/93bd3ddf84f1c612f910fe7985863538a19eb38f/docs/adr/0024-document-history.md
+
+  history-durability:
+    current: Apply, Undo, and Redo change memory first, queue ordered persistence, and preserve the resulting history across restart.
+    affects:
+      - "[[#/interface/operations/apply-change]]"
+      - "[[#/interface/operations/undo]]"
+      - "[[#/interface/operations/redo]]"
+      - "[[#/interface/guarantees/persistence-off-interaction-path]]"
+      - "[[#/interface/guarantees/history-survives-restart]]"
+    reasons:
+      - Undo and Redo are interactive document commands and must not wait on storage latency.
+      - Restart must not erase the user's ability to reverse committed work.
+    consequences:
+      - History persistence preserves the semantic order of accepted changes.
+      - Explicit lifecycle flush seams may wait for queued history and document durability.
+    reconsider_when:
+      - Measured persistence cost or storage growth requires a bounded durable-history policy.
+    explored_paths:
+      memory-only-history:
+        status: superseded
+        reason: It loses committed undo and redo state at restart.
+      synchronous-undo-persistence:
+        status: rejected
+        reason: It puts storage latency on an interactive command path.
+    sources:
+      - label: Add document undo history
+        url: https://github.com/noelcserepy/snappyref/pull/119
+
+  board-view-ownership:
+    current: Persist viewport and background with each Board while keeping window, sidebar, Search, and global settings in Workspace Continuity.
+    affects:
+      - "[[#/purpose/owns]]"
+      - "[[#/interface/operations/create-board]]"
+      - "[[#/interface/operations/open-board]]"
+      - "[[#/interface/operations/record-view]]"
+    reasons:
+      - Switching Boards must restore each Board's own spatial context.
+      - Window and application-wide preferences are not Board document content.
+    consequences:
+      - Board switching restores target Board view state.
+      - View changes remain outside Board undo history.
+    reconsider_when: []
+    explored_paths:
+      workspace-wide-viewport:
+        status: superseded
+        reason: One shared viewport loses the spatial context of inactive Boards.
+    sources: []

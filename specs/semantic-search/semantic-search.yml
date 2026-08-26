@@ -1,0 +1,338 @@
+schema: v0.1
+
+purpose:
+  outcome: Find reusable Assets across the whole local Library by meaning or visual similarity and place selected results on a Board.
+  owns:
+    - Local Semantic Search model installation, status, cancellation, removal, and retry.
+    - First-run model onboarding and legacy model-store migration.
+    - Asset embedding generation, storage policy, and retry scheduling.
+    - Text and image-pivot queries over Library Assets.
+    - Search result ranking and selection.
+    - Placement of selected Search results through Placement Creation.
+  excludes:
+    - Asset identity and original storage.
+    - Placement geometry and lifecycle rules.
+    - App release download and installation.
+    - General workspace session persistence.
+
+interface:
+  operations:
+    offer-onboarding:
+      description: Offers the one-time Semantic Search enable choice when the local model is missing.
+
+      input:
+        state:
+          type: SemanticSearchOnboardingState
+          description: Storage availability, model availability, and whether the offer was already answered.
+
+      outcomes:
+        offered:
+          offer: SemanticSearchInstallOffer
+        skipped: {}
+
+      behavior:
+        storage-required: offered requires writable local session storage so the answer can persist.
+        missing-model-only: Installed or successfully migrated model content produces skipped.
+        once-per-workspace: A previously answered offer produces skipped, including after later model removal.
+        enable-shares-install: Accepting the offer must use the same installation capability as Settings and the Search palette.
+        not-now-persists: Declining the offer must suppress later automatic offers without disabling manual installation.
+
+      caller_obligations: {}
+
+    status:
+      description: Reports whether local Semantic Search can answer queries.
+
+      input: {}
+
+      outcomes:
+        ready: {}
+        model-missing: {}
+        installing:
+          progress: InstallProgress
+        failed:
+          reason: SemanticSearchFailure
+
+      behavior:
+        progress-measurable: installing must report determinate progress when the package size is known.
+        query-ready-during-backfill: ready must not require Library-wide embedding backfill to finish.
+        legacy-store-migrated: A complete legacy in-bundle model must migrate once into the Local Model Store before status reports it missing.
+
+      caller_obligations: {}
+
+    install-model:
+      description: Installs the standalone local Semantic Search package after explicit user action.
+
+      input: {}
+
+      outcomes:
+        started:
+          install: ModelInstall
+        already-installed: {}
+        already-running:
+          install: ModelInstall
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        explicit-action: started must result from an explicit install or retry action.
+        one-install: Concurrent requests must share one installation instead of starting duplicate downloads.
+        staged-validation: The downloaded package must pass size, hash, layout, and content validation before promotion.
+        existing-store-preserved: A failed installation must not replace a working Local Model Store.
+        shared-control-surface: First-run onboarding, Settings, and the Search palette must start the same installation state machine.
+
+      caller_obligations: {}
+
+    cancel-install:
+      description: Cancels an active Semantic Search model installation.
+
+      input: {}
+
+      outcomes:
+        cancelled: {}
+        not-running: {}
+
+      behavior:
+        staging-cleaned: cancelled must remove incomplete staging content.
+        existing-store-preserved: cancelled must not remove a previously working Local Model Store.
+        repeat-safe: Repeating cancellation produces not-running without another change.
+
+      caller_obligations: {}
+
+    remove-model:
+      description: Removes installed Semantic Search model files.
+
+      input: {}
+
+      outcomes:
+        removed: {}
+        already-missing: {}
+        unavailable:
+          reason: SemanticSearchFailure
+
+      behavior:
+        library-preserved: removed must not remove Library Assets, Placements, or Boards.
+        embeddings-preserved: removed must not remove reusable Asset embeddings.
+        repeat-safe: Repeating removal produces already-missing without another change.
+
+      caller_obligations: {}
+
+    search-text:
+      description: Ranks Library Assets against a text query.
+
+      input:
+        query:
+          type: SemanticTextQuery
+          description: A non-empty natural-language search query.
+
+      outcomes:
+        results:
+          matches: SemanticSearchResults
+        model-missing: {}
+        rejected:
+          reason: SearchQueryRejection
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        library-wide: results must consider indexed Assets whether or not a Placement references them on the active Board.
+        assets-only: matches must identify Assets, not existing Placements.
+        incomplete-while-backfilling: results may omit Assets whose embeddings are still pending.
+
+      caller_obligations: {}
+
+    search-similar:
+      description: Ranks Library Assets by visual similarity to one Asset.
+
+      input:
+        pivot:
+          type: AssetId
+          description: The Library Asset used as the visual query.
+
+      outcomes:
+        results:
+          matches: SemanticSearchResults
+        pivot-missing: {}
+        model-missing: {}
+        unavailable:
+          retry_after: Duration?
+
+      behavior:
+        asset-pivot: The query must use Asset identity rather than a source Placement identity.
+        library-wide: results must consider matching Assets across all Boards and unplaced Library content.
+        incomplete-while-backfilling: results may omit Assets whose embeddings are still pending.
+
+      caller_obligations: {}
+
+    place-results:
+      description: Starts a provisional Placement batch for selected Search results.
+
+      input:
+        request:
+          type: SearchResultPlacementRequest
+          description: Selected Asset results and the target Board region.
+
+      outcomes:
+        started:
+          batch: ProvisionalPlacementBatch
+        empty: {}
+        rejected:
+          reason: SemanticSearchFailure
+
+      behavior:
+        new-placements: started must create new Placements even when another Placement already references a selected Asset.
+        known-dimensions: started must provide known Asset dimensions to Placement Creation.
+        provisional-positioning: Search results must use Placement Creation's provisional path until the user accepts their Board position.
+
+      caller_obligations: {}
+
+  guarantees:
+    local-query-execution: Query inference and Asset embeddings remain local.
+    asset-index: Semantic Search indexes Assets, not Board-specific Placements.
+    idle-backfill: Missing embeddings must run outside active interaction work.
+    search-usable-during-backfill: Pending Library-wide backfill must not make Semantic Search unavailable.
+    fresh-work-first: New unindexed Assets must take priority over retrying failed Assets.
+    bounded-failure-retry: A failed Asset retries at the next idle opportunity, then after five minutes, then stops until its source changes or an explicit retry occurs.
+    canonical-remap-refresh: After exact duplicate reconciliation, Semantic Search must invalidate affected results and schedule a missing canonical Asset embedding through normal backfill.
+    duplicate-embeddings-discarded: Semantic Search must discard embeddings owned by removed duplicate Assets rather than merge them into the canonical Asset.
+    canonical-embedding-retained: Exact duplicate reconciliation must retain an existing canonical Asset embedding and schedule normal backfill when the canonical embedding is missing.
+    optional-model-core-capability: Semantic Search remains a core capability even when its separately installed model is missing.
+    migration-idempotent: Legacy in-bundle model migration must leave an existing complete Local Model Store intact and be safe to repeat.
+    quiet-idle-backfill: Backfill starts only after interactive image work is drained and the app has remained quiet for its idle grace period.
+    one-backfill-step-at-a-time: Each idle opportunity schedules at most one missing or retry-eligible Asset embedding before yielding.
+
+  requires:
+    local-data-root:
+      target: "[[local-data-location#/interface/operations/resolve-data-root/outcomes/resolved]]"
+      reason: Supplies the Local Model Store and Semantic Search staging root.
+    asset-enumeration:
+      target: "[[local-library#/interface/operations/enumerate-assets/outcomes/listed]]"
+      reason: Supplies active Library Assets for indexing and queries.
+    asset-reconciliation:
+      target: "[[local-library#/interface/operations/reconcile-exact-duplicates/outcomes/reconciled]]"
+      reason: Reports changed Asset identities whose Semantic Search state needs invalidation or backfill.
+    working-image:
+      target: "[[image-preparation#/interface/operations/prepare-asset/outcomes/available]]"
+      reason: Supplies reusable Working-level image content for embedding.
+    result-placement:
+      target: "[[placement-creation#/interface/operations/begin-provisional/outcomes/started]]"
+      reason: Creates new Placements from selected Asset results.
+
+decisions:
+  search-result-identity:
+    current: Search the Library as one Asset collection and return Assets instead of existing Board Placements.
+    affects:
+      - "[[#/interface/operations/search-text]]"
+      - "[[#/interface/operations/search-similar]]"
+      - "[[#/interface/guarantees/asset-index]]"
+    reasons:
+      - Asset identity is stable across Boards and exists without a Placement.
+      - Separate Board and Library result modes exposed storage structure instead of search intent.
+    consequences:
+      - One Asset appears once in results even when several Boards place it.
+      - Placing a result creates a new Placement that references the Asset.
+    reconsider_when:
+      - Users need a distinct query whose subject is Board context rather than image content.
+    explored_paths:
+      board-and-library-tabs:
+        status: superseded
+        reason: The split duplicated results and tied Search to source Placement identity.
+    sources:
+      - label: Make Semantic Search results Library-wide Assets
+        url: https://github.com/noelcserepy/snappyref/pull/129
+
+  model-distribution:
+    current: Distribute the Semantic Search model as a standalone optional package in the Local Model Store.
+    affects:
+      - "[[#/interface/operations/install-model]]"
+      - "[[#/interface/operations/remove-model]]"
+      - "[[#/interface/guarantees/optional-model-core-capability]]"
+    reasons:
+      - The model is large and not every user wants it.
+      - App updates must remain independent of model installation.
+    consequences:
+      - The app can run while the model is missing.
+      - Settings expose install, progress, cancel, retry, and removal actions.
+      - First-run onboarding and the Search palette reuse the same install flow.
+    reconsider_when:
+      - The model becomes small enough that separate distribution no longer helps users.
+    explored_paths:
+      model-bundled-with-app:
+        status: superseded
+        reason: It made every app download carry optional model weight.
+    sources:
+      - label: Opt-in Semantic Search installation
+        url: https://github.com/noelcserepy/snappyref/issues/96
+
+  onboarding-and-migration:
+    current: Offer installation once when storage is available and the model is absent, while transparently migrating a complete legacy in-bundle model into the standalone Local Model Store.
+    affects:
+      - "[[#/interface/operations/offer-onboarding]]"
+      - "[[#/interface/operations/status]]"
+      - "[[#/interface/operations/install-model]]"
+      - "[[#/interface/guarantees/migration-idempotent]]"
+    reasons:
+      - Optional local assets need a discoverable enable path without repeatedly interrupting users who decline.
+      - Existing users must retain a model previously shipped inside the app bundle.
+    consequences:
+      - Enable and Not Now both persist that the first-run offer was answered.
+      - Removing the model later does not resurrect the first-run prompt.
+      - A valid standalone store wins over stale in-bundle content.
+    reconsider_when:
+      - Semantic Search no longer needs a separate local package.
+    explored_paths:
+      prompt-every-launch:
+        status: rejected
+        reason: It ignores a durable Not Now choice.
+      discard-bundled-model:
+        status: rejected
+        reason: It forces an unnecessary redownload for existing users.
+    sources:
+      - label: Opt-in Semantic Search installation
+        url: https://github.com/noelcserepy/snappyref/issues/96
+
+  index-readiness:
+    current: Make Semantic Search query-ready when its local model is available, while incomplete Asset coverage improves through background backfill.
+    affects:
+      - "[[#/interface/operations/status]]"
+      - "[[#/interface/operations/search-text]]"
+      - "[[#/interface/operations/search-similar]]"
+      - "[[#/interface/guarantees/search-usable-during-backfill]]"
+    reasons:
+      - Library-wide backfill must not block queries for already indexed Assets.
+      - No caller requires a quantitative coverage value to use Search safely.
+    consequences:
+      - Results may be incomplete while backfill remains pending.
+      - Status reports model availability rather than index completion.
+    reconsider_when:
+      - A user workflow needs a quantitative index-completion value.
+    explored_paths:
+      blocking-full-library-readiness:
+        status: rejected
+        reason: It delayed useful Search until every Asset had an embedding.
+    sources:
+      - label: Idle-prioritized embedding backfill
+        url: https://github.com/noelcserepy/snappyref/blob/93bd3ddf84f1c612f910fe7985863538a19eb38f/docs/adr/0009-idle-prioritized-embedding-backfill.md
+      - label: Implement post-install embedding backfill
+        url: https://github.com/noelcserepy/snappyref/issues/102
+
+  embedding-failure-retry:
+    current: Retry a failed Asset after fresh work drains, retry it once more after five minutes, then stop until the source changes or the user retries.
+    affects:
+      - "[[#/interface/guarantees/fresh-work-first]]"
+      - "[[#/interface/guarantees/bounded-failure-retry]]"
+    reasons:
+      - A transient failure deserves bounded recovery without trapping the idle queue on one Asset.
+    consequences:
+      - Restarting the app does not reset the retry schedule.
+      - Exhaustion follows the final allowed retry, not the first failure.
+    reconsider_when:
+      - Measured failure data supports another bounded schedule.
+    explored_paths:
+      exponential-backoff:
+        status: rejected
+        reason: The accepted schedule uses two fixed retry opportunities instead.
+    sources:
+      - label: Bounded embedding failure retries
+        url: https://github.com/noelcserepy/snappyref/blob/ca1ab5ce46bb0d1d99bbac7bc281bc56911827ef/docs/adr/0010-bounded-embedding-failure-retries.md
+      - label: Record bounded embedding retries
+        url: https://github.com/noelcserepy/snappyref/pull/67

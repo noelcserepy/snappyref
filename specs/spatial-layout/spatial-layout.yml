@@ -1,0 +1,135 @@
+schema: v0.1
+
+purpose:
+  outcome: Place and adjust Placements with predictable spacing, alignment, and collision behavior.
+  owns:
+    - Placement Gap semantics.
+    - Guide snapping for movement, resize, and uniform scale.
+    - Compact, row, and column arrangement.
+    - Directional packing within a Placement selection.
+    - Alignment guide results.
+  excludes:
+    - Pointer and keyboard interpretation.
+    - Placement persistence and history.
+    - Placement creation and content resolution.
+
+interface:
+  operations:
+    snap:
+      description: Adjusts a proposed Placement transform against nearby eligible Placements.
+
+      input:
+        request:
+          type: PlacementSnapRequest
+          description: A move, resize, or uniform-scale proposal with current Board geometry, viewport, and Placement Gap.
+
+      outcomes:
+        snapped:
+          geometry: RectGeometrySet
+          guides: AlignmentGuides
+        unchanged:
+          geometry: RectGeometrySet
+          guides: AlignmentGuides
+        rejected:
+          reason: SpatialLayoutRejection
+
+      behavior:
+        nearby-candidates-only: Snapping must consider only relevant nearby or viewport-visible candidates.
+        group-bounds: A multi-Placement move must snap the selection bounds as one unit.
+        gap-aware-contact: Edge contact must respect Placement Gap.
+        edge-center-and-gap-guides: Snapping must consider matching edges, centers, and Placement Gap spacing.
+        screen-space-threshold: Snap acquisition and release thresholds must remain stable in screen space across zoom levels.
+        release-hysteresis: A previously acquired snap must use a wider release threshold than its acquisition threshold.
+        co-winning-guides: Guides must report every equal alignment that produces the chosen nudge.
+        transform-specific: Resize and uniform scale must preserve the requested transform semantics.
+
+      caller_obligations:
+        current-board-geometry: Supply current geometry for relevant Board Placements.
+
+    arrange:
+      description: Arranges a non-empty Placement selection using a named layout.
+
+      input:
+        request:
+          type: PlacementArrangementRequest
+          description: The selected Placements, Compact, Row, or Column layout, anchor, and Placement Gap.
+
+      outcomes:
+        arranged:
+          geometry: RectGeometrySet
+        unchanged:
+          geometry: RectGeometrySet
+        rejected:
+          reason: SpatialLayoutRejection
+
+      behavior:
+        deterministic: The same request must produce the same geometry.
+        no-overlap: arranged must not overlap selected Placements.
+        requested-gap: arranged must apply Placement Gap between neighboring Placements.
+        compact-squareish: Compact must prefer a square-like footprint with few internal holes and clean top and left edges.
+        compact-right-edge-secondary: Compact must prefer clean top and left edges over a regular right edge.
+        compact-near-equal-normalization: Compact must normalize near-equal displayed sizes when that reduces visible drift, while preserving aspect ratios.
+        compact-rectangle-like: Compact must avoid degenerate single-column or single-row output when a materially more balanced rectangle exists.
+        selection-frame-preserved: Arrangement must place the result relative to the supplied anchor without an unrelated canvas jump.
+        aspect-preserved: Arrangement must preserve each Placement aspect ratio.
+
+      caller_obligations:
+        non-empty-selection: Supply at least one Placement.
+
+    settle:
+      description: Packs selected Placements toward one edge of their existing selection bounds.
+
+      input:
+        request:
+          type: DirectionalSettleRequest
+          description: The non-empty selection, direction, and Placement Gap.
+
+      outcomes:
+        settled:
+          geometry: RectGeometrySet
+        unchanged:
+          geometry: RectGeometrySet
+        rejected:
+          reason: SpatialLayoutRejection
+
+      behavior:
+        direction-preserved: settled must move Placements only along the requested direction.
+        selection-bounds-anchor: The leading Placement must settle against the requested edge of the selection's original bounds.
+        independently-packed: Remaining selected Placements must settle independently against the edge or already settled selected Placements.
+        orthogonal-coordinate-preserved: Each Placement must preserve its coordinate on the axis perpendicular to the settle direction.
+        first-selected-blocker: Each Placement must stop at the first already settled selected Placement whose perpendicular span overlaps within the gap policy.
+
+      caller_obligations:
+        non-empty-selection: Supply at least one Placement.
+
+  guarantees:
+    one-gap-meaning: Placement Gap has the same edge-to-edge meaning in snapping, arrangement, settling, and initial placement.
+    geometry-only: Spatial Layout must not mutate Asset content, Board history, or persistence.
+    repeatable-results: Repeating an already satisfied arrangement or settle request must produce unchanged.
+
+  requires:
+    placement-geometry:
+      target: "[[placement#/interface/operations/change-geometry/outcomes/changed]]"
+      reason: Defines the board-space geometry that Spatial Layout proposes to change.
+
+decisions:
+  shared-placement-gap:
+    current: Use one Placement Gap value as the edge-to-edge spacing rule for all spatial operations.
+    affects:
+      - "[[#/interface/operations/snap]]"
+      - "[[#/interface/operations/arrange]]"
+      - "[[#/interface/operations/settle]]"
+      - "[[#/interface/guarantees/one-gap-meaning]]"
+    reasons:
+      - Different import, snap, and arrangement gaps made Placement spacing unpredictable.
+      - One value lets automatic and manual layout agree.
+    consequences:
+      - A zero value permits direct edge contact.
+      - Initial placement and later layout use the same spacing policy.
+    reconsider_when:
+      - A spatial operation needs a distinct user-visible spacing concept.
+    explored_paths:
+      import-only-gap:
+        status: superseded
+        reason: The gap also governs snapping and later arrangement, so import vocabulary was too narrow.
+    sources: []

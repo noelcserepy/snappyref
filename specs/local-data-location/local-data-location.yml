@@ -1,0 +1,135 @@
+schema: v0.1
+
+purpose:
+  outcome: Resolve one predictable writable local data root for SnappyRef's independent data capabilities.
+  owns:
+    - Install-root derivation from the running executable.
+    - Writable data-root selection and platform fallback.
+    - Library-root derivation and explicit development overrides.
+    - Shared root vocabulary for local consumers.
+  excludes:
+    - App package replacement and update staging layout.
+    - Library, model, session, or embedding content policy.
+    - User-facing data relocation and migration controls.
+    - Physical cleanup of local data.
+
+interface:
+  operations:
+    resolve-install-root:
+      description: Resolves the portable app location from the running executable or an explicit development override.
+
+      input:
+        environment:
+          type: InstallLocationEnvironment
+          description: Executable path and any supported install-root override.
+
+      outcomes:
+        resolved:
+          install_root: LocalPath
+        unavailable:
+          reason: LocalDataLocationFailure
+
+      behavior:
+        explicit-install-override-first: A supported install-root override must win for development and update verification.
+        macos-bundle-aware: For a macOS app bundle, install_root must be the parent directory of the app bundle.
+        plain-binary-parent: For a plain executable, install_root must be the executable's parent directory.
+
+      caller_obligations: {}
+
+    resolve-data-root:
+      description: Resolves the writable root for the Library, Local Model Store, session state, embeddings, and Semantic Search staging.
+
+      input:
+        environment:
+          type: LocalDataEnvironment
+          description: Resolved install root, platform user-data roots, and supported data-root override.
+
+      outcomes:
+        resolved:
+          data_root: LocalPath
+        unavailable:
+          reason: LocalDataLocationFailure
+
+      behavior:
+        explicit-data-override-first: A supported explicit data-root override must win over automatic selection.
+        writable-portable-preferred: Without an override, a writable install_root must also be the data_root.
+        protected-install-fallback: A non-writable install_root must use the platform user-data directory.
+        write-probe-cleaned: Automatic writability probing must not leave probe files behind.
+
+      caller_obligations: {}
+
+    resolve-library-root:
+      description: Resolves the managed Library root from the selected data root.
+
+      input:
+        data_root:
+          type: LocalPath
+          description: The root returned by resolve-data-root.
+        override:
+          type: LocalPath?
+          description: An explicit Library-only development or diagnostic override.
+
+      outcomes:
+        resolved:
+          library_root: LocalPath
+        rejected:
+          reason: LocalDataLocationFailure
+
+      behavior:
+        library-override-first: An explicit Library-only override must win for the Library and must not relocate other data capabilities.
+        default-library-child: Without an override, library_root must be the library child of data_root.
+
+      caller_obligations: {}
+
+  guarantees:
+    one-data-root-vocabulary: Data root means writable app state shared by the Library, Local Model Store, session state, embeddings, and Semantic Search staging.
+    library-root-narrower: Library root means only managed Library storage and may be overridden independently for tests and diagnostics.
+    install-root-distinct: Install root means the portable app location and remains distinct from a protected-install data-root fallback.
+    app-update-staging-excluded: App Update download and staging remain install-root-relative and do not silently follow a data-root override.
+    no-content-mutation: Resolving paths must not migrate, delete, or rewrite capability-owned data.
+
+  requires: {}
+
+decisions:
+  portable-first-data-root:
+    current: Prefer a writable install-adjacent data root, fall back to platform user data for protected installs, and let one explicit data-root override move shared app data.
+    affects:
+      - "[[#/interface/operations/resolve-install-root]]"
+      - "[[#/interface/operations/resolve-data-root]]"
+      - "[[#/interface/guarantees/one-data-root-vocabulary]]"
+      - "[[#/interface/guarantees/install-root-distinct]]"
+    reasons:
+      - Portable installs should keep app data beside the app when that location is writable.
+      - Protected application directories cannot safely host mutable Library and model data.
+      - Library, model, session, embedding, and Semantic Search staging paths need one shared resolution rule.
+    consequences:
+      - macOS Applications installs and protected Windows installs use platform user-data fallback.
+      - A portable writable folder contains the shared data root beside the app.
+      - App Update staging still follows install root because it participates in app replacement.
+    reconsider_when:
+      - SnappyRef adds a user-facing data-location chooser with migration semantics.
+    explored_paths:
+      always-install-relative:
+        status: rejected
+        reason: Protected installs cannot write mutable data beside the app.
+      always-platform-user-data:
+        status: rejected
+        reason: It breaks the intended portable install shape.
+    sources:
+      - label: Install and data root contract
+        url: https://github.com/noelcserepy/snappyref/blob/main/docs/release-operations.md#install-and-data-root-contract
+
+  library-only-override:
+    current: Let the Library root be overridden independently without relocating models, session state, embeddings, or Semantic Search staging.
+    affects:
+      - "[[#/interface/operations/resolve-library-root]]"
+      - "[[#/interface/guarantees/library-root-narrower]]"
+    reasons:
+      - Tests and diagnostics need disposable Library state without changing every app-data consumer.
+    consequences:
+      - Library-only tooling can isolate content safely.
+      - Shared app-data relocation uses the data-root override instead.
+    reconsider_when:
+      - The Library becomes the only local data capability.
+    explored_paths: {}
+    sources: []
