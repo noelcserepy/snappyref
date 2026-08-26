@@ -282,9 +282,9 @@ pub(crate) fn committed_loading_batch_history_action(
             })
             .collect::<Vec<_>>()
     };
-    Some(crate::active_board::history::HistoryAction {
-        label: label.to_owned(),
-        placements: placements
+    Some(crate::active_board::history::HistoryAction::document(
+        label.to_owned(),
+        placements
             .iter()
             .cloned()
             .map(|placement| crate::active_board::history::HistoryChange {
@@ -292,12 +292,12 @@ pub(crate) fn committed_loading_batch_history_action(
                 after: Some(placement),
             })
             .collect(),
-        annotations: Vec::new(),
-        stack_order: Some(crate::active_board::history::HistoryChange {
+        Vec::new(),
+        Some(crate::active_board::history::HistoryChange {
             before: Some(committed_stack(stack_before)),
             after: Some(committed_stack(stack_after)),
         }),
-    })
+    ))
 }
 
 fn normalized_dimensions(intent: &SourceIntent) -> (u32, u32) {

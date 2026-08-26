@@ -1,6 +1,6 @@
 use eframe::egui::{Pos2, Rect, Vec2, vec2};
 
-use super::RectGeometry;
+use super::{CanvasAnnotation, RectGeometry, ViewportState};
 
 pub type PlacementId = i64;
 pub type AssetId = i64;
@@ -18,6 +18,15 @@ pub struct Board {
 pub struct BoardSummary {
     pub board: Board,
     pub placement_count: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct BoardDocumentSnapshot {
+    pub board: Board,
+    pub placements: Vec<Placement>,
+    pub annotations: Vec<CanvasAnnotation>,
+    pub stack_order: Vec<CanvasStackItem>,
+    pub viewport: ViewportState,
 }
 
 #[allow(dead_code)]

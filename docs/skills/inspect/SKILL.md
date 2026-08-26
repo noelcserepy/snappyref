@@ -87,6 +87,9 @@ docs/skills/inspect/scripts/check-harness.sh
   results, drag provisional placements, drop and verify loaded placements.
 - `delete-board-modal-flash`: opens the delete-board confirmation and captures
   the first modal frame to prove the sidebar blocker stays invisible.
+- `board-lifecycle-undo-redo`: drives Board create, rename, confirmed delete,
+  Undo, and Redo while checking identity, active Board, content, and view. Its
+  artifact records the current title-double-click harness limitation.
 - `search-palette-footer`: captures empty and populated search-palette footer
   states with fixed-width result/status metadata.
 - `compact-equal-size-images`, `compact-mixed-column-images`, and

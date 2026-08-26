@@ -13,16 +13,37 @@ struct PersistenceQueue {
 enum PersistenceCommand {
     SaveUserSession(crate::data::UserSession),
     CommitCanvasDocumentChanges(crate::canvas::CanvasDocumentChanges),
+    ApplyBoardLifecycle(BoardLifecyclePersistence),
     Flush(std::sync::mpsc::Sender<()>),
     Shutdown,
 }
 
 #[derive(Default)]
 struct PendingPersistenceBatch {
-    user_session: Option<crate::data::UserSession>,
-    document_changes: crate::canvas::CanvasDocumentChanges,
-    flushes: Vec<std::sync::mpsc::Sender<()>>,
+    operations: Vec<PendingPersistenceOperation>,
     shutdown: bool,
+}
+
+enum PendingPersistenceOperation {
+    UserSession(crate::data::UserSession),
+    Document(crate::canvas::CanvasDocumentChanges),
+    BoardLifecycle(BoardLifecyclePersistence),
+    Flush(std::sync::mpsc::Sender<()>),
+}
+
+pub(crate) enum BoardLifecyclePersistence {
+    Rename {
+        board_id: i64,
+        name: String,
+    },
+    Archive {
+        board_id: i64,
+        active_board_id: i64,
+    },
+    Restore {
+        document: crate::data::BoardDocumentSnapshot,
+        active_board_id: i64,
+    },
 }
 
 impl DocumentPersistence {
@@ -85,6 +106,20 @@ impl DocumentPersistence {
         queue.enqueue(PersistenceCommand::CommitCanvasDocumentChanges(changes))
     }
 
+    pub(crate) fn apply_board_lifecycle(
+        &mut self,
+        library: Option<&crate::library::storage::Library>,
+        change: BoardLifecyclePersistence,
+    ) -> Result<(), String> {
+        let Some(library) = library else {
+            return Err("Storage unavailable".to_owned());
+        };
+        if let Some(queue) = &self.queue {
+            return queue.enqueue(PersistenceCommand::ApplyBoardLifecycle(change));
+        }
+        write_board_lifecycle(library, change)
+    }
+
     pub(crate) fn save_user_session(
         &mut self,
         library: Option<&crate::library::storage::Library>,
@@ -144,10 +179,7 @@ impl PersistenceQueue {
                         }
                     }
                 }
-                if let Err(error) = batch.persist(&library) {
-                    let _ = error_tx.send(error);
-                }
-                batch.finish_flushes();
+                batch.persist(&library, &error_tx);
                 if batch.shutdown {
                     break;
                 }
@@ -201,14 +233,29 @@ impl Drop for PersistenceQueue {
 impl PendingPersistenceBatch {
     fn push(&mut self, command: PersistenceCommand) {
         match command {
-            PersistenceCommand::SaveUserSession(session) => {
-                self.user_session = Some(session);
-            }
+            PersistenceCommand::SaveUserSession(session) => match self.operations.last_mut() {
+                Some(PendingPersistenceOperation::UserSession(pending)) => *pending = session,
+                _ => self
+                    .operations
+                    .push(PendingPersistenceOperation::UserSession(session)),
+            },
             PersistenceCommand::CommitCanvasDocumentChanges(changes) => {
-                self.merge_document_changes(changes);
+                match self.operations.last_mut() {
+                    Some(PendingPersistenceOperation::Document(pending)) => {
+                        merge_document_changes(pending, changes);
+                    }
+                    _ => self
+                        .operations
+                        .push(PendingPersistenceOperation::Document(changes)),
+                }
+            }
+            PersistenceCommand::ApplyBoardLifecycle(change) => {
+                self.operations
+                    .push(PendingPersistenceOperation::BoardLifecycle(change));
             }
             PersistenceCommand::Flush(done_tx) => {
-                self.flushes.push(done_tx);
+                self.operations
+                    .push(PendingPersistenceOperation::Flush(done_tx));
             }
             PersistenceCommand::Shutdown => {
                 self.shutdown = true;
@@ -216,70 +263,86 @@ impl PendingPersistenceBatch {
         }
     }
 
-    fn merge_document_changes(&mut self, changes: crate::canvas::CanvasDocumentChanges) {
-        for item in changes.updated_placements {
-            if let Some(existing) = self
-                .document_changes
-                .updated_placements
-                .iter_mut()
-                .find(|existing| existing.id == item.id)
-            {
-                *existing = item;
-            } else {
-                self.document_changes.updated_placements.push(item);
+    fn persist(
+        &mut self,
+        library: &crate::library::storage::Library,
+        error_tx: &std::sync::mpsc::Sender<String>,
+    ) {
+        for operation in self.operations.drain(..) {
+            let result = match operation {
+                PendingPersistenceOperation::UserSession(session) => {
+                    library.save_user_session(&session)
+                }
+                PendingPersistenceOperation::Document(changes) => {
+                    write_canvas_document_changes(library, changes)
+                }
+                PendingPersistenceOperation::BoardLifecycle(change) => {
+                    write_board_lifecycle(library, change)
+                }
+                PendingPersistenceOperation::Flush(done_tx) => {
+                    let _ = done_tx.send(());
+                    continue;
+                }
+            };
+            if let Err(error) = result {
+                let _ = error_tx.send(error);
             }
-        }
-        for annotation in changes.updated_annotations {
-            if let Some(existing) = self
-                .document_changes
-                .updated_annotations
-                .iter_mut()
-                .find(|existing| existing.id == annotation.id)
-            {
-                *existing = annotation;
-            } else {
-                self.document_changes.updated_annotations.push(annotation);
-            }
-        }
-        for annotation_id in changes.archived_annotation_ids {
-            if !self
-                .document_changes
-                .archived_annotation_ids
-                .contains(&annotation_id)
-            {
-                self.document_changes
-                    .archived_annotation_ids
-                    .push(annotation_id);
-            }
-        }
-        if changes.stack_order.is_some() {
-            self.document_changes.stack_order = changes.stack_order;
         }
     }
+}
 
-    fn persist(&mut self, library: &crate::library::storage::Library) -> Result<(), String> {
-        let mut last_error = None;
-        let document_changes = std::mem::take(&mut self.document_changes);
-        if document_changes.has_changes()
-            && let Err(error) = write_canvas_document_changes(library, document_changes)
+fn merge_document_changes(
+    pending: &mut crate::canvas::CanvasDocumentChanges,
+    changes: crate::canvas::CanvasDocumentChanges,
+) {
+    for item in changes.updated_placements {
+        if let Some(existing) = pending
+            .updated_placements
+            .iter_mut()
+            .find(|existing| existing.id == item.id)
         {
-            last_error = Some(error);
-        }
-        if let Some(session) = self.user_session.take()
-            && let Err(error) = library.save_user_session(&session)
-        {
-            last_error = Some(error);
-        }
-        match last_error {
-            Some(error) => Err(error),
-            None => Ok(()),
+            *existing = item;
+        } else {
+            pending.updated_placements.push(item);
         }
     }
-
-    fn finish_flushes(&mut self) {
-        for done_tx in self.flushes.drain(..) {
-            let _ = done_tx.send(());
+    for annotation in changes.updated_annotations {
+        if let Some(existing) = pending
+            .updated_annotations
+            .iter_mut()
+            .find(|existing| existing.id == annotation.id)
+        {
+            *existing = annotation;
+        } else {
+            pending.updated_annotations.push(annotation);
         }
+    }
+    for annotation_id in changes.archived_annotation_ids {
+        if !pending.archived_annotation_ids.contains(&annotation_id) {
+            pending.archived_annotation_ids.push(annotation_id);
+        }
+    }
+    if changes.stack_order.is_some() {
+        pending.stack_order = changes.stack_order;
+    }
+}
+
+fn write_board_lifecycle(
+    library: &crate::library::storage::Library,
+    change: BoardLifecyclePersistence,
+) -> Result<(), String> {
+    match change {
+        BoardLifecyclePersistence::Rename { board_id, name } => {
+            library.rename_board(board_id, &name)
+        }
+        BoardLifecyclePersistence::Archive {
+            board_id,
+            active_board_id,
+        } => library.archive_board(board_id, active_board_id),
+        BoardLifecyclePersistence::Restore {
+            document,
+            active_board_id,
+        } => library.restore_board_document(&document, active_board_id),
     }
 }
 

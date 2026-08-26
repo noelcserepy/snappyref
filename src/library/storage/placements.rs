@@ -101,6 +101,66 @@ fn placement_content_state(content: &PlacementContent) -> &'static str {
     }
 }
 
+pub(super) fn restore_board_placement(
+    transaction: &Transaction<'_>,
+    board_id: i64,
+    placement: &Placement,
+) -> Result<(), String> {
+    let content_state = placement_content_state(&placement.content);
+    let content_payload = serde_json::to_string(&placement.content)
+        .map_err(|error| format!("failed to encode placement content: {error}"))?;
+    let lifecycle = match placement.lifecycle {
+        PlacementLifecycle::Provisional => "provisional",
+        PlacementLifecycle::Committed => "committed",
+    };
+    let changed = transaction
+        .execute(
+            "UPDATE board_items
+             SET asset_id = ?1,
+                 x = ?2,
+                 y = ?3,
+                 width = ?4,
+                 height = ?5,
+                 scale = ?6,
+                 rotation = ?7,
+                 z_index = ?8,
+                 archived = 0,
+                 placement_content_state = ?9,
+                 placement_lifecycle = ?10,
+                 content_resolution_intent = ?11
+             WHERE id = ?12
+               AND board_id = ?13",
+            params![
+                placement.state.asset_id,
+                placement.state.geometry.center.x,
+                placement.state.geometry.center.y,
+                placement.state.geometry.size.x,
+                placement.state.geometry.size.y,
+                placement.state.geometry.scale,
+                placement.state.geometry.rotation,
+                placement.state.geometry.z_index,
+                content_state,
+                lifecycle,
+                content_payload,
+                placement.state.id,
+                board_id,
+            ],
+        )
+        .map_err(|error| {
+            format!(
+                "failed to restore placement {}: {error}",
+                placement.state.id
+            )
+        })?;
+    if changed != 1 {
+        return Err(format!(
+            "cannot restore missing placement {}",
+            placement.state.id
+        ));
+    }
+    Ok(())
+}
+
 fn decode_placement_content(
     state: &str,
     content_resolution_source_payload: Option<&str>,
@@ -584,7 +644,7 @@ impl Library {
         self.load_placements_for_board_id(&connection, board_id)
     }
 
-    fn load_placements_for_board_id(
+    pub(super) fn load_placements_for_board_id(
         &self,
         connection: &Connection,
         board_id: i64,

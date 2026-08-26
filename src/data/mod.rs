@@ -12,8 +12,8 @@ pub use asset::Asset;
 pub(crate) use geometry::rotated_display_size;
 pub use geometry::{RectGeometry, SegmentGeometry};
 pub use placement::{
-    Board, BoardSummary, CanvasStackItem, ContentResolutionSource, Placement, PlacementContent,
-    PlacementId, PlacementLifecycle, PlacementState,
+    Board, BoardDocumentSnapshot, BoardSummary, CanvasStackItem, ContentResolutionSource,
+    Placement, PlacementContent, PlacementId, PlacementLifecycle, PlacementState,
 };
 pub use session::{
     CanvasImageLod, DEFAULT_CANVAS_IMAGE_MAX_SIDE, DEFAULT_PLACEMENT_GAP,

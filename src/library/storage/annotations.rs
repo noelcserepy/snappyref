@@ -6,86 +6,7 @@ impl Library {
     pub fn load_canvas_annotations(&self) -> Result<Vec<CanvasAnnotation>, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
-        let mut statement = connection
-            .prepare(
-                "SELECT
-                    id,
-                    kind,
-                    start_x,
-                    start_y,
-                    end_x,
-                    end_y,
-                    text,
-                    text_size,
-                    stroke_width,
-                    color,
-                    background_enabled
-                 FROM canvas_annotations
-                 WHERE archived = 0
-                   AND board_id = ?1
-                 ORDER BY id ASC",
-            )
-            .map_err(|error| format!("failed to prepare canvas-annotations query: {error}"))?;
-
-        let rows = statement
-            .query_map(params![active_board_id], |row| {
-                let kind_text = row.get::<_, String>(1)?;
-                let kind = CanvasAnnotationKind::from_str(&kind_text).ok_or_else(|| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        1,
-                        rusqlite::types::Type::Text,
-                        Box::new(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            format!("unknown canvas annotation kind: {kind_text}"),
-                        )),
-                    )
-                })?;
-                Ok(CanvasAnnotation::new(
-                    row.get(0)?,
-                    kind,
-                    egui::pos2(row.get(2)?, row.get(3)?),
-                    egui::pos2(row.get(4)?, row.get(5)?),
-                    row.get(6)?,
-                    CanvasTextSize::from_str(&row.get::<_, String>(7)?).ok_or_else(|| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            7,
-                            rusqlite::types::Type::Text,
-                            Box::new(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                "unknown canvas text size",
-                            )),
-                        )
-                    })?,
-                    CanvasStrokeWidth::from_str(&row.get::<_, String>(8)?).ok_or_else(|| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            8,
-                            rusqlite::types::Type::Text,
-                            Box::new(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                "unknown canvas stroke width",
-                            )),
-                        )
-                    })?,
-                    CanvasAnnotationColor::from_str(&row.get::<_, String>(9)?).ok_or_else(
-                        || {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                9,
-                                rusqlite::types::Type::Text,
-                                Box::new(std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData,
-                                    "unknown canvas annotation color",
-                                )),
-                            )
-                        },
-                    )?,
-                    row.get::<_, i64>(10).unwrap_or(0) != 0,
-                    false,
-                ))
-            })
-            .map_err(|error| format!("failed to read canvas-annotations query: {error}"))?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("failed to collect canvas annotations: {error}"))
+        load_canvas_annotations_for_board_id(&connection, active_board_id)
     }
 
     pub fn create_canvas_annotation(
@@ -238,4 +159,88 @@ impl Library {
 
         Ok(())
     }
+}
+
+pub(super) fn load_canvas_annotations_for_board_id(
+    connection: &Connection,
+    board_id: i64,
+) -> Result<Vec<CanvasAnnotation>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT
+                    id,
+                    kind,
+                    start_x,
+                    start_y,
+                    end_x,
+                    end_y,
+                    text,
+                    text_size,
+                    stroke_width,
+                    color,
+                    background_enabled
+                 FROM canvas_annotations
+                 WHERE archived = 0
+                   AND board_id = ?1
+                 ORDER BY id ASC",
+        )
+        .map_err(|error| format!("failed to prepare canvas-annotations query: {error}"))?;
+
+    let rows = statement
+        .query_map(params![board_id], |row| {
+            let kind_text = row.get::<_, String>(1)?;
+            let kind = CanvasAnnotationKind::from_str(&kind_text).ok_or_else(|| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Text,
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("unknown canvas annotation kind: {kind_text}"),
+                    )),
+                )
+            })?;
+            Ok(CanvasAnnotation::new(
+                row.get(0)?,
+                kind,
+                egui::pos2(row.get(2)?, row.get(3)?),
+                egui::pos2(row.get(4)?, row.get(5)?),
+                row.get(6)?,
+                CanvasTextSize::from_str(&row.get::<_, String>(7)?).ok_or_else(|| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        7,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "unknown canvas text size",
+                        )),
+                    )
+                })?,
+                CanvasStrokeWidth::from_str(&row.get::<_, String>(8)?).ok_or_else(|| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        8,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "unknown canvas stroke width",
+                        )),
+                    )
+                })?,
+                CanvasAnnotationColor::from_str(&row.get::<_, String>(9)?).ok_or_else(|| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        9,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "unknown canvas annotation color",
+                        )),
+                    )
+                })?,
+                row.get::<_, i64>(10).unwrap_or(0) != 0,
+                false,
+            ))
+        })
+        .map_err(|error| format!("failed to read canvas-annotations query: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect canvas annotations: {error}"))
 }
