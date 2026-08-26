@@ -336,8 +336,7 @@ impl Library {
         )?;
         let asset = persisted_asset.asset;
         let content = PlacementContent::Loaded { asset_id: asset.id };
-        let content_resolution_source_payload = serde_json::to_string(&content)
-            .map_err(|error| format!("failed to encode loaded placement content: {error}"))?;
+        let content_resolution_source_payload = encode_loaded_placement_content(asset.id)?;
         let current_size = transaction
             .query_row(
                 "SELECT width, height
@@ -727,11 +726,31 @@ impl Library {
 
     pub fn update_placement_document_state(&self, item: &PlacementState) -> Result<(), String> {
         let connection = self.connection()?;
+        let loaded_content = item
+            .asset_id
+            .map(encode_loaded_placement_content)
+            .transpose()?;
         connection
             .execute(
                 "UPDATE board_items
-                 SET asset_id = ?1, x = ?2, y = ?3, width = ?4, height = ?5, scale = ?6, rotation = ?7, z_index = ?8, archived = ?9
-                 WHERE id = ?10",
+                 SET asset_id = ?1,
+                     x = ?2,
+                     y = ?3,
+                     width = ?4,
+                     height = ?5,
+                     scale = ?6,
+                     rotation = ?7,
+                     z_index = ?8,
+                     archived = ?9,
+                     placement_content_state = CASE
+                         WHEN ?1 IS NOT NULL THEN 'loaded'
+                         ELSE placement_content_state
+                     END,
+                     content_resolution_intent = CASE
+                         WHEN ?1 IS NOT NULL THEN ?10
+                         ELSE content_resolution_intent
+                     END
+                 WHERE id = ?11",
                 params![
                     item.asset_id,
                     item.geometry.center.x,
@@ -742,6 +761,7 @@ impl Library {
                     item.geometry.rotation,
                     item.geometry.z_index,
                     if item.archived { 1_i64 } else { 0_i64 },
+                    loaded_content,
                     item.id,
                 ],
             )

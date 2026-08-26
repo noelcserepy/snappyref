@@ -134,6 +134,7 @@ impl ImageResidencyCoordinator {
             target_board_id: loaded.target_board_id,
             queue_id,
         });
+        let reports_import = resolution_ticket.is_some();
         let origin = loaded.origin;
         let loaded_lod = loaded.loaded_lod;
         let loaded_record = loaded.placement.clone();
@@ -143,7 +144,7 @@ impl ImageResidencyCoordinator {
         if loaded.target_board_id != active_board_id {
             return LoadedContentResolutionOutcome {
                 resolution_ticket,
-                status: Some("Imported image".to_owned()),
+                status: reports_import.then(|| "Imported image".to_owned()),
                 indexed_asset: None,
                 log: Some(LoadedContentResolutionLog {
                     origin,
@@ -168,7 +169,8 @@ impl ImageResidencyCoordinator {
             };
         }
 
-        let indexed_asset = (settings.semantic_search_enabled
+        let indexed_asset = (reports_import
+            && settings.semantic_search_enabled
             && asset_mime_type_supports_raster_derivatives(
                 &loaded.placement.require_loaded_asset().mime_type,
             ))
@@ -198,7 +200,7 @@ impl ImageResidencyCoordinator {
 
         LoadedContentResolutionOutcome {
             resolution_ticket,
-            status: Some("Imported image".to_owned()),
+            status: reports_import.then(|| "Imported image".to_owned()),
             indexed_asset,
             log: Some(LoadedContentResolutionLog {
                 origin,
