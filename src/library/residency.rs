@@ -145,7 +145,12 @@ impl ImageResidencyCoordinator {
                 resolution_ticket,
                 status: Some("Imported image".to_owned()),
                 indexed_asset: None,
-                log: None,
+                log: Some(LoadedContentResolutionLog {
+                    origin,
+                    placement: loaded_record,
+                    diagnostics: existing_load_diagnostics,
+                    trace: loaded.trace,
+                }),
             };
         }
 
