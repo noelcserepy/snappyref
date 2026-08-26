@@ -37,6 +37,7 @@ impl CommittedSearchProvisionalBatch {
 #[derive(Clone, Debug)]
 pub(crate) struct CommittedLoadingProvisionalBatch {
     pub(crate) placements: Vec<Placement>,
+    pub(crate) history_action: Option<crate::active_board::history::HistoryAction>,
 }
 
 pub(crate) fn start_provisional_batch(
@@ -75,9 +76,11 @@ pub(crate) fn commit_loading_provisional_batch(
     if provisional_placements.is_empty() {
         return Ok(CommittedLoadingProvisionalBatch {
             placements: Vec::new(),
+            history_action: None,
         });
     }
 
+    let stack_before = library.load_canvas_stack_order().unwrap_or_default();
     let committed_pairs = library.commit_provisional_loading_placements(&provisional_placements)?;
     let placements = canvas.commit_provisional_placements_in_place(committed_pairs);
     let stack_after = canvas.canvas_stack_order();
@@ -88,7 +91,15 @@ pub(crate) fn commit_loading_provisional_batch(
         .collect::<Vec<_>>();
     canvas.select_placements(&placement_ids);
 
-    Ok(CommittedLoadingProvisionalBatch { placements })
+    let history_action = crate::placement::creation::committed_loading_batch_history_action(
+        &placements,
+        stack_before,
+        stack_after,
+    );
+    Ok(CommittedLoadingProvisionalBatch {
+        placements,
+        history_action,
+    })
 }
 
 pub(crate) fn commit_search_provisional_batch(

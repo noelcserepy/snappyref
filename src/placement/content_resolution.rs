@@ -99,7 +99,7 @@ struct PendingContentResolution {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PendingContentResolutionSource {
-    Import,
+    Import { stale: bool },
     HistoryReplay { stale: bool },
 }
 
@@ -123,7 +123,7 @@ impl ContentResolutionRuntime {
             PendingContentResolution {
                 target_board_id,
                 placement_id,
-                source: PendingContentResolutionSource::Import,
+                source: PendingContentResolutionSource::Import { stale: false },
             },
         );
         ContentResolutionReservation {
@@ -147,25 +147,25 @@ impl ContentResolutionRuntime {
         reservation
     }
 
-    pub(crate) fn invalidate_history_placement(&mut self, placement_id: i64) {
+    pub(crate) fn invalidate_placement(&mut self, placement_id: i64) {
         for pending in self.pending.values_mut() {
-            if pending.placement_id == placement_id
-                && let PendingContentResolutionSource::HistoryReplay { stale } = &mut pending.source
-            {
-                *stale = true;
+            if pending.placement_id != placement_id {
+                continue;
+            }
+            match &mut pending.source {
+                PendingContentResolutionSource::Import { stale }
+                | PendingContentResolutionSource::HistoryReplay { stale } => *stale = true,
             }
         }
     }
 
-    pub(crate) fn history_placement_is_stale(
-        &self,
-        queue_id: u64,
-        placement_id: i64,
-    ) -> Option<bool> {
+    pub(crate) fn placement_is_stale(&self, queue_id: u64, placement_id: i64) -> Option<bool> {
         match self.pending.get(&queue_id) {
             Some(PendingContentResolution {
                 placement_id: pending_placement_id,
-                source: PendingContentResolutionSource::HistoryReplay { stale },
+                source:
+                    PendingContentResolutionSource::Import { stale }
+                    | PendingContentResolutionSource::HistoryReplay { stale },
                 ..
             }) if *pending_placement_id == placement_id => Some(*stale),
             _ => None,

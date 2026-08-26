@@ -644,9 +644,7 @@ fn late_history_content_result_does_not_restore_redone_deletion() {
     let mut loaded = test_loaded_item(7, app.active_board_id);
     loaded.queue_id = Some(reservation.queue_id);
 
-    assert!(
-        app.discard_stale_history_content_result(&crate::jobs::ImagePrepResult::Loaded(loaded))
-    );
+    assert!(app.discard_stale_content_result(&crate::jobs::ImagePrepResult::Loaded(loaded)));
     assert!(app.canvas.placement_for_id(7).is_none());
     assert_eq!(app.content_resolution.pending_len(), 0);
 }
@@ -691,7 +689,7 @@ fn late_undo_content_failure_is_ignored_after_newer_replay() {
         context: "fixture-7.png".to_owned(),
         error: "decode failed".to_owned(),
     };
-    if !app.discard_stale_history_content_result(&result) {
+    if !app.discard_stale_content_result(&result) {
         let outcome = app.residency.process_import_result(
             &ctx,
             &mut app.canvas,
@@ -736,7 +734,7 @@ fn completed_history_content_replay_preserves_history_command_status() {
         app.status = command_status.to_owned();
 
         let result = crate::jobs::ImagePrepResult::Loaded(loaded);
-        assert!(!app.discard_stale_history_content_result(&result));
+        assert!(!app.discard_stale_content_result(&result));
         let outcome = app.residency.process_import_result(
             &ctx,
             &mut app.canvas,
@@ -6012,6 +6010,103 @@ fn completed_import_batch_compacts_loaded_items_after_out_of_order_failures() {
 }
 
 #[test]
+fn accepted_loading_batch_is_one_history_action_despite_out_of_order_results() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-accepted-loading-batch-history");
+    let library = Library::initialize(root.clone()).unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    app.import_worker = Some(crate::jobs::ImagePrepWorker::new(
+        library.clone(),
+        ctx.clone(),
+        None,
+    ));
+    app.enqueue_external_import_sources(
+        (1..=3)
+            .map(|index| {
+                crate::sources::import::ExternalImportSource::Path(
+                    root.join(format!("missing-{index}.png")),
+                )
+            })
+            .collect(),
+        test_screen_rect(),
+        egui::pos2(120.0, 80.0),
+    );
+    let placement_ids = app.canvas.selected_placement_ids();
+    assert_eq!(placement_ids.len(), 3);
+
+    let mut loaded = test_loaded_item(placement_ids[2], app.active_board_id);
+    loaded.queue_id = Some(3);
+    loaded.origin = crate::jobs::ImportOrigin::Path;
+    let loaded_result = crate::jobs::ImagePrepResult::Loaded(loaded);
+    assert!(!app.discard_stale_content_result(&loaded_result));
+    let outcome = app.residency.process_import_result(
+        &ctx,
+        &mut app.canvas,
+        app.import_worker.as_ref(),
+        app.active_board_id,
+        &app.settings,
+        loaded_result,
+    );
+    app.apply_import_result_residency_outcome(&ctx, outcome);
+
+    let failed_result = crate::jobs::ImagePrepResult::Failed {
+        target_board_id: Some(app.active_board_id),
+        queue_id: Some(1),
+        placement_id: Some(placement_ids[0]),
+        context: "missing-1.png".to_owned(),
+        error: "decode failed".to_owned(),
+    };
+    assert!(!app.discard_stale_content_result(&failed_result));
+    let outcome = app.residency.process_import_result(
+        &ctx,
+        &mut app.canvas,
+        app.import_worker.as_ref(),
+        app.active_board_id,
+        &app.settings,
+        failed_result,
+    );
+    app.apply_import_result_residency_outcome(&ctx, outcome);
+
+    app.undo_document_history(&ctx);
+    let undo_status = app.status.clone();
+    assert_eq!(undo_status, "Undid Import images");
+    assert!(
+        placement_ids
+            .iter()
+            .all(|placement_id| app.canvas.placement_for_id(*placement_id).is_none())
+    );
+
+    let mut late_loaded = test_loaded_item(placement_ids[1], app.active_board_id);
+    late_loaded.queue_id = Some(2);
+    late_loaded.origin = crate::jobs::ImportOrigin::Path;
+    let late_result = crate::jobs::ImagePrepResult::Loaded(late_loaded);
+    if !app.discard_stale_content_result(&late_result) {
+        let outcome = app.residency.process_import_result(
+            &ctx,
+            &mut app.canvas,
+            app.import_worker.as_ref(),
+            app.active_board_id,
+            &app.settings,
+            late_result,
+        );
+        app.apply_import_result_residency_outcome(&ctx, outcome);
+    }
+    assert!(
+        placement_ids
+            .iter()
+            .all(|placement_id| app.canvas.placement_for_id(*placement_id).is_none())
+    );
+
+    app.undo_document_history(&ctx);
+    assert_eq!(app.status, undo_status);
+    app.flush_persistence();
+    assert!(library.load_placements().unwrap().is_empty());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn completed_inactive_board_import_batch_does_not_mutate_active_canvas() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
@@ -6086,25 +6181,29 @@ fn completed_import_for_inactive_board_does_not_enter_active_canvas() {
 }
 
 #[test]
-fn completed_import_for_inactive_board_records_history_for_target_board() {
+fn accepted_import_for_inactive_board_keeps_history_on_target_board() {
     let ctx = egui::Context::default();
     let root = temp_library_root("snappyref-inactive-import-history");
     let library = Library::initialize(root.clone()).unwrap();
     let first = library.list_boards().unwrap().remove(0);
-    let image_path = library
-        .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
-        .unwrap();
-    let placement = library
-        .persist_imported_image(&image_path, "image/png", 1, 1, 4, egui::Pos2::ZERO, 1.0)
-        .unwrap();
-    let placement_id = placement.state.id;
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    let reservation = app.reserve_import(
+        &mut Vec::new(),
+        Some((1, 1)),
+        egui::Pos2::ZERO,
+        test_viewport_world(),
+        crate::data::ContentResolutionSource::Unknown {
+            description: "inactive Board import".to_owned(),
+        },
+    );
+    let placement_id = reservation.placement_id.unwrap();
     app.switch_to_board(second.id);
 
     let mut loaded = test_loaded_item(placement_id, first.id);
-    loaded.placement = placement;
+    loaded.queue_id = Some(reservation.queue_id);
+    loaded.origin = crate::jobs::ImportOrigin::Path;
     app.integrate_loaded_import(&ctx, loaded);
 
     assert!(app.canvas.placement_for_id(placement_id).is_none());
@@ -6219,6 +6318,7 @@ fn raw_dropped_file_enqueues_external_import() {
         .store_rgba_image("drop-source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
     app.import_worker = Some(crate::jobs::ImagePrepWorker::new(
         library.clone(),
         ctx.clone(),
@@ -6285,6 +6385,16 @@ fn raw_dropped_file_enqueues_external_import() {
         )
         .distance(expected_world)
             < 1.0
+    );
+
+    harness.state_mut().undo_document_history(&ctx);
+    assert_eq!(harness.state().status, "Undid Import image");
+    assert!(
+        harness
+            .state()
+            .canvas
+            .placement_for_id(placement.state.id)
+            .is_none()
     );
 
     let _ = fs::remove_dir_all(root);
