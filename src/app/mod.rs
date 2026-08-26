@@ -677,6 +677,11 @@ struct BoardSummariesCache {
     summaries: Vec<crate::data::BoardSummary>,
 }
 
+struct HistoryCanvasReplay {
+    document_changes: crate::canvas::CanvasDocumentChanges,
+    placements_needing_content: Vec<crate::data::Placement>,
+}
+
 impl BoardSummariesCache {
     fn summaries(&self) -> Vec<crate::data::BoardSummary> {
         self.summaries.clone()
@@ -3249,6 +3254,9 @@ impl SnappyRefApp {
         let hit_result_cap = results.len() == MAX_IMPORT_RESULTS_PER_FRAME;
 
         for result in results {
+            if self.discard_stale_history_content_result(&result) {
+                continue;
+            }
             let outcome = self.residency.process_import_result(
                 ctx,
                 &mut self.canvas,
@@ -3280,6 +3288,53 @@ impl SnappyRefApp {
         if hit_result_cap {
             ctx.request_repaint();
         }
+    }
+
+    fn discard_stale_history_content_result(
+        &mut self,
+        result: &crate::jobs::ImagePrepResult,
+    ) -> bool {
+        let (queue_id, target_board_id, placement_id, loaded_result) = match result {
+            crate::jobs::ImagePrepResult::Loaded(loaded) => {
+                let Some(queue_id) = loaded.queue_id else {
+                    return false;
+                };
+                (
+                    queue_id,
+                    loaded.target_board_id,
+                    loaded.placement.state.id,
+                    true,
+                )
+            }
+            crate::jobs::ImagePrepResult::Failed {
+                queue_id: Some(queue_id),
+                target_board_id: Some(target_board_id),
+                placement_id: Some(placement_id),
+                ..
+            } => (*queue_id, *target_board_id, *placement_id, false),
+            _ => return false,
+        };
+        let Some(stale_history_replay) = self
+            .content_resolution
+            .history_placement_is_stale(queue_id, placement_id)
+        else {
+            return false;
+        };
+        if !stale_history_replay && self.canvas.placement_for_id(placement_id).is_some() {
+            return false;
+        }
+        self.content_resolution.resolve_completion(
+            Some(queue_id),
+            Some(target_board_id),
+            Some(placement_id),
+        );
+        if loaded_result {
+            self.residency.note_loaded_placement(placement_id);
+        } else {
+            self.residency
+                .note_failed_placement(&mut self.canvas, Some(placement_id));
+        }
+        true
     }
 
     fn apply_import_result_residency_outcome(
@@ -3534,92 +3589,156 @@ impl SnappyRefApp {
             input.modifiers.command && input.modifiers.shift && input.key_pressed(egui::Key::Z)
         });
         if redo_requested {
-            self.redo_document_history();
+            self.redo_document_history(ctx);
         } else if undo_requested {
             self.undo_document_history(ctx);
         }
     }
 
     fn undo_document_history(&mut self, ctx: &egui::Context) {
-        let Some(library) = self.library.clone() else {
+        if self.library.is_none() {
             self.status = "Storage unavailable".to_owned();
             return;
-        };
-        match self.document_history.undo(self.active_board_id, &library) {
-            Ok(Some(applied)) => {
-                self.apply_history_to_active_canvas(&applied.action, applied.direction);
-                self.status = format!("Undid {}", applied.label);
-            }
-            Ok(None) => self.undo_crop_fallback(ctx),
-            Err(error) => self.status = error,
         }
+        let Some(applied) = self.document_history.undo(self.active_board_id) else {
+            self.undo_crop_fallback(ctx);
+            return;
+        };
+        let replay = self.apply_history_to_active_canvas(&applied.action, applied.direction);
+        let persistence_error = self
+            .document_persistence
+            .enqueue_document_changes(replay.document_changes)
+            .err();
+        let content_error = self
+            .load_history_placement_content(ctx, replay.placements_needing_content)
+            .err();
+        if let Some(error) = persistence_error.or(content_error) {
+            self.status = error;
+            return;
+        }
+        self.status = format!("Undid {}", applied.action.label);
     }
 
-    fn redo_document_history(&mut self) {
-        let Some(library) = self.library.clone() else {
+    fn redo_document_history(&mut self, ctx: &egui::Context) {
+        if self.library.is_none() {
             self.status = "Storage unavailable".to_owned();
             return;
-        };
-        match self.document_history.redo(self.active_board_id, &library) {
-            Ok(Some(applied)) => {
-                self.apply_history_to_active_canvas(&applied.action, applied.direction);
-                self.status = format!("Redid {}", applied.label);
-            }
-            Ok(None) => {}
-            Err(error) => self.status = error,
         }
+        let Some(applied) = self.document_history.redo(self.active_board_id) else {
+            return;
+        };
+        let replay = self.apply_history_to_active_canvas(&applied.action, applied.direction);
+        let persistence_error = self
+            .document_persistence
+            .enqueue_document_changes(replay.document_changes)
+            .err();
+        let content_error = self
+            .load_history_placement_content(ctx, replay.placements_needing_content)
+            .err();
+        if let Some(error) = persistence_error.or(content_error) {
+            self.status = error;
+            return;
+        }
+        self.status = format!("Redid {}", applied.action.label);
     }
 
     fn apply_history_to_active_canvas(
         &mut self,
         action: &HistoryAction,
         direction: HistoryDirection,
-    ) {
+    ) -> HistoryCanvasReplay {
+        let mut document_changes = crate::canvas::CanvasDocumentChanges::default();
+        let mut placements_needing_content = Vec::new();
         for change in &action.annotations {
-            let target = match direction {
-                HistoryDirection::Forward => change.after.clone(),
-                HistoryDirection::Backward => change.before.clone(),
-            }
-            .or_else(|| match direction {
-                HistoryDirection::Forward => change.before.clone().map(|mut annotation| {
-                    annotation.archived = true;
-                    annotation
-                }),
-                HistoryDirection::Backward => change.after.clone().map(|mut annotation| {
-                    annotation.archived = true;
-                    annotation
-                }),
-            });
-            self.canvas.apply_annotation_history_state(target);
+            let Some(target) = change.annotation_target(direction) else {
+                continue;
+            };
+            self.canvas
+                .apply_annotation_history_state(Some(target.clone()));
+            document_changes.updated_annotations.push(target);
         }
 
         for change in &action.placements {
-            let target = match direction {
-                HistoryDirection::Forward => change.after.clone(),
-                HistoryDirection::Backward => change.before.clone(),
+            let Some(target) = change.placement_target(direction) else {
+                continue;
+            };
+            self.content_resolution
+                .invalidate_history_placement(target.state.id);
+            if let Some(placement) = self
+                .canvas
+                .apply_placement_history_state(Some(target.clone()))
+            {
+                placements_needing_content.push(placement);
             }
-            .or_else(|| match direction {
-                HistoryDirection::Forward => change.before.clone().map(|mut placement| {
-                    placement.state.archived = true;
-                    placement
-                }),
-                HistoryDirection::Backward => change.after.clone().map(|mut placement| {
-                    placement.state.archived = true;
-                    placement
-                }),
-            });
-            self.canvas.apply_placement_history_state(target);
+            document_changes.updated_placements.push(target.state);
         }
 
         if let Some(change) = &action.stack_order {
-            let target = match direction {
-                HistoryDirection::Forward => change.after.clone(),
-                HistoryDirection::Backward => change.before.clone(),
-            };
+            let target = change.target(direction);
             if let Some(stack_order) = target {
-                self.canvas.restore_canvas_stack_order(stack_order);
+                self.canvas.restore_canvas_stack_order(stack_order.clone());
+                document_changes.stack_order = Some(stack_order);
             }
         }
+        HistoryCanvasReplay {
+            document_changes,
+            placements_needing_content,
+        }
+    }
+
+    fn load_history_placement_content(
+        &mut self,
+        ctx: &egui::Context,
+        placements: Vec<crate::data::Placement>,
+    ) -> Result<(), String> {
+        let Some(library) = self.library.clone() else {
+            return Err("Storage unavailable".to_owned());
+        };
+        for placement in placements {
+            if let Some(import_worker) = &self.import_worker {
+                let reservation = self
+                    .content_resolution
+                    .reserve_history_placement(self.active_board_id, placement.state.id);
+                if let Err(error) =
+                    import_worker.enqueue(crate::jobs::ImagePrepRequest::LoadExisting {
+                        target_board_id: self.active_board_id,
+                        queue_id: Some(reservation.queue_id),
+                        placement,
+                        max_texture_side: self.max_texture_side,
+                        canvas_image_settings: crate::jobs::CanvasImageSettings {
+                            max_side: self.settings.canvas_image_max_side,
+                        },
+                        target_lod: crate::data::CanvasImageLod::Working,
+                        priority: crate::jobs::ExistingLoadPriority::Background,
+                        trace: None,
+                    })
+                {
+                    self.content_resolution.cancel(reservation);
+                    return Err(error);
+                }
+                continue;
+            }
+            match crate::jobs::load_existing(
+                &library,
+                self.active_board_id,
+                None,
+                placement,
+                self.max_texture_side,
+                crate::jobs::CanvasImageSettings {
+                    max_side: self.settings.canvas_image_max_side,
+                },
+                crate::data::CanvasImageLod::Working,
+                None,
+                self.wgpu_render_state.as_ref(),
+            ) {
+                crate::jobs::ImagePrepResult::Loaded(loaded) => {
+                    self.integrate_loaded_import(ctx, loaded);
+                }
+                crate::jobs::ImagePrepResult::Failed { error, .. } => return Err(error),
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     fn undo_crop_fallback(&mut self, ctx: &egui::Context) {

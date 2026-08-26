@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::data::{CanvasAnnotation, CanvasStackItem, Placement};
-use crate::library::storage::Library;
 
 #[derive(Default)]
 pub(crate) struct DocumentHistory {
@@ -28,20 +27,42 @@ pub(crate) struct HistoryChange<T> {
     pub(crate) after: Option<T>,
 }
 
-impl<T> HistoryChange<T> {
-    fn replay_target(&self, direction: HistoryDirection) -> Option<(&T, bool)> {
-        let (target, fallback) = match direction {
-            HistoryDirection::Forward => (self.after.as_ref(), self.before.as_ref()),
-            HistoryDirection::Backward => (self.before.as_ref(), self.after.as_ref()),
-        };
-        let target_missing = target.is_none();
-        target.or(fallback).map(|item| (item, target_missing))
+impl<T: Clone> HistoryChange<T> {
+    pub(crate) fn target(&self, direction: HistoryDirection) -> Option<T> {
+        match direction {
+            HistoryDirection::Forward => self.after.clone(),
+            HistoryDirection::Backward => self.before.clone(),
+        }
+    }
+}
+
+impl HistoryChange<Placement> {
+    pub(crate) fn placement_target(&self, direction: HistoryDirection) -> Option<Placement> {
+        self.target(direction).or_else(|| {
+            self.target(direction.opposite()).map(|mut placement| {
+                placement.state.archived = true;
+                placement
+            })
+        })
+    }
+}
+
+impl HistoryChange<CanvasAnnotation> {
+    pub(crate) fn annotation_target(
+        &self,
+        direction: HistoryDirection,
+    ) -> Option<CanvasAnnotation> {
+        self.target(direction).or_else(|| {
+            self.target(direction.opposite()).map(|mut annotation| {
+                annotation.archived = true;
+                annotation
+            })
+        })
     }
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct HistoryApplied {
-    pub(crate) label: String,
     pub(crate) action: HistoryAction,
     pub(crate) direction: HistoryDirection,
 }
@@ -53,119 +74,39 @@ impl DocumentHistory {
         history.redo_stack.clear();
     }
 
-    #[cfg(test)]
-    pub(crate) fn apply(
-        &mut self,
-        board_id: i64,
-        library: &Library,
-        action: HistoryAction,
-    ) -> Result<(), String> {
-        apply_history_action(library, &action, HistoryDirection::Forward)?;
-        self.record_applied(board_id, action);
-        Ok(())
-    }
-
-    pub(crate) fn undo(
-        &mut self,
-        board_id: i64,
-        library: &Library,
-    ) -> Result<Option<HistoryApplied>, String> {
-        let Some(history) = self.histories_by_board.get_mut(&board_id) else {
-            return Ok(None);
-        };
-        let Some(action) = history.undo_stack.pop() else {
-            return Ok(None);
-        };
-        apply_history_action(library, &action, HistoryDirection::Backward)?;
-        let label = action.label.clone();
+    pub(crate) fn undo(&mut self, board_id: i64) -> Option<HistoryApplied> {
+        let history = self.histories_by_board.get_mut(&board_id)?;
+        let action = history.undo_stack.pop()?;
         history.redo_stack.push(action.clone());
-        Ok(Some(HistoryApplied {
-            label,
+        Some(HistoryApplied {
             action,
             direction: HistoryDirection::Backward,
-        }))
+        })
     }
 
-    pub(crate) fn redo(
-        &mut self,
-        board_id: i64,
-        library: &Library,
-    ) -> Result<Option<HistoryApplied>, String> {
-        let Some(history) = self.histories_by_board.get_mut(&board_id) else {
-            return Ok(None);
-        };
-        let Some(action) = history.redo_stack.pop() else {
-            return Ok(None);
-        };
-        apply_history_action(library, &action, HistoryDirection::Forward)?;
-        let label = action.label.clone();
+    pub(crate) fn redo(&mut self, board_id: i64) -> Option<HistoryApplied> {
+        let history = self.histories_by_board.get_mut(&board_id)?;
+        let action = history.redo_stack.pop()?;
         history.undo_stack.push(action.clone());
-        Ok(Some(HistoryApplied {
-            label,
+        Some(HistoryApplied {
             action,
             direction: HistoryDirection::Forward,
-        }))
+        })
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HistoryDirection {
     Forward,
     Backward,
 }
 
-fn apply_history_action(
-    library: &Library,
-    action: &HistoryAction,
-    direction: HistoryDirection,
-) -> Result<(), String> {
-    for change in &action.annotations {
-        apply_annotation_change(library, change, direction)?;
-    }
-    for change in &action.placements {
-        apply_placement_change(library, change, direction)?;
-    }
-    if let Some(change) = &action.stack_order {
-        let target = match direction {
-            HistoryDirection::Forward => change.after.as_ref(),
-            HistoryDirection::Backward => change.before.as_ref(),
-        };
-        if let Some(stack_order) = target {
-            library.save_canvas_stack_order(stack_order)?;
+impl HistoryDirection {
+    fn opposite(self) -> Self {
+        match self {
+            Self::Forward => Self::Backward,
+            Self::Backward => Self::Forward,
         }
-    }
-    Ok(())
-}
-
-fn apply_placement_change(
-    library: &Library,
-    change: &HistoryChange<Placement>,
-    direction: HistoryDirection,
-) -> Result<(), String> {
-    let Some((item, target_missing)) = change.replay_target(direction) else {
-        return Ok(());
-    };
-    if item.state.archived || target_missing {
-        library.archive_placements(&[item.state.id])
-    } else {
-        library.restore_placements(&[item.state.id])?;
-        library.update_placement_document_state(&item.state)
-    }
-}
-
-fn apply_annotation_change(
-    library: &Library,
-    change: &HistoryChange<CanvasAnnotation>,
-    direction: HistoryDirection,
-) -> Result<(), String> {
-    let Some((annotation, target_missing)) = change.replay_target(direction) else {
-        return Ok(());
-    };
-    if annotation.archived || target_missing {
-        library.archive_canvas_annotations(&[annotation.id])
-    } else {
-        library.restore_canvas_annotations(&[annotation.id])?;
-        library.update_canvas_annotation(annotation)
     }
 }
 
@@ -173,387 +114,87 @@ fn apply_annotation_change(
 mod tests {
     use eframe::egui;
 
-    use super::{DocumentHistory, HistoryAction, HistoryChange};
+    use super::{DocumentHistory, HistoryAction, HistoryChange, HistoryDirection};
     use crate::data::{
-        CanvasAnnotationColor, CanvasAnnotationKind, CanvasStackItem, CanvasStrokeWidth,
+        CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasStrokeWidth,
         CanvasTextSize,
     };
-    use crate::library::storage::Library;
 
-    fn default_board_id(library: &Library) -> i64 {
-        library.list_boards().unwrap().remove(0).id
-    }
-
-    fn create_test_annotation(
-        library: &Library,
-        text: &str,
-        offset: f32,
-    ) -> crate::data::CanvasAnnotation {
-        library
-            .create_canvas_annotation(
-                CanvasAnnotationKind::Textbox,
-                egui::pos2(offset, offset),
-                egui::pos2(offset + 100.0, offset + 60.0),
-                text,
-                CanvasTextSize::M,
-                CanvasStrokeWidth::M,
-                CanvasAnnotationColor::Sky,
-                true,
-            )
-            .unwrap()
-    }
-
-    fn record_created_annotation(
-        history: &mut DocumentHistory,
-        board_id: i64,
-        annotation: crate::data::CanvasAnnotation,
-    ) {
-        history.record_applied(
-            board_id,
-            HistoryAction {
-                label: "Create annotation".to_owned(),
-                placements: Vec::new(),
-                annotations: vec![HistoryChange {
-                    before: None,
-                    after: Some(annotation),
-                }],
-                stack_order: None,
-            },
-        );
+    fn action(label: &str) -> HistoryAction {
+        HistoryAction {
+            label: label.to_owned(),
+            placements: Vec::new(),
+            annotations: Vec::new(),
+            stack_order: None,
+        }
     }
 
     #[test]
-    fn undo_and_redo_annotation_archive_restores_document_state() {
-        let root = std::env::temp_dir().join(format!(
-            "snappyref-history-annotation-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let library = Library::initialize(root.clone()).unwrap();
-        let annotation = library
-            .create_canvas_annotation(
-                CanvasAnnotationKind::Textbox,
-                egui::pos2(10.0, 12.0),
-                egui::pos2(110.0, 72.0),
-                "hello",
-                CanvasTextSize::M,
-                CanvasStrokeWidth::M,
-                CanvasAnnotationColor::Sky,
-                true,
-            )
-            .unwrap();
-        let mut archived = annotation.clone();
-        archived.archived = true;
+    fn undo_and_redo_return_the_document_action_in_order() {
         let mut history = DocumentHistory::default();
+        history.record_applied(1, action("First"));
+        history.record_applied(1, action("Second"));
 
-        history
-            .apply(
-                default_board_id(&library),
-                &library,
-                HistoryAction {
-                    label: "Delete annotation".to_owned(),
-                    placements: Vec::new(),
-                    annotations: vec![HistoryChange {
-                        before: Some(annotation.clone()),
-                        after: Some(archived),
-                    }],
-                    stack_order: None,
-                },
-            )
-            .unwrap();
-        assert!(library.load_canvas_annotations().unwrap().is_empty());
+        let undone = history.undo(1).unwrap();
+        assert_eq!(undone.action.label, "Second");
+        assert_eq!(undone.direction, HistoryDirection::Backward);
 
-        assert_eq!(
-            history
-                .undo(default_board_id(&library), &library)
-                .unwrap()
-                .map(|applied| applied.label),
-            Some("Delete annotation".to_owned())
-        );
-        assert_eq!(
-            library.load_canvas_annotations().unwrap(),
-            vec![annotation.clone()]
-        );
-        assert_eq!(
-            library.load_canvas_stack_order().unwrap(),
-            vec![CanvasStackItem::Annotation(annotation.id)]
-        );
-
-        assert_eq!(
-            history
-                .redo(default_board_id(&library), &library)
-                .unwrap()
-                .map(|applied| applied.label),
-            Some("Delete annotation".to_owned())
-        );
-        assert!(library.load_canvas_annotations().unwrap().is_empty());
-
-        let _ = std::fs::remove_dir_all(root);
+        let redone = history.redo(1).unwrap();
+        assert_eq!(redone.action.label, "Second");
+        assert_eq!(redone.direction, HistoryDirection::Forward);
     }
 
     #[test]
-    fn undo_and_redo_placement_archive_restores_document_state() {
-        let root = std::env::temp_dir().join(format!(
-            "snappyref-history-placement-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let library = Library::initialize(root.clone()).unwrap();
-        let image_path = library
-            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
-            .unwrap();
-        let record = library
-            .persist_imported_image(
-                &image_path,
-                "image/png",
-                1,
-                1,
-                4,
-                egui::pos2(10.0, 20.0),
-                1.0,
-            )
-            .unwrap();
-        let mut archived = record.clone();
-        archived.state.archived = true;
-        let mut history = DocumentHistory::default();
-
-        history
-            .apply(
-                default_board_id(&library),
-                &library,
-                HistoryAction {
-                    label: "Delete image".to_owned(),
-                    placements: vec![HistoryChange {
-                        before: Some(record.clone()),
-                        after: Some(archived),
-                    }],
-                    annotations: Vec::new(),
-                    stack_order: None,
-                },
-            )
-            .unwrap();
-        assert!(library.load_placements().unwrap().is_empty());
-
-        assert_eq!(
-            history
-                .undo(default_board_id(&library), &library)
-                .unwrap()
-                .map(|applied| applied.label),
-            Some("Delete image".to_owned())
+    fn missing_created_target_becomes_archived_document_state() {
+        let annotation = CanvasAnnotation::new(
+            7,
+            CanvasAnnotationKind::Textbox,
+            egui::pos2(10.0, 20.0),
+            egui::pos2(110.0, 80.0),
+            "note".to_owned(),
+            CanvasTextSize::M,
+            CanvasStrokeWidth::M,
+            CanvasAnnotationColor::Sky,
+            true,
+            false,
         );
-        let restored = library.load_placements().unwrap();
-        assert_eq!(restored.len(), 1);
-        assert_eq!(restored[0].state.id, record.state.id);
-        assert_eq!(restored[0].state.geometry.center.x, 10.0);
-        assert_eq!(
-            library.load_canvas_stack_order().unwrap(),
-            vec![CanvasStackItem::Placement(record.state.id)]
-        );
+        let change = HistoryChange {
+            before: None,
+            after: Some(annotation),
+        };
 
-        assert_eq!(
-            history
-                .redo(default_board_id(&library), &library)
+        assert!(
+            change
+                .annotation_target(HistoryDirection::Backward)
                 .unwrap()
-                .map(|applied| applied.label),
-            Some("Delete image".to_owned())
+                .archived
         );
-        assert!(library.load_placements().unwrap().is_empty());
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn undo_and_redo_stack_order_restores_order() {
-        let root = std::env::temp_dir().join(format!(
-            "snappyref-history-stack-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+        assert!(
+            !change
+                .annotation_target(HistoryDirection::Forward)
                 .unwrap()
-                .as_nanos()
-        ));
-        let library = Library::initialize(root.clone()).unwrap();
-        let image_path = library
-            .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
-            .unwrap();
-        let first = library
-            .persist_imported_image(
-                &image_path,
-                "image/png",
-                1,
-                1,
-                4,
-                egui::pos2(10.0, 20.0),
-                1.0,
-            )
-            .unwrap();
-        let second = library
-            .create_placement_from_asset(
-                first.require_loaded_asset().id,
-                egui::pos2(30.0, 40.0),
-                1.0,
-                0.0,
-                0,
-            )
-            .unwrap();
-        let before = vec![
-            CanvasStackItem::Placement(first.state.id),
-            CanvasStackItem::Placement(second.state.id),
-        ];
-        let after = vec![
-            CanvasStackItem::Placement(second.state.id),
-            CanvasStackItem::Placement(first.state.id),
-        ];
-        library.save_canvas_stack_order(&before).unwrap();
-        let mut history = DocumentHistory::default();
-
-        history
-            .apply(
-                default_board_id(&library),
-                &library,
-                HistoryAction {
-                    label: "Move to front".to_owned(),
-                    placements: Vec::new(),
-                    annotations: Vec::new(),
-                    stack_order: Some(HistoryChange {
-                        before: Some(before.clone()),
-                        after: Some(after.clone()),
-                    }),
-                },
-            )
-            .unwrap();
-        assert_eq!(library.load_canvas_stack_order().unwrap(), after);
-
-        history.undo(default_board_id(&library), &library).unwrap();
-        assert_eq!(library.load_canvas_stack_order().unwrap(), before);
-
-        history.redo(default_board_id(&library), &library).unwrap();
-        assert_eq!(library.load_canvas_stack_order().unwrap(), after);
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn undo_and_redo_created_history_entries_archives_and_restores_existing_items() {
-        let root = std::env::temp_dir().join(format!(
-            "snappyref-history-created-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let library = Library::initialize(root.clone()).unwrap();
-        let annotation = library
-            .create_canvas_annotation(
-                CanvasAnnotationKind::Textbox,
-                egui::pos2(10.0, 12.0),
-                egui::pos2(110.0, 72.0),
-                "created",
-                CanvasTextSize::M,
-                CanvasStrokeWidth::M,
-                CanvasAnnotationColor::Sky,
-                true,
-            )
-            .unwrap();
-        let mut history = DocumentHistory::default();
-
-        history.record_applied(
-            default_board_id(&library),
-            HistoryAction {
-                label: "Create annotation".to_owned(),
-                placements: Vec::new(),
-                annotations: vec![HistoryChange {
-                    before: None,
-                    after: Some(annotation.clone()),
-                }],
-                stack_order: None,
-            },
+                .archived
         );
-
-        history.undo(default_board_id(&library), &library).unwrap();
-        assert!(library.load_canvas_annotations().unwrap().is_empty());
-
-        history.redo(default_board_id(&library), &library).unwrap();
-        assert_eq!(library.load_canvas_annotations().unwrap(), vec![annotation]);
-
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn untouched_board_cannot_undo_another_boards_change() {
-        let root = std::env::temp_dir().join(format!(
-            "snappyref-history-board-isolation-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let library = Library::initialize(root.clone()).unwrap();
-        let board_a = library.list_boards().unwrap().remove(0);
-        let board_b = library.create_board("Board B").unwrap();
-        let annotation = create_test_annotation(&library, "Board A", 10.0);
         let mut history = DocumentHistory::default();
-        record_created_annotation(&mut history, board_a.id, annotation.clone());
+        history.record_applied(1, action("Board A"));
 
-        library.set_active_board(board_b.id).unwrap();
-        assert!(history.undo(board_b.id, &library).unwrap().is_none());
-        assert!(library.load_canvas_annotations().unwrap().is_empty());
-
-        library.set_active_board(board_a.id).unwrap();
-        assert_eq!(library.load_canvas_annotations().unwrap(), vec![annotation]);
-
-        let _ = std::fs::remove_dir_all(root);
+        assert!(history.undo(2).is_none());
+        assert_eq!(history.undo(1).unwrap().action.label, "Board A");
     }
 
     #[test]
-    fn each_board_preserves_its_undo_and_redo_state_across_switches() {
-        let root = std::env::temp_dir().join(format!(
-            "snappyref-history-board-switches-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let library = Library::initialize(root.clone()).unwrap();
-        let board_a = library.list_boards().unwrap().remove(0);
-        let board_b = library.create_board("Board B").unwrap();
-        let annotation_a = create_test_annotation(&library, "Board A", 10.0);
+    fn each_board_preserves_its_undo_and_redo_state() {
         let mut history = DocumentHistory::default();
-        record_created_annotation(&mut history, board_a.id, annotation_a.clone());
+        history.record_applied(1, action("Board A"));
+        history.record_applied(2, action("Board B"));
 
-        library.set_active_board(board_b.id).unwrap();
-        let annotation_b = create_test_annotation(&library, "Board B", 20.0);
-        record_created_annotation(&mut history, board_b.id, annotation_b.clone());
-
-        history.undo(board_b.id, &library).unwrap();
-        assert!(library.load_canvas_annotations().unwrap().is_empty());
-
-        library.set_active_board(board_a.id).unwrap();
-        history.undo(board_a.id, &library).unwrap();
-        assert!(library.load_canvas_annotations().unwrap().is_empty());
-        history.redo(board_a.id, &library).unwrap();
-        assert_eq!(
-            library.load_canvas_annotations().unwrap(),
-            vec![annotation_a.clone()]
-        );
-
-        library.set_active_board(board_b.id).unwrap();
-        assert!(library.load_canvas_annotations().unwrap().is_empty());
-        history.redo(board_b.id, &library).unwrap();
-        assert_eq!(
-            library.load_canvas_annotations().unwrap(),
-            vec![annotation_b]
-        );
-
-        library.set_active_board(board_a.id).unwrap();
-        assert_eq!(
-            library.load_canvas_annotations().unwrap(),
-            vec![annotation_a]
-        );
-
-        let _ = std::fs::remove_dir_all(root);
+        assert_eq!(history.undo(2).unwrap().action.label, "Board B");
+        assert_eq!(history.undo(1).unwrap().action.label, "Board A");
+        assert_eq!(history.redo(1).unwrap().action.label, "Board A");
+        assert_eq!(history.redo(2).unwrap().action.label, "Board B");
     }
 }

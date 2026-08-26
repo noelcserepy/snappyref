@@ -725,30 +725,6 @@ impl Library {
             .map_err(|error| format!("failed to collect board-arrangement inputs: {error}"))
     }
 
-    pub fn update_placement_state(&self, item: &PlacementState) -> Result<(), String> {
-        let connection = self.connection()?;
-        connection
-            .execute(
-                "UPDATE board_items
-                 SET x = ?1, y = ?2, width = ?3, height = ?4, scale = ?5, rotation = ?6, z_index = ?7, archived = ?8
-                 WHERE id = ?9",
-                params![
-                    item.geometry.center.x,
-                    item.geometry.center.y,
-                    item.geometry.size.x,
-                    item.geometry.size.y,
-                    item.geometry.scale,
-                    item.geometry.rotation,
-                    item.geometry.z_index,
-                    if item.archived { 1_i64 } else { 0_i64 },
-                    item.id,
-                ],
-            )
-            .map_err(|error| format!("failed to update placement: {error}"))?;
-
-        Ok(())
-    }
-
     pub fn update_placement_document_state(&self, item: &PlacementState) -> Result<(), String> {
         let connection = self.connection()?;
         connection
@@ -806,41 +782,6 @@ impl Library {
         transaction
             .commit()
             .map_err(|error| format!("failed to commit archive transaction: {error}"))?;
-
-        Ok(())
-    }
-
-    pub fn restore_placements(&self, placement_ids: &[i64]) -> Result<(), String> {
-        if placement_ids.is_empty() {
-            return Ok(());
-        }
-
-        let mut connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("failed to start restore transaction: {error}"))?;
-
-        for item_id in placement_ids {
-            transaction
-                .execute(
-                    "UPDATE board_items
-                     SET archived = 0
-                     WHERE id = ?1
-                       AND board_id = ?2",
-                    params![item_id, active_board_id],
-                )
-                .map_err(|error| format!("failed to restore placement {item_id}: {error}"))?;
-            append_canvas_stack_item(
-                &transaction,
-                active_board_id,
-                CanvasStackItem::Placement(*item_id),
-            )?;
-        }
-
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit restore transaction: {error}"))?;
 
         Ok(())
     }

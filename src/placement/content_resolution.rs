@@ -94,6 +94,13 @@ pub(crate) struct FinishedFailedContentResolution {
 struct PendingContentResolution {
     target_board_id: i64,
     placement_id: i64,
+    source: PendingContentResolutionSource,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingContentResolutionSource {
+    Import,
+    HistoryReplay { stale: bool },
 }
 
 impl ContentResolutionRuntime {
@@ -116,6 +123,7 @@ impl ContentResolutionRuntime {
             PendingContentResolution {
                 target_board_id,
                 placement_id,
+                source: PendingContentResolutionSource::Import,
             },
         );
         ContentResolutionReservation {
@@ -123,6 +131,44 @@ impl ContentResolutionRuntime {
             queue_id,
             placement_id: Some(placement_id),
             reserved_world: Some(reserved_world),
+        }
+    }
+
+    pub(crate) fn reserve_history_placement(
+        &mut self,
+        target_board_id: i64,
+        placement_id: i64,
+    ) -> ContentResolutionReservation {
+        let reservation = self.reserve_placement(target_board_id, placement_id, egui::Pos2::ZERO);
+        self.pending
+            .get_mut(&reservation.queue_id)
+            .expect("new content-resolution reservation should exist")
+            .source = PendingContentResolutionSource::HistoryReplay { stale: false };
+        reservation
+    }
+
+    pub(crate) fn invalidate_history_placement(&mut self, placement_id: i64) {
+        for pending in self.pending.values_mut() {
+            if pending.placement_id == placement_id
+                && let PendingContentResolutionSource::HistoryReplay { stale } = &mut pending.source
+            {
+                *stale = true;
+            }
+        }
+    }
+
+    pub(crate) fn history_placement_is_stale(
+        &self,
+        queue_id: u64,
+        placement_id: i64,
+    ) -> Option<bool> {
+        match self.pending.get(&queue_id) {
+            Some(PendingContentResolution {
+                placement_id: pending_placement_id,
+                source: PendingContentResolutionSource::HistoryReplay { stale },
+                ..
+            }) if *pending_placement_id == placement_id => Some(*stale),
+            _ => None,
         }
     }
 

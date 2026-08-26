@@ -923,22 +923,32 @@ impl CanvasState {
         }
     }
 
-    pub fn apply_placement_history_state(&mut self, placement: Option<Placement>) {
+    pub fn apply_placement_history_state(
+        &mut self,
+        placement: Option<Placement>,
+    ) -> Option<Placement> {
         let Some(placement) = placement else {
-            return;
+            return None;
         };
         if placement.state.archived {
             self.delete_placements(&[placement.state.id]);
-            return;
+            return None;
         }
         if let Some(image) = self.rendered_placement_by_id_mut(placement.state.id) {
             image.placement = placement;
             self.document
                 .rendered_placements
                 .sort_by_key(|image| image.placement.state.geometry.z_index);
-        } else {
-            let _ = self.add_loaded_reference_placement(placement);
+            return None;
         }
+        if self
+            .add_loaded_reference_placement(placement.clone())
+            .is_ok()
+        {
+            return None;
+        }
+        self.add_unresolved_placement(placement.clone());
+        Some(placement)
     }
 
     pub fn set_canvas_stack_order(&mut self, stack_order: Vec<CanvasStackItem>) {
