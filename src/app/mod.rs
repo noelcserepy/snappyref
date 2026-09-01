@@ -3726,17 +3726,14 @@ impl SnappyRefApp {
         let Some(applied) = self.document_history.undo(owner_before) else {
             return;
         };
+        let owner_after = applied
+            .action
+            .owner_after_replay(owner_before, applied.direction);
+        self.document_history
+            .reassign_applied(owner_before, owner_after, applied.direction);
         if let Err(error) = self.apply_history_action(ctx, &applied.action, applied.direction) {
             self.status = error;
             return;
-        }
-        self.document_history.reassign_applied(
-            owner_before,
-            self.active_board_id,
-            applied.direction,
-        );
-        if owner_before != self.active_board_id {
-            self.queue_history_snapshot();
         }
         self.status = format!("Undid {}", applied.action.label());
     }
@@ -3750,17 +3747,14 @@ impl SnappyRefApp {
         let Some(applied) = self.document_history.redo(owner_before) else {
             return;
         };
+        let owner_after = applied
+            .action
+            .owner_after_replay(owner_before, applied.direction);
+        self.document_history
+            .reassign_applied(owner_before, owner_after, applied.direction);
         if let Err(error) = self.apply_history_action(ctx, &applied.action, applied.direction) {
             self.status = error;
             return;
-        }
-        self.document_history.reassign_applied(
-            owner_before,
-            self.active_board_id,
-            applied.direction,
-        );
-        if owner_before != self.active_board_id {
-            self.queue_history_snapshot();
         }
         self.status = format!("Redid {}", applied.action.label());
     }

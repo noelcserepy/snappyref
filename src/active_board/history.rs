@@ -68,6 +68,32 @@ impl HistoryAction {
             Self::Board(BoardLifecycleHistoryAction::Deleted { .. }) => "Delete board",
         }
     }
+
+    pub(crate) fn owner_after_replay(
+        &self,
+        current_owner: i64,
+        direction: HistoryDirection,
+    ) -> i64 {
+        match (self, direction) {
+            (
+                Self::Board(BoardLifecycleHistoryAction::Created { active_before, .. }),
+                HistoryDirection::Backward,
+            ) => *active_before,
+            (
+                Self::Board(BoardLifecycleHistoryAction::Created { document, .. }),
+                HistoryDirection::Forward,
+            ) => document.board.id,
+            (
+                Self::Board(BoardLifecycleHistoryAction::Deleted { active_before, .. }),
+                HistoryDirection::Backward,
+            ) => *active_before,
+            (
+                Self::Board(BoardLifecycleHistoryAction::Deleted { active_after, .. }),
+                HistoryDirection::Forward,
+            ) => *active_after,
+            _ => current_owner,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
