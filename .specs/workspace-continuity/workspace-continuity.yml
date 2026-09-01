@@ -18,10 +18,7 @@ interface:
     restore:
       description: Restores the latest valid workspace session or supplies usable defaults.
 
-      input:
-        available_boards:
-          type: BoardCatalog
-          description: The Boards available in the current workspace.
+      input: {}
 
       outcomes:
         restored:
@@ -35,11 +32,10 @@ interface:
         versioned-payload-selection: restored must use the newest supported workspace payload that parses successfully as one unit.
         missing-fields-default: Fields absent from an older supported payload must use their schema defaults.
         invalid-payload-defaulted: A payload that cannot be parsed or whose version is unsupported must fall back to legacy session values or fresh defaults as one unit.
-        stale-reference-contained: After payload restoration, a missing Board or unusable window bounds may fall back without discarding the other restored session state.
+        unusable-window-contained: After payload restoration, unusable window bounds may fall back without discarding the other restored session state.
         usable-default: defaulted must provide a coherent active Board identity or a restoration request that Active Board can resolve.
 
-      caller_obligations:
-        current-board-catalog: Supply the current Board catalog before restoration.
+      caller_obligations: {}
 
     record:
       description: Records the latest workspace state without blocking interaction.
@@ -94,13 +90,7 @@ interface:
     mouse-default-pointer-mode: A workspace without a saved Pointer Mode starts in Mouse mode.
     board-view-excluded: Workspace payloads must not own per-Board viewport or background state.
 
-  requires:
-    board-catalog:
-      target: "[[board-document#/interface/operations/list-boards/outcomes/listed]]"
-      reason: Supplies valid Board identities for active Board restoration.
-    active-board-restoration:
-      target: "[[active-board#/interface/operations/activate/outcomes/activated]]"
-      reason: Resolves the restored Board identity and opens its Board-owned view and document.
+  requires: {}
 
 decisions:
   session-payload-recovery:

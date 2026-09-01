@@ -28,7 +28,7 @@ interface:
         viewport:
           type: CanvasViewport
           description: The initial board-space view.
-        provisional_batch:
+        provisional-batch:
           type: ProvisionalPlacementBatch?
           description: The active provisional Placement batch, when one exists.
 
@@ -85,12 +85,10 @@ interface:
 
   guarantees:
     continuous-interaction-storage-free: Pan, zoom, drag, resize, rotate, and other frame-continuous interaction must not wait for durable storage.
-    queued-document-edits: Ordinary Board edits must change memory first and queue durable persistence.
-    explicit-flush-seams: Board switch, app exit, update restart, and destructive Board or Library actions may wait for queued durability.
     shortcut-driven: Core editing and navigation actions must be available without opening a command menu.
     provisional-interaction: Provisional Placements support the same selection and transform interactions as committed Placements.
-    document-change-routing: Canvas Interaction must route durable Board edits through Active Board command and document handling rather than write storage during continuous input handling.
-    board-view-routing: Canvas viewport and background changes must be recorded as the active Board's view state without entering Board undo history.
+    document-change-routing: Canvas Interaction must route durable Board edits through Board Document rather than write storage during continuous input handling.
+    view-change-reporting: Canvas viewport and background changes must produce view-changed without entering Board undo history.
 
   requires:
     board-document-change:
@@ -114,20 +112,19 @@ interface:
 
 decisions:
   interaction-persistence-boundary:
-    current: Keep frame-continuous interaction storage-free, queue ordinary document edits, and wait for durability only at explicit lifecycle and destructive seams.
+    current: Keep frame-continuous interaction storage-free and route discrete document changes through Board Document.
     affects:
       - "[[#/interface/operations/perform]]"
       - "[[#/interface/guarantees/continuous-interaction-storage-free]]"
-      - "[[#/interface/guarantees/queued-document-edits]]"
-      - "[[#/interface/guarantees/explicit-flush-seams]]"
+      - "[[#/interface/guarantees/document-change-routing]]"
     reasons:
       - Storage latency must not interrupt pan, zoom, drag, resize, or rotate frames.
-      - Board switch, shutdown, update restart, and destructive actions need a known durability boundary.
+      - Board Document owns persistence order and durability boundaries.
     consequences:
-      - Active Board command handling owns persistence coordination for discrete edits.
+      - Board Document owns persistence coordination for discrete edits.
       - Continuous input handling never coordinates durable storage.
     reconsider_when:
-      - Measured storage behavior shows that an explicit flush seam causes unacceptable interaction delay.
+      - Board Document change routing blocks frame-continuous interaction.
     explored_paths:
       synchronous-interaction-writes:
         status: rejected
