@@ -928,6 +928,11 @@ impl Library {
                     PRIMARY KEY (board_id, item_kind, item_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS board_document_history (
+                    id      INTEGER PRIMARY KEY CHECK (id = 1),
+                    payload TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS asset_embeddings (
                     asset_id        INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
                     model_key       TEXT NOT NULL,

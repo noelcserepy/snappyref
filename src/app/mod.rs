@@ -734,12 +734,18 @@ impl SnappyRefApp {
 
         match library {
             Ok(library) => {
+                let (document_history, status) = match library.load_document_history() {
+                    Ok(history) => (history, "Library ready".to_owned()),
+                    Err(error) => (
+                        DocumentHistory::default(),
+                        format!("Board history unavailable: {error}"),
+                    ),
+                };
                 let import_worker = crate::jobs::ImagePrepWorker::new(
                     library.clone(),
                     cc.egui_ctx.clone(),
                     cc.wgpu_render_state.clone(),
                 );
-                let status = "Library ready".to_owned();
                 let mut app = Self {
                     canvas: crate::canvas::CanvasState::default(),
                     wgpu_render_state: cc.wgpu_render_state.clone(),
@@ -748,7 +754,7 @@ impl SnappyRefApp {
                     active_board_id: 1,
                     window_state: crate::data::WindowState::default(),
                     persist_window_state: config.persist_window_state_enabled(),
-                    document_history: DocumentHistory::default(),
+                    document_history,
                     max_texture_side,
                     settings: crate::data::WorkspaceSettings::default(),
                     #[cfg(feature = "semantic-search")]
@@ -1410,6 +1416,7 @@ impl SnappyRefApp {
                     active_before,
                 }),
             );
+            self.queue_history_snapshot();
         }
         self.refresh_board_summaries();
         if keep_sidebar_open {
@@ -1446,22 +1453,23 @@ impl SnappyRefApp {
                 if after.is_empty() || after == before {
                     return;
                 }
-                match self.document_persistence.apply_board_lifecycle(
+                self.document_history.record_applied(
+                    self.active_board_id,
+                    HistoryAction::Board(BoardLifecycleHistoryAction::Renamed {
+                        board_id,
+                        before_name: before,
+                        after_name: after.clone(),
+                    }),
+                );
+                match self.document_persistence.apply_board_lifecycle_unit(
                     Some(library),
                     crate::active_board::persistence::BoardLifecyclePersistence::Rename {
                         board_id,
                         name: after.clone(),
                     },
+                    &self.document_history,
                 ) {
                     Ok(()) => {
-                        self.document_history.record_applied(
-                            self.active_board_id,
-                            HistoryAction::Board(BoardLifecycleHistoryAction::Renamed {
-                                board_id,
-                                before_name: before,
-                                after_name: after.clone(),
-                            }),
-                        );
                         self.board_summaries_cache.rename(board_id, &after);
                         self.status = "Renamed board".to_owned();
                     }
@@ -1563,12 +1571,21 @@ impl SnappyRefApp {
         } else {
             None
         };
-        if let Err(error) = self.document_persistence.apply_board_lifecycle(
+        self.document_history.record_applied(
+            active_after,
+            HistoryAction::Board(BoardLifecycleHistoryAction::Deleted {
+                document: document.clone(),
+                active_before,
+                active_after,
+            }),
+        );
+        if let Err(error) = self.document_persistence.apply_board_lifecycle_unit(
             Some(library),
             crate::active_board::persistence::BoardLifecyclePersistence::Archive {
                 board_id: pending.board_id,
                 active_board_id: active_after,
             },
+            &self.document_history,
         ) {
             self.status = error;
             return;
@@ -1581,14 +1598,6 @@ impl SnappyRefApp {
             self.status = error;
             return;
         }
-        self.document_history.record_applied(
-            active_after,
-            HistoryAction::Board(BoardLifecycleHistoryAction::Deleted {
-                document,
-                active_before,
-                active_after,
-            }),
-        );
         self.status = format!("Deleted {}", pending.board_name);
     }
 
@@ -3317,6 +3326,7 @@ impl SnappyRefApp {
                 }),
             ),
         );
+        self.queue_history_snapshot();
     }
 
     fn record_created_selection_history(
@@ -3356,6 +3366,7 @@ impl SnappyRefApp {
                 }),
             ),
         );
+        self.queue_history_snapshot();
     }
 
     fn apply_paste_command_outcome(&mut self, outcome: PasteCommandOutcome) {
@@ -3517,6 +3528,7 @@ impl SnappyRefApp {
                         None,
                     ),
                 );
+                self.queue_history_snapshot();
                 let mut status = "Cropped image".to_owned();
                 #[cfg(feature = "semantic-search")]
                 if let Some((asset_id, original_path)) = integration.indexed_asset {
@@ -3723,6 +3735,9 @@ impl SnappyRefApp {
             self.active_board_id,
             applied.direction,
         );
+        if owner_before != self.active_board_id {
+            self.queue_history_snapshot();
+        }
         self.status = format!("Undid {}", applied.action.label());
     }
 
@@ -3744,6 +3759,9 @@ impl SnappyRefApp {
             self.active_board_id,
             applied.direction,
         );
+        if owner_before != self.active_board_id {
+            self.queue_history_snapshot();
+        }
         self.status = format!("Redid {}", applied.action.label());
     }
 
@@ -3756,8 +3774,11 @@ impl SnappyRefApp {
         match action {
             HistoryAction::Document(document_action) => {
                 let replay = self.apply_history_to_active_canvas(document_action, direction);
-                self.document_persistence
-                    .enqueue_document_changes(replay.document_changes)?;
+                self.document_persistence.enqueue_document_unit(
+                    self.active_board_id,
+                    replay.document_changes,
+                    &self.document_history,
+                )?;
                 self.load_history_placement_content(ctx, replay.placements_needing_content)
             }
             HistoryAction::Board(lifecycle_action) => {
@@ -3785,23 +3806,25 @@ impl SnappyRefApp {
                 HistoryDirection::Backward,
             ) => {
                 let active_document = library.load_board_document(*active_before)?;
-                self.document_persistence.apply_board_lifecycle(
+                self.document_persistence.apply_board_lifecycle_unit(
                     Some(&library),
                     crate::active_board::persistence::BoardLifecyclePersistence::Archive {
                         board_id: document.board.id,
                         active_board_id: *active_before,
                     },
+                    &self.document_history,
                 )?;
                 self.board_summaries_cache.archive(document.board.id);
                 self.open_board_document_snapshot(ctx, &active_document)?;
             }
             (BoardLifecycleHistoryAction::Created { document, .. }, HistoryDirection::Forward) => {
-                self.document_persistence.apply_board_lifecycle(
+                self.document_persistence.apply_board_lifecycle_unit(
                     Some(&library),
                     crate::active_board::persistence::BoardLifecyclePersistence::Restore {
                         document: document.clone(),
                         active_board_id: document.board.id,
                     },
+                    &self.document_history,
                 )?;
                 self.board_summaries_cache.restore_document(document);
                 self.open_board_document_snapshot(ctx, document)?;
@@ -3814,12 +3837,13 @@ impl SnappyRefApp {
                 },
                 HistoryDirection::Backward,
             ) => {
-                self.document_persistence.apply_board_lifecycle(
+                self.document_persistence.apply_board_lifecycle_unit(
                     Some(&library),
                     crate::active_board::persistence::BoardLifecyclePersistence::Rename {
                         board_id: *board_id,
                         name: before_name.clone(),
                     },
+                    &self.document_history,
                 )?;
                 self.board_summaries_cache.rename(*board_id, before_name);
             }
@@ -3831,12 +3855,13 @@ impl SnappyRefApp {
                 },
                 HistoryDirection::Forward,
             ) => {
-                self.document_persistence.apply_board_lifecycle(
+                self.document_persistence.apply_board_lifecycle_unit(
                     Some(&library),
                     crate::active_board::persistence::BoardLifecyclePersistence::Rename {
                         board_id: *board_id,
                         name: after_name.clone(),
                     },
+                    &self.document_history,
                 )?;
                 self.board_summaries_cache.rename(*board_id, after_name);
             }
@@ -3848,12 +3873,13 @@ impl SnappyRefApp {
                 },
                 HistoryDirection::Backward,
             ) => {
-                self.document_persistence.apply_board_lifecycle(
+                self.document_persistence.apply_board_lifecycle_unit(
                     Some(&library),
                     crate::active_board::persistence::BoardLifecyclePersistence::Restore {
                         document: document.clone(),
                         active_board_id: *active_before,
                     },
+                    &self.document_history,
                 )?;
                 self.board_summaries_cache.restore_document(document);
                 if active_before_replay != *active_before {
@@ -3873,12 +3899,13 @@ impl SnappyRefApp {
                 } else {
                     None
                 };
-                self.document_persistence.apply_board_lifecycle(
+                self.document_persistence.apply_board_lifecycle_unit(
                     Some(&library),
                     crate::active_board::persistence::BoardLifecyclePersistence::Archive {
                         board_id: document.board.id,
                         active_board_id: *active_after,
                     },
+                    &self.document_history,
                 )?;
                 self.board_summaries_cache.archive(document.board.id);
                 if let Some(active_document) = active_document {
@@ -4216,7 +4243,7 @@ impl SnappyRefApp {
     }
 
     fn handle_pending_annotation_requests(&mut self) {
-        let Some(library) = &self.library else {
+        let Some(library) = self.library.clone() else {
             return;
         };
 
@@ -4260,6 +4287,7 @@ impl SnappyRefApp {
                                 }),
                             ),
                         );
+                        self.queue_history_snapshot();
                     }
                     if should_focus_text {
                         self.canvas.begin_textbox_edit(annotation_id);
@@ -4280,9 +4308,11 @@ impl SnappyRefApp {
     fn persist_canvas_changes(&mut self) {
         self.record_pending_document_changes_history("Edit board");
         let session = self.current_user_session();
-        if let Err(error) = self.document_persistence.commit_canvas_changes(
+        if let Err(error) = self.document_persistence.commit_canvas_changes_unit(
             self.library.as_ref(),
             &mut self.canvas,
+            self.active_board_id,
+            &self.document_history,
             session,
         ) {
             self.status = error;
@@ -4293,10 +4323,12 @@ impl SnappyRefApp {
 
     fn persist_canvas_changes_debounced(&mut self, ctx: &egui::Context) {
         self.record_pending_document_changes_history("Edit board");
-        let document_changed = match self
-            .document_persistence
-            .commit_canvas_document_changes(self.library.as_ref(), &mut self.canvas)
-        {
+        let document_changed = match self.document_persistence.commit_canvas_document_unit(
+            self.library.as_ref(),
+            &mut self.canvas,
+            self.active_board_id,
+            &self.document_history,
+        ) {
             Ok(document_changed) => document_changed,
             Err(error) => {
                 self.status = error;
@@ -4361,10 +4393,15 @@ impl SnappyRefApp {
             .updated_placements
             .into_iter()
             .filter_map(|after| {
-                let before = current_items
-                    .iter()
-                    .find(|placement| placement.state.id == after.id)
-                    .cloned();
+                let before = self
+                    .document_history
+                    .accepted_placement(self.active_board_id, after.id)
+                    .or_else(|| {
+                        current_items
+                            .iter()
+                            .find(|placement| placement.state.id == after.id)
+                            .cloned()
+                    });
                 let asset = if let Some(before) = &before {
                     before.require_loaded_asset().clone()
                 } else {
@@ -4380,10 +4417,15 @@ impl SnappyRefApp {
             .updated_annotations
             .into_iter()
             .map(|after| {
-                let before = current_annotations
-                    .iter()
-                    .find(|annotation| annotation.id == after.id)
-                    .cloned();
+                let before = self
+                    .document_history
+                    .accepted_annotation(self.active_board_id, after.id)
+                    .or_else(|| {
+                        current_annotations
+                            .iter()
+                            .find(|annotation| annotation.id == after.id)
+                            .cloned()
+                    });
                 HistoryChange {
                     before,
                     after: Some(after),
@@ -4391,7 +4433,10 @@ impl SnappyRefApp {
             })
             .collect::<Vec<_>>();
         let stack_order = changes.stack_order.map(|after| HistoryChange {
-            before: current_stack_order,
+            before: self
+                .document_history
+                .accepted_stack_order(self.active_board_id)
+                .or(current_stack_order),
             after: Some(after),
         });
 
@@ -4509,6 +4554,7 @@ impl SnappyRefApp {
                         }),
                     ),
                 );
+                self.queue_history_snapshot();
                 self.flush_persistence();
                 self.refresh_board_summaries();
                 self.status = status;
@@ -4528,6 +4574,15 @@ impl SnappyRefApp {
         }
         self.pending_user_session = None;
         self.pending_user_session_save_at = None;
+    }
+
+    fn queue_history_snapshot(&mut self) {
+        if let Err(error) = self
+            .document_persistence
+            .persist_history(self.library.as_ref(), &self.document_history)
+        {
+            self.status = error;
+        }
     }
 
     fn flush_persistence(&mut self) {
@@ -4817,6 +4872,7 @@ impl SnappyRefApp {
             if let Some(history_action) = committed.history_action.clone() {
                 self.document_history
                     .record_applied(self.active_board_id, history_action);
+                self.queue_history_snapshot();
             }
             self.save_user_session();
             self.refresh_board_summaries();

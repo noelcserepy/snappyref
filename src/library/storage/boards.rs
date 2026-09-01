@@ -77,7 +77,7 @@ fn active_board_after_delete(
     }
 }
 
-fn archive_board_rows(
+pub(super) fn archive_board_rows(
     transaction: &Transaction<'_>,
     board_id: i64,
     next_active_board_id: i64,
@@ -109,7 +109,10 @@ fn archive_board_rows(
     persist_active_board_id(transaction, next_active_board_id)
 }
 
-fn persist_active_board_id(connection: &Connection, board_id: i64) -> Result<(), String> {
+pub(super) fn persist_active_board_id(
+    connection: &Connection,
+    board_id: i64,
+) -> Result<(), String> {
     connection
         .execute(
             "INSERT INTO user_session (
@@ -125,6 +128,139 @@ fn persist_active_board_id(connection: &Connection, board_id: i64) -> Result<(),
         )
         .map_err(|error| format!("failed to persist active board: {error}"))?;
     Ok(())
+}
+
+pub(super) fn restore_board_document_rows(
+    transaction: &Transaction<'_>,
+    snapshot: &crate::data::BoardDocumentSnapshot,
+    active_board_id: i64,
+) -> Result<(), String> {
+    let board_exists: i64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM boards WHERE id = ?1",
+            params![snapshot.board.id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("failed to inspect board {}: {error}", snapshot.board.id))?;
+    if board_exists == 0 {
+        return Err(format!(
+            "cannot restore missing board {}",
+            snapshot.board.id
+        ));
+    }
+    transaction
+        .execute(
+            "UPDATE boards
+             SET name = ?1, archived = 0, camera_pan_x = ?2, camera_pan_y = ?3,
+                 camera_zoom = ?4, canvas_background = ?5
+             WHERE id = ?6",
+            params![
+                snapshot.board.name,
+                snapshot.viewport.camera_pan_x,
+                snapshot.viewport.camera_pan_y,
+                snapshot.viewport.camera_zoom,
+                snapshot.viewport.canvas_background.as_str(),
+                snapshot.board.id,
+            ],
+        )
+        .map_err(|error| format!("failed to restore board {}: {error}", snapshot.board.id))?;
+    transaction
+        .execute(
+            "UPDATE board_items SET archived = 1 WHERE board_id = ?1",
+            params![snapshot.board.id],
+        )
+        .map_err(|error| {
+            format!(
+                "failed to reset board {} placements: {error}",
+                snapshot.board.id
+            )
+        })?;
+    for placement in &snapshot.placements {
+        super::placements::restore_board_placement(transaction, snapshot.board.id, placement)?;
+    }
+    transaction
+        .execute(
+            "UPDATE canvas_annotations SET archived = 1 WHERE board_id = ?1",
+            params![snapshot.board.id],
+        )
+        .map_err(|error| {
+            format!(
+                "failed to reset board {} annotations: {error}",
+                snapshot.board.id
+            )
+        })?;
+    for annotation in &snapshot.annotations {
+        let changed = transaction
+            .execute(
+                "UPDATE canvas_annotations
+                 SET kind = ?1, start_x = ?2, start_y = ?3, end_x = ?4, end_y = ?5,
+                     text = ?6, text_size = ?7, stroke_width = ?8, color = ?9,
+                     background_enabled = ?10, archived = 0
+                 WHERE id = ?11 AND board_id = ?12",
+                params![
+                    annotation.kind.as_str(),
+                    annotation.start().x,
+                    annotation.start().y,
+                    annotation.end().x,
+                    annotation.end().y,
+                    annotation.text,
+                    annotation.text_size.as_str(),
+                    annotation.stroke_width.as_str(),
+                    annotation.color.as_str(),
+                    if annotation.background_enabled {
+                        1_i64
+                    } else {
+                        0_i64
+                    },
+                    annotation.id,
+                    snapshot.board.id,
+                ],
+            )
+            .map_err(|error| format!("failed to restore annotation {}: {error}", annotation.id))?;
+        if changed != 1 {
+            return Err(format!(
+                "cannot restore missing annotation {}",
+                annotation.id
+            ));
+        }
+    }
+    transaction
+        .execute(
+            "DELETE FROM canvas_stack_items WHERE board_id = ?1",
+            params![snapshot.board.id],
+        )
+        .map_err(|error| {
+            format!(
+                "failed to reset board {} stack order: {error}",
+                snapshot.board.id
+            )
+        })?;
+    for (stack_index, item) in snapshot.stack_order.iter().enumerate() {
+        transaction
+            .execute(
+                "INSERT INTO canvas_stack_items (board_id, item_kind, item_id, stack_index)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    snapshot.board.id,
+                    item.kind(),
+                    item.item_id(),
+                    stack_index as i64
+                ],
+            )
+            .map_err(|error| {
+                format!(
+                    "failed to restore board {} stack order: {error}",
+                    snapshot.board.id
+                )
+            })?;
+    }
+    if active_board_id != snapshot.board.id && !board_is_non_archived(transaction, active_board_id)?
+    {
+        return Err(format!(
+            "cannot activate missing or archived board {active_board_id}"
+        ));
+    }
+    persist_active_board_id(transaction, active_board_id)
 }
 
 impl Library {
@@ -260,6 +396,7 @@ impl Library {
         })
     }
 
+    #[cfg(test)]
     pub fn rename_board(&self, board_id: i64, name: &str) -> Result<(), String> {
         let trimmed_name = name.trim();
         if trimmed_name.is_empty() {
@@ -287,6 +424,7 @@ impl Library {
         active_board_after_delete(&boards, board_id, current_active_board_id)
     }
 
+    #[cfg(test)]
     pub fn archive_board(&self, board_id: i64, next_active_board_id: i64) -> Result<(), String> {
         let mut connection = self.connection()?;
         let transaction = connection
@@ -310,6 +448,7 @@ impl Library {
             .map_err(|error| format!("failed to commit board archive transaction: {error}"))
     }
 
+    #[cfg(test)]
     pub fn restore_board_document(
         &self,
         snapshot: &crate::data::BoardDocumentSnapshot,

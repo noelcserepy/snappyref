@@ -5,6 +5,8 @@ mod annotations;
 mod assets;
 mod boards;
 mod connection;
+mod durability;
+pub(crate) use durability::BoardDurabilityOperation;
 mod embeddings;
 mod files;
 mod placements;

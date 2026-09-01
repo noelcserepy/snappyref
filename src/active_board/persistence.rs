@@ -13,24 +13,31 @@ struct PersistenceQueue {
 enum PersistenceCommand {
     SaveUserSession(crate::data::UserSession),
     CommitCanvasDocumentChanges(crate::canvas::CanvasDocumentChanges),
-    ApplyBoardLifecycle(BoardLifecyclePersistence),
+    CommitBoardUnit {
+        operation: crate::library::storage::BoardDurabilityOperation,
+        history: crate::active_board::history::DocumentHistory,
+    },
     Flush(std::sync::mpsc::Sender<()>),
     Shutdown,
 }
 
 #[derive(Default)]
 struct PendingPersistenceBatch {
-    operations: Vec<PendingPersistenceOperation>,
+    operations: std::collections::VecDeque<PendingPersistenceOperation>,
     shutdown: bool,
 }
 
 enum PendingPersistenceOperation {
     UserSession(crate::data::UserSession),
     Document(crate::canvas::CanvasDocumentChanges),
-    BoardLifecycle(BoardLifecyclePersistence),
+    BoardUnit {
+        operation: crate::library::storage::BoardDurabilityOperation,
+        history: crate::active_board::history::DocumentHistory,
+    },
     Flush(std::sync::mpsc::Sender<()>),
 }
 
+#[derive(Clone)]
 pub(crate) enum BoardLifecyclePersistence {
     Rename {
         board_id: i64,
@@ -72,6 +79,47 @@ impl DocumentPersistence {
         }
     }
 
+    pub(crate) fn commit_canvas_changes_unit(
+        &mut self,
+        library: Option<&crate::library::storage::Library>,
+        canvas: &mut crate::canvas::CanvasState,
+        board_id: i64,
+        history: &crate::active_board::history::DocumentHistory,
+        session: crate::data::UserSession,
+    ) -> Result<(), String> {
+        let document_result = self.commit_canvas_document_unit(library, canvas, board_id, history);
+        let session_result = self.persist_user_session_if_changed(library, session);
+        match (document_result, session_result) {
+            (Err(error), _) | (_, Err(error)) => Err(error),
+            _ => Ok(()),
+        }
+    }
+
+    pub(crate) fn commit_canvas_document_unit(
+        &mut self,
+        library: Option<&crate::library::storage::Library>,
+        canvas: &mut crate::canvas::CanvasState,
+        board_id: i64,
+        history: &crate::active_board::history::DocumentHistory,
+    ) -> Result<bool, String> {
+        let Some(library) = library else {
+            return Ok(false);
+        };
+        let changes = canvas.take_document_changes();
+        if !changes.has_changes() {
+            return Ok(false);
+        }
+        if self.queue.is_some() {
+            self.enqueue_document_unit(board_id, changes, history)?;
+        } else {
+            library.persist_board_unit(
+                &crate::library::storage::BoardDurabilityOperation::Document { board_id, changes },
+                history,
+            )?;
+        }
+        Ok(true)
+    }
+
     pub(crate) fn commit_canvas_document_changes(
         &mut self,
         library: Option<&crate::library::storage::Library>,
@@ -106,18 +154,66 @@ impl DocumentPersistence {
         queue.enqueue(PersistenceCommand::CommitCanvasDocumentChanges(changes))
     }
 
-    pub(crate) fn apply_board_lifecycle(
+    pub(crate) fn enqueue_document_unit(
+        &mut self,
+        board_id: i64,
+        changes: crate::canvas::CanvasDocumentChanges,
+        history: &crate::active_board::history::DocumentHistory,
+    ) -> Result<(), String> {
+        if !changes.has_changes() {
+            return Ok(());
+        }
+        let Some(queue) = &self.queue else {
+            return Err("persistence queue unavailable".to_owned());
+        };
+        queue.enqueue(PersistenceCommand::CommitBoardUnit {
+            operation: crate::library::storage::BoardDurabilityOperation::Document {
+                board_id,
+                changes,
+            },
+            history: history.clone(),
+        })
+    }
+
+    pub(crate) fn apply_board_lifecycle_unit(
         &mut self,
         library: Option<&crate::library::storage::Library>,
         change: BoardLifecyclePersistence,
+        history: &crate::active_board::history::DocumentHistory,
     ) -> Result<(), String> {
         let Some(library) = library else {
             return Err("Storage unavailable".to_owned());
         };
         if let Some(queue) = &self.queue {
-            return queue.enqueue(PersistenceCommand::ApplyBoardLifecycle(change));
+            return queue.enqueue(PersistenceCommand::CommitBoardUnit {
+                operation: crate::library::storage::BoardDurabilityOperation::Lifecycle(change),
+                history: history.clone(),
+            });
         }
-        write_board_lifecycle(library, change)
+        library.persist_board_unit(
+            &crate::library::storage::BoardDurabilityOperation::Lifecycle(change),
+            history,
+        )
+    }
+
+    pub(crate) fn persist_history(
+        &mut self,
+        library: Option<&crate::library::storage::Library>,
+        history: &crate::active_board::history::DocumentHistory,
+    ) -> Result<(), String> {
+        let Some(library) = library else {
+            return Err("Storage unavailable".to_owned());
+        };
+        if let Some(queue) = &self.queue {
+            return queue.enqueue(PersistenceCommand::CommitBoardUnit {
+                operation: crate::library::storage::BoardDurabilityOperation::HistoryOnly,
+                history: history.clone(),
+            });
+        }
+        library.persist_board_unit(
+            &crate::library::storage::BoardDurabilityOperation::HistoryOnly,
+            history,
+        )
     }
 
     pub(crate) fn save_user_session(
@@ -166,9 +262,18 @@ impl PersistenceQueue {
         let (tx, rx) = std::sync::mpsc::channel();
         let (error_tx, error_rx) = std::sync::mpsc::channel();
         let worker = std::thread::spawn(move || {
-            while let Ok(command) = rx.recv() {
-                let mut batch = PendingPersistenceBatch::default();
-                batch.push(command);
+            let mut batch = PendingPersistenceBatch::default();
+            loop {
+                if batch.operations.is_empty() && !batch.shutdown {
+                    let Ok(command) = rx.recv() else {
+                        batch.shutdown = true;
+                        if batch.operations.is_empty() {
+                            break;
+                        }
+                        continue;
+                    };
+                    batch.push(command);
+                }
                 while !batch.shutdown {
                     match rx.try_recv() {
                         Ok(command) => batch.push(command),
@@ -179,9 +284,12 @@ impl PersistenceQueue {
                         }
                     }
                 }
-                batch.persist(&library, &error_tx);
-                if batch.shutdown {
+                let persisted = batch.persist(&library, &error_tx);
+                if batch.shutdown && batch.operations.is_empty() {
                     break;
+                }
+                if !persisted {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
                 }
             }
         });
@@ -233,29 +341,29 @@ impl Drop for PersistenceQueue {
 impl PendingPersistenceBatch {
     fn push(&mut self, command: PersistenceCommand) {
         match command {
-            PersistenceCommand::SaveUserSession(session) => match self.operations.last_mut() {
+            PersistenceCommand::SaveUserSession(session) => match self.operations.back_mut() {
                 Some(PendingPersistenceOperation::UserSession(pending)) => *pending = session,
                 _ => self
                     .operations
-                    .push(PendingPersistenceOperation::UserSession(session)),
+                    .push_back(PendingPersistenceOperation::UserSession(session)),
             },
             PersistenceCommand::CommitCanvasDocumentChanges(changes) => {
-                match self.operations.last_mut() {
+                match self.operations.back_mut() {
                     Some(PendingPersistenceOperation::Document(pending)) => {
                         merge_document_changes(pending, changes);
                     }
                     _ => self
                         .operations
-                        .push(PendingPersistenceOperation::Document(changes)),
+                        .push_back(PendingPersistenceOperation::Document(changes)),
                 }
             }
-            PersistenceCommand::ApplyBoardLifecycle(change) => {
+            PersistenceCommand::CommitBoardUnit { operation, history } => {
                 self.operations
-                    .push(PendingPersistenceOperation::BoardLifecycle(change));
+                    .push_back(PendingPersistenceOperation::BoardUnit { operation, history });
             }
             PersistenceCommand::Flush(done_tx) => {
                 self.operations
-                    .push(PendingPersistenceOperation::Flush(done_tx));
+                    .push_back(PendingPersistenceOperation::Flush(done_tx));
             }
             PersistenceCommand::Shutdown => {
                 self.shutdown = true;
@@ -267,27 +375,30 @@ impl PendingPersistenceBatch {
         &mut self,
         library: &crate::library::storage::Library,
         error_tx: &std::sync::mpsc::Sender<String>,
-    ) {
-        for operation in self.operations.drain(..) {
+    ) -> bool {
+        while let Some(operation) = self.operations.front() {
             let result = match operation {
                 PendingPersistenceOperation::UserSession(session) => {
-                    library.save_user_session(&session)
+                    library.save_user_session(session)
                 }
                 PendingPersistenceOperation::Document(changes) => {
-                    write_canvas_document_changes(library, changes)
+                    write_canvas_document_changes(library, changes.clone())
                 }
-                PendingPersistenceOperation::BoardLifecycle(change) => {
-                    write_board_lifecycle(library, change)
+                PendingPersistenceOperation::BoardUnit { operation, history } => {
+                    library.persist_board_unit(&operation, &history)
                 }
                 PendingPersistenceOperation::Flush(done_tx) => {
                     let _ = done_tx.send(());
-                    continue;
+                    Ok(())
                 }
             };
             if let Err(error) = result {
                 let _ = error_tx.send(error);
+                return false;
             }
+            self.operations.pop_front();
         }
+        true
     }
 }
 
@@ -324,25 +435,6 @@ fn merge_document_changes(
     }
     if changes.stack_order.is_some() {
         pending.stack_order = changes.stack_order;
-    }
-}
-
-fn write_board_lifecycle(
-    library: &crate::library::storage::Library,
-    change: BoardLifecyclePersistence,
-) -> Result<(), String> {
-    match change {
-        BoardLifecyclePersistence::Rename { board_id, name } => {
-            library.rename_board(board_id, &name)
-        }
-        BoardLifecyclePersistence::Archive {
-            board_id,
-            active_board_id,
-        } => library.archive_board(board_id, active_board_id),
-        BoardLifecyclePersistence::Restore {
-            document,
-            active_board_id,
-        } => library.restore_board_document(&document, active_board_id),
     }
 }
 
