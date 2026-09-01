@@ -234,6 +234,9 @@ interface:
   guarantees:
     persistence-off-interaction-path: Durable writes must not block canvas interaction frames.
     latest-document-eventually-durable: The latest accepted document state must become durable, and coalescing must preserve the semantic order of changes.
+    accepted-state-survives-write-failure: A failed durable write must leave the accepted in-memory document, Canvas identity, and history visible while persistence retries.
+    durable-write-atomic: A durable write must commit the complete document change, including Placement rows, shared stack order, identities, and history, or leave the prior durable state unchanged.
+    durable-retry-idempotent: Retrying a failed durable write must not duplicate Placement rows, stack entries, identities, or history entries.
     mixed-item-stack: Placements and annotations share one durable stack order.
     stable-total-stack-order: Every active Board item has one stable position in a total back-to-front order; creating an item places it at the front unless an explicit reorder is part of the same change.
     relative-order-preserved: Reordering a multi-item selection must preserve the selected items' relative order.
