@@ -50,8 +50,6 @@ pub(crate) const DEFAULT_RELEASE_PAGE_URL: &str =
 /// Network/parse timeout for the fetch worker. Keep small so a hung TCP
 /// connection cannot keep a background thread alive past the next 6h tick.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
-#[cfg(test)]
-const FIRST_CHECK_MAX_DELAY: Duration = Duration::from_secs(10);
 
 /// Runtime state for the update service. Owned by the app and ticked from
 /// the main update loop.
@@ -904,7 +902,7 @@ mod tests {
         let mut service = UpdateService::new(UpdateConfig::default());
         service.test_fetch = Some(Box::new(|| panic!("must not fetch before settled idle")));
         // Many frames before settled idle reports true. The service must
-        // not touch the network or the state before the bounded fallback.
+        // not touch the network or the state.
         for _ in 0..16 {
             service.tick(false);
         }
@@ -912,7 +910,7 @@ mod tests {
     }
 
     #[test]
-    fn service_runs_first_check_after_max_delay_without_settled_idle() {
+    fn service_waits_through_long_startup_then_checks_once_at_settled_idle() {
         let mut service = UpdateService::new(UpdateConfig::default());
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
@@ -924,15 +922,17 @@ mod tests {
             }
         }));
 
-        service.started_at = Instant::now() - FIRST_CHECK_MAX_DELAY;
-        service.tick(false);
-        service.tick(false);
+        service.started_at = Instant::now() - Duration::from_secs(60);
+        for _ in 0..16 {
+            service.tick(false);
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(*service.state(), UpdateState::Hidden);
 
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            1,
-            "first update check must not be blocked forever by busy app state"
-        );
+        service.tick(true);
+        drive_until_quiescent(&mut service);
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
