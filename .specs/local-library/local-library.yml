@@ -76,7 +76,7 @@ interface:
 
       behavior:
         board-independent: listed must include active Assets whether or not a Placement currently references them.
-        legacy-duplicates-visible: listed may contain legacy exact duplicates until reconciliation reaches them.
+        stored-duplicates-visible: listed may contain stored exact duplicates until reconciliation reaches them.
 
       caller_obligations: {}
 
@@ -129,7 +129,7 @@ interface:
     local-ownership: The Library and its originals remain in user-owned local storage.
     board-independent-assets: An Asset exists independently of any Board or Placement.
     known-content-stable-identity: Registering content with a known matching file size and SHA-256 must reuse the existing active canonical Asset.
-    legacy-duplicates-possible: A Library created before import-time exact reuse may contain duplicate Assets until reconciliation completes.
+    stored-duplicates-possible: Stored exact duplicates may remain active until reconciliation completes.
     original-durability: Removing a source file after successful registration must not make the Asset unavailable.
     archive-not-physical-delete: Ordinary Library deletion archives Asset records, managed files, and affected Placement references instead of physically deleting them.
 
@@ -140,19 +140,19 @@ interface:
 
 decisions:
   exact-image-identity:
-    current: Reuse a known active exact-content match during registration and repair legacy duplicates by retaining the earliest registered Asset.
+    current: Reuse a known active exact-content match during registration and repair stored exact duplicates by retaining the earliest registered Asset.
     affects:
       - "[[#/interface/operations/register-original]]"
       - "[[#/interface/operations/reconcile-exact-duplicates]]"
       - "[[#/interface/guarantees/known-content-stable-identity]]"
-      - "[[#/interface/guarantees/legacy-duplicates-possible]]"
+      - "[[#/interface/guarantees/stored-duplicates-possible]]"
     reasons:
       - Duplicate Assets reduce Semantic Search quality and waste local storage.
       - Reusing the first Asset preserves stable references.
     consequences:
       - A later import with a known matching file size and SHA-256 reuses the canonical Asset.
       - Reconciliation redirects existing references before removing duplicates.
-      - Enumeration may include legacy duplicates until bounded or full repair reaches them.
+      - Enumeration may include stored exact duplicates until bounded or full repair reaches them.
     reconsider_when:
       - Two byte-distinct originals need a stronger notion of visual equivalence.
     explored_paths:

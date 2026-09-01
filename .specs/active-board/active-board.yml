@@ -86,9 +86,7 @@ interface:
 
       behavior:
         active-board-scoped: accepted must apply only to the current Board identity.
-        history-neutral: accepted must not add a Board Document history entry.
-        deferred-persistence: accepted must return before durable storage completes.
-        latest-state-wins: Equivalent pending view writes may coalesce, but the latest accepted state must become durable.
+        board-document-delegated: record-view must use Board Document's view-recording capability for the current Board.
 
       caller_obligations: {}
 
@@ -119,6 +117,9 @@ interface:
     explicit-flush-seams: Board switch, app exit, update restart, and destructive actions may wait for queued durability.
 
   requires:
+    board-catalog:
+      target: "[[board-document#/interface/operations/list-boards/outcomes/listed]]"
+      reason: Supplies valid Board identities for restoration and fallback activation.
     board-creation:
       target: "[[board-document#/interface/operations/create-board/outcomes/created]]"
       reason: Creates the default Board when restoration finds no active Board.

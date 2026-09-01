@@ -62,7 +62,7 @@ interface:
       description: Resolves the managed Library root from the selected data root.
 
       input:
-        data_root:
+        data-root:
           type: LocalPath
           description: The root returned by resolve-data-root.
         override:

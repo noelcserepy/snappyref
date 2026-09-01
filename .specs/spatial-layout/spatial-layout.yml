@@ -107,10 +107,7 @@ interface:
     geometry-only: Spatial Layout must not mutate Asset content, Board history, or persistence.
     repeatable-results: Repeating an already satisfied arrangement or settle request must produce unchanged.
 
-  requires:
-    placement-geometry:
-      target: "[[placement#/interface/operations/change-geometry/outcomes/changed]]"
-      reason: Defines the board-space geometry that Spatial Layout proposes to change.
+  requires: {}
 
 decisions:
   shared-placement-gap:
