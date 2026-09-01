@@ -189,7 +189,7 @@ decisions:
         url: https://github.com/noelcserepy/snappyref/blob/93bd3ddf84f1c612f910fe7985863538a19eb38f/docs/adr/0016-prioritize-small-assets-first-in-import-queue.md
 
   orientation-policy:
-    current: Normalize supported image orientation metadata before reporting prepared pixels and intrinsic dimensions.
+    current: Recognize and normalize EXIF Orientation values 1 through 8 for JPEG and TIFF before reporting prepared pixels and intrinsic dimensions. Other format-specific orientation metadata may be normalized when supported but is not required.
     affects:
       - "[[#/purpose/owns]]"
       - "[[#/interface/operations/prepare-source]]"
@@ -197,7 +197,8 @@ decisions:
       - Prepared pixels and reported dimensions must describe the same visual orientation.
     consequences:
       - Placement geometry planning receives post-orientation dimensions.
-      - A decoder must define which orientation metadata it supports.
+      - JPEG and TIFF decoders must support every EXIF Orientation value.
+      - Decoders for other formats may leave format-specific orientation metadata unsupported.
     reconsider_when:
       - A supported format cannot expose orientation metadata safely or consistently.
     explored_paths: {}
