@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use image::{AnimationDecoder, DynamicImage, ImageFormat, RgbaImage};
+use image::{AnimationDecoder, DynamicImage, ImageDecoder, ImageFormat, RgbaImage};
 
 pub const SUPPORTED_IMPORT_FORMATS: &[ImageFormat] = &[
     ImageFormat::Avif,
@@ -202,6 +202,53 @@ fn decode_image_bytes_with_path_hint(
             decode_with_image_crate(bytes, file_size, format)
         }?
     };
+
+    normalize_orientation(decoded, image_orientation(bytes, format))
+}
+
+fn image_orientation(bytes: &[u8], format: ImageFormat) -> image::metadata::Orientation {
+    use image::metadata::Orientation;
+
+    match format {
+        ImageFormat::Jpeg => image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(bytes))
+            .and_then(|mut decoder| decoder.orientation())
+            .unwrap_or(Orientation::NoTransforms),
+        ImageFormat::Tiff => image::codecs::tiff::TiffDecoder::new(std::io::Cursor::new(bytes))
+            .and_then(|mut decoder| decoder.orientation())
+            .unwrap_or(Orientation::NoTransforms),
+        _ => Orientation::NoTransforms,
+    }
+}
+
+fn normalize_orientation(
+    mut decoded: DecodedImage,
+    orientation: image::metadata::Orientation,
+) -> Result<DecodedImage, String> {
+    use image::metadata::Orientation;
+
+    if orientation == Orientation::NoTransforms {
+        return Ok(decoded);
+    }
+
+    let rgba = std::mem::take(&mut decoded.rgba);
+    let image = RgbaImage::from_raw(decoded.width, decoded.height, rgba)
+        .ok_or_else(|| "failed to rebuild RGBA image for orientation normalization".to_owned())?;
+    let mut image = DynamicImage::ImageRgba8(image);
+    image.apply_orientation(orientation);
+    let image = image.into_rgba8();
+    decoded.width = image.width();
+    decoded.height = image.height();
+    decoded.rgba = image.into_raw();
+
+    if matches!(
+        orientation,
+        Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH
+    ) {
+        std::mem::swap(&mut decoded.source_width, &mut decoded.source_height);
+    }
 
     Ok(decoded)
 }
@@ -1425,7 +1472,8 @@ fn decode_jpeg_with_turbojpeg(
 mod tests {
     use super::{
         decode_image_bytes_with_max_side, decode_image_file, decode_image_file_perf_report,
-        fitted_texture_size, native_fallback_metadata_for_path, preview_image_from_rgba,
+        decoded_image_from_rgba, fitted_texture_size, image_orientation,
+        native_fallback_metadata_for_path, normalize_orientation, preview_image_from_rgba,
     };
     use image::codecs::gif::{GifEncoder, Repeat};
     use image::codecs::jpeg::JpegEncoder;
@@ -1476,6 +1524,83 @@ mod tests {
         assert_eq!(decoded.rgba.len(), 16);
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn jpeg_and_tiff_read_all_exif_orientation_values() {
+        for exif in 1..=8 {
+            assert_eq!(
+                image_orientation(&jpeg_with_orientation(exif), image::ImageFormat::Jpeg).to_exif(),
+                exif
+            );
+            assert_eq!(
+                image_orientation(&tiff_with_orientation(exif), image::ImageFormat::Tiff).to_exif(),
+                exif
+            );
+        }
+    }
+
+    #[test]
+    fn jpeg_and_tiff_decode_with_post_orientation_dimensions() {
+        for exif in 1..=8 {
+            let expected_dimensions = if exif >= 5 { (2, 3) } else { (3, 2) };
+            for bytes in [jpeg_with_orientation(exif), tiff_with_orientation(exif)] {
+                let decoded = decode_image_bytes_with_max_side(&bytes, None, None, None).unwrap();
+                assert_eq!((decoded.width, decoded.height), expected_dimensions);
+                assert_eq!(
+                    (decoded.source_width, decoded.source_height),
+                    expected_dimensions
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn all_exif_orientations_transform_pixels_and_intrinsic_dimensions() {
+        let expected = [
+            (3, 2, vec![1, 2, 3, 4, 5, 6]),
+            (3, 2, vec![3, 2, 1, 6, 5, 4]),
+            (3, 2, vec![6, 5, 4, 3, 2, 1]),
+            (3, 2, vec![4, 5, 6, 1, 2, 3]),
+            (2, 3, vec![1, 4, 2, 5, 3, 6]),
+            (2, 3, vec![4, 1, 5, 2, 6, 3]),
+            (2, 3, vec![6, 3, 5, 2, 4, 1]),
+            (2, 3, vec![3, 6, 2, 5, 1, 4]),
+        ];
+        let rgba = [1, 2, 3, 4, 5, 6]
+            .into_iter()
+            .flat_map(|value| [value, 0, 0, 255])
+            .collect::<Vec<_>>();
+
+        for (index, (width, height, red_values)) in expected.into_iter().enumerate() {
+            let decoded = decoded_image_from_rgba(
+                rgba.clone(),
+                3,
+                2,
+                rgba.len() as u64,
+                image::ImageFormat::Tiff,
+                None,
+            );
+            let normalized = normalize_orientation(
+                decoded,
+                image::metadata::Orientation::from_exif((index + 1) as u8).unwrap(),
+            )
+            .unwrap();
+
+            assert_eq!((normalized.width, normalized.height), (width, height));
+            assert_eq!(
+                (normalized.source_width, normalized.source_height),
+                (width, height)
+            );
+            assert_eq!(
+                normalized
+                    .rgba
+                    .chunks_exact(4)
+                    .map(|pixel| pixel[0])
+                    .collect::<Vec<_>>(),
+                red_values
+            );
+        }
     }
 
     #[test]
@@ -2072,6 +2197,97 @@ static unsigned char sample_bits[] = { 0x01 };
         0x0f, 0x00, 0x00, 0x00, 0x2f, 0x01, 0x40, 0x00, 0x00, 0x07, 0x10, 0xd1, 0xfe, 0xfe, 0x07,
         0x22, 0xa2, 0xff, 0x01, 0x00,
     ];
+
+    fn jpeg_with_orientation(orientation: u8) -> Vec<u8> {
+        let mut jpeg = Vec::new();
+        JpegEncoder::new_with_quality(&mut jpeg, 95)
+            .write_image(
+                &[
+                    255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 0, 255, 255, 255, 0, 255,
+                ],
+                3,
+                2,
+                ExtendedColorType::Rgb8,
+            )
+            .unwrap();
+
+        let mut exif = b"Exif\0\0II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0".to_vec();
+        exif.extend_from_slice(&(orientation as u16).to_le_bytes());
+        exif.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
+        let segment_length = u16::try_from(exif.len() + 2).unwrap();
+        let mut segment = vec![0xff, 0xe1];
+        segment.extend_from_slice(&segment_length.to_be_bytes());
+        segment.extend_from_slice(&exif);
+        jpeg.splice(2..2, segment);
+        jpeg
+    }
+
+    fn tiff_with_orientation(orientation: u8) -> Vec<u8> {
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        image::codecs::tiff::TiffEncoder::new(&mut cursor)
+            .write_image(
+                &[
+                    1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255, 5, 0, 0, 255, 6, 0, 0,
+                    255,
+                ],
+                3,
+                2,
+                ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        let mut tiff = cursor.into_inner();
+        let little_endian = match &tiff[..2] {
+            b"II" => true,
+            b"MM" => false,
+            _ => panic!("invalid generated TIFF byte order"),
+        };
+        let ifd_offset = read_tiff_u32(&tiff, 4, little_endian) as usize;
+        let entry_count = read_tiff_u16(&tiff, ifd_offset, little_endian) as usize;
+        let entry_offset = (0..entry_count)
+            .map(|index| ifd_offset + 2 + index * 12)
+            .find(|offset| read_tiff_u16(&tiff, *offset, little_endian) == 296)
+            .expect("generated TIFF should include ResolutionUnit");
+        write_tiff_u16(&mut tiff, entry_offset, 274, little_endian);
+        write_tiff_u16(
+            &mut tiff,
+            entry_offset + 8,
+            orientation as u16,
+            little_endian,
+        );
+        tiff
+    }
+
+    fn read_tiff_u16(bytes: &[u8], offset: usize, little_endian: bool) -> u16 {
+        let value = [bytes[offset], bytes[offset + 1]];
+        if little_endian {
+            u16::from_le_bytes(value)
+        } else {
+            u16::from_be_bytes(value)
+        }
+    }
+
+    fn read_tiff_u32(bytes: &[u8], offset: usize, little_endian: bool) -> u32 {
+        let value = [
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ];
+        if little_endian {
+            u32::from_le_bytes(value)
+        } else {
+            u32::from_be_bytes(value)
+        }
+    }
+
+    fn write_tiff_u16(bytes: &mut [u8], offset: usize, value: u16, little_endian: bool) {
+        let encoded = if little_endian {
+            value.to_le_bytes()
+        } else {
+            value.to_be_bytes()
+        };
+        bytes[offset..offset + 2].copy_from_slice(&encoded);
+    }
 
     fn temp_test_dir(prefix: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!(
