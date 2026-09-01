@@ -2398,6 +2398,93 @@ fn board_rename_undo_and_redo_restore_exact_names_once() {
 }
 
 #[test]
+fn create_undo_persists_reassigned_redo_history_with_the_archive() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-create-undo-atomic-history");
+    let library = Library::initialize(root.clone()).unwrap();
+    let original = library.list_boards().unwrap()[0].clone();
+    let created = library.create_board("Created").unwrap();
+    library.set_active_board(created.id).unwrap();
+    let created_document = library.load_board_document(created.id).unwrap();
+
+    let mut app = test_app(Some(library.clone()));
+    app.active_board_id = created.id;
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    app.document_history.record_applied(
+        created.id,
+        super::HistoryAction::Board(super::BoardLifecycleHistoryAction::Created {
+            document: created_document,
+            active_before: original.id,
+        }),
+    );
+    app.queue_history_snapshot();
+    app.flush_persistence();
+
+    let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
+    trigger_connection
+        .execute_batch(&format!(
+            "CREATE TRIGGER fail_reassigned_history
+             BEFORE UPDATE ON board_document_history
+             WHEN json_array_length(json_extract(
+                 NEW.payload,
+                 '$.histories_by_board.\"{}\".redo_stack'
+             )) > 0
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected reassigned-history failure');
+             END;",
+            original.id
+        ))
+        .unwrap();
+
+    app.undo_document_history(&ctx);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        trigger_connection
+            .query_row(
+                "SELECT archived FROM boards WHERE id = ?1",
+                [created.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0,
+        "a failed history write must roll back the Board archive"
+    );
+    assert!(
+        library
+            .load_document_history()
+            .unwrap()
+            .redo(original.id)
+            .is_none(),
+        "a failed Board archive must leave the prior durable history unchanged"
+    );
+
+    trigger_connection
+        .execute_batch("DROP TRIGGER fail_reassigned_history")
+        .unwrap();
+    app.flush_persistence();
+    assert_eq!(
+        trigger_connection
+            .query_row(
+                "SELECT archived FROM boards WHERE id = ?1",
+                [created.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        1
+    );
+    assert!(
+        library
+            .load_document_history()
+            .unwrap()
+            .redo(original.id)
+            .is_some(),
+        "the retried archive and reassigned Redo entry must commit together"
+    );
+    drop(app);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn generated_board_names_fill_smallest_visible_gap() {
     let root = temp_library_root("snappyref-board-name-gap");
     let library = Library::initialize(root.clone()).unwrap();

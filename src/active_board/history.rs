@@ -2,12 +2,12 @@ use std::collections::HashMap;
 
 use crate::data::{CanvasAnnotation, CanvasStackItem, Placement};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct DocumentHistory {
     histories_by_board: HashMap<i64, BoardHistory>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct BoardHistory {
     undo_stack: Vec<HistoryAction>,
     redo_stack: Vec<HistoryAction>,
@@ -68,6 +68,32 @@ impl HistoryAction {
             Self::Board(BoardLifecycleHistoryAction::Deleted { .. }) => "Delete board",
         }
     }
+
+    pub(crate) fn owner_after_replay(
+        &self,
+        current_owner: i64,
+        direction: HistoryDirection,
+    ) -> i64 {
+        match (self, direction) {
+            (
+                Self::Board(BoardLifecycleHistoryAction::Created { active_before, .. }),
+                HistoryDirection::Backward,
+            ) => *active_before,
+            (
+                Self::Board(BoardLifecycleHistoryAction::Created { document, .. }),
+                HistoryDirection::Forward,
+            ) => document.board.id,
+            (
+                Self::Board(BoardLifecycleHistoryAction::Deleted { active_before, .. }),
+                HistoryDirection::Backward,
+            ) => *active_before,
+            (
+                Self::Board(BoardLifecycleHistoryAction::Deleted { active_after, .. }),
+                HistoryDirection::Forward,
+            ) => *active_after,
+            _ => current_owner,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +143,81 @@ pub(crate) struct HistoryApplied {
 }
 
 impl DocumentHistory {
+    pub(crate) fn encode(&self) -> Result<String, String> {
+        serde_json::to_string(&StoredDocumentHistory::from(self))
+            .map_err(|error| format!("failed to encode Board history: {error}"))
+    }
+
+    pub(crate) fn decode(
+        payload: &str,
+        library: &crate::library::storage::Library,
+    ) -> Result<Self, String> {
+        let stored: StoredDocumentHistory = serde_json::from_str(payload)
+            .map_err(|error| format!("failed to decode Board history: {error}"))?;
+        stored.into_history(library)
+    }
+
+    pub(crate) fn accepted_placement(&self, board_id: i64, placement_id: i64) -> Option<Placement> {
+        self.histories_by_board
+            .get(&board_id)?
+            .undo_stack
+            .iter()
+            .rev()
+            .filter_map(|action| match action {
+                HistoryAction::Document(action) => Some(&action.placements),
+                HistoryAction::Board(_) => None,
+            })
+            .flatten()
+            .find(|change| {
+                change
+                    .after
+                    .as_ref()
+                    .or(change.before.as_ref())
+                    .is_some_and(|placement| placement.state.id == placement_id)
+            })
+            .and_then(|change| change.after.clone())
+    }
+
+    pub(crate) fn accepted_annotation(
+        &self,
+        board_id: i64,
+        annotation_id: i64,
+    ) -> Option<CanvasAnnotation> {
+        self.histories_by_board
+            .get(&board_id)?
+            .undo_stack
+            .iter()
+            .rev()
+            .filter_map(|action| match action {
+                HistoryAction::Document(action) => Some(&action.annotations),
+                HistoryAction::Board(_) => None,
+            })
+            .flatten()
+            .find(|change| {
+                change
+                    .after
+                    .as_ref()
+                    .or(change.before.as_ref())
+                    .is_some_and(|annotation| annotation.id == annotation_id)
+            })
+            .and_then(|change| change.after.clone())
+    }
+
+    pub(crate) fn accepted_stack_order(&self, board_id: i64) -> Option<Vec<CanvasStackItem>> {
+        self.histories_by_board
+            .get(&board_id)?
+            .undo_stack
+            .iter()
+            .rev()
+            .find_map(|action| match action {
+                HistoryAction::Document(action) => action
+                    .stack_order
+                    .as_ref()
+                    .and_then(|change| change.after.clone()),
+                HistoryAction::Board(_) => None,
+            })
+    }
+
     pub(crate) fn record_applied(&mut self, board_id: i64, action: HistoryAction) {
         let history = self.histories_by_board.entry(board_id).or_default();
         history.undo_stack.push(action);
@@ -168,6 +269,477 @@ impl DocumentHistory {
             HistoryDirection::Backward => target.redo_stack.push(action),
             HistoryDirection::Forward => target.undo_stack.push(action),
         }
+    }
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct StoredDocumentHistory {
+    histories_by_board: HashMap<i64, StoredBoardHistory>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct StoredBoardHistory {
+    undo_stack: Vec<StoredHistoryAction>,
+    redo_stack: Vec<StoredHistoryAction>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+enum StoredHistoryAction {
+    Document {
+        label: String,
+        placements: Vec<StoredHistoryChange<StoredPlacement>>,
+        annotations: Vec<StoredHistoryChange<StoredAnnotation>>,
+        stack_order: Option<StoredHistoryChange<Vec<(String, i64)>>>,
+    },
+    Created {
+        document: StoredBoardDocument,
+        active_before: i64,
+    },
+    Renamed {
+        board_id: i64,
+        before_name: String,
+        after_name: String,
+    },
+    Deleted {
+        document: StoredBoardDocument,
+        active_before: i64,
+        active_after: i64,
+    },
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct StoredHistoryChange<T> {
+    before: Option<T>,
+    after: Option<T>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct StoredPlacement {
+    id: i64,
+    asset_id: Option<i64>,
+    center_x: f32,
+    center_y: f32,
+    width: f32,
+    height: f32,
+    scale: f32,
+    rotation: f32,
+    z_index: i32,
+    archived: bool,
+    content: crate::data::PlacementContent,
+    lifecycle: crate::data::PlacementLifecycle,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct StoredAnnotation {
+    id: i64,
+    kind: String,
+    start_x: f32,
+    start_y: f32,
+    end_x: f32,
+    end_y: f32,
+    text: String,
+    text_size: String,
+    stroke_width: String,
+    color: String,
+    background_enabled: bool,
+    archived: bool,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct StoredBoardDocument {
+    board_id: i64,
+    board_name: String,
+    board_archived: bool,
+    placements: Vec<StoredPlacement>,
+    annotations: Vec<StoredAnnotation>,
+    stack_order: Vec<(String, i64)>,
+    camera_pan_x: f32,
+    camera_pan_y: f32,
+    camera_zoom: f32,
+    canvas_background: String,
+}
+
+impl From<&DocumentHistory> for StoredDocumentHistory {
+    fn from(history: &DocumentHistory) -> Self {
+        Self {
+            histories_by_board: history
+                .histories_by_board
+                .iter()
+                .map(|(board_id, history)| {
+                    (
+                        *board_id,
+                        StoredBoardHistory {
+                            undo_stack: history
+                                .undo_stack
+                                .iter()
+                                .map(StoredHistoryAction::from)
+                                .collect(),
+                            redo_stack: history
+                                .redo_stack
+                                .iter()
+                                .map(StoredHistoryAction::from)
+                                .collect(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+impl StoredDocumentHistory {
+    fn into_history(
+        self,
+        library: &crate::library::storage::Library,
+    ) -> Result<DocumentHistory, String> {
+        Ok(DocumentHistory {
+            histories_by_board: self
+                .histories_by_board
+                .into_iter()
+                .map(|(board_id, history)| {
+                    Ok((
+                        board_id,
+                        BoardHistory {
+                            undo_stack: history
+                                .undo_stack
+                                .into_iter()
+                                .map(|action| action.into_action(library))
+                                .collect::<Result<_, _>>()?,
+                            redo_stack: history
+                                .redo_stack
+                                .into_iter()
+                                .map(|action| action.into_action(library))
+                                .collect::<Result<_, _>>()?,
+                        },
+                    ))
+                })
+                .collect::<Result<_, String>>()?,
+        })
+    }
+}
+
+impl From<&HistoryAction> for StoredHistoryAction {
+    fn from(action: &HistoryAction) -> Self {
+        match action {
+            HistoryAction::Document(action) => Self::Document {
+                label: action.label.clone(),
+                placements: action.placements.iter().map(stored_change).collect(),
+                annotations: action.annotations.iter().map(stored_change).collect(),
+                stack_order: action
+                    .stack_order
+                    .as_ref()
+                    .map(|change| StoredHistoryChange {
+                        before: change
+                            .before
+                            .as_ref()
+                            .map(|items| items.iter().map(stored_stack_item).collect()),
+                        after: change
+                            .after
+                            .as_ref()
+                            .map(|items| items.iter().map(stored_stack_item).collect()),
+                    }),
+            },
+            HistoryAction::Board(BoardLifecycleHistoryAction::Created {
+                document,
+                active_before,
+            }) => Self::Created {
+                document: StoredBoardDocument::from(document),
+                active_before: *active_before,
+            },
+            HistoryAction::Board(BoardLifecycleHistoryAction::Renamed {
+                board_id,
+                before_name,
+                after_name,
+            }) => Self::Renamed {
+                board_id: *board_id,
+                before_name: before_name.clone(),
+                after_name: after_name.clone(),
+            },
+            HistoryAction::Board(BoardLifecycleHistoryAction::Deleted {
+                document,
+                active_before,
+                active_after,
+            }) => Self::Deleted {
+                document: StoredBoardDocument::from(document),
+                active_before: *active_before,
+                active_after: *active_after,
+            },
+        }
+    }
+}
+
+fn stored_change<T, U>(change: &HistoryChange<T>) -> StoredHistoryChange<U>
+where
+    for<'a> U: From<&'a T>,
+{
+    StoredHistoryChange {
+        before: change.before.as_ref().map(U::from),
+        after: change.after.as_ref().map(U::from),
+    }
+}
+
+fn stored_stack_item(item: &CanvasStackItem) -> (String, i64) {
+    (item.kind().to_owned(), item.item_id())
+}
+
+fn load_stack_item((kind, id): (String, i64)) -> Result<CanvasStackItem, String> {
+    CanvasStackItem::from_parts(&kind, id)
+        .ok_or_else(|| format!("unknown stored stack item kind: {kind}"))
+}
+
+impl StoredHistoryAction {
+    fn into_action(
+        self,
+        library: &crate::library::storage::Library,
+    ) -> Result<HistoryAction, String> {
+        Ok(match self {
+            Self::Document {
+                label,
+                placements,
+                annotations,
+                stack_order,
+            } => HistoryAction::document(
+                label,
+                placements
+                    .into_iter()
+                    .map(|change| change.into_placement_change(library))
+                    .collect::<Result<_, _>>()?,
+                annotations
+                    .into_iter()
+                    .map(StoredHistoryChange::into_annotation_change)
+                    .collect::<Result<_, _>>()?,
+                stack_order
+                    .map(|change| change.into_stack_change())
+                    .transpose()?,
+            ),
+            Self::Created {
+                document,
+                active_before,
+            } => HistoryAction::Board(BoardLifecycleHistoryAction::Created {
+                document: document.into_document(library)?,
+                active_before,
+            }),
+            Self::Renamed {
+                board_id,
+                before_name,
+                after_name,
+            } => HistoryAction::Board(BoardLifecycleHistoryAction::Renamed {
+                board_id,
+                before_name,
+                after_name,
+            }),
+            Self::Deleted {
+                document,
+                active_before,
+                active_after,
+            } => HistoryAction::Board(BoardLifecycleHistoryAction::Deleted {
+                document: document.into_document(library)?,
+                active_before,
+                active_after,
+            }),
+        })
+    }
+}
+
+impl StoredHistoryChange<StoredPlacement> {
+    fn into_placement_change(
+        self,
+        library: &crate::library::storage::Library,
+    ) -> Result<HistoryChange<Placement>, String> {
+        Ok(HistoryChange {
+            before: self
+                .before
+                .map(|placement| placement.into_placement(library))
+                .transpose()?,
+            after: self
+                .after
+                .map(|placement| placement.into_placement(library))
+                .transpose()?,
+        })
+    }
+}
+
+impl StoredHistoryChange<StoredAnnotation> {
+    fn into_annotation_change(self) -> Result<HistoryChange<CanvasAnnotation>, String> {
+        Ok(HistoryChange {
+            before: self
+                .before
+                .map(StoredAnnotation::into_annotation)
+                .transpose()?,
+            after: self
+                .after
+                .map(StoredAnnotation::into_annotation)
+                .transpose()?,
+        })
+    }
+}
+
+impl StoredHistoryChange<Vec<(String, i64)>> {
+    fn into_stack_change(self) -> Result<HistoryChange<Vec<CanvasStackItem>>, String> {
+        Ok(HistoryChange {
+            before: self
+                .before
+                .map(|items| items.into_iter().map(load_stack_item).collect())
+                .transpose()?,
+            after: self
+                .after
+                .map(|items| items.into_iter().map(load_stack_item).collect())
+                .transpose()?,
+        })
+    }
+}
+
+impl From<&Placement> for StoredPlacement {
+    fn from(placement: &Placement) -> Self {
+        Self {
+            id: placement.state.id,
+            asset_id: placement.state.asset_id,
+            center_x: placement.state.geometry.center.x,
+            center_y: placement.state.geometry.center.y,
+            width: placement.state.geometry.size.x,
+            height: placement.state.geometry.size.y,
+            scale: placement.state.geometry.scale,
+            rotation: placement.state.geometry.rotation,
+            z_index: placement.state.geometry.z_index,
+            archived: placement.state.archived,
+            content: placement.content.clone(),
+            lifecycle: placement.lifecycle,
+        }
+    }
+}
+
+impl StoredPlacement {
+    fn into_placement(
+        self,
+        library: &crate::library::storage::Library,
+    ) -> Result<Placement, String> {
+        let state = crate::data::PlacementState::with_display_size(
+            self.id,
+            self.asset_id,
+            eframe::egui::pos2(self.center_x, self.center_y),
+            eframe::egui::vec2(self.width, self.height),
+            self.scale,
+            self.rotation,
+            self.z_index,
+            self.archived,
+        );
+        let asset = self
+            .asset_id
+            .map(|asset_id| library.load_asset(asset_id))
+            .transpose()?;
+        Ok(Placement {
+            state,
+            asset,
+            content: self.content,
+            lifecycle: self.lifecycle,
+        })
+    }
+}
+
+impl From<&CanvasAnnotation> for StoredAnnotation {
+    fn from(annotation: &CanvasAnnotation) -> Self {
+        Self {
+            id: annotation.id,
+            kind: annotation.kind.as_str().to_owned(),
+            start_x: annotation.start().x,
+            start_y: annotation.start().y,
+            end_x: annotation.end().x,
+            end_y: annotation.end().y,
+            text: annotation.text.clone(),
+            text_size: annotation.text_size.as_str().to_owned(),
+            stroke_width: annotation.stroke_width.as_str().to_owned(),
+            color: annotation.color.as_str().to_owned(),
+            background_enabled: annotation.background_enabled,
+            archived: annotation.archived,
+        }
+    }
+}
+
+impl StoredAnnotation {
+    fn into_annotation(self) -> Result<CanvasAnnotation, String> {
+        Ok(CanvasAnnotation::new(
+            self.id,
+            crate::data::CanvasAnnotationKind::from_str(&self.kind)
+                .ok_or_else(|| format!("unknown stored annotation kind: {}", self.kind))?,
+            eframe::egui::pos2(self.start_x, self.start_y),
+            eframe::egui::pos2(self.end_x, self.end_y),
+            self.text,
+            crate::data::CanvasTextSize::from_str(&self.text_size)
+                .ok_or_else(|| format!("unknown stored text size: {}", self.text_size))?,
+            crate::data::CanvasStrokeWidth::from_str(&self.stroke_width)
+                .ok_or_else(|| format!("unknown stored stroke width: {}", self.stroke_width))?,
+            crate::data::CanvasAnnotationColor::from_str(&self.color)
+                .ok_or_else(|| format!("unknown stored annotation color: {}", self.color))?,
+            self.background_enabled,
+            self.archived,
+        ))
+    }
+}
+
+impl From<&crate::data::BoardDocumentSnapshot> for StoredBoardDocument {
+    fn from(document: &crate::data::BoardDocumentSnapshot) -> Self {
+        Self {
+            board_id: document.board.id,
+            board_name: document.board.name.clone(),
+            board_archived: document.board.archived,
+            placements: document
+                .placements
+                .iter()
+                .map(StoredPlacement::from)
+                .collect(),
+            annotations: document
+                .annotations
+                .iter()
+                .map(StoredAnnotation::from)
+                .collect(),
+            stack_order: document.stack_order.iter().map(stored_stack_item).collect(),
+            camera_pan_x: document.viewport.camera_pan_x,
+            camera_pan_y: document.viewport.camera_pan_y,
+            camera_zoom: document.viewport.camera_zoom,
+            canvas_background: document.viewport.canvas_background.as_str().to_owned(),
+        }
+    }
+}
+
+impl StoredBoardDocument {
+    fn into_document(
+        self,
+        library: &crate::library::storage::Library,
+    ) -> Result<crate::data::BoardDocumentSnapshot, String> {
+        Ok(crate::data::BoardDocumentSnapshot {
+            board: crate::data::Board {
+                id: self.board_id,
+                name: self.board_name,
+                archived: self.board_archived,
+            },
+            placements: self
+                .placements
+                .into_iter()
+                .map(|placement| placement.into_placement(library))
+                .collect::<Result<_, _>>()?,
+            annotations: self
+                .annotations
+                .into_iter()
+                .map(StoredAnnotation::into_annotation)
+                .collect::<Result<_, _>>()?,
+            stack_order: self
+                .stack_order
+                .into_iter()
+                .map(load_stack_item)
+                .collect::<Result<_, _>>()?,
+            viewport: crate::data::ViewportState {
+                camera_pan_x: self.camera_pan_x,
+                camera_pan_y: self.camera_pan_y,
+                camera_zoom: self.camera_zoom,
+                canvas_background: crate::data::CanvasBackground::from_str(&self.canvas_background)
+                    .ok_or_else(|| {
+                        format!(
+                            "unknown stored canvas background: {}",
+                            self.canvas_background
+                        )
+                    })?,
+            },
+        })
     }
 }
 
