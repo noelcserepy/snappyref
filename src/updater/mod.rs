@@ -50,6 +50,7 @@ pub(crate) const DEFAULT_RELEASE_PAGE_URL: &str =
 /// Network/parse timeout for the fetch worker. Keep small so a hung TCP
 /// connection cannot keep a background thread alive past the next 6h tick.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
+#[cfg(test)]
 const FIRST_CHECK_MAX_DELAY: Duration = Duration::from_secs(10);
 
 /// Runtime state for the update service. Owned by the app and ticked from
@@ -444,15 +445,6 @@ impl UpdateService {
         // minute so a wedged network does not get pinged repeatedly.
         if self.manual_check_requested {
             self.manual_check_requested = false;
-            self.start_check();
-            return;
-        }
-
-        if self.settled_idle_at.is_none()
-            && self.last_check.is_none()
-            && self.started_at.elapsed() >= FIRST_CHECK_MAX_DELAY
-        {
-            self.write_diagnostic("first_check_max_delay_elapsed");
             self.start_check();
             return;
         }
