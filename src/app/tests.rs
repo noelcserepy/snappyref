@@ -2485,6 +2485,103 @@ fn create_undo_persists_reassigned_redo_history_with_the_archive() {
 }
 
 #[test]
+fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-delete-after-queued-resolution");
+    let library = Library::initialize(root.clone()).unwrap();
+    let first = library.list_boards().unwrap()[0].clone();
+    let second = library.create_board("Second").unwrap();
+    library.set_active_board(second.id).unwrap();
+    let source = library
+        .store_rgba_image("resolved", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let asset = library.create_asset(&source, "image/png", 1, 1, 4).unwrap();
+    let loading = library
+        .persist_committed_loading_placement(
+            egui::Pos2::ZERO,
+            1.0,
+            1.0,
+            1.0,
+            crate::data::ContentResolutionSource::ExternalPath {
+                path: source.to_string_lossy().into_owned(),
+            },
+            Some("Loading".to_owned()),
+        )
+        .unwrap();
+    library.set_active_board(first.id).unwrap();
+
+    let mut app = test_app(Some(library.clone()));
+    app.active_board_id = first.id;
+    app.refresh_board_summaries();
+    app.document_history.record_applied(
+        second.id,
+        super::HistoryAction::document(
+            "Added image".to_owned(),
+            vec![super::HistoryChange {
+                before: None,
+                after: Some(loading.clone()),
+            }],
+            Vec::new(),
+            None,
+        ),
+    );
+    app.queue_history_snapshot();
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+
+    let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
+    trigger_connection
+        .execute_batch(
+            "CREATE TRIGGER fail_resolution_history
+             BEFORE UPDATE ON board_document_history
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected resolution-history failure');
+             END;",
+        )
+        .unwrap();
+
+    let mut resolved = loading.clone();
+    resolved.state.asset_id = Some(asset.id);
+    resolved.asset = Some(asset.clone());
+    resolved.content = crate::data::PlacementContent::Loaded { asset_id: asset.id };
+    assert!(
+        app.document_history
+            .update_accepted_placement(second.id, resolved.clone())
+    );
+    app.document_persistence
+        .enqueue_document_unit(
+            second.id,
+            crate::canvas::CanvasDocumentChanges {
+                updated_placements: vec![resolved.state.clone()],
+                ..Default::default()
+            },
+            &app.document_history,
+        )
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+
+    app.request_board_delete(second.id, second.name.clone());
+    app.confirm_pending_board_delete(&ctx);
+    trigger_connection
+        .execute_batch("DROP TRIGGER fail_resolution_history")
+        .unwrap();
+    app.flush_persistence();
+
+    app.undo_document_history(&ctx);
+    app.flush_persistence();
+    let reopened = Library::initialize(root.clone()).unwrap();
+    let restored = reopened.load_board_document(second.id).unwrap();
+    assert_eq!(restored.placements.len(), 1);
+    assert_eq!(restored.placements[0].state.id, resolved.state.id);
+    assert_eq!(
+        restored.placements[0].state.asset_id,
+        resolved.state.asset_id
+    );
+    assert_eq!(restored.placements[0].content, resolved.content);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn generated_board_names_fill_smallest_visible_gap() {
     let root = temp_library_root("snappyref-board-name-gap");
     let library = Library::initialize(root.clone()).unwrap();
