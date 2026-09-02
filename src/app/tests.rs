@@ -2582,6 +2582,41 @@ fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement()
 }
 
 #[test]
+fn queued_board_identities_remain_visible_while_persistence_retries() {
+    let root = temp_library_root("snappyref-queued-board-identity");
+    let library = Library::initialize(root.clone()).unwrap();
+    let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
+    trigger_connection
+        .execute_batch(
+            "CREATE TRIGGER fail_board_history
+             BEFORE INSERT ON board_document_history
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected Board-history failure');
+             END;",
+        )
+        .unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library);
+
+    app.create_and_switch_board(false);
+    app.create_and_switch_board(false);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(app.board_summaries().len(), 3);
+
+    app.refresh_board_summaries();
+    let accepted_board_count = app.board_summaries().len();
+
+    trigger_connection
+        .execute_batch("DROP TRIGGER fail_board_history")
+        .unwrap();
+    app.flush_persistence();
+    drop(app);
+    let _ = fs::remove_dir_all(root);
+
+    assert_eq!(accepted_board_count, 3);
+}
+
+#[test]
 fn generated_board_names_fill_smallest_visible_gap() {
     let root = temp_library_root("snappyref-board-name-gap");
     let library = Library::initialize(root.clone()).unwrap();
