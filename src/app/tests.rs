@@ -2617,6 +2617,53 @@ fn queued_board_identities_remain_visible_while_persistence_retries() {
 }
 
 #[test]
+fn deleting_active_queued_board_uses_accepted_queued_fallback() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-delete-queued-active-board");
+    let library = Library::initialize(root.clone()).unwrap();
+    let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
+    trigger_connection
+        .execute_batch(
+            "CREATE TRIGGER fail_board_history
+             BEFORE INSERT ON board_document_history
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected Board-history failure');
+             END;",
+        )
+        .unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library);
+
+    app.create_and_switch_board(false);
+    let fallback_id = app.active_board_id;
+    app.create_and_switch_board(false);
+    let deleted_id = app.active_board_id;
+    std::thread::sleep(Duration::from_millis(100));
+
+    app.request_board_delete(deleted_id, "Board 3".to_owned());
+    app.confirm_pending_board_delete(&ctx);
+
+    let active_after_delete = app.active_board_id;
+    let deleted_identity_visible = app
+        .board_summaries()
+        .iter()
+        .any(|summary| summary.board.id == deleted_id);
+
+    trigger_connection
+        .execute_batch("DROP TRIGGER fail_board_history")
+        .unwrap();
+    app.flush_persistence();
+    drop(app);
+    let _ = fs::remove_dir_all(root);
+
+    assert_eq!(active_after_delete, fallback_id);
+    assert!(
+        !deleted_identity_visible,
+        "the accepted delete should update memory even while both Board creations await retry"
+    );
+}
+
+#[test]
 fn generated_board_names_fill_smallest_visible_gap() {
     let root = temp_library_root("snappyref-board-name-gap");
     let library = Library::initialize(root.clone()).unwrap();
