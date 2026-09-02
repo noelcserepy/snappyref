@@ -119,12 +119,12 @@ pub(super) fn restore_board_placement(
                  scale = ?6,
                  rotation = ?7,
                  z_index = ?8,
-                 archived = 0,
-                 placement_content_state = ?9,
-                 placement_lifecycle = ?10,
-                 content_resolution_intent = ?11
-             WHERE id = ?12
-               AND board_id = ?13",
+                 archived = ?9,
+                 placement_content_state = ?10,
+                 placement_lifecycle = ?11,
+                 content_resolution_intent = ?12
+             WHERE id = ?13
+               AND board_id = ?14",
             params![
                 placement.state.asset_id,
                 placement.state.geometry.center.x,
@@ -134,6 +134,11 @@ pub(super) fn restore_board_placement(
                 placement.state.geometry.scale,
                 placement.state.geometry.rotation,
                 placement.state.geometry.z_index,
+                if placement.state.archived {
+                    1_i64
+                } else {
+                    0_i64
+                },
                 content_state,
                 lifecycle,
                 content_payload,

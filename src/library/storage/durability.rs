@@ -87,43 +87,11 @@ fn persist_document_changes(
             })?;
     }
     for item in &changes.updated_placements {
-        let loaded_content = item
-            .asset_id
-            .map(|asset_id| {
-                serde_json::to_string(&crate::data::PlacementContent::Loaded { asset_id })
-            })
-            .transpose()
-            .map_err(|error| format!("failed to encode placement content: {error}"))?;
-        let changed = transaction
-            .execute(
-                "UPDATE board_items
-                 SET asset_id = ?1, x = ?2, y = ?3, width = ?4, height = ?5,
-                     scale = ?6, rotation = ?7, z_index = ?8, archived = ?9,
-                     placement_content_state = CASE WHEN ?1 IS NOT NULL THEN 'loaded' ELSE placement_content_state END,
-                     content_resolution_intent = CASE WHEN ?1 IS NOT NULL THEN ?10 ELSE content_resolution_intent END
-                 WHERE id = ?11 AND board_id = ?12",
-                params![
-                    item.asset_id,
-                    item.geometry.center.x,
-                    item.geometry.center.y,
-                    item.geometry.size.x,
-                    item.geometry.size.y,
-                    item.geometry.scale,
-                    item.geometry.rotation,
-                    item.geometry.z_index,
-                    if item.archived { 1_i64 } else { 0_i64 },
-                    loaded_content,
-                    item.id,
-                    board_id,
-                ],
-            )
-            .map_err(|error| format!("failed to update placement document state: {error}"))?;
-        if changed == 0 {
-            let placement = history
-                .accepted_placement(board_id, item.id)
-                .ok_or_else(|| format!("missing accepted placement {}", item.id))?;
-            super::placements::restore_board_placement(transaction, board_id, &placement)?;
-        }
+        let mut placement = history
+            .accepted_placement(board_id, item.id)
+            .ok_or_else(|| format!("missing accepted placement {}", item.id))?;
+        placement.state = item.clone();
+        super::placements::restore_board_placement(transaction, board_id, &placement)?;
     }
     for annotation in &changes.updated_annotations {
         let changed = transaction
