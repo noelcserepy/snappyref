@@ -554,6 +554,14 @@ fn delete_selected_annotation_records_undo_history() {
     app.canvas.select_content(&[], &[annotation.id]);
 
     app.delete_selected_items_from_board(test_screen_rect());
+    assert!(app.canvas.annotation_for_id(annotation.id).is_none());
+    assert_eq!(
+        library.load_canvas_annotations().unwrap(),
+        vec![annotation.clone()],
+        "accepted deletion must remain deferred until the explicit flush"
+    );
+
+    app.flush_persistence();
     assert!(library.load_canvas_annotations().unwrap().is_empty());
 
     app.undo_document_history(&ctx);
@@ -561,6 +569,53 @@ fn delete_selected_annotation_records_undo_history() {
 
     assert_eq!(app.status, "Undid Deleted 1 annotation");
     assert_eq!(library.load_canvas_annotations().unwrap(), vec![annotation]);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn failed_import_keeps_the_accepted_in_memory_placement_visible_before_durability() {
+    let root = temp_library_root("snappyref-content-resolution-in-memory-failure");
+    let library = Library::initialize(root.clone()).unwrap();
+    let loading = library.prepare_loading_placement(
+        egui::pos2(10.0, 20.0),
+        1.0,
+        egui::vec2(100.0, 80.0),
+        crate::data::ContentResolutionSource::Unknown {
+            description: "test".to_owned(),
+        },
+        Some("Queued".to_owned()),
+    );
+    let mut canvas = crate::canvas::CanvasState::default();
+    canvas.add_unresolved_placement(loading.clone());
+    let mut runtime = super::ContentResolutionRuntime::new();
+    let reservation = runtime.reserve_placement(1, loading.state.id, egui::Pos2::ZERO);
+
+    runtime.finish_failed_import(
+        Some(&library),
+        &mut canvas,
+        1,
+        crate::placement::content_resolution::FailedContentResolutionOutcome {
+            resolution_ticket: Some(
+                crate::placement::content_resolution::ContentResolutionTicket {
+                    target_board_id: 1,
+                    queue_id: reservation.queue_id,
+                },
+            ),
+            placement_id: None,
+            target_board_id: None,
+            status: "decode failed".to_owned(),
+        },
+    );
+
+    let canvas_record = canvas.placement_for_id(loading.state.id).unwrap();
+    assert!(
+        matches!(
+            canvas_record.content,
+            crate::data::PlacementContent::Failed { .. }
+        ),
+        "a failed durable lookup must not discard the accepted in-memory failure state"
+    );
 
     let _ = fs::remove_dir_all(root);
 }
