@@ -158,24 +158,21 @@ impl DocumentHistory {
     }
 
     pub(crate) fn accepted_placement(&self, board_id: i64, placement_id: i64) -> Option<Placement> {
-        self.histories_by_board
-            .get(&board_id)?
+        let history = self.histories_by_board.get(&board_id)?;
+        if let Some(change) = history
             .undo_stack
             .iter()
             .rev()
-            .filter_map(|action| match action {
-                HistoryAction::Document(action) => Some(&action.placements),
-                HistoryAction::Board(_) => None,
-            })
-            .flatten()
-            .find(|change| {
-                change
-                    .after
-                    .as_ref()
-                    .or(change.before.as_ref())
-                    .is_some_and(|placement| placement.state.id == placement_id)
-            })
-            .and_then(|change| change.after.clone())
+            .find_map(|action| placement_change(action, placement_id))
+        {
+            return change.after.clone();
+        }
+        history
+            .redo_stack
+            .iter()
+            .rev()
+            .find_map(|action| placement_change(action, placement_id))
+            .and_then(|change| change.placement_target(HistoryDirection::Backward))
     }
 
     pub(crate) fn update_accepted_placement(
@@ -335,6 +332,22 @@ impl DocumentHistory {
             HistoryDirection::Forward => target.undo_stack.push(action),
         }
     }
+}
+
+fn placement_change(
+    action: &HistoryAction,
+    placement_id: i64,
+) -> Option<&HistoryChange<Placement>> {
+    let HistoryAction::Document(action) = action else {
+        return None;
+    };
+    action.placements.iter().find(|change| {
+        change
+            .after
+            .as_ref()
+            .or(change.before.as_ref())
+            .is_some_and(|placement| placement.state.id == placement_id)
+    })
 }
 
 fn apply_document_action(
