@@ -6,6 +6,7 @@ pub(crate) enum BoardDurabilityOperation {
         changes: crate::canvas::CanvasDocumentChanges,
     },
     Lifecycle(crate::active_board::persistence::BoardLifecyclePersistence),
+    #[cfg(test)]
     HistoryOnly,
 }
 
@@ -23,11 +24,12 @@ impl Library {
 
         match operation {
             BoardDurabilityOperation::Document { board_id, changes } => {
-                persist_document_changes(&transaction, *board_id, changes)?;
+                persist_document_changes(&transaction, *board_id, changes, history)?;
             }
             BoardDurabilityOperation::Lifecycle(change) => {
                 persist_lifecycle_change(&transaction, change)?;
             }
+            #[cfg(test)]
             BoardDurabilityOperation::HistoryOnly => {}
         }
         transaction
@@ -64,7 +66,16 @@ fn persist_document_changes(
     transaction: &Transaction<'_>,
     board_id: i64,
     changes: &crate::canvas::CanvasDocumentChanges,
+    history: &crate::active_board::history::DocumentHistory,
 ) -> Result<(), String> {
+    for placement_id in &changes.archived_placement_ids {
+        transaction
+            .execute(
+                "UPDATE board_items SET archived = 1 WHERE id = ?1 AND board_id = ?2",
+                params![placement_id, board_id],
+            )
+            .map_err(|error| format!("failed to archive placement {placement_id}: {error}"))?;
+    }
     for annotation_id in &changes.archived_annotation_ids {
         transaction
             .execute(
@@ -83,7 +94,7 @@ fn persist_document_changes(
             })
             .transpose()
             .map_err(|error| format!("failed to encode placement content: {error}"))?;
-        transaction
+        let changed = transaction
             .execute(
                 "UPDATE board_items
                  SET asset_id = ?1, x = ?2, y = ?3, width = ?4, height = ?5,
@@ -107,9 +118,15 @@ fn persist_document_changes(
                 ],
             )
             .map_err(|error| format!("failed to update placement document state: {error}"))?;
+        if changed == 0 {
+            let placement = history
+                .accepted_placement(board_id, item.id)
+                .ok_or_else(|| format!("missing accepted placement {}", item.id))?;
+            super::placements::restore_board_placement(transaction, board_id, &placement)?;
+        }
     }
     for annotation in &changes.updated_annotations {
-        transaction
+        let changed = transaction
             .execute(
                 "UPDATE canvas_annotations
                  SET start_x = ?1, start_y = ?2, end_x = ?3, end_y = ?4,
@@ -141,6 +158,40 @@ fn persist_document_changes(
                     annotation.id
                 )
             })?;
+        if changed == 0 {
+            transaction
+                .execute(
+                    "INSERT INTO canvas_annotations (
+                        id, board_id, kind, start_x, start_y, end_x, end_y, text,
+                        text_size, stroke_width, color, background_enabled, archived
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    params![
+                        annotation.id,
+                        board_id,
+                        annotation.kind.as_str(),
+                        annotation.start().x,
+                        annotation.start().y,
+                        annotation.end().x,
+                        annotation.end().y,
+                        annotation.text,
+                        annotation.text_size.as_str(),
+                        annotation.stroke_width.as_str(),
+                        annotation.color.as_str(),
+                        if annotation.background_enabled {
+                            1_i64
+                        } else {
+                            0_i64
+                        },
+                        if annotation.archived { 1_i64 } else { 0_i64 },
+                    ],
+                )
+                .map_err(|error| {
+                    format!(
+                        "failed to insert canvas annotation {}: {error}",
+                        annotation.id
+                    )
+                })?;
+        }
     }
     if let Some(stack_order) = &changes.stack_order {
         transaction
@@ -168,6 +219,37 @@ fn persist_lifecycle_change(
 ) -> Result<(), String> {
     use crate::active_board::persistence::BoardLifecyclePersistence;
     match change {
+        BoardLifecyclePersistence::Create {
+            document,
+            active_board_id,
+        } => {
+            transaction
+                .execute(
+                    "INSERT INTO boards (
+                        id, name, archived, camera_pan_x, camera_pan_y, camera_zoom,
+                        canvas_background
+                     ) VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6)
+                     ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        archived = 0,
+                        camera_pan_x = excluded.camera_pan_x,
+                        camera_pan_y = excluded.camera_pan_y,
+                        camera_zoom = excluded.camera_zoom,
+                        canvas_background = excluded.canvas_background",
+                    params![
+                        document.board.id,
+                        document.board.name,
+                        document.viewport.camera_pan_x,
+                        document.viewport.camera_pan_y,
+                        document.viewport.camera_zoom,
+                        document.viewport.canvas_background.as_str(),
+                    ],
+                )
+                .map_err(|error| {
+                    format!("failed to create board {}: {error}", document.board.id)
+                })?;
+            super::boards::persist_active_board_id(transaction, *active_board_id)?;
+        }
         BoardLifecyclePersistence::Rename { board_id, name } => {
             let trimmed_name = name.trim();
             if !trimmed_name.is_empty() {

@@ -513,6 +513,7 @@ impl CanvasState {
         image.animation = None;
         self.render.pending_image_lod_loads.remove(&placement_id);
         self.render.pending_crop_previews.remove(&placement_id);
+        self.mark_placement_for_persistence(placement_id);
         Ok(())
     }
 
@@ -578,6 +579,19 @@ impl CanvasState {
             .iter()
             .map(|annotation| annotation.id)
             .collect()
+    }
+
+    pub(crate) fn committed_placements(&self) -> Vec<Placement> {
+        self.document
+            .rendered_placements
+            .iter()
+            .filter(|image| image.placement.lifecycle == PlacementLifecycle::Committed)
+            .map(|image| image.placement.clone())
+            .collect()
+    }
+
+    pub(crate) fn annotations(&self) -> Vec<CanvasAnnotation> {
+        self.document.annotations.clone()
     }
 
     pub fn annotation_for_id(&self, annotation_id: i64) -> Option<CanvasAnnotation> {
@@ -886,6 +900,22 @@ impl CanvasState {
         }
     }
 
+    pub(crate) fn mark_placement_for_persistence(&mut self, placement_id: i64) {
+        if !self.document.dirty_placement_ids.contains(&placement_id) {
+            self.document.dirty_placement_ids.push(placement_id);
+        }
+    }
+
+    pub(crate) fn mark_annotation_for_persistence(&mut self, annotation_id: i64) {
+        if !self.document.dirty_annotation_ids.contains(&annotation_id) {
+            self.document.dirty_annotation_ids.push(annotation_id);
+        }
+    }
+
+    pub(crate) fn mark_stack_order_for_persistence(&mut self) {
+        self.document.stack_order_dirty = true;
+    }
+
     pub fn begin_textbox_edit(&mut self, annotation_id: i64) {
         if self.document.annotations.iter().any(|annotation| {
             annotation.id == annotation_id && annotation.kind == CanvasAnnotationKind::Textbox
@@ -980,6 +1010,7 @@ impl CanvasState {
         self.document.selected_placement_ids.clear();
         self.document.selected_annotation_ids.clear();
         self.document.dirty_placement_ids.clear();
+        self.document.pending_archived_placement_ids.clear();
         self.document.dirty_annotation_ids.clear();
         self.document.pending_archived_annotation_ids.clear();
         self.document.stack_order_dirty = false;
@@ -1025,6 +1056,9 @@ impl CanvasState {
 
         CanvasDocumentChanges {
             updated_placements,
+            archived_placement_ids: std::mem::take(
+                &mut self.document.pending_archived_placement_ids,
+            ),
             updated_annotations,
             archived_annotation_ids: std::mem::take(
                 &mut self.document.pending_archived_annotation_ids,
@@ -1065,6 +1099,7 @@ impl CanvasState {
 
         CanvasDocumentChanges {
             updated_placements,
+            archived_placement_ids: self.document.pending_archived_placement_ids.clone(),
             updated_annotations,
             archived_annotation_ids: self.document.pending_archived_annotation_ids.clone(),
             stack_order: self
@@ -1477,9 +1512,22 @@ impl CanvasState {
             let keep = !placement_ids.contains(&image.placement.state.id);
             if !keep {
                 removed_ids.push(image.placement.state.id);
+                if image.placement.lifecycle == PlacementLifecycle::Committed
+                    && !self
+                        .document
+                        .pending_archived_placement_ids
+                        .contains(&image.placement.state.id)
+                {
+                    self.document
+                        .pending_archived_placement_ids
+                        .push(image.placement.state.id);
+                }
             }
             keep
         });
+        if !removed_ids.is_empty() {
+            self.document.stack_order_dirty = true;
+        }
         self.document
             .selected_placement_ids
             .retain(|placement_id| !removed_ids.contains(placement_id));
@@ -1634,6 +1682,11 @@ impl CanvasState {
     }
 
     pub(super) fn remove_annotation_locally(&mut self, annotation_id: i64) {
+        let existed = self
+            .document
+            .annotations
+            .iter()
+            .any(|annotation| annotation.id == annotation_id);
         self.document
             .annotations
             .retain(|annotation| annotation.id != annotation_id);
@@ -1656,6 +1709,18 @@ impl CanvasState {
         self.document
             .dirty_annotation_ids
             .retain(|dirty_id| *dirty_id != annotation_id);
+        if existed {
+            if !self
+                .document
+                .pending_archived_annotation_ids
+                .contains(&annotation_id)
+            {
+                self.document
+                    .pending_archived_annotation_ids
+                    .push(annotation_id);
+            }
+            self.document.stack_order_dirty = true;
+        }
     }
 
     pub(super) fn finish_textbox_edit(&mut self) {

@@ -1,14 +1,41 @@
 use super::boards::active_board_id;
+#[cfg(test)]
 use super::stack_order::append_canvas_stack_item;
 use super::*;
 
 impl Library {
+    pub(crate) fn new_canvas_annotation(
+        &self,
+        kind: CanvasAnnotationKind,
+        start: egui::Pos2,
+        end: egui::Pos2,
+        text: String,
+        text_size: CanvasTextSize,
+        stroke_width: CanvasStrokeWidth,
+        color: CanvasAnnotationColor,
+        background_enabled: bool,
+    ) -> CanvasAnnotation {
+        CanvasAnnotation::new(
+            self.allocate_document_id(),
+            kind,
+            start,
+            end,
+            text,
+            text_size,
+            stroke_width,
+            color,
+            background_enabled,
+            false,
+        )
+    }
+
     pub fn load_canvas_annotations(&self) -> Result<Vec<CanvasAnnotation>, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
         load_canvas_annotations_for_board_id(&connection, active_board_id)
     }
 
+    #[cfg(test)]
     pub fn create_canvas_annotation(
         &self,
         kind: CanvasAnnotationKind,
@@ -22,9 +49,11 @@ impl Library {
     ) -> Result<CanvasAnnotation, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
+        let annotation_id = self.allocate_document_id();
         connection
             .execute(
                 "INSERT INTO canvas_annotations (
+                    id,
                     board_id,
                     kind,
                     start_x,
@@ -37,8 +66,9 @@ impl Library {
                     color,
                     background_enabled,
                     archived
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
+                    annotation_id,
                     active_board_id,
                     kind.as_str(),
                     start.x,
@@ -55,7 +85,6 @@ impl Library {
             )
             .map_err(|error| format!("failed to create canvas annotation: {error}"))?;
 
-        let annotation_id = connection.last_insert_rowid();
         append_canvas_stack_item(
             &connection,
             active_board_id,
@@ -76,6 +105,7 @@ impl Library {
         ))
     }
 
+    #[cfg(test)]
     pub fn update_canvas_annotation(&self, annotation: &CanvasAnnotation) -> Result<(), String> {
         let connection = self.connection()?;
         connection
@@ -120,6 +150,7 @@ impl Library {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn archive_canvas_annotations(&self, annotation_ids: &[i64]) -> Result<(), String> {
         if annotation_ids.is_empty() {
             return Ok(());

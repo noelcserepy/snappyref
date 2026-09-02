@@ -104,6 +104,7 @@ pub struct CanvasFrameMetrics {
 #[derive(Clone, Debug, Default)]
 pub struct CanvasDocumentChanges {
     pub updated_placements: Vec<crate::data::PlacementState>,
+    pub archived_placement_ids: Vec<i64>,
     pub updated_annotations: Vec<CanvasAnnotation>,
     pub archived_annotation_ids: Vec<i64>,
     pub stack_order: Option<Vec<crate::data::CanvasStackItem>>,
@@ -112,6 +113,7 @@ pub struct CanvasDocumentChanges {
 impl CanvasDocumentChanges {
     pub fn has_changes(&self) -> bool {
         !self.updated_placements.is_empty()
+            || !self.archived_placement_ids.is_empty()
             || !self.updated_annotations.is_empty()
             || !self.archived_annotation_ids.is_empty()
             || self.stack_order.is_some()

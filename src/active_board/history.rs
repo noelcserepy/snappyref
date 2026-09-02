@@ -178,6 +178,55 @@ impl DocumentHistory {
             .and_then(|change| change.after.clone())
     }
 
+    pub(crate) fn update_accepted_placement(
+        &mut self,
+        board_id: i64,
+        placement: Placement,
+    ) -> bool {
+        let Some(history) = self.histories_by_board.get_mut(&board_id) else {
+            return false;
+        };
+        for action in history.undo_stack.iter_mut().rev() {
+            let HistoryAction::Document(action) = action else {
+                continue;
+            };
+            if let Some(change) = action.placements.iter_mut().find(|change| {
+                change
+                    .after
+                    .as_ref()
+                    .or(change.before.as_ref())
+                    .is_some_and(|candidate| candidate.state.id == placement.state.id)
+            }) {
+                change.after = Some(placement);
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(crate) fn fail_accepted_placement(
+        &mut self,
+        board_id: i64,
+        placement_id: i64,
+        message: String,
+    ) -> Option<Placement> {
+        let mut placement = self.accepted_placement(board_id, placement_id)?;
+        let source = match &placement.content {
+            crate::data::PlacementContent::Loading { source, .. } => Some(source.clone()),
+            crate::data::PlacementContent::Failed { source, .. } => source.clone(),
+            crate::data::PlacementContent::Loaded { .. } => None,
+        };
+        placement.content = crate::data::PlacementContent::Failed {
+            source,
+            message,
+            recoverable: true,
+        };
+        placement.asset = None;
+        placement.state.asset_id = None;
+        self.update_accepted_placement(board_id, placement.clone())
+            .then_some(placement)
+    }
+
     pub(crate) fn accepted_annotation(
         &self,
         board_id: i64,

@@ -59,6 +59,7 @@ pub(super) fn load_canvas_stack_order_for_board_id(
         .map_err(|error| format!("failed to collect canvas-stack items: {error}"))
 }
 
+#[cfg(test)]
 pub(super) fn append_canvas_stack_item(
     connection: &Connection,
     board_id: i64,
@@ -79,6 +80,7 @@ pub(super) fn append_canvas_stack_item(
     Ok(())
 }
 
+#[cfg(test)]
 fn next_canvas_stack_index(connection: &Connection, board_id: i64) -> Result<i64, String> {
     connection
         .query_row(
@@ -177,6 +179,7 @@ impl Library {
         load_canvas_stack_order_for_board_id(&connection, active_board_id)
     }
 
+    #[cfg(test)]
     pub fn save_canvas_stack_order(&self, stack_order: &[CanvasStackItem]) -> Result<(), String> {
         let mut connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;

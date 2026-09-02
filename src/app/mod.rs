@@ -719,6 +719,16 @@ impl BoardSummariesCache {
             summary.board.name = name.to_owned();
         }
     }
+
+    fn set_placement_count(&mut self, board_id: i64, placement_count: usize) {
+        if let Some(summary) = self
+            .summaries
+            .iter_mut()
+            .find(|summary| summary.board.id == board_id)
+        {
+            summary.placement_count = placement_count;
+        }
+    }
 }
 
 impl SnappyRefApp {
@@ -1374,9 +1384,36 @@ impl SnappyRefApp {
             self.board_summaries_cache.clear();
             return;
         };
+        let accepted_active_board = self
+            .board_summaries_cache
+            .summaries()
+            .into_iter()
+            .find(|summary| summary.board.id == self.active_board_id)
+            .map(|summary| summary.board);
         if let Err(error) = self.board_summaries_cache.refresh_from(library) {
             self.status = error;
+            return;
         }
+        if !self
+            .board_summaries_cache
+            .summaries()
+            .iter()
+            .any(|summary| summary.board.id == self.active_board_id)
+            && let Some(board) = accepted_active_board
+        {
+            self.board_summaries_cache
+                .restore_document(&crate::data::BoardDocumentSnapshot {
+                    board,
+                    placements: self.canvas.committed_placements(),
+                    annotations: Vec::new(),
+                    stack_order: Vec::new(),
+                    viewport: self.canvas.viewport_state(),
+                });
+        }
+        self.board_summaries_cache.set_placement_count(
+            self.active_board_id,
+            self.canvas.committed_placements().len(),
+        );
     }
 
     fn create_and_switch_board(&mut self, keep_sidebar_open: bool) {
@@ -1392,33 +1429,38 @@ impl SnappyRefApp {
             .collect::<Vec<_>>();
         let active_before = self.active_board_id;
         let name = generated_board_name(&boards);
-        let board = match library.create_board(&name) {
-            Ok(board) => board,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
+        let board = library.new_board(name);
+        let document = crate::data::BoardDocumentSnapshot {
+            board: board.clone(),
+            placements: Vec::new(),
+            annotations: Vec::new(),
+            stack_order: Vec::new(),
+            viewport: crate::data::ViewportState::default(),
         };
-        let document = match library.load_board_document(board.id) {
-            Ok(document) => document,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
-
-        self.switch_to_board(board.id);
-        if self.active_board_id == board.id {
-            self.document_history.record_applied(
-                board.id,
-                HistoryAction::Board(BoardLifecycleHistoryAction::Created {
-                    document,
-                    active_before,
-                }),
-            );
-            self.queue_history_snapshot();
+        self.document_history.record_applied(
+            board.id,
+            HistoryAction::Board(BoardLifecycleHistoryAction::Created {
+                document: document.clone(),
+                active_before,
+            }),
+        );
+        if let Err(error) = self.document_persistence.apply_board_lifecycle_unit(
+            Some(library),
+            crate::active_board::persistence::BoardLifecyclePersistence::Create {
+                document: document.clone(),
+                active_board_id: board.id,
+            },
+            &self.document_history,
+        ) {
+            self.status = error;
+            return;
         }
-        self.refresh_board_summaries();
+        self.clear_active_board_transients();
+        self.canvas.clear_for_board_switch();
+        self.active_board_id = board.id;
+        self.canvas.apply_viewport_state(&document.viewport);
+        self.save_user_session();
+        self.board_summaries_cache.restore_document(&document);
         if keep_sidebar_open {
             self.sidebar_open = true;
         }
@@ -1538,7 +1580,8 @@ impl SnappyRefApp {
             return;
         };
 
-        self.save_active_board_before_transition();
+        self.persist_canvas_changes();
+        self.save_user_session();
 
         let Some(library) = &self.library else {
             self.status = "Storage unavailable".to_owned();
@@ -1546,19 +1589,51 @@ impl SnappyRefApp {
         };
 
         let active_before = self.active_board_id;
-        let document = match library.load_board_document(pending.board_id) {
-            Ok(document) => document,
-            Err(error) => {
-                self.status = error;
+        let document = if pending.board_id == self.active_board_id {
+            let Some(board) = self
+                .board_summaries()
+                .into_iter()
+                .find(|summary| summary.board.id == pending.board_id)
+                .map(|summary| summary.board)
+            else {
+                self.status = "Board unavailable".to_owned();
                 return;
+            };
+            crate::data::BoardDocumentSnapshot {
+                board,
+                placements: self.canvas.committed_placements(),
+                annotations: self.canvas.annotations(),
+                stack_order: self.canvas.canvas_stack_order(),
+                viewport: self.canvas.viewport_state(),
+            }
+        } else {
+            match library.load_board_document(pending.board_id) {
+                Ok(document) => document,
+                Err(error) => {
+                    self.status = error;
+                    return;
+                }
             }
         };
-        let active_after = match library.active_board_after_delete(pending.board_id) {
-            Ok(active_after) => active_after,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
+        let board_ids = self
+            .board_summaries()
+            .into_iter()
+            .map(|summary| summary.board.id)
+            .collect::<Vec<_>>();
+        let Some(deleted_index) = board_ids.iter().position(|id| *id == pending.board_id) else {
+            self.status = "Board unavailable".to_owned();
+            return;
+        };
+        if board_ids.len() == 1 {
+            self.status = "cannot delete the last board".to_owned();
+            return;
+        }
+        let active_after = if active_before != pending.board_id {
+            active_before
+        } else if deleted_index > 0 {
+            board_ids[deleted_index - 1]
+        } else {
+            board_ids[deleted_index + 1]
         };
         let active_document = if active_before != active_after {
             match library.load_board_document(active_after) {
@@ -2208,7 +2283,7 @@ impl SnappyRefApp {
                     self.document_history
                         .record_applied(self.active_board_id, history_action);
                 }
-                self.persist_canvas_changes();
+                self.persist_recorded_canvas_changes();
                 batch
                     .created
                     .pop()
@@ -2730,7 +2805,7 @@ impl SnappyRefApp {
             self.document_history
                 .record_applied(self.active_board_id, history_action);
         }
-        self.persist_canvas_changes();
+        self.persist_recorded_canvas_changes();
 
         let mut queued_batch_ids = Vec::new();
         let mut queued_placement_ids = Vec::new();
@@ -3326,7 +3401,7 @@ impl SnappyRefApp {
                 }),
             ),
         );
-        self.queue_history_snapshot();
+        self.persist_recorded_canvas_changes();
     }
 
     fn record_created_selection_history(
@@ -3366,7 +3441,7 @@ impl SnappyRefApp {
                 }),
             ),
         );
-        self.queue_history_snapshot();
+        self.persist_recorded_canvas_changes();
     }
 
     fn apply_paste_command_outcome(&mut self, outcome: PasteCommandOutcome) {
@@ -3528,7 +3603,7 @@ impl SnappyRefApp {
                         None,
                     ),
                 );
-                self.queue_history_snapshot();
+                self.persist_recorded_canvas_changes();
                 let mut status = "Cropped image".to_owned();
                 #[cfg(feature = "semantic-search")]
                 if let Some((asset_id, original_path)) = integration.indexed_asset {
@@ -3570,6 +3645,23 @@ impl SnappyRefApp {
 
     fn apply_loaded_import_outcome(&mut self, outcome: LoadedContentResolutionOutcome) {
         let finished = self.content_resolution.finish_loaded_import(outcome);
+        if let (Some(ticket), Some(log)) = (finished.resolution_ticket, finished.log.as_ref())
+            && self
+                .document_history
+                .update_accepted_placement(ticket.target_board_id, log.placement.clone())
+        {
+            let changes = crate::canvas::CanvasDocumentChanges {
+                updated_placements: vec![log.placement.state.clone()],
+                ..Default::default()
+            };
+            if let Err(error) = self.document_persistence.enqueue_document_unit(
+                ticket.target_board_id,
+                changes,
+                &self.document_history,
+            ) {
+                self.status = error;
+            }
+        }
         let resolution_queue_id = finished.resolution_ticket.map(|ticket| ticket.queue_id);
         let perf_import_origin = finished.log.as_ref().map(|log| log.origin);
         let perf_counts_as_import = perf_import_origin.is_some_and(|origin| {
@@ -3694,6 +3786,32 @@ impl SnappyRefApp {
             self.active_board_id,
             outcome,
         );
+        if let (Some(board_id), Some(placement_id)) =
+            (finished.batch_target_board_id, finished.placement_id)
+            && let Some(placement) = self.document_history.fail_accepted_placement(
+                board_id,
+                placement_id,
+                finished.status.clone(),
+            )
+        {
+            if board_id == self.active_board_id
+                && self.canvas.placement_for_id(placement_id).is_some()
+            {
+                self.canvas.add_unresolved_placement(placement.clone());
+                self.canvas.select_placements(&[placement_id]);
+            }
+            let changes = crate::canvas::CanvasDocumentChanges {
+                updated_placements: vec![placement.state],
+                ..Default::default()
+            };
+            if let Err(error) = self.document_persistence.enqueue_document_unit(
+                board_id,
+                changes,
+                &self.document_history,
+            ) {
+                self.status = error;
+            }
+        }
         let _ = finished.resolution_ticket;
         self.finish_import_queue_id_in_batches(
             finished.batch_target_board_id,
@@ -4213,9 +4331,14 @@ impl SnappyRefApp {
             egui::Pos2::ZERO,
             STARTUP_VIEWPORT_SIZE,
         ));
+        let before_stack_order = self.canvas.canvas_stack_order();
         let mut context = self.active_board_command_context(viewport_world);
         match crate::active_board::commands::duplicate_selection(&mut context) {
-            Ok(Some(outcome)) => self.apply_paste_command_outcome(outcome),
+            Ok(Some(outcome)) => {
+                let label = outcome.status.clone();
+                self.apply_paste_command_outcome(outcome);
+                self.record_created_selection_history(label, before_stack_order);
+            }
             Ok(None) => {}
             Err(error) => self.status = error,
         }
@@ -4245,62 +4368,60 @@ impl SnappyRefApp {
             let before_stack_order = self.canvas.canvas_stack_order();
             let background_enabled = request.kind == crate::data::CanvasAnnotationKind::Textbox
                 && self.settings.default_textbox_background;
-            match library.create_canvas_annotation(
+            let annotation = library.new_canvas_annotation(
                 request.kind,
                 request.start_world(),
                 request.end_world(),
-                &request.text,
+                request.text,
                 request.text_size,
                 crate::data::CanvasStrokeWidth::default(),
                 crate::data::CanvasAnnotationColor::default(),
                 background_enabled,
-            ) {
-                Ok(annotation) => {
-                    let should_focus_text =
-                        annotation.kind == crate::data::CanvasAnnotationKind::Textbox;
-                    let annotation_id = annotation.id;
-                    self.canvas.add_annotation(annotation);
-                    if let Some(created) = self.canvas.annotation_for_id(annotation_id) {
-                        self.document_history.record_applied(
-                            self.active_board_id,
-                            HistoryAction::document(
-                                match request.kind {
-                                    crate::data::CanvasAnnotationKind::Arrow => "Added arrow",
-                                    crate::data::CanvasAnnotationKind::Line => "Added line",
-                                    crate::data::CanvasAnnotationKind::Textbox => "Added textbox",
-                                }
-                                .to_owned(),
-                                Vec::new(),
-                                vec![HistoryChange {
-                                    before: None,
-                                    after: Some(created),
-                                }],
-                                Some(HistoryChange {
-                                    before: Some(before_stack_order),
-                                    after: Some(self.canvas.canvas_stack_order()),
-                                }),
-                            ),
-                        );
-                        self.queue_history_snapshot();
-                    }
-                    if should_focus_text {
-                        self.canvas.begin_textbox_edit(annotation_id);
-                    }
-                    self.status = match request.kind {
-                        crate::data::CanvasAnnotationKind::Arrow => "Added arrow".to_owned(),
-                        crate::data::CanvasAnnotationKind::Line => "Added line".to_owned(),
-                        crate::data::CanvasAnnotationKind::Textbox => "Added textbox".to_owned(),
-                    };
-                }
-                Err(error) => {
-                    self.status = error;
-                }
+            );
+            let should_focus_text = annotation.kind == crate::data::CanvasAnnotationKind::Textbox;
+            let annotation_id = annotation.id;
+            self.canvas.add_annotation(annotation);
+            self.canvas.mark_annotation_for_persistence(annotation_id);
+            if let Some(created) = self.canvas.annotation_for_id(annotation_id) {
+                self.document_history.record_applied(
+                    self.active_board_id,
+                    HistoryAction::document(
+                        match request.kind {
+                            crate::data::CanvasAnnotationKind::Arrow => "Added arrow",
+                            crate::data::CanvasAnnotationKind::Line => "Added line",
+                            crate::data::CanvasAnnotationKind::Textbox => "Added textbox",
+                        }
+                        .to_owned(),
+                        Vec::new(),
+                        vec![HistoryChange {
+                            before: None,
+                            after: Some(created),
+                        }],
+                        Some(HistoryChange {
+                            before: Some(before_stack_order),
+                            after: Some(self.canvas.canvas_stack_order()),
+                        }),
+                    ),
+                );
+                self.persist_recorded_canvas_changes();
             }
+            if should_focus_text {
+                self.canvas.begin_textbox_edit(annotation_id);
+            }
+            self.status = match request.kind {
+                crate::data::CanvasAnnotationKind::Arrow => "Added arrow".to_owned(),
+                crate::data::CanvasAnnotationKind::Line => "Added line".to_owned(),
+                crate::data::CanvasAnnotationKind::Textbox => "Added textbox".to_owned(),
+            };
         }
     }
 
     fn persist_canvas_changes(&mut self) {
         self.record_pending_document_changes_history("Edit board");
+        self.persist_recorded_canvas_changes();
+    }
+
+    fn persist_recorded_canvas_changes(&mut self) {
         let session = self.current_user_session();
         if let Err(error) = self.document_persistence.commit_canvas_changes_unit(
             self.library.as_ref(),
@@ -4484,12 +4605,9 @@ impl SnappyRefApp {
         &mut self,
         viewport_world: egui::Rect,
     ) -> ActiveBoardCommandContext<'_> {
-        let user_session = self.current_user_session();
         ActiveBoardCommandContext {
             canvas: &mut self.canvas,
             library: self.library.as_ref(),
-            document_persistence: &mut self.document_persistence,
-            user_session,
             import_worker_available: self.import_worker.is_some(),
             placement_gap: self.settings.placement_gap,
             viewport_world,
@@ -4548,8 +4666,7 @@ impl SnappyRefApp {
                         }),
                     ),
                 );
-                self.queue_history_snapshot();
-                self.flush_persistence();
+                self.persist_recorded_canvas_changes();
                 self.refresh_board_summaries();
                 self.status = status;
             }
@@ -4570,6 +4687,7 @@ impl SnappyRefApp {
         self.pending_user_session_save_at = None;
     }
 
+    #[cfg(test)]
     fn queue_history_snapshot(&mut self) {
         if let Err(error) = self
             .document_persistence
@@ -4866,7 +4984,7 @@ impl SnappyRefApp {
             if let Some(history_action) = committed.history_action.clone() {
                 self.document_history
                     .record_applied(self.active_board_id, history_action);
-                self.queue_history_snapshot();
+                self.persist_recorded_canvas_changes();
             }
             self.save_user_session();
             self.refresh_board_summaries();
