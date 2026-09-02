@@ -12,6 +12,7 @@ struct PersistenceQueue {
 
 enum PersistenceCommand {
     SaveUserSession(crate::data::UserSession),
+    #[cfg(test)]
     CommitCanvasDocumentChanges(crate::canvas::CanvasDocumentChanges),
     CommitBoardUnit {
         operation: crate::library::storage::BoardDurabilityOperation,
@@ -29,6 +30,7 @@ struct PendingPersistenceBatch {
 
 enum PendingPersistenceOperation {
     UserSession(crate::data::UserSession),
+    #[cfg(test)]
     Document(crate::canvas::CanvasDocumentChanges),
     BoardUnit {
         operation: crate::library::storage::BoardDurabilityOperation,
@@ -65,6 +67,7 @@ impl DocumentPersistence {
         self.last_saved_user_session = Some(session);
     }
 
+    #[cfg(test)]
     pub(crate) fn commit_canvas_changes(
         &mut self,
         library: Option<&crate::library::storage::Library>,
@@ -120,6 +123,7 @@ impl DocumentPersistence {
         Ok(true)
     }
 
+    #[cfg(test)]
     pub(crate) fn commit_canvas_document_changes(
         &mut self,
         library: Option<&crate::library::storage::Library>,
@@ -141,6 +145,7 @@ impl DocumentPersistence {
         write_canvas_document_changes(library, changes).map(|()| true)
     }
 
+    #[cfg(test)]
     pub(crate) fn enqueue_document_changes(
         &mut self,
         changes: crate::canvas::CanvasDocumentChanges,
@@ -196,6 +201,28 @@ impl DocumentPersistence {
         )
     }
 
+    pub(crate) fn create_board_unit(
+        &mut self,
+        library: Option<&crate::library::storage::Library>,
+        document: crate::data::BoardDocumentSnapshot,
+        history: &crate::active_board::history::DocumentHistory,
+    ) -> Result<(), String> {
+        let Some(library) = library else {
+            return Err("Storage unavailable".to_owned());
+        };
+        if let Some(queue) = &self.queue {
+            return queue.enqueue(PersistenceCommand::CommitBoardUnit {
+                operation: crate::library::storage::BoardDurabilityOperation::Create(document),
+                history: history.clone(),
+            });
+        }
+        library.persist_board_unit(
+            &crate::library::storage::BoardDurabilityOperation::Create(document),
+            history,
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn persist_history(
         &mut self,
         library: Option<&crate::library::storage::Library>,
@@ -347,6 +374,7 @@ impl PendingPersistenceBatch {
                     .operations
                     .push_back(PendingPersistenceOperation::UserSession(session)),
             },
+            #[cfg(test)]
             PersistenceCommand::CommitCanvasDocumentChanges(changes) => {
                 match self.operations.back_mut() {
                     Some(PendingPersistenceOperation::Document(pending)) => {
@@ -381,6 +409,7 @@ impl PendingPersistenceBatch {
                 PendingPersistenceOperation::UserSession(session) => {
                     library.save_user_session(session)
                 }
+                #[cfg(test)]
                 PendingPersistenceOperation::Document(changes) => {
                     write_canvas_document_changes(library, changes.clone())
                 }
@@ -402,10 +431,22 @@ impl PendingPersistenceBatch {
     }
 }
 
+#[cfg(test)]
 fn merge_document_changes(
     pending: &mut crate::canvas::CanvasDocumentChanges,
     changes: crate::canvas::CanvasDocumentChanges,
 ) {
+    for placement in changes.created_placements {
+        if let Some(existing) = pending
+            .created_placements
+            .iter_mut()
+            .find(|existing| existing.state.id == placement.state.id)
+        {
+            *existing = placement;
+        } else {
+            pending.created_placements.push(placement);
+        }
+    }
     for item in changes.updated_placements {
         if let Some(existing) = pending
             .updated_placements
@@ -433,11 +474,17 @@ fn merge_document_changes(
             pending.archived_annotation_ids.push(annotation_id);
         }
     }
+    for placement_id in changes.archived_placement_ids {
+        if !pending.archived_placement_ids.contains(&placement_id) {
+            pending.archived_placement_ids.push(placement_id);
+        }
+    }
     if changes.stack_order.is_some() {
         pending.stack_order = changes.stack_order;
     }
 }
 
+#[cfg(test)]
 fn write_canvas_document_changes(
     library: &crate::library::storage::Library,
     changes: crate::canvas::CanvasDocumentChanges,

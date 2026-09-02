@@ -264,6 +264,14 @@ pub(super) fn restore_board_document_rows(
 }
 
 impl Library {
+    pub(crate) fn prepare_board(&self, name: &str) -> Board {
+        Board {
+            id: self.allocate_board_id(),
+            name: name.to_owned(),
+            archived: false,
+        }
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn list_boards(&self) -> Result<Vec<Board>, String> {
         let connection = self.connection()?;
@@ -372,25 +380,27 @@ impl Library {
         Ok(snapshot)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn create_board(&self, name: &str) -> Result<Board, String> {
         let connection = self.connection()?;
+        let board_id = self.allocate_board_id();
         connection
             .execute(
                 "INSERT INTO boards (
+                    id,
                     name,
                     archived,
                     camera_pan_x,
                     camera_pan_y,
                     camera_zoom,
                     canvas_background
-                 ) VALUES (?1, 0, 0.0, 0.0, ?2, 'none')",
-                params![name, DEFAULT_VIEWPORT_ZOOM],
+                 ) VALUES (?1, ?2, 0, 0.0, 0.0, ?3, 'none')",
+                params![board_id, name, DEFAULT_VIEWPORT_ZOOM],
             )
             .map_err(|error| format!("failed to create board: {error}"))?;
 
         Ok(Board {
-            id: connection.last_insert_rowid(),
+            id: board_id,
             name: name.to_owned(),
             archived: false,
         })

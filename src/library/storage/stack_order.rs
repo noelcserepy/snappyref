@@ -177,6 +177,7 @@ impl Library {
         load_canvas_stack_order_for_board_id(&connection, active_board_id)
     }
 
+    #[cfg(test)]
     pub fn save_canvas_stack_order(&self, stack_order: &[CanvasStackItem]) -> Result<(), String> {
         let mut connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;

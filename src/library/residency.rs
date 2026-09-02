@@ -128,7 +128,7 @@ impl ImageResidencyCoordinator {
         import_worker: Option<&ImagePrepWorker>,
         active_board_id: i64,
         settings: &WorkspaceSettings,
-        loaded: PreparedPlacementImage,
+        mut loaded: PreparedPlacementImage,
     ) -> LoadedContentResolutionOutcome {
         let resolution_ticket = loaded.queue_id.map(|queue_id| ContentResolutionTicket {
             target_board_id: loaded.target_board_id,
@@ -137,6 +137,18 @@ impl ImageResidencyCoordinator {
         let reports_import = resolution_ticket.is_some();
         let origin = loaded.origin;
         let loaded_lod = loaded.loaded_lod;
+        if loaded.target_board_id == active_board_id
+            && let Some(current) = canvas.placement_for_id(loaded.placement.state.id)
+        {
+            let mut geometry = current.state.geometry.clone();
+            let asset = loaded.placement.require_loaded_asset();
+            geometry.size = crate::data::RectGeometry::size_preserving_area_for_aspect(
+                geometry.size,
+                asset.width,
+                asset.height,
+            );
+            loaded.placement.state.geometry = geometry;
+        }
         let loaded_record = loaded.placement.clone();
         let existing_load_diagnostics = loaded.existing_load_diagnostics.clone();
         self.note_loaded_placement(loaded.placement.state.id);

@@ -81,14 +81,12 @@ pub(crate) fn integrate_cropped_result(
         }
     };
 
-    let asset = match library.create_asset_and_relink_placement(
-        updated_item.id,
+    let asset = match library.create_asset_for_document_change(
         &stored_path,
         image::ImageFormat::Png.to_mime_type(),
         cropped.width,
         cropped.height,
         cropped.file_size,
-        updated_item.geometry.center,
     ) {
         Ok(asset) => asset,
         Err(error) => {

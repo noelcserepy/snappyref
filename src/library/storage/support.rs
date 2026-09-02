@@ -16,7 +16,7 @@ pub(super) use crate::data::{
     Asset, Board, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasBackground,
     CanvasImageLod, CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, ContentResolutionSource,
     DEFAULT_VIEWPORT_ZOOM, Placement, PlacementContent, PlacementLifecycle, PlacementState,
-    RectGeometry, UserSession, ViewportState, WorkspaceSettings,
+    UserSession, ViewportState, WorkspaceSettings,
 };
 pub(super) use crate::placement::arrangement::PlacementArrangementInput;
 
@@ -27,6 +27,7 @@ pub(super) fn unix_timestamp_seconds() -> i64 {
         .unwrap_or(0)
 }
 
+#[cfg(test)]
 pub(super) fn encode_loaded_placement_content(asset_id: i64) -> Result<String, String> {
     serde_json::to_string(&PlacementContent::Loaded { asset_id })
         .map_err(|error| format!("failed to encode loaded placement content: {error}"))

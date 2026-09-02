@@ -6,11 +6,6 @@ use super::*;
 // The SQLite table is still named `board_items` for migration compatibility.
 // This adapter translates that legacy persistence vocabulary to the domain
 // object exposed everywhere else: Placement.
-struct ExactAssetPersistResult {
-    asset: Asset,
-    inserted: bool,
-}
-
 fn load_or_insert_exact_asset(
     transaction: &Transaction<'_>,
     stored_path: &Path,
@@ -19,14 +14,11 @@ fn load_or_insert_exact_asset(
     height: u32,
     file_size: u64,
     original_sha256: Option<&str>,
-) -> Result<ExactAssetPersistResult, String> {
+) -> Result<Asset, String> {
     if let Some(original_sha256) = original_sha256
         && let Some(asset) = load_exact_asset_for_original(transaction, file_size, original_sha256)?
     {
-        return Ok(ExactAssetPersistResult {
-            asset,
-            inserted: false,
-        });
+        return Ok(asset);
     }
 
     let asset = insert_asset_row(
@@ -38,14 +30,12 @@ fn load_or_insert_exact_asset(
         file_size,
         original_sha256,
     )?;
-    Ok(ExactAssetPersistResult {
-        asset,
-        inserted: true,
-    })
+    Ok(asset)
 }
 
 fn insert_placement_row(
     transaction: &Transaction<'_>,
+    placement_id: i64,
     board_id: i64,
     asset_id: i64,
     desired_world: egui::Pos2,
@@ -55,6 +45,7 @@ fn insert_placement_row(
     transaction
         .execute(
             "INSERT INTO board_items (
+                id,
                 board_id,
                 asset_id,
                 x,
@@ -65,8 +56,9 @@ fn insert_placement_row(
                 rotation,
                 z_index,
                 archived
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
+                placement_id,
                 board_id,
                 asset_id,
                 desired_world.x,
@@ -82,7 +74,7 @@ fn insert_placement_row(
         .map_err(|error| format!("failed to insert placement: {error}"))?;
 
     Ok(PlacementState::with_display_size(
-        transaction.last_insert_rowid(),
+        placement_id,
         Some(asset_id),
         desired_world,
         display_size,
@@ -221,6 +213,57 @@ fn decode_placement_lifecycle(value: &str) -> PlacementLifecycle {
 }
 
 impl Library {
+    pub(crate) fn prepare_loading_placement(
+        &self,
+        desired_world: egui::Pos2,
+        initial_scale: f32,
+        display_size: egui::Vec2,
+        source: ContentResolutionSource,
+        status_message: Option<String>,
+    ) -> Placement {
+        let state = PlacementState::with_display_size(
+            self.allocate_placement_id(),
+            None,
+            desired_world,
+            display_size,
+            initial_scale,
+            0.0,
+            0,
+            false,
+        );
+        Placement {
+            state,
+            asset: None,
+            content: PlacementContent::Loading {
+                source,
+                status_message,
+            },
+            lifecycle: PlacementLifecycle::Committed,
+        }
+    }
+
+    pub(crate) fn prepare_placement_from_asset(
+        &self,
+        asset_id: i64,
+        center_world: egui::Pos2,
+        scale: f32,
+        rotation: f32,
+        z_index: i32,
+    ) -> Result<Placement, String> {
+        let asset = self.load_asset(asset_id)?;
+        let state = PlacementState::with_display_size(
+            self.allocate_placement_id(),
+            Some(asset_id),
+            center_world,
+            egui::vec2(asset.width as f32, asset.height as f32),
+            scale,
+            rotation,
+            z_index,
+            false,
+        );
+        Ok(Placement::loaded(state, asset))
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn persist_imported_image(
         &self,
@@ -293,7 +336,7 @@ impl Library {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("failed to start transaction: {error}"))?;
 
-        let persisted_asset = load_or_insert_exact_asset(
+        let asset = load_or_insert_exact_asset(
             &transaction,
             stored_path,
             mime_type,
@@ -302,9 +345,9 @@ impl Library {
             file_size,
             original_sha256,
         )?;
-        let asset = persisted_asset.asset;
         let item = insert_placement_row(
             &transaction,
+            self.allocate_placement_id(),
             board_id,
             asset.id,
             desired_world,
@@ -375,17 +418,12 @@ impl Library {
         };
 
         let mut connection = self.connection()?;
-        if !board_is_non_archived(&connection, board_id)? {
-            return Err(format!(
-                "cannot import to missing or archived board {board_id}"
-            ));
-        }
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| {
                 format!("failed to start placement resolution transaction: {error}")
             })?;
-        let persisted_asset = load_or_insert_exact_asset(
+        let asset = load_or_insert_exact_asset(
             &transaction,
             stored_path,
             mime_type,
@@ -394,82 +432,39 @@ impl Library {
             file_size,
             original_sha256,
         )?;
-        let asset = persisted_asset.asset;
         let content = PlacementContent::Loaded { asset_id: asset.id };
-        let content_resolution_source_payload = encode_loaded_placement_content(asset.id)?;
-        let current_size = transaction
-            .query_row(
-                "SELECT width, height
-                 FROM board_items
-                 WHERE id = ?1
-                   AND board_id = ?2
-                   AND archived = 0",
-                params![placement_id, board_id],
-                |row| Ok(egui::vec2(row.get(0)?, row.get(1)?)),
-            )
-            .map_err(|error| {
-                format!("failed to load placement {placement_id} size before resolution: {error}")
-            })?;
-        let corrected_size =
-            RectGeometry::size_preserving_area_for_aspect(current_size, asset.width, asset.height);
-        let changed = transaction
+        #[cfg(test)]
+        transaction
             .execute(
                 "UPDATE board_items
-                 SET asset_id = ?1,
-                     placement_content_state = 'loaded',
-                     placement_lifecycle = 'committed',
-                     content_resolution_intent = ?2,
-                     width = ?3,
-                     height = ?4
-                 WHERE id = ?5
-                   AND board_id = ?6
-                   AND archived = 0",
+                 SET asset_id = ?1, placement_content_state = 'loaded',
+                     placement_lifecycle = 'committed', content_resolution_intent = ?2,
+                     width = ?3, height = ?4
+                 WHERE id = ?5 AND board_id = ?6 AND archived = 0",
                 params![
                     asset.id,
-                    content_resolution_source_payload,
-                    corrected_size.x,
-                    corrected_size.y,
+                    encode_loaded_placement_content(asset.id)?,
+                    asset.width,
+                    asset.height,
                     placement_id,
-                    board_id
+                    board_id,
                 ],
             )
             .map_err(|error| format!("failed to resolve placement {placement_id}: {error}"))?;
-        if changed == 0 {
-            if persisted_asset.inserted {
-                transaction
-                    .execute("DELETE FROM assets WHERE id = ?1", params![asset.id])
-                    .map_err(|error| format!("failed to remove stale imported asset: {error}"))?;
-            }
-            transaction
-                .commit()
-                .map_err(|error| format!("failed to commit stale placement resolution: {error}"))?;
-            return Err(format!("placement {placement_id} no longer exists"));
-        }
-        let item = transaction
-            .query_row(
-                "SELECT id, asset_id, x, y, width, height, scale, rotation, z_index, archived
-                 FROM board_items
-                 WHERE id = ?1",
-                params![placement_id],
-                |row| {
-                    Ok(PlacementState::with_display_size(
-                        row.get(0)?,
-                        row.get(1)?,
-                        egui::pos2(row.get(2)?, row.get(3)?),
-                        egui::vec2(row.get(4)?, row.get(5)?),
-                        row.get(6)?,
-                        row.get(7)?,
-                        row.get(8)?,
-                        row.get::<_, i64>(9)? != 0,
-                    ))
-                },
-            )
-            .map_err(|error| {
-                format!("failed to load resolved placement {placement_id}: {error}")
-            })?;
         transaction
             .commit()
             .map_err(|error| format!("failed to commit placement resolution: {error}"))?;
+
+        let item = PlacementState::with_display_size(
+            placement_id,
+            Some(asset.id),
+            desired_world,
+            egui::vec2(asset.width as f32, asset.height as f32),
+            initial_scale,
+            0.0,
+            0,
+            false,
+        );
 
         Ok(Placement {
             state: item,
@@ -525,7 +520,7 @@ impl Library {
         self.load_placements_for_board_id(&connection, active_board_id)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn persist_committed_loading_placement(
         &self,
         desired_world: egui::Pos2,
@@ -546,7 +541,7 @@ impl Library {
         )
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn persist_committed_failed_placement(
         &self,
         desired_world: egui::Pos2,
@@ -569,6 +564,7 @@ impl Library {
         )
     }
 
+    #[cfg(test)]
     fn persist_committed_unloaded_placement(
         &self,
         desired_world: egui::Pos2,
@@ -784,6 +780,7 @@ impl Library {
             .map_err(|error| format!("failed to collect board-arrangement inputs: {error}"))
     }
 
+    #[cfg(test)]
     pub fn update_placement_document_state(&self, item: &PlacementState) -> Result<(), String> {
         let connection = self.connection()?;
         let loaded_content = item
@@ -830,6 +827,7 @@ impl Library {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn archive_placements(&self, placement_ids: &[i64]) -> Result<(), String> {
         if placement_ids.is_empty() {
             return Ok(());
@@ -866,6 +864,7 @@ impl Library {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn commit_provisional_placements(
         &self,
         provisionals: &[Placement],
@@ -947,6 +946,7 @@ impl Library {
         Ok(committed)
     }
 
+    #[cfg(test)]
     pub fn commit_provisional_loading_placements(
         &self,
         provisionals: &[Placement],
@@ -1025,6 +1025,7 @@ impl Library {
         Ok(committed)
     }
 
+    #[cfg(test)]
     pub fn create_placement_from_asset(
         &self,
         asset_id: i64,
@@ -1036,10 +1037,12 @@ impl Library {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
         let asset = self.load_asset(asset_id)?;
+        let item_id = self.allocate_placement_id();
 
         connection
             .execute(
                 "INSERT INTO board_items (
+                    id,
                     board_id,
                     asset_id,
                     x,
@@ -1050,8 +1053,9 @@ impl Library {
                     rotation,
                     z_index,
                     archived
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
+                    item_id,
                     active_board_id,
                     asset_id,
                     center_world.x,
@@ -1066,7 +1070,6 @@ impl Library {
             )
             .map_err(|error| format!("failed to create pasted placement: {error}"))?;
 
-        let item_id = connection.last_insert_rowid();
         append_canvas_stack_item(
             &connection,
             active_board_id,

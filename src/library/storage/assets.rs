@@ -194,6 +194,33 @@ fn remap_placement_content_asset_ids(payload: &str, remaps: &HashMap<i64, i64>) 
 }
 
 impl Library {
+    pub(crate) fn create_asset_for_document_change(
+        &self,
+        stored_path: &Path,
+        mime_type: &str,
+        width: u32,
+        height: u32,
+        file_size: u64,
+    ) -> Result<Asset, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("failed to start asset transaction: {error}"))?;
+        let asset = insert_asset_row(
+            &transaction,
+            stored_path,
+            mime_type,
+            width,
+            height,
+            file_size,
+            None,
+        )?;
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit asset transaction: {error}"))?;
+        Ok(asset)
+    }
+
     pub fn dedupe_exact_assets(
         &self,
         hash_limit: usize,
@@ -439,6 +466,7 @@ impl Library {
         })
     }
 
+    #[cfg(test)]
     pub fn create_asset_and_relink_placement(
         &self,
         item_id: i64,

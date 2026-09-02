@@ -154,14 +154,13 @@ fn create_one_committed_loading_placement(
 ) -> Result<CreatedLoadingPlacement, String> {
     let (width, height) = normalized_dimensions(&intent);
     let size_world = display_size_for_dimensions(width, height, settings.placement_target_area);
-    let placement = library.persist_committed_loading_placement(
+    let placement = library.prepare_loading_placement(
         center_world,
         1.0,
-        size_world.x.max(1.0),
-        size_world.y.max(1.0),
+        egui::vec2(size_world.x.max(1.0), size_world.y.max(1.0)),
         intent.content,
         Some("Loading".to_owned()),
-    )?;
+    );
     let reservation =
         content_resolution.reserve_placement(target_board_id, placement.state.id, center_world);
 
@@ -173,6 +172,7 @@ fn create_one_committed_loading_placement(
         ),
     );
     canvas.add_unresolved_placement(placement.clone());
+    canvas.mark_placement_created(placement.state.id);
     canvas.select_placements(&[placement.state.id]);
 
     Ok(CreatedLoadingPlacement {

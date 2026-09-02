@@ -188,6 +188,26 @@ impl CanvasState {
             .sort_by_key(|image| image.placement.state.geometry.z_index);
     }
 
+    pub(crate) fn mark_placement_created(&mut self, placement_id: i64) {
+        if !self.document.created_placement_ids.contains(&placement_id) {
+            self.document.created_placement_ids.push(placement_id);
+        }
+    }
+
+    pub(crate) fn mark_placement_document_dirty(&mut self, placement_id: i64) {
+        self.mark_dirty(placement_id);
+    }
+
+    pub(crate) fn mark_annotation_created(&mut self, annotation_id: i64) {
+        if !self
+            .document
+            .created_annotation_ids
+            .contains(&annotation_id)
+        {
+            self.document.created_annotation_ids.push(annotation_id);
+        }
+    }
+
     pub fn add_provisional_unresolved_placement(&mut self, mut placement: Placement) {
         placement.lifecycle = PlacementLifecycle::Provisional;
         self.add_unresolved_placement(placement);
@@ -981,6 +1001,9 @@ impl CanvasState {
         self.document.selected_annotation_ids.clear();
         self.document.dirty_placement_ids.clear();
         self.document.dirty_annotation_ids.clear();
+        self.document.created_placement_ids.clear();
+        self.document.created_annotation_ids.clear();
+        self.document.pending_archived_placement_ids.clear();
         self.document.pending_archived_annotation_ids.clear();
         self.document.stack_order_dirty = false;
         self.interaction = Default::default();
@@ -990,6 +1013,11 @@ impl CanvasState {
     }
 
     pub fn take_document_changes(&mut self) -> CanvasDocumentChanges {
+        let created_ids = std::mem::take(&mut self.document.created_placement_ids);
+        let created_placements = created_ids
+            .into_iter()
+            .filter_map(|id| self.placement_for_id(id))
+            .collect();
         let dirty_ids = std::mem::take(&mut self.document.dirty_placement_ids);
         let updated_placements = dirty_ids
             .into_iter()
@@ -1005,7 +1033,10 @@ impl CanvasState {
             })
             .collect();
 
-        let dirty_ids = std::mem::take(&mut self.document.dirty_annotation_ids);
+        let mut dirty_ids = std::mem::take(&mut self.document.dirty_annotation_ids);
+        dirty_ids.extend(std::mem::take(&mut self.document.created_annotation_ids));
+        dirty_ids.sort_unstable();
+        dirty_ids.dedup();
         let updated_annotations = dirty_ids
             .into_iter()
             .filter_map(|id| {
@@ -1024,8 +1055,12 @@ impl CanvasState {
         self.document.stack_order_dirty = false;
 
         CanvasDocumentChanges {
+            created_placements,
             updated_placements,
             updated_annotations,
+            archived_placement_ids: std::mem::take(
+                &mut self.document.pending_archived_placement_ids,
+            ),
             archived_annotation_ids: std::mem::take(
                 &mut self.document.pending_archived_annotation_ids,
             ),
@@ -1034,6 +1069,12 @@ impl CanvasState {
     }
 
     pub fn pending_document_changes_preview(&self) -> CanvasDocumentChanges {
+        let created_placements = self
+            .document
+            .created_placement_ids
+            .iter()
+            .filter_map(|id| self.placement_for_id(*id))
+            .collect();
         let updated_placements = self
             .document
             .dirty_placement_ids
@@ -1064,8 +1105,10 @@ impl CanvasState {
             .collect();
 
         CanvasDocumentChanges {
+            created_placements,
             updated_placements,
             updated_annotations,
+            archived_placement_ids: self.document.pending_archived_placement_ids.clone(),
             archived_annotation_ids: self.document.pending_archived_annotation_ids.clone(),
             stack_order: self
                 .document
@@ -1489,6 +1532,25 @@ impl CanvasState {
         self.document
             .dirty_placement_ids
             .retain(|placement_id| !removed_ids.contains(placement_id));
+        for placement_id in &removed_ids {
+            if let Some(index) = self
+                .document
+                .created_placement_ids
+                .iter()
+                .position(|id| id == placement_id)
+            {
+                self.document.created_placement_ids.remove(index);
+            } else if *placement_id >= 0
+                && !self
+                    .document
+                    .pending_archived_placement_ids
+                    .contains(placement_id)
+            {
+                self.document
+                    .pending_archived_placement_ids
+                    .push(*placement_id);
+            }
+        }
         self.interaction.drag_state = None;
         self.interaction.placement_transform_state = None;
         self.interaction.textbox_transform_state = None;

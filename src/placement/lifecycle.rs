@@ -81,10 +81,20 @@ pub(crate) fn commit_loading_provisional_batch(
     }
 
     let stack_before = canvas.canvas_stack_order();
-    let committed_pairs = library.commit_provisional_loading_placements(&provisional_placements)?;
+    let committed_pairs = provisional_placements
+        .iter()
+        .map(|provisional| {
+            let mut committed = provisional.clone();
+            committed.state.id = library.allocate_placement_id();
+            committed.lifecycle = crate::data::PlacementLifecycle::Committed;
+            (provisional.state.id, committed)
+        })
+        .collect();
     let placements = canvas.commit_provisional_placements_in_place(committed_pairs);
     let stack_after = canvas.canvas_stack_order();
-    library.save_canvas_stack_order(&stack_after)?;
+    for placement in &placements {
+        canvas.mark_placement_created(placement.state.id);
+    }
     let placement_ids = placements
         .iter()
         .map(|placement| placement.state.id)
@@ -147,10 +157,27 @@ pub(crate) fn commit_search_provisional_batch(
     }
 
     let stack_before = library.load_canvas_stack_order().ok();
-    let committed_pairs = library.commit_provisional_placements(&provisional_placements)?;
+    let committed_pairs = provisional_placements
+        .iter()
+        .map(|provisional| {
+            let asset_id = provisional.state.asset_id.ok_or_else(|| {
+                format!(
+                    "provisional placement {} has no asset",
+                    provisional.state.id
+                )
+            })?;
+            let mut committed = provisional.clone();
+            committed.state.id = library.allocate_placement_id();
+            committed.asset = Some(library.load_asset(asset_id)?);
+            committed.lifecycle = crate::data::PlacementLifecycle::Committed;
+            Ok((provisional.state.id, committed))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let committed_placements = canvas.commit_provisional_placements_in_place(committed_pairs);
     let stack_after = canvas.canvas_stack_order();
-    library.save_canvas_stack_order(&stack_after)?;
+    for placement in &committed_placements {
+        canvas.mark_placement_created(placement.state.id);
+    }
 
     let added_placement_ids = committed_placements
         .iter()

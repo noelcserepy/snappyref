@@ -1,7 +1,6 @@
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
-use crate::active_board::persistence::DocumentPersistence;
 use crate::canvas::CanvasState;
 use crate::data::{
     CanvasAnnotationGeometry, CanvasAnnotationKind, CanvasStackItem, CanvasStrokeWidth,
@@ -16,8 +15,6 @@ pub(crate) const COPY_PAYLOAD_KIND: &str = "snappyref-board-items";
 pub(crate) struct ActiveBoardCommandContext<'a> {
     pub(crate) canvas: &'a mut CanvasState,
     pub(crate) library: Option<&'a Library>,
-    pub(crate) document_persistence: &'a mut DocumentPersistence,
-    pub(crate) user_session: crate::data::UserSession,
     pub(crate) import_worker_available: bool,
     pub(crate) placement_gap: f32,
     pub(crate) viewport_world: egui::Rect,
@@ -246,13 +243,14 @@ pub(crate) fn paste_board_payload_at(
     let mut pasted_placement_ids = Vec::new();
     for placement in &payload.placements {
         let geometry = placement.translated_geometry(delta);
-        let placement = library.create_placement_from_asset(
+        let placement = library.prepare_placement_from_asset(
             placement.asset_id,
             geometry.center,
             geometry.scale,
             geometry.rotation,
             geometry.z_index,
         )?;
+        context.canvas.mark_placement_created(placement.state.id);
         pasted_placement_ids.push(placement.state.id);
         if let Err(error) = context.canvas.add_loaded_reference_placement(placement) {
             if context.import_worker_available {
@@ -274,7 +272,7 @@ pub(crate) fn paste_board_payload_at(
         let color = crate::data::CanvasAnnotationColor::from_str(&annotation.color)
             .ok_or_else(|| format!("unknown copied annotation color: {}", annotation.color))?;
         let geometry = annotation.translated_geometry(kind, delta);
-        let pasted = library.create_canvas_annotation(
+        let pasted = library.prepare_canvas_annotation(
             kind,
             geometry.start(),
             geometry.end(),
@@ -283,7 +281,8 @@ pub(crate) fn paste_board_payload_at(
             stroke_width,
             color,
             annotation.background_enabled,
-        )?;
+        );
+        context.canvas.mark_annotation_created(pasted.id);
         pasted_annotation_ids.push(pasted.id);
         context.canvas.add_annotation(pasted);
     }
@@ -297,7 +296,6 @@ pub(crate) fn paste_board_payload_at(
         &pasted_annotation_ids,
         payload,
     );
-    commit_document_changes(context)?;
     let count = pasted_placement_ids.len() + pasted_annotation_ids.len();
     let noun = if count == 1 { "item" } else { "items" };
     Ok(PasteCommandOutcome {
@@ -330,9 +328,6 @@ pub(crate) fn delete_selected_from_board(
     let mut status = None;
     let annotation_ids = context.canvas.delete_selected_annotations();
     if !annotation_ids.is_empty() {
-        if let Some(library) = context.library {
-            library.archive_canvas_annotations(&annotation_ids)?;
-        }
         let noun = if annotation_ids.len() == 1 {
             "annotation"
         } else {
@@ -343,22 +338,15 @@ pub(crate) fn delete_selected_from_board(
 
     let archived_ids = context.canvas.delete_selected_placements();
     if archived_ids.is_empty() {
-        if status.is_some() {
-            commit_document_changes(context)?;
-        }
         return Ok(status);
     }
 
-    if let Some(library) = context.library {
-        library.archive_placements(&archived_ids)?;
-    }
     let noun = if archived_ids.len() == 1 {
         "image"
     } else {
         "images"
     };
     status = Some(format!("Deleted {} {noun} from board", archived_ids.len()));
-    commit_document_changes(context)?;
     Ok(status)
 }
 
@@ -366,9 +354,6 @@ pub(crate) fn move_selected_to_front(
     context: &mut ActiveBoardCommandContext<'_>,
 ) -> Result<bool, String> {
     let changed = context.canvas.move_selected_canvas_items_to_front();
-    if changed {
-        commit_document_changes(context)?;
-    }
     Ok(changed)
 }
 
@@ -376,9 +361,6 @@ pub(crate) fn move_selected_to_back(
     context: &mut ActiveBoardCommandContext<'_>,
 ) -> Result<bool, String> {
     let changed = context.canvas.move_selected_canvas_items_to_back();
-    if changed {
-        commit_document_changes(context)?;
-    }
     Ok(changed)
 }
 
@@ -467,12 +449,4 @@ pub(crate) fn clipboard_payload_bounds(payload: &ClipboardBoardSelection) -> Opt
     }
 
     bounds
-}
-
-fn commit_document_changes(context: &mut ActiveBoardCommandContext<'_>) -> Result<(), String> {
-    context.document_persistence.commit_canvas_changes(
-        context.library,
-        context.canvas,
-        context.user_session.clone(),
-    )
 }
