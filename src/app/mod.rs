@@ -1589,7 +1589,7 @@ impl SnappyRefApp {
         };
 
         let active_before = self.active_board_id;
-        let document = if pending.board_id == self.active_board_id {
+        let mut document = if pending.board_id == self.active_board_id {
             let Some(board) = self
                 .board_summaries()
                 .into_iter()
@@ -1615,6 +1615,18 @@ impl SnappyRefApp {
                 }
             }
         };
+        if pending.board_id != self.active_board_id {
+            self.document_history
+                .apply_accepted_document_state(pending.board_id, &mut document);
+        }
+        if let Some(board) = self
+            .board_summaries()
+            .into_iter()
+            .find(|summary| summary.board.id == pending.board_id)
+            .map(|summary| summary.board)
+        {
+            document.board = board;
+        }
         let board_ids = self
             .board_summaries()
             .into_iter()

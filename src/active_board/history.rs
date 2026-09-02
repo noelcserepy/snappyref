@@ -267,6 +267,22 @@ impl DocumentHistory {
             })
     }
 
+    pub(crate) fn apply_accepted_document_state(
+        &self,
+        board_id: i64,
+        document: &mut crate::data::BoardDocumentSnapshot,
+    ) {
+        let Some(history) = self.histories_by_board.get(&board_id) else {
+            return;
+        };
+        for action in &history.undo_stack {
+            apply_document_action(document, action, HistoryDirection::Forward);
+        }
+        for action in &history.redo_stack {
+            apply_document_action(document, action, HistoryDirection::Backward);
+        }
+    }
+
     pub(crate) fn record_applied(&mut self, board_id: i64, action: HistoryAction) {
         let history = self.histories_by_board.entry(board_id).or_default();
         history.undo_stack.push(action);
@@ -318,6 +334,45 @@ impl DocumentHistory {
             HistoryDirection::Backward => target.redo_stack.push(action),
             HistoryDirection::Forward => target.undo_stack.push(action),
         }
+    }
+}
+
+fn apply_document_action(
+    document: &mut crate::data::BoardDocumentSnapshot,
+    action: &HistoryAction,
+    direction: HistoryDirection,
+) {
+    let HistoryAction::Document(action) = action else {
+        return;
+    };
+    for change in &action.placements {
+        let Some(target) = change.placement_target(direction) else {
+            continue;
+        };
+        document
+            .placements
+            .retain(|placement| placement.state.id != target.state.id);
+        if !target.state.archived {
+            document.placements.push(target);
+        }
+    }
+    for change in &action.annotations {
+        let Some(target) = change.annotation_target(direction) else {
+            continue;
+        };
+        document
+            .annotations
+            .retain(|annotation| annotation.id != target.id);
+        if !target.archived {
+            document.annotations.push(target);
+        }
+    }
+    if let Some(stack_order) = action
+        .stack_order
+        .as_ref()
+        .and_then(|change| change.target(direction))
+    {
+        document.stack_order = stack_order;
     }
 }
 
