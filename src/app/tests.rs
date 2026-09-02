@@ -1412,6 +1412,45 @@ fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
 }
 
 #[test]
+fn duplicate_history_removes_the_created_placement_after_persistence() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-duplicate-history");
+    let library = Library::initialize(root.clone()).unwrap();
+    let image_path = library
+        .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let source = library
+        .persist_imported_image(
+            &image_path,
+            "image/png",
+            1,
+            1,
+            4,
+            egui::pos2(10.0, 20.0),
+            1.0,
+        )
+        .unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    add_loaded_record(&mut app, &ctx, source.clone());
+    app.canvas.select_placements(&[source.state.id]);
+
+    app.duplicate_selection_with_gap();
+    app.persist_canvas_changes();
+    app.flush_persistence();
+    assert_eq!(library.load_placements().unwrap().len(), 2);
+
+    app.undo_document_history(&ctx);
+    app.flush_persistence();
+
+    let durable = library.load_placements().unwrap();
+    assert_eq!(durable.len(), 1);
+    assert_eq!(durable[0].state.id, source.state.id);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn duplicate_preserves_image_only_stack_order_and_places_group_at_front() {
     let ctx = egui::Context::default();
     let root = temp_library_root("snappyref-image-duplicate-stack-order");
