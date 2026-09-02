@@ -1661,10 +1661,26 @@ impl SnappyRefApp {
         let active_document = if active_before != active_after {
             match library.load_board_document(active_after) {
                 Ok(document) => Some(document),
-                Err(error) => {
-                    self.status = error;
-                    return;
-                }
+                Err(error) => match self
+                    .document_history
+                    .accepted_document_for_created_board(active_after)
+                {
+                    Some(mut document) => {
+                        if let Some(board) = self
+                            .board_summaries()
+                            .into_iter()
+                            .find(|summary| summary.board.id == active_after)
+                            .map(|summary| summary.board)
+                        {
+                            document.board = board;
+                        }
+                        Some(document)
+                    }
+                    None => {
+                        self.status = error;
+                        return;
+                    }
+                },
             }
         } else {
             None

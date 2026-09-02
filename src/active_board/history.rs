@@ -280,6 +280,23 @@ impl DocumentHistory {
         }
     }
 
+    pub(crate) fn accepted_document_for_created_board(
+        &self,
+        board_id: i64,
+    ) -> Option<crate::data::BoardDocumentSnapshot> {
+        let history = self.histories_by_board.get(&board_id)?;
+        let mut document = history.undo_stack.iter().find_map(|action| match action {
+            HistoryAction::Board(BoardLifecycleHistoryAction::Created { document, .. })
+                if document.board.id == board_id =>
+            {
+                Some(document.clone())
+            }
+            _ => None,
+        })?;
+        self.apply_accepted_document_state(board_id, &mut document);
+        Some(document)
+    }
+
     pub(crate) fn record_applied(&mut self, board_id: i64, action: HistoryAction) {
         let history = self.histories_by_board.entry(board_id).or_default();
         history.undo_stack.push(action);
