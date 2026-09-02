@@ -391,6 +391,66 @@ fn board_unit_persists_failed_resolution_state_with_matching_history() {
 }
 
 #[test]
+fn board_unit_persists_undone_placement_state_with_redo_history() {
+    let root = temp_root("snappyref-undone-placement-board-unit-test");
+    let source = root.join("source.png");
+    fs::write(&source, [255, 255, 255, 255]).unwrap();
+    let library = Library::initialize(root.clone()).unwrap();
+    let original = library
+        .persist_imported_image(&source, "image/png", 10, 20, 4, egui::pos2(3.0, 4.0), 1.0)
+        .unwrap();
+    let mut moved = original.clone();
+    moved.state.geometry.center = egui::pos2(30.0, 40.0);
+    let mut history = crate::active_board::history::DocumentHistory::default();
+    history.record_applied(
+        1,
+        crate::active_board::history::HistoryAction::document(
+            "Move image".to_owned(),
+            vec![crate::active_board::history::HistoryChange {
+                before: Some(original.clone()),
+                after: Some(moved.clone()),
+            }],
+            Vec::new(),
+            None,
+        ),
+    );
+    library
+        .persist_board_unit(
+            &super::BoardDurabilityOperation::Document {
+                board_id: 1,
+                changes: crate::canvas::CanvasDocumentChanges {
+                    updated_placements: vec![moved.state],
+                    ..Default::default()
+                },
+            },
+            &history,
+        )
+        .unwrap();
+
+    history.undo(1).unwrap();
+    library
+        .persist_board_unit(
+            &super::BoardDurabilityOperation::Document {
+                board_id: 1,
+                changes: crate::canvas::CanvasDocumentChanges {
+                    updated_placements: vec![original.state.clone()],
+                    ..Default::default()
+                },
+            },
+            &history,
+        )
+        .unwrap();
+
+    assert_eq!(
+        library.load_placements().unwrap()[0].state.geometry.center,
+        original.state.geometry.center
+    );
+    assert!(library.load_document_history().unwrap().redo(1).is_some());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn update_preservation_smoke() {
     let app_root = temp_root("snappyref-update-preservation-test");
     let library_root = app_root.join("library");
