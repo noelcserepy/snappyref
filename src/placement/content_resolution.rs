@@ -87,6 +87,7 @@ pub(crate) struct FinishedFailedContentResolution {
     pub(crate) resolution_ticket: Option<ContentResolutionTicket>,
     pub(crate) batch_target_board_id: Option<i64>,
     pub(crate) batch_queue_id: Option<u64>,
+    pub(crate) placement_id: Option<i64>,
     pub(crate) status: String,
 }
 
@@ -245,9 +246,9 @@ impl ContentResolutionRuntime {
 
     pub(crate) fn finish_failed_import(
         &mut self,
-        library: Option<&Library>,
-        canvas: &mut CanvasState,
-        active_board_id: i64,
+        _library: Option<&Library>,
+        _canvas: &mut CanvasState,
+        _active_board_id: i64,
         outcome: FailedContentResolutionOutcome,
     ) -> FinishedFailedContentResolution {
         let target_board_id = outcome
@@ -263,21 +264,23 @@ impl ContentResolutionRuntime {
             target_board_id.or(outcome.target_board_id),
             outcome.placement_id,
         );
-        if let (Some(library), Some(placement_id)) = (library, completion.placement_id) {
-            let failed_board_id = completion.target_board_id.unwrap_or(active_board_id);
+        #[cfg(test)]
+        if let (Some(library), Some(placement_id)) = (_library, completion.placement_id) {
+            let failed_board_id = completion.target_board_id.unwrap_or(_active_board_id);
             if let Ok(Some(placement)) =
                 library.mark_placement_failed(failed_board_id, placement_id, outcome.status.clone())
-                && failed_board_id == active_board_id
-                && canvas.placement_for_id(placement_id).is_some()
+                && failed_board_id == _active_board_id
+                && _canvas.placement_for_id(placement_id).is_some()
             {
-                canvas.add_unresolved_placement(placement);
-                canvas.select_placements(&[placement_id]);
+                _canvas.add_unresolved_placement(placement);
+                _canvas.select_placements(&[placement_id]);
             }
         }
         FinishedFailedContentResolution {
             resolution_ticket: outcome.resolution_ticket,
             batch_target_board_id: completion.target_board_id,
             batch_queue_id: completion.queue_id,
+            placement_id: completion.placement_id,
             status: outcome.status,
         }
     }

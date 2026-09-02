@@ -28,6 +28,7 @@ pub(crate) struct CanvasDocumentState {
     pub(super) selected_placement_ids: Vec<i64>,
     pub(super) selected_annotation_ids: Vec<i64>,
     pub(super) dirty_placement_ids: Vec<i64>,
+    pub(super) pending_archived_placement_ids: Vec<i64>,
     pub(super) dirty_annotation_ids: Vec<i64>,
     pub(super) pending_archived_annotation_ids: Vec<i64>,
     pub(super) stack_order_dirty: bool,

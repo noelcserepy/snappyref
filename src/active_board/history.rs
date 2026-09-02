@@ -158,24 +158,70 @@ impl DocumentHistory {
     }
 
     pub(crate) fn accepted_placement(&self, board_id: i64, placement_id: i64) -> Option<Placement> {
-        self.histories_by_board
-            .get(&board_id)?
+        let history = self.histories_by_board.get(&board_id)?;
+        if let Some(change) = history
             .undo_stack
             .iter()
             .rev()
-            .filter_map(|action| match action {
-                HistoryAction::Document(action) => Some(&action.placements),
-                HistoryAction::Board(_) => None,
-            })
-            .flatten()
-            .find(|change| {
+            .find_map(|action| placement_change(action, placement_id))
+        {
+            return change.after.clone();
+        }
+        history
+            .redo_stack
+            .iter()
+            .rev()
+            .find_map(|action| placement_change(action, placement_id))
+            .and_then(|change| change.placement_target(HistoryDirection::Backward))
+    }
+
+    pub(crate) fn update_accepted_placement(
+        &mut self,
+        board_id: i64,
+        placement: Placement,
+    ) -> bool {
+        let Some(history) = self.histories_by_board.get_mut(&board_id) else {
+            return false;
+        };
+        for action in history.undo_stack.iter_mut().rev() {
+            let HistoryAction::Document(action) = action else {
+                continue;
+            };
+            if let Some(change) = action.placements.iter_mut().find(|change| {
                 change
                     .after
                     .as_ref()
                     .or(change.before.as_ref())
-                    .is_some_and(|placement| placement.state.id == placement_id)
-            })
-            .and_then(|change| change.after.clone())
+                    .is_some_and(|candidate| candidate.state.id == placement.state.id)
+            }) {
+                change.after = Some(placement);
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(crate) fn fail_accepted_placement(
+        &mut self,
+        board_id: i64,
+        placement_id: i64,
+        message: String,
+    ) -> Option<Placement> {
+        let mut placement = self.accepted_placement(board_id, placement_id)?;
+        let source = match &placement.content {
+            crate::data::PlacementContent::Loading { source, .. } => Some(source.clone()),
+            crate::data::PlacementContent::Failed { source, .. } => source.clone(),
+            crate::data::PlacementContent::Loaded { .. } => None,
+        };
+        placement.content = crate::data::PlacementContent::Failed {
+            source,
+            message,
+            recoverable: true,
+        };
+        placement.asset = None;
+        placement.state.asset_id = None;
+        self.update_accepted_placement(board_id, placement.clone())
+            .then_some(placement)
     }
 
     pub(crate) fn accepted_annotation(
@@ -216,6 +262,39 @@ impl DocumentHistory {
                     .and_then(|change| change.after.clone()),
                 HistoryAction::Board(_) => None,
             })
+    }
+
+    pub(crate) fn apply_accepted_document_state(
+        &self,
+        board_id: i64,
+        document: &mut crate::data::BoardDocumentSnapshot,
+    ) {
+        let Some(history) = self.histories_by_board.get(&board_id) else {
+            return;
+        };
+        for action in &history.undo_stack {
+            apply_document_action(document, action, HistoryDirection::Forward);
+        }
+        for action in &history.redo_stack {
+            apply_document_action(document, action, HistoryDirection::Backward);
+        }
+    }
+
+    pub(crate) fn accepted_document_for_created_board(
+        &self,
+        board_id: i64,
+    ) -> Option<crate::data::BoardDocumentSnapshot> {
+        let history = self.histories_by_board.get(&board_id)?;
+        let mut document = history.undo_stack.iter().find_map(|action| match action {
+            HistoryAction::Board(BoardLifecycleHistoryAction::Created { document, .. })
+                if document.board.id == board_id =>
+            {
+                Some(document.clone())
+            }
+            _ => None,
+        })?;
+        self.apply_accepted_document_state(board_id, &mut document);
+        Some(document)
     }
 
     pub(crate) fn record_applied(&mut self, board_id: i64, action: HistoryAction) {
@@ -269,6 +348,61 @@ impl DocumentHistory {
             HistoryDirection::Backward => target.redo_stack.push(action),
             HistoryDirection::Forward => target.undo_stack.push(action),
         }
+    }
+}
+
+fn placement_change(
+    action: &HistoryAction,
+    placement_id: i64,
+) -> Option<&HistoryChange<Placement>> {
+    let HistoryAction::Document(action) = action else {
+        return None;
+    };
+    action.placements.iter().find(|change| {
+        change
+            .after
+            .as_ref()
+            .or(change.before.as_ref())
+            .is_some_and(|placement| placement.state.id == placement_id)
+    })
+}
+
+fn apply_document_action(
+    document: &mut crate::data::BoardDocumentSnapshot,
+    action: &HistoryAction,
+    direction: HistoryDirection,
+) {
+    let HistoryAction::Document(action) = action else {
+        return;
+    };
+    for change in &action.placements {
+        let Some(target) = change.placement_target(direction) else {
+            continue;
+        };
+        document
+            .placements
+            .retain(|placement| placement.state.id != target.state.id);
+        if !target.state.archived {
+            document.placements.push(target);
+        }
+    }
+    for change in &action.annotations {
+        let Some(target) = change.annotation_target(direction) else {
+            continue;
+        };
+        document
+            .annotations
+            .retain(|annotation| annotation.id != target.id);
+        if !target.archived {
+            document.annotations.push(target);
+        }
+    }
+    if let Some(stack_order) = action
+        .stack_order
+        .as_ref()
+        .and_then(|change| change.target(direction))
+    {
+        document.stack_order = stack_order;
     }
 }
 

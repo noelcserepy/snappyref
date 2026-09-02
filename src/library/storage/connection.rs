@@ -1,4 +1,8 @@
 use super::*;
+use std::sync::{
+    Arc,
+    atomic::{AtomicI64, Ordering},
+};
 use std::time::Duration;
 
 const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(2);
@@ -14,6 +18,7 @@ pub struct Library {
     pub(super) originals_dir: PathBuf,
     pub(super) thumbs_dir: PathBuf,
     pub(super) db_path: PathBuf,
+    document_ids: Arc<AtomicI64>,
 }
 
 impl Library {
@@ -31,9 +36,28 @@ impl Library {
             originals_dir,
             thumbs_dir,
             db_path,
+            document_ids: Arc::new(AtomicI64::new(1)),
         };
         library.initialize_schema()?;
+        let connection = library.connection()?;
+        let next_id = connection
+            .query_row(
+                "SELECT MAX(id) + 1 FROM (
+                    SELECT id FROM boards
+                    UNION ALL SELECT id FROM board_items
+                    UNION ALL SELECT id FROM canvas_annotations
+                 )",
+                [],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .map_err(|error| format!("failed to initialize Board identity allocator: {error}"))?
+            .unwrap_or(1);
+        library.document_ids.store(next_id, Ordering::Relaxed);
         Ok(library)
+    }
+
+    pub(crate) fn allocate_document_id(&self) -> i64 {
+        self.document_ids.fetch_add(1, Ordering::Relaxed)
     }
 
     pub(super) fn connection(&self) -> Result<Connection, String> {

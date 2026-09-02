@@ -940,6 +940,7 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
         .require_loaded_asset()
         .id;
     assert_ne!(cropped_asset_id, source_asset_id);
+    app.flush_persistence();
     let stored_after_crop = &library.load_placements().unwrap()[0];
     assert_eq!(
         stored_after_crop.require_loaded_asset().id,
@@ -2482,6 +2483,260 @@ fn create_undo_persists_reassigned_redo_history_with_the_archive() {
     );
     drop(app);
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-delete-after-queued-resolution");
+    let library = Library::initialize(root.clone()).unwrap();
+    let first = library.list_boards().unwrap()[0].clone();
+    let second = library.create_board("Second").unwrap();
+    library.set_active_board(second.id).unwrap();
+    let source = library
+        .store_rgba_image("resolved", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let asset = library.create_asset(&source, "image/png", 1, 1, 4).unwrap();
+    let loading = library
+        .persist_committed_loading_placement(
+            egui::Pos2::ZERO,
+            1.0,
+            1.0,
+            1.0,
+            crate::data::ContentResolutionSource::ExternalPath {
+                path: source.to_string_lossy().into_owned(),
+            },
+            Some("Loading".to_owned()),
+        )
+        .unwrap();
+    library.set_active_board(first.id).unwrap();
+
+    let mut app = test_app(Some(library.clone()));
+    app.active_board_id = first.id;
+    app.refresh_board_summaries();
+    app.document_history.record_applied(
+        second.id,
+        super::HistoryAction::document(
+            "Added image".to_owned(),
+            vec![super::HistoryChange {
+                before: None,
+                after: Some(loading.clone()),
+            }],
+            Vec::new(),
+            None,
+        ),
+    );
+    app.queue_history_snapshot();
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+
+    let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
+    trigger_connection
+        .execute_batch(
+            "CREATE TRIGGER fail_resolution_history
+             BEFORE UPDATE ON board_document_history
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected resolution-history failure');
+             END;",
+        )
+        .unwrap();
+
+    let mut resolved = loading.clone();
+    resolved.state.asset_id = Some(asset.id);
+    resolved.asset = Some(asset.clone());
+    resolved.content = crate::data::PlacementContent::Loaded { asset_id: asset.id };
+    assert!(
+        app.document_history
+            .update_accepted_placement(second.id, resolved.clone())
+    );
+    app.document_persistence
+        .enqueue_document_unit(
+            second.id,
+            crate::canvas::CanvasDocumentChanges {
+                updated_placements: vec![resolved.state.clone()],
+                ..Default::default()
+            },
+            &app.document_history,
+        )
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+
+    app.request_board_delete(second.id, second.name.clone());
+    app.confirm_pending_board_delete(&ctx);
+    trigger_connection
+        .execute_batch("DROP TRIGGER fail_resolution_history")
+        .unwrap();
+    app.flush_persistence();
+
+    app.undo_document_history(&ctx);
+    app.flush_persistence();
+    let reopened = Library::initialize(root.clone()).unwrap();
+    let restored = reopened.load_board_document(second.id).unwrap();
+    assert_eq!(restored.placements.len(), 1);
+    assert_eq!(restored.placements[0].state.id, resolved.state.id);
+    assert_eq!(
+        restored.placements[0].state.asset_id,
+        resolved.state.asset_id
+    );
+    assert_eq!(restored.placements[0].content, resolved.content);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn queued_board_identities_remain_visible_while_persistence_retries() {
+    let root = temp_library_root("snappyref-queued-board-identity");
+    let library = Library::initialize(root.clone()).unwrap();
+    let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
+    trigger_connection
+        .execute_batch(
+            "CREATE TRIGGER fail_board_history
+             BEFORE INSERT ON board_document_history
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected Board-history failure');
+             END;",
+        )
+        .unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library);
+
+    app.create_and_switch_board(false);
+    app.create_and_switch_board(false);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(app.board_summaries().len(), 3);
+
+    app.refresh_board_summaries();
+    let accepted_board_count = app.board_summaries().len();
+
+    trigger_connection
+        .execute_batch("DROP TRIGGER fail_board_history")
+        .unwrap();
+    app.flush_persistence();
+    drop(app);
+    let _ = fs::remove_dir_all(root);
+
+    assert_eq!(accepted_board_count, 3);
+}
+
+#[test]
+fn deleting_active_queued_board_uses_accepted_queued_fallback() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-delete-queued-active-board");
+    let library = Library::initialize(root.clone()).unwrap();
+    let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
+    trigger_connection
+        .execute_batch(
+            "CREATE TRIGGER fail_board_history
+             BEFORE INSERT ON board_document_history
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected Board-history failure');
+             END;",
+        )
+        .unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library);
+
+    app.create_and_switch_board(false);
+    let fallback_id = app.active_board_id;
+    app.create_and_switch_board(false);
+    let deleted_id = app.active_board_id;
+    std::thread::sleep(Duration::from_millis(100));
+
+    app.request_board_delete(deleted_id, "Board 3".to_owned());
+    app.confirm_pending_board_delete(&ctx);
+
+    let active_after_delete = app.active_board_id;
+    let deleted_identity_visible = app
+        .board_summaries()
+        .iter()
+        .any(|summary| summary.board.id == deleted_id);
+
+    trigger_connection
+        .execute_batch("DROP TRIGGER fail_board_history")
+        .unwrap();
+    app.flush_persistence();
+    drop(app);
+    let _ = fs::remove_dir_all(root);
+
+    assert_eq!(active_after_delete, fallback_id);
+    assert!(
+        !deleted_identity_visible,
+        "the accepted delete should update memory even while both Board creations await retry"
+    );
+}
+
+#[test]
+fn deleting_active_board_restores_accepted_fallback_content_while_persistence_retries() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-delete-accepted-fallback-content");
+    let library = Library::initialize(root.clone()).unwrap();
+    let fallback = library.list_boards().unwrap()[0].clone();
+    let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
+    trigger_connection
+        .execute_batch(
+            "CREATE TRIGGER fail_board_history
+             BEFORE INSERT ON board_document_history
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected Board-history failure');
+             END;",
+        )
+        .unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+
+    app.handle_board_action(Some(crate::ui::sidebar::SidebarBoardAction::RenameBoard(
+        fallback.id,
+        "Accepted fallback".to_owned(),
+    )));
+    let stack_before = app.canvas.canvas_stack_order();
+    let annotation = library.new_canvas_annotation(
+        CanvasAnnotationKind::Textbox,
+        egui::pos2(40.0, 60.0),
+        egui::pos2(140.0, 100.0),
+        "accepted note".to_owned(),
+        CanvasTextSize::M,
+        CanvasStrokeWidth::M,
+        crate::data::CanvasAnnotationColor::Sky,
+        true,
+    );
+    app.canvas.add_annotation(annotation.clone());
+    app.canvas.mark_annotation_for_persistence(annotation.id);
+    app.document_history.record_applied(
+        fallback.id,
+        super::HistoryAction::document(
+            "Added textbox".to_owned(),
+            Vec::new(),
+            vec![super::HistoryChange {
+                before: None,
+                after: Some(annotation.clone()),
+            }],
+            Some(super::HistoryChange {
+                before: Some(stack_before),
+                after: Some(app.canvas.canvas_stack_order()),
+            }),
+        ),
+    );
+    app.persist_recorded_canvas_changes();
+    app.create_and_switch_board(false);
+    let deleted_id = app.active_board_id;
+    std::thread::sleep(Duration::from_millis(100));
+
+    app.request_board_delete(deleted_id, "Board 2".to_owned());
+    app.confirm_pending_board_delete(&ctx);
+
+    let active_after_delete = app.active_board_id;
+    let fallback_name_after_delete = app.board_summaries()[0].board.name.clone();
+    let fallback_annotations_after_delete = app.canvas.annotations();
+
+    trigger_connection
+        .execute_batch("DROP TRIGGER fail_board_history")
+        .unwrap();
+    app.flush_persistence();
+    drop(app);
+    let _ = fs::remove_dir_all(root);
+
+    assert_eq!(active_after_delete, fallback.id);
+    assert_eq!(fallback_name_after_delete, "Accepted fallback");
+    assert_eq!(fallback_annotations_after_delete, vec![annotation]);
 }
 
 #[test]

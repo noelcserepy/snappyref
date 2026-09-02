@@ -12,6 +12,7 @@ struct PersistenceQueue {
 
 enum PersistenceCommand {
     SaveUserSession(crate::data::UserSession),
+    #[cfg(test)]
     CommitCanvasDocumentChanges(crate::canvas::CanvasDocumentChanges),
     CommitBoardUnit {
         operation: crate::library::storage::BoardDurabilityOperation,
@@ -29,6 +30,7 @@ struct PendingPersistenceBatch {
 
 enum PendingPersistenceOperation {
     UserSession(crate::data::UserSession),
+    #[cfg(test)]
     Document(crate::canvas::CanvasDocumentChanges),
     BoardUnit {
         operation: crate::library::storage::BoardDurabilityOperation,
@@ -39,6 +41,10 @@ enum PendingPersistenceOperation {
 
 #[derive(Clone)]
 pub(crate) enum BoardLifecyclePersistence {
+    Create {
+        document: crate::data::BoardDocumentSnapshot,
+        active_board_id: i64,
+    },
     Rename {
         board_id: i64,
         name: String,
@@ -65,6 +71,7 @@ impl DocumentPersistence {
         self.last_saved_user_session = Some(session);
     }
 
+    #[cfg(test)]
     pub(crate) fn commit_canvas_changes(
         &mut self,
         library: Option<&crate::library::storage::Library>,
@@ -120,6 +127,7 @@ impl DocumentPersistence {
         Ok(true)
     }
 
+    #[cfg(test)]
     pub(crate) fn commit_canvas_document_changes(
         &mut self,
         library: Option<&crate::library::storage::Library>,
@@ -141,6 +149,7 @@ impl DocumentPersistence {
         write_canvas_document_changes(library, changes).map(|()| true)
     }
 
+    #[cfg(test)]
     pub(crate) fn enqueue_document_changes(
         &mut self,
         changes: crate::canvas::CanvasDocumentChanges,
@@ -196,6 +205,7 @@ impl DocumentPersistence {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn persist_history(
         &mut self,
         library: Option<&crate::library::storage::Library>,
@@ -347,6 +357,7 @@ impl PendingPersistenceBatch {
                     .operations
                     .push_back(PendingPersistenceOperation::UserSession(session)),
             },
+            #[cfg(test)]
             PersistenceCommand::CommitCanvasDocumentChanges(changes) => {
                 match self.operations.back_mut() {
                     Some(PendingPersistenceOperation::Document(pending)) => {
@@ -381,6 +392,7 @@ impl PendingPersistenceBatch {
                 PendingPersistenceOperation::UserSession(session) => {
                     library.save_user_session(session)
                 }
+                #[cfg(test)]
                 PendingPersistenceOperation::Document(changes) => {
                     write_canvas_document_changes(library, changes.clone())
                 }
@@ -402,10 +414,16 @@ impl PendingPersistenceBatch {
     }
 }
 
+#[cfg(test)]
 fn merge_document_changes(
     pending: &mut crate::canvas::CanvasDocumentChanges,
     changes: crate::canvas::CanvasDocumentChanges,
 ) {
+    for placement_id in changes.archived_placement_ids {
+        if !pending.archived_placement_ids.contains(&placement_id) {
+            pending.archived_placement_ids.push(placement_id);
+        }
+    }
     for item in changes.updated_placements {
         if let Some(existing) = pending
             .updated_placements
@@ -438,6 +456,7 @@ fn merge_document_changes(
     }
 }
 
+#[cfg(test)]
 fn write_canvas_document_changes(
     library: &crate::library::storage::Library,
     changes: crate::canvas::CanvasDocumentChanges,

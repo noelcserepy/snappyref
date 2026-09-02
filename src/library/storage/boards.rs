@@ -22,6 +22,7 @@ pub(super) fn active_board_id(connection: &Connection) -> Result<i64, String> {
         .map_err(|error| format!("failed to load active board: {error}"))
 }
 
+#[cfg(test)]
 pub(super) fn list_non_archived_board_ids(connection: &Connection) -> Result<Vec<i64>, String> {
     let mut statement = connection
         .prepare(
@@ -54,6 +55,7 @@ pub(super) fn board_is_non_archived(
     Ok(count > 0)
 }
 
+#[cfg(test)]
 fn active_board_after_delete(
     boards: &[i64],
     board_id: i64,
@@ -264,6 +266,14 @@ pub(super) fn restore_board_document_rows(
 }
 
 impl Library {
+    pub(crate) fn new_board(&self, name: String) -> Board {
+        Board {
+            id: self.allocate_document_id(),
+            name,
+            archived: false,
+        }
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn list_boards(&self) -> Result<Vec<Board>, String> {
         let connection = self.connection()?;
@@ -372,25 +382,27 @@ impl Library {
         Ok(snapshot)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn create_board(&self, name: &str) -> Result<Board, String> {
         let connection = self.connection()?;
+        let board_id = self.allocate_document_id();
         connection
             .execute(
                 "INSERT INTO boards (
+                    id,
                     name,
                     archived,
                     camera_pan_x,
                     camera_pan_y,
                     camera_zoom,
                     canvas_background
-                 ) VALUES (?1, 0, 0.0, 0.0, ?2, 'none')",
-                params![name, DEFAULT_VIEWPORT_ZOOM],
+                 ) VALUES (?1, ?2, 0, 0.0, 0.0, ?3, 'none')",
+                params![board_id, name, DEFAULT_VIEWPORT_ZOOM],
             )
             .map_err(|error| format!("failed to create board: {error}"))?;
 
         Ok(Board {
-            id: connection.last_insert_rowid(),
+            id: board_id,
             name: name.to_owned(),
             archived: false,
         })
@@ -417,6 +429,7 @@ impl Library {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn active_board_after_delete(&self, board_id: i64) -> Result<i64, String> {
         let connection = self.connection()?;
         let boards = list_non_archived_board_ids(&connection)?;

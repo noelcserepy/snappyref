@@ -81,10 +81,13 @@ pub(crate) fn commit_loading_provisional_batch(
     }
 
     let stack_before = canvas.canvas_stack_order();
-    let committed_pairs = library.commit_provisional_loading_placements(&provisional_placements)?;
+    let committed_pairs = library.prepare_committed_loading_placements(&provisional_placements);
     let placements = canvas.commit_provisional_placements_in_place(committed_pairs);
+    for placement in &placements {
+        canvas.mark_placement_for_persistence(placement.state.id);
+    }
+    canvas.mark_stack_order_for_persistence();
     let stack_after = canvas.canvas_stack_order();
-    library.save_canvas_stack_order(&stack_after)?;
     let placement_ids = placements
         .iter()
         .map(|placement| placement.state.id)
@@ -146,11 +149,14 @@ pub(crate) fn commit_search_provisional_batch(
         );
     }
 
-    let stack_before = library.load_canvas_stack_order().ok();
-    let committed_pairs = library.commit_provisional_placements(&provisional_placements)?;
+    let stack_before = Some(canvas.canvas_stack_order());
+    let committed_pairs = library.prepare_committed_asset_placements(&provisional_placements)?;
     let committed_placements = canvas.commit_provisional_placements_in_place(committed_pairs);
+    for placement in &committed_placements {
+        canvas.mark_placement_for_persistence(placement.state.id);
+    }
+    canvas.mark_stack_order_for_persistence();
     let stack_after = canvas.canvas_stack_order();
-    library.save_canvas_stack_order(&stack_after)?;
 
     let added_placement_ids = committed_placements
         .iter()
