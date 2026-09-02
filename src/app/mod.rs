@@ -1660,7 +1660,11 @@ impl SnappyRefApp {
         };
         let active_document = if active_before != active_after {
             match library.load_board_document(active_after) {
-                Ok(document) => Some(document),
+                Ok(mut document) => {
+                    self.document_history
+                        .apply_accepted_document_state(active_after, &mut document);
+                    Some(document)
+                }
                 Err(error) => match self
                     .document_history
                     .accepted_document_for_created_board(active_after)
