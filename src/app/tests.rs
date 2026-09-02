@@ -940,6 +940,7 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
         .require_loaded_asset()
         .id;
     assert_ne!(cropped_asset_id, source_asset_id);
+    app.flush_persistence();
     let stored_after_crop = &library.load_placements().unwrap()[0];
     assert_eq!(
         stored_after_crop.require_loaded_asset().id,
@@ -2661,6 +2662,81 @@ fn deleting_active_queued_board_uses_accepted_queued_fallback() {
         !deleted_identity_visible,
         "the accepted delete should update memory even while both Board creations await retry"
     );
+}
+
+#[test]
+fn deleting_active_board_restores_accepted_fallback_content_while_persistence_retries() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-delete-accepted-fallback-content");
+    let library = Library::initialize(root.clone()).unwrap();
+    let fallback = library.list_boards().unwrap()[0].clone();
+    let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
+    trigger_connection
+        .execute_batch(
+            "CREATE TRIGGER fail_board_history
+             BEFORE INSERT ON board_document_history
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected Board-history failure');
+             END;",
+        )
+        .unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+
+    app.handle_board_action(Some(crate::ui::sidebar::SidebarBoardAction::RenameBoard(
+        fallback.id,
+        "Accepted fallback".to_owned(),
+    )));
+    let stack_before = app.canvas.canvas_stack_order();
+    let annotation = library.new_canvas_annotation(
+        CanvasAnnotationKind::Textbox,
+        egui::pos2(40.0, 60.0),
+        egui::pos2(140.0, 100.0),
+        "accepted note".to_owned(),
+        CanvasTextSize::M,
+        CanvasStrokeWidth::M,
+        crate::data::CanvasAnnotationColor::Sky,
+        true,
+    );
+    app.canvas.add_annotation(annotation.clone());
+    app.canvas.mark_annotation_for_persistence(annotation.id);
+    app.document_history.record_applied(
+        fallback.id,
+        super::HistoryAction::document(
+            "Added textbox".to_owned(),
+            Vec::new(),
+            vec![super::HistoryChange {
+                before: None,
+                after: Some(annotation.clone()),
+            }],
+            Some(super::HistoryChange {
+                before: Some(stack_before),
+                after: Some(app.canvas.canvas_stack_order()),
+            }),
+        ),
+    );
+    app.persist_recorded_canvas_changes();
+    app.create_and_switch_board(false);
+    let deleted_id = app.active_board_id;
+    std::thread::sleep(Duration::from_millis(100));
+
+    app.request_board_delete(deleted_id, "Board 2".to_owned());
+    app.confirm_pending_board_delete(&ctx);
+
+    let active_after_delete = app.active_board_id;
+    let fallback_name_after_delete = app.board_summaries()[0].board.name.clone();
+    let fallback_annotations_after_delete = app.canvas.annotations();
+
+    trigger_connection
+        .execute_batch("DROP TRIGGER fail_board_history")
+        .unwrap();
+    app.flush_persistence();
+    drop(app);
+    let _ = fs::remove_dir_all(root);
+
+    assert_eq!(active_after_delete, fallback.id);
+    assert_eq!(fallback_name_after_delete, "Accepted fallback");
+    assert_eq!(fallback_annotations_after_delete, vec![annotation]);
 }
 
 #[test]
