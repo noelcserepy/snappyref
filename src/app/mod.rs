@@ -691,7 +691,18 @@ impl BoardSummariesCache {
     }
 
     fn refresh_from(&mut self, library: &crate::library::storage::Library) -> Result<(), String> {
+        let accepted = std::mem::take(&mut self.summaries);
         self.summaries = library.list_board_summaries()?;
+        for summary in accepted {
+            if !self
+                .summaries
+                .iter()
+                .any(|durable| durable.board.id == summary.board.id)
+            {
+                self.summaries.push(summary);
+            }
+        }
+        self.summaries.sort_by_key(|summary| summary.board.id);
         Ok(())
     }
 
@@ -1589,35 +1600,35 @@ impl SnappyRefApp {
         };
 
         let active_before = self.active_board_id;
-        let mut document = if pending.board_id == self.active_board_id {
-            let Some(board) = self
-                .board_summaries()
-                .into_iter()
-                .find(|summary| summary.board.id == pending.board_id)
-                .map(|summary| summary.board)
-            else {
-                self.status = "Board unavailable".to_owned();
+        let mut document = match library.load_board_document(pending.board_id) {
+            Ok(document) => document,
+            Err(error) if pending.board_id != self.active_board_id => {
+                self.status = error;
                 return;
-            };
-            crate::data::BoardDocumentSnapshot {
-                board,
-                placements: self.canvas.committed_placements(),
-                annotations: self.canvas.annotations(),
-                stack_order: self.canvas.canvas_stack_order(),
-                viewport: self.canvas.viewport_state(),
             }
-        } else {
-            match library.load_board_document(pending.board_id) {
-                Ok(document) => document,
-                Err(error) => {
-                    self.status = error;
+            Err(_) => {
+                let Some(board) = self
+                    .board_summaries()
+                    .into_iter()
+                    .find(|summary| summary.board.id == pending.board_id)
+                    .map(|summary| summary.board)
+                else {
+                    self.status = "Board unavailable".to_owned();
                     return;
+                };
+                crate::data::BoardDocumentSnapshot {
+                    board,
+                    placements: self.canvas.committed_placements(),
+                    annotations: self.canvas.annotations(),
+                    stack_order: self.canvas.canvas_stack_order(),
+                    viewport: self.canvas.viewport_state(),
                 }
             }
         };
-        if pending.board_id != self.active_board_id {
-            self.document_history
-                .apply_accepted_document_state(pending.board_id, &mut document);
+        self.document_history
+            .apply_accepted_document_state(pending.board_id, &mut document);
+        if pending.board_id == self.active_board_id {
+            document.viewport = self.canvas.viewport_state();
         }
         if let Some(board) = self
             .board_summaries()
