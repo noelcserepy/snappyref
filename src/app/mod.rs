@@ -1659,32 +1659,12 @@ impl SnappyRefApp {
             board_ids[deleted_index + 1]
         };
         let active_document = if active_before != active_after {
-            match library.load_board_document(active_after) {
-                Ok(mut document) => {
-                    self.document_history
-                        .apply_accepted_document_state(active_after, &mut document);
-                    Some(document)
+            match self.accepted_board_document(library, active_after) {
+                Ok(document) => Some(document),
+                Err(error) => {
+                    self.status = error;
+                    return;
                 }
-                Err(error) => match self
-                    .document_history
-                    .accepted_document_for_created_board(active_after)
-                {
-                    Some(mut document) => {
-                        if let Some(board) = self
-                            .board_summaries()
-                            .into_iter()
-                            .find(|summary| summary.board.id == active_after)
-                            .map(|summary| summary.board)
-                        {
-                            document.board = board;
-                        }
-                        Some(document)
-                    }
-                    None => {
-                        self.status = error;
-                        return;
-                    }
-                },
             }
         } else {
             None
@@ -3938,6 +3918,37 @@ impl SnappyRefApp {
         }
     }
 
+    /// The Board document as accepted so far: durable rows (or the accepted
+    /// creation while the Board is not durable yet) with queued history
+    /// applied on top, so opening a Board never shows state that durability
+    /// still lags behind.
+    fn accepted_board_document(
+        &self,
+        library: &crate::library::storage::Library,
+        board_id: i64,
+    ) -> Result<crate::data::BoardDocumentSnapshot, String> {
+        let mut document = match library.load_board_document(board_id) {
+            Ok(mut document) => {
+                self.document_history
+                    .apply_accepted_document_state(board_id, &mut document);
+                document
+            }
+            Err(error) => self
+                .document_history
+                .accepted_document_for_created_board(board_id)
+                .ok_or(error)?,
+        };
+        if let Some(board) = self
+            .board_summaries()
+            .into_iter()
+            .find(|summary| summary.board.id == board_id)
+            .map(|summary| summary.board)
+        {
+            document.board = board;
+        }
+        Ok(document)
+    }
+
     fn apply_board_lifecycle_history(
         &mut self,
         ctx: &egui::Context,
@@ -3956,7 +3967,7 @@ impl SnappyRefApp {
                 },
                 HistoryDirection::Backward,
             ) => {
-                let active_document = library.load_board_document(*active_before)?;
+                let active_document = self.accepted_board_document(&library, *active_before)?;
                 self.document_persistence.apply_board_lifecycle_unit(
                     Some(&library),
                     crate::active_board::persistence::BoardLifecyclePersistence::Archive {
@@ -4046,7 +4057,7 @@ impl SnappyRefApp {
                 HistoryDirection::Forward,
             ) => {
                 let active_document = if active_before_replay != *active_after {
-                    Some(library.load_board_document(*active_after)?)
+                    Some(self.accepted_board_document(&library, *active_after)?)
                 } else {
                     None
                 };
