@@ -8,6 +8,7 @@ purpose:
     - Move, resize, uniform scale, rotation, and crop interaction.
     - Annotation and text-box editing interaction.
     - Copy, paste, duplicate, delete, focus, arrangement, and stack-order commands.
+    - Group selection, member editing, layout controls, and the Add to group destination picker.
     - Presentation of provisional, loading, loaded, and failed Placements.
   excludes:
     - Durable Board ownership and history rules.
@@ -42,6 +43,7 @@ interface:
         complete-document: ready must present Placements and annotations in their shared stack order.
         content-state-visible: ready must present provisional, loading, loaded, and failed Placement states without changing their identity.
         viewport-applied: ready must use the supplied viewport without changing document geometry.
+        groups-visible: ready must present Group containers and names, including empty Groups and members that overflow their container.
 
       caller_obligations: {}
 
@@ -80,6 +82,21 @@ interface:
         search-preview-pointer-anchor: After a Search preview fit, the provisional group must remain positioned at the user's pointer.
         animation-on-engagement: A visible animated image advances while hovered or selected and stays on its current frame while unengaged.
         history-delegated: Undo and redo actions must use Board Document history rather than private Canvas history.
+        group-shortcuts: Command+G on macOS and Control+G on other platforms must create a Group from selected Placements. Adding Shift must ungroup selected Groups. Unmodified G must open Add to group.
+        group-shortcuts-text-safe: Group shortcuts must not execute while the user is editing text.
+        group-context-menu: The context menu must offer Group, Ungroup, and Add to group for applicable selections.
+        group-selection: Outside member editing, selecting a Group member must select the Group, and dragging the Group must move its members together.
+        group-member-editing: Double-clicking a Group member must enter member editing. Escape must return to Group selection.
+        group-member-reorder: Dragging a member within its Group during member editing must change its ordered position rather than leave it freely positioned outside the layout.
+        group-controls: A selected Group must expose Row, Column, and Wrap flow controls, spacing, padding, and inline name editing.
+        group-resize-and-scale: Container-resize interaction must request Group reflow from Spatial Layout. Explicit uniform scaling must remain a separate action.
+        group-picker-search: Add to group must show a keyboard-searchable picker of destination Groups on the active Board, including their names and empty Groups.
+        group-picker-repeat: The picker must initially highlight the last-used destination when it remains available on the active Board. Enter must confirm the highlighted destination.
+        group-picker-choice: Typing must filter destinations, and keyboard navigation must allow choosing another destination before confirmation.
+        group-picker-cancel: Cancelling the picker must leave membership and geometry unchanged.
+        group-picker-command: Confirming a destination must send the selected existing Placements through Board Document's Group addition behavior.
+        group-picker-context-parity: Add to group from the context menu must expose the same destination choices as the keyboard action.
+        group-duplicate-command: Duplicating a Group must use Board Document's structure-preserving Group duplication behavior.
 
       caller_obligations: {}
 
@@ -89,6 +106,8 @@ interface:
     provisional-interaction: Provisional Placements support the same selection and transform interactions as committed Placements.
     document-change-routing: Canvas Interaction must route durable Board edits through Board Document rather than write storage during continuous input handling.
     view-change-reporting: Canvas viewport and background changes must produce view-changed without entering Board undo history.
+    group-intake-explicit: A remembered Group destination must not automatically capture Search results, imports, or pastes. Add to group operates on existing selected Placements.
+    group-picker-not-radial: Destination selection must use the searchable picker rather than a radial or mouse-wheel selector.
 
   requires:
     board-document-change:
@@ -109,6 +128,9 @@ interface:
     spatial-transform:
       target: "[[spatial-layout#/interface/operations/snap/outcomes/snapped]]"
       reason: Supplies snapping and layout geometry for Canvas actions.
+    group-layout:
+      target: "[[spatial-layout#/interface/operations/layout-group]]"
+      reason: Supplies Group reflow and distinct container-resize and uniform-scale behavior during interaction.
 
 decisions:
   interaction-persistence-boundary:
