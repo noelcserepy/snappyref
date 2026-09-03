@@ -6,8 +6,6 @@ pub(crate) enum BoardDurabilityOperation {
         changes: crate::canvas::CanvasDocumentChanges,
     },
     Lifecycle(crate::active_board::persistence::BoardLifecyclePersistence),
-    #[cfg(test)]
-    HistoryOnly,
 }
 
 impl Library {
@@ -29,8 +27,6 @@ impl Library {
             BoardDurabilityOperation::Lifecycle(change) => {
                 persist_lifecycle_change(&transaction, change)?;
             }
-            #[cfg(test)]
-            BoardDurabilityOperation::HistoryOnly => {}
         }
         transaction
             .execute(

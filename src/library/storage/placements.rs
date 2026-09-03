@@ -478,19 +478,6 @@ impl Library {
         initial_scale: f32,
     ) -> Result<Placement, String> {
         let Some(placement_id) = placement_id else {
-            #[cfg(test)]
-            return self.persist_imported_image_to_board_with_hash(
-                board_id,
-                stored_path,
-                mime_type,
-                width,
-                height,
-                file_size,
-                original_sha256,
-                desired_world,
-                initial_scale,
-            );
-            #[cfg(not(test))]
             return Err("import persistence requires an accepted Placement".to_owned());
         };
 
@@ -568,47 +555,6 @@ impl Library {
             content,
             lifecycle: PlacementLifecycle::Committed,
         })
-    }
-
-    #[cfg(test)]
-    pub fn mark_placement_failed(
-        &self,
-        board_id: i64,
-        placement_id: i64,
-        message: String,
-    ) -> Result<Option<Placement>, String> {
-        let connection = self.connection()?;
-        let Some(mut placement) = self
-            .load_placements_for_board_id(&connection, board_id)?
-            .into_iter()
-            .find(|placement| placement.state.id == placement_id)
-        else {
-            return Ok(None);
-        };
-        let source = match &placement.content {
-            PlacementContent::Loading { source, .. } => Some(source.clone()),
-            PlacementContent::Failed { source, .. } => source.clone(),
-            PlacementContent::Loaded { .. } => None,
-        };
-        placement.content = PlacementContent::Failed {
-            source,
-            message,
-            recoverable: true,
-        };
-        let content_resolution_source_payload = serde_json::to_string(&placement.content)
-            .map_err(|error| format!("failed to encode failed placement content: {error}"))?;
-        connection
-            .execute(
-                "UPDATE board_items
-                 SET placement_content_state = 'failed',
-                     content_resolution_intent = ?1
-                 WHERE id = ?2
-                   AND board_id = ?3
-                   AND archived = 0",
-                params![content_resolution_source_payload, placement_id, board_id],
-            )
-            .map_err(|error| format!("failed to mark placement {placement_id} failed: {error}"))?;
-        Ok(Some(placement))
     }
 
     pub fn load_placements(&self) -> Result<Vec<Placement>, String> {
@@ -876,53 +822,6 @@ impl Library {
 
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("failed to collect board-arrangement inputs: {error}"))
-    }
-
-    #[cfg(test)]
-    pub fn update_placement_document_state(&self, item: &PlacementState) -> Result<(), String> {
-        let connection = self.connection()?;
-        let loaded_content = item
-            .asset_id
-            .map(encode_loaded_placement_content)
-            .transpose()?;
-        connection
-            .execute(
-                "UPDATE board_items
-                 SET asset_id = ?1,
-                     x = ?2,
-                     y = ?3,
-                     width = ?4,
-                     height = ?5,
-                     scale = ?6,
-                     rotation = ?7,
-                     z_index = ?8,
-                     archived = ?9,
-                     placement_content_state = CASE
-                         WHEN ?1 IS NOT NULL THEN 'loaded'
-                         ELSE placement_content_state
-                     END,
-                     content_resolution_intent = CASE
-                         WHEN ?1 IS NOT NULL THEN ?10
-                         ELSE content_resolution_intent
-                     END
-                 WHERE id = ?11",
-                params![
-                    item.asset_id,
-                    item.geometry.center.x,
-                    item.geometry.center.y,
-                    item.geometry.size.x,
-                    item.geometry.size.y,
-                    item.geometry.scale,
-                    item.geometry.rotation,
-                    item.geometry.z_index,
-                    if item.archived { 1_i64 } else { 0_i64 },
-                    loaded_content,
-                    item.id,
-                ],
-            )
-            .map_err(|error| format!("failed to update placement document state: {error}"))?;
-
-        Ok(())
     }
 
     #[cfg(test)]

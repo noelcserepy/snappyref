@@ -2406,22 +2406,19 @@ fn create_undo_persists_reassigned_redo_history_with_the_archive() {
     let root = temp_library_root("snappyref-create-undo-atomic-history");
     let library = Library::initialize(root.clone()).unwrap();
     let original = library.list_boards().unwrap()[0].clone();
-    let created = library.create_board("Created").unwrap();
-    library.set_active_board(created.id).unwrap();
-    let created_document = library.load_board_document(created.id).unwrap();
 
     let mut app = test_app(Some(library.clone()));
-    app.active_board_id = created.id;
+    app.active_board_id = original.id;
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
-    app.document_history.record_applied(
-        created.id,
-        super::HistoryAction::Board(super::BoardLifecycleHistoryAction::Created {
-            document: created_document,
-            active_before: original.id,
-        }),
-    );
-    app.queue_history_snapshot();
+    app.create_and_switch_board(false);
     app.flush_persistence();
+    let created = library
+        .list_boards()
+        .unwrap()
+        .into_iter()
+        .find(|board| board.id != original.id)
+        .unwrap();
+    assert_eq!(app.active_board_id, created.id);
 
     let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
     trigger_connection
@@ -2528,8 +2525,18 @@ fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement()
             None,
         ),
     );
-    app.queue_history_snapshot();
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    app.document_persistence
+        .enqueue_document_unit(
+            second.id,
+            crate::canvas::CanvasDocumentChanges {
+                updated_placements: vec![loading.state.clone()],
+                ..Default::default()
+            },
+            &app.document_history,
+        )
+        .unwrap();
+    app.flush_persistence();
 
     let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
     trigger_connection
@@ -4886,6 +4893,7 @@ fn inspect_board_lifecycle_undo_redo_writes_artifact() {
     scenario.action("pointer click New board", create_rect.center());
     inspect_click_at(&harness, create_rect.center(), egui::Modifiers::NONE);
     harness.step();
+    harness.state_mut().flush_persistence();
     let created = library
         .list_boards()
         .unwrap()
@@ -7063,24 +7071,28 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
     app.active_board_id = second.id;
     let mut layout = Vec::new();
 
-    let known = app.reserve_import(
-        &mut layout,
-        Some((100, 80)),
-        egui::Pos2::ZERO,
-        test_viewport_world(),
-        crate::data::ContentResolutionSource::Unknown {
-            description: "known test import".to_owned(),
-        },
-    );
-    let unknown = app.reserve_import(
-        &mut layout,
-        None,
-        egui::pos2(200.0, 0.0),
-        test_viewport_world(),
-        crate::data::ContentResolutionSource::Unknown {
-            description: "unknown test import".to_owned(),
-        },
-    );
+    let known = app
+        .reserve_import(
+            &mut layout,
+            Some((100, 80)),
+            egui::Pos2::ZERO,
+            test_viewport_world(),
+            crate::data::ContentResolutionSource::Unknown {
+                description: "known test import".to_owned(),
+            },
+        )
+        .unwrap();
+    let unknown = app
+        .reserve_import(
+            &mut layout,
+            None,
+            egui::pos2(200.0, 0.0),
+            test_viewport_world(),
+            crate::data::ContentResolutionSource::Unknown {
+                description: "unknown test import".to_owned(),
+            },
+        )
+        .unwrap();
 
     assert_eq!(known.target_board_id, second.id);
     assert_eq!(known.queue_id, 1);
@@ -7122,15 +7134,17 @@ fn accepted_import_for_inactive_board_keeps_history_on_target_board() {
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
-    let reservation = app.reserve_import(
-        &mut Vec::new(),
-        Some((1, 1)),
-        egui::Pos2::ZERO,
-        test_viewport_world(),
-        crate::data::ContentResolutionSource::Unknown {
-            description: "inactive Board import".to_owned(),
-        },
-    );
+    let reservation = app
+        .reserve_import(
+            &mut Vec::new(),
+            Some((1, 1)),
+            egui::Pos2::ZERO,
+            test_viewport_world(),
+            crate::data::ContentResolutionSource::Unknown {
+                description: "inactive Board import".to_owned(),
+            },
+        )
+        .unwrap();
     let placement_id = reservation.placement_id.unwrap();
     app.switch_to_board(second.id);
 
@@ -8038,15 +8052,18 @@ impl InspectScenario {
         let mut layout = Vec::new();
         let mut imports = Vec::new();
         for sample in samples {
-            let reservation = harness.state_mut().reserve_import(
-                &mut layout,
-                Some((sample.width, sample.height)),
-                sample.center,
-                test_viewport_world(),
-                crate::data::ContentResolutionSource::Unknown {
-                    description: sample.name.to_owned(),
-                },
-            );
+            let reservation = harness
+                .state_mut()
+                .reserve_import(
+                    &mut layout,
+                    Some((sample.width, sample.height)),
+                    sample.center,
+                    test_viewport_world(),
+                    crate::data::ContentResolutionSource::Unknown {
+                        description: sample.name.to_owned(),
+                    },
+                )
+                .unwrap();
             let placement_id = reservation
                 .placement_id
                 .expect("sample import should create loading placement");

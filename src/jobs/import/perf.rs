@@ -281,7 +281,7 @@ pub fn file_import_perf_report(source_path: PathBuf) -> Result<FileImportPerfRep
         &library,
         1,
         None,
-        None,
+        Some(library.allocate_document_id()),
         source_path.clone(),
         egui::Pos2::ZERO,
         None,
@@ -429,7 +429,8 @@ fn measure_interactive_import_ms(
 fn measure_worker_interactive_import_ms(config: ImagePrepWorkerConfig) -> Result<f64, String> {
     let root = temp_library_root("worker-interactive-import-perf");
     let library = Library::initialize(root.clone())?;
-    let worker = ImagePrepWorker::new_with_config(library, egui::Context::default(), None, config);
+    let worker =
+        ImagePrepWorker::new_with_config(library.clone(), egui::Context::default(), None, config);
     let viewport_world =
         egui::Rect::from_min_max(egui::pos2(-240.0, -180.0), egui::pos2(240.0, 180.0));
 
@@ -462,7 +463,7 @@ fn measure_worker_interactive_import_ms(config: ImagePrepWorkerConfig) -> Result
     worker.enqueue(ImagePrepRequest::ImportClipboard {
         target_board_id: 1,
         queue_id: 1,
-        placement_id: None,
+        placement_id: Some(library.allocate_document_id()),
         rgba: solid_rgba(1200, 900),
         width: 1200,
         height: 900,

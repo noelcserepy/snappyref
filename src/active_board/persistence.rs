@@ -12,8 +12,6 @@ struct PersistenceQueue {
 
 enum PersistenceCommand {
     SaveUserSession(crate::data::UserSession),
-    #[cfg(test)]
-    CommitCanvasDocumentChanges(crate::canvas::CanvasDocumentChanges),
     CommitBoardUnit {
         operation: crate::library::storage::BoardDurabilityOperation,
         history: crate::active_board::history::DocumentHistory,
@@ -32,8 +30,6 @@ struct PendingPersistenceBatch {
 
 enum PendingPersistenceOperation {
     UserSession(crate::data::UserSession),
-    #[cfg(test)]
-    Document(crate::canvas::CanvasDocumentChanges),
     BoardUnit {
         operation: crate::library::storage::BoardDurabilityOperation,
         history: crate::active_board::history::DocumentHistory,
@@ -71,21 +67,6 @@ impl DocumentPersistence {
 
     pub(crate) fn record_saved_user_session(&mut self, session: crate::data::UserSession) {
         self.last_saved_user_session = Some(session);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn commit_canvas_changes(
-        &mut self,
-        library: Option<&crate::library::storage::Library>,
-        canvas: &mut crate::canvas::CanvasState,
-        session: crate::data::UserSession,
-    ) -> Result<(), String> {
-        let document_result = self.commit_canvas_document_changes(library, canvas);
-        let session_result = self.persist_user_session_if_changed(library, session);
-        match (document_result, session_result) {
-            (Err(error), _) | (_, Err(error)) => Err(error),
-            _ => Ok(()),
-        }
     }
 
     pub(crate) fn commit_canvas_changes_unit(
@@ -129,42 +110,6 @@ impl DocumentPersistence {
         Ok(true)
     }
 
-    #[cfg(test)]
-    pub(crate) fn commit_canvas_document_changes(
-        &mut self,
-        library: Option<&crate::library::storage::Library>,
-        canvas: &mut crate::canvas::CanvasState,
-    ) -> Result<bool, String> {
-        let Some(library) = library else {
-            return Ok(false);
-        };
-
-        let changes = canvas.take_document_changes();
-        let had_changes = changes.has_changes();
-        if !had_changes {
-            return Ok(false);
-        }
-        if self.queue.is_some() {
-            self.enqueue_document_changes(changes)?;
-            return Ok(true);
-        }
-        write_canvas_document_changes(library, changes).map(|()| true)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn enqueue_document_changes(
-        &mut self,
-        changes: crate::canvas::CanvasDocumentChanges,
-    ) -> Result<(), String> {
-        if !changes.has_changes() {
-            return Ok(());
-        }
-        let Some(queue) = &self.queue else {
-            return Err("persistence queue unavailable".to_owned());
-        };
-        queue.enqueue(PersistenceCommand::CommitCanvasDocumentChanges(changes))
-    }
-
     pub(crate) fn enqueue_document_unit(
         &mut self,
         board_id: i64,
@@ -203,27 +148,6 @@ impl DocumentPersistence {
         }
         library.persist_board_unit(
             &crate::library::storage::BoardDurabilityOperation::Lifecycle(change),
-            history,
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn persist_history(
-        &mut self,
-        library: Option<&crate::library::storage::Library>,
-        history: &crate::active_board::history::DocumentHistory,
-    ) -> Result<(), String> {
-        let Some(library) = library else {
-            return Err("Storage unavailable".to_owned());
-        };
-        if let Some(queue) = &self.queue {
-            return queue.enqueue(PersistenceCommand::CommitBoardUnit {
-                operation: crate::library::storage::BoardDurabilityOperation::HistoryOnly,
-                history: history.clone(),
-            });
-        }
-        library.persist_board_unit(
-            &crate::library::storage::BoardDurabilityOperation::HistoryOnly,
             history,
         )
     }
@@ -370,17 +294,6 @@ impl PendingPersistenceBatch {
                     .operations
                     .push_back(PendingPersistenceOperation::UserSession(session)),
             },
-            #[cfg(test)]
-            PersistenceCommand::CommitCanvasDocumentChanges(changes) => {
-                match self.operations.back_mut() {
-                    Some(PendingPersistenceOperation::Document(pending)) => {
-                        merge_document_changes(pending, changes);
-                    }
-                    _ => self
-                        .operations
-                        .push_back(PendingPersistenceOperation::Document(changes)),
-                }
-            }
             PersistenceCommand::CommitBoardUnit { operation, history } => {
                 self.operations
                     .push_back(PendingPersistenceOperation::BoardUnit { operation, history });
@@ -411,10 +324,6 @@ impl PendingPersistenceBatch {
             let result = match operation {
                 PendingPersistenceOperation::UserSession(session) => {
                     library.save_user_session(session)
-                }
-                #[cfg(test)]
-                PendingPersistenceOperation::Document(changes) => {
-                    write_canvas_document_changes(library, changes.clone())
                 }
                 PendingPersistenceOperation::BoardUnit { operation, history } => {
                     library.persist_board_unit(&operation, &history)
@@ -458,84 +367,6 @@ const RETRY_DELAYS: [std::time::Duration; 7] = [
 ];
 
 #[cfg(test)]
-fn merge_document_changes(
-    pending: &mut crate::canvas::CanvasDocumentChanges,
-    changes: crate::canvas::CanvasDocumentChanges,
-) {
-    for placement_id in changes.archived_placement_ids {
-        if !pending.archived_placement_ids.contains(&placement_id) {
-            pending.archived_placement_ids.push(placement_id);
-        }
-    }
-    for item in changes.updated_placements {
-        if let Some(existing) = pending
-            .updated_placements
-            .iter_mut()
-            .find(|existing| existing.id == item.id)
-        {
-            *existing = item;
-        } else {
-            pending.updated_placements.push(item);
-        }
-    }
-    for annotation in changes.updated_annotations {
-        if let Some(existing) = pending
-            .updated_annotations
-            .iter_mut()
-            .find(|existing| existing.id == annotation.id)
-        {
-            *existing = annotation;
-        } else {
-            pending.updated_annotations.push(annotation);
-        }
-    }
-    for annotation_id in changes.archived_annotation_ids {
-        if !pending.archived_annotation_ids.contains(&annotation_id) {
-            pending.archived_annotation_ids.push(annotation_id);
-        }
-    }
-    if changes.stack_order.is_some() {
-        pending.stack_order = changes.stack_order;
-    }
-}
-
-#[cfg(test)]
-fn write_canvas_document_changes(
-    library: &crate::library::storage::Library,
-    changes: crate::canvas::CanvasDocumentChanges,
-) -> Result<(), String> {
-    let mut last_error = None;
-    if !changes.archived_annotation_ids.is_empty()
-        && let Err(error) = library.archive_canvas_annotations(&changes.archived_annotation_ids)
-    {
-        last_error = Some(error);
-    }
-
-    for item in changes.updated_placements {
-        if let Err(error) = library.update_placement_document_state(&item) {
-            last_error = Some(error);
-        }
-    }
-
-    for annotation in changes.updated_annotations {
-        if let Err(error) = library.update_canvas_annotation(&annotation) {
-            last_error = Some(error);
-        }
-    }
-
-    if let Some(stack_order) = changes.stack_order
-        && let Err(error) = library.save_canvas_stack_order(&stack_order)
-    {
-        last_error = Some(error);
-    }
-
-    match last_error {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::DocumentPersistence;
 
@@ -556,7 +387,12 @@ mod tests {
         let mut canvas = crate::canvas::CanvasState::default();
         canvas.set_canvas_stack_order(vec![crate::data::CanvasStackItem::Annotation(7)]);
 
-        let result = persistence.commit_canvas_document_changes(None, &mut canvas);
+        let result = persistence.commit_canvas_document_unit(
+            None,
+            &mut canvas,
+            1,
+            &crate::active_board::history::DocumentHistory::default(),
+        );
 
         assert_eq!(result, Ok(false));
         assert!(canvas.take_document_changes().stack_order.is_some());
@@ -593,14 +429,15 @@ mod tests {
     }
 
     #[test]
-    fn queued_document_persistence_is_durable_after_flush() {
+    fn queued_document_unit_is_durable_after_flush() {
         let root =
             std::env::temp_dir().join(format!("snappyref-queued-document-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let library = crate::library::storage::Library::initialize(root.clone()).unwrap();
+        let board_id = library.list_boards().unwrap()[0].id;
         let source = root.join("source.png");
         std::fs::write(&source, [255, 255, 255, 255]).unwrap();
-        let mut record = library
+        let record = library
             .persist_imported_image(
                 &source,
                 "image/png",
@@ -611,29 +448,34 @@ mod tests {
                 1.0,
             )
             .unwrap();
-        let replacement_source = root.join("replacement.png");
-        std::fs::write(&replacement_source, [0, 0, 0, 255]).unwrap();
-        let replacement = library
-            .persist_imported_image(
-                &replacement_source,
-                "image/png",
-                1,
-                1,
-                4,
-                eframe::egui::pos2(100.0, 100.0),
-                1.0,
-            )
-            .unwrap();
-        record.state.asset_id = replacement.state.asset_id;
-        record.state.geometry.center.x = 42.0;
-        record.state.geometry.center.y = 64.0;
-        let changes = crate::canvas::CanvasDocumentChanges {
-            updated_placements: vec![record.state.clone()],
-            ..Default::default()
-        };
+        let mut moved = record.clone();
+        moved.state.geometry.center.x = 42.0;
+        moved.state.geometry.center.y = 64.0;
+        let mut history = crate::active_board::history::DocumentHistory::default();
+        history.record_applied(
+            board_id,
+            crate::active_board::history::HistoryAction::document(
+                "Move".to_owned(),
+                vec![crate::active_board::history::HistoryChange {
+                    before: Some(record.clone()),
+                    after: Some(moved.clone()),
+                }],
+                Vec::new(),
+                None,
+            ),
+        );
         let mut persistence = DocumentPersistence::queued(library.clone());
 
-        persistence.enqueue_document_changes(changes).unwrap();
+        persistence
+            .enqueue_document_unit(
+                board_id,
+                crate::canvas::CanvasDocumentChanges {
+                    updated_placements: vec![moved.state.clone()],
+                    ..Default::default()
+                },
+                &history,
+            )
+            .unwrap();
         persistence.flush().unwrap();
 
         let stored = library
@@ -642,56 +484,8 @@ mod tests {
             .into_iter()
             .find(|placement| placement.state.id == record.state.id)
             .unwrap();
-        assert_eq!(stored.state.asset_id, replacement.state.asset_id);
         assert_eq!(stored.state.geometry.center.x, 42.0);
         assert_eq!(stored.state.geometry.center.y, 64.0);
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn queued_document_persistence_coalesces_item_updates_before_flush() {
-        let root = std::env::temp_dir().join(format!(
-            "snappyref-queued-document-coalesces-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
-        let library = crate::library::storage::Library::initialize(root.clone()).unwrap();
-        let source = root.join("source.png");
-        std::fs::write(&source, [255, 255, 255, 255]).unwrap();
-        let mut record = library
-            .persist_imported_image(
-                &source,
-                "image/png",
-                1,
-                1,
-                4,
-                eframe::egui::pos2(0.0, 0.0),
-                1.0,
-            )
-            .unwrap();
-        let mut persistence = DocumentPersistence::queued(library.clone());
-
-        record.state.geometry.center.x = 10.0;
-        persistence
-            .enqueue_document_changes(crate::canvas::CanvasDocumentChanges {
-                updated_placements: vec![record.state.clone()],
-                ..Default::default()
-            })
-            .unwrap();
-        record.state.geometry.center.x = 30.0;
-        record.state.geometry.center.y = 40.0;
-        persistence
-            .enqueue_document_changes(crate::canvas::CanvasDocumentChanges {
-                updated_placements: vec![record.state.clone()],
-                ..Default::default()
-            })
-            .unwrap();
-        persistence.flush().unwrap();
-
-        let stored = library.load_placements().unwrap();
-        assert_eq!(stored[0].state.geometry.center.x, 30.0);
-        assert_eq!(stored[0].state.geometry.center.y, 40.0);
 
         let _ = std::fs::remove_dir_all(root);
     }
