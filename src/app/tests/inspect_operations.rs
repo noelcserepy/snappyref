@@ -764,6 +764,11 @@ fn inspect_persistence_dropped_write_writes_artifact() {
         "the canvas keeps the accepted move while the write is dropped",
         approx(center_of(&harness, blue.state.id), first_move, 0.1),
     );
+    // Let the status pill finish its entrance before capturing it.
+    for _ in 0..4 {
+        std::thread::sleep(Duration::from_millis(50));
+        harness.step();
+    }
     scenario.capture_screen("screen-001-dropped-write-status", &mut harness);
 
     trigger_connection

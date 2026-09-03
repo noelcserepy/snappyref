@@ -132,18 +132,27 @@ pub(super) fn paint_sidebar_subcard(ui: &mut egui::Ui, add_contents: impl FnOnce
     });
 }
 
+pub(crate) struct SidebarHintResponse {
+    pub clicked: bool,
+    /// Painted pill rect; `None` while the sidebar is open and the hint hidden.
+    pub rect: Option<egui::Rect>,
+}
+
 pub(crate) fn show_sidebar_hint(
     ctx: &egui::Context,
     screen_rect: egui::Rect,
     sidebar_open: bool,
     active_board_name: &str,
-) -> bool {
+) -> SidebarHintResponse {
     if sidebar_open {
-        return false;
+        return SidebarHintResponse {
+            clicked: false,
+            rect: None,
+        };
     }
 
     let mut clicked = false;
-    egui::Area::new(egui::Id::new("sidebar_hint"))
+    let area = egui::Area::new(egui::Id::new("sidebar_hint"))
         .order(egui::Order::Foreground)
         .fixed_pos(egui::pos2(
             screen_rect.left() + crate::ui::theme::SPACE_4,
@@ -204,8 +213,75 @@ pub(crate) fn show_sidebar_hint(
                     clicked = hovered && ui.input(|input| input.pointer.primary_clicked());
                 });
         });
-    clicked
+    SidebarHintResponse {
+        clicked,
+        rect: Some(area.response.rect),
+    }
 }
+
+/// Transient status pill: the result of the last action or a storage error.
+/// Sits above the sidebar hint, or right of the open sidebar, in the same
+/// quiet muted-on-elevated style so it reads as chrome, not canvas. Call
+/// every frame so the entrance restarts cleanly for the next message.
+pub(crate) fn show_status_message(
+    ctx: &egui::Context,
+    screen_rect: egui::Rect,
+    sidebar_open: bool,
+    sidebar_hint_rect: Option<egui::Rect>,
+    status: Option<&str>,
+) {
+    let entrance =
+        crate::ui::motion::overlay_entrance(ctx, egui::Id::new("status_message"), status.is_some());
+    let Some(status) = status else {
+        return;
+    };
+    let anchor = match sidebar_hint_rect {
+        Some(hint) => egui::pos2(hint.left(), hint.top() - crate::ui::theme::SPACE_2),
+        None => egui::pos2(
+            screen_rect.left()
+                + crate::ui::theme::SPACE_4
+                + if sidebar_open {
+                    super::SIDEBAR_WIDTH
+                } else {
+                    0.0
+                },
+            screen_rect.bottom() - crate::ui::theme::SPACE_4,
+        ),
+    };
+    let settle = crate::ui::motion::settle_offset(entrance);
+    egui::Area::new(egui::Id::new("status_message"))
+        .order(egui::Order::Foreground)
+        .interactable(false)
+        .pivot(egui::Align2::LEFT_BOTTOM)
+        .fixed_pos(anchor + egui::vec2(0.0, settle))
+        .show(ctx, |ui| {
+            ui.set_opacity(entrance.clamp(0.0, 1.0));
+            egui::Frame::new()
+                .fill(crate::ui::theme::SURFACE_ELEVATED)
+                .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT))
+                .inner_margin(egui::Margin {
+                    left: 8,
+                    right: 8,
+                    top: 6,
+                    bottom: 6,
+                })
+                .show(ui, |ui| {
+                    // Long import paths and errors wrap instead of running
+                    // across the canvas.
+                    let galley = ui.painter().layout(
+                        status.to_owned(),
+                        egui::TextStyle::Small.resolve(ui.style()),
+                        crate::ui::theme::TEXT_MUTED,
+                        STATUS_MESSAGE_MAX_WIDTH,
+                    );
+                    let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+                    ui.painter()
+                        .galley(rect.min, galley, crate::ui::theme::TEXT_MUTED);
+                });
+        });
+}
+
+const STATUS_MESSAGE_MAX_WIDTH: f32 = 360.0;
 
 fn truncate_board_name(name: &str, max_chars: usize) -> String {
     if name.chars().count() <= max_chars {

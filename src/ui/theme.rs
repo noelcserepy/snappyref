@@ -130,6 +130,8 @@ pub const CAPTION_TRACKING: f32 = 1.0;
 ///   sidebar, context menus, and toolbars: opacity plus a tiny settle.
 /// - `MOTION_FEEDBACK_SECONDS` for hover/press/acquire feedback.
 /// - `MOTION_CONTENT_SECONDS` for fast canvas loading/hover fades.
+/// - `STATUS_MESSAGE_SECONDS` how long a transient status message
+///   (action result or storage error) stays visible bottom-left.
 pub const MOTION_REVEAL_SECONDS: f32 = 0.16;
 pub const MOTION_REVEAL_STAGGER_SECONDS: f32 = 0.02;
 pub const MOTION_REVEAL_MAX_STAGGER_STEPS: usize = 8;
@@ -142,6 +144,7 @@ pub const MOTION_PULSE_SECONDS: f32 = 0.16;
 pub const MOTION_SETTLE_DISTANCE: f32 = 2.0;
 pub const MOTION_PRESS_SCALE: f32 = 0.985;
 pub const MOTION_ENTER_SCALE: f32 = 0.985;
+pub const STATUS_MESSAGE_SECONDS: f32 = 4.0;
 pub const HOVER_HAIRLINE_OPACITY: f32 = 0.35;
 
 /// Editorial caption text: the quiet uppercase microcap used for section

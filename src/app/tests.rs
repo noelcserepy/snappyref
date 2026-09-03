@@ -7875,6 +7875,8 @@ fn test_app(library: Option<Library>) -> SnappyRefApp {
         pending_semantic_search_remove: false,
         context_menu_pos: None,
         status: String::new(),
+        status_shown: String::new(),
+        status_shown_since: Instant::now(),
         perf_log: None,
         perf_scenario: None,
         hover_preview_dimensions: std::collections::HashMap::new(),
