@@ -126,7 +126,7 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
         &library,
         1,
         1,
-        None,
+        Some(library.allocate_document_id()),
         tall_rgba,
         390,
         844,
@@ -148,7 +148,7 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
         &library,
         1,
         2,
-        None,
+        Some(library.allocate_document_id()),
         small_rgba,
         160,
         200,
@@ -183,7 +183,7 @@ fn clipboard_import_uses_configured_target_area() {
         &library,
         1,
         1,
-        None,
+        Some(library.allocate_document_id()),
         solid_rgba(1000, 1500),
         1000,
         1500,
@@ -211,15 +211,14 @@ fn clipboard_import_uses_configured_target_area() {
 fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active() {
     let root = temp_library_root("clipboard-import-target-board");
     let library = Library::initialize(root.clone()).unwrap();
-    let first = library.list_boards().unwrap()[0].clone();
-    seed_placement(&library, 1, 42.0, 24.0, 160, 120, 1.0);
+    seed_placement(&library, 42.0, 24.0, 160, 120, 1.0);
     let second = library.create_board("Second").unwrap();
 
     let loaded = match import_clipboard(
         &library,
         second.id,
         1,
-        None,
+        Some(library.allocate_document_id()),
         solid_rgba(160, 120),
         160,
         120,
@@ -241,14 +240,6 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
     assert_eq!(loaded.target_board_id, second.id);
     assert_eq!(loaded.placement.state.geometry.center.x, 42.0);
     assert_eq!(loaded.placement.state.geometry.center.y, 24.0);
-    assert_eq!(
-        library.load_placements_for_board(first.id).unwrap().len(),
-        1
-    );
-    assert_eq!(
-        library.load_placements_for_board(second.id).unwrap().len(),
-        1
-    );
 
     let _ = fs::remove_dir_all(root);
 }
@@ -270,7 +261,7 @@ fn empty_board_placement_uses_requested_anchor() {
 fn deterministic_candidate_order_prefers_right_before_below_on_tie() {
     let root = temp_library_root("placement-order");
     let library = Library::initialize(root.clone()).unwrap();
-    seed_placement(&library, 1, 0.0, 0.0, 100, 100, 1.0);
+    seed_placement(&library, 0.0, 0.0, 100, 100, 1.0);
 
     let arranged = arrange_rect_world(
         &library,
@@ -290,8 +281,8 @@ fn deterministic_candidate_order_prefers_right_before_below_on_tie() {
 fn blocked_right_side_candidate_falls_through_to_valid_lower_slot() {
     let root = temp_library_root("placement-blocked-right");
     let library = Library::initialize(root.clone()).unwrap();
-    seed_placement(&library, 1, 0.0, 0.0, 100, 100, 1.0);
-    seed_placement(&library, 2, 112.0, 0.0, 100, 100, 1.0);
+    seed_placement(&library, 0.0, 0.0, 100, 100, 1.0);
+    seed_placement(&library, 112.0, 0.0, 100, 100, 1.0);
 
     let arranged = arrange_rect_world(
         &library,
@@ -311,7 +302,7 @@ fn blocked_right_side_candidate_falls_through_to_valid_lower_slot() {
 fn square_scoring_beats_anchor_distance_for_adjacent_imports() {
     let root = temp_library_root("placement-square-scoring");
     let library = Library::initialize(root.clone()).unwrap();
-    seed_placement(&library, 1, 0.0, 0.0, 240, 80, 1.0);
+    seed_placement(&library, 0.0, 0.0, 240, 80, 1.0);
 
     let arranged = arrange_rect_world(
         &library,
@@ -331,7 +322,7 @@ fn square_scoring_beats_anchor_distance_for_adjacent_imports() {
 fn viewport_bounding_prefers_on_screen_candidate() {
     let root = temp_library_root("placement-viewport-bounded");
     let library = Library::initialize(root.clone()).unwrap();
-    seed_placement(&library, 1, 0.0, 0.0, 240, 80, 1.0);
+    seed_placement(&library, 0.0, 0.0, 240, 80, 1.0);
     let viewport = eframe::egui::Rect::from_min_max(
         eframe::egui::pos2(100.0, -60.0),
         eframe::egui::pos2(260.0, 60.0),
@@ -356,35 +347,13 @@ fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
     let root = temp_library_root("placement-custom-gap");
     let library = Library::initialize(root.clone()).unwrap();
     let gap = 8.0;
-
-    let first = match import_clipboard(
-        &library,
-        1,
-        1,
-        None,
-        solid_rgba(200, 200),
-        200,
-        200,
-        eframe::egui::Pos2::ZERO,
-        None,
-        test_viewport_world(),
-        usize::MAX,
-        CanvasImageSettings::default(),
-        false,
-        DEFAULT_PLACEMENT_TARGET_AREA,
-        gap,
-        None,
-        None,
-    ) {
-        ImagePrepResult::Loaded(loaded) => loaded,
-        other => panic!("expected first loaded image, got {other:?}"),
-    };
+    seed_placement(&library, 0.0, 0.0, 200, 200, 1.0);
 
     let second = match import_clipboard(
         &library,
         1,
         2,
-        None,
+        Some(library.allocate_document_id()),
         solid_rgba(200, 200),
         200,
         200,
@@ -404,10 +373,7 @@ fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
     };
 
     let first_rect = eframe::egui::Rect::from_center_size(
-        eframe::egui::pos2(
-            first.placement.state.geometry.center.x,
-            first.placement.state.geometry.center.y,
-        ),
+        eframe::egui::Pos2::ZERO,
         eframe::egui::vec2(200.0, 200.0),
     );
     let second_rect = eframe::egui::Rect::from_center_size(
@@ -427,14 +393,14 @@ fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
 fn reserved_world_is_persisted_without_worker_relayout() {
     let root = temp_library_root("placement-reserved-world");
     let library = Library::initialize(root.clone()).unwrap();
-    seed_placement(&library, 1, 0.0, 0.0, 100, 100, 1.0);
+    seed_placement(&library, 0.0, 0.0, 100, 100, 1.0);
     let reserved_world = eframe::egui::pos2(240.0, 36.0);
 
     let loaded = match import_clipboard(
         &library,
         1,
         2,
-        None,
+        Some(library.allocate_document_id()),
         solid_rgba(100, 100),
         100,
         100,
@@ -462,14 +428,14 @@ fn reserved_world_is_persisted_without_worker_relayout() {
 fn overlapping_reserved_world_is_preserved_when_persisting() {
     let root = temp_library_root("placement-preserved-reserved-world");
     let library = Library::initialize(root.clone()).unwrap();
-    seed_placement(&library, 1, 0.0, 0.0, 100, 100, 1.0);
+    seed_placement(&library, 0.0, 0.0, 100, 100, 1.0);
     let reserved_world = eframe::egui::Pos2::ZERO;
 
     let loaded = match import_clipboard(
         &library,
         1,
         2,
-        None,
+        Some(library.allocate_document_id()),
         solid_rgba(100, 100),
         100,
         100,
@@ -507,7 +473,7 @@ fn url_import_downloads_and_persists_original_bytes() {
         &library,
         1,
         Some(7),
-        None,
+        Some(library.allocate_document_id()),
         &url,
         eframe::egui::Pos2::ZERO,
         None,
@@ -609,12 +575,6 @@ fn path_import_reuses_existing_exact_asset_and_removes_duplicate_original() {
         .unwrap();
     assert_eq!(live_assets, 1);
 
-    let placements = library.load_placements().unwrap();
-    assert_eq!(placements.len(), 2);
-    assert!(placements.iter().all(|placement| {
-        placement.state.asset_id == Some(first.placement.require_loaded_asset().id)
-    }));
-
     let _ = fs::remove_dir_all(root);
 }
 
@@ -630,7 +590,7 @@ fn url_import_preserves_svg_as_vector_source() {
         &library,
         1,
         Some(9),
-        None,
+        Some(library.allocate_document_id()),
         &url,
         eframe::egui::Pos2::ZERO,
         None,
@@ -1029,7 +989,7 @@ fn traced_clipboard_import_populates_non_negative_timings() {
         &library,
         1,
         1,
-        None,
+        Some(library.allocate_document_id()),
         solid_rgba(64, 64),
         64,
         64,
@@ -1519,17 +1479,17 @@ fn test_viewport_world() -> eframe::egui::Rect {
     )
 }
 
-fn seed_placement(library: &Library, id: i64, x: f32, y: f32, width: u32, height: u32, scale: f32) {
+fn seed_placement(library: &Library, x: f32, y: f32, width: u32, height: u32, scale: f32) {
     let stored_path = library
         .store_rgba_image(
-            &format!("seed-{id}"),
+            &format!("seed-{x}-{y}"),
             &solid_rgba(width, height),
             width,
             height,
         )
         .unwrap();
     let file_size = fs::metadata(&stored_path).unwrap().len();
-    let placement = library
+    library
         .persist_imported_image(
             &stored_path,
             image::ImageFormat::Png.to_mime_type(),
@@ -1540,7 +1500,6 @@ fn seed_placement(library: &Library, id: i64, x: f32, y: f32, width: u32, height
             scale,
         )
         .unwrap();
-    assert_eq!(placement.state.id, id);
 }
 
 fn test_render_state() -> Option<eframe::egui_wgpu::RenderState> {

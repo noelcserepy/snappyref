@@ -8,6 +8,9 @@ use crate::data::{
 };
 use crate::jobs::PreparedPlacementImage;
 use crate::library::storage::Library;
+use crate::placement::content_resolution::{
+    ContentResolutionTicket, FailedContentResolutionOutcome,
+};
 #[cfg(feature = "semantic-search")]
 use crate::search::palette::{
     PALETTE_WIDTH, SEARCH_OVERLAY_TOP_MARGIN, search_result_grid_content_height,
@@ -554,6 +557,7 @@ fn delete_selected_annotation_records_undo_history() {
     app.canvas.select_content(&[], &[annotation.id]);
 
     app.delete_selected_items_from_board(test_screen_rect());
+    app.flush_persistence();
     assert!(library.load_canvas_annotations().unwrap().is_empty());
 
     app.undo_document_history(&ctx);
@@ -598,6 +602,7 @@ fn undo_delete_annotation_patches_active_canvas_without_board_reload() {
         Some(annotation)
     );
     assert_eq!(app.status, "Undid Deleted 1 annotation");
+    app.flush_persistence();
 
     let _ = fs::remove_dir_all(root);
 }
@@ -1353,6 +1358,74 @@ fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
     ];
     assert_eq!(app.canvas.canvas_stack_order(), expected);
     assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn undo_after_persisted_duplicate_removes_the_created_placement() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-duplicate-undo-durable");
+    let library = Library::initialize(root.clone()).unwrap();
+    let image_path = library
+        .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let source_item = library
+        .persist_imported_image(
+            &image_path,
+            "image/png",
+            1,
+            1,
+            4,
+            egui::pos2(10.0, 20.0),
+            1.0,
+        )
+        .unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    app.canvas.add_prepared_placement_image(
+        &ctx,
+        PreparedPlacementImage {
+            target_board_id: 1,
+            queue_id: None,
+            placement: source_item.clone(),
+            preview_rgba: vec![255, 0, 0, 255],
+            preview_width: 1,
+            preview_height: 1,
+            animated_preview: None,
+            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
+            loaded_lod: crate::data::CanvasImageLod::Working,
+            existing_load_diagnostics: None,
+            origin: crate::jobs::ImportOrigin::Existing,
+            trace: None,
+        },
+    );
+    app.canvas
+        .set_canvas_stack_order(vec![CanvasStackItem::Placement(source_item.state.id)]);
+    app.canvas.select_placements(&[source_item.state.id]);
+
+    app.duplicate_selection_with_gap();
+    app.flush_persistence();
+    assert_eq!(library.load_placements().unwrap().len(), 2);
+
+    app.undo_document_history(&ctx);
+    app.flush_persistence();
+
+    let items = library.load_placements().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].state.id, source_item.state.id);
+    assert_eq!(
+        app.canvas
+            .committed_placements()
+            .iter()
+            .map(|placement| placement.state.id)
+            .collect::<Vec<_>>(),
+        vec![source_item.state.id]
+    );
+    assert_eq!(
+        library.load_canvas_stack_order().unwrap(),
+        vec![CanvasStackItem::Placement(source_item.state.id)]
+    );
 
     let _ = fs::remove_dir_all(root);
 }
@@ -2404,22 +2477,19 @@ fn create_undo_persists_reassigned_redo_history_with_the_archive() {
     let root = temp_library_root("snappyref-create-undo-atomic-history");
     let library = Library::initialize(root.clone()).unwrap();
     let original = library.list_boards().unwrap()[0].clone();
-    let created = library.create_board("Created").unwrap();
-    library.set_active_board(created.id).unwrap();
-    let created_document = library.load_board_document(created.id).unwrap();
 
     let mut app = test_app(Some(library.clone()));
-    app.active_board_id = created.id;
+    app.active_board_id = original.id;
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
-    app.document_history.record_applied(
-        created.id,
-        super::HistoryAction::Board(super::BoardLifecycleHistoryAction::Created {
-            document: created_document,
-            active_before: original.id,
-        }),
-    );
-    app.queue_history_snapshot();
+    app.create_and_switch_board(false);
     app.flush_persistence();
+    let created = library
+        .list_boards()
+        .unwrap()
+        .into_iter()
+        .find(|board| board.id != original.id)
+        .unwrap();
+    assert_eq!(app.active_board_id, created.id);
 
     let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
     trigger_connection
@@ -2526,8 +2596,18 @@ fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement()
             None,
         ),
     );
-    app.queue_history_snapshot();
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    app.document_persistence
+        .enqueue_document_unit(
+            second.id,
+            crate::canvas::CanvasDocumentChanges {
+                updated_placements: vec![loading.state.clone()],
+                ..Default::default()
+            },
+            &app.document_history,
+        )
+        .unwrap();
+    app.flush_persistence();
 
     let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
     trigger_connection
@@ -2737,6 +2817,80 @@ fn deleting_active_board_restores_accepted_fallback_content_while_persistence_re
     assert_eq!(active_after_delete, fallback.id);
     assert_eq!(fallback_name_after_delete, "Accepted fallback");
     assert_eq!(fallback_annotations_after_delete, vec![annotation]);
+}
+
+#[test]
+fn undoing_board_create_reopens_accepted_previous_board_while_persistence_retries() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-undo-create-accepted-content");
+    let library = Library::initialize(root.clone()).unwrap();
+    let previous = library.list_boards().unwrap()[0].clone();
+    let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
+    trigger_connection
+        .execute_batch(
+            "CREATE TRIGGER fail_board_history
+             BEFORE INSERT ON board_document_history
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected Board-history failure');
+             END;",
+        )
+        .unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+
+    app.handle_board_action(Some(crate::ui::sidebar::SidebarBoardAction::RenameBoard(
+        previous.id,
+        "Accepted previous".to_owned(),
+    )));
+    let stack_before = app.canvas.canvas_stack_order();
+    let annotation = library.new_canvas_annotation(
+        CanvasAnnotationKind::Textbox,
+        egui::pos2(40.0, 60.0),
+        egui::pos2(140.0, 100.0),
+        "accepted note".to_owned(),
+        CanvasTextSize::M,
+        CanvasStrokeWidth::M,
+        crate::data::CanvasAnnotationColor::Sky,
+        true,
+    );
+    app.canvas.add_annotation(annotation.clone());
+    app.canvas.mark_annotation_for_persistence(annotation.id);
+    app.document_history.record_applied(
+        previous.id,
+        super::HistoryAction::document(
+            "Added textbox".to_owned(),
+            Vec::new(),
+            vec![super::HistoryChange {
+                before: None,
+                after: Some(annotation.clone()),
+            }],
+            Some(super::HistoryChange {
+                before: Some(stack_before),
+                after: Some(app.canvas.canvas_stack_order()),
+            }),
+        ),
+    );
+    app.persist_recorded_canvas_changes();
+    app.create_and_switch_board(false);
+    assert_ne!(app.active_board_id, previous.id);
+    std::thread::sleep(Duration::from_millis(100));
+
+    app.undo_document_history(&ctx);
+
+    let active_after_undo = app.active_board_id;
+    let previous_name_after_undo = app.board_summaries()[0].board.name.clone();
+    let previous_annotations_after_undo = app.canvas.annotations();
+
+    trigger_connection
+        .execute_batch("DROP TRIGGER fail_board_history")
+        .unwrap();
+    app.flush_persistence();
+    drop(app);
+    let _ = fs::remove_dir_all(root);
+
+    assert_eq!(active_after_undo, previous.id);
+    assert_eq!(previous_name_after_undo, "Accepted previous");
+    assert_eq!(previous_annotations_after_undo, vec![annotation]);
 }
 
 #[test]
@@ -4884,6 +5038,7 @@ fn inspect_board_lifecycle_undo_redo_writes_artifact() {
     scenario.action("pointer click New board", create_rect.center());
     inspect_click_at(&harness, create_rect.center(), egui::Modifiers::NONE);
     harness.step();
+    harness.state_mut().flush_persistence();
     let created = library
         .list_boards()
         .unwrap()
@@ -6966,7 +7121,7 @@ fn accepted_loading_batch_is_one_history_action_despite_out_of_order_results() {
     let placement_ids = app.canvas.selected_placement_ids();
     assert_eq!(placement_ids.len(), 3);
 
-    let mut loaded = test_loaded_item(placement_ids[2], app.active_board_id);
+    let mut loaded = persisted_loaded_item(&library, placement_ids[2], app.active_board_id);
     loaded.queue_id = Some(3);
     loaded.origin = crate::jobs::ImportOrigin::Path;
     let loaded_result = crate::jobs::ImagePrepResult::Loaded(loaded);
@@ -7008,7 +7163,7 @@ fn accepted_loading_batch_is_one_history_action_despite_out_of_order_results() {
             .all(|placement_id| app.canvas.placement_for_id(*placement_id).is_none())
     );
 
-    let mut late_loaded = test_loaded_item(placement_ids[1], app.active_board_id);
+    let mut late_loaded = persisted_loaded_item(&library, placement_ids[1], app.active_board_id);
     late_loaded.queue_id = Some(2);
     late_loaded.origin = crate::jobs::ImportOrigin::Path;
     let late_result = crate::jobs::ImagePrepResult::Loaded(late_loaded);
@@ -7061,24 +7216,28 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
     app.active_board_id = second.id;
     let mut layout = Vec::new();
 
-    let known = app.reserve_import(
-        &mut layout,
-        Some((100, 80)),
-        egui::Pos2::ZERO,
-        test_viewport_world(),
-        crate::data::ContentResolutionSource::Unknown {
-            description: "known test import".to_owned(),
-        },
-    );
-    let unknown = app.reserve_import(
-        &mut layout,
-        None,
-        egui::pos2(200.0, 0.0),
-        test_viewport_world(),
-        crate::data::ContentResolutionSource::Unknown {
-            description: "unknown test import".to_owned(),
-        },
-    );
+    let known = app
+        .reserve_import(
+            &mut layout,
+            Some((100, 80)),
+            egui::Pos2::ZERO,
+            test_viewport_world(),
+            crate::data::ContentResolutionSource::Unknown {
+                description: "known test import".to_owned(),
+            },
+        )
+        .unwrap();
+    let unknown = app
+        .reserve_import(
+            &mut layout,
+            None,
+            egui::pos2(200.0, 0.0),
+            test_viewport_world(),
+            crate::data::ContentResolutionSource::Unknown {
+                description: "unknown test import".to_owned(),
+            },
+        )
+        .unwrap();
 
     assert_eq!(known.target_board_id, second.id);
     assert_eq!(known.queue_id, 1);
@@ -7089,6 +7248,61 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
     assert!(unknown.placement_id.is_some());
     assert_eq!(unknown.reserved_world, Some(egui::pos2(200.0, 0.0)));
     assert_eq!(layout.len(), 2);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn failed_import_fails_the_accepted_placement_before_it_is_durable() {
+    let root = temp_library_root("snappyref-failed-import-accepted");
+    let library = Library::initialize(root.clone()).unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    let reservation = app
+        .reserve_import(
+            &mut Vec::new(),
+            Some((100, 80)),
+            egui::Pos2::ZERO,
+            test_viewport_world(),
+            crate::data::ContentResolutionSource::Unknown {
+                description: "doomed import".to_owned(),
+            },
+        )
+        .unwrap();
+    let placement_id = reservation.placement_id.unwrap();
+
+    // The creation unit may still be queued; failure handling must not
+    // depend on the row existing.
+    app.apply_failed_import_outcome(FailedContentResolutionOutcome {
+        resolution_ticket: Some(ContentResolutionTicket {
+            target_board_id: reservation.target_board_id,
+            queue_id: reservation.queue_id,
+        }),
+        placement_id: Some(placement_id),
+        target_board_id: None,
+        status: "decode failed".to_owned(),
+    });
+
+    let record = app.canvas.placement_for_id(placement_id).unwrap();
+    assert!(
+        matches!(record.content, crate::data::PlacementContent::Failed { .. }),
+        "{:?}",
+        record.content
+    );
+    assert_eq!(app.canvas.selected_placement_ids(), vec![placement_id]);
+    assert_eq!(app.status, "decode failed");
+
+    app.flush_persistence();
+    let stored = library
+        .load_placements()
+        .unwrap()
+        .into_iter()
+        .find(|placement| placement.state.id == placement_id)
+        .unwrap();
+    assert!(matches!(
+        stored.content,
+        crate::data::PlacementContent::Failed { .. }
+    ));
 
     let _ = fs::remove_dir_all(root);
 }
@@ -7120,19 +7334,21 @@ fn accepted_import_for_inactive_board_keeps_history_on_target_board() {
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
-    let reservation = app.reserve_import(
-        &mut Vec::new(),
-        Some((1, 1)),
-        egui::Pos2::ZERO,
-        test_viewport_world(),
-        crate::data::ContentResolutionSource::Unknown {
-            description: "inactive Board import".to_owned(),
-        },
-    );
+    let reservation = app
+        .reserve_import(
+            &mut Vec::new(),
+            Some((1, 1)),
+            egui::Pos2::ZERO,
+            test_viewport_world(),
+            crate::data::ContentResolutionSource::Unknown {
+                description: "inactive Board import".to_owned(),
+            },
+        )
+        .unwrap();
     let placement_id = reservation.placement_id.unwrap();
     app.switch_to_board(second.id);
 
-    let mut loaded = test_loaded_item(placement_id, first.id);
+    let mut loaded = persisted_loaded_item(&library, placement_id, first.id);
     loaded.queue_id = Some(reservation.queue_id);
     loaded.origin = crate::jobs::ImportOrigin::Path;
     app.integrate_loaded_import(&ctx, loaded);
@@ -7160,6 +7376,42 @@ fn accepted_import_for_inactive_board_keeps_history_on_target_board() {
     assert_eq!(app.status, "Redid Import image");
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn delayed_image_load_preserves_geometry_edited_after_request() {
+    let ctx = egui::Context::default();
+    let mut app = test_app(None);
+    let mut initial = test_loaded_item(42, app.active_board_id);
+    initial.queue_id = None;
+    initial.origin = crate::jobs::ImportOrigin::Existing;
+    app.integrate_loaded_import(&ctx, initial);
+
+    // The worker captured this placement before the user moved and resized it.
+    let mut delayed = test_loaded_item(42, app.active_board_id);
+    delayed.queue_id = None;
+    delayed.origin = crate::jobs::ImportOrigin::Existing;
+    delayed.loaded_lod = crate::data::CanvasImageLod::Detail;
+    app.canvas.select_placements(&[42]);
+    assert_eq!(
+        app.canvas.move_selected_placement_group_to_center(
+            egui::pos2(120.0, 80.0),
+            test_viewport_world(),
+            0.0,
+        ),
+        1
+    );
+    assert_eq!(app.canvas.apply_target_area_to_selected_placements(4.0), 1);
+    let accepted_geometry = app.canvas.placement_for_id(42).unwrap().state.geometry;
+    assert_ne!(accepted_geometry, delayed.placement.state.geometry);
+
+    app.integrate_loaded_import(&ctx, delayed);
+
+    assert_eq!(
+        app.canvas.placement_for_id(42).unwrap().state.geometry,
+        accepted_geometry,
+        "a delayed image load must not overwrite newer canvas geometry"
+    );
 }
 
 #[test]
@@ -7301,6 +7553,7 @@ fn raw_dropped_file_enqueues_external_import() {
             .is_empty()
     );
     assert_eq!(harness.state().content_resolution.pending_len(), 1);
+    harness.state_mut().flush_persistence();
     let items = library.load_placements().unwrap();
     assert_eq!(items.len(), 1);
     let screen_rect = test_screen_rect();
@@ -8035,15 +8288,18 @@ impl InspectScenario {
         let mut layout = Vec::new();
         let mut imports = Vec::new();
         for sample in samples {
-            let reservation = harness.state_mut().reserve_import(
-                &mut layout,
-                Some((sample.width, sample.height)),
-                sample.center,
-                test_viewport_world(),
-                crate::data::ContentResolutionSource::Unknown {
-                    description: sample.name.to_owned(),
-                },
-            );
+            let reservation = harness
+                .state_mut()
+                .reserve_import(
+                    &mut layout,
+                    Some((sample.width, sample.height)),
+                    sample.center,
+                    test_viewport_world(),
+                    crate::data::ContentResolutionSource::Unknown {
+                        description: sample.name.to_owned(),
+                    },
+                )
+                .unwrap();
             let placement_id = reservation
                 .placement_id
                 .expect("sample import should create loading placement");
@@ -8599,6 +8855,40 @@ fn test_loaded_item(placement_id: i64, target_board_id: i64) -> PreparedPlacemen
         existing_load_diagnostics: None,
         origin: crate::jobs::ImportOrigin::Clipboard,
         trace: None,
+    }
+}
+
+/// Like `test_loaded_item`, but the Asset really exists in `library`, so the
+/// queued Document unit for the Placement can satisfy the asset foreign key.
+fn persisted_loaded_item(
+    library: &Library,
+    placement_id: i64,
+    target_board_id: i64,
+) -> PreparedPlacementImage {
+    let stored = library
+        .store_rgba_image(
+            &format!("fixture-{placement_id}"),
+            &[255, 255, 255, 255],
+            1,
+            1,
+        )
+        .unwrap();
+    let placement = library
+        .persist_imported_image_resolving_placement(
+            target_board_id,
+            Some(placement_id),
+            &stored,
+            "image/png",
+            1,
+            1,
+            4,
+            eframe::egui::pos2(0.0, 0.0),
+            1.0,
+        )
+        .unwrap();
+    PreparedPlacementImage {
+        placement,
+        ..test_loaded_item(placement_id, target_board_id)
     }
 }
 

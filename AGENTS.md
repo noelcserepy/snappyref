@@ -21,7 +21,7 @@ module interface, tests, inspect scenarios, repo-local skills, or Telos memory.
 Any remaining `docs/adr/` files are carryover notes to absorb or delete, not the
 normal project memory source.
 
-Use `grill-with-docs` when language, boundaries, lifecycle, storage, release/update behavior, or architecture decisions are unclear. Ask one question at a time; if the repo answers the question, inspect the repo instead of asking.
+When language, boundaries, lifecycle, storage, release/update behavior, or architecture decisions are unclear, ask one question at a time; if the repo answers the question, inspect the repo instead of asking.
 
 ## Repo-Local Skills
 

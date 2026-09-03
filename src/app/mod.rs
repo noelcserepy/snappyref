@@ -1021,7 +1021,7 @@ impl SnappyRefApp {
             crate::data::ContentResolutionSource::ExternalPath {
                 path: path.to_string_lossy().into_owned(),
             },
-        );
+        )?;
         let request = crate::placement::content_resolution::import_path_request(
             path.clone(),
             reservation,
@@ -1659,32 +1659,12 @@ impl SnappyRefApp {
             board_ids[deleted_index + 1]
         };
         let active_document = if active_before != active_after {
-            match library.load_board_document(active_after) {
-                Ok(mut document) => {
-                    self.document_history
-                        .apply_accepted_document_state(active_after, &mut document);
-                    Some(document)
+            match self.accepted_board_document(library, active_after) {
+                Ok(document) => Some(document),
+                Err(error) => {
+                    self.status = error;
+                    return;
                 }
-                Err(error) => match self
-                    .document_history
-                    .accepted_document_for_created_board(active_after)
-                {
-                    Some(mut document) => {
-                        if let Some(board) = self
-                            .board_summaries()
-                            .into_iter()
-                            .find(|summary| summary.board.id == active_after)
-                            .map(|summary| summary.board)
-                        {
-                            document.board = board;
-                        }
-                        Some(document)
-                    }
-                    None => {
-                        self.status = error;
-                        return;
-                    }
-                },
             }
         } else {
             None
@@ -2284,7 +2264,7 @@ impl SnappyRefApp {
         desired_world: egui::Pos2,
         viewport_world: egui::Rect,
         source: crate::data::ContentResolutionSource,
-    ) -> ContentResolutionReservation {
+    ) -> Result<ContentResolutionReservation, String> {
         let _ = viewport_world;
         self.create_committed_loading_import(
             layout,
@@ -2302,16 +2282,13 @@ impl SnappyRefApp {
         layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
         intent: crate::placement::creation::SourceIntent,
         center_world: egui::Pos2,
-    ) -> ContentResolutionReservation {
+    ) -> Result<ContentResolutionReservation, String> {
         let Some(library) = &self.library else {
-            self.status = "Storage unavailable".to_owned();
-            return self
-                .content_resolution
-                .reserve_untracked(self.active_board_id, center_world);
+            return Err("Storage unavailable".to_owned());
         };
 
         let settings = self.placement_creation_settings();
-        match crate::placement::creation::create_committed_loading_placement(
+        let mut batch = crate::placement::creation::create_committed_loading_placement(
             library,
             &mut self.content_resolution,
             &mut self.canvas,
@@ -2320,25 +2297,17 @@ impl SnappyRefApp {
             intent,
             center_world,
             settings,
-        ) {
-            Ok(mut batch) => {
-                if let Some(history_action) = batch.history_action.take() {
-                    self.document_history
-                        .record_applied(self.active_board_id, history_action);
-                }
-                self.persist_recorded_canvas_changes();
-                batch
-                    .created
-                    .pop()
-                    .expect("single committed creation should return one placement")
-                    .reservation
-            }
-            Err(error) => {
-                self.status = error;
-                self.content_resolution
-                    .reserve_untracked(self.active_board_id, center_world)
-            }
+        )?;
+        if let Some(history_action) = batch.history_action.take() {
+            self.document_history
+                .record_applied(self.active_board_id, history_action);
         }
+        self.persist_recorded_canvas_changes();
+        Ok(batch
+            .created
+            .pop()
+            .expect("single committed creation should return one placement")
+            .reservation)
     }
 
     fn remove_import_reservation(&mut self, reservation: ContentResolutionReservation) {
@@ -2685,13 +2654,19 @@ impl SnappyRefApp {
                 return;
             }
         };
-        let reservation = self.reserve_import(
+        let reservation = match self.reserve_import(
             &mut layout,
             Some((width, height)),
             desired_world,
             viewport_world,
             crate::data::ContentResolutionSource::Clipboard,
-        );
+        ) {
+            Ok(reservation) => reservation,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
 
         if let Err(error) = self
             .import_worker
@@ -2739,13 +2714,19 @@ impl SnappyRefApp {
                 return true;
             }
         };
-        let reservation = self.reserve_import(
+        let reservation = match self.reserve_import(
             &mut layout,
             Some((360, 240)),
             desired_world,
             viewport_world,
             crate::data::ContentResolutionSource::ExternalUrl { url: url.clone() },
-        );
+        ) {
+            Ok(reservation) => reservation,
+            Err(error) => {
+                self.status = error;
+                return true;
+            }
+        };
 
         if let Err(error) = self
             .import_worker
@@ -3688,21 +3669,32 @@ impl SnappyRefApp {
 
     fn apply_loaded_import_outcome(&mut self, outcome: LoadedContentResolutionOutcome) {
         let finished = self.content_resolution.finish_loaded_import(outcome);
-        if let (Some(ticket), Some(log)) = (finished.resolution_ticket, finished.log.as_ref())
-            && self
+        if let (Some(ticket), Some(log)) = (finished.resolution_ticket, finished.log.as_ref()) {
+            let mut placement = log.placement.clone();
+            // An inactive Board has no canvas; its accepted history holds the
+            // newest geometry.
+            if ticket.target_board_id != self.active_board_id
+                && let Some(accepted) = self
+                    .document_history
+                    .accepted_placement(ticket.target_board_id, placement.state.id)
+            {
+                placement.adopt_geometry_of(&accepted);
+            }
+            if self
                 .document_history
-                .update_accepted_placement(ticket.target_board_id, log.placement.clone())
-        {
-            let changes = crate::canvas::CanvasDocumentChanges {
-                updated_placements: vec![log.placement.state.clone()],
-                ..Default::default()
-            };
-            if let Err(error) = self.document_persistence.enqueue_document_unit(
-                ticket.target_board_id,
-                changes,
-                &self.document_history,
-            ) {
-                self.status = error;
+                .update_accepted_placement(ticket.target_board_id, placement.clone())
+            {
+                let changes = crate::canvas::CanvasDocumentChanges {
+                    updated_placements: vec![placement.state],
+                    ..Default::default()
+                };
+                if let Err(error) = self.document_persistence.enqueue_document_unit(
+                    ticket.target_board_id,
+                    changes,
+                    &self.document_history,
+                ) {
+                    self.status = error;
+                }
             }
         }
         let resolution_queue_id = finished.resolution_ticket.map(|ticket| ticket.queue_id);
@@ -3823,12 +3815,7 @@ impl SnappyRefApp {
     }
 
     fn apply_failed_import_outcome(&mut self, outcome: FailedContentResolutionOutcome) {
-        let finished = self.content_resolution.finish_failed_import(
-            self.library.as_ref(),
-            &mut self.canvas,
-            self.active_board_id,
-            outcome,
-        );
+        let finished = self.content_resolution.finish_failed_import(outcome);
         if let (Some(board_id), Some(placement_id)) =
             (finished.batch_target_board_id, finished.placement_id)
             && let Some(placement) = self.document_history.fail_accepted_placement(
@@ -3942,6 +3929,37 @@ impl SnappyRefApp {
         }
     }
 
+    /// The Board document as accepted so far: durable rows (or the accepted
+    /// creation while the Board is not durable yet) with queued history
+    /// applied on top, so opening a Board never shows state that durability
+    /// still lags behind.
+    fn accepted_board_document(
+        &self,
+        library: &crate::library::storage::Library,
+        board_id: i64,
+    ) -> Result<crate::data::BoardDocumentSnapshot, String> {
+        let mut document = match library.load_board_document(board_id) {
+            Ok(mut document) => {
+                self.document_history
+                    .apply_accepted_document_state(board_id, &mut document);
+                document
+            }
+            Err(error) => self
+                .document_history
+                .accepted_document_for_created_board(board_id)
+                .ok_or(error)?,
+        };
+        if let Some(board) = self
+            .board_summaries()
+            .into_iter()
+            .find(|summary| summary.board.id == board_id)
+            .map(|summary| summary.board)
+        {
+            document.board = board;
+        }
+        Ok(document)
+    }
+
     fn apply_board_lifecycle_history(
         &mut self,
         ctx: &egui::Context,
@@ -3960,7 +3978,7 @@ impl SnappyRefApp {
                 },
                 HistoryDirection::Backward,
             ) => {
-                let active_document = library.load_board_document(*active_before)?;
+                let active_document = self.accepted_board_document(&library, *active_before)?;
                 self.document_persistence.apply_board_lifecycle_unit(
                     Some(&library),
                     crate::active_board::persistence::BoardLifecyclePersistence::Archive {
@@ -4050,7 +4068,7 @@ impl SnappyRefApp {
                 HistoryDirection::Forward,
             ) => {
                 let active_document = if active_before_replay != *active_after {
-                    Some(library.load_board_document(*active_after)?)
+                    Some(self.accepted_board_document(&library, *active_after)?)
                 } else {
                     None
                 };
@@ -4730,16 +4748,6 @@ impl SnappyRefApp {
         self.pending_user_session_save_at = None;
     }
 
-    #[cfg(test)]
-    fn queue_history_snapshot(&mut self) {
-        if let Err(error) = self
-            .document_persistence
-            .persist_history(self.library.as_ref(), &self.document_history)
-        {
-            self.status = error;
-        }
-    }
-
     fn flush_persistence(&mut self) {
         if let Err(error) = self.document_persistence.flush() {
             self.status = error;
@@ -5401,6 +5409,9 @@ impl eframe::App for SnappyRefApp {
         self.drive_embedding_backfill(ui.ctx());
         self.handle_pending_annotation_requests();
         self.persist_canvas_changes_debounced(ui.ctx());
+        if let Some(error) = self.document_persistence.take_error() {
+            self.status = error;
+        }
         let settled_idle = self.app_settled_idle();
         self.update_service.tick(settled_idle);
         self.drive_update_smoke(ui.ctx(), settled_idle);

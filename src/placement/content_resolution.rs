@@ -3,10 +3,8 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
-use crate::canvas::CanvasState;
 use crate::data::Placement;
 use crate::jobs::{ExistingLoadDiagnostics, ImagePrepTrace, ImportOrigin};
-use crate::library::storage::Library;
 
 // Content Resolution correlates async worker results back to the Placement
 // that reserved a canvas position. The queue id is the runtime handle; the
@@ -170,19 +168,6 @@ impl ContentResolutionRuntime {
         }
     }
 
-    pub(crate) fn reserve_untracked(
-        &mut self,
-        target_board_id: i64,
-        reserved_world: egui::Pos2,
-    ) -> ContentResolutionReservation {
-        ContentResolutionReservation {
-            target_board_id,
-            queue_id: self.next_queue_id(),
-            placement_id: None,
-            reserved_world: Some(reserved_world),
-        }
-    }
-
     pub(crate) fn cancel(&mut self, reservation: ContentResolutionReservation) {
         self.pending.remove(&reservation.queue_id);
     }
@@ -246,9 +231,6 @@ impl ContentResolutionRuntime {
 
     pub(crate) fn finish_failed_import(
         &mut self,
-        _library: Option<&Library>,
-        _canvas: &mut CanvasState,
-        _active_board_id: i64,
         outcome: FailedContentResolutionOutcome,
     ) -> FinishedFailedContentResolution {
         let target_board_id = outcome
@@ -264,18 +246,6 @@ impl ContentResolutionRuntime {
             target_board_id.or(outcome.target_board_id),
             outcome.placement_id,
         );
-        #[cfg(test)]
-        if let (Some(library), Some(placement_id)) = (_library, completion.placement_id) {
-            let failed_board_id = completion.target_board_id.unwrap_or(_active_board_id);
-            if let Ok(Some(placement)) =
-                library.mark_placement_failed(failed_board_id, placement_id, outcome.status.clone())
-                && failed_board_id == _active_board_id
-                && _canvas.placement_for_id(placement_id).is_some()
-            {
-                _canvas.add_unresolved_placement(placement);
-                _canvas.select_placements(&[placement_id]);
-            }
-        }
         FinishedFailedContentResolution {
             resolution_ticket: outcome.resolution_ticket,
             batch_target_board_id: completion.target_board_id,
@@ -494,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_import_marks_correlated_loading_placement_failed() {
+    fn failed_import_resolves_correlated_reservation() {
         let root = temp_root("snappyref-content-resolution-failure");
         let library = crate::library::storage::Library::initialize(root.clone()).unwrap();
         let loading = library
@@ -509,43 +479,23 @@ mod tests {
                 Some("Queued".to_owned()),
             )
             .unwrap();
-        let mut canvas = crate::canvas::CanvasState::default();
-        canvas.add_unresolved_placement(loading.clone());
         let mut runtime = super::ContentResolutionRuntime::new();
         let reservation = runtime.reserve_placement(1, loading.state.id, eframe::egui::Pos2::ZERO);
 
-        let finished = runtime.finish_failed_import(
-            Some(&library),
-            &mut canvas,
-            1,
-            super::FailedContentResolutionOutcome {
-                resolution_ticket: Some(super::ContentResolutionTicket {
-                    target_board_id: 1,
-                    queue_id: reservation.queue_id,
-                }),
-                placement_id: None,
-                target_board_id: None,
-                status: "decode failed".to_owned(),
-            },
-        );
+        let finished = runtime.finish_failed_import(super::FailedContentResolutionOutcome {
+            resolution_ticket: Some(super::ContentResolutionTicket {
+                target_board_id: 1,
+                queue_id: reservation.queue_id,
+            }),
+            placement_id: None,
+            target_board_id: None,
+            status: "decode failed".to_owned(),
+        });
 
         assert_eq!(finished.batch_target_board_id, Some(1));
         assert_eq!(finished.batch_queue_id, Some(reservation.queue_id));
-        let stored = library
-            .load_placements()
-            .unwrap()
-            .into_iter()
-            .find(|placement| placement.state.id == loading.state.id)
-            .unwrap();
-        assert!(matches!(
-            stored.content,
-            crate::data::PlacementContent::Failed { .. }
-        ));
-        let canvas_record = canvas.placement_for_id(loading.state.id).unwrap();
-        assert!(matches!(
-            canvas_record.content,
-            crate::data::PlacementContent::Failed { .. }
-        ));
+        assert_eq!(finished.placement_id, Some(loading.state.id));
+        assert_eq!(runtime.pending_len(), 0);
 
         let _ = std::fs::remove_dir_all(root);
     }

@@ -283,7 +283,7 @@ fn imported_asset_resolves_existing_loading_placement_preserving_area_and_stack_
 }
 
 #[test]
-fn import_failure_marks_loading_placement_failed_and_archived_completion_stays_stale() {
+fn archived_loading_placement_rejects_late_import_completion() {
     let root = temp_root("snappyref-failed-loading-placement-test");
     let source = root.join("source.png");
     fs::write(&source, [255, 255, 255, 255]).unwrap();
@@ -300,14 +300,6 @@ fn import_failure_marks_loading_placement_failed_and_archived_completion_stays_s
             Some("Queued".to_owned()),
         )
         .unwrap();
-
-    let failed = library
-        .mark_placement_failed(1, loading.state.id, "decode failed".to_owned())
-        .unwrap()
-        .unwrap();
-    assert!(matches!(failed.content, PlacementContent::Failed { .. }));
-    assert_eq!(failed.state.geometry.center.x, 10.0);
-    assert_eq!(failed.state.geometry.size.x, 100.0);
 
     library.archive_placements(&[loading.state.id]).unwrap();
     assert!(
@@ -1316,7 +1308,7 @@ fn hash_aware_import_reuses_existing_exact_asset() {
     let first = library
         .persist_imported_image_resolving_placement_with_hash(
             1,
-            None,
+            Some(library.allocate_document_id()),
             &first_path,
             "image/png",
             1,
@@ -1330,7 +1322,7 @@ fn hash_aware_import_reuses_existing_exact_asset() {
     let duplicate = library
         .persist_imported_image_resolving_placement_with_hash(
             1,
-            None,
+            Some(library.allocate_document_id()),
             &duplicate_path,
             "image/png",
             1,
@@ -1350,13 +1342,7 @@ fn hash_aware_import_reuses_existing_exact_asset() {
         duplicate.require_loaded_asset().original_path,
         first.require_loaded_asset().original_path
     );
-    let placements = library.load_placements().unwrap();
-    assert_eq!(placements.len(), 2);
-    assert!(
-        placements
-            .iter()
-            .all(|placement| placement.state.asset_id == Some(first.require_loaded_asset().id))
-    );
+    assert_eq!(duplicate.state.asset_id, first.state.asset_id);
 
     let connection = Connection::open(root.join("library.db")).unwrap();
     let live_assets: i64 = connection
@@ -1393,7 +1379,7 @@ fn parallel_hash_aware_imports_converge_on_one_exact_asset() {
             library
                 .persist_imported_image_resolving_placement_with_hash(
                     1,
-                    None,
+                    Some(library.allocate_document_id()),
                     &first_path,
                     "image/png",
                     1,
@@ -1416,7 +1402,7 @@ fn parallel_hash_aware_imports_converge_on_one_exact_asset() {
             library
                 .persist_imported_image_resolving_placement_with_hash(
                     1,
-                    None,
+                    Some(library.allocate_document_id()),
                     &duplicate_path,
                     "image/png",
                     1,
@@ -1445,7 +1431,6 @@ fn parallel_hash_aware_imports_converge_on_one_exact_asset() {
         )
         .unwrap();
     assert_eq!(live_assets, 1);
-    assert_eq!(library.load_placements().unwrap().len(), 2);
 
     let _ = fs::remove_dir_all(root);
 }

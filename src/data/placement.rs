@@ -154,6 +154,22 @@ impl Placement {
         matches!(self.content, PlacementContent::Loaded { .. })
     }
 
+    /// Adopts the geometry of the record already on the Board. An image load
+    /// can finish after the user moved, rotated, or restacked the Placement,
+    /// and that newer geometry wins. Size and scale follow only once the same
+    /// Asset was already loaded; a first load fits the Asset's aspect.
+    pub fn adopt_geometry_of(&mut self, current: &Placement) {
+        let newer = current.state.geometry;
+        let geometry = &mut self.state.geometry;
+        geometry.center = newer.center;
+        geometry.rotation = newer.rotation;
+        geometry.z_index = newer.z_index;
+        if current.is_loaded() && current.state.asset_id == self.state.asset_id {
+            geometry.size = newer.size;
+            geometry.scale = newer.scale;
+        }
+    }
+
     pub fn require_loaded_asset(&self) -> &super::Asset {
         self.asset
             .as_ref()
