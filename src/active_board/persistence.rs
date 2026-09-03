@@ -25,6 +25,8 @@ enum PersistenceCommand {
 #[derive(Default)]
 struct PendingPersistenceBatch {
     operations: std::collections::VecDeque<PendingPersistenceOperation>,
+    /// Failed attempts of the front operation; indexes `RETRY_DELAYS`.
+    front_attempts: usize,
     shutdown: bool,
 }
 
@@ -265,6 +267,10 @@ impl DocumentPersistence {
         };
         queue.flush()
     }
+
+    pub(crate) fn take_error(&self) -> Option<String> {
+        self.queue.as_ref().and_then(PersistenceQueue::take_error)
+    }
 }
 
 impl PersistenceQueue {
@@ -294,12 +300,12 @@ impl PersistenceQueue {
                         }
                     }
                 }
-                let persisted = batch.persist(&library, &error_tx);
+                let retry_after = batch.persist(&library, &error_tx);
                 if batch.shutdown && batch.operations.is_empty() {
                     break;
                 }
-                if !persisted {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+                if let Some(delay) = retry_after {
+                    std::thread::sleep(delay);
                 }
             }
         });
@@ -325,6 +331,13 @@ impl PersistenceQueue {
             .recv()
             .map_err(|error| format!("failed to wait for persistence flush: {error}"))?;
         self.drain_errors()
+    }
+
+    /// Newest failure reported by the worker since the last poll, without
+    /// waiting for queued writes. Frames poll this so a dropped durable write
+    /// becomes visible without a flush barrier.
+    fn take_error(&self) -> Option<String> {
+        self.drain_errors().err()
     }
 
     fn drain_errors(&self) -> Result<(), String> {
@@ -382,11 +395,18 @@ impl PendingPersistenceBatch {
         }
     }
 
+    /// Persists queued operations in order. Returns the delay before the
+    /// front operation should be retried, or `None` once the queue is drained.
+    ///
+    /// A failing operation is retried with backoff; after
+    /// `RETRY_DELAYS.len()` failures (or immediately during shutdown) it is
+    /// dropped and reported so later units, which re-upsert the same rows
+    /// and the full history, can still land.
     fn persist(
         &mut self,
         library: &crate::library::storage::Library,
         error_tx: &std::sync::mpsc::Sender<String>,
-    ) -> bool {
+    ) -> Option<std::time::Duration> {
         while let Some(operation) = self.operations.front() {
             let result = match operation {
                 PendingPersistenceOperation::UserSession(session) => {
@@ -405,14 +425,37 @@ impl PendingPersistenceBatch {
                 }
             };
             if let Err(error) = result {
-                let _ = error_tx.send(error);
-                return false;
+                let attempts = self.front_attempts;
+                if !self.shutdown
+                    && let Some(delay) = RETRY_DELAYS.get(attempts)
+                {
+                    self.front_attempts += 1;
+                    return Some(*delay);
+                }
+                let _ = error_tx.send(format!(
+                    "dropped durable write after {} attempts: {error}",
+                    attempts + 1
+                ));
             }
+            self.front_attempts = 0;
             self.operations.pop_front();
         }
-        true
+        None
     }
 }
+
+/// Backoff schedule for a failing durable write, roughly six seconds in
+/// total. Long enough to ride out a transient lock or slow disk, short enough
+/// that a poisoned unit cannot stall flush, shutdown, or later units forever.
+const RETRY_DELAYS: [std::time::Duration; 7] = [
+    std::time::Duration::from_millis(50),
+    std::time::Duration::from_millis(100),
+    std::time::Duration::from_millis(200),
+    std::time::Duration::from_millis(400),
+    std::time::Duration::from_millis(800),
+    std::time::Duration::from_millis(1600),
+    std::time::Duration::from_millis(3200),
+];
 
 #[cfg(test)]
 fn merge_document_changes(
@@ -654,54 +697,58 @@ mod tests {
     }
 
     #[test]
-    fn queued_failure_does_not_reject_later_changes_or_skip_flush() {
+    fn poisoned_unit_is_dropped_after_bounded_retries_and_later_writes_land() {
         let root = std::env::temp_dir().join(format!(
             "snappyref-queued-failure-recovery-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
         let library = crate::library::storage::Library::initialize(root.clone()).unwrap();
-        let source = root.join("source.png");
-        std::fs::write(&source, [255, 255, 255, 255]).unwrap();
-        let record = library
-            .persist_imported_image(
-                &source,
-                "image/png",
-                1,
-                1,
-                4,
-                eframe::egui::pos2(0.0, 0.0),
+        let board_id = library.list_boards().unwrap()[0].id;
+        let mut persistence = DocumentPersistence::queued(library.clone());
+        // A Document unit whose Placement has no accepted state can never
+        // persist, whatever the retry count.
+        let poisoned = crate::canvas::CanvasDocumentChanges {
+            updated_placements: vec![crate::data::PlacementState::new(
+                99,
+                Some(1),
+                eframe::egui::Pos2::ZERO,
                 1.0,
+                0.0,
+                0,
+                false,
+            )],
+            ..Default::default()
+        };
+        persistence
+            .enqueue_document_unit(
+                board_id,
+                poisoned,
+                &crate::active_board::history::DocumentHistory::default(),
             )
             .unwrap();
-        let mut persistence = DocumentPersistence::queued(library.clone());
-
-        let mut invalid = record.state.clone();
-        invalid.asset_id = Some(i64::MAX);
-        persistence
-            .enqueue_document_changes(crate::canvas::CanvasDocumentChanges {
-                updated_placements: vec![invalid],
+        let session = crate::data::UserSession {
+            viewport: crate::data::ViewportState {
+                camera_pan_x: 42.0,
                 ..Default::default()
-            })
-            .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
-        let mut valid = record.state.clone();
-        valid.geometry.center.x = 42.0;
+            },
+            ..Default::default()
+        };
         persistence
-            .enqueue_document_changes(crate::canvas::CanvasDocumentChanges {
-                updated_placements: vec![valid],
-                ..Default::default()
-            })
+            .save_user_session(Some(&library), session)
             .unwrap();
 
-        assert!(persistence.flush().is_err());
+        let flushed = persistence.flush();
+
+        assert!(
+            flushed
+                .as_ref()
+                .is_err_and(|error| error.starts_with("dropped durable write after")),
+            "{flushed:?}"
+        );
+        assert_eq!(persistence.take_error(), None);
         assert_eq!(
-            library.load_placements().unwrap()[0]
-                .state
-                .geometry
-                .center
-                .x,
+            library.load_user_session().unwrap().viewport.camera_pan_x,
             42.0
         );
 

@@ -5401,6 +5401,9 @@ impl eframe::App for SnappyRefApp {
         self.drive_embedding_backfill(ui.ctx());
         self.handle_pending_annotation_requests();
         self.persist_canvas_changes_debounced(ui.ctx());
+        if let Some(error) = self.document_persistence.take_error() {
+            self.status = error;
+        }
         let settled_idle = self.app_settled_idle();
         self.update_service.tick(settled_idle);
         self.drive_update_smoke(ui.ctx(), settled_idle);
