@@ -7163,6 +7163,42 @@ fn accepted_import_for_inactive_board_keeps_history_on_target_board() {
 }
 
 #[test]
+fn delayed_image_load_preserves_geometry_edited_after_request() {
+    let ctx = egui::Context::default();
+    let mut app = test_app(None);
+    let mut initial = test_loaded_item(42, app.active_board_id);
+    initial.queue_id = None;
+    initial.origin = crate::jobs::ImportOrigin::Existing;
+    app.integrate_loaded_import(&ctx, initial);
+
+    // The worker captured this placement before the user moved and resized it.
+    let mut delayed = test_loaded_item(42, app.active_board_id);
+    delayed.queue_id = None;
+    delayed.origin = crate::jobs::ImportOrigin::Existing;
+    delayed.loaded_lod = crate::data::CanvasImageLod::Detail;
+    app.canvas.select_placements(&[42]);
+    assert_eq!(
+        app.canvas.move_selected_placement_group_to_center(
+            egui::pos2(120.0, 80.0),
+            test_viewport_world(),
+            0.0,
+        ),
+        1
+    );
+    assert_eq!(app.canvas.apply_target_area_to_selected_placements(4.0), 1);
+    let accepted_geometry = app.canvas.placement_for_id(42).unwrap().state.geometry;
+    assert_ne!(accepted_geometry, delayed.placement.state.geometry);
+
+    app.integrate_loaded_import(&ctx, delayed);
+
+    assert_eq!(
+        app.canvas.placement_for_id(42).unwrap().state.geometry,
+        accepted_geometry,
+        "a delayed image load must not overwrite newer canvas geometry"
+    );
+}
+
+#[test]
 fn completed_import_for_active_board_enters_active_canvas() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
