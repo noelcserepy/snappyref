@@ -32,6 +32,10 @@ if [[ "$scenario" == "--help" || "$scenario" == "-h" ]]; then
   echo "  compact-equal-size-images"
   echo "  compact-mixed-column-images"
   echo "  compact-windows-column-images"
+  echo "  canvas-edit-operations"
+  echo "  canvas-navigation-boards"
+  echo "  session-restart-restore"
+  echo "  persistence-dropped-write"
   exit 0
 fi
 
@@ -53,6 +57,10 @@ if [[ "$scenario" == "--list" ]]; then
   echo "compact-equal-size-images"
   echo "compact-mixed-column-images"
   echo "compact-windows-column-images"
+  echo "canvas-edit-operations"
+  echo "canvas-navigation-boards"
+  echo "session-restart-restore"
+  echo "persistence-dropped-write"
   exit 0
 fi
 
@@ -107,6 +115,18 @@ case "$scenario" in
     ;;
   compact-windows-column-images)
     test_filter="inspect_compact_windows_column_images_writes_artifact"
+    ;;
+  canvas-edit-operations)
+    test_filter="inspect_canvas_edit_operations_writes_artifact"
+    ;;
+  canvas-navigation-boards)
+    test_filter="inspect_canvas_navigation_and_boards_writes_artifact"
+    ;;
+  session-restart-restore)
+    test_filter="inspect_session_restart_restore_writes_artifact"
+    ;;
+  persistence-dropped-write)
+    test_filter="inspect_persistence_dropped_write_writes_artifact"
     ;;
   *)
     echo "status=fail"

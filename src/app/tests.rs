@@ -81,6 +81,8 @@ fn embedding_phase_markers_report_summary_durations() {
     );
 }
 
+#[cfg(feature = "semantic-search")]
+mod inspect_operations;
 mod session_settings;
 
 #[cfg(feature = "semantic-search")]
