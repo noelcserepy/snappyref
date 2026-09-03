@@ -3669,21 +3669,32 @@ impl SnappyRefApp {
 
     fn apply_loaded_import_outcome(&mut self, outcome: LoadedContentResolutionOutcome) {
         let finished = self.content_resolution.finish_loaded_import(outcome);
-        if let (Some(ticket), Some(log)) = (finished.resolution_ticket, finished.log.as_ref())
-            && self
+        if let (Some(ticket), Some(log)) = (finished.resolution_ticket, finished.log.as_ref()) {
+            let mut placement = log.placement.clone();
+            // An inactive Board has no canvas; its accepted history holds the
+            // newest geometry.
+            if ticket.target_board_id != self.active_board_id
+                && let Some(accepted) = self
+                    .document_history
+                    .accepted_placement(ticket.target_board_id, placement.state.id)
+            {
+                placement.adopt_geometry_of(&accepted);
+            }
+            if self
                 .document_history
-                .update_accepted_placement(ticket.target_board_id, log.placement.clone())
-        {
-            let changes = crate::canvas::CanvasDocumentChanges {
-                updated_placements: vec![log.placement.state.clone()],
-                ..Default::default()
-            };
-            if let Err(error) = self.document_persistence.enqueue_document_unit(
-                ticket.target_board_id,
-                changes,
-                &self.document_history,
-            ) {
-                self.status = error;
+                .update_accepted_placement(ticket.target_board_id, placement.clone())
+            {
+                let changes = crate::canvas::CanvasDocumentChanges {
+                    updated_placements: vec![placement.state],
+                    ..Default::default()
+                };
+                if let Err(error) = self.document_persistence.enqueue_document_unit(
+                    ticket.target_board_id,
+                    changes,
+                    &self.document_history,
+                ) {
+                    self.status = error;
+                }
             }
         }
         let resolution_queue_id = finished.resolution_ticket.map(|ticket| ticket.queue_id);

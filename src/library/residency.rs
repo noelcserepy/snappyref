@@ -128,7 +128,7 @@ impl ImageResidencyCoordinator {
         import_worker: Option<&ImagePrepWorker>,
         active_board_id: i64,
         settings: &WorkspaceSettings,
-        loaded: PreparedPlacementImage,
+        mut loaded: PreparedPlacementImage,
     ) -> LoadedContentResolutionOutcome {
         let resolution_ticket = loaded.queue_id.map(|queue_id| ContentResolutionTicket {
             target_board_id: loaded.target_board_id,
@@ -168,6 +168,11 @@ impl ImageResidencyCoordinator {
                 log: None,
             };
         }
+
+        if let Some(current) = canvas.placement_for_id(loaded.placement.state.id) {
+            loaded.placement.adopt_geometry_of(&current);
+        }
+        let loaded_record = loaded.placement.clone();
 
         let indexed_asset = (reports_import
             && settings.semantic_search_enabled
