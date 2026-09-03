@@ -1508,24 +1508,29 @@ impl CanvasState {
         }
 
         let mut removed_ids = Vec::new();
+        let mut removed_committed = false;
         self.document.rendered_placements.retain(|image| {
             let keep = !placement_ids.contains(&image.placement.state.id);
             if !keep {
                 removed_ids.push(image.placement.state.id);
-                if image.placement.lifecycle == PlacementLifecycle::Committed
-                    && !self
+                if image.placement.lifecycle == PlacementLifecycle::Committed {
+                    removed_committed = true;
+                    if !self
                         .document
                         .pending_archived_placement_ids
                         .contains(&image.placement.state.id)
-                {
-                    self.document
-                        .pending_archived_placement_ids
-                        .push(image.placement.state.id);
+                    {
+                        self.document
+                            .pending_archived_placement_ids
+                            .push(image.placement.state.id);
+                    }
                 }
             }
             keep
         });
-        if !removed_ids.is_empty() {
+        // Provisional Placements never reached the durable stack order, so
+        // removing them (a cancelled hover) must not queue a write.
+        if removed_committed {
             self.document.stack_order_dirty = true;
         }
         self.document
