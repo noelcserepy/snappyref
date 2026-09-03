@@ -6,11 +6,13 @@ purpose:
     - Placement Gap semantics.
     - Guide snapping for movement, resize, and uniform scale.
     - Compact, row, and column arrangement.
+    - Ordered Group auto-layout, container sizing, and incoming Placement fitting.
     - Directional packing within a Placement selection.
     - Alignment guide results.
   excludes:
     - Pointer and keyboard interpretation.
     - Placement persistence and history.
+    - Group identity, naming, and membership mutation.
     - Placement creation and content resolution.
 
 interface:
@@ -76,6 +78,45 @@ interface:
       caller_obligations:
         non-empty-selection: Supply at least one Placement.
 
+    layout-group:
+      description: Computes an ordered Group layout for creation or a change to its members, configuration, or container.
+
+      input:
+        request:
+          type: GroupLayoutRequest
+          description: The ordered Placement geometries, container geometry, Row, Column, or Wrap flow, spacing, padding, and change being applied, including any newly appended members.
+
+      outcomes:
+        laid-out:
+          layout: GroupLayout
+        unchanged:
+          layout: GroupLayout
+        rejected:
+          reason: SpatialLayoutRejection
+
+      behavior:
+        default-flow: A new Group must default to horizontal Wrap with fixed width and content-driven height.
+        row-flow: Row must place members in their supplied order along one horizontal row.
+        column-flow: Column must place members in their supplied order along one vertical column.
+        wrap-flow: Wrap must place members left to right in supplied order, starting a new row when the next member does not fit the available width.
+        wrap-height: Wrap must grow or shrink its content-driven height to contain its rows and padding without changing its fixed width.
+        group-spacing: The Group's spacing must determine edge-to-edge gaps between neighboring members and rows. Padding must inset content from the container edges.
+        ordered-not-packed: Layout must preserve the supplied member order rather than sort by size, fill earlier holes, or optimize packing density.
+        append-stable: Appending members with otherwise unchanged container, configuration, and existing member sizes must preserve all existing member positions.
+        append-location: Appended members must continue at the end of the layout, filling the last Wrap row before starting another row.
+        remove-closes-gap: Removing a member must close its space in the ordered flow. Reordering must lay out the new supplied order.
+        size-preserved: Creation and reflow must preserve member sizes and aspect ratios except for incoming fitting or an explicit member-size or uniform-scale change.
+        incoming-fit: A newly appended Placement wider than the destination's available width must scale down proportionally to fit that width.
+        incoming-fit-isolated: Incoming fitting must never enlarge the incoming Placement or change the sizes of existing members.
+        resize-not-scale: Resizing the container must change layout space and reflow members without scaling their dimensions.
+        fixed-member-overflow: A member wider than the available width after container resizing must retain its size and overflow rather than shrink automatically.
+        uniform-scale-distinct: Explicit uniform scaling must scale the container, members, spacing, and padding together while preserving relative geometry, rather than perform a container resize.
+        empty-valid: An empty Group must have a valid layout and retain the configuration needed for later additions.
+        deterministic: The same request must produce the same Group layout.
+        invalid-geometry-rejected: Non-finite geometry, negative spacing or padding, or a non-positive available width must produce rejected.
+
+      caller_obligations: {}
+
     settle:
       description: Packs selected Placements toward one edge of their existing selection bounds.
 
@@ -103,30 +144,53 @@ interface:
         non-empty-selection: Supply at least one Placement.
 
   guarantees:
-    one-gap-meaning: Placement Gap has the same edge-to-edge meaning in snapping, arrangement, settling, and initial placement.
+    one-gap-meaning: Placement Gap has the same edge-to-edge meaning in snapping, arrangement, settling, and initial placement. Group spacing uses that same meaning with a Group-owned value.
     geometry-only: Spatial Layout must not mutate Asset content, Board history, or persistence.
-    repeatable-results: Repeating an already satisfied arrangement or settle request must produce unchanged.
+    repeatable-results: Repeating an already satisfied arrangement, Group layout, or settle request must produce unchanged.
 
   requires: {}
 
 decisions:
   shared-placement-gap:
-    current: Use one Placement Gap value as the edge-to-edge spacing rule for all spatial operations.
+    current: Use the shared Placement Gap for ungrouped spatial operations and each Group's own spacing for its auto-layout. Both measure edge-to-edge distance.
     affects:
       - "[[#/interface/operations/snap]]"
       - "[[#/interface/operations/arrange]]"
       - "[[#/interface/operations/settle]]"
+      - "[[#/interface/operations/layout-group/behavior/group-spacing]]"
       - "[[#/interface/guarantees/one-gap-meaning]]"
     reasons:
       - Different import, snap, and arrangement gaps made Placement spacing unpredictable.
-      - One value lets automatic and manual layout agree.
+      - Shared spacing keeps ungrouped automatic and manual layout consistent, while Groups need independently editable layout configuration.
     consequences:
       - A zero value permits direct edge contact.
       - Initial placement and later layout use the same spacing policy.
+      - Group layout reads its saved spacing and padding rather than changing other Groups or ungrouped layout settings.
     reconsider_when:
       - A spatial operation needs a distinct user-visible spacing concept.
     explored_paths:
       import-only-gap:
         status: superseded
         reason: The gap also governs snapping and later arrangement, so import vocabulary was too narrow.
+    sources: []
+
+  group-layout-model:
+    current: Use ordered Row, Column, or Wrap flow for Groups. Container resizing reflows fixed-size members, while uniform scaling remains a separate action.
+    affects:
+      - "[[#/interface/operations/layout-group]]"
+    reasons:
+      - Adding a reference must append it predictably without rearranging existing references for density.
+      - Container width controls flow rather than silently changing the sizes of existing references.
+    consequences:
+      - Removing, reordering, or resizing can shift members through the flow.
+      - Narrowing a container can leave an existing fixed-size member overflowing.
+      - Oversized incoming references fit on addition without resizing existing members.
+    reconsider_when: []
+    explored_paths:
+      compact-repacking:
+        status: rejected
+        reason: Density-based packing can rearrange every reference when one is added.
+      scale-only-container:
+        status: rejected
+        reason: It prevents container resizing from controlling the flow of references.
     sources: []

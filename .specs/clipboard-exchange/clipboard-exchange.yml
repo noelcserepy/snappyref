@@ -45,7 +45,7 @@ interface:
       input:
         content:
           type: ClipboardExportContent
-          description: Selected Placements, annotations, relative geometry, and shared stack order.
+          description: Selected Placements, annotations, Groups with their members and configuration, relative geometry, and shared stack order.
 
       outcomes:
         written:
@@ -57,7 +57,7 @@ interface:
 
       behavior:
         internal-always: Every non-empty write must include the SnappyRef representation needed for lossless in-app paste.
-        structure-preserved: Internal metadata must preserve supported mixed items, relative geometry, and relative stack order.
+        structure-preserved: Internal metadata must preserve supported mixed items, relative geometry, relative stack order, and selected Group structure as defined by Board Document.
         single-image-native: Exactly one loaded Placement with no selected annotations may also publish native RGBA image content.
         multi-or-mixed-metadata-only: Multi-item or mixed Placement and annotation selections must publish only internal metadata.
         native-image-bounded: Native image export must be omitted when its RGBA payload exceeds 200 MiB or its dimensions overflow.
@@ -65,12 +65,16 @@ interface:
       caller_obligations: {}
 
   guarantees:
-    internal-round-trip: Copy and paste within SnappyRef must preserve supported item kinds, relative geometry, and relative stack order while assigning new durable identities at paste.
+    internal-round-trip: Copy and paste within SnappyRef, including between Boards, must preserve supported item kinds, relative geometry, relative stack order, and Group structure while assigning new durable identities at paste.
+    group-membership-remapped: Pasting a copied Group must map its ordered membership to the newly pasted Placements rather than link to members of the source Group.
     external-content-normalized: Paths, URLs, PureRef content, and native pixels leave Clipboard Exchange as typed source or document intent.
     system-clipboard-boundary: Platform clipboard formats and ownership remain inside Clipboard Exchange.
     empty-repeat-safe: Reading or writing an empty clipboard selection makes no Board change.
 
-  requires: {}
+  requires:
+    group-structure:
+      target: "[[board-document#/interface/guarantees/group-durable-state]]"
+      reason: Defines the Group state that internal clipboard exchange must preserve.
 
 decisions:
   dual-representation-copy:
