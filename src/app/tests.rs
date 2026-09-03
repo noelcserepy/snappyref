@@ -8,6 +8,9 @@ use crate::data::{
 };
 use crate::jobs::PreparedPlacementImage;
 use crate::library::storage::Library;
+use crate::placement::content_resolution::{
+    ContentResolutionTicket, FailedContentResolutionOutcome,
+};
 #[cfg(feature = "semantic-search")]
 use crate::search::palette::{
     PALETTE_WIDTH, SEARCH_OVERLAY_TOP_MARGIN, search_result_grid_content_height,
@@ -1355,6 +1358,74 @@ fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
     ];
     assert_eq!(app.canvas.canvas_stack_order(), expected);
     assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn undo_after_persisted_duplicate_removes_the_created_placement() {
+    let ctx = egui::Context::default();
+    let root = temp_library_root("snappyref-duplicate-undo-durable");
+    let library = Library::initialize(root.clone()).unwrap();
+    let image_path = library
+        .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let source_item = library
+        .persist_imported_image(
+            &image_path,
+            "image/png",
+            1,
+            1,
+            4,
+            egui::pos2(10.0, 20.0),
+            1.0,
+        )
+        .unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    app.canvas.add_prepared_placement_image(
+        &ctx,
+        PreparedPlacementImage {
+            target_board_id: 1,
+            queue_id: None,
+            placement: source_item.clone(),
+            preview_rgba: vec![255, 0, 0, 255],
+            preview_width: 1,
+            preview_height: 1,
+            animated_preview: None,
+            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
+            loaded_lod: crate::data::CanvasImageLod::Working,
+            existing_load_diagnostics: None,
+            origin: crate::jobs::ImportOrigin::Existing,
+            trace: None,
+        },
+    );
+    app.canvas
+        .set_canvas_stack_order(vec![CanvasStackItem::Placement(source_item.state.id)]);
+    app.canvas.select_placements(&[source_item.state.id]);
+
+    app.duplicate_selection_with_gap();
+    app.flush_persistence();
+    assert_eq!(library.load_placements().unwrap().len(), 2);
+
+    app.undo_document_history(&ctx);
+    app.flush_persistence();
+
+    let items = library.load_placements().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].state.id, source_item.state.id);
+    assert_eq!(
+        app.canvas
+            .committed_placements()
+            .iter()
+            .map(|placement| placement.state.id)
+            .collect::<Vec<_>>(),
+        vec![source_item.state.id]
+    );
+    assert_eq!(
+        library.load_canvas_stack_order().unwrap(),
+        vec![CanvasStackItem::Placement(source_item.state.id)]
+    );
 
     let _ = fs::remove_dir_all(root);
 }
@@ -7103,6 +7174,61 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
     assert!(unknown.placement_id.is_some());
     assert_eq!(unknown.reserved_world, Some(egui::pos2(200.0, 0.0)));
     assert_eq!(layout.len(), 2);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn failed_import_fails_the_accepted_placement_before_it_is_durable() {
+    let root = temp_library_root("snappyref-failed-import-accepted");
+    let library = Library::initialize(root.clone()).unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    let reservation = app
+        .reserve_import(
+            &mut Vec::new(),
+            Some((100, 80)),
+            egui::Pos2::ZERO,
+            test_viewport_world(),
+            crate::data::ContentResolutionSource::Unknown {
+                description: "doomed import".to_owned(),
+            },
+        )
+        .unwrap();
+    let placement_id = reservation.placement_id.unwrap();
+
+    // The creation unit may still be queued; failure handling must not
+    // depend on the row existing.
+    app.apply_failed_import_outcome(FailedContentResolutionOutcome {
+        resolution_ticket: Some(ContentResolutionTicket {
+            target_board_id: reservation.target_board_id,
+            queue_id: reservation.queue_id,
+        }),
+        placement_id: Some(placement_id),
+        target_board_id: None,
+        status: "decode failed".to_owned(),
+    });
+
+    let record = app.canvas.placement_for_id(placement_id).unwrap();
+    assert!(
+        matches!(record.content, crate::data::PlacementContent::Failed { .. }),
+        "{:?}",
+        record.content
+    );
+    assert_eq!(app.canvas.selected_placement_ids(), vec![placement_id]);
+    assert_eq!(app.status, "decode failed");
+
+    app.flush_persistence();
+    let stored = library
+        .load_placements()
+        .unwrap()
+        .into_iter()
+        .find(|placement| placement.state.id == placement_id)
+        .unwrap();
+    assert!(matches!(
+        stored.content,
+        crate::data::PlacementContent::Failed { .. }
+    ));
 
     let _ = fs::remove_dir_all(root);
 }
