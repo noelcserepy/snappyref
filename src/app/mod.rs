@@ -24,7 +24,7 @@ use crate::sources::import::ExternalImportSource;
 use crate::ui::sidebar::{
     SemanticSearchSettingsAction, SemanticSearchSettingsStatus, SidebarBoardAction, SidebarTab,
     block_sidebar_input, close_sidebar_on_outside_click, show_sidebar, show_sidebar_hint,
-    sidebar_rect,
+    show_status_message, sidebar_rect,
 };
 use crate::updater::{UpdateConfig, UpdateService, UpdateState};
 
@@ -647,7 +647,11 @@ pub struct SnappyRefApp {
     #[cfg(feature = "semantic-search")]
     pending_semantic_search_remove: bool,
     context_menu_pos: Option<egui::Pos2>,
+    /// Transient status line. Actions and storage errors write it; it shows
+    /// bottom-left for [`crate::ui::theme::STATUS_MESSAGE_SECONDS`] and then clears.
     status: String,
+    status_shown: String,
+    status_shown_since: Instant,
     perf_log: Option<PerfLogState>,
     frame_perf: FramePerfState,
     perf_scenario: Option<PerfScenarioState>,
@@ -788,6 +792,8 @@ impl SnappyRefApp {
                     pending_semantic_search_remove: false,
                     context_menu_pos: None,
                     status,
+                    status_shown: String::new(),
+                    status_shown_since: Instant::now(),
                     perf_log: config.perf_log_enabled().then(|| PerfLogState {
                         app_started_at: Instant::now(),
                         startup_logged: false,
@@ -841,6 +847,8 @@ impl SnappyRefApp {
                 pending_semantic_search_remove: false,
                 context_menu_pos: None,
                 status: format!("Storage unavailable: {error}"),
+                status_shown: String::new(),
+                status_shown_since: Instant::now(),
                 perf_log: config.perf_log_enabled().then(|| PerfLogState {
                     app_started_at: Instant::now(),
                     startup_logged: false,
@@ -5320,6 +5328,30 @@ fn semantic_search_settings_status(
     }
 }
 
+impl SnappyRefApp {
+    /// The status message currently on screen. A changed `status` starts a
+    /// new visibility window; an expired one clears `status` so the same
+    /// message can show again later.
+    fn visible_status(&mut self, ctx: &egui::Context) -> Option<&str> {
+        if self.status.is_empty() {
+            self.status_shown.clear();
+            return None;
+        }
+        if self.status != self.status_shown {
+            self.status_shown.clone_from(&self.status);
+            self.status_shown_since = Instant::now();
+        }
+        let visible_for = Duration::from_secs_f32(crate::ui::theme::STATUS_MESSAGE_SECONDS);
+        let Some(remaining) = visible_for.checked_sub(self.status_shown_since.elapsed()) else {
+            self.status.clear();
+            self.status_shown.clear();
+            return None;
+        };
+        ctx.request_repaint_after(remaining);
+        Some(&self.status)
+    }
+}
+
 impl eframe::App for SnappyRefApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let screen_rect = ui.ctx().viewport_rect();
@@ -5488,9 +5520,12 @@ impl eframe::App for SnappyRefApp {
         self.show_semantic_search_first_launch_prompt(ui.ctx());
         if !modal_open {
             self.show_context_menu(ui.ctx(), screen_rect, context_menu_just_opened);
-            if show_sidebar_hint(ui.ctx(), screen_rect, sidebar_open, &active_board_name) {
+            let hint = show_sidebar_hint(ui.ctx(), screen_rect, sidebar_open, &active_board_name);
+            if hint.clicked {
                 self.sidebar_open = !self.sidebar_open;
             }
+            let status = self.visible_status(ui.ctx());
+            show_status_message(ui.ctx(), screen_rect, sidebar_open, hint.rect, status);
         }
         #[cfg(feature = "semantic-search")]
         self.show_search_overlay(ui.ctx(), screen_rect);
