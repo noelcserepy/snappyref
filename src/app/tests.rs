@@ -554,6 +554,7 @@ fn delete_selected_annotation_records_undo_history() {
     app.canvas.select_content(&[], &[annotation.id]);
 
     app.delete_selected_items_from_board(test_screen_rect());
+    app.flush_persistence();
     assert!(library.load_canvas_annotations().unwrap().is_empty());
 
     app.undo_document_history(&ctx);
@@ -598,6 +599,7 @@ fn undo_delete_annotation_patches_active_canvas_without_board_reload() {
         Some(annotation)
     );
     assert_eq!(app.status, "Undid Deleted 1 annotation");
+    app.flush_persistence();
 
     let _ = fs::remove_dir_all(root);
 }
@@ -6966,7 +6968,7 @@ fn accepted_loading_batch_is_one_history_action_despite_out_of_order_results() {
     let placement_ids = app.canvas.selected_placement_ids();
     assert_eq!(placement_ids.len(), 3);
 
-    let mut loaded = test_loaded_item(placement_ids[2], app.active_board_id);
+    let mut loaded = persisted_loaded_item(&library, placement_ids[2], app.active_board_id);
     loaded.queue_id = Some(3);
     loaded.origin = crate::jobs::ImportOrigin::Path;
     let loaded_result = crate::jobs::ImagePrepResult::Loaded(loaded);
@@ -7008,7 +7010,7 @@ fn accepted_loading_batch_is_one_history_action_despite_out_of_order_results() {
             .all(|placement_id| app.canvas.placement_for_id(*placement_id).is_none())
     );
 
-    let mut late_loaded = test_loaded_item(placement_ids[1], app.active_board_id);
+    let mut late_loaded = persisted_loaded_item(&library, placement_ids[1], app.active_board_id);
     late_loaded.queue_id = Some(2);
     late_loaded.origin = crate::jobs::ImportOrigin::Path;
     let late_result = crate::jobs::ImagePrepResult::Loaded(late_loaded);
@@ -7132,7 +7134,7 @@ fn accepted_import_for_inactive_board_keeps_history_on_target_board() {
     let placement_id = reservation.placement_id.unwrap();
     app.switch_to_board(second.id);
 
-    let mut loaded = test_loaded_item(placement_id, first.id);
+    let mut loaded = persisted_loaded_item(&library, placement_id, first.id);
     loaded.queue_id = Some(reservation.queue_id);
     loaded.origin = crate::jobs::ImportOrigin::Path;
     app.integrate_loaded_import(&ctx, loaded);
@@ -7301,6 +7303,7 @@ fn raw_dropped_file_enqueues_external_import() {
             .is_empty()
     );
     assert_eq!(harness.state().content_resolution.pending_len(), 1);
+    harness.state_mut().flush_persistence();
     let items = library.load_placements().unwrap();
     assert_eq!(items.len(), 1);
     let screen_rect = test_screen_rect();
@@ -8599,6 +8602,40 @@ fn test_loaded_item(placement_id: i64, target_board_id: i64) -> PreparedPlacemen
         existing_load_diagnostics: None,
         origin: crate::jobs::ImportOrigin::Clipboard,
         trace: None,
+    }
+}
+
+/// Like `test_loaded_item`, but the Asset really exists in `library`, so the
+/// queued Document unit for the Placement can satisfy the asset foreign key.
+fn persisted_loaded_item(
+    library: &Library,
+    placement_id: i64,
+    target_board_id: i64,
+) -> PreparedPlacementImage {
+    let stored = library
+        .store_rgba_image(
+            &format!("fixture-{placement_id}"),
+            &[255, 255, 255, 255],
+            1,
+            1,
+        )
+        .unwrap();
+    let placement = library
+        .persist_imported_image_resolving_placement(
+            target_board_id,
+            Some(placement_id),
+            &stored,
+            "image/png",
+            1,
+            1,
+            4,
+            eframe::egui::pos2(0.0, 0.0),
+            1.0,
+        )
+        .unwrap();
+    PreparedPlacementImage {
+        placement,
+        ..test_loaded_item(placement_id, target_board_id)
     }
 }
 
