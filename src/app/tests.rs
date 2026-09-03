@@ -7165,7 +7165,9 @@ fn accepted_loading_batch_is_one_history_action_despite_out_of_order_results() {
             .all(|placement_id| app.canvas.placement_for_id(*placement_id).is_none())
     );
 
-    let mut late_loaded = persisted_loaded_item(&library, placement_ids[1], app.active_board_id);
+    // Storage already rejects a load for an undone Placement, so the late
+    // result never reaches the Library; model it in memory only.
+    let mut late_loaded = test_loaded_item(placement_ids[1], app.active_board_id);
     late_loaded.queue_id = Some(2);
     late_loaded.origin = crate::jobs::ImportOrigin::Path;
     let late_result = crate::jobs::ImagePrepResult::Loaded(late_loaded);
