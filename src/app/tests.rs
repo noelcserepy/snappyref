@@ -1,6 +1,6 @@
+use super::perf_scenario::{EmbeddingPhaseMarkers, ModelLoadTimingSummary};
 use super::{
-    AppConfig, ArrangementAction, EmbeddingPhaseMarkers, ModelLoadTimingSummary,
-    SUPPORTED_SHORTCUTS, SnappyRefApp, apply_arrangement_action,
+    AppConfig, ArrangementAction, SUPPORTED_SHORTCUTS, SnappyRefApp, apply_arrangement_action,
 };
 use crate::data::{
     Asset, CanvasAnnotationKind, CanvasBackground, CanvasStackItem, CanvasStrokeWidth,
@@ -610,7 +610,10 @@ fn late_undo_content_failure_is_ignored_after_newer_replay() {
     let super::HistoryAction::Document(action) = action else {
         panic!("expected document history action");
     };
-    let replay = app.apply_history_to_active_canvas(&action, super::HistoryDirection::Forward);
+    let replay = app.apply_history_to_active_canvas(
+        &action,
+        crate::active_board::history::HistoryDirection::Forward,
+    );
     assert_eq!(replay.placements_needing_content.len(), 1);
     assert_eq!(replay.placements_needing_content[0].asset_id(), Some(202));
     app.status = "Redid Crop image".to_owned();
@@ -1486,49 +1489,67 @@ fn context_menu_items_reflect_mixed_selection_capabilities() {
             .collect::<Vec<_>>(),
         vec![
             (
-                super::ContextMenuAction::Copy,
+                super::shortcuts::ContextMenuAction::Copy,
                 Some(super::platform_shortcut_label("⌘ C", "Ctrl C")),
             ),
             (
-                super::ContextMenuAction::Paste,
+                super::shortcuts::ContextMenuAction::Paste,
                 Some(super::platform_shortcut_label("⌘ V", "Ctrl V")),
             ),
             (
-                super::ContextMenuAction::Duplicate,
+                super::shortcuts::ContextMenuAction::Duplicate,
                 Some(super::platform_shortcut_label("⌘ D", "Ctrl D")),
             ),
-            (super::ContextMenuAction::DeleteFromBoard, Some("del")),
             (
-                super::ContextMenuAction::MoveToFront,
+                super::shortcuts::ContextMenuAction::DeleteFromBoard,
+                Some("del")
+            ),
+            (
+                super::shortcuts::ContextMenuAction::MoveToFront,
                 Some(super::platform_shortcut_label("⌘ .", "Ctrl .")),
             ),
             (
-                super::ContextMenuAction::MoveToBack,
+                super::shortcuts::ContextMenuAction::MoveToBack,
                 Some(super::platform_shortcut_label("⌘ ,", "Ctrl ,")),
             ),
             (
-                super::ContextMenuAction::SearchUsingImage,
+                super::shortcuts::ContextMenuAction::SearchUsingImage,
                 Some(super::platform_shortcut_label("⌘ F", "Ctrl F")),
             ),
-            (super::ContextMenuAction::RemoveFromLibrary, None),
+            (super::shortcuts::ContextMenuAction::RemoveFromLibrary, None),
         ]
     );
-    assert!(item_enabled(&items, super::ContextMenuAction::Copy));
-    assert!(item_enabled(&items, super::ContextMenuAction::Paste));
-    assert!(item_enabled(&items, super::ContextMenuAction::Duplicate));
     assert!(item_enabled(
         &items,
-        super::ContextMenuAction::DeleteFromBoard
+        super::shortcuts::ContextMenuAction::Copy
     ));
-    assert!(item_enabled(&items, super::ContextMenuAction::MoveToFront));
-    assert!(item_enabled(&items, super::ContextMenuAction::MoveToBack));
+    assert!(item_enabled(
+        &items,
+        super::shortcuts::ContextMenuAction::Paste
+    ));
+    assert!(item_enabled(
+        &items,
+        super::shortcuts::ContextMenuAction::Duplicate
+    ));
+    assert!(item_enabled(
+        &items,
+        super::shortcuts::ContextMenuAction::DeleteFromBoard
+    ));
+    assert!(item_enabled(
+        &items,
+        super::shortcuts::ContextMenuAction::MoveToFront
+    ));
+    assert!(item_enabled(
+        &items,
+        super::shortcuts::ContextMenuAction::MoveToBack
+    ));
     assert!(!item_enabled(
         &items,
-        super::ContextMenuAction::SearchUsingImage
+        super::shortcuts::ContextMenuAction::SearchUsingImage
     ));
     assert!(item_enabled(
         &items,
-        super::ContextMenuAction::RemoveFromLibrary
+        super::shortcuts::ContextMenuAction::RemoveFromLibrary
     ));
 }
 
@@ -1536,7 +1557,7 @@ fn context_menu_items_reflect_mixed_selection_capabilities() {
 fn context_menu_primary_press_closes_menu_only_outside_it() {
     let menu_rect = egui::Rect::from_min_size(egui::pos2(100.0, 120.0), egui::vec2(190.0, 240.0));
     let should_close = |pointer_pos: egui::Pos2| {
-        super::context_menu_should_close(
+        super::context_menu::context_menu_should_close(
             false,
             false,
             menu_rect,
@@ -1578,8 +1599,14 @@ fn stack_order_context_actions_are_disabled_without_canvas_item_selection() {
 
     let items = app.context_menu_items();
 
-    assert!(!item_enabled(&items, super::ContextMenuAction::MoveToFront));
-    assert!(!item_enabled(&items, super::ContextMenuAction::MoveToBack));
+    assert!(!item_enabled(
+        &items,
+        super::shortcuts::ContextMenuAction::MoveToFront
+    ));
+    assert!(!item_enabled(
+        &items,
+        super::shortcuts::ContextMenuAction::MoveToBack
+    ));
 }
 
 #[test]
@@ -1606,22 +1633,22 @@ fn stack_order_context_actions_are_enabled_for_image_and_annotation_selections()
     let image_only = app.context_menu_items();
     assert!(item_enabled(
         &image_only,
-        super::ContextMenuAction::MoveToFront
+        super::shortcuts::ContextMenuAction::MoveToFront
     ));
     assert!(item_enabled(
         &image_only,
-        super::ContextMenuAction::MoveToBack
+        super::shortcuts::ContextMenuAction::MoveToBack
     ));
 
     app.canvas.select_content(&[], &[20]);
     let annotation_only = app.context_menu_items();
     assert!(item_enabled(
         &annotation_only,
-        super::ContextMenuAction::MoveToFront
+        super::shortcuts::ContextMenuAction::MoveToFront
     ));
     assert!(item_enabled(
         &annotation_only,
-        super::ContextMenuAction::MoveToBack
+        super::shortcuts::ContextMenuAction::MoveToBack
     ));
 }
 
@@ -1638,14 +1665,14 @@ fn image_search_context_action_requires_exactly_one_image() {
     let single = app.context_menu_items();
     assert!(item_enabled(
         &single,
-        super::ContextMenuAction::SearchUsingImage
+        super::shortcuts::ContextMenuAction::SearchUsingImage
     ));
 
     app.canvas.select_placements(&[1, 2]);
     let multiple = app.context_menu_items();
     assert!(!item_enabled(
         &multiple,
-        super::ContextMenuAction::SearchUsingImage
+        super::shortcuts::ContextMenuAction::SearchUsingImage
     ));
 }
 
@@ -1674,7 +1701,7 @@ fn remove_from_library_context_action_waits_for_confirmation() {
     app.canvas.select_placements(&[source_item.state.id]);
 
     app.handle_context_menu_action(
-        super::ContextMenuAction::RemoveFromLibrary,
+        super::shortcuts::ContextMenuAction::RemoveFromLibrary,
         &ctx,
         egui::Rect::EVERYTHING,
     );
@@ -1743,7 +1770,7 @@ fn move_to_front_context_action_persists_canvas_stack_order() {
         .select_content(&[first.state.id], &[annotation.id]);
 
     app.handle_context_menu_action(
-        super::ContextMenuAction::MoveToFront,
+        super::shortcuts::ContextMenuAction::MoveToFront,
         &ctx,
         egui::Rect::EVERYTHING,
     );
@@ -1759,7 +1786,7 @@ fn move_to_front_context_action_persists_canvas_stack_order() {
     );
 
     app.handle_context_menu_action(
-        super::ContextMenuAction::MoveToBack,
+        super::shortcuts::ContextMenuAction::MoveToBack,
         &ctx,
         egui::Rect::EVERYTHING,
     );
@@ -1814,7 +1841,7 @@ fn delete_from_board_archives_image_placements_and_annotations() {
         .select_content(&[source_item.state.id], &[annotation.id]);
 
     app.handle_context_menu_action(
-        super::ContextMenuAction::DeleteFromBoard,
+        super::shortcuts::ContextMenuAction::DeleteFromBoard,
         &ctx,
         egui::Rect::EVERYTHING,
     );
@@ -1848,7 +1875,7 @@ fn search_using_image_context_action_opens_image_pivot_search() {
     app.canvas.select_placements(&[42]);
 
     app.handle_context_menu_action(
-        super::ContextMenuAction::SearchUsingImage,
+        super::shortcuts::ContextMenuAction::SearchUsingImage,
         &ctx,
         egui::Rect::EVERYTHING,
     );
@@ -1870,7 +1897,7 @@ fn search_using_image_context_action_survives_activation_click_outside_overlay()
     app.canvas.select_placements(&[42]);
 
     app.handle_context_menu_action(
-        super::ContextMenuAction::SearchUsingImage,
+        super::shortcuts::ContextMenuAction::SearchUsingImage,
         &ctx,
         egui::Rect::EVERYTHING,
     );
@@ -8080,7 +8107,10 @@ fn test_viewport_world() -> egui::Rect {
     egui::Rect::from_min_max(egui::pos2(-240.0, -180.0), egui::pos2(240.0, 180.0))
 }
 
-fn item_enabled(items: &[super::ContextMenuItem], action: super::ContextMenuAction) -> bool {
+fn item_enabled(
+    items: &[super::shortcuts::ContextMenuItem],
+    action: super::shortcuts::ContextMenuAction,
+) -> bool {
     items
         .iter()
         .find(|item| item.action == action)
