@@ -13,7 +13,6 @@ pub struct Board {
     pub name: String,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct BoardSummary {
     pub board: Board,
@@ -29,7 +28,6 @@ pub struct BoardDocumentSnapshot {
     pub viewport: ViewportState,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct PlacementState {
     pub id: PlacementId,
@@ -128,7 +126,6 @@ pub enum PlacementLifecycle {
 /// Board-local visual object. Loaded Placements carry their Library Asset;
 /// loading/failed Placements carry the source needed to resolve or explain
 /// their content.
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Debug)]
 pub struct Placement {
     pub state: PlacementState,
@@ -177,7 +174,7 @@ impl Placement {
             .expect("loaded Placement should carry its Asset")
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn require_loaded_asset_mut(&mut self) -> &mut super::Asset {
         self.asset
             .as_mut()

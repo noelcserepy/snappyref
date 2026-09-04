@@ -71,7 +71,6 @@ fn push_test_image(
                 mime_type: "image/png".to_owned(),
                 width,
                 height,
-                file_size: 0,
             },
         ),
         texture: CanvasTexture::Managed(texture),
@@ -148,7 +147,6 @@ fn test_record(placement_id: i64, asset_id: i64, width: u32, height: u32) -> Pla
             mime_type: "image/png".to_owned(),
             width,
             height,
-            file_size: 0,
         },
     )
 }
@@ -321,7 +319,6 @@ fn crop_replacement_keeps_old_native_texture_until_last_shared_reference_drops()
                 mime_type: "image/png".to_owned(),
                 width: 2,
                 height: 2,
-                file_size: 0,
             },
             PlacementState::new(1, Some(2), eframe::egui::pos2(0.0, 0.0), 1.0, 0.0, 1, false),
         )
@@ -404,7 +401,6 @@ fn converts_drag_rect_to_crop_pixels_and_live_scale_position() {
         mime_type: "image/png".to_owned(),
         width: 100,
         height: 80,
-        file_size: 0,
     };
     let kept_local = eframe::egui::Rect::from_min_max(
         eframe::egui::pos2(10.0, 20.0),
@@ -1153,7 +1149,6 @@ fn placement_resize_scales_proportionally_from_opposite_corner() {
         mime_type: "image/png".to_owned(),
         width: 200,
         height: 100,
-        file_size: 0,
     };
     let anchor = eframe::egui::pos2(200.0, 190.0);
     let start_handle = eframe::egui::pos2(400.0, 290.0);
@@ -1175,7 +1170,6 @@ fn placement_resize_respects_minimum_scale() {
         mime_type: "image/png".to_owned(),
         width: 400,
         height: 200,
-        file_size: 0,
     };
 
     let (_, scale) = resized_placement_transform(

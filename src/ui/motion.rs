@@ -65,7 +65,7 @@ pub(crate) fn cascade_reveal(ctx: &egui::Context, list_id: egui::Id, index: usiz
     if progress < 1.0 {
         ctx.request_repaint_after(Duration::from_millis(16));
     }
-    let eased = ease_out_cubic(progress);
+    let eased = theme::motion_easing(progress);
     RevealState {
         opacity: eased,
         rise: (1.0 - eased) * theme::MOTION_REVEAL_RISE,
@@ -158,7 +158,7 @@ pub(crate) fn hover_amount(ctx: &egui::Context, id: egui::Id, hovered: bool) -> 
         id.with("hover"),
         hovered,
         theme::MOTION_FEEDBACK_SECONDS,
-        egui::emath::easing::cubic_out,
+        theme::motion_easing,
     )
 }
 
@@ -167,7 +167,7 @@ pub(crate) fn press_amount(ctx: &egui::Context, id: egui::Id, pressed: bool) -> 
         id.with("press"),
         pressed,
         theme::MOTION_FEEDBACK_SECONDS,
-        egui::emath::easing::cubic_out,
+        theme::motion_easing,
     )
 }
 
@@ -220,10 +220,6 @@ pub(crate) fn pulse_decay(
     Some(1.0 - theme::motion_easing(t.clamp(0.0, 1.0)))
 }
 
-fn ease_out_cubic(progress: f32) -> f32 {
-    1.0 - (1.0 - progress).powi(3)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,13 +252,6 @@ mod tests {
         let capped = cascade_reveal(&ctx, list, theme::MOTION_REVEAL_MAX_STAGGER_STEPS);
         let beyond = cascade_reveal(&ctx, list, theme::MOTION_REVEAL_MAX_STAGGER_STEPS + 40);
         assert_eq!(capped.opacity, beyond.opacity);
-    }
-
-    #[test]
-    fn ease_out_cubic_settles_at_one() {
-        assert_eq!(ease_out_cubic(1.0), 1.0);
-        assert_eq!(ease_out_cubic(0.0), 0.0);
-        assert!(ease_out_cubic(0.5) > 0.5);
     }
 
     #[test]

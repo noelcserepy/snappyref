@@ -208,11 +208,6 @@ pub(crate) fn parse_and_verify_with_key(
 }
 
 #[cfg(test)]
-pub(crate) fn embedded_public_key_for_tests() -> Option<VerifyingKey> {
-    VerifyingKey::from_bytes(&SIGNING_PUBLIC_KEY).ok()
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
@@ -347,6 +342,6 @@ mod tests {
         // The PEM file shipped in the repo must be a valid ed25519 SPKI;
         // otherwise discovery would always fail at runtime with
         // InvalidEmbeddedPublicKey.
-        assert!(embedded_public_key_for_tests().is_some());
+        assert!(VerifyingKey::from_bytes(&SIGNING_PUBLIC_KEY).is_ok());
     }
 }

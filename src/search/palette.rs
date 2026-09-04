@@ -596,7 +596,7 @@ fn paint_kbd_hint(ui: &mut egui::Ui, label: &str) {
         crate::ui::theme::TEXT_MUTED,
     );
     ui.painter().galley(
-        crate::ui::layout::centered_pos(rect, galley.size()),
+        rect.center() - galley.size() * 0.5,
         galley,
         crate::ui::theme::TEXT_MUTED,
     );
@@ -631,7 +631,7 @@ fn footer_hint_label(ui: &mut egui::Ui, label: &str) {
         egui::Sense::hover(),
     );
     ui.painter().galley(
-        crate::ui::layout::centered_pos(rect, galley.size()),
+        rect.center() - galley.size() * 0.5,
         galley,
         crate::ui::theme::TEXT_SUBTLE,
     );
@@ -867,7 +867,7 @@ pub(crate) fn paint_palette_footer(
                         + footer_hint_label_width(ui, "More");
                     ui.allocate_ui_with_layout(
                         egui::vec2(more_hint_width, KBD_HINT_CELL_SIZE.y),
-                        crate::ui::layout::row_center_y_layout(),
+                        egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
                             paint_kbd_hint(ui, "↓");
@@ -876,7 +876,7 @@ pub(crate) fn paint_palette_footer(
                         },
                     );
                 }
-                ui.with_layout(crate::ui::layout::row_end_center_y_layout(), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     if result_count == 0 {
                         footer_hint_label(ui, "Select");

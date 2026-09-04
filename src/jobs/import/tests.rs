@@ -1315,7 +1315,6 @@ fn crop_redecodes_original_path_and_preserves_exact_pixels() {
     let stored_path = library
         .store_rgba_image("crop-source", &source_rgba, 4, 4)
         .unwrap();
-    let file_size = fs::metadata(&stored_path).unwrap().len();
     let request = crate::canvas::CanvasCropRequest {
         placement_id: 1,
         source_asset: crate::data::Asset {
@@ -1325,7 +1324,6 @@ fn crop_redecodes_original_path_and_preserves_exact_pixels() {
             mime_type: "image/png".to_owned(),
             width: 4,
             height: 4,
-            file_size,
         },
         crop_rect: crate::canvas::PixelCropRect {
             x: 1,

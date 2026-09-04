@@ -95,7 +95,7 @@ pub(super) fn paint_sidebar_section_header(ui: &mut egui::Ui, title: &str, detai
             ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
             ui.label(crate::ui::theme::editorial_caption(title));
             if let Some(detail) = detail {
-                ui.with_layout(crate::ui::layout::row_end_center_y_layout(), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         egui::RichText::new(detail)
                             .text_style(egui::TextStyle::Small)

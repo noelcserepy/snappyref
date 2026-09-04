@@ -751,12 +751,12 @@ impl CanvasState {
         self.interaction.guide_snap_engaged_at
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn guide_snap_indicator_count(&self) -> usize {
         self.interaction.guide_snap_indicators.len()
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn guide_snap_mark_count(&self) -> usize {
         self.interaction
             .guide_snap_indicators
@@ -1290,7 +1290,6 @@ impl CanvasState {
         true
     }
 
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn select_placements(&mut self, placement_ids: &[i64]) {
         self.finish_textbox_edit();
         self.document.selected_placement_ids = placement_ids
@@ -1484,7 +1483,6 @@ impl CanvasState {
         self.move_selected_canvas_items(StackOrderMove::Back)
     }
 
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn delete_selected_placements(&mut self) -> Vec<i64> {
         let selected_ids = self.document.selected_placement_ids.clone();
         self.delete_placements(&selected_ids)
@@ -1501,7 +1499,6 @@ impl CanvasState {
         selected_ids
     }
 
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn delete_placements(&mut self, placement_ids: &[i64]) -> Vec<i64> {
         if placement_ids.is_empty() {
             return Vec::new();
@@ -2372,7 +2369,7 @@ impl CanvasState {
         true
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn set_placement_rotation(&mut self, placement_id: i64, rotation: f32) -> bool {
         let Some(image) = self.rendered_placement_by_id_mut(placement_id) else {
             return false;

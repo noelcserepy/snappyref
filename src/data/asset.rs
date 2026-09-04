@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 /// A library-owned image reference, independent of any board-local Placement.
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct Asset {
     pub id: i64,
@@ -10,5 +9,4 @@ pub struct Asset {
     pub mime_type: String,
     pub width: u32,
     pub height: u32,
-    pub file_size: u64,
 }

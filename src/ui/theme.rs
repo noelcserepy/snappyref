@@ -9,8 +9,6 @@ const PANEL_BG_ELEVATED: egui::Color32 = color(0x22, 0x21, 0x1F);
 const ACCENT_GOLD: egui::Color32 = color(0xE4, 0xCE, 0xB0);
 const DESTRUCTIVE_RED: egui::Color32 = color(0xCA, 0x3C, 0x25);
 
-const DISPLAY_TEXT_STYLE_NAME: &str = "display";
-
 /// Tailwind-like 4px spacing scale for layout-driven hierarchy.
 ///
 /// Usage:
@@ -210,9 +208,8 @@ fn configure_fonts(ctx: &egui::Context) {
 
 fn apply_style(style: &mut egui::Style) {
     // Editorial type scale: wider steps so size alone carries hierarchy
-    // (18 / 14 / 12 / 11 / 10) instead of borders or fills.
+    // (14 / 12 / 11 / 10) instead of borders or fills.
     style.text_styles = [
-        (display_text_style(), FontId::proportional(18.0)),
         (TextStyle::Heading, FontId::proportional(14.0)),
         (TextStyle::Body, FontId::proportional(12.0)),
         (TextStyle::Button, FontId::proportional(11.0)),
@@ -267,10 +264,6 @@ fn apply_style(style: &mut egui::Style) {
     style.animation_time = MOTION_FEEDBACK_SECONDS;
     style.spacing.item_spacing = egui::vec2(SPACE_3, SPACE_3);
     style.spacing.button_padding = egui::vec2(SPACE_3, SPACE_2);
-}
-
-pub fn display_text_style() -> TextStyle {
-    TextStyle::Name(DISPLAY_TEXT_STYLE_NAME.into())
 }
 
 pub fn stroke_subtle() -> egui::Stroke {

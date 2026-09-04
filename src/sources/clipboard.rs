@@ -353,7 +353,6 @@ mod tests {
                 mime_type: "image/png".to_owned(),
                 width: 1,
                 height: 1,
-                file_size: 4,
             },
         )
     }

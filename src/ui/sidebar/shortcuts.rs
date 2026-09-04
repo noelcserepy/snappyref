@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::app::{SUPPORTED_SHORTCUTS, SupportedShortcut};
+use crate::app::{SUPPORTED_SHORTCUTS, SupportedShortcut, platform_shortcut_label};
 
 pub(super) fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
     let pad = crate::ui::theme::SPACE_3;
@@ -26,17 +26,12 @@ fn paint_shortcut_group(ui: &mut egui::Ui, title: &str, shortcuts: &[SupportedSh
 }
 
 fn paint_shortcut_row(ui: &mut egui::Ui, shortcut: &SupportedShortcut) {
-    #[cfg(target_os = "macos")]
-    let keys = shortcut.mac;
-    #[cfg(not(target_os = "macos"))]
-    let keys = shortcut.windows;
-
     ui.add_space(3.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
-        ui.with_layout(crate::ui::layout::row_end_center_y_layout(), |ui| {
-            paint_shortcut_pill(ui, keys);
-            ui.with_layout(crate::ui::layout::row_center_y_layout(), |ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            paint_shortcut_pill(ui, shortcut.keys);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.label(
                     egui::RichText::new(shortcut.action)
                         .text_style(egui::TextStyle::Small)
@@ -80,16 +75,6 @@ pub(super) fn platform_command_modifier_name() -> &'static str {
     {
         "Ctrl"
     }
-}
-
-#[cfg(target_os = "macos")]
-fn platform_shortcut_label(mac: &'static str, _windows: &'static str) -> &'static str {
-    mac
-}
-
-#[cfg(not(target_os = "macos"))]
-fn platform_shortcut_label(_mac: &'static str, windows: &'static str) -> &'static str {
-    windows
 }
 
 pub(super) fn display_shortcut_label(keys: &str) -> String {

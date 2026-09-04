@@ -112,7 +112,6 @@ pub(crate) struct GuideSnapIndicator {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CanvasInputPolicy {
     Full,
-    #[allow(dead_code)]
     ViewportOnly,
     Blocked,
 }
