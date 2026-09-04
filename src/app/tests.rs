@@ -333,7 +333,6 @@ fn compact_arrangement_action_uses_dense_compact_layout() {
         let placement = Placement::loaded(
             PlacementState::new(
                 *id,
-                Some(*id),
                 eframe::egui::pos2(index as f32 * 500.0, index as f32 * 120.0),
                 1.0,
                 0.0,
@@ -598,9 +597,7 @@ fn late_undo_content_failure_is_ignored_after_newer_replay() {
         .content_resolution
         .reserve_history_placement(app.active_board_id, placement_id);
     let mut redo_placement = undo_placement;
-    redo_placement.state.asset_id = Some(202);
-    redo_placement.asset.as_mut().unwrap().id = 202;
-    redo_placement.content = crate::data::PlacementContent::Loaded { asset_id: 202 };
+    redo_placement.require_loaded_asset_mut().id = 202;
     let action = super::HistoryAction::document(
         "Crop image".to_owned(),
         vec![super::HistoryChange {
@@ -615,10 +612,7 @@ fn late_undo_content_failure_is_ignored_after_newer_replay() {
     };
     let replay = app.apply_history_to_active_canvas(&action, super::HistoryDirection::Forward);
     assert_eq!(replay.placements_needing_content.len(), 1);
-    assert_eq!(
-        replay.placements_needing_content[0].state.asset_id,
-        Some(202)
-    );
+    assert_eq!(replay.placements_needing_content[0].asset_id(), Some(202));
     app.status = "Redid Crop image".to_owned();
 
     let result = crate::jobs::ImagePrepResult::Failed {
@@ -645,8 +639,7 @@ fn late_undo_content_failure_is_ignored_after_newer_replay() {
         app.canvas
             .placement_for_id(placement_id)
             .unwrap()
-            .state
-            .asset_id,
+            .asset_id(),
         Some(202)
     );
     assert_eq!(app.content_resolution.pending_len(), 0);
@@ -660,9 +653,7 @@ fn completed_history_content_replay_preserves_history_command_status() {
 
     for (asset_id, command_status) in [(101, "Undid Crop image"), (202, "Redid Crop image")] {
         let mut loaded = test_loaded_item(placement_id, app.active_board_id);
-        loaded.placement.state.asset_id = Some(asset_id);
-        loaded.placement.asset.as_mut().unwrap().id = asset_id;
-        loaded.placement.content = crate::data::PlacementContent::Loaded { asset_id };
+        loaded.placement.require_loaded_asset_mut().id = asset_id;
         loaded.origin = crate::jobs::ImportOrigin::Existing;
         app.canvas
             .add_unresolved_placement(loaded.placement.clone());
@@ -696,9 +687,7 @@ fn completed_history_content_replay_preserves_history_command_status() {
         assert_eq!(app.content_resolution.pending_len(), 0);
 
         let mut detail = test_loaded_item(placement_id, app.active_board_id);
-        detail.placement.state.asset_id = Some(asset_id);
-        detail.placement.asset.as_mut().unwrap().id = asset_id;
-        detail.placement.content = crate::data::PlacementContent::Loaded { asset_id };
+        detail.placement.require_loaded_asset_mut().id = asset_id;
         detail.origin = crate::jobs::ImportOrigin::Existing;
         detail.queue_id = None;
         let outcome = app.residency.process_import_result(
@@ -875,12 +864,6 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
         stored_after_crop.require_loaded_asset().id,
         cropped_asset_id
     );
-    assert_eq!(
-        stored_after_crop.content,
-        crate::data::PlacementContent::Loaded {
-            asset_id: cropped_asset_id
-        }
-    );
 
     app.undo_document_history(&ctx);
     app.flush_persistence();
@@ -903,12 +886,6 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
     );
     let stored_after_undo = &library.load_placements().unwrap()[0];
     assert_eq!(stored_after_undo.require_loaded_asset().id, source_asset_id);
-    assert_eq!(
-        stored_after_undo.content,
-        crate::data::PlacementContent::Loaded {
-            asset_id: source_asset_id
-        }
-    );
 
     app.undo_document_history(&ctx);
     assert_eq!(app.status, status_after_undo);
@@ -942,12 +919,6 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
     );
     let stored = &library.load_placements().unwrap()[0];
     assert_eq!(stored.require_loaded_asset().id, cropped_asset_id);
-    assert_eq!(
-        stored.content,
-        crate::data::PlacementContent::Loaded {
-            asset_id: cropped_asset_id
-        }
-    );
     assert_eq!(
         library.load_asset(cropped_asset_id).unwrap().id,
         cropped_asset_id
@@ -2238,9 +2209,9 @@ fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement()
         .unwrap();
 
     let mut resolved = loading.clone();
-    resolved.state.asset_id = Some(asset.id);
-    resolved.asset = Some(asset.clone());
-    resolved.content = crate::data::PlacementContent::Loaded { asset_id: asset.id };
+    resolved.content = crate::data::PlacementContent::Loaded {
+        asset: asset.clone(),
+    };
     assert!(
         app.document_history
             .update_accepted_placement(second.id, resolved.clone())
@@ -2270,10 +2241,6 @@ fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement()
     let restored = reopened.load_board_document(second.id).unwrap();
     assert_eq!(restored.placements.len(), 1);
     assert_eq!(restored.placements[0].state.id, resolved.state.id);
-    assert_eq!(
-        restored.placements[0].state.asset_id,
-        resolved.state.asset_id
-    );
     assert_eq!(restored.placements[0].content, resolved.content);
 }
 
@@ -3342,7 +3309,7 @@ fn switching_boards_clears_selection_and_search() {
         height: 1,
     };
     let placement = Placement::loaded(
-        PlacementState::new(1, Some(1), eframe::egui::pos2(0.0, 0.0), 1.0, 0.0, 0, false),
+        PlacementState::new(1, eframe::egui::pos2(0.0, 0.0), 1.0, 0.0, 0, false),
         asset,
     );
     app.canvas.add_prepared_placement_image(
@@ -5055,7 +5022,6 @@ fn inspect_compact_equal_size_images_writes_artifact() {
         let placement = Placement::loaded(
             PlacementState::with_display_size(
                 id,
-                Some(id),
                 egui::pos2(-360.0 + id as f32 * 150.0, -120.0 + id as f32 * 20.0),
                 egui::vec2(150.0, 40.0),
                 1.0,
@@ -5950,11 +5916,7 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
     let durable = &library.load_placements().unwrap()[0];
     scenario.assertion(
         "explicit flush preserves the cropped Asset relation",
-        durable.require_loaded_asset().id == cropped_asset_id
-            && durable.content
-                == crate::data::PlacementContent::Loaded {
-                    asset_id: cropped_asset_id,
-                },
+        durable.require_loaded_asset().id == cropped_asset_id,
     );
 
     let report = scenario.finish();
@@ -6455,15 +6417,7 @@ fn completed_multi_file_import_batch_selects_and_compacts_loaded_geometry() {
             height,
         };
         let placement = Placement::loaded(
-            PlacementState::new(
-                id,
-                Some(id),
-                eframe::egui::pos2(0.0, 0.0),
-                1.0,
-                0.0,
-                id as i32,
-                false,
-            ),
+            PlacementState::new(id, eframe::egui::pos2(0.0, 0.0), 1.0, 0.0, id as i32, false),
             asset,
         );
         app.integrate_loaded_import(
@@ -7904,7 +7858,7 @@ fn inspect_rect(rect: egui::Rect) -> serde_json::Value {
 fn inspect_placement(placement: &Placement) -> serde_json::Value {
     serde_json::json!({
         "id": placement.state.id,
-        "asset_id": placement.state.asset_id,
+        "asset_id": placement.asset_id(),
         "center": inspect_pos(placement.state.geometry.center),
         "size": inspect_vec2(placement.state.geometry.scaled_size()),
         "scale": placement.state.geometry.scale,
@@ -7930,10 +7884,9 @@ fn inspect_sample_loaded_item(
     color: [u8; 4],
     queue_id: u64,
     target_board_id: i64,
-    mut state: PlacementState,
+    state: PlacementState,
 ) -> PreparedPlacementImage {
     let asset_id = state.id;
-    state.asset_id = Some(asset_id);
     let asset = Asset {
         id: asset_id,
         original_path: PathBuf::from(name),
@@ -8169,7 +8122,6 @@ fn add_inspect_compact_image(
     let placement = Placement::loaded(
         PlacementState::with_display_size(
             id,
-            Some(id),
             center,
             egui::vec2(width as f32, height as f32),
             1.0,
@@ -8235,7 +8187,6 @@ fn test_loaded_item(placement_id: i64, target_board_id: i64) -> PreparedPlacemen
     let placement = Placement::loaded(
         PlacementState::new(
             placement_id,
-            Some(placement_id),
             eframe::egui::pos2(0.0, 0.0),
             1.0,
             0.0,

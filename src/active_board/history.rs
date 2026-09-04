@@ -218,8 +218,6 @@ impl DocumentHistory {
             message,
             recoverable: true,
         };
-        placement.asset = None;
-        placement.state.asset_id = None;
         self.update_accepted_placement(board_id, placement.clone())
             .then_some(placement)
     }
@@ -450,7 +448,6 @@ struct StoredHistoryChange<T> {
 #[derive(serde::Deserialize, serde::Serialize)]
 struct StoredPlacement {
     id: i64,
-    asset_id: Option<i64>,
     center_x: f32,
     center_y: f32,
     width: f32,
@@ -459,7 +456,7 @@ struct StoredPlacement {
     rotation: f32,
     z_index: i32,
     archived: bool,
-    content: crate::data::PlacementContent,
+    content: crate::library::storage::StoredPlacementContent,
     lifecycle: crate::data::PlacementLifecycle,
 }
 
@@ -726,7 +723,6 @@ impl From<&Placement> for StoredPlacement {
     fn from(placement: &Placement) -> Self {
         Self {
             id: placement.state.id,
-            asset_id: placement.state.asset_id,
             center_x: placement.state.geometry.center.x,
             center_y: placement.state.geometry.center.y,
             width: placement.state.geometry.size.x,
@@ -735,7 +731,9 @@ impl From<&Placement> for StoredPlacement {
             rotation: placement.state.geometry.rotation,
             z_index: placement.state.geometry.z_index,
             archived: placement.state.archived,
-            content: placement.content.clone(),
+            content: crate::library::storage::StoredPlacementContent::from_content(
+                &placement.content,
+            ),
             lifecycle: placement.lifecycle,
         }
     }
@@ -748,7 +746,6 @@ impl StoredPlacement {
     ) -> Result<Placement, String> {
         let state = crate::data::PlacementState::with_display_size(
             self.id,
-            self.asset_id,
             eframe::egui::pos2(self.center_x, self.center_y),
             eframe::egui::vec2(self.width, self.height),
             self.scale,
@@ -756,14 +753,11 @@ impl StoredPlacement {
             self.z_index,
             self.archived,
         );
-        let asset = self
-            .asset_id
-            .map(|asset_id| library.load_asset(asset_id))
-            .transpose()?;
         Ok(Placement {
             state,
-            asset,
-            content: self.content,
+            content: self
+                .content
+                .into_content(|asset_id| library.load_asset(asset_id))?,
             lifecycle: self.lifecycle,
         })
     }

@@ -42,6 +42,6 @@ pub(super) fn unix_timestamp_seconds() -> i64 {
 
 #[cfg(test)]
 pub(super) fn encode_loaded_placement_content(asset_id: i64) -> Result<String, String> {
-    serde_json::to_string(&PlacementContent::Loaded { asset_id })
+    serde_json::to_string(&super::StoredPlacementContent::Loaded { asset_id })
         .map_err(|error| format!("failed to encode loaded placement content: {error}"))
 }

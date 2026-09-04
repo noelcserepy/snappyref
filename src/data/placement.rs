@@ -31,7 +31,6 @@ pub struct BoardDocumentSnapshot {
 #[derive(Clone, Debug)]
 pub struct PlacementState {
     pub id: PlacementId,
-    pub asset_id: Option<AssetId>,
     pub geometry: RectGeometry,
     pub archived: bool,
 }
@@ -40,28 +39,17 @@ impl PlacementState {
     #[cfg(test)]
     pub fn new(
         id: PlacementId,
-        asset_id: Option<AssetId>,
         center: Pos2,
         scale: f32,
         rotation: f32,
         z_index: i32,
         archived: bool,
     ) -> Self {
-        Self::with_display_size(
-            id,
-            asset_id,
-            center,
-            Vec2::ZERO,
-            scale,
-            rotation,
-            z_index,
-            archived,
-        )
+        Self::with_display_size(id, center, Vec2::ZERO, scale, rotation, z_index, archived)
     }
 
     pub fn with_display_size(
         id: PlacementId,
-        asset_id: Option<AssetId>,
         center: Pos2,
         size: Vec2,
         scale: f32,
@@ -71,7 +59,6 @@ impl PlacementState {
     ) -> Self {
         Self {
             id,
-            asset_id,
             geometry: RectGeometry::new(center, size, scale, rotation, z_index),
             archived,
         }
@@ -83,23 +70,18 @@ impl PlacementState {
 /// A Placement is the canonical canvas object even while content is still
 /// loading or has failed. Async import/search/clipboard work updates this
 /// state in place so selection, movement, history, and stack order do not
-/// need a separate placeholder model.
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+/// need a separate placeholder model. The persisted form lives in the
+/// library storage adapter.
+#[derive(Clone, Debug, PartialEq)]
 pub enum PlacementContent {
     Loaded {
-        asset_id: i64,
+        asset: super::Asset,
     },
     Loading {
-        // Compatibility: older persisted payloads used `intent` for this
-        // post-Placement Content Resolution Source.
-        #[serde(alias = "intent")]
         source: ContentResolutionSource,
         status_message: Option<String>,
     },
     Failed {
-        // Compatibility: older persisted payloads used `intent` for this
-        // post-Placement Content Resolution Source.
-        #[serde(alias = "intent")]
         source: Option<ContentResolutionSource>,
         message: String,
         recoverable: bool,
@@ -129,27 +111,37 @@ pub enum PlacementLifecycle {
 #[derive(Clone, Debug)]
 pub struct Placement {
     pub state: PlacementState,
-    pub asset: Option<super::Asset>,
     pub content: PlacementContent,
     pub lifecycle: PlacementLifecycle,
 }
 
 impl Placement {
     pub fn loaded(mut state: PlacementState, asset: super::Asset) -> Self {
-        state.asset_id = Some(asset.id);
         if state.geometry.size.x <= 0.0 || state.geometry.size.y <= 0.0 {
             state.geometry.size = vec2(asset.width as f32, asset.height as f32);
         }
         Self {
-            content: PlacementContent::Loaded { asset_id: asset.id },
+            content: PlacementContent::Loaded { asset },
             lifecycle: PlacementLifecycle::Committed,
             state,
-            asset: Some(asset),
         }
     }
 
     pub fn is_loaded(&self) -> bool {
         matches!(self.content, PlacementContent::Loaded { .. })
+    }
+
+    /// The Library Asset this Placement renders, or is still resolving
+    /// toward when it was placed from a known Asset.
+    pub fn asset_id(&self) -> Option<AssetId> {
+        match &self.content {
+            PlacementContent::Loaded { asset } => Some(asset.id),
+            PlacementContent::Loading {
+                source: ContentResolutionSource::SearchAsset { asset_id },
+                ..
+            } => Some(*asset_id),
+            _ => None,
+        }
     }
 
     /// Adopts the geometry of the record already on the Board. An image load
@@ -158,27 +150,35 @@ impl Placement {
     /// Asset was already loaded; a first load fits the Asset's aspect.
     pub fn adopt_geometry_of(&mut self, current: &Placement) {
         let newer = current.state.geometry;
+        let same_loaded_asset = current.is_loaded() && current.asset_id() == self.asset_id();
         let geometry = &mut self.state.geometry;
         geometry.center = newer.center;
         geometry.rotation = newer.rotation;
         geometry.z_index = newer.z_index;
-        if current.is_loaded() && current.state.asset_id == self.state.asset_id {
+        if same_loaded_asset {
             geometry.size = newer.size;
             geometry.scale = newer.scale;
         }
     }
 
+    pub fn loaded_asset(&self) -> Option<&super::Asset> {
+        match &self.content {
+            PlacementContent::Loaded { asset } => Some(asset),
+            _ => None,
+        }
+    }
+
     pub fn require_loaded_asset(&self) -> &super::Asset {
-        self.asset
-            .as_ref()
+        self.loaded_asset()
             .expect("loaded Placement should carry its Asset")
     }
 
     #[cfg(test)]
     pub fn require_loaded_asset_mut(&mut self) -> &mut super::Asset {
-        self.asset
-            .as_mut()
-            .expect("loaded Placement should carry its Asset")
+        match &mut self.content {
+            PlacementContent::Loaded { asset } => asset,
+            _ => panic!("loaded Placement should carry its Asset"),
+        }
     }
 
     pub fn id(&self) -> PlacementId {

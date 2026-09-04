@@ -158,7 +158,7 @@ impl ImageResidencyCoordinator {
         if canvas
             .placement_for_id(loaded.placement.state.id)
             .is_some_and(|current| {
-                current.is_loaded() && current.state.asset_id != loaded.placement.state.asset_id
+                current.is_loaded() && current.asset_id() != loaded.placement.asset_id()
             })
         {
             return LoadedContentResolutionOutcome {

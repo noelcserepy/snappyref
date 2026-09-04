@@ -388,14 +388,7 @@ impl CanvasState {
             };
 
         let mut updated_placement_state = source_placement_state;
-        let asset_id = updated_placement_state
-            .asset_id
-            .ok_or_else(|| format!("placement {} has no asset", updated_placement_state.id))?;
-        merge_cropped_item_fields(
-            &mut updated_placement_state,
-            asset_id,
-            cropped.crop_offset_local,
-        );
+        merge_cropped_item_fields(&mut updated_placement_state, cropped.crop_offset_local);
         Ok(updated_placement_state)
     }
 
@@ -454,18 +447,11 @@ impl CanvasState {
         asset.width = request.crop_rect.width;
         asset.height = request.crop_rect.height;
         let mut updated_placement_state = original_image.placement.state.clone();
-        let asset_id = updated_placement_state
-            .asset_id
-            .ok_or_else(|| format!("placement {} has no asset", updated_placement_state.id))?;
-        merge_cropped_item_fields(
-            &mut updated_placement_state,
-            asset_id,
-            request.crop_offset_local,
-        );
+        merge_cropped_item_fields(&mut updated_placement_state, request.crop_offset_local);
 
         let image = &mut self.document.rendered_placements[image_index];
         image.placement.state = updated_placement_state;
-        image.placement.asset = Some(asset);
+        image.placement.content = crate::data::PlacementContent::Loaded { asset };
         image.texture = texture;
         image.loaded_lod = CanvasImageLod::Working;
         image.animation = None;
@@ -507,7 +493,7 @@ impl CanvasState {
         };
 
         image.placement.state = updated_item;
-        image.placement.asset = Some(asset);
+        image.placement.content = crate::data::PlacementContent::Loaded { asset };
         image.texture = texture;
         image.loaded_lod = loaded_lod;
         image.animation = None;
@@ -879,7 +865,7 @@ impl CanvasState {
                     .selected_placement_ids
                     .contains(&image.placement.state.id)
             })
-            .filter_map(|image| image.placement.asset.as_ref().map(|asset| asset.id))
+            .filter_map(|image| image.placement.asset_id())
             .collect::<Vec<_>>();
         self.render
             .asset_rgba_cache
@@ -961,7 +947,7 @@ impl CanvasState {
             return None;
         }
         if let Some(image) = self.rendered_placement_by_id_mut(placement.state.id) {
-            let content_changed = image.placement.state.asset_id != placement.state.asset_id;
+            let content_changed = image.placement.asset_id() != placement.asset_id();
             if content_changed {
                 self.add_unresolved_placement(placement.clone());
                 return Some(placement);

@@ -1465,7 +1465,6 @@ mod tests {
         let placement = Placement::loaded(
             PlacementState::new(
                 id,
-                Some(id),
                 eframe::egui::pos2(center_world.x, center_world.y),
                 1.0,
                 0.0,

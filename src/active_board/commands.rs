@@ -139,8 +139,8 @@ pub(crate) fn copy_selected_board_payload(canvas: &CanvasState) -> Option<Clipbo
     let mut placement_ids = Vec::new();
     for placement_id in canvas.selected_placement_ids() {
         let placement = canvas.placement_for_id(placement_id)?;
-        let asset = placement.asset.as_ref()?;
-        let asset_id = placement.state.asset_id?;
+        let asset = placement.loaded_asset()?;
+        let asset_id = asset.id;
         placement_ids.push(placement_id);
         placements.push(ClipboardPlacementState {
             asset_id,

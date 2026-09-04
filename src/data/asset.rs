@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 /// A library-owned image reference, independent of any board-local Placement.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Asset {
     pub id: i64,
     pub original_path: PathBuf,

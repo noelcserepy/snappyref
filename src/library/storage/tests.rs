@@ -24,12 +24,9 @@ fn loaded_placements_load_as_committed_loaded_content() {
     assert_eq!(reloaded.len(), 1);
     assert_eq!(reloaded[0].state.id, placement.state.id);
     assert_eq!(
-        reloaded[0].content,
-        PlacementContent::Loaded {
-            asset_id: placement.require_loaded_asset().id
-        }
+        reloaded[0].require_loaded_asset(),
+        placement.require_loaded_asset()
     );
-    assert!(reloaded[0].asset.is_some());
     assert_eq!(reloaded[0].lifecycle, PlacementLifecycle::Committed);
     assert_eq!(reloaded[0].state.geometry.size, egui::vec2(10.0, 20.0));
     assert_eq!(
@@ -78,12 +75,10 @@ fn committed_loading_and_failed_placements_persist_load_and_stack() {
         reloaded[0].content,
         PlacementContent::Loading { .. }
     ));
-    assert!(reloaded[0].asset.is_none());
     assert!(matches!(
         reloaded[1].content,
         PlacementContent::Failed { .. }
     ));
-    assert!(reloaded[1].asset.is_none());
     assert_eq!(reloaded[0].state.geometry.size.x, 320.0);
     assert_eq!(reloaded[1].state.geometry.size.y, 90.0);
     assert_eq!(
@@ -115,8 +110,14 @@ fn legacy_content_resolution_intent_payload_alias_decodes_as_source() {
     let loading_payload = r#"{"Loading":{"intent":{"ExternalPath":{"path":"/tmp/source.png"}},"status_message":"Queued"}}"#;
     let failed_payload = r#"{"Failed":{"intent":{"Unknown":{"description":"clipboard"}},"message":"Could not read image","recoverable":true}}"#;
 
-    let loading: PlacementContent = serde_json::from_str(loading_payload).unwrap();
-    let failed: PlacementContent = serde_json::from_str(failed_payload).unwrap();
+    let decode = |payload: &str| {
+        super::StoredPlacementContent::decode(payload)
+            .unwrap()
+            .into_content(|_| Err("no asset".to_owned()))
+            .unwrap()
+    };
+    let loading = decode(loading_payload);
+    let failed = decode(failed_payload);
 
     assert_eq!(
         loading,
@@ -199,7 +200,7 @@ fn legacy_board_items_asset_id_not_null_migrates_for_loading_placements() {
         )
         .unwrap();
 
-    assert_eq!(loading.state.asset_id, None);
+    assert_eq!(loading.asset_id(), None);
     assert!(matches!(loading.content, PlacementContent::Loading { .. }));
 }
 
@@ -1024,11 +1025,9 @@ fn restoring_board_snapshot_restores_loading_placement_content_exactly() {
 
     let restored = library.load_placements().unwrap();
     assert_eq!(restored.len(), 1);
-    assert_eq!(restored[0].state.asset_id, loading.state.asset_id);
     assert_eq!(restored[0].state.geometry, loading.state.geometry);
     assert_eq!(restored[0].content, loading.content);
     assert_eq!(restored[0].lifecycle, loading.lifecycle);
-    assert!(restored[0].asset.is_none());
 }
 
 #[test]
@@ -1203,23 +1202,11 @@ fn exact_dedupe_relinks_placements_to_first_asset_and_deletes_duplicates() {
     library.set_active_board(1).unwrap();
     let first_board_placements = library.load_placements().unwrap();
     assert_eq!(first_board_placements.len(), 1);
-    assert_eq!(
-        first_board_placements[0].state.asset_id,
-        Some(first_asset_id)
-    );
+    assert_eq!(first_board_placements[0].asset_id(), Some(first_asset_id));
     library.set_active_board(second_board.id).unwrap();
     let second_board_placements = library.load_placements().unwrap();
     assert_eq!(second_board_placements.len(), 1);
-    assert_eq!(
-        second_board_placements[0].state.asset_id,
-        Some(first_asset_id)
-    );
-    assert_eq!(
-        second_board_placements[0].content,
-        PlacementContent::Loaded {
-            asset_id: first_asset_id
-        }
-    );
+    assert_eq!(second_board_placements[0].asset_id(), Some(first_asset_id));
 
     let embeddings = library.load_library_embeddings("test-model").unwrap();
     assert_eq!(embeddings.len(), 1);
@@ -1292,7 +1279,7 @@ fn hash_aware_import_reuses_existing_exact_asset() {
         duplicate.require_loaded_asset().original_path,
         first.require_loaded_asset().original_path
     );
-    assert_eq!(duplicate.state.asset_id, first.state.asset_id);
+    assert_eq!(duplicate.asset_id(), first.asset_id());
 
     let connection = Connection::open(root.join("library.db")).unwrap();
     let live_assets: i64 = connection

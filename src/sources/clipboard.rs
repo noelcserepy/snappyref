@@ -337,7 +337,6 @@ mod tests {
         Placement::loaded(
             PlacementState {
                 id: placement_id,
-                asset_id: Some(asset_id),
                 geometry: crate::data::RectGeometry::new(
                     eframe::egui::Pos2::ZERO,
                     eframe::egui::Vec2::ZERO,

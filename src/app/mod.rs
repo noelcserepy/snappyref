@@ -3050,10 +3050,13 @@ impl SnappyRefApp {
     fn request_selected_assets_library_remove(&mut self) {
         let mut asset_ids = Vec::new();
         for placement_id in self.canvas.selected_placement_ids() {
-            if let Some(placement) = self.canvas.placement_for_id(placement_id)
-                && !asset_ids.contains(&placement.require_loaded_asset().id)
+            if let Some(asset_id) = self
+                .canvas
+                .placement_for_id(placement_id)
+                .and_then(|placement| placement.asset_id())
+                && !asset_ids.contains(&asset_id)
             {
-                asset_ids.push(placement.require_loaded_asset().id);
+                asset_ids.push(asset_id);
             }
         }
 
@@ -4527,11 +4530,14 @@ impl SnappyRefApp {
                             .find(|placement| placement.state.id == after.id)
                             .cloned()
                     });
-                let asset = if let Some(before) = &before {
-                    before.require_loaded_asset().clone()
-                } else {
-                    library.load_asset(after.asset_id?).ok()?
-                };
+                let asset = before
+                    .as_ref()
+                    .and_then(|before| before.loaded_asset().cloned())
+                    .or_else(|| {
+                        self.canvas
+                            .placement_for_id(after.id)
+                            .and_then(|current| current.loaded_asset().cloned())
+                    })?;
                 Some(HistoryChange {
                     before,
                     after: Some(crate::data::Placement::loaded(after, asset)),

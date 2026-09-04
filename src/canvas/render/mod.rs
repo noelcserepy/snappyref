@@ -169,7 +169,6 @@ mod tests {
             placement: Placement::loaded(
                 PlacementState::new(
                     placement_id,
-                    Some(placement_id),
                     eframe::egui::pos2(center_world.x, center_world.y),
                     1.0,
                     0.0,
