@@ -2396,7 +2396,6 @@ fn board_create_undo_and_redo_restore_the_same_identity_once() {
             crate::data::Board {
                 id: original_id,
                 name: "My Board".to_owned(),
-                archived: false,
             },
             other,
             created.clone(),

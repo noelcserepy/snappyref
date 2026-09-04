@@ -9,7 +9,9 @@ pub(super) use image::codecs::jpeg::JpegEncoder;
 pub(super) use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 pub(super) use image::codecs::webp::WebPEncoder;
 pub(super) use image::{ColorType, ExtendedColorType, ImageEncoder, ImageFormat};
-pub(super) use rusqlite::{Connection, Transaction, TransactionBehavior, params, params_from_iter};
+pub(super) use rusqlite::{
+    Connection, OptionalExtension, Transaction, TransactionBehavior, params, params_from_iter,
+};
 pub(super) use sha2::{Digest, Sha256};
 
 pub(super) use crate::data::{
@@ -19,6 +21,17 @@ pub(super) use crate::data::{
     RectGeometry, UserSession, ViewportState, WorkspaceSettings,
 };
 pub(super) use crate::placement::arrangement::PlacementArrangementInput;
+
+/// Every Library write starts as an Immediate transaction so the writer takes
+/// the lock up front instead of failing with SQLITE_BUSY at commit.
+pub(super) fn write_transaction<'c>(
+    connection: &'c mut Connection,
+    label: &str,
+) -> Result<Transaction<'c>, String> {
+    connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("failed to start {label} transaction: {error}"))
+}
 
 pub(super) fn unix_timestamp_seconds() -> i64 {
     SystemTime::now()

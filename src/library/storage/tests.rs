@@ -555,7 +555,6 @@ fn new_library_has_default_non_archived_active_board() {
 
     assert_eq!(boards.len(), 1);
     assert_eq!(boards[0].name, "My Board");
-    assert!(!boards[0].archived);
     assert_eq!(session.active_board_id, boards[0].id);
 
     let _ = fs::remove_dir_all(root);

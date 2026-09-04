@@ -47,52 +47,8 @@ impl Library {
         color: CanvasAnnotationColor,
         background_enabled: bool,
     ) -> Result<CanvasAnnotation, String> {
-        let connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let annotation_id = self.allocate_document_id();
-        connection
-            .execute(
-                "INSERT INTO canvas_annotations (
-                    id,
-                    board_id,
-                    kind,
-                    start_x,
-                    start_y,
-                    end_x,
-                    end_y,
-                    text,
-                    text_size,
-                    stroke_width,
-                    color,
-                    background_enabled,
-                    archived
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-                params![
-                    annotation_id,
-                    active_board_id,
-                    kind.as_str(),
-                    start.x,
-                    start.y,
-                    end.x,
-                    end.y,
-                    text,
-                    text_size.as_str(),
-                    stroke_width.as_str(),
-                    color.as_str(),
-                    if background_enabled { 1_i64 } else { 0_i64 },
-                    0_i64
-                ],
-            )
-            .map_err(|error| format!("failed to create canvas annotation: {error}"))?;
-
-        append_canvas_stack_item(
-            &connection,
-            active_board_id,
-            CanvasStackItem::Annotation(annotation_id),
-        )?;
-
-        Ok(CanvasAnnotation::new(
-            annotation_id,
+        let annotation = CanvasAnnotation::new(
+            self.allocate_document_id(),
             kind,
             start,
             end,
@@ -102,52 +58,36 @@ impl Library {
             color,
             background_enabled,
             false,
-        ))
+        );
+        let mut connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        let transaction = write_transaction(&mut connection, "annotation create")?;
+        upsert_board_annotation(&transaction, active_board_id, &annotation, false)?;
+        append_canvas_stack_item(
+            &transaction,
+            active_board_id,
+            CanvasStackItem::Annotation(annotation.id),
+        )?;
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit annotation create: {error}"))?;
+        Ok(annotation)
     }
 
     #[cfg(test)]
     pub fn update_canvas_annotation(&self, annotation: &CanvasAnnotation) -> Result<(), String> {
-        let connection = self.connection()?;
-        connection
-            .execute(
-                "UPDATE canvas_annotations
-                 SET start_x = ?1,
-                     start_y = ?2,
-                     end_x = ?3,
-                     end_y = ?4,
-                     text = ?5,
-                     text_size = ?6,
-                     stroke_width = ?7,
-                     color = ?8,
-                     background_enabled = ?9,
-                     archived = ?10
-                 WHERE id = ?11",
-                params![
-                    annotation.start().x,
-                    annotation.start().y,
-                    annotation.end().x,
-                    annotation.end().y,
-                    annotation.text,
-                    annotation.text_size.as_str(),
-                    annotation.stroke_width.as_str(),
-                    annotation.color.as_str(),
-                    if annotation.background_enabled {
-                        1_i64
-                    } else {
-                        0_i64
-                    },
-                    if annotation.archived { 1_i64 } else { 0_i64 },
-                    annotation.id,
-                ],
-            )
-            .map_err(|error| {
-                format!(
-                    "failed to update canvas annotation {}: {error}",
-                    annotation.id
-                )
-            })?;
-
-        Ok(())
+        let mut connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        let transaction = write_transaction(&mut connection, "annotation update")?;
+        upsert_board_annotation(
+            &transaction,
+            active_board_id,
+            annotation,
+            annotation.archived,
+        )?;
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit annotation update: {error}"))
     }
 
     #[cfg(test)]
@@ -157,9 +97,7 @@ impl Library {
         }
 
         let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("failed to start annotation archive transaction: {error}"))?;
+        let transaction = write_transaction(&mut connection, "annotation archive")?;
 
         for annotation_id in annotation_ids {
             transaction
@@ -190,6 +128,83 @@ impl Library {
 
         Ok(())
     }
+}
+
+/// Writes the annotation row for `board_id`, inserting it when the Board has
+/// no row for that id yet. `archived` is explicit: durability writes the
+/// annotation's own flag, a document restore forces every row live.
+pub(super) fn upsert_board_annotation(
+    transaction: &Transaction<'_>,
+    board_id: i64,
+    annotation: &CanvasAnnotation,
+    archived: bool,
+) -> Result<(), String> {
+    let archived = if archived { 1_i64 } else { 0_i64 };
+    let background_enabled = if annotation.background_enabled {
+        1_i64
+    } else {
+        0_i64
+    };
+    let changed = transaction
+        .execute(
+            "UPDATE canvas_annotations
+             SET kind = ?1, start_x = ?2, start_y = ?3, end_x = ?4, end_y = ?5,
+                 text = ?6, text_size = ?7, stroke_width = ?8, color = ?9,
+                 background_enabled = ?10, archived = ?11
+             WHERE id = ?12 AND board_id = ?13",
+            params![
+                annotation.kind.as_str(),
+                annotation.start().x,
+                annotation.start().y,
+                annotation.end().x,
+                annotation.end().y,
+                annotation.text,
+                annotation.text_size.as_str(),
+                annotation.stroke_width.as_str(),
+                annotation.color.as_str(),
+                background_enabled,
+                archived,
+                annotation.id,
+                board_id,
+            ],
+        )
+        .map_err(|error| {
+            format!(
+                "failed to update canvas annotation {}: {error}",
+                annotation.id
+            )
+        })?;
+    if changed == 0 {
+        transaction
+            .execute(
+                "INSERT INTO canvas_annotations (
+                    id, board_id, kind, start_x, start_y, end_x, end_y, text,
+                    text_size, stroke_width, color, background_enabled, archived
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    annotation.id,
+                    board_id,
+                    annotation.kind.as_str(),
+                    annotation.start().x,
+                    annotation.start().y,
+                    annotation.end().x,
+                    annotation.end().y,
+                    annotation.text,
+                    annotation.text_size.as_str(),
+                    annotation.stroke_width.as_str(),
+                    annotation.color.as_str(),
+                    background_enabled,
+                    archived,
+                ],
+            )
+            .map_err(|error| {
+                format!(
+                    "failed to insert canvas annotation {}: {error}",
+                    annotation.id
+                )
+            })?;
+    }
+    Ok(())
 }
 
 pub(super) fn load_canvas_annotations_for_board_id(

@@ -5,12 +5,12 @@ use super::{CanvasAnnotation, RectGeometry, ViewportState};
 pub type PlacementId = i64;
 pub type AssetId = i64;
 
-#[cfg_attr(not(test), allow(dead_code))]
+/// A non-archived Board. Archived rows never load, so the model carries no
+/// archived flag.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Board {
     pub id: i64,
     pub name: String,
-    pub archived: bool,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
