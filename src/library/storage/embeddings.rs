@@ -1,7 +1,6 @@
 use super::boards::active_board_id;
 use super::*;
 
-#[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EmbeddingStatus {
     Pending,
@@ -9,7 +8,6 @@ pub enum EmbeddingStatus {
 }
 
 impl EmbeddingStatus {
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     fn as_str(self) -> &'static str {
         match self {
             Self::Pending => "pending",
@@ -18,28 +16,24 @@ impl EmbeddingStatus {
     }
 }
 
-#[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
 #[derive(Clone, Debug)]
 pub struct ImageEmbeddingJob {
     pub asset_id: i64,
     pub original_path: PathBuf,
 }
 
-#[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
 #[derive(Clone, Debug)]
 pub struct ActiveCanvasEmbedding {
     pub asset_id: i64,
     pub embedding_blob: Vec<u8>,
 }
 
-#[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
 #[derive(Clone, Debug)]
 pub struct AssetSearchHit {
     pub asset_id: i64,
     pub similarity: f32,
 }
 
-#[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
 fn encode_f32_slice(values: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(values.len() * std::mem::size_of::<f32>());
     for value in values {
@@ -49,7 +43,6 @@ fn encode_f32_slice(values: &[f32]) -> Vec<u8> {
 }
 
 impl Library {
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn upsert_asset_embedding_status(
         &self,
         asset_id: i64,
@@ -89,7 +82,6 @@ impl Library {
         Ok(())
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn record_retryable_asset_embedding_failure(
         &self,
         asset_id: i64,
@@ -154,7 +146,6 @@ impl Library {
         Ok(())
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn record_terminal_asset_embedding_failure(
         &self,
         asset_id: i64,
@@ -198,7 +189,6 @@ impl Library {
         Ok(())
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn upsert_asset_embedding_blob(
         &self,
         asset_id: i64,
@@ -244,7 +234,6 @@ impl Library {
         Ok(())
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn missing_live_canvas_asset_jobs_for_model(
         &self,
         model_key: &str,
@@ -280,7 +269,6 @@ impl Library {
             .map_err(|error| format!("failed to collect embedding backfill jobs: {error}"))
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn retryable_live_canvas_asset_jobs_for_model(
         &self,
         model_key: &str,
@@ -322,7 +310,6 @@ impl Library {
             .map_err(|error| format!("failed to collect embedding retry backfill jobs: {error}"))
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn missing_active_board_asset_jobs_for_model(
         &self,
         model_key: &str,
@@ -368,7 +355,6 @@ impl Library {
         })
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn retryable_active_board_asset_jobs_for_model(
         &self,
         model_key: &str,
@@ -418,7 +404,6 @@ impl Library {
         })
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn next_embedding_backfill_job_for_model(
         &self,
         model_key: &str,
@@ -449,7 +434,6 @@ impl Library {
             .map(|jobs| jobs.into_iter().next())
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn load_library_embeddings(
         &self,
         model_key: &str,
@@ -483,7 +467,6 @@ impl Library {
             .map_err(|error| format!("failed to collect library embeddings: {error}"))
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn load_asset_embedding(
         &self,
         asset_id: i64,
@@ -522,7 +505,6 @@ impl Library {
         }
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn asset_original_paths_for_assets(
         &self,
         asset_ids: &[i64],

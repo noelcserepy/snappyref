@@ -21,5 +21,4 @@ mod tests;
 pub use assets::ExactDedupeReport;
 pub(crate) use assets::{sha256_bytes, sha256_file};
 pub use connection::Library;
-#[cfg(feature = "semantic-search")]
 pub use embeddings::{AssetSearchHit, EmbeddingStatus};

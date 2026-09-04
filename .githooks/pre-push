@@ -10,8 +10,8 @@ set -euo pipefail
 echo "[pre-push] cargo fmt --check"
 cargo fmt --check
 
-echo "[pre-push] cargo check --locked --no-default-features --features semantic-search"
-cargo check --locked --no-default-features --features semantic-search
+echo "[pre-push] cargo check --locked --no-default-features"
+cargo check --locked --no-default-features
 
 echo "[pre-push] cargo test update_preservation_smoke"
 cargo test --locked --no-default-features update_preservation_smoke

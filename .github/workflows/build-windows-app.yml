@@ -121,7 +121,7 @@ jobs:
             cargo build --release --locked --bins
             "SNAPPYREF_TARGET_DIR=target\release" | Out-File -FilePath $env:GITHUB_ENV -Append
           } else {
-            cargo build --profile release-fast --locked --no-default-features --features semantic-search --bins
+            cargo build --profile release-fast --locked --no-default-features --bins
             "SNAPPYREF_TARGET_DIR=target\release-fast" | Out-File -FilePath $env:GITHUB_ENV -Append
           }
 

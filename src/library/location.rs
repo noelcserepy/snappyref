@@ -23,7 +23,6 @@ pub(crate) fn resolve_library_root() -> Result<PathBuf, String> {
     ))
 }
 
-#[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
 pub(crate) fn resolve_data_root() -> Result<PathBuf, String> {
     if let Some(override_root) = std::env::var_os(SNAPPYREF_DATA_ROOT_ENV) {
         return Ok(PathBuf::from(override_root));

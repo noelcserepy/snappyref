@@ -64,7 +64,7 @@ impl ImagePrepWorker {
         )
     }
 
-    #[cfg(all(test, feature = "semantic-search"))]
+    #[cfg(test)]
     pub(crate) fn controlled() -> (Self, mpsc::Sender<ImagePrepResult>) {
         let (result_tx, receiver) = mpsc::channel();
         (

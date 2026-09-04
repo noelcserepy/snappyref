@@ -16,7 +16,6 @@ use crate::placement::content_resolution::{
     ContentResolutionRequestConfig, ContentResolutionReservation, ContentResolutionRuntime,
     FailedContentResolutionOutcome, LoadedContentResolutionOutcome,
 };
-#[cfg(feature = "semantic-search")]
 use crate::search::SearchController;
 use crate::sources::crop;
 use crate::ui::sidebar::{
@@ -589,13 +588,11 @@ pub struct SnappyRefApp {
     document_history: DocumentHistory,
     max_texture_side: usize,
     settings: crate::data::WorkspaceSettings,
-    #[cfg(feature = "semantic-search")]
     search: SearchController,
     sidebar_open: bool,
     sidebar_tab: SidebarTab,
     pending_board_delete: Option<PendingBoardDelete>,
     pending_library_remove: Option<PendingLibraryRemove>,
-    #[cfg(feature = "semantic-search")]
     pending_semantic_search_remove: bool,
     context_menu_pos: Option<egui::Pos2>,
     /// Transient status line. Actions and storage errors write it; it shows
@@ -742,7 +739,6 @@ impl SnappyRefApp {
         app.library = Some(library);
         app.load_user_session();
         app.refresh_board_summaries();
-        #[cfg(feature = "semantic-search")]
         app.sync_semantic_search_service();
         if !config.skip_existing_items_on_start() {
             app.enqueue_existing_items();
@@ -768,13 +764,11 @@ impl SnappyRefApp {
             document_history: DocumentHistory::default(),
             max_texture_side,
             settings: crate::data::WorkspaceSettings::default(),
-            #[cfg(feature = "semantic-search")]
             search: SearchController::default(),
             sidebar_open: false,
             sidebar_tab: SidebarTab::default(),
             pending_board_delete: None,
             pending_library_remove: None,
-            #[cfg(feature = "semantic-search")]
             pending_semantic_search_remove: false,
             context_menu_pos: None,
             status: String::new(),
@@ -1051,7 +1045,6 @@ impl SnappyRefApp {
         let Some(scenario) = &mut self.perf_scenario else {
             return;
         };
-        #[cfg(feature = "semantic-search")]
         {
             for event in self.search.drain_perf_events() {
                 match event {
@@ -1157,17 +1150,8 @@ impl SnappyRefApp {
             .as_ref()
             .map(crate::jobs::ImagePrepWorker::stats)
             .unwrap_or_default();
-        let embedding_idle = {
-            #[cfg(feature = "semantic-search")]
-            {
-                self.search.demand_embedding_pending_count() == 0
-                    && self.search.embedding_backfill_is_idle()
-            }
-            #[cfg(not(feature = "semantic-search"))]
-            {
-                true
-            }
-        };
+        let embedding_idle = self.search.demand_embedding_pending_count() == 0
+            && self.search.embedding_backfill_is_idle();
         let idle = scenario.queued
             && scenario.visible_imports >= scenario.expected_imports
             && !worker_stats.has_work()
@@ -1189,7 +1173,6 @@ impl SnappyRefApp {
             }
             if scenario.settled_idle_logged {
                 let mut next_repaint_after = idle_hold.saturating_sub(idle_since.elapsed());
-                #[cfg(feature = "semantic-search")]
                 if let Some(unload_after) =
                     std::env::var("SNAPPYREF_PERF_MODEL_UNLOAD_AFTER_IDLE_MS")
                         .ok()
@@ -1280,17 +1263,8 @@ impl SnappyRefApp {
             .as_ref()
             .map(crate::jobs::ImagePrepWorker::stats)
             .unwrap_or_default();
-        let embedding_idle = {
-            #[cfg(feature = "semantic-search")]
-            {
-                self.search.demand_embedding_pending_count() == 0
-                    && self.search.embedding_backfill_is_idle()
-            }
-            #[cfg(not(feature = "semantic-search"))]
-            {
-                true
-            }
-        };
+        let embedding_idle = self.search.demand_embedding_pending_count() == 0
+            && self.search.embedding_backfill_is_idle();
         !worker_stats.has_work()
             && !self.canvas.has_pending_crop_work()
             && !self.canvas.has_pending_image_loads()
@@ -1452,7 +1426,6 @@ impl SnappyRefApp {
         }
     }
 
-    #[cfg(feature = "semantic-search")]
     fn handle_semantic_search_settings_action(
         &mut self,
         action: Option<SemanticSearchSettingsAction>,
@@ -1473,14 +1446,6 @@ impl SnappyRefApp {
             }
             None => {}
         }
-    }
-
-    #[cfg(not(feature = "semantic-search"))]
-    fn handle_semantic_search_settings_action(
-        &mut self,
-        _action: Option<SemanticSearchSettingsAction>,
-        _ctx: &egui::Context,
-    ) {
     }
 
     fn request_board_delete(&mut self, board_id: i64, board_name: String) {
@@ -1628,7 +1593,6 @@ impl SnappyRefApp {
         match library.dedupe_exact_assets(hash_limit, group_limit) {
             Ok(report) => {
                 if report.changed() {
-                    #[cfg(feature = "semantic-search")]
                     self.search.invalidate_library_search_cache();
                     self.refresh_board_summaries();
                 }
@@ -1667,7 +1631,6 @@ impl SnappyRefApp {
     }
 
     fn clear_active_board_transients(&mut self) {
-        #[cfg(feature = "semantic-search")]
         {
             self.search.close_overlay(Some(&mut self.canvas));
             self.search.reset_embedding_backfill();
@@ -1727,16 +1690,7 @@ impl SnappyRefApp {
     fn modal_open(&self) -> bool {
         self.pending_board_delete.is_some()
             || self.pending_library_remove.is_some()
-            || {
-                #[cfg(feature = "semantic-search")]
-                {
-                    self.pending_semantic_search_remove
-                }
-                #[cfg(not(feature = "semantic-search"))]
-                {
-                    false
-                }
-            }
+            || self.pending_semantic_search_remove
             || self.should_show_semantic_search_first_launch_prompt()
     }
 
@@ -1761,10 +1715,7 @@ impl SnappyRefApp {
             update_button_primary,
             update_status,
             semantic_search: crate::ui::sidebar::SemanticSearchSettingsView {
-                #[cfg(feature = "semantic-search")]
                 status: semantic_search_settings_status(self.search.local_model_store_status()),
-                #[cfg(not(feature = "semantic-search"))]
-                status: SemanticSearchSettingsStatus::Failed,
             },
         }
     }
@@ -1998,7 +1949,6 @@ impl SnappyRefApp {
         // child process is killed by EmbeddingHelperClient::drop, which
         // fires when the SearchController is dropped or rebuilt.
         self.import_worker = None;
-        #[cfg(feature = "semantic-search")]
         {
             self.search.shutdown_helper_processes();
         }
@@ -2071,7 +2021,6 @@ impl SnappyRefApp {
                 self.settings.normalize_core_features();
                 self.sidebar_open = session.sidebar_open;
                 self.sidebar_tab = sidebar_tab_from_session(&session.sidebar_tab);
-                #[cfg(feature = "semantic-search")]
                 self.search.set_recent_searches(session.recent_searches);
                 self.canvas
                     .set_rotation_snap_degrees(self.settings.rotation_snap_degrees);
@@ -2892,7 +2841,6 @@ impl SnappyRefApp {
         }
 
         self.canvas.remove_assets(&pending.asset_ids);
-        #[cfg(feature = "semantic-search")]
         {
             self.search.invalidate_library_search_cache();
         }
@@ -2965,33 +2913,13 @@ impl SnappyRefApp {
             return crate::canvas::CanvasInputPolicy::Blocked;
         }
 
-        let search_blocks_canvas = {
-            #[cfg(feature = "semantic-search")]
-            {
-                self.search.blocks_canvas_input(ctx)
-            }
-            #[cfg(not(feature = "semantic-search"))]
-            {
-                let _ = ctx;
-                false
-            }
-        };
-        if !search_blocks_canvas {
+        if !self.search.blocks_canvas_input(ctx) {
             return crate::canvas::CanvasInputPolicy::Full;
         }
-
-        #[cfg(feature = "semantic-search")]
-        {
-            if self.search.provisional_batch_active() {
-                return crate::canvas::CanvasInputPolicy::ViewportOnly;
-            }
-            return crate::canvas::CanvasInputPolicy::Blocked;
+        if self.search.provisional_batch_active() {
+            return crate::canvas::CanvasInputPolicy::ViewportOnly;
         }
-
-        #[cfg(not(feature = "semantic-search"))]
-        {
-            crate::canvas::CanvasInputPolicy::Blocked
-        }
+        crate::canvas::CanvasInputPolicy::Blocked
     }
 
     fn show_library_remove_confirmation(&mut self, ctx: &egui::Context) {
@@ -3047,7 +2975,6 @@ impl SnappyRefApp {
             });
     }
 
-    #[cfg(feature = "semantic-search")]
     fn show_semantic_search_remove_confirmation(&mut self, ctx: &egui::Context) {
         let entrance = crate::ui::motion::overlay_entrance(
             ctx,
@@ -3098,7 +3025,6 @@ impl SnappyRefApp {
             });
     }
 
-    #[cfg(feature = "semantic-search")]
     fn search_using_selected_image(&mut self) {
         self.search.search_using_selected_image(
             self.settings.semantic_search_enabled,
@@ -3107,11 +3033,6 @@ impl SnappyRefApp {
             &mut self.status,
             self.settings.canvas_image_max_side,
         );
-    }
-
-    #[cfg(not(feature = "semantic-search"))]
-    fn search_using_selected_image(&mut self) {
-        self.status = "Semantic search unavailable".to_owned();
     }
 
     #[cfg(test)]
@@ -3387,7 +3308,6 @@ impl SnappyRefApp {
                 );
                 self.persist_recorded_canvas_changes();
                 let mut status = "Cropped image".to_owned();
-                #[cfg(feature = "semantic-search")]
                 if let Some((asset_id, original_path)) = integration.indexed_asset {
                     if let Err(error) = self.search.queue_asset_index(asset_id, original_path) {
                         status = error;
@@ -3465,9 +3385,7 @@ impl SnappyRefApp {
             )
         });
         let status = outcome.status;
-        #[cfg(feature = "semantic-search")]
         let mut status = status;
-        #[cfg(feature = "semantic-search")]
         let indexed_asset = outcome.indexed_asset;
         self.finish_import_queue_id_in_batches(
             completion.target_board_id,
@@ -3532,7 +3450,6 @@ impl SnappyRefApp {
                 log.trace,
             );
         }
-        #[cfg(feature = "semantic-search")]
         if let Some((asset_id, original_path)) = indexed_asset {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
                 scenario.demand_embeddings_queued += 1;
@@ -3962,7 +3879,6 @@ impl SnappyRefApp {
     }
 
     fn handle_selection_shortcuts(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
-        #[cfg(feature = "semantic-search")]
         if self.search.is_open() {
             return;
         }
@@ -4092,7 +4008,6 @@ impl SnappyRefApp {
             return;
         }
 
-        #[cfg(feature = "semantic-search")]
         if self.search.is_open() {
             return;
         }
@@ -4401,10 +4316,7 @@ impl SnappyRefApp {
             settings: self.settings.clone(),
             sidebar_open: self.sidebar_open,
             sidebar_tab: sidebar_tab_session_value(self.sidebar_tab).to_owned(),
-            #[cfg(feature = "semantic-search")]
             recent_searches: self.search.recent_searches().to_vec(),
-            #[cfg(not(feature = "semantic-search"))]
-            recent_searches: Vec::new(),
         }
     }
 
@@ -4497,7 +4409,6 @@ impl SnappyRefApp {
         }
     }
 
-    #[cfg(feature = "semantic-search")]
     fn sync_semantic_search_service(&mut self) {
         self.search.sync_service(
             self.settings.semantic_search_enabled,
@@ -4508,12 +4419,10 @@ impl SnappyRefApp {
         );
     }
 
-    #[cfg(feature = "semantic-search")]
     fn handle_search_results(&mut self) {
         self.search.handle_results(&mut self.canvas);
     }
 
-    #[cfg(feature = "semantic-search")]
     fn drive_semantic_search_install(&mut self, ctx: &egui::Context) {
         if self.search.drive_semantic_search_install(&mut self.status) {
             if self.search.local_model_assets_available() {
@@ -4523,37 +4432,27 @@ impl SnappyRefApp {
         }
     }
 
-    #[cfg(feature = "semantic-search")]
     fn should_show_semantic_search_first_launch_prompt(&self) -> bool {
         self.library.is_some()
             && !self.settings.semantic_search_first_launch_prompt_seen
             && self.search.local_model_assets_missing()
     }
 
-    #[cfg(not(feature = "semantic-search"))]
-    fn should_show_semantic_search_first_launch_prompt(&self) -> bool {
-        false
-    }
-
-    #[cfg(feature = "semantic-search")]
     fn mark_semantic_search_first_launch_prompt_seen(&mut self) {
         self.settings.semantic_search_first_launch_prompt_seen = true;
         self.save_user_session();
     }
 
-    #[cfg(feature = "semantic-search")]
     fn decline_semantic_search_first_launch_prompt(&mut self) {
         self.mark_semantic_search_first_launch_prompt_seen();
     }
 
-    #[cfg(feature = "semantic-search")]
     fn enable_semantic_search_from_first_launch_prompt(&mut self, ctx: &egui::Context) {
         self.mark_semantic_search_first_launch_prompt_seen();
         self.search.start_semantic_search_install(&mut self.status);
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
 
-    #[cfg(feature = "semantic-search")]
     fn show_semantic_search_first_launch_prompt(&mut self, ctx: &egui::Context) {
         let entrance = crate::ui::motion::overlay_entrance(
             ctx,
@@ -4618,7 +4517,6 @@ impl SnappyRefApp {
         }
     }
 
-    #[cfg(feature = "semantic-search")]
     fn drive_embedding_backfill(&mut self, ctx: &egui::Context) {
         let idle = crate::search::EmbeddingBackfillIdleState {
             app_idle: self.frame_perf.import_results_drained == 0
@@ -4634,7 +4532,6 @@ impl SnappyRefApp {
         }
     }
 
-    #[cfg(feature = "semantic-search")]
     fn handle_search_shortcut(&mut self, ctx: &egui::Context) {
         self.search.handle_shortcut(
             ctx,
@@ -4646,7 +4543,6 @@ impl SnappyRefApp {
         );
     }
 
-    #[cfg(feature = "semantic-search")]
     fn show_search_overlay(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         if let Some(drop_request) = self.search.show_overlay(
@@ -4667,7 +4563,6 @@ impl SnappyRefApp {
         }
     }
 
-    #[cfg(feature = "semantic-search")]
     fn handle_search_drop(
         &mut self,
         ctx: &egui::Context,
@@ -5041,7 +4936,6 @@ fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egui::Response
     response
 }
 
-#[cfg(feature = "semantic-search")]
 fn semantic_search_settings_status(
     status: crate::search::semantic::LocalModelStoreStatus,
 ) -> SemanticSearchSettingsStatus {
@@ -5096,9 +4990,7 @@ impl eframe::App for SnappyRefApp {
         self.frame_perf.import_result_drain_ms = 0.0;
 
         self.handle_import_results(ui.ctx());
-        #[cfg(feature = "semantic-search")]
         self.handle_search_results();
-        #[cfg(feature = "semantic-search")]
         self.drive_semantic_search_install(ui.ctx());
         self.handle_history_shortcuts(ui.ctx());
         if self.drive_perf_scenario(ui.ctx(), screen_rect) {
@@ -5109,7 +5001,6 @@ impl eframe::App for SnappyRefApp {
         self.handle_clipboard_paste(ui.ctx(), screen_rect);
         self.handle_hovered_files(ui, screen_rect);
         self.handle_dropped_files(ui, screen_rect);
-        #[cfg(feature = "semantic-search")]
         self.handle_search_shortcut(ui.ctx());
         self.handle_board_shortcuts(ui.ctx());
         self.handle_selection_shortcuts(ui.ctx(), screen_rect);
@@ -5122,7 +5013,6 @@ impl eframe::App for SnappyRefApp {
         self.canvas.set_placement_gap(self.settings.placement_gap);
         self.canvas.set_pointer_mode(self.settings.pointer_mode);
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
-        #[cfg(feature = "semantic-search")]
         self.search.prepare_canvas_provisional_batch(
             ui.ctx(),
             &mut self.canvas,
@@ -5171,7 +5061,6 @@ impl eframe::App for SnappyRefApp {
             self.status = error;
         }
         self.handle_pending_crop_requests(ui.ctx());
-        #[cfg(feature = "semantic-search")]
         self.drive_embedding_backfill(ui.ctx());
         self.handle_pending_annotation_requests();
         self.persist_canvas_changes_debounced(ui.ctx());
@@ -5235,7 +5124,6 @@ impl eframe::App for SnappyRefApp {
             if self.settings.always_on_top != always_on_top_before {
                 self.apply_always_on_top_window_level(ui.ctx());
             }
-            #[cfg(feature = "semantic-search")]
             self.sync_semantic_search_service();
         }
         if sidebar_result.update_action_clicked {
@@ -5248,9 +5136,7 @@ impl eframe::App for SnappyRefApp {
         self.persist_settings_if_changed(settings_changed);
         self.show_board_delete_confirmation(ui.ctx());
         self.show_library_remove_confirmation(ui.ctx());
-        #[cfg(feature = "semantic-search")]
         self.show_semantic_search_remove_confirmation(ui.ctx());
-        #[cfg(feature = "semantic-search")]
         self.show_semantic_search_first_launch_prompt(ui.ctx());
         if !modal_open {
             self.show_context_menu(ui.ctx(), screen_rect, context_menu_just_opened);
@@ -5261,7 +5147,6 @@ impl eframe::App for SnappyRefApp {
             let status = self.visible_status(ui.ctx());
             show_status_message(ui.ctx(), screen_rect, sidebar_open, hint.rect, status);
         }
-        #[cfg(feature = "semantic-search")]
         self.show_search_overlay(ui.ctx(), screen_rect);
     }
 
@@ -5348,7 +5233,6 @@ use dialogs::{
     destructive_action_button, destructive_confirmation_frame, destructive_dialog_body,
     destructive_dialog_header, destructive_dialog_width, secondary_dialog_button,
 };
-#[cfg(feature = "semantic-search")]
 use dialogs::{
     primary_dialog_button, semantic_search_prompt_body, semantic_search_prompt_frame,
     semantic_search_prompt_header, semantic_search_prompt_width,

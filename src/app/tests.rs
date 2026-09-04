@@ -11,11 +11,9 @@ use crate::library::storage::Library;
 use crate::placement::content_resolution::{
     ContentResolutionTicket, FailedContentResolutionOutcome,
 };
-#[cfg(feature = "semantic-search")]
 use crate::search::palette::{
     PALETTE_WIDTH, SEARCH_OVERLAY_TOP_MARGIN, search_result_grid_layout, search_result_tile_height,
 };
-#[cfg(feature = "semantic-search")]
 use crate::search::semantic::{LocalModelStoreStatus, SearchResultAssetEntry};
 use crate::test_support::TempRoot;
 use crate::ui::sidebar::{SidebarTab, block_sidebar_input, show_sidebar, sidebar_rect};
@@ -79,11 +77,9 @@ fn embedding_phase_markers_report_summary_durations() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 mod inspect_operations;
 mod session_settings;
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn first_launch_semantic_search_prompt_waits_for_storage_and_missing_assets() {
     let root = TempRoot::new("snappyref-semantic-prompt");
@@ -100,7 +96,6 @@ fn first_launch_semantic_search_prompt_waits_for_storage_and_missing_assets() {
     assert!(!app.should_show_semantic_search_first_launch_prompt());
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn first_launch_semantic_search_prompt_skips_installed_and_migrated_assets() {
     let root = TempRoot::new("snappyref-semantic-prompt-installed");
@@ -116,7 +111,6 @@ fn first_launch_semantic_search_prompt_skips_installed_and_migrated_assets() {
     assert!(!app.should_show_semantic_search_first_launch_prompt());
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn first_launch_semantic_search_prompt_skips_without_storage() {
     let mut app = test_app(None);
@@ -126,7 +120,6 @@ fn first_launch_semantic_search_prompt_skips_without_storage() {
     assert!(!app.should_show_semantic_search_first_launch_prompt());
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn first_launch_semantic_search_prompt_not_now_persists_suppression() {
     let root = TempRoot::new("snappyref-semantic-prompt-not-now");
@@ -148,7 +141,6 @@ fn first_launch_semantic_search_prompt_not_now_persists_suppression() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn first_launch_semantic_search_prompt_enable_persists_seen_and_starts_install() {
     let ctx = egui::Context::default();
@@ -181,7 +173,6 @@ fn first_launch_semantic_search_prompt_enable_persists_seen_and_starts_install()
 }
 
 #[test]
-#[cfg(feature = "semantic-search")]
 fn removing_semantic_search_keeps_first_launch_prompt_seen() {
     let mut app = test_app(None);
     app.settings.semantic_search_first_launch_prompt_seen = true;
@@ -1847,7 +1838,6 @@ fn delete_from_board_archives_image_placements_and_annotations() {
     assert_eq!(annotation_count, 1);
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn search_using_image_context_action_opens_image_pivot_search() {
     let ctx = egui::Context::default();
@@ -1870,7 +1860,6 @@ fn search_using_image_context_action_opens_image_pivot_search() {
     assert!(pivot.asset_preview_path.is_none());
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn search_using_image_context_action_survives_activation_click_outside_overlay() {
     let ctx = egui::Context::default();
@@ -2633,7 +2622,6 @@ fn command_zero_switches_tenth_visible_board() {
     assert_eq!(app.active_board_id, tenth.id);
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn board_shortcuts_are_suppressed_while_search_is_open() {
     let ctx = egui::Context::default();
@@ -3031,7 +3019,6 @@ fn board_sidebar_name_click_switches_board_immediately() {
 }
 
 #[test]
-#[cfg(feature = "semantic-search")]
 fn settings_semantic_search_install_and_cancel_share_download_state() {
     let mut app = test_app(None);
     app.sidebar_open = true;
@@ -3089,7 +3076,6 @@ fn update_action_check_requests_repaint() {
 }
 
 #[test]
-#[cfg(feature = "semantic-search")]
 fn settings_semantic_search_failed_state_retries_shared_install() {
     let mut app = test_app(None);
     app.sidebar_open = true;
@@ -3115,7 +3101,6 @@ fn settings_semantic_search_failed_state_retries_shared_install() {
 }
 
 #[test]
-#[cfg(feature = "semantic-search")]
 fn settings_semantic_search_remove_requires_confirmation() {
     let root = TempRoot::new("snappyref-semantic-search-remove-confirm");
     let library = Library::initialize(root.to_path_buf()).unwrap();
@@ -3330,7 +3315,6 @@ fn rapid_board_switches_ignore_stale_import_completions_and_last_switch_wins() {
     assert!(app.canvas.placement_for_id(43).is_none());
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn switching_boards_clears_selection_and_search() {
     let ctx = egui::Context::default();
@@ -3365,7 +3349,6 @@ fn switching_boards_clears_selection_and_search() {
     assert!(!app.search.is_open());
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn search_shortcut_opens_overlay_when_enabled() {
     let ctx = egui::Context::default();
@@ -3401,7 +3384,6 @@ fn search_shortcut_opens_overlay_when_enabled() {
     assert!(app.search.overlay.focus_requested);
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn search_shortcut_opens_missing_palette_with_focused_install_action() {
     let ctx = egui::Context::default();
@@ -3440,7 +3422,6 @@ fn search_shortcut_opens_missing_palette_with_focused_install_action() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn escape_closes_search_overlay() {
     let ctx = egui::Context::default();
@@ -3471,7 +3452,6 @@ fn escape_closes_search_overlay() {
     assert!(app.search.overlay.query.is_empty());
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn search_overlay_focuses_text_input_when_requested() {
     let ctx = egui::Context::default();
@@ -3490,7 +3470,6 @@ fn search_overlay_focuses_text_input_when_requested() {
     assert!(!app.search.overlay.focus_requested);
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn search_keyboard_flow_owns_escape_through_app_render_path() {
     let root = TempRoot::new("snappyref-search-keyboard-routing");
@@ -3544,7 +3523,6 @@ fn search_keyboard_flow_owns_escape_through_app_render_path() {
     assert_ne!(second.id, 1);
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn enter_places_unplaced_library_search_result_on_empty_active_board() {
     let root = TempRoot::new("snappyref-library-search-enter-unplaced");
@@ -3590,7 +3568,6 @@ fn enter_places_unplaced_library_search_result_on_empty_active_board() {
     assert!(!harness.state().search.overlay.open);
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn enter_places_unplaced_library_search_result_at_import_scale() {
     let root = TempRoot::new("snappyref-library-search-enter-import-scale");
@@ -3654,7 +3631,6 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
     assert_eq!(active_items[0].state.geometry.scale, expected_scale);
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
     let ctx = egui::Context::default();
@@ -3710,7 +3686,6 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
     assert_eq!(harness.state().pending_import_batches.len(), 0);
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn long_search_error_does_not_expand_palette_width() {
     let mut app = test_app(None);
@@ -3736,7 +3711,6 @@ fn long_search_error_does_not_expand_palette_width() {
     assert!(overlay_width <= PALETTE_WIDTH + 2.0);
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn command_enter_library_search_results_show_pending_cursor_arrangement_inputs() {
     let root = TempRoot::new("snappyref-library-search-cmd-enter-provisional-placement");
@@ -3815,7 +3789,6 @@ fn command_enter_library_search_results_show_pending_cursor_arrangement_inputs()
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_path() {
     let root = TempRoot::new("snappyref-library-search-known-dimensions-preview");
@@ -3910,7 +3883,6 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
     }));
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn multi_select_enter_library_search_results_show_pending_cursor_arrangement_inputs() {
     let root = TempRoot::new("snappyref-library-search-multi-enter-provisional-placement");
@@ -3984,7 +3956,6 @@ fn multi_select_enter_library_search_results_show_pending_cursor_arrangement_inp
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn dragging_library_search_result_out_of_palette_creates_provisional_placement() {
     let root = TempRoot::new("snappyref-library-search-pointer-drag-provisional-placement");
@@ -4035,7 +4006,6 @@ fn dragging_library_search_result_out_of_palette_creates_provisional_placement()
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_search_result_drag_to_canvas_writes_artifact() {
     let mut scenario = InspectScenario::new("search-drag-to-canvas");
@@ -4171,7 +4141,6 @@ fn inspect_search_result_drag_to_canvas_writes_artifact() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_semantic_search_install_accepts_prompt() {
     let mut scenario = InspectScenario::new("semantic-search-install");
@@ -4239,7 +4208,6 @@ fn inspect_semantic_search_install_accepts_prompt() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_semantic_search_sidebar_status_writes_artifact() {
     let mut scenario = InspectScenario::new("semantic-search-sidebar-status");
@@ -4305,7 +4273,6 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
 
 /// Downloads the real model bundle. Run via
 /// `docs/skills/inspect/scripts/run-scenario.sh semantic-search-real-install`.
-#[cfg(feature = "semantic-search")]
 #[test]
 #[ignore]
 fn inspect_semantic_search_real_install_writes_artifact() {
@@ -4417,7 +4384,6 @@ fn inspect_semantic_search_real_install_writes_artifact() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_sample_image_import_writes_artifact() {
     let mut scenario = InspectScenario::new("sample-image-import");
@@ -4467,7 +4433,6 @@ fn inspect_sample_image_import_writes_artifact() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_delete_board_modal_flash_writes_artifact() {
     let mut scenario = InspectScenario::new("delete-board-modal-flash");
@@ -4546,7 +4511,6 @@ fn inspect_delete_board_modal_flash_writes_artifact() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_board_lifecycle_undo_redo_writes_artifact() {
     let mut scenario = InspectScenario::new("board-lifecycle-undo-redo");
@@ -4834,7 +4798,6 @@ fn inspect_board_lifecycle_undo_redo_writes_artifact() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_compact_windows_column_images_writes_artifact() {
     let mut scenario = InspectScenario::new("compact-windows-column-images");
@@ -4939,7 +4902,6 @@ fn inspect_compact_windows_column_images_writes_artifact() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_compact_mixed_column_images_writes_artifact() {
     let mut scenario = InspectScenario::new("compact-mixed-column-images");
@@ -5029,7 +4991,6 @@ fn inspect_compact_mixed_column_images_writes_artifact() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_compact_equal_size_images_writes_artifact() {
     let mut scenario = InspectScenario::new("compact-equal-size-images");
@@ -5119,7 +5080,6 @@ fn inspect_compact_equal_size_images_writes_artifact() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_search_palette_footer_writes_artifact() {
     let mut scenario = InspectScenario::new("search-palette-footer");
@@ -5210,7 +5170,6 @@ fn inspect_search_palette_footer_writes_artifact() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_blue_image_search_drag_writes_artifact() {
     let mut scenario = InspectScenario::new("blue-image-search-drag");
@@ -5417,7 +5376,6 @@ fn inspect_blue_image_search_drag_writes_artifact() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_placement_click_hold_flash_writes_artifact() {
     let mut scenario = InspectScenario::new("placement-click-hold-flash");
@@ -5527,7 +5485,6 @@ fn inspect_placement_click_hold_flash_writes_artifact() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_delete_undo_redo_placement_writes_artifact() {
     let mut scenario = InspectScenario::new("delete-undo-redo-placement");
@@ -5708,7 +5665,6 @@ fn inspect_delete_undo_redo_placement_writes_artifact() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_crop_undo_redo_placement_writes_artifact() {
     let mut scenario = InspectScenario::new("crop-undo-redo-placement");
@@ -5970,7 +5926,6 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn dragging_multiple_library_search_results_centers_provisional_group_on_pointer() {
     let root = TempRoot::new("snappyref-library-search-pointer-drag-multi-center");
@@ -6064,7 +6019,6 @@ fn dragging_multiple_library_search_results_centers_provisional_group_on_pointer
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn active_search_provisional_drag_keeps_canvas_edit_input_disabled() {
     let ctx = egui::Context::default();
@@ -6083,7 +6037,6 @@ fn active_search_provisional_drag_keeps_canvas_edit_input_disabled() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn empty_external_hover_does_not_cancel_search_provisional_placement() {
     let mut app = test_app(None);
@@ -6135,7 +6088,6 @@ fn empty_external_hover_does_not_cancel_search_provisional_placement() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn clicked_multi_select_enter_places_all_selected_library_results() {
     let root = TempRoot::new("snappyref-library-search-click-multi-enter-drop");
@@ -6256,7 +6208,6 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
     assert_eq!(asset_ids, expected_asset_ids);
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn command_enter_places_all_unplaced_library_search_results_on_empty_active_board() {
     let root = TempRoot::new("snappyref-library-search-command-enter-unplaced");
@@ -6335,7 +6286,6 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
     assert!(!harness.state().search.overlay.open);
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn submitted_search_is_saved_to_recent_searches() {
     let root = TempRoot::new("snappyref-search-recent-session");
@@ -6358,7 +6308,6 @@ fn submitted_search_is_saved_to_recent_searches() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn empty_recent_searches_do_not_submit_boilerplate_query() {
     let root = TempRoot::new("snappyref-search-no-boilerplate-recent");
@@ -7002,7 +6951,6 @@ fn raw_dropped_file_enqueues_external_import() {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_pending_drop_batch_undo_writes_artifact() {
     let mut scenario = InspectScenario::new("pending-drop-batch-undo");
@@ -7366,7 +7314,6 @@ fn drag_test_pos<State>(harness: &Harness<'_, State>, from: egui::Pos2, to: egui
     harness.drop_at(to);
 }
 
-#[cfg(feature = "semantic-search")]
 struct InspectScenario {
     name: String,
     artifact_dir: PathBuf,
@@ -7376,13 +7323,11 @@ struct InspectScenario {
     passed: bool,
 }
 
-#[cfg(feature = "semantic-search")]
 struct InspectReport {
     passed: bool,
     artifact_dir: PathBuf,
 }
 
-#[cfg(feature = "semantic-search")]
 struct InspectFrameStats {
     width: u32,
     height: u32,
@@ -7390,7 +7335,6 @@ struct InspectFrameStats {
     unique_colors: usize,
 }
 
-#[cfg(feature = "semantic-search")]
 struct InspectProgressConfig {
     start_frame_index: usize,
     timeout: Duration,
@@ -7401,7 +7345,6 @@ struct InspectProgressConfig {
     timeout_assertion: &'static str,
 }
 
-#[cfg(feature = "semantic-search")]
 struct InspectImportSample {
     name: &'static str,
     width: u32,
@@ -7410,7 +7353,6 @@ struct InspectImportSample {
     center: egui::Pos2,
 }
 
-#[cfg(feature = "semantic-search")]
 struct InspectSampleImport {
     name: &'static str,
     width: u32,
@@ -7420,7 +7362,6 @@ struct InspectSampleImport {
     loading_state: PlacementState,
 }
 
-#[cfg(feature = "semantic-search")]
 impl InspectScenario {
     fn new(name: impl Into<String>) -> Self {
         let name = name.into();
@@ -7797,7 +7738,6 @@ impl InspectScenario {
     }
 }
 
-#[cfg(feature = "semantic-search")]
 fn inspect_artifact_dir(scenario: &str) -> PathBuf {
     let target_dir = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
@@ -7819,7 +7759,6 @@ fn inspect_artifact_dir(scenario: &str) -> PathBuf {
         ))
 }
 
-#[cfg(feature = "semantic-search")]
 fn inspect_pos(pos: egui::Pos2) -> serde_json::Value {
     serde_json::json!({
         "x": pos.x,
@@ -7827,7 +7766,6 @@ fn inspect_pos(pos: egui::Pos2) -> serde_json::Value {
     })
 }
 
-#[cfg(feature = "semantic-search")]
 fn inspect_vec2(vec: egui::Vec2) -> serde_json::Value {
     serde_json::json!({
         "x": vec.x,
@@ -7835,7 +7773,6 @@ fn inspect_vec2(vec: egui::Vec2) -> serde_json::Value {
     })
 }
 
-#[cfg(feature = "semantic-search")]
 fn inspect_rect(rect: egui::Rect) -> serde_json::Value {
     serde_json::json!({
         "min": inspect_pos(rect.min),
@@ -7845,7 +7782,6 @@ fn inspect_rect(rect: egui::Rect) -> serde_json::Value {
     })
 }
 
-#[cfg(feature = "semantic-search")]
 fn inspect_placement(placement: &Placement) -> serde_json::Value {
     serde_json::json!({
         "id": placement.state.id,
@@ -7856,7 +7792,6 @@ fn inspect_placement(placement: &Placement) -> serde_json::Value {
     })
 }
 
-#[cfg(feature = "semantic-search")]
 fn inspect_status_slug(status: &LocalModelStoreStatus) -> String {
     match status {
         LocalModelStoreStatus::Missing => "missing".to_owned(),
@@ -7867,7 +7802,6 @@ fn inspect_status_slug(status: &LocalModelStoreStatus) -> String {
     }
 }
 
-#[cfg(feature = "semantic-search")]
 fn inspect_sample_loaded_item(
     name: &str,
     width: u32,
@@ -7898,7 +7832,6 @@ fn inspect_sample_loaded_item(
     }
 }
 
-#[cfg(feature = "semantic-search")]
 fn inspect_prepared_loaded_placement(
     placement: Placement,
     color: [u8; 4],
@@ -7917,7 +7850,6 @@ fn inspect_prepared_loaded_placement(
     }
 }
 
-#[cfg(feature = "semantic-search")]
 fn inspect_search_result_entry(placement: &Placement) -> SearchResultAssetEntry {
     let asset = placement.require_loaded_asset();
     SearchResultAssetEntry {
@@ -7928,7 +7860,6 @@ fn inspect_search_result_entry(placement: &Placement) -> SearchResultAssetEntry 
     }
 }
 
-#[cfg(feature = "semantic-search")]
 fn inspect_search_result_tile_center(index: usize, result_count: usize) -> egui::Pos2 {
     let body_h_pad = 12.0_f32;
     let grid_inner_width = PALETTE_WIDTH - body_h_pad * 2.0;
@@ -7949,12 +7880,10 @@ fn inspect_search_result_tile_center(index: usize, result_count: usize) -> egui:
     )
 }
 
-#[cfg(feature = "semantic-search")]
 fn inspect_world_to_screen(world: egui::Pos2, rect: egui::Rect) -> egui::Pos2 {
     rect.center() + world.to_vec2()
 }
 
-#[cfg(feature = "semantic-search")]
 fn inspect_click_at(
     harness: &Harness<'_, SnappyRefApp>,
     pos: egui::Pos2,
@@ -7980,7 +7909,6 @@ fn inspect_click_at(
     );
 }
 
-#[cfg(feature = "semantic-search")]
 fn inspect_bright_red_pixels_in_rect(path: &PathBuf, rect: egui::Rect) -> usize {
     let image = image::open(path)
         .expect("inspect frame should exist")
@@ -8001,7 +7929,6 @@ fn inspect_bright_red_pixels_in_rect(path: &PathBuf, rect: egui::Rect) -> usize 
     count
 }
 
-#[cfg(feature = "semantic-search")]
 fn inspect_command_modifier() -> egui::Modifiers {
     egui::Modifiers {
         command: true,
@@ -8009,7 +7936,6 @@ fn inspect_command_modifier() -> egui::Modifiers {
     }
 }
 
-#[cfg(feature = "semantic-search")]
 fn compact_selection_fact(app: &SnappyRefApp) -> serde_json::Value {
     let mut centers = app
         .canvas
@@ -8061,7 +7987,6 @@ fn compact_selection_fact(app: &SnappyRefApp) -> serde_json::Value {
     })
 }
 
-#[cfg(feature = "semantic-search")]
 fn compact_axis_bucket_count(mut values: Vec<f32>) -> usize {
     let mut buckets = 0usize;
     let mut last = None::<f32>;
@@ -8074,7 +7999,6 @@ fn compact_axis_bucket_count(mut values: Vec<f32>) -> usize {
     buckets
 }
 
-#[cfg(feature = "semantic-search")]
 fn compact_axis_max_bucket_size(mut values: Vec<f32>) -> usize {
     values.sort_by(|left, right| left.total_cmp(right));
     let mut max_bucket = 0usize;
@@ -8092,7 +8016,6 @@ fn compact_axis_max_bucket_size(mut values: Vec<f32>) -> usize {
     max_bucket.max(current_bucket)
 }
 
-#[cfg(feature = "semantic-search")]
 fn add_inspect_compact_image(
     harness: &mut Harness<'_, SnappyRefApp>,
     ctx: &egui::Context,
@@ -8133,14 +8056,12 @@ fn add_inspect_compact_image(
     );
 }
 
-#[cfg(feature = "semantic-search")]
 fn solid_rgba(color: [u8; 4], width: u32, height: u32) -> Vec<u8> {
     std::iter::repeat_n(color, width as usize * height as usize)
         .flatten()
         .collect()
 }
 
-#[cfg(feature = "semantic-search")]
 fn composite_pixel_over_background(
     foreground: image::Rgba<u8>,
     background: image::Rgba<u8>,

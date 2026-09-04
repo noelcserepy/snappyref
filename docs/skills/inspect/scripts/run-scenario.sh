@@ -146,7 +146,7 @@ rm -f "$artifact_root/latest.txt"
 
 (
   cd "$repo_root"
-  cargo test "$test_filter" --features semantic-search -- --nocapture $test_args
+  cargo test "$test_filter" -- --nocapture $test_args
 )
 cargo_status=$?
 
