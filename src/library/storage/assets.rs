@@ -17,7 +17,7 @@ impl ExactDedupeReport {
     }
 }
 
-const ASSET_COLUMNS: &str = "id, original_path, filename, mime_type, width, height, file_size";
+const ASSET_COLUMNS: &str = "id, original_path, filename, mime_type, width, height";
 
 fn asset_from_row(row: &rusqlite::Row<'_>) -> Result<Asset, rusqlite::Error> {
     Ok(Asset {
@@ -27,7 +27,6 @@ fn asset_from_row(row: &rusqlite::Row<'_>) -> Result<Asset, rusqlite::Error> {
         mime_type: row.get(3)?,
         width: row.get::<_, u32>(4)?,
         height: row.get::<_, u32>(5)?,
-        file_size: row.get::<_, i64>(6)? as u64,
     })
 }
 
@@ -81,7 +80,6 @@ pub(super) fn insert_asset_row(
         mime_type,
         width,
         height,
-        file_size,
     })
 }
 

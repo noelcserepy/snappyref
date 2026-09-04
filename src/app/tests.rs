@@ -349,7 +349,6 @@ fn compact_arrangement_action_uses_dense_compact_layout() {
             mime_type: "image/png".to_owned(),
             width: *width,
             height: *height,
-            file_size: 0,
         };
         let placement = Placement::loaded(
             PlacementState::new(
@@ -1700,9 +1699,7 @@ fn arrow_keys_apply_directional_settle_arrange() {
 #[test]
 fn shortcuts_list_includes_directional_settle_arrange() {
     assert!(SUPPORTED_SHORTCUTS.iter().any(|shortcut| {
-        shortcut.action == "Directional settle arrange"
-            && shortcut.windows == "Arrow keys"
-            && shortcut.mac == "Arrow keys"
+        shortcut.action == "Directional settle arrange" && shortcut.keys == "Arrow keys"
     }));
 }
 
@@ -3768,7 +3765,6 @@ fn switching_boards_clears_selection_and_search() {
         mime_type: "image/png".to_owned(),
         width: 1,
         height: 1,
-        file_size: 4,
     };
     let placement = Placement::loaded(
         PlacementState::new(1, Some(1), eframe::egui::pos2(0.0, 0.0), 1.0, 0.0, 0, false),
@@ -4337,14 +4333,15 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
         })
         .collect::<Vec<_>>();
     assert_eq!(layout.len(), 2);
-    let first_size = harness.state().import_size_world(
-        first.require_loaded_asset().width,
-        first.require_loaded_asset().height,
-    );
-    let second_size = harness.state().import_size_world(
-        second.require_loaded_asset().width,
-        second.require_loaded_asset().height,
-    );
+    let import_size_world = |asset: &crate::data::Asset| {
+        crate::placement::creation::display_size_for_dimensions(
+            asset.width,
+            asset.height,
+            harness.state().settings.placement_target_area,
+        )
+    };
+    let first_size = import_size_world(first.require_loaded_asset());
+    let second_size = import_size_world(second.require_loaded_asset());
     assert!(layout.iter().any(|item| {
         (item.width() - first_size.x).abs() < 0.1 && (item.height() - first_size.y).abs() < 0.1
     }));
@@ -5529,7 +5526,6 @@ fn inspect_compact_equal_size_images_writes_artifact() {
             mime_type: "image/png".to_owned(),
             width: 150,
             height: 40,
-            file_size: 150 * 40 * 4,
         };
         let placement = Placement::loaded(
             PlacementState::with_display_size(
@@ -7005,7 +7001,6 @@ fn completed_multi_file_import_batch_selects_and_compacts_loaded_geometry() {
             mime_type: "image/png".to_owned(),
             width,
             height,
-            file_size: 4,
         };
         let placement = Placement::loaded(
             PlacementState::new(
@@ -8510,7 +8505,6 @@ fn inspect_sample_loaded_item(
         mime_type: "image/png".to_owned(),
         width,
         height,
-        file_size: width as u64 * height as u64 * 4,
     };
     let pixel_count = width as usize * height as usize;
     PreparedPlacementImage {
@@ -8746,7 +8740,6 @@ fn add_inspect_compact_image(
         mime_type: "image/png".to_owned(),
         width,
         height,
-        file_size: width as u64 * height as u64 * 4,
     };
     let placement = Placement::loaded(
         PlacementState::with_display_size(
@@ -8833,7 +8826,6 @@ fn test_loaded_item(placement_id: i64, target_board_id: i64) -> PreparedPlacemen
         mime_type: "image/png".to_owned(),
         width: 1,
         height: 1,
-        file_size: 4,
     };
     let placement = Placement::loaded(
         PlacementState::new(

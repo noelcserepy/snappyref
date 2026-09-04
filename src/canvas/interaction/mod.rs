@@ -1461,7 +1461,6 @@ mod tests {
             mime_type: "image/png".to_owned(),
             width,
             height,
-            file_size: 0,
         };
         let placement = Placement::loaded(
             PlacementState::new(

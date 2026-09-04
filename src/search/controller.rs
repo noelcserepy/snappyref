@@ -146,21 +146,6 @@ impl SearchController {
         self.semantic_install.set_test_installer(installer);
     }
 
-    pub(crate) fn start_semantic_search_install_from_first_launch_prompt(
-        &mut self,
-        status: &mut String,
-    ) {
-        self.start_semantic_search_install(status);
-    }
-
-    pub(crate) fn start_semantic_search_install_from_settings(&mut self, status: &mut String) {
-        self.start_semantic_search_install(status);
-    }
-
-    pub(crate) fn cancel_semantic_search_install_from_settings(&mut self, status: &mut String) {
-        self.cancel_semantic_search_install(status);
-    }
-
     #[cfg(feature = "semantic-search")]
     pub(crate) fn remove_semantic_search_assets_from_settings(&mut self, status: &mut String) {
         self.semantic_install.force_stop();
@@ -340,13 +325,13 @@ impl SearchController {
         true
     }
 
-    pub(super) fn start_semantic_search_install(&mut self, status: &mut String) {
+    pub(crate) fn start_semantic_search_install(&mut self, status: &mut String) {
         if let Some(snapshot) = self.semantic_install.start() {
             self.apply_semantic_install_snapshot(snapshot, status);
         }
     }
 
-    pub(super) fn cancel_semantic_search_install(&mut self, status: &mut String) {
+    pub(crate) fn cancel_semantic_search_install(&mut self, status: &mut String) {
         if let Some(snapshot) = self.semantic_install.request_cancel() {
             self.apply_semantic_install_snapshot(snapshot, status);
         }
@@ -1174,7 +1159,7 @@ mod tests {
         });
         let mut status = "Ready".to_owned();
 
-        search.start_semantic_search_install_from_first_launch_prompt(&mut status);
+        search.start_semantic_search_install(&mut status);
 
         assert_eq!(starts.get(), 1);
         assert_eq!(
@@ -1465,7 +1450,6 @@ mod tests {
                 mime_type: "image/png".to_owned(),
                 width: 200,
                 height: 100,
-                file_size: 0,
             };
             canvas.add_unresolved_placement(Placement::loaded(
                 PlacementState {
@@ -1558,7 +1542,6 @@ mod tests {
             mime_type: "image/png".to_owned(),
             width: 100,
             height: 100,
-            file_size: 0,
         };
         canvas.add_unresolved_placement(Placement::loaded(
             PlacementState::with_display_size(

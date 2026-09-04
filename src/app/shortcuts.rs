@@ -69,82 +69,83 @@ pub(super) struct PendingLibraryRemove {
 #[derive(Clone, Copy)]
 pub(crate) struct SupportedShortcut {
     pub action: &'static str,
-    #[allow(dead_code)]
-    pub windows: &'static str,
-    #[allow(dead_code)]
-    pub mac: &'static str,
+    /// Key label for the running platform; see `platform_shortcut_label`.
+    pub keys: &'static str,
     pub(super) binding: Option<ShortcutBinding>,
     pub(super) shortcut_action: Option<SupportedShortcutAction>,
+}
+
+/// Picks the shortcut label for the running platform: macOS symbol glyphs
+/// (`⌘V`), `Ctrl`-style text everywhere else.
+pub(crate) const fn platform_shortcut_label(
+    mac: &'static str,
+    windows: &'static str,
+) -> &'static str {
+    if cfg!(target_os = "macos") {
+        mac
+    } else {
+        windows
+    }
 }
 
 pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     SupportedShortcut {
         action: "Copy selection",
-        windows: "Ctrl+C",
-        mac: "⌘C",
+        keys: platform_shortcut_label("⌘C", "Ctrl+C"),
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Paste image",
-        windows: "Ctrl+V",
-        mac: "⌘V",
+        keys: platform_shortcut_label("⌘V", "Ctrl+V"),
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Search images",
-        windows: "Ctrl+F",
-        mac: "⌘F",
+        keys: platform_shortcut_label("⌘F", "Ctrl+F"),
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Crop image",
-        windows: "C + Drag",
-        mac: "C + Drag",
+        keys: "C + Drag",
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Draw arrow",
-        windows: "A + Drag",
-        mac: "A + Drag",
+        keys: "A + Drag",
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Draw line",
-        windows: "L + Drag",
-        mac: "L + Drag",
+        keys: "L + Drag",
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Draw textbox",
-        windows: "T + Click/Drag",
-        mac: "T + Click/Drag",
+        keys: "T + Click/Drag",
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Rotate selection",
-        windows: "R + Drag",
-        mac: "R + Drag",
+        keys: "R + Drag",
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Scale selection",
-        windows: "Ctrl+Alt+Drag",
-        mac: "⌘⌥ Drag",
+        keys: platform_shortcut_label("⌘⌥ Drag", "Ctrl+Alt+Drag"),
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Focus selection",
-        windows: "Space",
-        mac: "Space",
+        keys: "Space",
         binding: Some(ShortcutBinding {
             key: egui::Key::Space,
             command: false,
@@ -154,15 +155,13 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Delete selection",
-        windows: "Delete",
-        mac: "Backspace",
+        keys: platform_shortcut_label("Backspace", "Delete"),
         binding: None,
         shortcut_action: Some(SupportedShortcutAction::DeleteSelection),
     },
     SupportedShortcut {
         action: "Duplicate selection",
-        windows: "Ctrl+D",
-        mac: "⌘D",
+        keys: platform_shortcut_label("⌘D", "Ctrl+D"),
         binding: Some(ShortcutBinding {
             key: egui::Key::D,
             command: true,
@@ -172,8 +171,7 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Move selection to front",
-        windows: "Ctrl+.",
-        mac: "⌘.",
+        keys: platform_shortcut_label("⌘.", "Ctrl+."),
         binding: Some(ShortcutBinding {
             key: egui::Key::Period,
             command: true,
@@ -183,8 +181,7 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Move selection to back",
-        windows: "Ctrl+,",
-        mac: "⌘,",
+        keys: platform_shortcut_label("⌘,", "Ctrl+,"),
         binding: Some(ShortcutBinding {
             key: egui::Key::Comma,
             command: true,
@@ -194,8 +191,7 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Toggle sidebar",
-        windows: "Ctrl+B",
-        mac: "⌘B",
+        keys: platform_shortcut_label("⌘B", "Ctrl+B"),
         binding: Some(ShortcutBinding {
             key: egui::Key::B,
             command: true,
@@ -205,8 +201,7 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Toggle always on top",
-        windows: "Ctrl+Shift+T",
-        mac: "⇧⌘T",
+        keys: platform_shortcut_label("⇧⌘T", "Ctrl+Shift+T"),
         binding: Some(ShortcutBinding {
             key: egui::Key::T,
             command: true,
@@ -216,8 +211,7 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Compact arrange",
-        windows: "Q",
-        mac: "Q",
+        keys: "Q",
         binding: Some(ShortcutBinding {
             key: egui::Key::Q,
             command: false,
@@ -227,8 +221,7 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Row arrange",
-        windows: "W",
-        mac: "W",
+        keys: "W",
         binding: Some(ShortcutBinding {
             key: egui::Key::W,
             command: false,
@@ -240,8 +233,7 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Column arrange",
-        windows: "E",
-        mac: "E",
+        keys: "E",
         binding: Some(ShortcutBinding {
             key: egui::Key::E,
             command: false,
@@ -253,15 +245,13 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Directional settle arrange",
-        windows: "Arrow keys",
-        mac: "Arrow keys",
+        keys: "Arrow keys",
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Dedupe library",
-        windows: "P",
-        mac: "P",
+        keys: "P",
         binding: Some(ShortcutBinding {
             key: egui::Key::P,
             command: false,
@@ -271,8 +261,7 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Default avg area",
-        windows: "Ctrl+L",
-        mac: "⌘L",
+        keys: platform_shortcut_label("⌘L", "Ctrl+L"),
         binding: Some(ShortcutBinding {
             key: egui::Key::L,
             command: true,
@@ -282,8 +271,7 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Selection avg area",
-        windows: "Ctrl+Shift+L",
-        mac: "⇧⌘L",
+        keys: platform_shortcut_label("⇧⌘L", "Ctrl+Shift+L"),
         binding: Some(ShortcutBinding {
             key: egui::Key::L,
             command: true,
@@ -293,13 +281,8 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Undo",
-        windows: "Ctrl+Z",
-        mac: "⌘Z",
-        binding: Some(ShortcutBinding {
-            key: egui::Key::Z,
-            command: true,
-            shift: false,
-        }),
+        keys: platform_shortcut_label("⌘Z", "Ctrl+Z"),
+        binding: None,
         shortcut_action: None,
     },
 ];

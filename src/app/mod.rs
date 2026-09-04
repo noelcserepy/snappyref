@@ -5,9 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::active_board::commands::{
-    ActiveBoardCommandContext, ClipboardBoardSelection, PasteCommandOutcome,
-};
+use crate::active_board::commands::{ActiveBoardCommandContext, PasteCommandOutcome};
 use crate::active_board::history::{
     BoardLifecycleHistoryAction, DocumentHistory, HistoryAction, HistoryChange, HistoryDirection,
 };
@@ -45,7 +43,7 @@ use shortcuts::{
     PendingLibraryRemove, SupportedShortcutAction, delete_shortcut_pressed,
     settle_direction_pressed, shortcut_pressed,
 };
-pub(crate) use shortcuts::{SUPPORTED_SHORTCUTS, SupportedShortcut};
+pub(crate) use shortcuts::{SUPPORTED_SHORTCUTS, SupportedShortcut, platform_shortcut_label};
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -175,10 +173,20 @@ struct PerfCorpusEntry {
 }
 
 impl PerfScenarioState {
-    fn from_config(config: &AppConfig) -> Result<Option<Self>, String> {
-        let Some(name) = config.perf_scenario.clone() else {
-            return Ok(None);
-        };
+    /// `None` when no scenario was requested. A requested scenario that
+    /// cannot start is reported on stderr and the app runs without it.
+    fn from_config(config: &AppConfig) -> Option<Self> {
+        let name = config.perf_scenario.clone()?;
+        match Self::start(name, config) {
+            Ok(state) => Some(state),
+            Err(error) => {
+                eprintln!("perf scenario disabled: {error}");
+                None
+            }
+        }
+    }
+
+    fn start(name: String, config: &AppConfig) -> Result<Self, String> {
         let corpus_root = config
             .perf_corpus
             .clone()
@@ -196,7 +204,7 @@ impl PerfScenarioState {
         let events_path = run_dir.join("events.ndjson");
         let events = File::create(&events_path)
             .map_err(|error| format!("failed to create {}: {error}", events_path.display()))?;
-        Ok(Some(Self {
+        Ok(Self {
             name,
             corpus_root,
             run_dir,
@@ -224,7 +232,7 @@ impl PerfScenarioState {
             pending_trickle_imports: Vec::new(),
             trickle_interval: Duration::from_secs(2),
             trickle_next_at: None,
-        }))
+        })
     }
 
     fn elapsed_ms(&self) -> f64 {
@@ -742,7 +750,7 @@ impl SnappyRefApp {
                         startup_logged: false,
                     }),
                     frame_perf: FramePerfState::default(),
-                    perf_scenario: PerfScenarioState::from_config(&config).unwrap_or(None),
+                    perf_scenario: PerfScenarioState::from_config(&config),
                     content_resolution: ContentResolutionRuntime::new(),
                     residency: ImageResidencyCoordinator::default(),
                     pending_import_batches:
@@ -797,7 +805,7 @@ impl SnappyRefApp {
                     startup_logged: false,
                 }),
                 frame_perf: FramePerfState::default(),
-                perf_scenario: PerfScenarioState::from_config(&config).unwrap_or(None),
+                perf_scenario: PerfScenarioState::from_config(&config),
                 content_resolution: ContentResolutionRuntime::new(),
                 residency: ImageResidencyCoordinator::default(),
                 pending_import_batches:
@@ -1502,13 +1510,11 @@ impl SnappyRefApp {
         match action {
             Some(SemanticSearchSettingsAction::Install)
             | Some(SemanticSearchSettingsAction::Retry) => {
-                self.search
-                    .start_semantic_search_install_from_settings(&mut self.status);
+                self.search.start_semantic_search_install(&mut self.status);
                 ctx.request_repaint_after(std::time::Duration::from_millis(16));
             }
             Some(SemanticSearchSettingsAction::Cancel) => {
-                self.search
-                    .cancel_semantic_search_install_from_settings(&mut self.status);
+                self.search.cancel_semantic_search_install(&mut self.status);
                 ctx.request_repaint_after(std::time::Duration::from_millis(16));
             }
             Some(SemanticSearchSettingsAction::RequestRemove) => {
@@ -2162,15 +2168,6 @@ impl SnappyRefApp {
             screen_rect.left()
         };
         egui::Rect::from_min_max(egui::pos2(left, screen_rect.top()), screen_rect.max)
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    fn import_size_world(&self, width: u32, height: u32) -> egui::Vec2 {
-        crate::sources::import::import_preview_size_world(
-            width,
-            height,
-            self.settings.placement_target_area,
-        )
     }
 
     fn placement_creation_settings(&self) -> crate::placement::creation::PlacementCreationSettings {
@@ -3305,8 +3302,10 @@ impl SnappyRefApp {
         self.status = "Semantic search unavailable".to_owned();
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    fn copy_selected_board_payload(&self) -> Option<ClipboardBoardSelection> {
+    #[cfg(test)]
+    fn copy_selected_board_payload(
+        &self,
+    ) -> Option<crate::active_board::commands::ClipboardBoardSelection> {
         crate::active_board::commands::copy_selected_board_payload(&self.canvas)
     }
 
@@ -3336,10 +3335,10 @@ impl SnappyRefApp {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     fn paste_board_payload_at(
         &mut self,
-        payload: &ClipboardBoardSelection,
+        payload: &crate::active_board::commands::ClipboardBoardSelection,
         requested_anchor_world: egui::Pos2,
     ) -> Result<(), String> {
         let viewport_world = self.import_viewport_world_rect(egui::Rect::from_min_size(
@@ -3601,7 +3600,6 @@ impl SnappyRefApp {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     fn integrate_loaded_import(
         &mut self,
         ctx: &egui::Context,
@@ -4757,8 +4755,7 @@ impl SnappyRefApp {
     #[cfg(feature = "semantic-search")]
     fn enable_semantic_search_from_first_launch_prompt(&mut self, ctx: &egui::Context) {
         self.mark_semantic_search_first_launch_prompt_seen();
-        self.search
-            .start_semantic_search_install_from_first_launch_prompt(&mut self.status);
+        self.search.start_semantic_search_install(&mut self.status);
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
 
@@ -5543,16 +5540,6 @@ fn restart_launch_args() -> Vec<String> {
         .skip(1)
         .filter(|argument| argument != "--update-smoke-install")
         .collect()
-}
-
-#[cfg(target_os = "macos")]
-fn platform_shortcut_label(mac: &'static str, _windows: &'static str) -> &'static str {
-    mac
-}
-
-#[cfg(not(target_os = "macos"))]
-fn platform_shortcut_label(_mac: &'static str, windows: &'static str) -> &'static str {
-    windows
 }
 
 mod dialogs;

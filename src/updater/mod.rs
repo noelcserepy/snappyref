@@ -75,13 +75,11 @@ pub(crate) struct UpdateService {
     /// Install-worker progress receiver. `None` while no install is in
     /// flight. A finished install drops the channel via `Failed` or `Staged`.
     install_rx: Option<Receiver<InstallProgress>>,
-    /// Optional override for tests: short-circuit the network and feed a
-    /// canned outcome instead of spawning a thread.
-    #[cfg(test)]
-    test_fetch: Option<Box<dyn FnMut() -> DiscoveryResult + Send>>,
-    /// Optional override for tests: feed install events directly.
-    #[cfg(test)]
-    test_install: Option<Box<dyn FnMut(InstallContext, Sender<InstallProgress>) + Send>>,
+    /// Test override: short-circuit the network and feed a canned outcome
+    /// instead of spawning a thread. See `spawn_fetch`.
+    fetch_override: Option<Box<dyn FnMut() -> DiscoveryResult + Send>>,
+    /// Test override: feed install events directly. See `spawn_install`.
+    install_override: Option<Box<dyn FnMut(InstallContext, Sender<InstallProgress>) + Send>>,
 }
 
 #[derive(Clone)]
@@ -156,10 +154,8 @@ impl UpdateService {
             last_check_completed_at: None,
             manual_check_requested: false,
             install_rx: None,
-            #[cfg(test)]
-            test_fetch: None,
-            #[cfg(test)]
-            test_install: None,
+            fetch_override: None,
+            install_override: None,
         };
         // Best-effort startup hygiene: discard partial downloads from a
         // prior session so a half-written file cannot be served as a
@@ -262,19 +258,17 @@ impl UpdateService {
         self.spawn_install(context, tx);
     }
 
-    #[cfg(not(test))]
-    fn spawn_install(&self, context: InstallContext, tx: Sender<InstallProgress>) {
-        std::thread::spawn(move || run_install(context, tx));
-    }
-
-    #[cfg(test)]
+    /// Tests never download: without an override the install fails
+    /// immediately instead of touching the network.
     fn spawn_install(&mut self, context: InstallContext, tx: Sender<InstallProgress>) {
-        if let Some(installer) = self.test_install.as_mut() {
+        if let Some(installer) = self.install_override.as_mut() {
             (installer)(context, tx);
-        } else {
+        } else if cfg!(test) {
             let _ = tx.send(InstallProgress::Failed {
                 reason: "no test installer".to_owned(),
             });
+        } else {
+            std::thread::spawn(move || run_install(context, tx));
         }
     }
 
@@ -509,31 +503,29 @@ impl UpdateService {
         self.next_check_after = None;
     }
 
-    #[cfg(not(test))]
+    /// Tests never reach the network: without an override the check fails
+    /// immediately instead of spawning the fetch thread.
     fn spawn_fetch(&mut self, tx: Sender<DiscoveryResult>) {
-        let config = self.config.clone();
-        std::thread::spawn(move || {
-            let outcome = run_fetch(&config);
+        if let Some(fetcher) = self.fetch_override.as_mut() {
+            let outcome = (fetcher)();
             let _ = tx.send(outcome);
-        });
+        } else if cfg!(test) {
+            let _ = tx.send(DiscoveryResult {
+                outcome: CheckOutcome::Failed,
+                manifest: None,
+            });
+        } else {
+            let config = self.config.clone();
+            std::thread::spawn(move || {
+                let outcome = run_fetch(&config);
+                let _ = tx.send(outcome);
+            });
+        }
     }
 
     fn write_diagnostic(&self, message: &str) {
         if let Some(path) = &self.config.diagnostic_path {
             write_diagnostic(path, message);
-        }
-    }
-
-    #[cfg(test)]
-    fn spawn_fetch(&mut self, tx: Sender<DiscoveryResult>) {
-        if let Some(fetcher) = self.test_fetch.as_mut() {
-            let outcome = (fetcher)();
-            let _ = tx.send(outcome);
-        } else {
-            let _ = tx.send(DiscoveryResult {
-                outcome: CheckOutcome::Failed,
-                manifest: None,
-            });
         }
     }
 
@@ -635,7 +627,6 @@ fn validate_existing_staging(
 /// Production install pipeline: download the zip, verify sha, extract
 /// into staging, validate layout. Each phase reports progress through
 /// `tx`. Drop semantics on the channel act as a failure signal too.
-#[cfg(not(test))]
 fn run_install(context: InstallContext, tx: Sender<InstallProgress>) {
     let zip_path = install_paths::download_file_path(&context.install_root, &context.version);
     let version_for_progress = context.version.clone();
@@ -900,7 +891,7 @@ mod tests {
     #[test]
     fn service_stays_hidden_before_settled_idle() {
         let mut service = UpdateService::new(UpdateConfig::default());
-        service.test_fetch = Some(Box::new(|| panic!("must not fetch before settled idle")));
+        service.fetch_override = Some(Box::new(|| panic!("must not fetch before settled idle")));
         // Many frames before settled idle reports true. The service must
         // not touch the network or the state.
         for _ in 0..16 {
@@ -914,7 +905,7 @@ mod tests {
         let mut service = UpdateService::new(UpdateConfig::default());
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
-        service.test_fetch = Some(Box::new(move || {
+        service.fetch_override = Some(Box::new(move || {
             calls_clone.fetch_add(1, Ordering::SeqCst);
             DiscoveryResult {
                 outcome: CheckOutcome::UpToDate,
@@ -946,7 +937,7 @@ mod tests {
         let bytes = build_manifest_bytes("1.0.0", &key);
         let public = key.verifying_key();
         let bytes_clone = bytes.clone();
-        service.test_fetch = Some(Box::new(move || {
+        service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
             let outcome = classify(&manifest, "0.1.0", "https://example/release");
             DiscoveryResult {
@@ -971,7 +962,7 @@ mod tests {
     #[test]
     fn service_reports_failed_on_fetch_failure() {
         let mut service = UpdateService::new(UpdateConfig::default());
-        service.test_fetch = Some(Box::new(|| DiscoveryResult {
+        service.fetch_override = Some(Box::new(|| DiscoveryResult {
             outcome: CheckOutcome::Failed,
             manifest: None,
         }));
@@ -988,7 +979,7 @@ mod tests {
         });
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
-        service.test_fetch = Some(Box::new(move || {
+        service.fetch_override = Some(Box::new(move || {
             let n = calls_clone.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
                 DiscoveryResult {
@@ -1080,7 +1071,7 @@ mod tests {
         });
         // Stub the install worker so start_install doesn't depend on
         // platform shape or filesystem.
-        service.test_install = Some(Box::new(|_, _| {}));
+        service.install_override = Some(Box::new(|_, _| {}));
         // Pin install root to a temp dir so resolve_install_root doesn't
         // try to derive it from the test binary's path.
         service.config.install_root = Some(std::env::temp_dir());
@@ -1105,7 +1096,7 @@ mod tests {
         });
         service.config.install_root = Some(std::env::temp_dir());
         // Test installer immediately reports progress + Staged.
-        service.test_install = Some(Box::new(|ctx, tx| {
+        service.install_override = Some(Box::new(|ctx, tx| {
             let _ = tx.send(InstallProgress::Progress {
                 version: ctx.version.clone(),
                 percent: 50,
@@ -1133,7 +1124,7 @@ mod tests {
             release_page_url: "r".to_owned(),
         });
         service.config.install_root = Some(std::env::temp_dir());
-        service.test_install = Some(Box::new(|_, tx| {
+        service.install_override = Some(Box::new(|_, tx| {
             let _ = tx.send(InstallProgress::Failed {
                 reason: "boom".to_owned(),
             });
@@ -1228,7 +1219,7 @@ mod tests {
         let bytes = build_manifest_bytes("1.0.0", &key);
         let public = key.verifying_key();
         let bytes_clone = bytes.clone();
-        service.test_fetch = Some(Box::new(move || {
+        service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
             let outcome = classify(&manifest, "0.1.0", "https://example/release");
             DiscoveryResult {
@@ -1270,7 +1261,7 @@ mod tests {
         let bytes = build_manifest_bytes("1.0.0", &key);
         let public = key.verifying_key();
         let bytes_clone = bytes.clone();
-        service.test_fetch = Some(Box::new(move || {
+        service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
             let outcome = classify(&manifest, "1.0.0", "https://example/release");
             DiscoveryResult {
@@ -1314,7 +1305,7 @@ mod tests {
         let bytes = build_manifest_bytes("1.0.0", &key);
         let public = key.verifying_key();
         let bytes_clone = bytes.clone();
-        service.test_fetch = Some(Box::new(move || {
+        service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
             let outcome = classify(&manifest, "0.1.0", "https://example/release");
             DiscoveryResult {
@@ -1360,7 +1351,7 @@ mod tests {
         let bytes = build_manifest_bytes("1.0.0", &key);
         let public = key.verifying_key();
         let bytes_clone = bytes.clone();
-        service.test_fetch = Some(Box::new(move || {
+        service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
             let outcome = classify(&manifest, "0.1.0", "https://example/release");
             DiscoveryResult {
@@ -1410,7 +1401,7 @@ mod tests {
         let bytes = build_manifest_bytes("1.0.0", &key);
         let public = key.verifying_key();
         let bytes_clone = bytes.clone();
-        service.test_fetch = Some(Box::new(move || {
+        service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
             let outcome = classify(&manifest, "0.1.0", "https://example/release");
             DiscoveryResult {
@@ -1431,7 +1422,7 @@ mod tests {
     #[test]
     fn last_check_completed_at_records_a_timestamp_after_a_check_returns() {
         let mut service = UpdateService::new(UpdateConfig::default());
-        service.test_fetch = Some(Box::new(|| DiscoveryResult {
+        service.fetch_override = Some(Box::new(|| DiscoveryResult {
             outcome: CheckOutcome::UpToDate,
             manifest: None,
         }));
@@ -1459,7 +1450,7 @@ mod tests {
         let mut service = UpdateService::new(UpdateConfig::default());
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
-        service.test_fetch = Some(Box::new(move || {
+        service.fetch_override = Some(Box::new(move || {
             calls_clone.fetch_add(1, Ordering::SeqCst);
             DiscoveryResult {
                 outcome: CheckOutcome::UpToDate,
@@ -1487,7 +1478,7 @@ mod tests {
         let mut service = UpdateService::new(UpdateConfig::default());
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
-        service.test_fetch = Some(Box::new(move || {
+        service.fetch_override = Some(Box::new(move || {
             calls_clone.fetch_add(1, Ordering::SeqCst);
             DiscoveryResult {
                 outcome: CheckOutcome::UpToDate,
@@ -1509,7 +1500,7 @@ mod tests {
     #[test]
     fn time_until_next_check_polls_while_discovery_is_in_flight() {
         let mut service = UpdateService::new(UpdateConfig::default());
-        service.test_fetch = Some(Box::new(|| DiscoveryResult {
+        service.fetch_override = Some(Box::new(|| DiscoveryResult {
             outcome: CheckOutcome::UpToDate,
             manifest: None,
         }));

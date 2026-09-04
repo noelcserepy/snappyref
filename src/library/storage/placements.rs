@@ -636,7 +636,6 @@ impl Library {
                     a.mime_type,
                     a.width,
                     a.height,
-                    a.file_size,
                     COALESCE(b.placement_content_state, 'loaded'),
                     COALESCE(b.placement_lifecycle, 'committed'),
                     b.content_resolution_intent
@@ -662,9 +661,9 @@ impl Library {
                     row.get(8)?,
                     false,
                 );
-                let content_state: String = row.get(16)?;
-                let lifecycle: String = row.get(17)?;
-                let content_resolution_source_payload: Option<String> = row.get(18)?;
+                let content_state: String = row.get(15)?;
+                let lifecycle: String = row.get(16)?;
+                let content_resolution_source_payload: Option<String> = row.get(17)?;
                 let asset = if let Some(asset_id) = row.get::<_, Option<i64>>(9)? {
                     Some(Asset {
                         id: asset_id,
@@ -673,7 +672,6 @@ impl Library {
                         mime_type: row.get(12)?,
                         width: row.get::<_, u32>(13)?,
                         height: row.get::<_, u32>(14)?,
-                        file_size: row.get::<_, i64>(15)? as u64,
                     })
                 } else {
                     None

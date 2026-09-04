@@ -373,7 +373,7 @@ fn paint_inline_choice_response(ui: &mut egui::Ui, label: &str, selected: bool) 
         );
     }
     ui.painter().galley(
-        crate::ui::layout::centered_pos(rect, galley.size()) + egui::vec2(0.0, press * 0.5),
+        rect.center() - galley.size() * 0.5 + egui::vec2(0.0, press * 0.5),
         galley,
         text_color,
     );
