@@ -23,6 +23,7 @@ use render::{
     paint_selected_placement_borders, paint_selection_bounds, show_annotation_style_toolbar,
     show_textbox_editor,
 };
+pub(crate) use state::ActiveGesture;
 use state::{CanvasDocumentState, CanvasInteractionState, CanvasRenderState};
 
 pub(crate) type SharedRgba = Arc<[u8]>;
@@ -261,7 +262,7 @@ fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
 "#;
 
 #[derive(Clone)]
-struct PlacementScaleStart {
+pub(crate) struct PlacementScaleStart {
     placement_id: i64,
     geometry: RectGeometry,
     min_scale: f32,
@@ -307,7 +308,7 @@ pub(crate) struct DragState {
 }
 
 #[derive(Clone)]
-struct AnnotationDragState {
+pub(crate) struct AnnotationDragState {
     annotation_ids: Vec<i64>,
     pointer_start_world: egui::Pos2,
     pointer_start_screen: egui::Pos2,
@@ -315,7 +316,7 @@ struct AnnotationDragState {
 }
 
 #[derive(Clone)]
-enum PlacementTransformState {
+pub(crate) enum PlacementTransformState {
     Resizing {
         placement_id: i64,
         anchor_screen: egui::Pos2,
@@ -338,7 +339,7 @@ enum PlacementTransformState {
 }
 
 #[derive(Clone)]
-enum TextboxTransformState {
+pub(crate) enum TextboxTransformState {
     PendingMove {
         annotation_ids: Vec<i64>,
         pointer_start_world: egui::Pos2,
@@ -359,7 +360,7 @@ enum TextboxTransformState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TextboxResizeHandle {
+pub(crate) enum TextboxResizeHandle {
     TopLeft,
     TopRight,
     BottomLeft,
@@ -401,12 +402,14 @@ struct TextboxLayoutCacheEntry {
     required_world_height: f32,
 }
 
-struct MarqueeState {
+#[derive(Clone)]
+pub(crate) struct MarqueeState {
     start_screen: egui::Pos2,
     current_screen: egui::Pos2,
 }
 
-struct CropState {
+#[derive(Clone)]
+pub(crate) struct CropState {
     placement_id: i64,
     start_screen: egui::Pos2,
     current_screen: egui::Pos2,
@@ -427,7 +430,7 @@ struct AnimatedCanvasImage {
 }
 
 #[derive(Clone)]
-struct AnnotationDraftState {
+pub(crate) struct AnnotationDraftState {
     kind: CanvasAnnotationKind,
     geometry: SegmentGeometry,
 }
@@ -766,11 +769,11 @@ pub fn show(
             handle_input(ui, rect, input_rect, toolbar_rect, state, &response);
         }
         CanvasInputPolicy::ViewportOnly => {
-            clear_canvas_edit_interaction(state);
+            state.interaction.end_gesture();
             handle_viewport_navigation_input(ui, rect, input_rect, toolbar_rect, state, &response);
         }
         CanvasInputPolicy::Blocked => {
-            clear_canvas_edit_interaction(state);
+            state.interaction.end_gesture();
         }
     }
     state.prune_cached_pixels_to_selected_items();
@@ -804,13 +807,6 @@ pub fn show(
     show_annotation_style_toolbar(ui, rect, state);
     show_textbox_editor(ui, rect, state);
     CanvasFrameMetrics { image_pass }
-}
-
-fn clear_canvas_edit_interaction(state: &mut CanvasState) {
-    state.interaction.drag_state = None;
-    state.interaction.marquee_state = None;
-    state.interaction.crop_state = None;
-    state.interaction.annotation_draft_state = None;
 }
 
 fn rotation_handle_key_held(ctx: &egui::Context) -> bool {

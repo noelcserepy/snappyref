@@ -89,21 +89,23 @@ mod tests {
     fn selection_border_hides_while_placement_movement_is_recent() {
         let state = CanvasState {
             interaction: crate::canvas::CanvasInteractionState {
-                drag_state: Some(crate::canvas::DragState {
-                    pointer_start_world: egui::Pos2::ZERO,
-                    starting_items: vec![
-                        crate::placement::arrangement::PlacementArrangementInput::new(
-                            1,
-                            egui::pos2(0.0, 0.0),
-                            egui::vec2(100.0, 100.0),
-                        ),
-                    ],
-                    snap_preview_rect_world: None,
-                    started_at_seconds: 10.0,
-                    last_movement_seconds: 10.5,
-                    last_world_delta: egui::vec2(4.0, 0.0),
-                    moved: true,
-                }),
+                gesture: Some(crate::canvas::ActiveGesture::PlacementDrag(
+                    crate::canvas::DragState {
+                        pointer_start_world: egui::Pos2::ZERO,
+                        starting_items: vec![
+                            crate::placement::arrangement::PlacementArrangementInput::new(
+                                1,
+                                egui::pos2(0.0, 0.0),
+                                egui::vec2(100.0, 100.0),
+                            ),
+                        ],
+                        snap_preview_rect_world: None,
+                        started_at_seconds: 10.0,
+                        last_movement_seconds: 10.5,
+                        last_world_delta: egui::vec2(4.0, 0.0),
+                        moved: true,
+                    },
+                )),
                 ..Default::default()
             },
             ..Default::default()

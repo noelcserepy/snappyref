@@ -519,7 +519,7 @@ fn paint_image_overlay(
 }
 
 pub(crate) fn selection_border_visible(state: &CanvasState, now_seconds: f64) -> bool {
-    let Some(drag_state) = &state.interaction.drag_state else {
+    let Some(drag_state) = state.interaction.placement_drag() else {
         return true;
     };
     !drag_state.moved

@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::canvas::{CanvasState, DragState};
+use crate::canvas::{ActiveGesture, CanvasState, DragState};
 use crate::placement::arrangement::PlacementArrangementInput;
 
 pub(crate) fn begin_selected_placement_drag(
@@ -8,7 +8,7 @@ pub(crate) fn begin_selected_placement_drag(
     pointer_world: egui::Pos2,
     now_seconds: f64,
 ) {
-    state.interaction.drag_state = Some(DragState {
+    state.interaction.gesture = Some(ActiveGesture::PlacementDrag(DragState {
         pointer_start_world: pointer_world,
         starting_items: state.selected_arrangement_inputs(),
         snap_preview_rect_world: None,
@@ -16,7 +16,7 @@ pub(crate) fn begin_selected_placement_drag(
         last_movement_seconds: now_seconds,
         last_world_delta: egui::Vec2::ZERO,
         moved: false,
-    });
+    }));
 }
 
 pub(crate) fn update_selected_placement_drag(
@@ -26,7 +26,7 @@ pub(crate) fn update_selected_placement_drag(
     guide_snap_disabled: bool,
     now_seconds: f64,
 ) -> bool {
-    let Some(drag_state) = state.interaction.drag_state.clone() else {
+    let Some(drag_state) = state.interaction.placement_drag().cloned() else {
         return false;
     };
 
@@ -68,8 +68,7 @@ pub(crate) fn move_selected_placement_group_to_center(
     let excluded_ids = items.iter().map(|item| item.id).collect::<Vec<_>>();
     let previously_snapped = state
         .interaction
-        .drag_state
-        .as_ref()
+        .placement_drag()
         .is_some_and(|drag| drag.snap_preview_rect_world.is_some())
         || !state.interaction.guide_snap_indicators.is_empty();
 
@@ -247,7 +246,7 @@ fn record_active_drag_movement(
     world_delta: egui::Vec2,
     now_seconds: f64,
 ) {
-    if let Some(active_drag_state) = &mut state.interaction.drag_state {
+    if let Some(active_drag_state) = state.interaction.placement_drag_mut() {
         active_drag_state.snap_preview_rect_world = snap_preview_rect;
         if (world_delta - active_drag_state.last_world_delta).length_sq() > 0.01 {
             active_drag_state.last_movement_seconds = now_seconds;
@@ -267,7 +266,7 @@ fn record_synthetic_drag_movement(
         return;
     }
 
-    match &mut state.interaction.drag_state {
+    match state.interaction.placement_drag_mut() {
         Some(drag_state) => {
             if (world_delta - drag_state.last_world_delta).length_sq() > 0.01 {
                 drag_state.last_movement_seconds = now_seconds;
@@ -276,7 +275,7 @@ fn record_synthetic_drag_movement(
             drag_state.moved = true;
         }
         None => {
-            state.interaction.drag_state = Some(DragState {
+            state.interaction.gesture = Some(ActiveGesture::PlacementDrag(DragState {
                 pointer_start_world: egui::Pos2::ZERO,
                 starting_items,
                 snap_preview_rect_world: None,
@@ -284,7 +283,7 @@ fn record_synthetic_drag_movement(
                 last_movement_seconds: now_seconds,
                 last_world_delta: world_delta,
                 moved: true,
-            });
+            }));
         }
     }
 }

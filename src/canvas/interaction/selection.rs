@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use super::super::geometry::placement_contains_screen_point;
-use super::super::{CanvasContextMenuRequest, CanvasHit, CanvasState, MarqueeState};
+use super::super::{ActiveGesture, CanvasContextMenuRequest, CanvasHit, CanvasState, MarqueeState};
 use super::{annotation_hit_test, annotation_screen_rect, placement_screen_rect};
 use crate::data::CanvasStackItem;
 
@@ -27,13 +27,7 @@ pub(crate) fn open_context_menu_at_pointer(
         }
     }
 
-    state.interaction.drag_state = None;
-    state.interaction.annotation_drag_state = None;
-    state.interaction.placement_transform_state = None;
-    state.interaction.textbox_transform_state = None;
-    state.interaction.marquee_state = None;
-    state.interaction.crop_state = None;
-    state.interaction.annotation_draft_state = None;
+    state.interaction.end_gesture();
     state.interaction.pending_context_menu_request = Some(CanvasContextMenuRequest {
         screen_pos: pointer_pos,
     });
@@ -73,19 +67,13 @@ pub(crate) fn begin_marquee_selection(
     pointer_pos: egui::Pos2,
     shift_held: bool,
 ) {
-    state.interaction.drag_state = None;
-    state.interaction.placement_transform_state = None;
-    state.interaction.textbox_transform_state = None;
-    state.interaction.annotation_drag_state = None;
     if !shift_held {
         state.clear_selection();
     }
-    state.interaction.marquee_state = Some(MarqueeState {
+    state.interaction.gesture = Some(ActiveGesture::Marquee(MarqueeState {
         start_screen: pointer_pos,
         current_screen: pointer_pos,
-    });
-    state.interaction.crop_state = None;
-    state.interaction.annotation_draft_state = None;
+    }));
 }
 
 pub(crate) fn update_marquee_selection(
@@ -94,7 +82,7 @@ pub(crate) fn update_marquee_selection(
     pointer_pos: egui::Pos2,
     shift_held: bool,
 ) {
-    let Some(marquee_state) = &mut state.interaction.marquee_state else {
+    let Some(ActiveGesture::Marquee(marquee_state)) = &mut state.interaction.gesture else {
         return;
     };
     marquee_state.current_screen = pointer_pos;

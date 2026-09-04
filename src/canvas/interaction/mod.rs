@@ -11,7 +11,7 @@ pub(super) use annotation::{
     annotation_hit_test, annotation_screen_points, annotation_screen_rect, annotation_world_rect,
     begin_annotation_drag, hit_test_annotation, pending_annotation_from_draft,
 };
-pub(super) use crop::{begin_crop, finish_crop, update_crop};
+pub(super) use crop::begin_crop;
 pub(super) use placement_transform::{
     begin_placement_drag_scale, begin_placement_resize, begin_placement_rotation,
     compute_resize_snap_preview, compute_uniform_scale_snap_preview,
@@ -42,7 +42,7 @@ use super::PlacementScaleStart;
 use super::geometry::{min_loaded_placement_scale, placement_contains_screen_point};
 use super::render::textbox_pointer_region;
 use super::{
-    AnnotationDraftState, CanvasHit, CanvasState, PLACEMENT_DRAG_THRESHOLD_SCREEN,
+    ActiveGesture, AnnotationDraftState, CanvasHit, CanvasState, PLACEMENT_DRAG_THRESHOLD_SCREEN,
     PlacementTransformState, TEXTBOX_DRAG_THRESHOLD_SCREEN, TextboxPointerRegion,
     TextboxTransformState,
 };
@@ -119,13 +119,7 @@ pub(super) fn handle_input(
         }
     } else if pointer_in_canvas_rect && primary_pressed && alt_held {
         state.interaction.alt_pan_active = true;
-        state.interaction.drag_state = None;
-        state.interaction.placement_transform_state = None;
-        state.interaction.textbox_transform_state = None;
-        state.interaction.annotation_drag_state = None;
-        state.interaction.marquee_state = None;
-        state.interaction.crop_state = None;
-        state.interaction.annotation_draft_state = None;
+        state.interaction.end_gesture();
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         return;
     } else if pointer_in_canvas_rect && alt_held && !primary_down {
@@ -145,8 +139,10 @@ pub(super) fn handle_input(
     }
 
     if matches!(
-        state.interaction.placement_transform_state.as_ref(),
-        Some(PlacementTransformState::Rotating { .. } | PlacementTransformState::Scaling { .. })
+        state.interaction.gesture,
+        Some(ActiveGesture::PlacementTransform(
+            PlacementTransformState::Rotating { .. } | PlacementTransformState::Scaling { .. }
+        ))
     ) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     } else if let Some(pointer_pos) = pointer_pos
@@ -192,13 +188,9 @@ pub(super) fn handle_input(
         if let Some(kind) = draw_kind {
             let pointer_world = state.screen_to_world(pointer_pos, rect);
             state.clear_selection();
-            state.interaction.drag_state = None;
-            state.interaction.placement_transform_state = None;
-            state.interaction.textbox_transform_state = None;
-            state.interaction.marquee_state = None;
-            state.interaction.crop_state = None;
-            state.interaction.annotation_draft_state =
-                Some(AnnotationDraftState::new(kind, pointer_world));
+            state.interaction.gesture = Some(ActiveGesture::AnnotationDraft(
+                AnnotationDraftState::new(kind, pointer_world),
+            ));
         } else if crop_key_held
             && let Some(placement_id) = hit_test_placement(state, rect, pointer_pos)
         {
@@ -238,10 +230,7 @@ pub(super) fn handle_input(
                             state.finish_textbox_edit();
                         }
                         state.add_annotation_to_selection(annotation_id);
-                        state.interaction.drag_state = None;
-                        state.interaction.marquee_state = None;
-                        state.interaction.crop_state = None;
-                        state.interaction.annotation_draft_state = None;
+                        state.interaction.end_gesture();
                         return;
                     }
                     if let Some(annotation) = annotation
@@ -257,10 +246,6 @@ pub(super) fn handle_input(
                         state.document.selected_placement_ids.clear();
                         state.document.selected_annotation_ids = vec![annotation_id];
                         begin_annotation_drag(state, rect, annotation_id, pointer_pos);
-                        state.interaction.placement_transform_state = None;
-                        state.interaction.marquee_state = None;
-                        state.interaction.crop_state = None;
-                        state.interaction.annotation_draft_state = None;
                         return;
                     }
                 }
@@ -278,12 +263,6 @@ pub(super) fn handle_input(
                         pointer_world,
                         now,
                     );
-                    state.interaction.placement_transform_state = None;
-                    state.interaction.textbox_transform_state = None;
-                    state.interaction.annotation_drag_state = None;
-                    state.interaction.marquee_state = None;
-                    state.interaction.crop_state = None;
-                    state.interaction.annotation_draft_state = None;
                     return;
                 }
             }
@@ -292,27 +271,25 @@ pub(super) fn handle_input(
         }
     }
 
-    if state.interaction.crop_state.is_some()
-        && primary_down
+    if primary_down
         && let Some(pointer_pos) = pointer_pos
+        && let Some(ActiveGesture::Crop(crop_state)) = &mut state.interaction.gesture
     {
-        update_crop(state, pointer_pos);
+        crop_state.current_screen = pointer_pos;
     }
 
     if primary_down
         && let Some(pointer_pos) = pointer_pos
-        && let Some(draft_state) = &mut state.interaction.annotation_draft_state
+        && let Some(ActiveGesture::AnnotationDraft(draft_state)) = &mut state.interaction.gesture
     {
         let world = (pointer_pos - rect.center() - state.pan) / state.zoom;
         let pointer_world = egui::pos2(world.x, world.y);
         draft_state.set_current_world(pointer_world);
     }
 
-    if state.interaction.crop_state.is_none()
-        && state.interaction.annotation_draft_state.is_none()
-        && primary_down
+    if primary_down
         && let Some(pointer_pos) = pointer_pos
-        && let Some(drag_state) = state.interaction.annotation_drag_state.clone()
+        && let Some(ActiveGesture::AnnotationDrag(drag_state)) = state.interaction.gesture.clone()
     {
         if pointer_pos.distance(drag_state.pointer_start_screen) >= TEXTBOX_DRAG_THRESHOLD_SCREEN {
             let pointer_world = state.screen_to_world(pointer_pos, rect);
@@ -327,11 +304,10 @@ pub(super) fn handle_input(
         }
     }
 
-    if state.interaction.crop_state.is_none()
-        && state.interaction.annotation_draft_state.is_none()
-        && primary_down
+    if primary_down
         && let Some(pointer_pos) = pointer_pos
-        && let Some(transform_state) = state.interaction.textbox_transform_state.clone()
+        && let Some(ActiveGesture::TextboxTransform(transform_state)) =
+            state.interaction.gesture.clone()
     {
         match transform_state {
             TextboxTransformState::PendingMove {
@@ -341,12 +317,13 @@ pub(super) fn handle_input(
                 start_rects_world,
             } => {
                 if pointer_pos.distance(pointer_start_screen) >= TEXTBOX_DRAG_THRESHOLD_SCREEN {
-                    state.interaction.textbox_transform_state =
-                        Some(TextboxTransformState::Moving {
+                    state.interaction.gesture = Some(ActiveGesture::TextboxTransform(
+                        TextboxTransformState::Moving {
                             annotation_ids: annotation_ids.clone(),
                             pointer_start_world,
                             start_rects_world: start_rects_world.clone(),
-                        });
+                        },
+                    ));
                 }
             }
             TextboxTransformState::Moving {
@@ -382,11 +359,10 @@ pub(super) fn handle_input(
         }
     }
 
-    if state.interaction.crop_state.is_none()
-        && state.interaction.annotation_draft_state.is_none()
-        && primary_down
+    if primary_down
         && let Some(pointer_pos) = pointer_pos
-        && let Some(transform_state) = state.interaction.placement_transform_state.clone()
+        && let Some(ActiveGesture::PlacementTransform(transform_state)) =
+            state.interaction.gesture.clone()
     {
         match transform_state {
             PlacementTransformState::Resizing {
@@ -499,11 +475,9 @@ pub(super) fn handle_input(
         }
     }
 
-    if state.interaction.crop_state.is_none()
-        && state.interaction.annotation_draft_state.is_none()
-        && let Some(drag_state) = state.interaction.drag_state.clone()
-        && primary_down
+    if primary_down
         && let Some(pointer_pos) = pointer_pos
+        && let Some(ActiveGesture::PlacementDrag(drag_state)) = state.interaction.gesture.clone()
     {
         let elapsed_seconds = ui.input(|input| input.time) - drag_state.started_at_seconds;
         if elapsed_seconds < PLACEMENT_MOVE_DEBOUNCE_SECONDS {
@@ -534,27 +508,25 @@ pub(super) fn handle_input(
     }
 
     if primary_released {
-        if finish_crop(state, rect) {
-        } else if let Some(draft_state) = state.interaction.annotation_draft_state.take() {
-            state.interaction.pending_annotation = pending_annotation_from_draft(draft_state);
-        } else if let Some(transform_state) = state.interaction.placement_transform_state.take() {
-            match transform_state {
+        match state.interaction.gesture.take() {
+            Some(ActiveGesture::Crop(crop_state)) => {
+                state.interaction.pending_crop = state.build_crop_request(rect, &crop_state);
+            }
+            Some(ActiveGesture::AnnotationDraft(draft_state)) => {
+                state.interaction.pending_annotation = pending_annotation_from_draft(draft_state);
+            }
+            Some(ActiveGesture::PlacementTransform(transform_state)) => match transform_state {
                 PlacementTransformState::Resizing { placement_id, .. } => {
                     state.mark_dirty(placement_id)
                 }
-                PlacementTransformState::Scaling { placement_ids, .. } => {
+                PlacementTransformState::Scaling { placement_ids, .. }
+                | PlacementTransformState::Rotating { placement_ids, .. } => {
                     for placement_id in placement_ids {
                         state.mark_dirty(placement_id);
                     }
                 }
-                PlacementTransformState::Rotating { placement_ids, .. } => {
-                    for placement_id in placement_ids {
-                        state.mark_dirty(placement_id);
-                    }
-                }
-            }
-        } else if let Some(transform_state) = state.interaction.textbox_transform_state.take() {
-            match transform_state {
+            },
+            Some(ActiveGesture::TextboxTransform(transform_state)) => match transform_state {
                 TextboxTransformState::Moving { annotation_ids, .. } => {
                     for annotation_id in annotation_ids {
                         state.mark_annotation_dirty(annotation_id);
@@ -564,20 +536,22 @@ pub(super) fn handle_input(
                     state.mark_annotation_dirty(annotation_id);
                 }
                 TextboxTransformState::PendingMove { .. } => {}
-            }
-        } else if let Some(drag_state) = state.interaction.annotation_drag_state.take() {
-            for annotation_id in drag_state.annotation_ids {
-                state.mark_annotation_dirty(annotation_id);
-            }
-        } else if let Some(drag_state) = state.interaction.drag_state.take() {
-            if drag_state.moved {
-                for item in drag_state.starting_items {
-                    state.mark_dirty(item.id);
+            },
+            Some(ActiveGesture::AnnotationDrag(drag_state)) => {
+                for annotation_id in drag_state.annotation_ids {
+                    state.mark_annotation_dirty(annotation_id);
                 }
             }
-            state.clear_guide_snap_indicators();
+            Some(ActiveGesture::PlacementDrag(drag_state)) => {
+                if drag_state.moved {
+                    for item in drag_state.starting_items {
+                        state.mark_dirty(item.id);
+                    }
+                }
+                state.clear_guide_snap_indicators();
+            }
+            Some(ActiveGesture::Marquee(_)) | None => {}
         }
-        state.interaction.marquee_state = None;
     }
 
     if primary_released
@@ -606,9 +580,7 @@ pub(super) fn handle_input(
         return;
     }
 
-    if state.interaction.crop_state.is_none()
-        && state.interaction.annotation_draft_state.is_none()
-        && state.interaction.marquee_state.is_some()
+    if matches!(state.interaction.gesture, Some(ActiveGesture::Marquee(_)))
         && ui.input(|i| i.pointer.primary_down())
         && let Some(pointer_pos) = pointer_pos
     {
@@ -623,8 +595,10 @@ pub(super) fn handle_input(
         return;
     };
 
-    if state.interaction.crop_state.is_some() || state.interaction.annotation_draft_state.is_some()
-    {
+    if matches!(
+        state.interaction.gesture,
+        Some(ActiveGesture::Crop(_) | ActiveGesture::AnnotationDraft(_))
+    ) {
         return;
     }
 
@@ -695,7 +669,7 @@ mod tests {
         map_mouse_mode_scroll_events, placement_drag_scale_factor, scaled_placement_transforms,
         selected_placement_rotation_handle_screen_pos, step_mouse_wheel_zoom_animation,
     };
-    use crate::canvas::{CanvasState, DragState};
+    use crate::canvas::{ActiveGesture, CanvasState, DragState};
     use crate::data::{
         Asset, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
         CanvasStrokeWidth, CanvasTextSize, Placement, PlacementState,
@@ -788,12 +762,12 @@ mod tests {
         begin_placement_rotation(&mut canvas, screen_rect, handle_pos);
 
         assert!(matches!(
-            canvas.interaction.placement_transform_state,
-            Some(PlacementTransformState::Rotating {
+            canvas.interaction.gesture,
+            Some(ActiveGesture::PlacementTransform(PlacementTransformState::Rotating {
                 ref placement_ids,
                 ref starting_items,
                 ..
-            }) if placement_ids == &vec![1, 2] && starting_items.len() == 2
+            })) if placement_ids == &vec![1, 2] && starting_items.len() == 2
         ));
     }
 
@@ -848,13 +822,13 @@ mod tests {
         begin_placement_drag_scale(&mut canvas, test_screen_rect(), 1, egui::pos2(380.0, 360.0));
 
         assert!(matches!(
-            canvas.interaction.placement_transform_state,
-            Some(PlacementTransformState::Scaling {
+            canvas.interaction.gesture,
+            Some(ActiveGesture::PlacementTransform(PlacementTransformState::Scaling {
                 ref placement_ids,
                 group_center_world,
                 ref starting_items,
                 ..
-            }) if placement_ids == &vec![1, 2]
+            })) if placement_ids == &vec![1, 2]
                 && group_center_world == egui::pos2(0.0, 0.0)
                 && starting_items.len() == 2
         ));

@@ -34,17 +34,24 @@ pub(crate) struct CanvasDocumentState {
     pub(super) stack_order_dirty: bool,
 }
 
+/// The one pointer gesture the canvas is in the middle of. Starting a
+/// gesture replaces whatever was active; releasing the primary button ends it.
+#[derive(Clone)]
+pub(crate) enum ActiveGesture {
+    PlacementDrag(DragState),
+    AnnotationDrag(AnnotationDragState),
+    PlacementTransform(PlacementTransformState),
+    TextboxTransform(TextboxTransformState),
+    Marquee(MarqueeState),
+    Crop(CropState),
+    AnnotationDraft(AnnotationDraftState),
+}
+
 #[derive(Default)]
 pub(crate) struct CanvasInteractionState {
     pub(super) editing_text_annotation_id: Option<i64>,
     pub(super) focus_text_editor: bool,
-    pub(crate) drag_state: Option<DragState>,
-    pub(super) annotation_drag_state: Option<AnnotationDragState>,
-    pub(super) placement_transform_state: Option<PlacementTransformState>,
-    pub(super) textbox_transform_state: Option<TextboxTransformState>,
-    pub(super) marquee_state: Option<MarqueeState>,
-    pub(super) crop_state: Option<CropState>,
-    pub(super) annotation_draft_state: Option<AnnotationDraftState>,
+    pub(crate) gesture: Option<ActiveGesture>,
     pub(super) crop_pending_placement_ids: Vec<i64>,
     pub(super) pending_crop: Option<CanvasCropRequest>,
     pub(super) pending_annotation: Option<PendingAnnotation>,
@@ -56,6 +63,42 @@ pub(crate) struct CanvasInteractionState {
     pub(super) mouse_wheel_zoom_animation: Option<MouseWheelZoomAnimation>,
     pub(super) last_pointer_screen_pos: Option<egui::Pos2>,
     pub(super) alt_pan_active: bool,
+}
+
+impl CanvasInteractionState {
+    pub(super) fn end_gesture(&mut self) {
+        self.gesture = None;
+    }
+
+    /// Selection edits end transform gestures but leave pointer captures
+    /// (drag, marquee, crop, draft) alone: those edit the selection
+    /// themselves while they run.
+    pub(super) fn end_transform_gesture(&mut self) {
+        if matches!(
+            self.gesture,
+            Some(
+                ActiveGesture::PlacementTransform(_)
+                    | ActiveGesture::TextboxTransform(_)
+                    | ActiveGesture::AnnotationDrag(_)
+            )
+        ) {
+            self.gesture = None;
+        }
+    }
+
+    pub(crate) fn placement_drag(&self) -> Option<&DragState> {
+        match &self.gesture {
+            Some(ActiveGesture::PlacementDrag(drag_state)) => Some(drag_state),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn placement_drag_mut(&mut self) -> Option<&mut DragState> {
+        match &mut self.gesture {
+            Some(ActiveGesture::PlacementDrag(drag_state)) => Some(drag_state),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Default)]
