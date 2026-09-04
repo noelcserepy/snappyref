@@ -3,6 +3,7 @@
 //! dropped durable write.
 
 use super::*;
+use crate::test_support::TempRoot;
 
 const CMD: egui::Modifiers = egui::Modifiers {
     command: true,
@@ -123,19 +124,37 @@ fn approx(a: egui::Pos2, b: egui::Pos2, tolerance: f32) -> bool {
     a.distance(b) <= tolerance
 }
 
-fn finish(scenario: InspectScenario, root: PathBuf) {
+/// Steps the app until the import worker has loaded `placement_id`. The
+/// budget is wall-clock so a busy parallel test run cannot starve it.
+fn step_until_placement_loaded(harness: &mut Harness<'_, SnappyRefApp>, placement_id: i64) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        harness.step();
+        if harness
+            .state()
+            .canvas
+            .placement_for_id(placement_id)
+            .is_some_and(|placement| placement.is_loaded())
+        {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
+}
+
+fn finish(scenario: InspectScenario) {
     let report = scenario.finish();
     assert!(
         report.passed,
         "inspect scenario failed; artifact={}",
         report.artifact_dir.display()
     );
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn inspect_canvas_edit_operations_writes_artifact() {
-    let mut scenario = InspectScenario::new(inspect_scenario_name("canvas-edit-operations"));
+    let mut scenario = InspectScenario::new("canvas-edit-operations");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -144,8 +163,8 @@ fn inspect_canvas_edit_operations_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-canvas-edit-operations");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-canvas-edit-operations");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.document_persistence =
         crate::active_board::persistence::DocumentPersistence::queued(library.clone());
@@ -412,12 +431,12 @@ fn inspect_canvas_edit_operations_writes_artifact() {
             && stored_annotations[0].text == "Note",
     );
 
-    finish(scenario, root);
+    finish(scenario);
 }
 
 #[test]
 fn inspect_canvas_navigation_and_boards_writes_artifact() {
-    let mut scenario = InspectScenario::new(inspect_scenario_name("canvas-navigation-boards"));
+    let mut scenario = InspectScenario::new("canvas-navigation-boards");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -426,8 +445,8 @@ fn inspect_canvas_navigation_and_boards_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-canvas-navigation");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-canvas-navigation");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.document_persistence =
         crate::active_board::persistence::DocumentPersistence::queued(library.clone());
@@ -531,18 +550,7 @@ fn inspect_canvas_navigation_and_boards_writes_artifact() {
     scenario.capture_screen("screen-005-new-board", &mut harness);
 
     shortcut(&mut harness, CMD, egui::Key::Num1);
-    for _ in 0..200 {
-        harness.step();
-        if harness
-            .state()
-            .canvas
-            .placement_for_id(green.state.id)
-            .is_some_and(|placement| placement.is_loaded())
-        {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    step_until_placement_loaded(&mut harness, green.state.id);
     scenario.fact(
         "boards.after-switch-back",
         serde_json::json!({"active": harness.state().active_board_id, "canvas_items": harness.state().canvas.canvas_stack_order().len(), "status": harness.state().status}),
@@ -564,12 +572,12 @@ fn inspect_canvas_navigation_and_boards_writes_artifact() {
         library.list_boards().unwrap().len() == 2,
     );
 
-    finish(scenario, root);
+    finish(scenario);
 }
 
 #[test]
 fn inspect_session_restart_restore_writes_artifact() {
-    let mut scenario = InspectScenario::new(inspect_scenario_name("session-restart-restore"));
+    let mut scenario = InspectScenario::new("session-restart-restore");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -578,8 +586,8 @@ fn inspect_session_restart_restore_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-session-restart");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-session-restart");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.document_persistence =
         crate::active_board::persistence::DocumentPersistence::queued(library.clone());
@@ -626,35 +634,25 @@ fn inspect_session_restart_restore_writes_artifact() {
     harness.state_mut().flush_persistence();
     drop(harness);
 
-    // Second instance: the real startup sequence minus the eframe creation
-    // context (session load, summaries, existing-item load through the worker).
-    let mut app = test_app(Some(library.clone()));
-    app.document_persistence =
-        crate::active_board::persistence::DocumentPersistence::queued(library.clone());
-    let mut harness = app_full_harness(app);
-    let ctx = harness.ctx.clone();
-    harness.state_mut().import_worker = Some(crate::jobs::ImagePrepWorker::new(
-        library.clone(),
-        ctx,
-        None,
-    ));
-    harness.state_mut().load_user_session();
-    harness.state_mut().refresh_board_summaries();
-    harness.state_mut().enqueue_existing_items();
-    let mut loaded = false;
-    for _ in 0..400 {
-        harness.step();
-        if harness
-            .state()
-            .canvas
-            .placement_for_id(red.state.id)
-            .is_some_and(|placement| placement.is_loaded())
-        {
-            loaded = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    // Second instance: the real startup sequence (worker, session load,
+    // summaries, existing-item load) before the first frame, so the first
+    // frame's own session save cannot race the load.
+    let startup_library = library.clone();
+    let mut harness = app_full_harness_with_startup(1.0 / 4.0, move |ctx| {
+        let mut app = test_app(Some(startup_library.clone()));
+        app.document_persistence =
+            crate::active_board::persistence::DocumentPersistence::queued(startup_library.clone());
+        app.import_worker = Some(crate::jobs::ImagePrepWorker::new(
+            startup_library,
+            ctx.clone(),
+            None,
+        ));
+        app.load_user_session();
+        app.refresh_board_summaries();
+        app.enqueue_existing_items();
+        app
+    });
+    let loaded = step_until_placement_loaded(&mut harness, red.state.id);
     let restored_view = harness.state().canvas.viewport_state();
     let restored_center = harness
         .state()
@@ -688,12 +686,12 @@ fn inspect_session_restart_restore_writes_artifact() {
     );
     scenario.capture_screen("screen-001-after-restart", &mut harness);
 
-    finish(scenario, root);
+    finish(scenario);
 }
 
 #[test]
 fn inspect_persistence_dropped_write_writes_artifact() {
-    let mut scenario = InspectScenario::new(inspect_scenario_name("persistence-dropped-write"));
+    let mut scenario = InspectScenario::new("persistence-dropped-write");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -702,8 +700,8 @@ fn inspect_persistence_dropped_write_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-dropped-write");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-dropped-write");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.document_persistence =
         crate::active_board::persistence::DocumentPersistence::queued(library.clone());
@@ -803,5 +801,5 @@ fn inspect_persistence_dropped_write_writes_artifact() {
     );
     scenario.capture_screen("screen-002-recovered", &mut harness);
 
-    finish(scenario, root);
+    finish(scenario);
 }

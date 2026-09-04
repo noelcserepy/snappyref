@@ -64,11 +64,14 @@ if [[ "$scenario" == "--list" ]]; then
   exit 0
 fi
 
+test_args=""
 case "$scenario" in
   search-drag-to-canvas)
     test_filter="inspect_search_result_drag_to_canvas_writes_artifact"
     ;;
   check-harness)
+    # Alias: proves the harness runs by replaying the known drag scenario.
+    scenario="search-drag-to-canvas"
     test_filter="inspect_search_result_drag_to_canvas_writes_artifact"
     ;;
   semantic-search-install)
@@ -78,7 +81,9 @@ case "$scenario" in
     test_filter="inspect_semantic_search_sidebar_status_writes_artifact"
     ;;
   semantic-search-real-install)
+    # Networked and slow; the test is #[ignore] so plain `cargo test` skips it.
     test_filter="inspect_semantic_search_real_install_writes_artifact"
+    test_args="--ignored"
     ;;
   sample-image-import)
     test_filter="inspect_sample_image_import_writes_artifact"
@@ -141,15 +146,13 @@ rm -f "$artifact_root/latest.txt"
 
 (
   cd "$repo_root"
-  SNAPPYREF_INSPECT_SCENARIO="$scenario" cargo test "$test_filter" --features semantic-search -- --nocapture
+  cargo test "$test_filter" --features semantic-search -- --nocapture $test_args
 )
 cargo_status=$?
 
 artifact=""
 if [[ -f "$artifact_root/latest.txt" ]]; then
   artifact="$(cat "$artifact_root/latest.txt")"
-elif [[ "$scenario" == "check-harness" && -f "$repo_root/target/snappyref-inspect/search-drag-to-canvas/latest.txt" ]]; then
-  artifact="$(cat "$repo_root/target/snappyref-inspect/search-drag-to-canvas/latest.txt")"
 fi
 
 if [[ "$cargo_status" -eq 0 ]]; then

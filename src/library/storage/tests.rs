@@ -3,30 +3,19 @@ use crate::data::{
     CanvasAnnotationKind, CanvasBackground, CanvasStackItem, CanvasTextSize,
     ContentResolutionSource, PlacementContent, PlacementLifecycle, UserSession,
 };
+use crate::test_support::TempRoot;
 use eframe::egui;
 use rusqlite::Connection;
 use std::fs;
 use std::sync::{Arc, Barrier};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn temp_root(prefix: &str) -> std::path::PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "{prefix}-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).unwrap();
-    root
-}
-
 #[test]
 fn loaded_placements_load_as_committed_loaded_content() {
-    let root = temp_root("snappyref-loaded-placement-content-test");
+    let root = TempRoot::new("snappyref-loaded-placement-content-test");
     let source = root.join("source.png");
     fs::write(&source, [255, 255, 255, 255]).unwrap();
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let placement = library
         .persist_imported_image(&source, "image/png", 10, 20, 4, egui::pos2(3.0, 4.0), 2.0)
         .unwrap();
@@ -51,14 +40,12 @@ fn loaded_placements_load_as_committed_loaded_content() {
             egui::vec2(20.0, 40.0),
         )
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn committed_loading_and_failed_placements_persist_load_and_stack() {
-    let root = temp_root("snappyref-unloaded-placement-content-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-unloaded-placement-content-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let loading = library
         .persist_committed_loading_placement(
             egui::pos2(12.0, 24.0),
@@ -121,8 +108,6 @@ fn committed_loading_and_failed_placements_persist_load_and_stack() {
             CanvasStackItem::Placement(failed.state.id),
         ]
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -156,7 +141,7 @@ fn legacy_content_resolution_intent_payload_alias_decodes_as_source() {
 
 #[test]
 fn legacy_board_items_asset_id_not_null_migrates_for_loading_placements() {
-    let root = temp_root("snappyref-board-item-asset-nullability-test");
+    let root = TempRoot::new("snappyref-board-item-asset-nullability-test");
     let db_path = root.join("library.db");
     let connection = Connection::open(&db_path).unwrap();
     connection
@@ -195,7 +180,7 @@ fn legacy_board_items_asset_id_not_null_migrates_for_loading_placements() {
         .unwrap();
     drop(connection);
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let migrated = Connection::open(&db_path).unwrap();
     let not_null = board_items_column_not_null(&migrated, "asset_id");
     drop(migrated);
@@ -216,8 +201,6 @@ fn legacy_board_items_asset_id_not_null_migrates_for_loading_placements() {
 
     assert_eq!(loading.state.asset_id, None);
     assert!(matches!(loading.content, PlacementContent::Loading { .. }));
-
-    let _ = fs::remove_dir_all(root);
 }
 
 fn board_items_column_not_null(connection: &Connection, column: &str) -> bool {
@@ -237,10 +220,10 @@ fn board_items_column_not_null(connection: &Connection, column: &str) -> bool {
 
 #[test]
 fn imported_asset_resolves_existing_loading_placement_preserving_area_and_stack_order() {
-    let root = temp_root("snappyref-resolve-loading-placement-test");
+    let root = TempRoot::new("snappyref-resolve-loading-placement-test");
     let source = root.join("source.png");
     fs::write(&source, [255, 255, 255, 255]).unwrap();
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let loading = library
         .persist_committed_loading_placement(
             egui::pos2(12.0, 24.0),
@@ -278,16 +261,14 @@ fn imported_asset_resolves_existing_loading_placement_preserving_area_and_stack_
     assert!((resolved_size.x / resolved_size.y - 640.0 / 480.0).abs() < 0.001);
     assert!(matches!(loaded.content, PlacementContent::Loaded { .. }));
     assert_eq!(library.load_canvas_stack_order().unwrap(), stack_before);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn archived_loading_placement_rejects_late_import_completion() {
-    let root = temp_root("snappyref-failed-loading-placement-test");
+    let root = TempRoot::new("snappyref-failed-loading-placement-test");
     let source = root.join("source.png");
     fs::write(&source, [255, 255, 255, 255]).unwrap();
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let loading = library
         .persist_committed_loading_placement(
             egui::pos2(10.0, 20.0),
@@ -318,14 +299,12 @@ fn archived_loading_placement_rejects_late_import_completion() {
             .is_err()
     );
     assert!(library.load_placements().unwrap().is_empty());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn board_unit_persists_failed_resolution_state_with_matching_history() {
-    let root = temp_root("snappyref-failed-resolution-board-unit-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-failed-resolution-board-unit-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let loading = library
         .persist_committed_loading_placement(
             egui::pos2(10.0, 20.0),
@@ -378,16 +357,14 @@ fn board_unit_persists_failed_resolution_state_with_matching_history() {
     ));
     let stored = library.load_placements().unwrap();
     assert!(matches!(stored[0].content, PlacementContent::Failed { .. }));
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn board_unit_persists_undone_placement_state_with_redo_history() {
-    let root = temp_root("snappyref-undone-placement-board-unit-test");
+    let root = TempRoot::new("snappyref-undone-placement-board-unit-test");
     let source = root.join("source.png");
     fs::write(&source, [255, 255, 255, 255]).unwrap();
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let original = library
         .persist_imported_image(&source, "image/png", 10, 20, 4, egui::pos2(3.0, 4.0), 1.0)
         .unwrap();
@@ -438,13 +415,11 @@ fn board_unit_persists_undone_placement_state_with_redo_history() {
         original.state.geometry.center
     );
     assert!(library.load_document_history().unwrap().redo(1).is_some());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn update_preservation_smoke() {
-    let app_root = temp_root("snappyref-update-preservation-test");
+    let app_root = TempRoot::new("snappyref-update-preservation-test");
     let library_root = app_root.join("library");
     fs::create_dir_all(&library_root).unwrap();
     fs::write(app_root.join("SnappyRef.app"), b"old app bundle").unwrap();
@@ -541,14 +516,12 @@ fn update_preservation_smoke() {
         fs::read(&items[0].require_loaded_asset().original_path).unwrap(),
         stored_original_bytes
     );
-
-    let _ = fs::remove_dir_all(app_root);
 }
 
 #[test]
 fn new_library_has_default_non_archived_active_board() {
-    let root = temp_root("snappyref-default-board-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-default-board-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
 
     let boards = library.list_boards().unwrap();
     let session = library.load_user_session().unwrap();
@@ -556,13 +529,11 @@ fn new_library_has_default_non_archived_active_board() {
     assert_eq!(boards.len(), 1);
     assert_eq!(boards[0].name, "My Board");
     assert_eq!(session.active_board_id, boards[0].id);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn existing_single_canvas_data_migrates_to_my_board() {
-    let root = temp_root("snappyref-board-migration-test");
+    let root = TempRoot::new("snappyref-board-migration-test");
     let db_path = root.join("library.db");
     let connection = Connection::open(&db_path).unwrap();
     connection
@@ -635,7 +606,7 @@ fn existing_single_canvas_data_migrates_to_my_board() {
         .unwrap();
     drop(connection);
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let boards = library.list_boards().unwrap();
     let session = library.load_user_session().unwrap();
     let items = library.load_placements().unwrap();
@@ -653,13 +624,11 @@ fn existing_single_canvas_data_migrates_to_my_board() {
     assert_eq!(annotations.len(), 1);
     assert_eq!(annotations[0].id, 31);
     assert_eq!(annotations[0].text, "note");
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn existing_canvas_data_migrates_to_unified_stack_with_annotations_above_placements() {
-    let root = temp_root("snappyref-stack-order-migration-test");
+    let root = TempRoot::new("snappyref-stack-order-migration-test");
     let db_path = root.join("library.db");
     let connection = Connection::open(&db_path).unwrap();
     connection
@@ -727,7 +696,7 @@ fn existing_canvas_data_migrates_to_unified_stack_with_annotations_above_placeme
         .unwrap();
     drop(connection);
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let stack = library.load_canvas_stack_order().unwrap();
 
     assert_eq!(
@@ -739,14 +708,12 @@ fn existing_canvas_data_migrates_to_unified_stack_with_annotations_above_placeme
             CanvasStackItem::Annotation(32),
         ]
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn created_annotations_round_trip_through_canvas_stack_order() {
-    let root = temp_root("snappyref-stack-order-annotation-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-stack-order-annotation-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let path = library
         .store_rgba_image("placed", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -767,7 +734,7 @@ fn created_annotations_round_trip_through_canvas_stack_order() {
         .unwrap();
 
     drop(library);
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let stack = library.load_canvas_stack_order().unwrap();
 
     assert_eq!(
@@ -777,14 +744,12 @@ fn created_annotations_round_trip_through_canvas_stack_order() {
             CanvasStackItem::Annotation(annotation.id),
         ]
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn saved_canvas_stack_order_round_trips_for_active_board() {
-    let root = temp_root("snappyref-stack-order-save-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-stack-order-save-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
         .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -826,16 +791,14 @@ fn saved_canvas_stack_order_round_trips_for_active_board() {
     library.save_canvas_stack_order(&saved).unwrap();
 
     drop(library);
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     assert_eq!(library.load_canvas_stack_order().unwrap(), saved);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn active_board_persists_and_scopes_items_annotations_and_viewport() {
-    let root = temp_root("snappyref-board-scope-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-board-scope-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_board = library.list_boards().unwrap()[0].clone();
     let first_path = library
         .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
@@ -933,14 +896,12 @@ fn active_board_persists_and_scopes_items_annotations_and_viewport() {
     assert_eq!(first_items[0].state.id, first_item.state.id);
     assert_eq!(first_annotations.len(), 1);
     assert_eq!(first_annotations[0].id, first_annotation.id);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn board_rename_allows_duplicates_and_preserves_name_for_empty_edits() {
-    let root = temp_root("snappyref-board-rename-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-board-rename-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let second = library.create_board("Second").unwrap();
 
@@ -950,14 +911,12 @@ fn board_rename_allows_duplicates_and_preserves_name_for_empty_edits() {
     let boards = library.list_boards().unwrap();
     assert_eq!(boards[0].name, "Second");
     assert_eq!(boards[1].name, "Second");
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn delete_board_archives_board_preserves_assets_and_archives_board_content() {
-    let root = temp_root("snappyref-board-delete-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-board-delete-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let second = library.create_board("Second").unwrap();
     let third = library.create_board("Third").unwrap();
@@ -1020,14 +979,12 @@ fn delete_board_archives_board_preserves_assets_and_archives_board_content() {
     let remaining_active = library.active_board_after_delete(first.id).unwrap();
     library.archive_board(first.id, remaining_active).unwrap();
     assert!(library.active_board_after_delete(third.id).is_err());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn restoring_board_snapshot_restores_loading_placement_content_exactly() {
-    let root = temp_root("snappyref-board-restore-loading-content");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-board-restore-loading-content");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let second = library.create_board("Second").unwrap();
     library.set_active_board(second.id).unwrap();
@@ -1072,14 +1029,12 @@ fn restoring_board_snapshot_restores_loading_placement_content_exactly() {
     assert_eq!(restored[0].content, loading.content);
     assert_eq!(restored[0].lifecycle, loading.lifecycle);
     assert!(restored[0].asset.is_none());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn archive_assets_removes_their_placements_from_all_boards_and_preserves_files() {
-    let root = temp_root("snappyref-archive-assets-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-archive-assets-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let second = library.create_board("Second").unwrap();
     let first_path = library
         .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
@@ -1162,14 +1117,12 @@ fn archive_assets_removes_their_placements_from_all_boards_and_preserves_files()
             .collect::<Vec<_>>(),
         vec![kept_item.require_loaded_asset().id]
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn exact_dedupe_relinks_placements_to_first_asset_and_deletes_duplicates() {
-    let root = temp_root("snappyref-exact-dedupe-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-exact-dedupe-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let second_board = library.create_board("Second").unwrap();
     let first_path = library
         .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
@@ -1288,14 +1241,12 @@ fn exact_dedupe_relinks_placements_to_first_asset_and_deletes_duplicates() {
         )
         .unwrap();
     assert_eq!(duplicate_embedding_rows, 0);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn hash_aware_import_reuses_existing_exact_asset() {
-    let root = temp_root("snappyref-hash-aware-import-reuse-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-hash-aware-import-reuse-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
         .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -1352,14 +1303,12 @@ fn hash_aware_import_reuses_existing_exact_asset() {
         )
         .unwrap();
     assert_eq!(live_assets, 1);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn parallel_hash_aware_imports_converge_on_one_exact_asset() {
-    let root = temp_root("snappyref-parallel-hash-aware-import-reuse-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-parallel-hash-aware-import-reuse-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
         .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -1430,14 +1379,12 @@ fn parallel_hash_aware_imports_converge_on_one_exact_asset() {
         )
         .unwrap();
     assert_eq!(live_assets, 1);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn workspace_settings_remain_global_across_active_boards() {
-    let root = temp_root("snappyref-global-settings-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-global-settings-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_board = library.list_boards().unwrap()[0].clone();
     let initial_session = library.load_user_session().unwrap();
     assert_eq!(
@@ -1486,7 +1433,7 @@ fn workspace_settings_remain_global_across_active_boards() {
     assert_eq!(second_reopened.settings.placement_target_area, 45_000.0);
 
     drop(library);
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     library.set_active_board(first_board.id).unwrap();
     let first_after_reopen = library.load_user_session().unwrap();
     assert_eq!(first_after_reopen.viewport.camera_pan_x, 0.0);
@@ -1501,14 +1448,12 @@ fn workspace_settings_remain_global_across_active_boards() {
         second_after_reopen.viewport.canvas_background,
         CanvasBackground::Grid
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
-    let root = temp_root("snappyref-session-payload-precedence");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-session-payload-precedence");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
 
     let mut session = library.load_user_session().unwrap();
     session.settings.auto_image_scaling = false;
@@ -1542,7 +1487,7 @@ fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
         .unwrap();
     drop(connection);
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let reloaded = library.load_user_session().unwrap();
 
     assert!(!reloaded.settings.auto_image_scaling);
@@ -1554,13 +1499,11 @@ fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
     assert!(reloaded.settings.default_textbox_background);
     assert!(reloaded.sidebar_open);
     assert_eq!(reloaded.sidebar_tab, "boards");
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn existing_legacy_user_session_columns_backfill_payload() {
-    let root = temp_root("snappyref-session-payload-backfill");
+    let root = TempRoot::new("snappyref-session-payload-backfill");
     let db_path = root.join("library.db");
     let connection = Connection::open(&db_path).unwrap();
     connection
@@ -1624,7 +1567,7 @@ fn existing_legacy_user_session_columns_backfill_payload() {
         .unwrap();
     drop(connection);
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let session = library.load_user_session().unwrap();
 
     assert_eq!(session.viewport.camera_pan_x, 10.0);
@@ -1663,13 +1606,11 @@ fn existing_legacy_user_session_columns_backfill_payload() {
         .unwrap();
     drop(connection);
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let reloaded = library.load_user_session().unwrap();
     assert_eq!(reloaded.settings.placement_gap, 48.0);
     assert!(reloaded.sidebar_open);
     assert_eq!(reloaded.sidebar_tab, "boards");
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -1702,7 +1643,7 @@ fn existing_user_session_rows_migrate_to_default_preferences() {
         .unwrap();
     drop(connection);
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let session = library.load_user_session().unwrap();
 
     assert_eq!(session.viewport.camera_pan_x, 10.0);
@@ -1723,8 +1664,6 @@ fn existing_user_session_rows_migrate_to_default_preferences() {
     );
     assert_eq!(session.viewport.canvas_background, CanvasBackground::None);
     assert!(session.settings.semantic_search_enabled);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -1738,7 +1677,7 @@ fn canvas_image_cache_path_is_deterministic() {
     ));
     fs::create_dir_all(&root).unwrap();
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let path = library
         .store_canvas_image_cache(42, 2000, &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -1749,8 +1688,6 @@ fn canvas_image_cache_path_is_deterministic() {
         root.join("thumbs")
             .join("asset-42-canvas-v3-downscale-working-2000.jpg")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -1764,7 +1701,7 @@ fn clipboard_images_get_unique_destination_paths() {
     ));
     fs::create_dir_all(&root).unwrap();
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library
         .store_clipboard_image(&[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -1775,8 +1712,6 @@ fn clipboard_images_get_unique_destination_paths() {
     assert_ne!(first, second);
     assert!(first.exists());
     assert!(second.exists());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -1790,7 +1725,7 @@ fn store_and_remove_canvas_image_cache_round_trips_thumb_file() {
     ));
     fs::create_dir_all(&root).unwrap();
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let preview_path = library
         .store_canvas_image_cache(7, 2000, &[255, 0, 0, 255], 1, 1)
         .unwrap()
@@ -1800,8 +1735,6 @@ fn store_and_remove_canvas_image_cache_round_trips_thumb_file() {
 
     library.remove_asset_canvas_caches(7).unwrap();
     assert!(!preview_path.exists());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -1815,7 +1748,7 @@ fn remove_asset_canvas_caches_removes_all_variants_for_asset() {
     ));
     fs::create_dir_all(&root).unwrap();
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library
         .store_canvas_image_cache(7, 2000, &[255, 0, 0, 255], 1, 1)
         .unwrap()
@@ -1829,8 +1762,6 @@ fn remove_asset_canvas_caches_removes_all_variants_for_asset() {
 
     assert!(!first.exists());
     assert!(!second.exists());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -1844,7 +1775,7 @@ fn embedding_backfill_includes_unplaced_library_assets() {
     ));
     fs::create_dir_all(&root).unwrap();
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let ready_path = library
         .store_rgba_image("ready", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -1902,14 +1833,12 @@ fn embedding_backfill_includes_unplaced_library_assets() {
             unplaced.require_loaded_asset().id
         ]
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn embedding_backfill_skips_svg_assets() {
-    let root = temp_root("snappyref-svg-embedding-backfill-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-svg-embedding-backfill-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let raster_path = library
         .store_rgba_image("raster", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -1971,14 +1900,12 @@ fn embedding_backfill_skips_svg_assets() {
             .iter()
             .any(|job| job.asset_id == svg.require_loaded_asset().id)
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn active_board_embedding_backfill_jobs_include_active_placements_only() {
-    let root = temp_root("snappyref-active-board-embedding-backfill-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-active-board-embedding-backfill-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let second = library.create_board("Second").unwrap();
     let active_path = library
         .store_rgba_image("active", &[255, 0, 0, 255], 1, 1)
@@ -2034,14 +1961,12 @@ fn active_board_embedding_backfill_jobs_include_active_placements_only() {
     assert_eq!(job_asset_ids, vec![active.require_loaded_asset().id]);
     assert!(!job_asset_ids.contains(&ready.require_loaded_asset().id));
     assert!(!job_asset_ids.contains(&inactive.require_loaded_asset().id));
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn embedding_backfill_retries_failed_assets_after_never_tried_assets() {
-    let root = temp_root("snappyref-embedding-retry-order-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-embedding-retry-order-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let retry_path = library
         .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -2087,14 +2012,12 @@ fn embedding_backfill_retries_failed_assets_after_never_tried_assets() {
             .collect::<Vec<_>>(),
         vec![retry.require_loaded_asset().id]
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
-    let root = temp_root("snappyref-embedding-retry-schedule-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-embedding-retry-schedule-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let path = library
         .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -2157,14 +2080,12 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
             .unwrap()
             .is_empty()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn pending_retry_preserves_embedding_failure_count_until_success() {
-    let root = temp_root("snappyref-pending-retry-count-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-pending-retry-count-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let path = library
         .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -2227,14 +2148,12 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
             .unwrap()
             .is_empty()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn terminal_embedding_failures_are_not_automatic_retry_jobs() {
-    let root = temp_root("snappyref-terminal-embedding-failure-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-terminal-embedding-failure-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let path = library
         .store_rgba_image("terminal", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -2263,14 +2182,12 @@ fn terminal_embedding_failures_are_not_automatic_retry_jobs() {
             .unwrap()
             .is_empty()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn next_embedding_backfill_job_prefers_never_tried_assets_before_retries() {
-    let root = temp_root("snappyref-next-embedding-backfill-job-test");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-next-embedding-backfill-job-test");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let retry_path = library
         .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -2312,8 +2229,6 @@ fn next_embedding_backfill_job_prefers_never_tried_assets_before_retries() {
         .unwrap()
         .unwrap();
     assert_eq!(retry_job.asset_id, retry.require_loaded_asset().id);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -2327,7 +2242,7 @@ fn cropped_relink_requires_new_asset_embedding() {
     ));
     fs::create_dir_all(&root).unwrap();
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let original_path = library
         .store_rgba_image("original", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -2382,8 +2297,6 @@ fn cropped_relink_requires_new_asset_embedding() {
             .unwrap()
             .is_some()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -2397,7 +2310,7 @@ fn embedding_helpers_scope_to_requested_model_key() {
     ));
     fs::create_dir_all(&root).unwrap();
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
         .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -2439,8 +2352,6 @@ fn embedding_helpers_scope_to_requested_model_key() {
     let embeddings = library.load_library_embeddings("siglip_key").unwrap();
     assert_eq!(embeddings.len(), 1);
     assert_eq!(embeddings[0].asset_id, first.require_loaded_asset().id);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -2454,7 +2365,7 @@ fn canvas_annotations_round_trip_and_archive() {
     ));
     fs::create_dir_all(&root).unwrap();
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let created = library
         .create_canvas_annotation(
             CanvasAnnotationKind::Textbox,
@@ -2482,8 +2393,6 @@ fn canvas_annotations_round_trip_and_archive() {
 
     library.archive_canvas_annotations(&[created.id]).unwrap();
     assert!(library.load_canvas_annotations().unwrap().is_empty());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -2520,11 +2429,9 @@ fn existing_canvas_annotations_rows_migrate_text_size_to_default_m() {
         .unwrap();
     drop(connection);
 
-    let library = Library::initialize(root.clone()).unwrap();
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let loaded = library.load_canvas_annotations().unwrap();
 
     assert_eq!(loaded.len(), 1);
     assert_eq!(loaded[0].text_size, CanvasTextSize::M);
-
-    let _ = fs::remove_dir_all(root);
 }

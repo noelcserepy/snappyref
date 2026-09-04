@@ -6,6 +6,7 @@ use super::{
 };
 use crate::data::CanvasImageLod;
 use crate::library::storage::Library;
+use crate::test_support::TempRoot;
 use image::{ColorType, ImageFormat};
 use pollster::block_on;
 use rusqlite::Connection;
@@ -14,7 +15,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 fn downscaled_canvas_settings(max_side: u32) -> CanvasImageSettings {
     CanvasImageSettings { max_side }
@@ -60,8 +61,8 @@ fn disabling_auto_scale_keeps_full_scale() {
 
 #[test]
 fn file_imports_land_in_same_area_band() {
-    let root = temp_library_root("file-import-scaling");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("file-import-scaling");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
 
     let portrait_path = write_png(&root, "portrait.png", 1000, 1500);
     let landscape_path = write_png(&root, "landscape.png", 1920, 1080);
@@ -109,14 +110,12 @@ fn file_imports_land_in_same_area_band() {
     assert!((displayed_area(&landscape) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
     assert!((displayed_area(&square) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
     assert_eq!(small.placement.state.geometry.scale, 1.0);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
-    let root = temp_library_root("clipboard-import-scaling");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("clipboard-import-scaling");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
 
     let tall_rgba = solid_rgba(390, 844);
     let small_rgba = solid_rgba(160, 200);
@@ -168,14 +167,12 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
 
     assert!((displayed_area(&tall) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
     assert_eq!(small.placement.state.geometry.scale, 1.0);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn clipboard_import_uses_configured_target_area() {
-    let root = temp_library_root("clipboard-import-custom-area");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("clipboard-import-custom-area");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let target_area = 40_000.0;
 
     let loaded = match import_clipboard(
@@ -202,14 +199,12 @@ fn clipboard_import_uses_configured_target_area() {
     };
 
     assert!((displayed_area(&loaded) - target_area).abs() < 0.1);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active() {
-    let root = temp_library_root("clipboard-import-target-board");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("clipboard-import-target-board");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     seed_placement(&library, 42.0, 24.0, 160, 120, 1.0);
     let second = library.create_board("Second").unwrap();
 
@@ -239,27 +234,24 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
     assert_eq!(loaded.target_board_id, second.id);
     assert_eq!(loaded.placement.state.geometry.center.x, 42.0);
     assert_eq!(loaded.placement.state.geometry.center.y, 24.0);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn empty_board_placement_uses_requested_anchor() {
-    let root = temp_library_root("empty-placement");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("empty-placement");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let anchor = eframe::egui::pos2(120.0, -48.0);
 
     let arranged =
         arrange_rect_world(&library, anchor, test_viewport_world(), 300.0, 200.0, 12.0).unwrap();
 
     assert_eq!(arranged, anchor);
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn deterministic_candidate_order_prefers_right_before_below_on_tie() {
-    let root = temp_library_root("placement-order");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("placement-order");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     seed_placement(&library, 0.0, 0.0, 100, 100, 1.0);
 
     let arranged = arrange_rect_world(
@@ -273,13 +265,12 @@ fn deterministic_candidate_order_prefers_right_before_below_on_tie() {
     .unwrap();
 
     assert_eq!(arranged, eframe::egui::pos2(112.0, 0.0));
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn blocked_right_side_candidate_falls_through_to_valid_lower_slot() {
-    let root = temp_library_root("placement-blocked-right");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("placement-blocked-right");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     seed_placement(&library, 0.0, 0.0, 100, 100, 1.0);
     seed_placement(&library, 112.0, 0.0, 100, 100, 1.0);
 
@@ -294,13 +285,12 @@ fn blocked_right_side_candidate_falls_through_to_valid_lower_slot() {
     .unwrap();
 
     assert_eq!(arranged, eframe::egui::pos2(112.0, 112.0));
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn square_scoring_beats_anchor_distance_for_adjacent_imports() {
-    let root = temp_library_root("placement-square-scoring");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("placement-square-scoring");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     seed_placement(&library, 0.0, 0.0, 240, 80, 1.0);
 
     let arranged = arrange_rect_world(
@@ -314,13 +304,12 @@ fn square_scoring_beats_anchor_distance_for_adjacent_imports() {
     .unwrap();
 
     assert_eq!(arranged, eframe::egui::pos2(172.0, 0.0));
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn viewport_bounding_prefers_on_screen_candidate() {
-    let root = temp_library_root("placement-viewport-bounded");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("placement-viewport-bounded");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     seed_placement(&library, 0.0, 0.0, 240, 80, 1.0);
     let viewport = eframe::egui::Rect::from_min_max(
         eframe::egui::pos2(100.0, -60.0),
@@ -338,13 +327,12 @@ fn viewport_bounding_prefers_on_screen_candidate() {
     .unwrap();
 
     assert_eq!(arranged, eframe::egui::pos2(172.0, 0.0));
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
-    let root = temp_library_root("placement-custom-gap");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("placement-custom-gap");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let gap = 8.0;
     seed_placement(&library, 0.0, 0.0, 200, 200, 1.0);
 
@@ -385,13 +373,12 @@ fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
 
     assert_eq!(second_rect.left() - first_rect.right(), gap);
     assert!(!rects_overlap_with_gap(first_rect, second_rect, gap));
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn reserved_world_is_persisted_without_worker_relayout() {
-    let root = temp_library_root("placement-reserved-world");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("placement-reserved-world");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     seed_placement(&library, 0.0, 0.0, 100, 100, 1.0);
     let reserved_world = eframe::egui::pos2(240.0, 36.0);
 
@@ -420,13 +407,12 @@ fn reserved_world_is_persisted_without_worker_relayout() {
 
     assert_eq!(loaded.placement.state.geometry.center.x, reserved_world.x);
     assert_eq!(loaded.placement.state.geometry.center.y, reserved_world.y);
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn overlapping_reserved_world_is_preserved_when_persisting() {
-    let root = temp_library_root("placement-preserved-reserved-world");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("placement-preserved-reserved-world");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     seed_placement(&library, 0.0, 0.0, 100, 100, 1.0);
     let reserved_world = eframe::egui::Pos2::ZERO;
 
@@ -457,14 +443,12 @@ fn overlapping_reserved_world_is_preserved_when_persisting() {
 
     assert_eq!(loaded.placement.state.geometry.center.x, reserved_world.x);
     assert_eq!(loaded.placement.state.geometry.center.y, reserved_world.y);
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn url_import_downloads_and_persists_original_bytes() {
-    let root = temp_library_root("url-import");
-    fs::create_dir_all(&root).unwrap();
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("url-import");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let png_bytes = solid_png_bytes(64, 48, [188, 146, 255, 255]);
     let (url, server) = serve_bytes_once("/test-image.png", "image/png", png_bytes.clone());
 
@@ -517,15 +501,12 @@ fn url_import_downloads_and_persists_original_bytes() {
         fs::read(&loaded.placement.require_loaded_asset().original_path).unwrap(),
         png_bytes
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn path_import_reuses_existing_exact_asset_and_removes_duplicate_original() {
-    let root = temp_library_root("path-import-exact-reuse");
-    fs::create_dir_all(&root).unwrap();
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("path-import-exact-reuse");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let source = write_png(&root, "source.png", 64, 48);
 
     let first = import_path_sync(
@@ -573,15 +554,12 @@ fn path_import_reuses_existing_exact_asset_and_removes_duplicate_original() {
         )
         .unwrap();
     assert_eq!(live_assets, 1);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn url_import_preserves_svg_as_vector_source() {
-    let root = temp_library_root("url-svg-import");
-    fs::create_dir_all(&root).unwrap();
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("url-svg-import");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let svg_bytes = svg_bytes(128, 96);
     let (url, server) = serve_bytes_once("/remote-icon.svg", "image/svg+xml", svg_bytes.clone());
 
@@ -627,15 +605,12 @@ fn url_import_preserves_svg_as_vector_source() {
             .canvas_image_cache_path(loaded.placement.require_loaded_asset().id, 2000)
             .is_none()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn svg_import_preserves_vector_source_and_skips_canvas_cache() {
-    let root = temp_library_root("svg-import");
-    fs::create_dir_all(&root).unwrap();
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("svg-import");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let svg_path = write_svg(&root, "icon.svg", 320, 180);
 
     let loaded = import_path_sync(
@@ -668,15 +643,12 @@ fn svg_import_preserves_vector_source_and_skips_canvas_cache() {
             .canvas_image_cache_path(loaded.placement.require_loaded_asset().id, 2000)
             .is_none()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn xpm_import_uses_raster_pipeline_with_original_mime_type() {
-    let root = temp_library_root("xpm-import");
-    fs::create_dir_all(&root).unwrap();
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("xpm-import");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let source = root.join("sample.xpm");
     fs::write(
         &source,
@@ -716,15 +688,12 @@ static char * sample_xpm[] = {
             .canvas_image_cache_path(loaded.placement.require_loaded_asset().id, 2000)
             .is_some()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn crop_item_rejects_svg_with_clear_error() {
-    let root = temp_library_root("svg-crop");
-    fs::create_dir_all(&root).unwrap();
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("svg-crop");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let svg_path = write_svg(&root, "icon.svg", 100, 80);
     let loaded = import_path_sync(
         &library,
@@ -765,15 +734,12 @@ fn crop_item_rejects_svg_with_clear_error() {
         }
         other => panic!("expected SVG crop failure, got {other:?}"),
     }
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn load_existing_svg_uses_original_vector_source() {
-    let root = temp_library_root("svg-existing-load");
-    fs::create_dir_all(&root).unwrap();
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("svg-existing-load");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let svg_path = write_svg(&root, "icon.svg", 240, 120);
     let imported = import_path_sync(
         &library,
@@ -813,14 +779,11 @@ fn load_existing_svg_uses_original_vector_source() {
             .canvas_image_cache_path(loaded.placement.require_loaded_asset().id, 2000)
             .is_none()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn interactive_import_queue_pops_smallest_bytes_first() {
-    let root = temp_library_root("interactive-queue-by-bytes");
-    fs::create_dir_all(&root).unwrap();
+    let root = TempRoot::new("interactive-queue-by-bytes");
     // Write three real PNGs of different byte sizes so metadata-based
     // priority can be derived from the filesystem at enqueue time.
     let small_path = write_png(&root, "small.png", 32, 32);
@@ -856,14 +819,11 @@ fn interactive_import_queue_pops_smallest_bytes_first() {
     assert_eq!(import_path_source(&first), small_path);
     assert_eq!(import_path_source(&second), medium_path);
     assert_eq!(import_path_source(&third), large_path);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn interactive_import_queue_breaks_ties_by_arrival_order() {
-    let root = temp_library_root("interactive-queue-tie-break");
-    fs::create_dir_all(&root).unwrap();
+    let root = TempRoot::new("interactive-queue-tie-break");
     // Two identical 64x64 PNGs produce identical byte counts; FIFO order
     // must be preserved when the sort key ties.
     let first_path = write_png(&root, "first.png", 64, 64);
@@ -892,8 +852,6 @@ fn interactive_import_queue_breaks_ties_by_arrival_order() {
         })
         .collect();
     assert_eq!(popped, vec![first_path, second_path, third_path]);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 fn make_import_path_request(source_path: PathBuf) -> super::ImagePrepRequest {
@@ -975,8 +933,8 @@ fn worker_config_reserves_background_worker_on_multi_core() {
 
 #[test]
 fn traced_clipboard_import_populates_non_negative_timings() {
-    let root = temp_library_root("clipboard-trace");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("clipboard-trace");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let trace = ImagePrepTrace {
         queued_at: Instant::now()
             .checked_sub(Duration::from_millis(1))
@@ -1015,8 +973,6 @@ fn traced_clipboard_import_populates_non_negative_timings() {
     assert!(trace.timings.store_and_persist >= Duration::ZERO);
     assert!(trace.timings.preview_prepare >= Duration::ZERO);
     assert!(trace.timings.worker_total >= trace.timings.store_and_persist);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -1047,8 +1003,8 @@ fn native_preview_texture_stays_registered_until_last_reference_drops() {
 
 #[test]
 fn load_existing_backfills_versioned_canvas_cache_and_prefers_it_on_second_load() {
-    let root = temp_library_root("load-existing-canvas-cache");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("load-existing-canvas-cache");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let original_path = write_png(&root, "source.png", 4000, 3000);
     let file_size = fs::metadata(&original_path).unwrap().len();
     let placement = library
@@ -1115,15 +1071,12 @@ fn load_existing_backfills_versioned_canvas_cache_and_prefers_it_on_second_load(
     let cached = crate::jobs::image_formats::decode_image_file(&cache_path).unwrap();
     assert_eq!(cached.width, 2000);
     assert_eq!(cached.height, 1500);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn load_existing_preserves_animated_webp_in_downscale_mode() {
-    let root = temp_library_root("load-existing-animated-webp");
-    fs::create_dir_all(&root).unwrap();
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("load-existing-animated-webp");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let original_path = root.join("source.webp");
     fs::write(&original_path, ANIMATED_WEBP_2X2_2_FRAMES).unwrap();
     let file_size = fs::metadata(&original_path).unwrap().len();
@@ -1160,14 +1113,12 @@ fn load_existing_preserves_animated_webp_in_downscale_mode() {
     assert_eq!(animation.frames.len(), 2);
     assert_eq!(animation.width, 2);
     assert_eq!(animation.height, 2);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn load_existing_backfills_new_cache_when_canvas_max_side_changes() {
-    let root = temp_library_root("load-existing-canvas-cache-variants");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("load-existing-canvas-cache-variants");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let original_path = write_png(&root, "source.png", 4000, 3000);
     let file_size = fs::metadata(&original_path).unwrap().len();
     let placement = library
@@ -1249,14 +1200,12 @@ fn load_existing_backfills_new_cache_when_canvas_max_side_changes() {
         .unwrap();
     assert_ne!(first_cache, second_cache);
     assert!(second_cache.is_file());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn downscale_mode_ignores_legacy_thumb_cache_paths() {
-    let root = temp_library_root("load-existing-legacy-thumb");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("load-existing-legacy-thumb");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let original_path = write_png(&root, "source.png", 4000, 3000);
     let file_size = fs::metadata(&original_path).unwrap().len();
     let placement = library
@@ -1299,14 +1248,12 @@ fn downscale_mode_ignores_legacy_thumb_cache_paths() {
         ImagePrepResult::Failed { .. } => {}
         other => panic!("expected legacy thumb path to be ignored, got {other:?}"),
     }
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn crop_redecodes_original_path_and_preserves_exact_pixels() {
-    let root = temp_library_root("crop-redecode");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("crop-redecode");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let source_rgba = vec![
         1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255, 13, 14, 15, 255, 16, 17, 18,
         255, 19, 20, 21, 255, 22, 23, 24, 255, 25, 26, 27, 255, 28, 29, 30, 255, 31, 32, 33, 255,
@@ -1354,16 +1301,6 @@ fn crop_redecodes_original_path_and_preserves_exact_pixels() {
             16, 17, 18, 255, 19, 20, 21, 255, 28, 29, 30, 255, 31, 32, 33, 255,
         ]
     );
-
-    let _ = fs::remove_dir_all(root);
-}
-
-fn temp_library_root(label: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    std::env::temp_dir().join(format!("snappyref-{label}-{unique}"))
 }
 
 fn write_png(root: &Path, filename: &str, width: u32, height: u32) -> PathBuf {

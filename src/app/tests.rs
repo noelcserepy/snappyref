@@ -13,14 +13,12 @@ use crate::placement::content_resolution::{
 };
 #[cfg(feature = "semantic-search")]
 use crate::search::palette::{
-    PALETTE_WIDTH, SEARCH_OVERLAY_TOP_MARGIN, search_result_grid_content_height,
-    search_result_grid_layout, search_result_tile_height,
+    PALETTE_WIDTH, SEARCH_OVERLAY_TOP_MARGIN, search_result_grid_layout, search_result_tile_height,
 };
 #[cfg(feature = "semantic-search")]
 use crate::search::semantic::{LocalModelStoreStatus, SearchResultAssetEntry};
-use crate::ui::sidebar::{
-    SidebarTab, block_sidebar_input, should_close_sidebar, show_sidebar, sidebar_rect,
-};
+use crate::test_support::TempRoot;
+use crate::ui::sidebar::{SidebarTab, block_sidebar_input, show_sidebar, sidebar_rect};
 use eframe::egui;
 use egui_kittest::{Harness, kittest::Queryable};
 use std::fs;
@@ -30,7 +28,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 #[test]
 fn destructive_confirmation_shell_has_no_destructive_outline() {
@@ -88,8 +86,8 @@ mod session_settings;
 #[cfg(feature = "semantic-search")]
 #[test]
 fn first_launch_semantic_search_prompt_waits_for_storage_and_missing_assets() {
-    let root = temp_library_root("snappyref-semantic-prompt");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-semantic-prompt");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library));
 
     assert!(!app.should_show_semantic_search_first_launch_prompt());
@@ -100,15 +98,13 @@ fn first_launch_semantic_search_prompt_waits_for_storage_and_missing_assets() {
 
     app.settings.semantic_search_first_launch_prompt_seen = true;
     assert!(!app.should_show_semantic_search_first_launch_prompt());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn first_launch_semantic_search_prompt_skips_installed_and_migrated_assets() {
-    let root = temp_library_root("snappyref-semantic-prompt-installed");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-semantic-prompt-installed");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library));
 
     app.search
@@ -118,8 +114,6 @@ fn first_launch_semantic_search_prompt_skips_installed_and_migrated_assets() {
     app.search
         .set_local_model_store_status_for_test(LocalModelStoreStatus::InstalledViaMigration);
     assert!(!app.should_show_semantic_search_first_launch_prompt());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
@@ -135,8 +129,8 @@ fn first_launch_semantic_search_prompt_skips_without_storage() {
 #[cfg(feature = "semantic-search")]
 #[test]
 fn first_launch_semantic_search_prompt_not_now_persists_suppression() {
-    let root = temp_library_root("snappyref-semantic-prompt-not-now");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-semantic-prompt-not-now");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.search
         .set_local_model_store_status_for_test(LocalModelStoreStatus::Missing);
@@ -151,16 +145,14 @@ fn first_launch_semantic_search_prompt_not_now_persists_suppression() {
             .settings
             .semantic_search_first_launch_prompt_seen
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn first_launch_semantic_search_prompt_enable_persists_seen_and_starts_install() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-semantic-prompt-enable");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-semantic-prompt-enable");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let starts = std::rc::Rc::new(std::cell::Cell::new(0));
     let observed = starts.clone();
     let mut app = test_app(Some(library.clone()));
@@ -184,8 +176,6 @@ fn first_launch_semantic_search_prompt_enable_persists_seen_and_starts_install()
             .settings
             .semantic_search_first_launch_prompt_seen
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -209,8 +199,8 @@ fn removing_semantic_search_keeps_first_launch_prompt_seen() {
 
 #[test]
 fn save_user_session_round_trips_sidebar_state() {
-    let root = temp_library_root("snappyref-app-sidebar-session");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-app-sidebar-session");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.sidebar_open = true;
     app.sidebar_tab = SidebarTab::Boards;
@@ -221,14 +211,12 @@ fn save_user_session_round_trips_sidebar_state() {
     reopened.load_user_session();
     assert!(reopened.sidebar_open);
     assert_eq!(reopened.sidebar_tab, SidebarTab::Boards);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn board_summaries_are_served_from_cache_until_refreshed() {
-    let root = temp_library_root("snappyref-board-summary-cache");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-board-summary-cache");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
 
     app.refresh_board_summaries();
@@ -243,14 +231,12 @@ fn board_summaries_are_served_from_cache_until_refreshed() {
 
     app.refresh_board_summaries();
     assert_eq!(app.board_summaries().len(), 2);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn creating_board_refreshes_board_summaries_cache() {
-    let root = temp_library_root("snappyref-board-summary-create-refresh");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-board-summary-create-refresh");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library));
     app.refresh_board_summaries();
 
@@ -263,14 +249,12 @@ fn creating_board_refreshes_board_summaries_cache() {
             .iter()
             .any(|summary| summary.board.name == "Board 2")
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn persist_canvas_changes_saves_viewport_changes() {
-    let root = temp_library_root("snappyref-app-viewport-session");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-app-viewport-session");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.canvas
         .apply_viewport_state(&crate::data::ViewportState {
@@ -290,15 +274,13 @@ fn persist_canvas_changes_saves_viewport_changes() {
         session.viewport.canvas_background,
         crate::data::CanvasBackground::Dots
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn debounced_canvas_persistence_defers_session_only_viewport_changes() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-app-viewport-session-debounce");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-app-viewport-session-debounce");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.canvas
         .apply_viewport_state(&crate::data::ViewportState {
@@ -322,8 +304,6 @@ fn debounced_canvas_persistence_defers_session_only_viewport_changes() {
     assert_eq!(session.viewport.camera_pan_y, 20.0);
     assert_eq!(session.viewport.camera_zoom, 1.75);
     assert!(app.pending_user_session.is_none());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -366,18 +346,10 @@ fn compact_arrangement_action_uses_dense_compact_layout() {
         canvas.add_prepared_placement_image(
             &ctx,
             PreparedPlacementImage {
-                target_board_id: 1,
-                queue_id: None,
-                placement,
                 preview_rgba: rgba,
                 preview_width: *width,
                 preview_height: *height,
-                animated_preview: None,
-                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-                loaded_lod: crate::data::CanvasImageLod::Working,
-                existing_load_diagnostics: None,
-                origin: crate::jobs::ImportOrigin::Existing,
-                trace: None,
+                ..loaded_record(placement)
             },
         );
     }
@@ -399,32 +371,10 @@ fn compact_arrangement_action_uses_dense_compact_layout() {
 }
 
 #[test]
-fn sidebar_close_helper_only_closes_for_outside_clicks() {
-    let sidebar_rect = egui::Rect::from_min_max(egui::pos2(20.0, 30.0), egui::pos2(220.0, 180.0));
-
-    assert!(!should_close_sidebar(
-        true,
-        Some(egui::pos2(60.0, 90.0)),
-        sidebar_rect
-    ));
-    assert!(should_close_sidebar(
-        true,
-        Some(egui::pos2(300.0, 90.0)),
-        sidebar_rect
-    ));
-    assert!(!should_close_sidebar(
-        false,
-        Some(egui::pos2(300.0, 90.0)),
-        sidebar_rect
-    ));
-    assert!(!should_close_sidebar(true, None, sidebar_rect));
-}
-
-#[test]
 fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-cross-board-paste");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-cross-board-paste");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let second = library.create_board("Second").unwrap();
     let image_path = library
@@ -458,17 +408,7 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
         &ctx,
         PreparedPlacementImage {
             target_board_id: first.id,
-            queue_id: None,
-            placement: source_item.clone(),
-            preview_rgba: vec![255, 0, 0, 255],
-            preview_width: 1,
-            preview_height: 1,
-            animated_preview: None,
-            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-            loaded_lod: crate::data::CanvasImageLod::Working,
-            existing_load_diagnostics: None,
-            origin: crate::jobs::ImportOrigin::Existing,
-            trace: None,
+            ..loaded_record(source_item.clone())
         },
     );
     app.canvas.add_annotation(source_annotation.clone());
@@ -531,15 +471,13 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
         library.load_canvas_stack_order().unwrap(),
         source_stack_order
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn delete_selected_annotation_records_undo_history() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-delete-annotation-history");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-delete-annotation-history");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let annotation = library
         .create_canvas_annotation(
             CanvasAnnotationKind::Textbox,
@@ -566,15 +504,13 @@ fn delete_selected_annotation_records_undo_history() {
 
     assert_eq!(app.status, "Undid Deleted 1 annotation");
     assert_eq!(library.load_canvas_annotations().unwrap(), vec![annotation]);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn undo_delete_annotation_patches_active_canvas_without_board_reload() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-undo-no-board-reload");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-undo-no-board-reload");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let annotation = library
         .create_canvas_annotation(
             CanvasAnnotationKind::Textbox,
@@ -604,15 +540,13 @@ fn undo_delete_annotation_patches_active_canvas_without_board_reload() {
     );
     assert_eq!(app.status, "Undid Deleted 1 annotation");
     app.flush_persistence();
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn undo_delete_restores_last_placement_to_active_canvas() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-undo-delete-last-placement");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-undo-delete-last-placement");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let source = library
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -637,8 +571,6 @@ fn undo_delete_restores_last_placement_to_active_canvas() {
             .is_some_and(|placement| placement.is_loaded())
     );
     assert_eq!(library.load_placements().unwrap().len(), 1);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -786,8 +718,8 @@ fn completed_history_content_replay_preserves_history_command_status() {
 #[test]
 fn undo_and_redo_defer_storage_until_explicit_flush() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-history-deferred-persistence");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-history-deferred-persistence");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let annotation = library
         .create_canvas_annotation(
             CanvasAnnotationKind::Textbox,
@@ -858,15 +790,13 @@ fn undo_and_redo_defer_storage_until_explicit_flush() {
     storage_lock.execute_batch("COMMIT").unwrap();
     app.flush_persistence();
     assert_eq!(library.load_canvas_annotations().unwrap(), vec![annotation]);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-crop-document-history");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-crop-document-history");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let source_path = library
         .store_rgba_image("source", &[255; 2 * 2 * 4], 2, 2)
         .unwrap();
@@ -906,17 +836,10 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
         &ctx,
         PreparedPlacementImage {
             target_board_id: app.active_board_id,
-            queue_id: None,
-            placement: source.clone(),
             preview_rgba: vec![255; 2 * 2 * 4],
             preview_width: 2,
             preview_height: 2,
-            animated_preview: None,
-            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-            loaded_lod: crate::data::CanvasImageLod::Working,
-            existing_load_diagnostics: None,
-            origin: crate::jobs::ImportOrigin::Existing,
-            trace: None,
+            ..loaded_record(source.clone())
         },
     );
     app.canvas
@@ -1030,242 +953,136 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
         cropped_asset_id
     );
     assert!(cropped_path.exists());
-
-    let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn paste_preserves_mixed_selection_stack_order_and_places_group_at_front() {
+#[derive(Clone, Copy, PartialEq)]
+enum StackContentKind {
+    Placement,
+    Annotation,
+}
+
+/// Seeds four items in stack order (back, upper, lower, front), selects the
+/// two middle ones, runs `copy_selection`, and asserts the copies land at the
+/// front of the stack in the selection's original relative order, both in
+/// memory and in the library.
+fn assert_copy_keeps_stack_order(
+    kinds: [StackContentKind; 4],
+    copy_selection: impl FnOnce(&mut SnappyRefApp),
+) {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-mixed-paste-stack-order");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-copy-stack-order");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let image_path = library
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
-    let back_item = library
-        .persist_imported_image(&image_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
-        .unwrap();
-    let source_item = library
-        .create_placement_from_asset(
-            back_item.require_loaded_asset().id,
-            egui::pos2(10.0, 20.0),
-            1.0,
-            0.0,
-            0,
-        )
-        .unwrap();
-    let source_annotation = library
-        .create_canvas_annotation(
-            CanvasAnnotationKind::Line,
-            egui::pos2(40.0, 60.0),
-            egui::pos2(80.0, 90.0),
-            "",
-            CanvasTextSize::M,
-            CanvasStrokeWidth::M,
-            crate::data::CanvasAnnotationColor::Gold,
-            false,
-        )
-        .unwrap();
-    let front_item = library
-        .create_placement_from_asset(
-            back_item.require_loaded_asset().id,
-            egui::pos2(100.0, 100.0),
-            1.0,
-            0.0,
-            0,
-        )
-        .unwrap();
     let mut app = test_app(Some(library.clone()));
-    for placement in [&back_item, &source_item, &front_item] {
-        app.canvas.add_prepared_placement_image(
-            &ctx,
-            PreparedPlacementImage {
-                target_board_id: 1,
-                queue_id: None,
-                placement: placement.clone(),
-                preview_rgba: vec![255, 0, 0, 255],
-                preview_width: 1,
-                preview_height: 1,
-                animated_preview: None,
-                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-                loaded_lod: crate::data::CanvasImageLod::Working,
-                existing_load_diagnostics: None,
-                origin: crate::jobs::ImportOrigin::Existing,
-                trace: None,
-            },
-        );
+    app.settings.placement_gap = 24.0;
+    let mut asset_id = None;
+    let mut stack = Vec::new();
+    for (index, kind) in kinds.into_iter().enumerate() {
+        let position = egui::pos2(index as f32 * 30.0, index as f32 * 20.0);
+        let item = match kind {
+            StackContentKind::Placement => {
+                let placement = match asset_id {
+                    None => library
+                        .persist_imported_image(&image_path, "image/png", 1, 1, 4, position, 1.0)
+                        .unwrap(),
+                    Some(asset_id) => library
+                        .create_placement_from_asset(asset_id, position, 1.0, 0.0, 0)
+                        .unwrap(),
+                };
+                asset_id = Some(placement.require_loaded_asset().id);
+                add_loaded_record(&mut app, &ctx, placement.clone());
+                CanvasStackItem::Placement(placement.state.id)
+            }
+            StackContentKind::Annotation => {
+                let fixture = test_canvas_annotation(0, position);
+                let annotation = library
+                    .create_canvas_annotation(
+                        fixture.kind,
+                        fixture.start(),
+                        fixture.end(),
+                        &fixture.text,
+                        fixture.text_size,
+                        fixture.stroke_width,
+                        fixture.color,
+                        fixture.background_enabled,
+                    )
+                    .unwrap();
+                app.canvas.add_annotation(annotation.clone());
+                CanvasStackItem::Annotation(annotation.id)
+            }
+        };
+        stack.push(item);
     }
-    app.canvas.add_annotation(source_annotation.clone());
-    app.canvas.set_canvas_stack_order(vec![
-        CanvasStackItem::Placement(back_item.state.id),
-        CanvasStackItem::Annotation(source_annotation.id),
-        CanvasStackItem::Placement(source_item.state.id),
-        CanvasStackItem::Placement(front_item.state.id),
-    ]);
-    app.canvas
-        .select_content(&[source_item.state.id], &[source_annotation.id]);
-
-    let payload = app.copy_selected_board_payload().unwrap();
-    app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
-        .unwrap();
-
-    let pasted_item_id = app.canvas.selected_placement_ids()[0];
-    let pasted_annotation_id = app.canvas.selected_annotation_ids()[0];
-    assert_eq!(
-        app.canvas.canvas_stack_order(),
-        vec![
-            CanvasStackItem::Placement(back_item.state.id),
-            CanvasStackItem::Annotation(source_annotation.id),
-            CanvasStackItem::Placement(source_item.state.id),
-            CanvasStackItem::Placement(front_item.state.id),
-            CanvasStackItem::Annotation(pasted_annotation_id),
-            CanvasStackItem::Placement(pasted_item_id),
-        ]
+    app.canvas.set_canvas_stack_order(stack.clone());
+    let selected = [stack[2], stack[1]];
+    let ids_of = |kind: StackContentKind| -> Vec<i64> {
+        selected
+            .iter()
+            .filter_map(|item| match (kind, item) {
+                (StackContentKind::Placement, CanvasStackItem::Placement(id))
+                | (StackContentKind::Annotation, CanvasStackItem::Annotation(id)) => Some(*id),
+                _ => None,
+            })
+            .collect()
+    };
+    app.canvas.select_content(
+        &ids_of(StackContentKind::Placement),
+        &ids_of(StackContentKind::Annotation),
     );
 
-    let _ = fs::remove_dir_all(root);
+    copy_selection(&mut app);
+
+    // Copies of one kind are selected in the same order as their originals.
+    let mut copied_placements = app.canvas.selected_placement_ids().into_iter();
+    let mut copied_annotations = app.canvas.selected_annotation_ids().into_iter();
+    let mut copy_of = |item: &CanvasStackItem| match item {
+        CanvasStackItem::Placement(_) => {
+            CanvasStackItem::Placement(copied_placements.next().unwrap())
+        }
+        CanvasStackItem::Annotation(_) => {
+            CanvasStackItem::Annotation(copied_annotations.next().unwrap())
+        }
+    };
+    let lower_copy = copy_of(&stack[2]);
+    let upper_copy = copy_of(&stack[1]);
+    assert!(copied_placements.next().is_none() && copied_annotations.next().is_none());
+    let mut expected = stack;
+    expected.extend([upper_copy, lower_copy]);
+    assert_eq!(app.canvas.canvas_stack_order(), expected);
+    assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
 }
 
-#[test]
-fn paste_preserves_image_only_stack_order_and_places_group_at_front() {
-    let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-image-paste-stack-order");
-    let library = Library::initialize(root.clone()).unwrap();
-    let image_path = library
-        .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
-        .unwrap();
-    let back_item = library
-        .persist_imported_image(&image_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
-        .unwrap();
-    let lower_selected = library
-        .create_placement_from_asset(
-            back_item.require_loaded_asset().id,
-            egui::pos2(10.0, 20.0),
-            1.0,
-            0.0,
-            0,
-        )
-        .unwrap();
-    let upper_selected = library
-        .create_placement_from_asset(
-            back_item.require_loaded_asset().id,
-            egui::pos2(30.0, 40.0),
-            1.0,
-            0.0,
-            0,
-        )
-        .unwrap();
-    let front_item = library
-        .create_placement_from_asset(
-            back_item.require_loaded_asset().id,
-            egui::pos2(100.0, 100.0),
-            1.0,
-            0.0,
-            0,
-        )
-        .unwrap();
-    let mut app = test_app(Some(library.clone()));
-    for placement in [&back_item, &lower_selected, &upper_selected, &front_item] {
-        add_loaded_record(&mut app, &ctx, placement.clone());
-    }
-    app.canvas.set_canvas_stack_order(vec![
-        CanvasStackItem::Placement(back_item.state.id),
-        CanvasStackItem::Placement(upper_selected.state.id),
-        CanvasStackItem::Placement(lower_selected.state.id),
-        CanvasStackItem::Placement(front_item.state.id),
-    ]);
-    app.canvas
-        .select_placements(&[lower_selected.state.id, upper_selected.state.id]);
-
+fn paste_selection(app: &mut SnappyRefApp) {
     let payload = app.copy_selected_board_payload().unwrap();
     app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
         .unwrap();
-
-    let selected = app.canvas.selected_placement_ids();
-    let pasted_lower_id = selected[0];
-    let pasted_upper_id = selected[1];
-    let expected = vec![
-        CanvasStackItem::Placement(back_item.state.id),
-        CanvasStackItem::Placement(upper_selected.state.id),
-        CanvasStackItem::Placement(lower_selected.state.id),
-        CanvasStackItem::Placement(front_item.state.id),
-        CanvasStackItem::Placement(pasted_upper_id),
-        CanvasStackItem::Placement(pasted_lower_id),
-    ];
-    assert_eq!(app.canvas.canvas_stack_order(), expected);
-    assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
-fn paste_preserves_annotation_only_stack_order_and_places_group_at_front() {
-    let root = temp_library_root("snappyref-annotation-paste-stack-order");
-    let library = Library::initialize(root.clone()).unwrap();
-    let back_annotation = test_canvas_annotation(1, egui::pos2(0.0, 0.0));
-    let lower_selected = test_canvas_annotation(2, egui::pos2(10.0, 20.0));
-    let upper_selected = test_canvas_annotation(3, egui::pos2(30.0, 40.0));
-    let front_annotation = test_canvas_annotation(4, egui::pos2(100.0, 100.0));
-    for annotation in [
-        &back_annotation,
-        &lower_selected,
-        &upper_selected,
-        &front_annotation,
-    ] {
-        library
-            .create_canvas_annotation(
-                annotation.kind,
-                egui::pos2(annotation.start().x, annotation.start().y),
-                egui::pos2(annotation.end().x, annotation.end().y),
-                &annotation.text,
-                annotation.text_size,
-                annotation.stroke_width,
-                annotation.color,
-                annotation.background_enabled,
-            )
-            .unwrap();
-    }
-    let annotations = library.load_canvas_annotations().unwrap();
-    let back_id = annotations[0].id;
-    let lower_id = annotations[1].id;
-    let upper_id = annotations[2].id;
-    let front_id = annotations[3].id;
-    let mut app = test_app(Some(library.clone()));
-    app.canvas.add_annotations(annotations);
-    app.canvas.set_canvas_stack_order(vec![
-        CanvasStackItem::Annotation(back_id),
-        CanvasStackItem::Annotation(upper_id),
-        CanvasStackItem::Annotation(lower_id),
-        CanvasStackItem::Annotation(front_id),
-    ]);
-    app.canvas.select_content(&[], &[lower_id, upper_id]);
+fn paste_keeps_stack_order_and_places_group_at_front() {
+    use StackContentKind::{Annotation, Placement};
+    assert_copy_keeps_stack_order(
+        [Placement, Annotation, Placement, Placement],
+        paste_selection,
+    );
+    assert_copy_keeps_stack_order([Placement; 4], paste_selection);
+    assert_copy_keeps_stack_order([Annotation; 4], paste_selection);
+}
 
-    let payload = app.copy_selected_board_payload().unwrap();
-    app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
-        .unwrap();
-
-    let selected = app.canvas.selected_annotation_ids();
-    let pasted_lower_id = selected[0];
-    let pasted_upper_id = selected[1];
-    let expected = vec![
-        CanvasStackItem::Annotation(back_id),
-        CanvasStackItem::Annotation(upper_id),
-        CanvasStackItem::Annotation(lower_id),
-        CanvasStackItem::Annotation(front_id),
-        CanvasStackItem::Annotation(pasted_upper_id),
-        CanvasStackItem::Annotation(pasted_lower_id),
-    ];
-    assert_eq!(app.canvas.canvas_stack_order(), expected);
-    assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
-
-    let _ = fs::remove_dir_all(root);
+#[test]
+fn duplicate_keeps_stack_order_and_places_group_at_front() {
+    use StackContentKind::{Annotation, Placement};
+    assert_copy_keeps_stack_order([Placement; 4], SnappyRefApp::duplicate_selection_with_gap);
+    assert_copy_keeps_stack_order([Annotation; 4], SnappyRefApp::duplicate_selection_with_gap);
 }
 
 #[test]
 fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-mixed-duplicate");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-mixed-duplicate");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let image_path = library
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -1294,23 +1111,8 @@ fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
         .unwrap();
     let mut app = test_app(Some(library.clone()));
     app.settings.placement_gap = 24.0;
-    app.canvas.add_prepared_placement_image(
-        &ctx,
-        PreparedPlacementImage {
-            target_board_id: 1,
-            queue_id: None,
-            placement: source_item.clone(),
-            preview_rgba: vec![255, 0, 0, 255],
-            preview_width: 1,
-            preview_height: 1,
-            animated_preview: None,
-            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-            loaded_lod: crate::data::CanvasImageLod::Working,
-            existing_load_diagnostics: None,
-            origin: crate::jobs::ImportOrigin::Existing,
-            trace: None,
-        },
-    );
+    app.canvas
+        .add_prepared_placement_image(&ctx, loaded_record(source_item.clone()));
     app.canvas.add_annotation(source_annotation.clone());
     app.canvas.set_canvas_stack_order(vec![
         CanvasStackItem::Annotation(source_annotation.id),
@@ -1359,15 +1161,13 @@ fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
     ];
     assert_eq!(app.canvas.canvas_stack_order(), expected);
     assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn undo_after_persisted_duplicate_removes_the_created_placement() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-duplicate-undo-durable");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-duplicate-undo-durable");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let image_path = library
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -1384,23 +1184,8 @@ fn undo_after_persisted_duplicate_removes_the_created_placement() {
         .unwrap();
     let mut app = test_app(Some(library.clone()));
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
-    app.canvas.add_prepared_placement_image(
-        &ctx,
-        PreparedPlacementImage {
-            target_board_id: 1,
-            queue_id: None,
-            placement: source_item.clone(),
-            preview_rgba: vec![255, 0, 0, 255],
-            preview_width: 1,
-            preview_height: 1,
-            animated_preview: None,
-            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-            loaded_lod: crate::data::CanvasImageLod::Working,
-            existing_load_diagnostics: None,
-            origin: crate::jobs::ImportOrigin::Existing,
-            trace: None,
-        },
-    );
+    app.canvas
+        .add_prepared_placement_image(&ctx, loaded_record(source_item.clone()));
     app.canvas
         .set_canvas_stack_order(vec![CanvasStackItem::Placement(source_item.state.id)]);
     app.canvas.select_placements(&[source_item.state.id]);
@@ -1427,121 +1212,6 @@ fn undo_after_persisted_duplicate_removes_the_created_placement() {
         library.load_canvas_stack_order().unwrap(),
         vec![CanvasStackItem::Placement(source_item.state.id)]
     );
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn duplicate_preserves_image_only_stack_order_and_places_group_at_front() {
-    let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-image-duplicate-stack-order");
-    let library = Library::initialize(root.clone()).unwrap();
-    let image_path = library
-        .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
-        .unwrap();
-    let back_item = library
-        .persist_imported_image(&image_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
-        .unwrap();
-    let lower_selected = library
-        .create_placement_from_asset(
-            back_item.require_loaded_asset().id,
-            egui::pos2(10.0, 20.0),
-            1.0,
-            0.0,
-            0,
-        )
-        .unwrap();
-    let upper_selected = library
-        .create_placement_from_asset(
-            back_item.require_loaded_asset().id,
-            egui::pos2(30.0, 40.0),
-            1.0,
-            0.0,
-            0,
-        )
-        .unwrap();
-    let mut app = test_app(Some(library.clone()));
-    app.settings.placement_gap = 24.0;
-    for placement in [&back_item, &lower_selected, &upper_selected] {
-        add_loaded_record(&mut app, &ctx, placement.clone());
-    }
-    app.canvas.set_canvas_stack_order(vec![
-        CanvasStackItem::Placement(back_item.state.id),
-        CanvasStackItem::Placement(upper_selected.state.id),
-        CanvasStackItem::Placement(lower_selected.state.id),
-    ]);
-    app.canvas
-        .select_placements(&[lower_selected.state.id, upper_selected.state.id]);
-
-    app.duplicate_selection_with_gap();
-
-    let selected = app.canvas.selected_placement_ids();
-    let duplicated_lower_id = selected[0];
-    let duplicated_upper_id = selected[1];
-    let expected = vec![
-        CanvasStackItem::Placement(back_item.state.id),
-        CanvasStackItem::Placement(upper_selected.state.id),
-        CanvasStackItem::Placement(lower_selected.state.id),
-        CanvasStackItem::Placement(duplicated_upper_id),
-        CanvasStackItem::Placement(duplicated_lower_id),
-    ];
-    assert_eq!(app.canvas.canvas_stack_order(), expected);
-    assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn duplicate_preserves_annotation_only_stack_order_and_places_group_at_front() {
-    let root = temp_library_root("snappyref-annotation-duplicate-stack-order");
-    let library = Library::initialize(root.clone()).unwrap();
-    let back_annotation = test_canvas_annotation(1, egui::pos2(0.0, 0.0));
-    let lower_selected = test_canvas_annotation(2, egui::pos2(10.0, 20.0));
-    let upper_selected = test_canvas_annotation(3, egui::pos2(30.0, 40.0));
-    for annotation in [&back_annotation, &lower_selected, &upper_selected] {
-        library
-            .create_canvas_annotation(
-                annotation.kind,
-                egui::pos2(annotation.start().x, annotation.start().y),
-                egui::pos2(annotation.end().x, annotation.end().y),
-                &annotation.text,
-                annotation.text_size,
-                annotation.stroke_width,
-                annotation.color,
-                annotation.background_enabled,
-            )
-            .unwrap();
-    }
-    let annotations = library.load_canvas_annotations().unwrap();
-    let back_id = annotations[0].id;
-    let lower_id = annotations[1].id;
-    let upper_id = annotations[2].id;
-    let mut app = test_app(Some(library.clone()));
-    app.settings.placement_gap = 24.0;
-    app.canvas.add_annotations(annotations);
-    app.canvas.set_canvas_stack_order(vec![
-        CanvasStackItem::Annotation(back_id),
-        CanvasStackItem::Annotation(upper_id),
-        CanvasStackItem::Annotation(lower_id),
-    ]);
-    app.canvas.select_content(&[], &[lower_id, upper_id]);
-
-    app.duplicate_selection_with_gap();
-
-    let selected = app.canvas.selected_annotation_ids();
-    let duplicated_lower_id = selected[0];
-    let duplicated_upper_id = selected[1];
-    let expected = vec![
-        CanvasStackItem::Annotation(back_id),
-        CanvasStackItem::Annotation(upper_id),
-        CanvasStackItem::Annotation(lower_id),
-        CanvasStackItem::Annotation(duplicated_upper_id),
-        CanvasStackItem::Annotation(duplicated_lower_id),
-    ];
-    assert_eq!(app.canvas.canvas_stack_order(), expected);
-    assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -1886,33 +1556,25 @@ fn context_menu_items_reflect_mixed_selection_capabilities() {
 }
 
 #[test]
-fn context_menu_primary_press_inside_menu_keeps_menu_open_for_click_release() {
+fn context_menu_primary_press_closes_menu_only_outside_it() {
     let menu_rect = egui::Rect::from_min_size(egui::pos2(100.0, 120.0), egui::vec2(190.0, 240.0));
+    let should_close = |pointer_pos: egui::Pos2| {
+        super::context_menu_should_close(
+            false,
+            false,
+            menu_rect,
+            Some(pointer_pos),
+            true,
+            false,
+            false,
+        )
+    };
 
-    assert!(!super::context_menu_should_close(
-        false,
-        false,
-        menu_rect,
-        Some(menu_rect.center()),
-        true,
-        false,
-        false,
-    ));
-}
-
-#[test]
-fn context_menu_primary_press_outside_menu_closes_menu() {
-    let menu_rect = egui::Rect::from_min_size(egui::pos2(100.0, 120.0), egui::vec2(190.0, 240.0));
-
-    assert!(super::context_menu_should_close(
-        false,
-        false,
-        menu_rect,
-        Some(egui::pos2(menu_rect.right() + 8.0, menu_rect.center().y)),
-        true,
-        false,
-        false,
-    ));
+    assert!(!should_close(menu_rect.center()));
+    assert!(should_close(egui::pos2(
+        menu_rect.right() + 8.0,
+        menu_rect.center().y
+    )));
 }
 
 #[test]
@@ -2013,8 +1675,8 @@ fn image_search_context_action_requires_exactly_one_image() {
 #[test]
 fn remove_from_library_context_action_waits_for_confirmation() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-context-remove-confirm");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-context-remove-confirm");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let image_path = library
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -2030,23 +1692,8 @@ fn remove_from_library_context_action_waits_for_confirmation() {
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.canvas.add_prepared_placement_image(
-        &ctx,
-        PreparedPlacementImage {
-            target_board_id: 1,
-            queue_id: None,
-            placement: source_item.clone(),
-            preview_rgba: vec![255, 0, 0, 255],
-            preview_width: 1,
-            preview_height: 1,
-            animated_preview: None,
-            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-            loaded_lod: crate::data::CanvasImageLod::Working,
-            existing_load_diagnostics: None,
-            origin: crate::jobs::ImportOrigin::Existing,
-            trace: None,
-        },
-    );
+    app.canvas
+        .add_prepared_placement_image(&ctx, loaded_record(source_item.clone()));
     app.canvas.select_placements(&[source_item.state.id]);
 
     app.handle_context_menu_action(
@@ -2063,15 +1710,13 @@ fn remove_from_library_context_action_waits_for_confirmation() {
     assert!(app.pending_library_remove.is_none());
     assert!(library.load_placements().unwrap().is_empty());
     assert!(source_item.require_loaded_asset().original_path.exists());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn move_to_front_context_action_persists_canvas_stack_order() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-context-move-front");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-context-move-front");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
         .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -2147,15 +1792,13 @@ fn move_to_front_context_action_persists_canvas_stack_order() {
             crate::data::CanvasStackItem::Placement(second.state.id),
         ]
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn delete_from_board_archives_image_placements_and_annotations() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-delete-from-board");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-delete-from-board");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let image_path = library
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -2183,23 +1826,8 @@ fn delete_from_board_archives_image_placements_and_annotations() {
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.canvas.add_prepared_placement_image(
-        &ctx,
-        PreparedPlacementImage {
-            target_board_id: 1,
-            queue_id: None,
-            placement: source_item.clone(),
-            preview_rgba: vec![255, 0, 0, 255],
-            preview_width: 1,
-            preview_height: 1,
-            animated_preview: None,
-            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-            loaded_lod: crate::data::CanvasImageLod::Working,
-            existing_load_diagnostics: None,
-            origin: crate::jobs::ImportOrigin::Existing,
-            trace: None,
-        },
-    );
+    app.canvas
+        .add_prepared_placement_image(&ctx, loaded_record(source_item.clone()));
     app.canvas.add_annotation(annotation.clone());
     app.canvas
         .select_content(&[source_item.state.id], &[annotation.id]);
@@ -2226,8 +1854,6 @@ fn delete_from_board_archives_image_placements_and_annotations() {
         )
         .unwrap();
     assert_eq!(annotation_count, 1);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
@@ -2296,8 +1922,8 @@ fn search_using_image_context_action_survives_activation_click_outside_overlay()
 
 #[test]
 fn sidebar_create_board_generates_name_switches_and_stays_open() {
-    let root = temp_library_root("snappyref-create-board");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-create-board");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.sidebar_open = true;
 
@@ -2313,15 +1939,13 @@ fn sidebar_create_board_generates_name_switches_and_stays_open() {
         boards[1].id
     );
     assert!(app.sidebar_open);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn board_create_undo_and_redo_restore_the_same_identity_once() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-create-board-history");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-create-board-history");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let original_id = library.list_boards().unwrap()[0].id;
     let other = library.create_board("Other").unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -2399,15 +2023,13 @@ fn board_create_undo_and_redo_restore_the_same_identity_once() {
         ]
     );
     assert_eq!(app.active_board_id, created.id);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn board_rename_undo_and_redo_restore_exact_names_once() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-rename-board-history");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-rename-board-history");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let board = library.list_boards().unwrap()[0].clone();
     let mut app = test_app(Some(library.clone()));
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
@@ -2465,15 +2087,13 @@ fn board_rename_undo_and_redo_restore_exact_names_once() {
     app.redo_document_history(&ctx);
     app.flush_persistence();
     assert_eq!(library.list_boards().unwrap()[0].name, "Final Board");
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn create_undo_persists_reassigned_redo_history_with_the_archive() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-create-undo-atomic-history");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-create-undo-atomic-history");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let original = library.list_boards().unwrap()[0].clone();
 
     let mut app = test_app(Some(library.clone()));
@@ -2550,14 +2170,13 @@ fn create_undo_persists_reassigned_redo_history_with_the_archive() {
         "the retried archive and reassigned Redo entry must commit together"
     );
     drop(app);
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-delete-after-queued-resolution");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-delete-after-queued-resolution");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let second = library.create_board("Second").unwrap();
     library.set_active_board(second.id).unwrap();
@@ -2647,7 +2266,7 @@ fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement()
 
     app.undo_document_history(&ctx);
     app.flush_persistence();
-    let reopened = Library::initialize(root.clone()).unwrap();
+    let reopened = Library::initialize(root.to_path_buf()).unwrap();
     let restored = reopened.load_board_document(second.id).unwrap();
     assert_eq!(restored.placements.len(), 1);
     assert_eq!(restored.placements[0].state.id, resolved.state.id);
@@ -2656,14 +2275,12 @@ fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement()
         resolved.state.asset_id
     );
     assert_eq!(restored.placements[0].content, resolved.content);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn queued_board_identities_remain_visible_while_persistence_retries() {
-    let root = temp_library_root("snappyref-queued-board-identity");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-queued-board-identity");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
     trigger_connection
         .execute_batch(
@@ -2690,7 +2307,6 @@ fn queued_board_identities_remain_visible_while_persistence_retries() {
         .unwrap();
     app.flush_persistence();
     drop(app);
-    let _ = fs::remove_dir_all(root);
 
     assert_eq!(accepted_board_count, 3);
 }
@@ -2698,8 +2314,8 @@ fn queued_board_identities_remain_visible_while_persistence_retries() {
 #[test]
 fn deleting_active_queued_board_uses_accepted_queued_fallback() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-delete-queued-active-board");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-delete-queued-active-board");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
     trigger_connection
         .execute_batch(
@@ -2733,7 +2349,6 @@ fn deleting_active_queued_board_uses_accepted_queued_fallback() {
         .unwrap();
     app.flush_persistence();
     drop(app);
-    let _ = fs::remove_dir_all(root);
 
     assert_eq!(active_after_delete, fallback_id);
     assert!(
@@ -2745,8 +2360,8 @@ fn deleting_active_queued_board_uses_accepted_queued_fallback() {
 #[test]
 fn deleting_active_board_restores_accepted_fallback_content_while_persistence_retries() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-delete-accepted-fallback-content");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-delete-accepted-fallback-content");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let fallback = library.list_boards().unwrap()[0].clone();
     let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
     trigger_connection
@@ -2810,7 +2425,6 @@ fn deleting_active_board_restores_accepted_fallback_content_while_persistence_re
         .unwrap();
     app.flush_persistence();
     drop(app);
-    let _ = fs::remove_dir_all(root);
 
     assert_eq!(active_after_delete, fallback.id);
     assert_eq!(fallback_name_after_delete, "Accepted fallback");
@@ -2820,8 +2434,8 @@ fn deleting_active_board_restores_accepted_fallback_content_while_persistence_re
 #[test]
 fn undoing_board_create_reopens_accepted_previous_board_while_persistence_retries() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-undo-create-accepted-content");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-undo-create-accepted-content");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let previous = library.list_boards().unwrap()[0].clone();
     let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
     trigger_connection
@@ -2884,7 +2498,6 @@ fn undoing_board_create_reopens_accepted_previous_board_while_persistence_retrie
         .unwrap();
     app.flush_persistence();
     drop(app);
-    let _ = fs::remove_dir_all(root);
 
     assert_eq!(active_after_undo, previous.id);
     assert_eq!(previous_name_after_undo, "Accepted previous");
@@ -2893,8 +2506,8 @@ fn undoing_board_create_reopens_accepted_previous_board_while_persistence_retrie
 
 #[test]
 fn generated_board_names_fill_smallest_visible_gap() {
-    let root = temp_library_root("snappyref-board-name-gap");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-board-name-gap");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let board_2 = library.create_board("Board 2").unwrap();
     library.create_board("Board 3").unwrap();
     {
@@ -2911,15 +2524,13 @@ fn generated_board_names_fill_smallest_visible_gap() {
     assert!(boards.iter().any(|board| board.name == "Board 2"));
     assert_eq!(app.active_board_id, boards.last().unwrap().id);
     assert!(!app.sidebar_open);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn command_n_creates_board_without_opening_sidebar() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-cmd-n-board");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-cmd-n-board");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.sidebar_open = false;
 
@@ -2949,15 +2560,13 @@ fn command_n_creates_board_without_opening_sidebar() {
     assert_eq!(boards[1].name, "Board 2");
     assert_eq!(app.active_board_id, boards[1].id);
     assert!(!app.sidebar_open);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn command_number_switches_visible_board() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-cmd-number-board");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-cmd-number-board");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let second = library.create_board("Second").unwrap();
     let third = library.create_board("Third").unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -2990,15 +2599,13 @@ fn command_number_switches_visible_board() {
         library.load_user_session().unwrap().active_board_id,
         third.id
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn command_zero_switches_tenth_visible_board() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-cmd-zero-board");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-cmd-zero-board");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut tenth = None;
     for index in 2..=10 {
         let board = library.create_board(&format!("Board {index}")).unwrap();
@@ -3031,16 +2638,14 @@ fn command_zero_switches_tenth_visible_board() {
     );
 
     assert_eq!(app.active_board_id, tenth.id);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn board_shortcuts_are_suppressed_while_search_is_open() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-board-shortcut-search");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-board-shortcut-search");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.search.overlay.open = true;
@@ -3067,14 +2672,12 @@ fn board_shortcuts_are_suppressed_while_search_is_open() {
     );
 
     assert_eq!(app.active_board_id, 1);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn switching_boards_saves_previous_viewport_and_loads_target_viewport() {
-    let root = temp_library_root("snappyref-board-switch-viewport");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-board-switch-viewport");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let second = library.create_board("Second").unwrap();
     library.set_active_board(second.id).unwrap();
@@ -3107,14 +2710,12 @@ fn switching_boards_saves_previous_viewport_and_loads_target_viewport() {
     library.set_active_board(second.id).unwrap();
     assert_eq!(app.active_board_id, second.id);
     assert_eq!(app.canvas.background(), crate::data::CanvasBackground::Dots);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn active_board_load_applies_viewport_without_reloading_global_settings() {
-    let root = temp_library_root("snappyref-active-load-settings-scope");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-active-load-settings-scope");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let second = library.create_board("Second").unwrap();
     library.set_active_board(second.id).unwrap();
     let mut stored_session = library.load_user_session().unwrap();
@@ -3132,15 +2733,13 @@ fn active_board_load_applies_viewport_without_reloading_global_settings() {
     assert_eq!(app.canvas.background(), crate::data::CanvasBackground::Dots);
     assert_eq!(app.canvas.viewport_state().camera_pan_x, 75.0);
     assert_eq!(app.settings.placement_gap, 24.0);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn board_delete_requires_confirmation_before_archiving_active_board() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-confirm-delete-board");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-confirm-delete-board");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let second = library.create_board("Second").unwrap();
     library.set_active_board(second.id).unwrap();
@@ -3167,15 +2766,13 @@ fn board_delete_requires_confirmation_before_archiving_active_board() {
             .collect::<Vec<_>>(),
         vec![first.id]
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn board_delete_confirmation_keeps_sidebar_open_and_removes_inactive_board() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-delete-inactive-board");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-delete-inactive-board");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -3197,15 +2794,13 @@ fn board_delete_confirmation_keeps_sidebar_open_and_removes_inactive_board() {
             .collect::<Vec<_>>(),
         vec![first.id]
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn board_delete_undo_restores_document_view_history_and_active_fallback() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-delete-board-history");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-delete-board-history");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let second = library.create_board("Reference").unwrap();
     library.set_active_board(second.id).unwrap();
@@ -3341,14 +2936,12 @@ fn board_delete_undo_restores_document_view_history_and_active_fallback() {
         )
         .unwrap();
     assert_eq!(active_assets, 1);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn board_delete_modal_click_routes_through_egui_layers() {
-    let root = temp_library_root("snappyref-delete-modal-click-routing");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-delete-modal-click-routing");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -3381,14 +2974,12 @@ fn board_delete_modal_click_routes_through_egui_layers() {
             .collect::<Vec<_>>(),
         vec![first.id]
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn board_sidebar_stays_clickable_after_delete_modal_confirms() {
-    let root = temp_library_root("snappyref-sidebar-click-after-delete");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-sidebar-click-after-delete");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = second.id;
@@ -3416,14 +3007,12 @@ fn board_sidebar_stays_clickable_after_delete_modal_confirms() {
     );
     assert_eq!(harness.state().active_board_id, boards[1].id);
     assert!(harness.state().sidebar_open);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn board_sidebar_name_click_switches_board_immediately() {
-    let root = temp_library_root("snappyref-sidebar-name-click-switch");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-sidebar-name-click-switch");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -3438,8 +3027,6 @@ fn board_sidebar_name_click_switches_board_immediately() {
     harness.run();
 
     assert_eq!(harness.state().active_board_id, second.id);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -3529,8 +3116,8 @@ fn settings_semantic_search_failed_state_retries_shared_install() {
 #[test]
 #[cfg(feature = "semantic-search")]
 fn settings_semantic_search_remove_requires_confirmation() {
-    let root = temp_library_root("snappyref-semantic-search-remove-confirm");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-semantic-search-remove-confirm");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library));
     app.sidebar_open = true;
     app.sidebar_tab = SidebarTab::Options;
@@ -3567,14 +3154,12 @@ fn settings_semantic_search_remove_requires_confirmation() {
             .settings
             .semantic_search_first_launch_prompt_seen
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn rapid_sidebar_board_name_clicks_keep_last_requested_board_active() {
-    let root = temp_library_root("snappyref-rapid-sidebar-board-clicks");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-rapid-sidebar-board-clicks");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let second = library.create_board("Second").unwrap();
     let _third = library.create_board("Third").unwrap();
@@ -3601,14 +3186,12 @@ fn rapid_sidebar_board_name_clicks_keep_last_requested_board_active() {
         library.load_user_session().unwrap().active_board_id,
         second.id
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn board_delete_modal_blocks_sidebar_board_switches_until_closed() {
-    let root = temp_library_root("snappyref-delete-modal-blocks-sidebar");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-delete-modal-blocks-sidebar");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -3639,14 +3222,12 @@ fn board_delete_modal_blocks_sidebar_board_switches_until_closed() {
         library.load_user_session().unwrap().active_board_id,
         second.id
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn board_delete_modal_blocks_sidebar_tabs_and_settings() {
-    let root = temp_library_root("snappyref-delete-modal-blocks-sidebar-state");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-delete-modal-blocks-sidebar-state");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.sidebar_open = true;
@@ -3686,14 +3267,12 @@ fn board_delete_modal_blocks_sidebar_tabs_and_settings() {
     assert_eq!(harness.state().settings.rotation_snap_degrees, 15.0);
     assert!(harness.state().settings.auto_image_scaling);
     assert!(harness.state().pending_board_delete.is_some());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn sidebar_board_lifecycle_clicks_create_switch_and_persist_active_board() {
-    let root = temp_library_root("snappyref-sidebar-board-lifecycle");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-sidebar-board-lifecycle");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = first.id;
@@ -3720,15 +3299,13 @@ fn sidebar_board_lifecycle_clicks_create_switch_and_persist_active_board() {
         library.load_user_session().unwrap().active_board_id,
         first.id
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn rapid_board_switches_ignore_stale_import_completions_and_last_switch_wins() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-rapid-switch-stale-imports");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-rapid-switch-stale-imports");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let second = library.create_board("Second").unwrap();
     let third = library.create_board("Third").unwrap();
@@ -3746,16 +3323,14 @@ fn rapid_board_switches_ignore_stale_import_completions_and_last_switch_wins() {
     assert!(app.canvas.placement_for_id(41).is_none());
     assert!(app.canvas.placement_for_id(42).is_none());
     assert!(app.canvas.placement_for_id(43).is_none());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn switching_boards_clears_selection_and_search() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-board-switch-cleanup");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-board-switch-cleanup");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     let asset = Asset {
@@ -3773,18 +3348,8 @@ fn switching_boards_clears_selection_and_search() {
     app.canvas.add_prepared_placement_image(
         &ctx,
         PreparedPlacementImage {
-            target_board_id: 1,
-            queue_id: None,
-            placement: placement.clone(),
             preview_rgba: vec![255, 255, 255, 255],
-            preview_width: 1,
-            preview_height: 1,
-            animated_preview: None,
-            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-            loaded_lod: crate::data::CanvasImageLod::Working,
-            existing_load_diagnostics: None,
-            origin: crate::jobs::ImportOrigin::Existing,
-            trace: None,
+            ..loaded_record(placement.clone())
         },
     );
     app.canvas.select_placements(&[1]);
@@ -3793,16 +3358,14 @@ fn switching_boards_clears_selection_and_search() {
 
     assert!(!app.canvas.has_selection());
     assert!(!app.search.is_open());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn search_shortcut_opens_overlay_when_enabled() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-search-shortcut-enabled");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-search-shortcut-enabled");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library));
     app.settings.semantic_search_enabled = true;
     app.search
@@ -3831,8 +3394,6 @@ fn search_shortcut_opens_overlay_when_enabled() {
 
     assert!(app.search.overlay.open);
     assert!(app.search.overlay.focus_requested);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
@@ -3927,8 +3488,8 @@ fn search_overlay_focuses_text_input_when_requested() {
 #[cfg(feature = "semantic-search")]
 #[test]
 fn search_keyboard_flow_owns_escape_through_app_render_path() {
-    let root = temp_library_root("snappyref-search-keyboard-routing");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-search-keyboard-routing");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.settings.semantic_search_enabled = true;
@@ -3975,15 +3536,13 @@ fn search_keyboard_flow_owns_escape_through_app_render_path() {
     assert!(harness.state().search.overlay.query.is_empty());
     assert_eq!(library.load_user_session().unwrap().active_board_id, 1);
     assert_ne!(second.id, 1);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn enter_places_unplaced_library_search_result_on_empty_active_board() {
-    let root = temp_library_root("snappyref-library-search-enter-unplaced");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-library-search-enter-unplaced");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
         .store_rgba_image("library-only", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -4022,15 +3581,13 @@ fn enter_places_unplaced_library_search_result_on_empty_active_board() {
         vec![active_items[0].state.id]
     );
     assert!(!harness.state().search.overlay.open);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn enter_places_unplaced_library_search_result_at_import_scale() {
-    let root = temp_library_root("snappyref-library-search-enter-import-scale");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-library-search-enter-import-scale");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let width = 1000_u32;
     let height = 1000_u32;
     let first_path = library
@@ -4087,16 +3644,14 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
     );
     assert_eq!(active_items.len(), 1);
     assert_eq!(active_items[0].state.geometry.scale, expected_scale);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-library-search-visible-before-worker");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-library-search-visible-before-worker");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
         .store_rgba_image("library-only", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -4144,8 +3699,6 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
             .is_some()
     );
     assert_eq!(harness.state().pending_import_batches.len(), 0);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
@@ -4177,8 +3730,8 @@ fn long_search_error_does_not_expand_palette_width() {
 #[cfg(feature = "semantic-search")]
 #[test]
 fn command_enter_library_search_results_show_pending_cursor_arrangement_inputs() {
-    let root = temp_library_root("snappyref-library-search-cmd-enter-provisional-placement");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-library-search-cmd-enter-provisional-placement");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
         .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
         .unwrap();
@@ -4251,15 +3804,13 @@ fn command_enter_library_search_results_show_pending_cursor_arrangement_inputs()
             .len(),
         2
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_path() {
-    let root = temp_library_root("snappyref-library-search-known-dimensions-preview");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-library-search-known-dimensions-preview");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
         .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
         .unwrap();
@@ -4348,15 +3899,13 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
     assert!(layout.iter().any(|item| {
         (item.width() - second_size.x).abs() < 0.1 && (item.height() - second_size.y).abs() < 0.1
     }));
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn multi_select_enter_library_search_results_show_pending_cursor_arrangement_inputs() {
-    let root = temp_library_root("snappyref-library-search-multi-enter-provisional-placement");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-library-search-multi-enter-provisional-placement");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
         .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
         .unwrap();
@@ -4424,15 +3973,13 @@ fn multi_select_enter_library_search_results_show_pending_cursor_arrangement_inp
             .len(),
         2
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn dragging_library_search_result_out_of_palette_creates_provisional_placement() {
-    let root = temp_library_root("snappyref-library-search-pointer-drag-provisional-placement");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-library-search-pointer-drag-provisional-placement");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let source_path = library
         .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
         .unwrap();
@@ -4477,15 +4024,12 @@ fn dragging_library_search_result_out_of_palette_creates_provisional_placement()
             .len(),
         1
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_search_result_drag_to_canvas_writes_artifact() {
-    let scenario_name = inspect_scenario_name("search-drag-to-canvas");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("search-drag-to-canvas");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -4493,8 +4037,8 @@ fn inspect_search_result_drag_to_canvas_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-search-drag");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-search-drag");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let source_path = library
         .store_rgba_image("first", &vec![255; 120 * 80 * 4], 120, 80)
         .unwrap();
@@ -4615,15 +4159,12 @@ fn inspect_search_result_drag_to_canvas_writes_artifact() {
         "inspect scenario failed; artifact={}",
         report.artifact_dir.display()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_semantic_search_install_accepts_prompt() {
-    let scenario_name = inspect_scenario_name("semantic-search-install");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("semantic-search-install");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -4631,8 +4172,8 @@ fn inspect_semantic_search_install_accepts_prompt() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-semantic-install");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-semantic-install");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let starts = std::rc::Rc::new(std::cell::Cell::new(0));
     let observed = starts.clone();
     let mut app = test_app(Some(library.clone()));
@@ -4686,15 +4227,12 @@ fn inspect_semantic_search_install_accepts_prompt() {
         "inspect scenario failed; artifact={}",
         report.artifact_dir.display()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_semantic_search_sidebar_status_writes_artifact() {
-    let scenario_name = inspect_scenario_name("semantic-search-sidebar-status");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("semantic-search-sidebar-status");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -4702,8 +4240,8 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-semantic-sidebar-status");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-semantic-sidebar-status");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let actual_status = crate::search::semantic::default_local_model_store_status();
     let mut app = test_app(Some(library));
     app.sidebar_open = true;
@@ -4753,15 +4291,15 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
         "inspect scenario failed; artifact={}",
         report.artifact_dir.display()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
+/// Downloads the real model bundle. Run via
+/// `docs/skills/inspect/scripts/run-scenario.sh semantic-search-real-install`.
 #[cfg(feature = "semantic-search")]
 #[test]
+#[ignore]
 fn inspect_semantic_search_real_install_writes_artifact() {
-    let scenario_name = inspect_scenario_name("semantic-search-real-install");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("semantic-search-real-install");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -4769,8 +4307,8 @@ fn inspect_semantic_search_real_install_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-semantic-real-install");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-semantic-real-install");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let initial_status = crate::search::semantic::default_local_model_store_status();
     let mut app = test_app(Some(library));
     app.sidebar_open = true;
@@ -4825,7 +4363,6 @@ fn inspect_semantic_search_real_install_writes_artifact() {
             "inspect scenario failed; artifact={}",
             report.artifact_dir.display()
         );
-        let _ = fs::remove_dir_all(root);
         return;
     }
 
@@ -4868,15 +4405,12 @@ fn inspect_semantic_search_real_install_writes_artifact() {
         "inspect scenario failed; artifact={}",
         report.artifact_dir.display()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_sample_image_import_writes_artifact() {
-    let scenario_name = inspect_scenario_name("sample-image-import");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("sample-image-import");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -4884,8 +4418,8 @@ fn inspect_sample_image_import_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-sample-image-import");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-sample-image-import");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library));
     app.settings.semantic_search_enabled = false;
     let mut harness = app_full_harness(app);
@@ -4921,15 +4455,12 @@ fn inspect_sample_image_import_writes_artifact() {
         "inspect scenario failed; artifact={}",
         report.artifact_dir.display()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_delete_board_modal_flash_writes_artifact() {
-    let scenario_name = inspect_scenario_name("delete-board-modal-flash");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("delete-board-modal-flash");
     scenario.event(
         "scenario.seed",
         serde_json::json!({
@@ -4938,8 +4469,8 @@ fn inspect_delete_board_modal_flash_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-delete-board-flash");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-delete-board-flash");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.sidebar_open = true;
@@ -5003,14 +4534,12 @@ fn inspect_delete_board_modal_flash_writes_artifact() {
         "inspect scenario failed; artifact={}",
         report.artifact_dir.display()
     );
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_board_lifecycle_undo_redo_writes_artifact() {
-    let scenario_name = inspect_scenario_name("board-lifecycle-undo-redo");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("board-lifecycle-undo-redo");
     scenario.event(
         "scenario.seed",
         serde_json::json!({
@@ -5019,8 +4548,8 @@ fn inspect_board_lifecycle_undo_redo_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-board-lifecycle");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-board-lifecycle");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
     let mut app = test_app(Some(library.clone()));
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
@@ -5293,14 +4822,12 @@ fn inspect_board_lifecycle_undo_redo_writes_artifact() {
         "inspect scenario failed; artifact={}",
         report.artifact_dir.display()
     );
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_compact_windows_column_images_writes_artifact() {
-    let scenario_name = inspect_scenario_name("compact-windows-column-images");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("compact-windows-column-images");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -5405,8 +4932,7 @@ fn inspect_compact_windows_column_images_writes_artifact() {
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_compact_mixed_column_images_writes_artifact() {
-    let scenario_name = inspect_scenario_name("compact-mixed-column-images");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("compact-mixed-column-images");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -5496,8 +5022,7 @@ fn inspect_compact_mixed_column_images_writes_artifact() {
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_compact_equal_size_images_writes_artifact() {
-    let scenario_name = inspect_scenario_name("compact-equal-size-images");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("compact-equal-size-images");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -5543,18 +5068,10 @@ fn inspect_compact_equal_size_images_writes_artifact() {
         harness.state_mut().canvas.add_prepared_placement_image(
             &ctx,
             PreparedPlacementImage {
-                target_board_id: 1,
-                queue_id: None,
-                placement,
                 preview_rgba: solid_rgba(colors[(id - 1) as usize], 150, 40),
                 preview_width: 150,
                 preview_height: 40,
-                animated_preview: None,
-                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-                loaded_lod: crate::data::CanvasImageLod::Working,
-                existing_load_diagnostics: None,
-                origin: crate::jobs::ImportOrigin::Existing,
-                trace: None,
+                ..loaded_record(placement)
             },
         );
     }
@@ -5596,8 +5113,7 @@ fn inspect_compact_equal_size_images_writes_artifact() {
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_search_palette_footer_writes_artifact() {
-    let scenario_name = inspect_scenario_name("search-palette-footer");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("search-palette-footer");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -5605,8 +5121,8 @@ fn inspect_search_palette_footer_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-search-palette-footer");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-search-palette-footer");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let result_specs = [
         ("first-result", [228, 171, 72, 255], 180_u32, 120_u32),
         ("second-result", [155, 108, 218, 255], 140_u32, 140_u32),
@@ -5683,15 +5199,12 @@ fn inspect_search_palette_footer_writes_artifact() {
         "inspect scenario failed; artifact={}",
         report.artifact_dir.display()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_blue_image_search_drag_writes_artifact() {
-    let scenario_name = inspect_scenario_name("blue-image-search-drag");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("blue-image-search-drag");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -5699,8 +5212,8 @@ fn inspect_blue_image_search_drag_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-blue-image-search-drag");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-blue-image-search-drag");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let blue_path = library
         .store_rgba_image(
             "blue-selected",
@@ -5893,15 +5406,12 @@ fn inspect_blue_image_search_drag_writes_artifact() {
         "inspect scenario failed; artifact={}",
         report.artifact_dir.display()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_placement_click_hold_flash_writes_artifact() {
-    let scenario_name = inspect_scenario_name("placement-click-hold-flash");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("placement-click-hold-flash");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -5910,8 +5420,8 @@ fn inspect_placement_click_hold_flash_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-placement-click-hold-flash");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-placement-click-hold-flash");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let blue_path = library
         .store_rgba_image(
             "blue-click-hold",
@@ -6006,15 +5516,12 @@ fn inspect_placement_click_hold_flash_writes_artifact() {
         "inspect scenario failed; artifact={}",
         report.artifact_dir.display()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_delete_undo_redo_placement_writes_artifact() {
-    let scenario_name = inspect_scenario_name("delete-undo-redo-placement");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("delete-undo-redo-placement");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -6023,8 +5530,8 @@ fn inspect_delete_undo_redo_placement_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-delete-undo-redo-placement");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-delete-undo-redo-placement");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let blue_path = library
         .store_rgba_image(
             "blue-undo-redo",
@@ -6190,15 +5697,12 @@ fn inspect_delete_undo_redo_placement_writes_artifact() {
         "inspect scenario failed; artifact={}",
         report.artifact_dir.display()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_crop_undo_redo_placement_writes_artifact() {
-    let scenario_name = inspect_scenario_name("crop-undo-redo-placement");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("crop-undo-redo-placement");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -6207,8 +5711,8 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-crop-undo-redo-placement");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-crop-undo-redo-placement");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let width = 160;
     let height = 120;
     let source_rgba = (0..height)
@@ -6265,17 +5769,10 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
         &ctx,
         PreparedPlacementImage {
             target_board_id: active_board_id,
-            queue_id: None,
-            placement: source.clone(),
             preview_rgba: source_rgba,
             preview_width: width,
             preview_height: height,
-            animated_preview: None,
-            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-            loaded_lod: crate::data::CanvasImageLod::Working,
-            existing_load_diagnostics: None,
-            origin: crate::jobs::ImportOrigin::Existing,
-            trace: None,
+            ..loaded_record(source.clone())
         },
     );
     harness.step();
@@ -6466,15 +5963,13 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
         "inspect scenario failed; artifact={}",
         report.artifact_dir.display()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn dragging_multiple_library_search_results_centers_provisional_group_on_pointer() {
-    let root = temp_library_root("snappyref-library-search-pointer-drag-multi-center");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-library-search-pointer-drag-multi-center");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
         .store_rgba_image("first", &vec![255; 120 * 80 * 4], 120, 80)
         .unwrap();
@@ -6562,8 +6057,6 @@ fn dragging_multiple_library_search_results_centers_provisional_group_on_pointer
         bounds.center().y,
         pointer_world.y
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
@@ -6640,8 +6133,8 @@ fn empty_external_hover_does_not_cancel_search_provisional_placement() {
 #[cfg(feature = "semantic-search")]
 #[test]
 fn clicked_multi_select_enter_places_all_selected_library_results() {
-    let root = temp_library_root("snappyref-library-search-click-multi-enter-drop");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-library-search-click-multi-enter-drop");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
         .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
         .unwrap();
@@ -6756,15 +6249,13 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
     ];
     expected_asset_ids.sort_unstable();
     assert_eq!(asset_ids, expected_asset_ids);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn command_enter_places_all_unplaced_library_search_results_on_empty_active_board() {
-    let root = temp_library_root("snappyref-library-search-command-enter-unplaced");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-library-search-command-enter-unplaced");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
         .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -6837,15 +6328,13 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
     assert_eq!(asset_ids, expected_asset_ids);
     assert_eq!(harness.state().canvas.selected_placement_ids().len(), 2);
     assert!(!harness.state().search.overlay.open);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn submitted_search_is_saved_to_recent_searches() {
-    let root = temp_library_root("snappyref-search-recent-session");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-search-recent-session");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.search.overlay.open = true;
     app.search.overlay.query = "brutalist chair".to_owned();
@@ -6860,15 +6349,13 @@ fn submitted_search_is_saved_to_recent_searches() {
         library.load_user_session().unwrap().recent_searches,
         vec!["brutalist chair".to_owned()]
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn empty_recent_searches_do_not_submit_boilerplate_query() {
-    let root = temp_library_root("snappyref-search-no-boilerplate-recent");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-search-no-boilerplate-recent");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.search.overlay.open = true;
     let mut harness = app_harness(app, |ctx, app| {
@@ -6886,15 +6373,13 @@ fn empty_recent_searches_do_not_submit_boilerplate_query() {
             .recent_searches
             .is_empty()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn context_menu_move_to_front_routes_through_rendered_menu_row() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-context-menu-move-front");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-context-menu-move-front");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let image_path = library
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -6952,39 +6437,6 @@ fn context_menu_move_to_front_routes_through_rendered_menu_row() {
         library.load_canvas_stack_order().unwrap(),
         harness.state().canvas.canvas_stack_order()
     );
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[cfg(feature = "semantic-search")]
-#[test]
-fn search_result_grid_layout_balances_five_results_into_five_columns() {
-    let shell_content_width = PALETTE_WIDTH - 24.0;
-    let grid_layout = search_result_grid_layout(shell_content_width, 5);
-
-    assert_eq!(grid_layout.columns, 5);
-}
-
-#[cfg(feature = "semantic-search")]
-#[test]
-fn search_result_grid_layout_keeps_partial_rows_at_five_column_width() {
-    let shell_content_width = PALETTE_WIDTH - 24.0;
-    let five_result_layout = search_result_grid_layout(shell_content_width, 5);
-    let two_result_layout = search_result_grid_layout(shell_content_width, 2);
-
-    assert_eq!(two_result_layout.columns, 5);
-    assert_eq!(two_result_layout.tile_width, five_result_layout.tile_width);
-}
-
-#[cfg(feature = "semantic-search")]
-#[test]
-fn search_result_grid_content_height_grows_by_rows() {
-    let height = search_result_grid_content_height(6, 5);
-
-    assert_eq!(
-        height,
-        search_result_tile_height() * 2.0 + crate::ui::theme::SPACE_2
-    );
 }
 
 #[test]
@@ -7017,18 +6469,12 @@ fn completed_multi_file_import_batch_selects_and_compacts_loaded_geometry() {
         app.integrate_loaded_import(
             &ctx,
             PreparedPlacementImage {
-                target_board_id: 1,
                 queue_id: Some(id as u64),
-                placement,
                 preview_rgba: vec![255; width as usize * height as usize * 4],
                 preview_width: width,
                 preview_height: height,
-                animated_preview: None,
-                preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-                loaded_lod: crate::data::CanvasImageLod::Working,
-                existing_load_diagnostics: None,
                 origin: crate::jobs::ImportOrigin::Path,
-                trace: None,
+                ..loaded_record(placement)
             },
         );
     }
@@ -7094,8 +6540,8 @@ fn completed_import_batch_compacts_loaded_items_after_out_of_order_failures() {
 #[test]
 fn accepted_loading_batch_is_one_history_action_despite_out_of_order_results() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-accepted-loading-batch-history");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-accepted-loading-batch-history");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
     app.import_worker = Some(crate::jobs::ImagePrepWorker::new(
@@ -7186,8 +6632,6 @@ fn accepted_loading_batch_is_one_history_action_despite_out_of_order_results() {
     assert_eq!(app.status, undo_status);
     app.flush_persistence();
     assert!(library.load_placements().unwrap().is_empty());
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -7207,8 +6651,8 @@ fn completed_inactive_board_import_batch_does_not_mutate_active_canvas() {
 
 #[test]
 fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensions() {
-    let root = temp_library_root("snappyref-import-reservation");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-import-reservation");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library));
     app.active_board_id = second.id;
@@ -7246,14 +6690,12 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
     assert!(unknown.placement_id.is_some());
     assert_eq!(unknown.reserved_world, Some(egui::pos2(200.0, 0.0)));
     assert_eq!(layout.len(), 2);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn failed_import_fails_the_accepted_placement_before_it_is_durable() {
-    let root = temp_library_root("snappyref-failed-import-accepted");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-failed-import-accepted");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
     let reservation = app
@@ -7301,15 +6743,13 @@ fn failed_import_fails_the_accepted_placement_before_it_is_durable() {
         stored.content,
         crate::data::PlacementContent::Failed { .. }
     ));
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn completed_import_for_inactive_board_does_not_enter_active_canvas() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-inactive-import-completion");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inactive-import-completion");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library));
     app.active_board_id = 1;
@@ -7319,15 +6759,13 @@ fn completed_import_for_inactive_board_does_not_enter_active_canvas() {
 
     assert!(app.canvas.placement_for_id(41).is_none());
     assert_eq!(app.status, "Imported image");
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn accepted_import_for_inactive_board_keeps_history_on_target_board() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-inactive-import-history");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inactive-import-history");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap().remove(0);
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -7372,8 +6810,6 @@ fn accepted_import_for_inactive_board_keeps_history_on_target_board() {
         1
     );
     assert_eq!(app.status, "Redid Import image");
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -7493,8 +6929,8 @@ fn import_requests_preserve_import_area_cap_when_auto_scaling_setting_is_off() {
 #[test]
 fn raw_dropped_file_enqueues_external_import() {
     let ctx = egui::Context::default();
-    let root = temp_library_root("snappyref-raw-file-drop");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-raw-file-drop");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let source_path = library
         .store_rgba_image("drop-source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -7578,15 +7014,12 @@ fn raw_dropped_file_enqueues_external_import() {
             .placement_for_id(placement.state.id)
             .is_none()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(feature = "semantic-search")]
 #[test]
 fn inspect_pending_drop_batch_undo_writes_artifact() {
-    let scenario_name = inspect_scenario_name("pending-drop-batch-undo");
-    let mut scenario = InspectScenario::new(scenario_name);
+    let mut scenario = InspectScenario::new("pending-drop-batch-undo");
     scenario.event(
         "seed",
         serde_json::json!({
@@ -7595,8 +7028,8 @@ fn inspect_pending_drop_batch_undo_writes_artifact() {
         }),
     );
 
-    let root = temp_library_root("snappyref-inspect-pending-drop-batch-undo");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-inspect-pending-drop-batch-undo");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let sources = [
         (
             library
@@ -7819,8 +7252,6 @@ fn inspect_pending_drop_batch_undo_writes_artifact() {
         "inspect scenario failed; artifact={}",
         report.artifact_dir.display()
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -7883,7 +7314,7 @@ fn test_app(library: Option<Library>) -> SnappyRefApp {
         pending_user_session: None,
         pending_user_session_save_at: None,
         board_summaries_cache: BoardSummariesCache::default(),
-        update_service: super::UpdateService::new(super::UpdateConfig::default()),
+        update_service: super::UpdateService::new(super::UpdateConfig::for_tests()),
         user_update_flow_active: false,
         update_smoke: None,
         last_manual_update_check: None,
@@ -7957,6 +7388,16 @@ fn app_full_harness_with_step_dt(
     app: SnappyRefApp,
     step_dt: f32,
 ) -> Harness<'static, SnappyRefApp> {
+    app_full_harness_with_startup(step_dt, move |_| app)
+}
+
+/// Builds the app inside the eframe creation context, before the first frame,
+/// like `SnappyRefApp::new`. Use it when startup work (worker creation,
+/// session load) must precede the first frame's persistence.
+fn app_full_harness_with_startup(
+    step_dt: f32,
+    startup: impl FnOnce(&egui::Context) -> SnappyRefApp + 'static,
+) -> Harness<'static, SnappyRefApp> {
     Harness::builder()
         .with_size(egui::vec2(1200.0, 800.0))
         .with_pixels_per_point(1.0)
@@ -7966,7 +7407,7 @@ fn app_full_harness_with_step_dt(
         .with_step_dt(step_dt)
         .build_eframe(move |cc| {
             crate::ui::theme::configure_theme(&cc.egui_ctx);
-            app
+            startup(&cc.egui_ctx)
         })
 }
 
@@ -8412,11 +7853,6 @@ impl InspectScenario {
 }
 
 #[cfg(feature = "semantic-search")]
-fn inspect_scenario_name(default: &str) -> String {
-    std::env::var("SNAPPYREF_INSPECT_SCENARIO").unwrap_or_else(|_| default.to_owned())
-}
-
-#[cfg(feature = "semantic-search")]
 fn inspect_artifact_dir(scenario: &str) -> PathBuf {
     let target_dir = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
@@ -8431,8 +7867,8 @@ fn inspect_artifact_dir(scenario: &str) -> PathBuf {
         .join(scenario)
         .join(format!(
             "run-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ))
@@ -8510,16 +7946,11 @@ fn inspect_sample_loaded_item(
     PreparedPlacementImage {
         target_board_id,
         queue_id: Some(queue_id),
-        placement: Placement::loaded(state, asset),
         preview_rgba: std::iter::repeat_n(color, pixel_count).flatten().collect(),
         preview_width: width,
         preview_height: height,
-        animated_preview: None,
-        preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-        loaded_lod: crate::data::CanvasImageLod::Working,
-        existing_load_diagnostics: None,
         origin: crate::jobs::ImportOrigin::Path,
-        trace: None,
+        ..loaded_record(Placement::loaded(state, asset))
     }
 }
 
@@ -8533,18 +7964,12 @@ fn inspect_prepared_loaded_placement(
     origin: crate::jobs::ImportOrigin,
 ) -> PreparedPlacementImage {
     PreparedPlacementImage {
-        target_board_id: 1,
         queue_id,
-        placement,
         preview_rgba: solid_rgba(color, preview_width, preview_height),
         preview_width,
         preview_height,
-        animated_preview: None,
-        preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-        loaded_lod: crate::data::CanvasImageLod::Working,
-        existing_load_diagnostics: None,
         origin,
-        trace: None,
+        ..loaded_record(placement)
     }
 }
 
@@ -8757,18 +8182,10 @@ fn add_inspect_compact_image(
     harness.state_mut().canvas.add_prepared_placement_image(
         ctx,
         PreparedPlacementImage {
-            target_board_id: 1,
-            queue_id: None,
-            placement,
             preview_rgba: solid_rgba(color, width, height),
             preview_width: width,
             preview_height: height,
-            animated_preview: None,
-            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-            loaded_lod: crate::data::CanvasImageLod::Working,
-            existing_load_diagnostics: None,
-            origin: crate::jobs::ImportOrigin::Existing,
-            trace: None,
+            ..loaded_record(placement)
         },
     );
 }
@@ -8793,18 +8210,6 @@ fn composite_pixel_over_background(
         (foreground.0[2] as f32 * alpha + background.0[2] as f32 * inverse_alpha).round() as u8,
         255,
     ])
-}
-
-fn temp_library_root(prefix: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "{prefix}-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).unwrap();
-    root
 }
 
 fn test_viewport_world() -> egui::Rect {
@@ -8842,16 +8247,9 @@ fn test_loaded_item(placement_id: i64, target_board_id: i64) -> PreparedPlacemen
     PreparedPlacementImage {
         target_board_id,
         queue_id: Some(placement_id as u64),
-        placement,
         preview_rgba: vec![255, 255, 255, 255],
-        preview_width: 1,
-        preview_height: 1,
-        animated_preview: None,
-        preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-        loaded_lod: crate::data::CanvasImageLod::Working,
-        existing_load_diagnostics: None,
         origin: crate::jobs::ImportOrigin::Clipboard,
-        trace: None,
+        ..loaded_record(placement)
     }
 }
 
@@ -8889,24 +8287,28 @@ fn persisted_loaded_item(
     }
 }
 
+/// A worker-prepared record for `placement` on board 1 with a 1x1 red
+/// preview, as if the existing item had just loaded from the library.
+fn loaded_record(placement: Placement) -> PreparedPlacementImage {
+    PreparedPlacementImage {
+        target_board_id: 1,
+        queue_id: None,
+        placement,
+        preview_rgba: vec![255, 0, 0, 255],
+        preview_width: 1,
+        preview_height: 1,
+        animated_preview: None,
+        preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
+        loaded_lod: crate::data::CanvasImageLod::Working,
+        existing_load_diagnostics: None,
+        origin: crate::jobs::ImportOrigin::Existing,
+        trace: None,
+    }
+}
+
 fn add_loaded_record(app: &mut SnappyRefApp, ctx: &egui::Context, placement: Placement) {
-    app.canvas.add_prepared_placement_image(
-        ctx,
-        PreparedPlacementImage {
-            target_board_id: 1,
-            queue_id: None,
-            placement,
-            preview_rgba: vec![255, 0, 0, 255],
-            preview_width: 1,
-            preview_height: 1,
-            animated_preview: None,
-            preview_texture: crate::jobs::ImagePrepPreviewTexture::Cpu,
-            loaded_lod: crate::data::CanvasImageLod::Working,
-            existing_load_diagnostics: None,
-            origin: crate::jobs::ImportOrigin::Existing,
-            trace: None,
-        },
-    );
+    app.canvas
+        .add_prepared_placement_image(ctx, loaded_record(placement));
 }
 
 fn test_canvas_annotation(id: i64, start: egui::Pos2) -> crate::data::CanvasAnnotation {

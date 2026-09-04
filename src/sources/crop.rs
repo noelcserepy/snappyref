@@ -129,7 +129,6 @@ fn cleanup_failed_crop(stored_path: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use eframe::egui;
 
@@ -139,12 +138,11 @@ mod tests {
         ImagePrepPreviewTexture, ImagePrepWorker, ImportOrigin, PreparedPlacementImage,
     };
     use crate::library::storage::Library;
-
-    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    use crate::test_support::TempRoot;
 
     #[test]
     fn enqueue_pending_crop_shows_cached_preview_before_worker_result() {
-        let root = temp_library_root("crop-flow-pending-preview");
+        let root = TempRoot::new("crop-flow-pending-preview");
         let library = Library::initialize(root.join("library")).unwrap();
         let source_path = library
             .store_rgba_image("source", &vec![255; 8 * 8 * 4], 8, 8)
@@ -216,8 +214,6 @@ mod tests {
             ),
             (2.0, 2.0)
         );
-
-        let _ = std::fs::remove_dir_all(root);
     }
 
     fn test_record(placement_id: i64, asset_id: i64, width: u32, height: u32) -> Placement {
@@ -243,10 +239,5 @@ mod tests {
                 height,
             },
         )
-    }
-
-    fn temp_library_root(label: &str) -> PathBuf {
-        let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("snappyref-{label}-{counter}"))
     }
 }

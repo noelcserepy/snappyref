@@ -359,17 +359,7 @@ fn canvas_image_settings(
 
 #[cfg(test)]
 mod tests {
-    fn temp_root(prefix: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "{prefix}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        root
-    }
+    use crate::test_support::TempRoot;
 
     #[test]
     fn reservation_tracks_queue_and_placement_correlation() {
@@ -465,8 +455,8 @@ mod tests {
 
     #[test]
     fn failed_import_resolves_correlated_reservation() {
-        let root = temp_root("snappyref-content-resolution-failure");
-        let library = crate::library::storage::Library::initialize(root.clone()).unwrap();
+        let root = TempRoot::new("snappyref-content-resolution-failure");
+        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
         let loading = library
             .persist_committed_loading_placement(
                 eframe::egui::pos2(10.0, 20.0),
@@ -496,7 +486,5 @@ mod tests {
         assert_eq!(finished.batch_queue_id, Some(reservation.queue_id));
         assert_eq!(finished.placement_id, Some(loading.state.id));
         assert_eq!(runtime.pending_len(), 0);
-
-        let _ = std::fs::remove_dir_all(root);
     }
 }

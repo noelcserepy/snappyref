@@ -1111,6 +1111,7 @@ mod tests {
     use crate::library::storage::Library;
     use crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
     use crate::search::semantic::model::ModelSpec;
+    use crate::test_support::TempRoot;
     use eframe::egui;
     use image::imageops::FilterType;
     use std::fs;
@@ -1124,7 +1125,7 @@ mod tests {
 
     #[test]
     fn image_pivot_returns_unplaced_asset_without_creating_placement() {
-        let root = temp_root("snappyref-library-service-test");
+        let root = TempRoot::new("snappyref-library-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
         let source_path = library
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
@@ -1202,13 +1203,11 @@ mod tests {
             Some(unplaced_preview_path.as_path())
         );
         assert_eq!(library.load_placements().unwrap().len(), 1);
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn image_pivot_searches_assets_across_boards() {
-        let root = temp_root("snappyref-library-wide-service-test");
+        let root = TempRoot::new("snappyref-library-wide-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
         let second_board = library.create_board("Second").unwrap();
         let source_path = library
@@ -1293,13 +1292,11 @@ mod tests {
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].asset_id, inactive.require_loaded_asset().id);
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn image_pivot_search_tolerates_archived_asset_from_warmed_cache() {
-        let root = temp_root("snappyref-archived-cache-service-test");
+        let root = TempRoot::new("snappyref-archived-cache-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
         let source_path = library
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
@@ -1371,13 +1368,11 @@ mod tests {
             .search_with_image_pivot_with_limit(source.require_loaded_asset().id, None, 5)
             .unwrap();
         assert!(results.is_empty());
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn enqueue_asset_index_skips_assets_with_ready_embedding() {
-        let root = temp_root("snappyref-ready-index-skip-service-test");
+        let root = TempRoot::new("snappyref-ready-index-skip-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
         let source_path = library
             .store_rgba_image("ready", &[255, 0, 0, 255], 1, 1)
@@ -1424,13 +1419,11 @@ mod tests {
             crate::search::semantic::index::decode_f32_blob(&embedding).unwrap(),
             vec![1.0, 0.0]
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn idle_backfill_without_jobs_does_not_initialize_model() {
-        let root = temp_root("snappyref-empty-backfill-no-model-service-test");
+        let root = TempRoot::new("snappyref-empty-backfill-no-model-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
         let service = SemanticSearchService::new(
             library.clone(),
@@ -1460,13 +1453,11 @@ mod tests {
 
         assert!(backfill_idle, "timed out waiting for empty backfill");
         assert!(!service.is_ready());
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn embedding_source_prefers_working_lod_when_present() {
-        let root = temp_root("snappyref-embedding-source-lod-test");
+        let root = TempRoot::new("snappyref-embedding-source-lod-test");
         let library = Library::initialize(root.join("library")).unwrap();
         let original_path = library
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
@@ -1509,8 +1500,6 @@ mod tests {
             crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
         );
         assert_eq!(with_lod, working_lod);
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1546,19 +1535,6 @@ mod tests {
             normalize_std: None,
             resize_filter: FilterType::Nearest,
         }
-    }
-
-    fn temp_root(prefix: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "{}-{}",
-            prefix,
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&root).unwrap();
-        root
     }
 
     #[test]
@@ -1641,8 +1617,6 @@ mod tests {
         let results = service.search_with_limit("cat", 5).unwrap();
         assert!(!results.is_empty());
         assert_eq!(results[0].asset_id, record.require_loaded_asset().id);
-
-        let _ = fs::remove_dir_all(root);
     }
 
     /// A test stand-in for the **Embedding Helper Process** child. The

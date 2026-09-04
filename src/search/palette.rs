@@ -940,7 +940,11 @@ fn palette_status_text(status: &SearchOverlayStatus, idle_text: &'static str) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{KBD_HINT_CELL_SIZE, PALETTE_CHROME_Y_MARGIN, PALETTE_FOOTER_STATUS_WIDTH};
+    use super::{
+        KBD_HINT_CELL_SIZE, PALETTE_CHROME_Y_MARGIN, PALETTE_FOOTER_STATUS_WIDTH, PALETTE_WIDTH,
+        search_result_grid_content_height, search_result_grid_layout, search_result_tile_height,
+    };
+    use crate::ui::theme::SPACE_2;
 
     #[test]
     fn palette_header_and_footer_share_chrome_height() {
@@ -953,5 +957,30 @@ mod tests {
     #[test]
     fn palette_footer_status_reservation_stays_compact() {
         assert!(PALETTE_FOOTER_STATUS_WIDTH <= 96.0);
+    }
+
+    #[test]
+    fn search_result_grid_layout_balances_five_results_into_five_columns() {
+        let shell_content_width = PALETTE_WIDTH - 24.0;
+        let grid_layout = search_result_grid_layout(shell_content_width, 5);
+
+        assert_eq!(grid_layout.columns, 5);
+    }
+
+    #[test]
+    fn search_result_grid_layout_keeps_partial_rows_at_five_column_width() {
+        let shell_content_width = PALETTE_WIDTH - 24.0;
+        let five_result_layout = search_result_grid_layout(shell_content_width, 5);
+        let two_result_layout = search_result_grid_layout(shell_content_width, 2);
+
+        assert_eq!(two_result_layout.columns, 5);
+        assert_eq!(two_result_layout.tile_width, five_result_layout.tile_width);
+    }
+
+    #[test]
+    fn search_result_grid_content_height_grows_by_rows() {
+        let height = search_result_grid_content_height(6, 5);
+
+        assert_eq!(height, search_result_tile_height() * 2.0 + SPACE_2);
     }
 }
