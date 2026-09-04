@@ -270,91 +270,31 @@ impl ContentResolutionRuntime {
     }
 }
 
-pub(crate) fn import_path_request(
-    source_path: PathBuf,
+pub(crate) fn import_request(
+    source: crate::jobs::ImportSource,
     reservation: ContentResolutionReservation,
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
     config: ContentResolutionRequestConfig,
     trace: Option<crate::jobs::ImagePrepTrace>,
 ) -> crate::jobs::ImagePrepRequest {
-    crate::jobs::ImagePrepRequest::ImportPath {
+    crate::jobs::ImagePrepRequest::Import(crate::jobs::ImportRequest {
         target_board_id: reservation.target_board_id,
         queue_id: reservation.queue_id,
         placement_id: reservation.placement_id,
-        source_path,
+        source,
         desired_world,
         reserved_world: reservation.reserved_world,
         viewport_world,
         max_texture_side: config.max_texture_side,
-        canvas_image_settings: canvas_image_settings(config),
+        canvas_image_settings: crate::jobs::CanvasImageSettings {
+            max_side: config.canvas_image_max_side,
+        },
         auto_scale: config.auto_image_scaling,
         placement_target_area: config.placement_target_area,
         placement_gap: config.placement_gap,
         trace,
-    }
-}
-
-pub(crate) fn import_url_request(
-    url: String,
-    reservation: ContentResolutionReservation,
-    desired_world: egui::Pos2,
-    viewport_world: egui::Rect,
-    config: ContentResolutionRequestConfig,
-    trace: Option<crate::jobs::ImagePrepTrace>,
-) -> crate::jobs::ImagePrepRequest {
-    crate::jobs::ImagePrepRequest::ImportUrl {
-        target_board_id: reservation.target_board_id,
-        queue_id: reservation.queue_id,
-        placement_id: reservation.placement_id,
-        url,
-        desired_world,
-        reserved_world: reservation.reserved_world,
-        viewport_world,
-        max_texture_side: config.max_texture_side,
-        canvas_image_settings: canvas_image_settings(config),
-        auto_scale: config.auto_image_scaling,
-        placement_target_area: config.placement_target_area,
-        placement_gap: config.placement_gap,
-        trace,
-    }
-}
-
-pub(crate) fn import_clipboard_request(
-    rgba: Vec<u8>,
-    width: u32,
-    height: u32,
-    reservation: ContentResolutionReservation,
-    desired_world: egui::Pos2,
-    viewport_world: egui::Rect,
-    config: ContentResolutionRequestConfig,
-    trace: Option<crate::jobs::ImagePrepTrace>,
-) -> crate::jobs::ImagePrepRequest {
-    crate::jobs::ImagePrepRequest::ImportClipboard {
-        target_board_id: reservation.target_board_id,
-        queue_id: reservation.queue_id,
-        placement_id: reservation.placement_id,
-        rgba,
-        width,
-        height,
-        desired_world,
-        reserved_world: reservation.reserved_world,
-        viewport_world,
-        max_texture_side: config.max_texture_side,
-        canvas_image_settings: canvas_image_settings(config),
-        auto_scale: config.auto_image_scaling,
-        placement_target_area: config.placement_target_area,
-        placement_gap: config.placement_gap,
-        trace,
-    }
-}
-
-fn canvas_image_settings(
-    config: ContentResolutionRequestConfig,
-) -> crate::jobs::CanvasImageSettings {
-    crate::jobs::CanvasImageSettings {
-        max_side: config.canvas_image_max_side,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -411,8 +351,8 @@ mod tests {
             eframe::egui::vec2(100.0, 80.0),
         );
 
-        let request = super::import_path_request(
-            std::path::PathBuf::from("image.png"),
+        let request = super::import_request(
+            crate::jobs::ImportSource::Path(std::path::PathBuf::from("image.png")),
             reservation,
             eframe::egui::pos2(12.0, 24.0),
             viewport_world,
@@ -426,31 +366,18 @@ mod tests {
             None,
         );
 
-        match request {
-            crate::jobs::ImagePrepRequest::ImportPath {
-                target_board_id,
-                queue_id,
-                placement_id,
-                reserved_world,
-                max_texture_side,
-                canvas_image_settings,
-                auto_scale,
-                placement_target_area,
-                placement_gap,
-                ..
-            } => {
-                assert_eq!(target_board_id, 2);
-                assert_eq!(queue_id, 1);
-                assert_eq!(placement_id, Some(41));
-                assert_eq!(reserved_world, Some(eframe::egui::pos2(10.0, 20.0)));
-                assert_eq!(max_texture_side, 512);
-                assert_eq!(canvas_image_settings.max_side, 1024);
-                assert!(auto_scale);
-                assert_eq!(placement_target_area, 14400.0);
-                assert_eq!(placement_gap, 18.0);
-            }
-            _ => panic!("expected import path request"),
-        }
+        let crate::jobs::ImagePrepRequest::Import(request) = request else {
+            panic!("expected import request");
+        };
+        assert_eq!(request.target_board_id, 2);
+        assert_eq!(request.queue_id, 1);
+        assert_eq!(request.placement_id, Some(41));
+        assert_eq!(request.reserved_world, Some(eframe::egui::pos2(10.0, 20.0)));
+        assert_eq!(request.max_texture_side, 512);
+        assert_eq!(request.canvas_image_settings.max_side, 1024);
+        assert!(request.auto_scale);
+        assert_eq!(request.placement_target_area, 14400.0);
+        assert_eq!(request.placement_gap, 18.0);
     }
 
     #[test]

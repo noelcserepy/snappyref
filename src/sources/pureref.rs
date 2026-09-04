@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
-use crate::sources::import::{ExternalImportSource, normalize_import_url};
+use crate::jobs::ImportSource;
+use crate::sources::import::normalize_import_url;
 
 const PURE_REF_IMAGE_ITEM: &str = "GraphicsImageItem";
 
-pub(crate) fn sources_from_binary(bytes: &[u8]) -> Vec<ExternalImportSource> {
+pub(crate) fn sources_from_binary(bytes: &[u8]) -> Vec<ImportSource> {
     let strings = length_prefixed_utf16be_strings(bytes);
     let mut sources = Vec::new();
 
@@ -22,16 +23,16 @@ pub(crate) fn sources_from_binary(bytes: &[u8]) -> Vec<ExternalImportSource> {
     sources
 }
 
-fn import_source_from_pureref_source(raw: &str) -> Option<ExternalImportSource> {
+fn import_source_from_pureref_source(raw: &str) -> Option<ImportSource> {
     let value = raw.trim();
     if value.is_empty() {
         return None;
     }
     if let Some(url) = normalize_import_url(value) {
-        return Some(ExternalImportSource::Url(url));
+        return Some(ImportSource::Url(url));
     }
     if is_windows_path(value) || is_unc_path(value) {
-        return Some(ExternalImportSource::Path(PathBuf::from(value)));
+        return Some(ImportSource::Path(PathBuf::from(value)));
     }
     None
 }
@@ -96,7 +97,7 @@ fn is_supported_pureref_string_char(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::sources_from_binary;
-    use crate::sources::import::ExternalImportSource;
+    use crate::jobs::ImportSource;
 
     #[test]
     fn extracts_image_item_urls_and_paths() {
@@ -113,8 +114,8 @@ mod tests {
         assert_eq!(
             sources_from_binary(&bytes),
             vec![
-                ExternalImportSource::Url("https://example.com/a.jpg".to_owned()),
-                ExternalImportSource::Path("C:/Users/Admin/Downloads/reference.webp".into()),
+                ImportSource::Url("https://example.com/a.jpg".to_owned()),
+                ImportSource::Path("C:/Users/Admin/Downloads/reference.webp".into()),
             ]
         );
     }
@@ -134,9 +135,7 @@ mod tests {
 
         assert_eq!(
             sources_from_binary(&bytes),
-            vec![ExternalImportSource::Url(
-                "https://example.com/a.jpg".to_owned()
-            )]
+            vec![ImportSource::Url("https://example.com/a.jpg".to_owned())]
         );
     }
 

@@ -6503,13 +6503,9 @@ fn accepted_loading_batch_is_one_history_action_despite_out_of_order_results() {
         ctx.clone(),
         None,
     ));
-    app.enqueue_external_import_sources(
+    app.enqueue_import_sources(
         (1..=3)
-            .map(|index| {
-                crate::sources::import::ExternalImportSource::Path(
-                    root.join(format!("missing-{index}.png")),
-                )
-            })
+            .map(|index| crate::jobs::ImportSource::Path(root.join(format!("missing-{index}.png"))))
             .collect(),
         test_screen_rect(),
         egui::pos2(120.0, 80.0),
@@ -6610,14 +6606,11 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
     let second = library.create_board("Second").unwrap();
     let mut app = test_app(Some(library));
     app.active_board_id = second.id;
-    let mut layout = Vec::new();
 
     let known = app
         .reserve_import(
-            &mut layout,
             Some((100, 80)),
             egui::Pos2::ZERO,
-            test_viewport_world(),
             crate::data::ContentResolutionSource::Unknown {
                 description: "known test import".to_owned(),
             },
@@ -6625,10 +6618,8 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
         .unwrap();
     let unknown = app
         .reserve_import(
-            &mut layout,
             None,
             egui::pos2(200.0, 0.0),
-            test_viewport_world(),
             crate::data::ContentResolutionSource::Unknown {
                 description: "unknown test import".to_owned(),
             },
@@ -6643,7 +6634,6 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
     assert_eq!(unknown.queue_id, 2);
     assert!(unknown.placement_id.is_some());
     assert_eq!(unknown.reserved_world, Some(egui::pos2(200.0, 0.0)));
-    assert_eq!(layout.len(), 2);
 }
 
 #[test]
@@ -6654,10 +6644,8 @@ fn failed_import_fails_the_accepted_placement_before_it_is_durable() {
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
     let reservation = app
         .reserve_import(
-            &mut Vec::new(),
             Some((100, 80)),
             egui::Pos2::ZERO,
-            test_viewport_world(),
             crate::data::ContentResolutionSource::Unknown {
                 description: "doomed import".to_owned(),
             },
@@ -6726,10 +6714,8 @@ fn accepted_import_for_inactive_board_keeps_history_on_target_board() {
     app.document_persistence = super::DocumentPersistence::queued(library.clone());
     let reservation = app
         .reserve_import(
-            &mut Vec::new(),
             Some((1, 1)),
             egui::Pos2::ZERO,
-            test_viewport_world(),
             crate::data::ContentResolutionSource::Unknown {
                 description: "inactive Board import".to_owned(),
             },
@@ -6840,7 +6826,7 @@ fn url_batch_previews_use_balanced_layout_for_approximate_dimensions() {
     let mut app = test_app(None);
     let sources = (0..13)
         .map(|index| {
-            super::ExternalImportSource::Url(format!("https://example.com/image-{index}.png"))
+            crate::jobs::ImportSource::Url(format!("https://example.com/image-{index}.png"))
         })
         .collect::<Vec<_>>();
 
@@ -7212,7 +7198,7 @@ fn inspect_pending_drop_batch_undo_writes_artifact() {
 fn missing_drop_event_fallback_is_single_use_after_hover_ends() {
     let mut app = test_app(None);
     let hover_pos = egui::pos2(320.0, 240.0);
-    let source = crate::sources::import::ExternalImportSource::Path(std::path::PathBuf::from(
+    let source = crate::jobs::ImportSource::Path(std::path::PathBuf::from(
         "C:/Users/Admin/Pictures/drop.png",
     ));
     app.pending_missing_drop_fallback = Some(crate::sources::external_drag::ExternalDragIntake {
@@ -7680,16 +7666,13 @@ impl InspectScenario {
     ) {
         self.capture_screen("screen-000-before-import", harness);
 
-        let mut layout = Vec::new();
         let mut imports = Vec::new();
         for sample in samples {
             let reservation = harness
                 .state_mut()
                 .reserve_import(
-                    &mut layout,
                     Some((sample.width, sample.height)),
                     sample.center,
-                    test_viewport_world(),
                     crate::data::ContentResolutionSource::Unknown {
                         description: sample.name.to_owned(),
                     },

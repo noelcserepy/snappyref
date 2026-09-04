@@ -10,8 +10,7 @@ use crate::library::storage::Library;
 
 use super::{
     ExistingLoadPriority, ImagePrepPriority, ImagePrepRequest, ImagePrepResult,
-    ImagePrepWorkerStats, backfill_cache_lod, crop_item, import_clipboard, import_path, import_url,
-    load_existing,
+    ImagePrepWorkerStats, ImportSource, backfill_cache_lod, crop_item, import, load_existing,
 };
 
 pub struct ImagePrepWorker {
@@ -97,103 +96,9 @@ impl ImagePrepWorker {
             workers.push(thread::spawn(move || {
                 while let Some(request) = worker_queue.pop(kind) {
                     let result = match request {
-                        ImagePrepRequest::ImportPath {
-                            target_board_id,
-                            queue_id,
-                            placement_id,
-                            source_path,
-                            desired_world,
-                            reserved_world,
-                            viewport_world,
-                            max_texture_side,
-                            canvas_image_settings,
-                            auto_scale,
-                            placement_target_area,
-                            placement_gap,
-                            trace,
-                        } => import_path(
-                            &worker_library,
-                            target_board_id,
-                            queue_id,
-                            placement_id,
-                            source_path,
-                            desired_world,
-                            reserved_world,
-                            viewport_world,
-                            max_texture_side,
-                            canvas_image_settings,
-                            auto_scale,
-                            placement_target_area,
-                            placement_gap,
-                            trace,
-                            worker_render_state.as_ref(),
-                        ),
-                        ImagePrepRequest::ImportClipboard {
-                            target_board_id,
-                            queue_id,
-                            placement_id,
-                            rgba,
-                            width,
-                            height,
-                            desired_world,
-                            reserved_world,
-                            viewport_world,
-                            max_texture_side,
-                            canvas_image_settings,
-                            auto_scale,
-                            placement_target_area,
-                            placement_gap,
-                            trace,
-                        } => import_clipboard(
-                            &worker_library,
-                            target_board_id,
-                            queue_id,
-                            placement_id,
-                            rgba,
-                            width,
-                            height,
-                            desired_world,
-                            reserved_world,
-                            viewport_world,
-                            max_texture_side,
-                            canvas_image_settings,
-                            auto_scale,
-                            placement_target_area,
-                            placement_gap,
-                            trace,
-                            worker_render_state.as_ref(),
-                        ),
-                        ImagePrepRequest::ImportUrl {
-                            target_board_id,
-                            queue_id,
-                            placement_id,
-                            url,
-                            desired_world,
-                            reserved_world,
-                            viewport_world,
-                            max_texture_side,
-                            canvas_image_settings,
-                            auto_scale,
-                            placement_target_area,
-                            placement_gap,
-                            trace,
-                        } => import_url(
-                            &worker_library,
-                            target_board_id,
-                            queue_id,
-                            placement_id,
-                            url,
-                            desired_world,
-                            reserved_world,
-                            viewport_world,
-                            max_texture_side,
-                            canvas_image_settings,
-                            auto_scale,
-                            placement_target_area,
-                            placement_gap,
-                            trace,
-                            worker_render_state.as_ref(),
-                        ),
+                        ImagePrepRequest::Import(request) => {
+                            import(&worker_library, request, worker_render_state.as_ref())
+                        }
                         ImagePrepRequest::Crop {
                             request,
                             max_texture_side,
@@ -442,10 +347,9 @@ impl ImagePrepRequest {
                 ExistingLoadPriority::Background => ImagePrepPriority::Background,
             },
             ImagePrepRequest::BackfillLod { .. } => ImagePrepPriority::Background,
-            ImagePrepRequest::ImportPath { .. }
-            | ImagePrepRequest::ImportClipboard { .. }
-            | ImagePrepRequest::ImportUrl { .. }
-            | ImagePrepRequest::Crop { .. } => ImagePrepPriority::Interactive,
+            ImagePrepRequest::Import(_) | ImagePrepRequest::Crop { .. } => {
+                ImagePrepPriority::Interactive
+            }
         }
     }
 
@@ -456,12 +360,14 @@ impl ImagePrepRequest {
     /// in mixed-batch import ordering (`Crop`, `LoadExisting`, `BackfillLod`).
     fn priority_bytes(&self) -> Option<u64> {
         match self {
-            ImagePrepRequest::ImportPath { source_path, .. } => std::fs::metadata(source_path)
-                .ok()
-                .map(|metadata| metadata.len()),
-            ImagePrepRequest::ImportClipboard { rgba, .. } => Some(rgba.len() as u64),
-            ImagePrepRequest::ImportUrl { .. }
-            | ImagePrepRequest::Crop { .. }
+            ImagePrepRequest::Import(request) => match &request.source {
+                ImportSource::Path(source_path) => std::fs::metadata(source_path)
+                    .ok()
+                    .map(|metadata| metadata.len()),
+                ImportSource::Clipboard { rgba, .. } => Some(rgba.len() as u64),
+                ImportSource::Url(_) => None,
+            },
+            ImagePrepRequest::Crop { .. }
             | ImagePrepRequest::LoadExisting { .. }
             | ImagePrepRequest::BackfillLod { .. } => None,
         }

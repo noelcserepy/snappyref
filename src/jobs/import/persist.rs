@@ -7,18 +7,18 @@ use eframe::egui;
 
 use crate::data::CanvasImageLod;
 use crate::jobs::image_formats::{
-    PreviewImage, decode_image_bytes_with_max_side, decode_image_file_with_max_side,
-    preview_animation_from_frames, preview_image_from_rgba,
+    DecodedAnimation, PreviewImage, decode_image_bytes_with_max_side,
+    decode_image_file_with_max_side, preview_animation_from_frames, preview_image_from_rgba,
 };
 use crate::library::storage::{Library, sha256_bytes, sha256_file};
 
 #[cfg(test)]
 use super::DEFAULT_PLACEMENT_TARGET_AREA;
 use super::arrangement::resolve_import_world;
-use super::decode::{install_prepared_canvas_cache, prepare_image_with_helper};
+use super::decode::{PreparedImage, install_prepared_canvas_cache, prepare_image_with_helper};
 use super::preview_texture::build_preview_texture;
 use super::{
-    CanvasImageSettings, ImagePrepPreviewTexture, ImagePrepResult, ImagePrepTrace, ImportOrigin,
+    CanvasImageSettings, ImagePrepPreviewTexture, ImagePrepResult, ImportRequest, ImportSource,
     PreparedPlacementImage, SVG_MIME_TYPE, animated_preview_max_side,
     canvas_source_image_from_rgba, is_svg_path, original_mime_type_is_svg, parse_svg_document,
     read_svg_document, stable_svg_uri_key,
@@ -79,545 +79,78 @@ pub fn import_path_sync(
     placement_gap: f32,
 ) -> Result<PreparedPlacementImage, String> {
     let target_board_id = library.load_user_session()?.active_board_id;
-    import_path_sync_traced(
+    import_sync(
         library,
-        target_board_id,
-        None,
-        Some(library.allocate_document_id()),
-        source_path,
-        desired_world,
-        None,
-        viewport_world,
-        usize::MAX,
-        CanvasImageSettings::default(),
-        auto_scale,
-        DEFAULT_PLACEMENT_TARGET_AREA,
-        placement_gap,
-        None,
+        ImportRequest {
+            target_board_id,
+            queue_id: 0,
+            placement_id: Some(library.allocate_document_id()),
+            source: ImportSource::Path(source_path),
+            desired_world,
+            reserved_world: None,
+            viewport_world,
+            max_texture_side: usize::MAX,
+            canvas_image_settings: CanvasImageSettings::default(),
+            auto_scale,
+            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+            placement_gap,
+            trace: None,
+        },
         None,
     )
 }
 
-pub(crate) fn import_path_sync_traced(
+pub(crate) fn import(
     library: &Library,
-    target_board_id: i64,
-    queue_id: Option<u64>,
-    placement_id: Option<i64>,
-    source_path: PathBuf,
-    desired_world: egui::Pos2,
-    reserved_world: Option<egui::Pos2>,
-    viewport_world: egui::Rect,
-    max_texture_side: usize,
-    canvas_image_settings: CanvasImageSettings,
-    auto_scale: bool,
-    placement_target_area: f32,
-    placement_gap: f32,
-    trace: Option<ImagePrepTrace>,
+    request: ImportRequest,
+    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
+) -> ImagePrepResult {
+    let target_board_id = request.target_board_id;
+    let queue_id = request.queue_id;
+    let placement_id = request.placement_id;
+    let context = request.source.label();
+    match import_sync(library, request, wgpu_render_state) {
+        Ok(loaded) => ImagePrepResult::Loaded(loaded),
+        Err(error) => ImagePrepResult::Failed {
+            target_board_id: Some(target_board_id),
+            queue_id: Some(queue_id),
+            placement_id,
+            context,
+            error,
+        },
+    }
+}
+
+pub(crate) fn import_sync(
+    library: &Library,
+    request: ImportRequest,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> Result<PreparedPlacementImage, String> {
     let worker_started_at = Instant::now();
-    let mut trace = trace;
+    let ImportRequest {
+        target_board_id,
+        queue_id,
+        placement_id,
+        source,
+        desired_world,
+        reserved_world,
+        viewport_world,
+        max_texture_side,
+        canvas_image_settings,
+        auto_scale,
+        placement_target_area,
+        placement_gap,
+        mut trace,
+    } = request;
     if let Some(trace) = &mut trace {
         trace.timings.queue_wait = worker_started_at.saturating_duration_since(trace.queued_at);
     }
-
-    if is_svg_path(&source_path) {
-        return import_svg_path_sync_traced(
-            library,
-            target_board_id,
-            queue_id,
-            placement_id,
-            source_path,
-            desired_world,
-            reserved_world,
-            viewport_world,
-            auto_scale,
-            placement_target_area,
-            placement_gap,
-            worker_started_at,
-            trace,
-        );
-    }
+    let origin = source.origin();
 
     let decode_started_at = Instant::now();
-    if let Some(prepared) =
-        prepare_image_with_helper(&source_path, canvas_image_settings).unwrap_or(None)
-    {
-        if let Some(trace) = &mut trace {
-            trace.timings.decode_or_load = decode_started_at.elapsed();
-        }
-        let initial_scale = display_scale_for_placement_target_area(
-            prepared.source_width,
-            prepared.source_height,
-            auto_scale,
-            placement_target_area,
-        );
-        let arranged_world = resolve_import_world(
-            library,
-            target_board_id,
-            desired_world,
-            reserved_world,
-            viewport_world,
-            prepared.source_width as f32 * initial_scale.max(0.01),
-            prepared.source_height as f32 * initial_scale.max(0.01),
-            placement_gap,
-        )?;
-
-        let store_started_at = Instant::now();
-        let stored_path = library
-            .store_original(&source_path)
-            .map_err(|error| format!("{}: {error}", source_path.display()))?;
-        let original_sha256 = sha256_file(&stored_path)?;
-
-        let placement = persist_imported_image_with_exact_reuse(ImportedImagePersistRequest {
-            library,
-            target_board_id,
-            placement_id,
-            stored_path: &stored_path,
-            mime_type: &prepared.mime_type,
-            width: prepared.source_width,
-            height: prepared.source_height,
-            file_size: prepared.file_size,
-            original_sha256: &original_sha256,
-            arranged_world,
-            initial_scale,
-        })
-        .map_err(|error| format!("{}: {error}", stored_path.display()))?;
-        let store_and_persist = store_started_at.elapsed();
-        let preview_started_at = Instant::now();
-        install_prepared_canvas_cache(
-            library,
-            placement.require_loaded_asset().id,
-            canvas_image_settings.max_side,
-            CanvasImageLod::Working,
-            &prepared,
-        );
-        let preview = preview_image_from_rgba(
-            prepared.width,
-            prepared.height,
-            &prepared.rgba,
-            max_texture_side,
-        )?;
-        let preview_texture = build_preview_texture(wgpu_render_state, &preview)?;
-        if let Some(trace) = &mut trace {
-            trace.timings.store_and_persist = store_and_persist;
-            trace.timings.preview_prepare = preview_started_at.elapsed();
-            trace.timings.worker_total = worker_started_at.elapsed();
-        }
-
-        return Ok(PreparedPlacementImage {
-            target_board_id,
-            queue_id,
-            placement,
-            preview_rgba: preview.rgba,
-            preview_width: preview.width,
-            preview_height: preview.height,
-            animated_preview: None,
-            preview_texture,
-            loaded_lod: CanvasImageLod::Working,
-            existing_load_diagnostics: None,
-            origin: ImportOrigin::Path,
-            trace,
-        });
-    }
-
-    let decode_started_at = Instant::now();
-    let decoded =
-        decode_image_file_with_max_side(&source_path, Some(canvas_image_settings.max_side))
-            .map_err(|error| format!("{}: {error}", source_path.display()))?;
+    let decoded = decode_import_source(source, canvas_image_settings)?;
     if let Some(trace) = &mut trace {
         trace.timings.decode_or_load = decode_started_at.elapsed();
-    }
-    let initial_scale = display_scale_for_placement_target_area(
-        decoded.source_width,
-        decoded.source_height,
-        auto_scale,
-        placement_target_area,
-    );
-    let arranged_world = resolve_import_world(
-        library,
-        target_board_id,
-        desired_world,
-        reserved_world,
-        viewport_world,
-        decoded.source_width as f32 * initial_scale.max(0.01),
-        decoded.source_height as f32 * initial_scale.max(0.01),
-        placement_gap,
-    )?;
-
-    let store_started_at = Instant::now();
-    let stored_path = library
-        .store_original(&source_path)
-        .map_err(|error| format!("{}: {error}", source_path.display()))?;
-    let original_sha256 = sha256_file(&stored_path)?;
-
-    let placement = persist_imported_image_with_exact_reuse(ImportedImagePersistRequest {
-        library,
-        target_board_id,
-        placement_id,
-        stored_path: &stored_path,
-        mime_type: &decoded.mime_type,
-        width: decoded.source_width,
-        height: decoded.source_height,
-        file_size: decoded.file_size,
-        original_sha256: &original_sha256,
-        arranged_world,
-        initial_scale,
-    })
-    .map_err(|error| format!("{}: {error}", stored_path.display()))?;
-    let store_and_persist = store_started_at.elapsed();
-    let preview_started_at = Instant::now();
-    let canvas_source = canvas_source_image_from_rgba(
-        decoded.width,
-        decoded.height,
-        &decoded.rgba,
-        canvas_image_settings,
-    )?;
-    let _ = library.store_canvas_image_cache(
-        placement.require_loaded_asset().id,
-        canvas_image_settings.max_side,
-        &canvas_source.rgba,
-        canvas_source.width,
-        canvas_source.height,
-    );
-    let preview = preview_image_from_rgba(
-        canvas_source.width,
-        canvas_source.height,
-        &canvas_source.rgba,
-        max_texture_side,
-    )?;
-    let animated_preview = decoded
-        .animation
-        .as_ref()
-        .map(|animation| {
-            preview_animation_from_frames(
-                decoded.width,
-                decoded.height,
-                &animation.frames,
-                animated_preview_max_side(canvas_image_settings, max_texture_side),
-            )
-        })
-        .transpose()?;
-    let preview_texture = if animated_preview.is_some() {
-        ImagePrepPreviewTexture::Cpu
-    } else {
-        build_preview_texture(wgpu_render_state, &preview)?
-    };
-    if let Some(trace) = &mut trace {
-        trace.timings.store_and_persist = store_and_persist;
-        trace.timings.preview_prepare = preview_started_at.elapsed();
-        trace.timings.worker_total = worker_started_at.elapsed();
-    }
-
-    Ok(PreparedPlacementImage {
-        target_board_id,
-        queue_id,
-        placement,
-        preview_rgba: preview.rgba,
-        preview_width: preview.width,
-        preview_height: preview.height,
-        animated_preview,
-        preview_texture,
-        loaded_lod: CanvasImageLod::Working,
-        existing_load_diagnostics: None,
-        origin: ImportOrigin::Path,
-        trace,
-    })
-}
-
-fn import_svg_path_sync_traced(
-    library: &Library,
-    target_board_id: i64,
-    queue_id: Option<u64>,
-    placement_id: Option<i64>,
-    source_path: PathBuf,
-    desired_world: egui::Pos2,
-    reserved_world: Option<egui::Pos2>,
-    viewport_world: egui::Rect,
-    auto_scale: bool,
-    placement_target_area: f32,
-    placement_gap: f32,
-    worker_started_at: Instant,
-    mut trace: Option<ImagePrepTrace>,
-) -> Result<PreparedPlacementImage, String> {
-    let decode_started_at = Instant::now();
-    let svg = read_svg_document(&source_path)?;
-    if let Some(trace) = &mut trace {
-        trace.timings.decode_or_load = decode_started_at.elapsed();
-    }
-
-    let initial_scale = display_scale_for_placement_target_area(
-        svg.width,
-        svg.height,
-        auto_scale,
-        placement_target_area,
-    );
-    let arranged_world = resolve_import_world(
-        library,
-        target_board_id,
-        desired_world,
-        reserved_world,
-        viewport_world,
-        svg.width as f32 * initial_scale.max(0.01),
-        svg.height as f32 * initial_scale.max(0.01),
-        placement_gap,
-    )?;
-
-    let store_started_at = Instant::now();
-    let stored_path = library
-        .store_original(&source_path)
-        .map_err(|error| format!("{}: {error}", source_path.display()))?;
-    let file_size = std::fs::metadata(&stored_path)
-        .map_err(|error| format!("failed to read stored SVG metadata: {error}"))?
-        .len();
-    let original_sha256 = sha256_file(&stored_path)?;
-    let placement = persist_imported_image_with_exact_reuse(ImportedImagePersistRequest {
-        library,
-        target_board_id,
-        placement_id,
-        stored_path: &stored_path,
-        mime_type: SVG_MIME_TYPE,
-        width: svg.width,
-        height: svg.height,
-        file_size,
-        original_sha256: &original_sha256,
-        arranged_world,
-        initial_scale,
-    })
-    .map_err(|error| format!("{}: {error}", stored_path.display()))?;
-    let store_and_persist = store_started_at.elapsed();
-
-    if let Some(trace) = &mut trace {
-        trace.timings.store_and_persist = store_and_persist;
-        trace.timings.worker_total = worker_started_at.elapsed();
-    }
-    let svg_uri = format!(
-        "bytes://asset-svg-{}.svg",
-        stable_svg_uri_key(&placement.require_loaded_asset().original_path)
-    );
-
-    Ok(PreparedPlacementImage {
-        target_board_id,
-        queue_id,
-        placement,
-        preview_rgba: Vec::new(),
-        preview_width: svg.width,
-        preview_height: svg.height,
-        animated_preview: None,
-        preview_texture: ImagePrepPreviewTexture::Svg {
-            uri: svg_uri,
-            bytes: Arc::<[u8]>::from(svg.bytes),
-            size: [svg.width as usize, svg.height as usize],
-        },
-        loaded_lod: CanvasImageLod::Working,
-        existing_load_diagnostics: None,
-        origin: ImportOrigin::Path,
-        trace,
-    })
-}
-
-pub(crate) fn import_path(
-    library: &Library,
-    target_board_id: i64,
-    queue_id: u64,
-    placement_id: Option<i64>,
-    source_path: PathBuf,
-    desired_world: egui::Pos2,
-    reserved_world: Option<egui::Pos2>,
-    viewport_world: egui::Rect,
-    max_texture_side: usize,
-    canvas_image_settings: CanvasImageSettings,
-    auto_scale: bool,
-    placement_target_area: f32,
-    placement_gap: f32,
-    trace: Option<ImagePrepTrace>,
-    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> ImagePrepResult {
-    match import_path_sync_traced(
-        library,
-        target_board_id,
-        Some(queue_id),
-        placement_id,
-        source_path.clone(),
-        desired_world,
-        reserved_world,
-        viewport_world,
-        max_texture_side,
-        canvas_image_settings,
-        auto_scale,
-        placement_target_area,
-        placement_gap,
-        trace,
-        wgpu_render_state,
-    ) {
-        Ok(loaded) => ImagePrepResult::Loaded(loaded),
-        Err(error) => ImagePrepResult::Failed {
-            target_board_id: Some(target_board_id),
-            queue_id: Some(queue_id),
-            placement_id,
-            context: source_path.display().to_string(),
-            error,
-        },
-    }
-}
-
-pub(crate) fn import_url(
-    library: &Library,
-    target_board_id: i64,
-    queue_id: u64,
-    placement_id: Option<i64>,
-    url: String,
-    desired_world: egui::Pos2,
-    reserved_world: Option<egui::Pos2>,
-    viewport_world: egui::Rect,
-    max_texture_side: usize,
-    canvas_image_settings: CanvasImageSettings,
-    auto_scale: bool,
-    placement_target_area: f32,
-    placement_gap: f32,
-    trace: Option<ImagePrepTrace>,
-    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> ImagePrepResult {
-    match import_url_sync_traced(
-        library,
-        target_board_id,
-        Some(queue_id),
-        placement_id,
-        &url,
-        desired_world,
-        reserved_world,
-        viewport_world,
-        max_texture_side,
-        canvas_image_settings,
-        auto_scale,
-        placement_target_area,
-        placement_gap,
-        trace,
-        wgpu_render_state,
-    ) {
-        Ok(loaded) => ImagePrepResult::Loaded(loaded),
-        Err(error) => ImagePrepResult::Failed {
-            target_board_id: Some(target_board_id),
-            queue_id: Some(queue_id),
-            placement_id,
-            context: url,
-            error,
-        },
-    }
-}
-
-pub(crate) fn import_clipboard(
-    library: &Library,
-    target_board_id: i64,
-    queue_id: u64,
-    placement_id: Option<i64>,
-    rgba: Vec<u8>,
-    width: u32,
-    height: u32,
-    desired_world: egui::Pos2,
-    reserved_world: Option<egui::Pos2>,
-    viewport_world: egui::Rect,
-    max_texture_side: usize,
-    canvas_image_settings: CanvasImageSettings,
-    auto_scale: bool,
-    placement_target_area: f32,
-    placement_gap: f32,
-    trace: Option<ImagePrepTrace>,
-    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> ImagePrepResult {
-    match import_clipboard_sync_traced(
-        library,
-        target_board_id,
-        queue_id,
-        placement_id,
-        rgba,
-        width,
-        height,
-        desired_world,
-        reserved_world,
-        viewport_world,
-        max_texture_side,
-        canvas_image_settings,
-        auto_scale,
-        placement_target_area,
-        placement_gap,
-        trace,
-        wgpu_render_state,
-    ) {
-        Ok(loaded) => ImagePrepResult::Loaded(loaded),
-        Err(error) => ImagePrepResult::Failed {
-            target_board_id: Some(target_board_id),
-            queue_id: Some(queue_id),
-            placement_id,
-            context: "clipboard".to_owned(),
-            error,
-        },
-    }
-}
-
-struct DownloadedUrlImage {
-    url: url::Url,
-    bytes: Vec<u8>,
-    mime_type: Option<String>,
-}
-
-pub(crate) fn import_url_sync_traced(
-    library: &Library,
-    target_board_id: i64,
-    queue_id: Option<u64>,
-    placement_id: Option<i64>,
-    url: &str,
-    desired_world: egui::Pos2,
-    reserved_world: Option<egui::Pos2>,
-    viewport_world: egui::Rect,
-    max_texture_side: usize,
-    canvas_image_settings: CanvasImageSettings,
-    auto_scale: bool,
-    placement_target_area: f32,
-    placement_gap: f32,
-    trace: Option<ImagePrepTrace>,
-    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> Result<PreparedPlacementImage, String> {
-    let worker_started_at = Instant::now();
-    let mut trace = trace;
-    if let Some(trace) = &mut trace {
-        trace.timings.queue_wait = worker_started_at.saturating_duration_since(trace.queued_at);
-    }
-
-    let download_started_at = Instant::now();
-    let downloaded = download_remote_image(url)?;
-    if let Some(trace) = &mut trace {
-        trace.timings.decode_or_load = download_started_at.elapsed();
-    }
-
-    if downloaded_url_image_is_svg(&downloaded) {
-        return import_downloaded_svg_sync_traced(
-            library,
-            target_board_id,
-            queue_id,
-            placement_id,
-            downloaded,
-            desired_world,
-            reserved_world,
-            viewport_world,
-            auto_scale,
-            placement_target_area,
-            placement_gap,
-            worker_started_at,
-            trace,
-        );
-    }
-
-    let source_label = downloaded.url.as_str().to_owned();
-    let decode_started_at = Instant::now();
-    let decoded = decode_image_bytes_with_max_side(
-        &downloaded.bytes,
-        Some(source_label.clone()),
-        downloaded.mime_type.as_deref(),
-        Some(canvas_image_settings.max_side),
-    )?;
-    if let Some(trace) = &mut trace {
-        trace.timings.decode_or_load += decode_started_at.elapsed();
     }
 
     let initial_scale = display_scale_for_placement_target_area(
@@ -638,254 +171,101 @@ pub(crate) fn import_url_sync_traced(
     )?;
 
     let store_started_at = Instant::now();
-    let source_name = remote_image_source_name(&downloaded.url);
-    let stored_path =
-        library.store_original_bytes(&source_name, &decoded.extension, &downloaded.bytes)?;
-    let original_sha256 = sha256_bytes(&downloaded.bytes);
+    let stored = store_original(library, &decoded)?;
     let placement = persist_imported_image_with_exact_reuse(ImportedImagePersistRequest {
         library,
         target_board_id,
         placement_id,
-        stored_path: &stored_path,
+        stored_path: &stored.path,
         mime_type: &decoded.mime_type,
         width: decoded.source_width,
         height: decoded.source_height,
-        file_size: downloaded.bytes.len() as u64,
-        original_sha256: &original_sha256,
+        file_size: stored.file_size,
+        original_sha256: &stored.sha256,
         arranged_world,
         initial_scale,
     })?;
     let store_and_persist = store_started_at.elapsed();
 
     let preview_started_at = Instant::now();
-    let canvas_source = canvas_source_image_from_rgba(
-        decoded.width,
-        decoded.height,
-        &decoded.rgba,
-        canvas_image_settings,
-    )?;
-    let _ = library.store_canvas_image_cache(
-        placement.require_loaded_asset().id,
-        canvas_image_settings.max_side,
-        &canvas_source.rgba,
-        canvas_source.width,
-        canvas_source.height,
-    );
-    let preview = preview_image_from_rgba(
-        canvas_source.width,
-        canvas_source.height,
-        &canvas_source.rgba,
-        max_texture_side,
-    )?;
-    let animated_preview = decoded
-        .animation
-        .as_ref()
-        .map(|animation| {
-            preview_animation_from_frames(
-                decoded.width,
-                decoded.height,
-                &animation.frames,
-                animated_preview_max_side(canvas_image_settings, max_texture_side),
-            )
-        })
-        .transpose()?;
-    let preview_texture = if animated_preview.is_some() {
-        ImagePrepPreviewTexture::Cpu
-    } else {
-        build_preview_texture(
-            wgpu_render_state,
-            &PreviewImage {
-                rgba: preview.rgba.clone(),
-                width: preview.width,
-                height: preview.height,
-            },
-        )?
+    let asset = placement.require_loaded_asset();
+    let (preview, animated_preview, preview_texture) = match decoded.pixels {
+        ImportPixels::Svg { bytes } => {
+            let preview = PreviewImage {
+                rgba: Vec::new(),
+                width: decoded.source_width,
+                height: decoded.source_height,
+            };
+            let texture = ImagePrepPreviewTexture::Svg {
+                uri: format!(
+                    "bytes://asset-svg-{}.svg",
+                    stable_svg_uri_key(&asset.original_path)
+                ),
+                bytes: Arc::<[u8]>::from(bytes),
+                size: [
+                    decoded.source_width as usize,
+                    decoded.source_height as usize,
+                ],
+            };
+            (preview, None, texture)
+        }
+        ImportPixels::Prepared(prepared) => {
+            install_prepared_canvas_cache(
+                library,
+                asset.id,
+                canvas_image_settings.max_side,
+                CanvasImageLod::Working,
+                &prepared,
+            );
+            let preview = preview_image_from_rgba(
+                prepared.width,
+                prepared.height,
+                &prepared.rgba,
+                max_texture_side,
+            )?;
+            let texture = build_preview_texture(wgpu_render_state, &preview)?;
+            (preview, None, texture)
+        }
+        ImportPixels::Raster {
+            width,
+            height,
+            rgba,
+            animation,
+        } => {
+            let canvas_source =
+                canvas_source_image_from_rgba(width, height, &rgba, canvas_image_settings)?;
+            let _ = library.store_canvas_image_cache(
+                asset.id,
+                canvas_image_settings.max_side,
+                &canvas_source.rgba,
+                canvas_source.width,
+                canvas_source.height,
+            );
+            let preview = preview_image_from_rgba(
+                canvas_source.width,
+                canvas_source.height,
+                &canvas_source.rgba,
+                max_texture_side,
+            )?;
+            let animated_preview = animation
+                .as_ref()
+                .map(|animation| {
+                    preview_animation_from_frames(
+                        width,
+                        height,
+                        &animation.frames,
+                        animated_preview_max_side(canvas_image_settings, max_texture_side),
+                    )
+                })
+                .transpose()?;
+            let texture = if animated_preview.is_some() {
+                ImagePrepPreviewTexture::Cpu
+            } else {
+                build_preview_texture(wgpu_render_state, &preview)?
+            };
+            (preview, animated_preview, texture)
+        }
     };
-    let preview_prepare = preview_started_at.elapsed();
-
-    if let Some(trace) = &mut trace {
-        trace.timings.store_and_persist = store_and_persist;
-        trace.timings.preview_prepare = preview_prepare;
-        trace.timings.worker_total = worker_started_at.elapsed();
-    }
-
-    Ok(PreparedPlacementImage {
-        target_board_id,
-        queue_id,
-        placement,
-        preview_rgba: preview.rgba,
-        preview_width: preview.width,
-        preview_height: preview.height,
-        animated_preview,
-        preview_texture,
-        loaded_lod: CanvasImageLod::Working,
-        existing_load_diagnostics: None,
-        origin: ImportOrigin::Url,
-        trace,
-    })
-}
-
-fn import_downloaded_svg_sync_traced(
-    library: &Library,
-    target_board_id: i64,
-    queue_id: Option<u64>,
-    placement_id: Option<i64>,
-    downloaded: DownloadedUrlImage,
-    desired_world: egui::Pos2,
-    reserved_world: Option<egui::Pos2>,
-    viewport_world: egui::Rect,
-    auto_scale: bool,
-    placement_target_area: f32,
-    placement_gap: f32,
-    worker_started_at: Instant,
-    mut trace: Option<ImagePrepTrace>,
-) -> Result<PreparedPlacementImage, String> {
-    let source_label = downloaded.url.as_str().to_owned();
-    let decode_started_at = Instant::now();
-    let svg =
-        parse_svg_document(downloaded.bytes).map_err(|error| format!("{source_label}: {error}"))?;
-    if let Some(trace) = &mut trace {
-        trace.timings.decode_or_load += decode_started_at.elapsed();
-    }
-
-    let initial_scale = display_scale_for_placement_target_area(
-        svg.width,
-        svg.height,
-        auto_scale,
-        placement_target_area,
-    );
-    let arranged_world = resolve_import_world(
-        library,
-        target_board_id,
-        desired_world,
-        reserved_world,
-        viewport_world,
-        svg.width as f32 * initial_scale.max(0.01),
-        svg.height as f32 * initial_scale.max(0.01),
-        placement_gap,
-    )?;
-
-    let store_started_at = Instant::now();
-    let source_name = remote_image_source_name(&downloaded.url);
-    let stored_path = library.store_original_bytes(&source_name, "svg", &svg.bytes)?;
-    let original_sha256 = sha256_bytes(&svg.bytes);
-    let placement = persist_imported_image_with_exact_reuse(ImportedImagePersistRequest {
-        library,
-        target_board_id,
-        placement_id,
-        stored_path: &stored_path,
-        mime_type: SVG_MIME_TYPE,
-        width: svg.width,
-        height: svg.height,
-        file_size: svg.bytes.len() as u64,
-        original_sha256: &original_sha256,
-        arranged_world,
-        initial_scale,
-    })?;
-    let store_and_persist = store_started_at.elapsed();
-
-    if let Some(trace) = &mut trace {
-        trace.timings.store_and_persist = store_and_persist;
-        trace.timings.worker_total = worker_started_at.elapsed();
-    }
-    let svg_uri = format!(
-        "bytes://asset-svg-{}.svg",
-        stable_svg_uri_key(&placement.require_loaded_asset().original_path)
-    );
-
-    Ok(PreparedPlacementImage {
-        target_board_id,
-        queue_id,
-        placement,
-        preview_rgba: Vec::new(),
-        preview_width: svg.width,
-        preview_height: svg.height,
-        animated_preview: None,
-        preview_texture: ImagePrepPreviewTexture::Svg {
-            uri: svg_uri,
-            bytes: Arc::<[u8]>::from(svg.bytes),
-            size: [svg.width as usize, svg.height as usize],
-        },
-        loaded_lod: CanvasImageLod::Working,
-        existing_load_diagnostics: None,
-        origin: ImportOrigin::Url,
-        trace,
-    })
-}
-
-pub(crate) fn import_clipboard_sync_traced(
-    library: &Library,
-    target_board_id: i64,
-    queue_id: u64,
-    placement_id: Option<i64>,
-    rgba: Vec<u8>,
-    width: u32,
-    height: u32,
-    desired_world: egui::Pos2,
-    reserved_world: Option<egui::Pos2>,
-    viewport_world: egui::Rect,
-    max_texture_side: usize,
-    canvas_image_settings: CanvasImageSettings,
-    auto_scale: bool,
-    placement_target_area: f32,
-    placement_gap: f32,
-    trace: Option<ImagePrepTrace>,
-    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-) -> Result<PreparedPlacementImage, String> {
-    let worker_started_at = Instant::now();
-    let mut trace = trace;
-    if let Some(trace) = &mut trace {
-        trace.timings.queue_wait = worker_started_at.saturating_duration_since(trace.queued_at);
-    }
-
-    let store_started_at = Instant::now();
-    let stored_path = library.store_clipboard_image(&rgba, width, height)?;
-    let file_size = std::fs::metadata(&stored_path)
-        .map_err(|error| format!("failed to read clipboard image metadata: {error}"))?
-        .len();
-    let original_sha256 = sha256_file(&stored_path)?;
-    let initial_scale =
-        display_scale_for_placement_target_area(width, height, auto_scale, placement_target_area);
-    let arranged_world = resolve_import_world(
-        library,
-        target_board_id,
-        desired_world,
-        reserved_world,
-        viewport_world,
-        width as f32 * initial_scale.max(0.01),
-        height as f32 * initial_scale.max(0.01),
-        placement_gap,
-    )?;
-    let placement = persist_imported_image_with_exact_reuse(ImportedImagePersistRequest {
-        library,
-        target_board_id,
-        placement_id,
-        stored_path: &stored_path,
-        mime_type: image::ImageFormat::Png.to_mime_type(),
-        width,
-        height,
-        file_size,
-        original_sha256: &original_sha256,
-        arranged_world,
-        initial_scale,
-    })?;
-    let store_and_persist = store_started_at.elapsed();
-    let preview_started_at = Instant::now();
-    let canvas_source = canvas_source_image_from_rgba(width, height, &rgba, canvas_image_settings)?;
-    let _ = library.store_canvas_image_cache(
-        placement.require_loaded_asset().id,
-        canvas_image_settings.max_side,
-        &canvas_source.rgba,
-        canvas_source.width,
-        canvas_source.height,
-    );
-    let preview = preview_image_from_rgba(
-        canvas_source.width,
-        canvas_source.height,
-        &canvas_source.rgba,
-        max_texture_side,
-    )?;
-    let preview_texture = build_preview_texture(wgpu_render_state, &preview)?;
     if let Some(trace) = &mut trace {
         trace.timings.store_and_persist = store_and_persist;
         trace.timings.preview_prepare = preview_started_at.elapsed();
@@ -899,13 +279,210 @@ pub(crate) fn import_clipboard_sync_traced(
         preview_rgba: preview.rgba,
         preview_width: preview.width,
         preview_height: preview.height,
-        animated_preview: None,
+        animated_preview,
         preview_texture,
         loaded_lod: CanvasImageLod::Working,
         existing_load_diagnostics: None,
-        origin: ImportOrigin::Clipboard,
+        origin,
         trace,
     })
+}
+
+/// An import source decoded far enough to size, place, and store it.
+struct DecodedImportSource {
+    source_width: u32,
+    source_height: u32,
+    mime_type: String,
+    original: OriginalBytes,
+    pixels: ImportPixels,
+}
+
+/// How the original file reaches the library's originals folder.
+enum OriginalBytes {
+    CopyFile(PathBuf),
+    Write {
+        source_name: String,
+        extension: String,
+        bytes: Vec<u8>,
+    },
+    /// Encode the raster pixels as PNG; used for clipboard images.
+    EncodePng,
+}
+
+enum ImportPixels {
+    /// Helper output already at canvas size, plus a cache file to adopt.
+    Prepared(PreparedImage),
+    Raster {
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+        animation: Option<DecodedAnimation>,
+    },
+    Svg {
+        bytes: Vec<u8>,
+    },
+}
+
+fn decode_import_source(
+    source: ImportSource,
+    canvas_image_settings: CanvasImageSettings,
+) -> Result<DecodedImportSource, String> {
+    match source {
+        ImportSource::Path(source_path) => {
+            if is_svg_path(&source_path) {
+                let svg = read_svg_document(&source_path)?;
+                return Ok(DecodedImportSource {
+                    source_width: svg.width,
+                    source_height: svg.height,
+                    mime_type: SVG_MIME_TYPE.to_owned(),
+                    original: OriginalBytes::CopyFile(source_path),
+                    pixels: ImportPixels::Svg { bytes: svg.bytes },
+                });
+            }
+            if let Some(prepared) =
+                prepare_image_with_helper(&source_path, canvas_image_settings).unwrap_or(None)
+            {
+                return Ok(DecodedImportSource {
+                    source_width: prepared.source_width,
+                    source_height: prepared.source_height,
+                    mime_type: prepared.mime_type.clone(),
+                    original: OriginalBytes::CopyFile(source_path),
+                    pixels: ImportPixels::Prepared(prepared),
+                });
+            }
+            let decoded =
+                decode_image_file_with_max_side(&source_path, Some(canvas_image_settings.max_side))
+                    .map_err(|error| format!("{}: {error}", source_path.display()))?;
+            Ok(DecodedImportSource {
+                source_width: decoded.source_width,
+                source_height: decoded.source_height,
+                mime_type: decoded.mime_type,
+                original: OriginalBytes::CopyFile(source_path),
+                pixels: ImportPixels::Raster {
+                    width: decoded.width,
+                    height: decoded.height,
+                    rgba: decoded.rgba,
+                    animation: decoded.animation,
+                },
+            })
+        }
+        ImportSource::Url(url) => {
+            let downloaded = download_remote_image(&url)?;
+            let source_name = remote_image_source_name(&downloaded.url);
+            if downloaded_url_image_is_svg(&downloaded) {
+                let svg = parse_svg_document(downloaded.bytes)
+                    .map_err(|error| format!("{}: {error}", downloaded.url))?;
+                return Ok(DecodedImportSource {
+                    source_width: svg.width,
+                    source_height: svg.height,
+                    mime_type: SVG_MIME_TYPE.to_owned(),
+                    original: OriginalBytes::Write {
+                        source_name,
+                        extension: "svg".to_owned(),
+                        bytes: svg.bytes.clone(),
+                    },
+                    pixels: ImportPixels::Svg { bytes: svg.bytes },
+                });
+            }
+            let decoded = decode_image_bytes_with_max_side(
+                &downloaded.bytes,
+                Some(downloaded.url.as_str().to_owned()),
+                downloaded.mime_type.as_deref(),
+                Some(canvas_image_settings.max_side),
+            )?;
+            Ok(DecodedImportSource {
+                source_width: decoded.source_width,
+                source_height: decoded.source_height,
+                mime_type: decoded.mime_type,
+                original: OriginalBytes::Write {
+                    source_name,
+                    extension: decoded.extension,
+                    bytes: downloaded.bytes,
+                },
+                pixels: ImportPixels::Raster {
+                    width: decoded.width,
+                    height: decoded.height,
+                    rgba: decoded.rgba,
+                    animation: decoded.animation,
+                },
+            })
+        }
+        ImportSource::Clipboard {
+            rgba,
+            width,
+            height,
+        } => Ok(DecodedImportSource {
+            source_width: width,
+            source_height: height,
+            mime_type: image::ImageFormat::Png.to_mime_type().to_owned(),
+            original: OriginalBytes::EncodePng,
+            pixels: ImportPixels::Raster {
+                width,
+                height,
+                rgba,
+                animation: None,
+            },
+        }),
+    }
+}
+
+struct StoredOriginal {
+    path: PathBuf,
+    file_size: u64,
+    sha256: String,
+}
+
+fn store_original(
+    library: &Library,
+    decoded: &DecodedImportSource,
+) -> Result<StoredOriginal, String> {
+    match &decoded.original {
+        OriginalBytes::CopyFile(source_path) => {
+            let path = library
+                .store_original(source_path)
+                .map_err(|error| format!("{}: {error}", source_path.display()))?;
+            stored_file(path)
+        }
+        OriginalBytes::Write {
+            source_name,
+            extension,
+            bytes,
+        } => Ok(StoredOriginal {
+            path: library.store_original_bytes(source_name, extension, bytes)?,
+            file_size: bytes.len() as u64,
+            sha256: sha256_bytes(bytes),
+        }),
+        OriginalBytes::EncodePng => {
+            let ImportPixels::Raster {
+                width,
+                height,
+                rgba,
+                ..
+            } = &decoded.pixels
+            else {
+                return Err("clipboard import requires raster pixels".to_owned());
+            };
+            stored_file(library.store_clipboard_image(rgba, *width, *height)?)
+        }
+    }
+}
+
+fn stored_file(path: PathBuf) -> Result<StoredOriginal, String> {
+    let file_size = std::fs::metadata(&path)
+        .map_err(|error| format!("failed to read stored original metadata: {error}"))?
+        .len();
+    let sha256 = sha256_file(&path)?;
+    Ok(StoredOriginal {
+        path,
+        file_size,
+        sha256,
+    })
+}
+
+struct DownloadedUrlImage {
+    url: url::Url,
+    bytes: Vec<u8>,
+    mime_type: Option<String>,
 }
 
 fn downloaded_url_image_is_svg(downloaded: &DownloadedUrlImage) -> bool {

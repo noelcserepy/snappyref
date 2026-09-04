@@ -2,11 +2,12 @@ use std::collections::HashSet;
 
 use eframe::egui;
 
-use crate::sources::import::{ExternalImportSource, normalize_import_url};
+use crate::jobs::ImportSource;
+use crate::sources::import::normalize_import_url;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct ExternalDragIntake {
-    pub(crate) sources: Vec<ExternalImportSource>,
+    pub(crate) sources: Vec<ImportSource>,
     pub(crate) screen_pos: Option<egui::Pos2>,
 }
 
@@ -21,8 +22,8 @@ pub(crate) fn hovered(ui: &egui::Ui) -> ExternalDragIntake {
         raw_hovered_files
             .into_iter()
             .filter_map(|file| file.path.map(source_from_path_or_url_name)),
-        native_paths.into_iter().map(ExternalImportSource::Path),
-        native_urls.into_iter().map(ExternalImportSource::Url),
+        native_paths.into_iter().map(ImportSource::Path),
+        native_urls.into_iter().map(ImportSource::Url),
     );
     let screen_pos = resolve_screen_pos(native_pos, cursor_pos, egui_pos);
 
@@ -43,8 +44,8 @@ pub(crate) fn take_drop(ui: &egui::Ui) -> ExternalDragIntake {
         raw_dropped_files
             .into_iter()
             .filter_map(source_from_dropped_file),
-        native_paths.into_iter().map(ExternalImportSource::Path),
-        native_urls.into_iter().map(ExternalImportSource::Url),
+        native_paths.into_iter().map(ImportSource::Path),
+        native_urls.into_iter().map(ImportSource::Url),
     );
     let screen_pos = resolve_screen_pos(native_pos, cursor_pos, egui_pos);
 
@@ -62,42 +63,35 @@ pub(crate) fn resolve_screen_pos(
     native_drag_pos.or(os_cursor_pos).or(egui_latest_pos)
 }
 
-fn source_from_dropped_file(file: egui::DroppedFile) -> Option<ExternalImportSource> {
+fn source_from_dropped_file(file: egui::DroppedFile) -> Option<ImportSource> {
     if let Some(path) = file.path {
         return Some(source_from_path_or_url_name(path));
     }
-    normalize_import_url(&file.name).map(ExternalImportSource::Url)
+    normalize_import_url(&file.name).map(ImportSource::Url)
 }
 
-fn source_from_path_or_url_name(path: std::path::PathBuf) -> ExternalImportSource {
+fn source_from_path_or_url_name(path: std::path::PathBuf) -> ImportSource {
     let path_text = path.to_string_lossy();
     normalize_import_url(&path_text)
-        .map(ExternalImportSource::Url)
-        .unwrap_or(ExternalImportSource::Path(path))
+        .map(ImportSource::Url)
+        .unwrap_or(ImportSource::Path(path))
 }
 
 fn merge_sources(
-    egui_sources: impl IntoIterator<Item = ExternalImportSource>,
-    native_paths: impl IntoIterator<Item = ExternalImportSource>,
-    native_urls: impl IntoIterator<Item = ExternalImportSource>,
-) -> Vec<ExternalImportSource> {
+    egui_sources: impl IntoIterator<Item = ImportSource>,
+    native_paths: impl IntoIterator<Item = ImportSource>,
+    native_urls: impl IntoIterator<Item = ImportSource>,
+) -> Vec<ImportSource> {
     let mut sources = Vec::new();
-    let mut seen_paths = HashSet::new();
-    let mut seen_urls = HashSet::new();
+    let mut seen = HashSet::new();
 
     for source in egui_sources
         .into_iter()
         .chain(native_paths)
         .chain(native_urls)
     {
-        match &source {
-            ExternalImportSource::Path(path) if seen_paths.insert(path.clone()) => {
-                sources.push(source);
-            }
-            ExternalImportSource::Url(url) if seen_urls.insert(url.clone()) => {
-                sources.push(source);
-            }
-            _ => {}
+        if seen.insert(source.clone()) {
+            sources.push(source);
         }
     }
 
