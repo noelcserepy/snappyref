@@ -13,9 +13,7 @@ pub(crate) use install_controller::{
     SemanticSearchInstallController, SemanticSearchInstallDisplay, SemanticSearchInstallSnapshot,
 };
 pub use model::DEFAULT_SEMANTIC_SEARCH_MODEL;
-pub(crate) use model::{
-    ImageEmbeddingTiming, ModelLoadTiming, OrtDualEncoderModel, default_local_model_store_status,
-};
+pub(crate) use model::{ModelLoadTiming, default_local_model_store_status};
 pub(crate) use model_store::LocalModelStoreStatus;
 pub use service::{
     IndexResult, SearchQueryResult, SearchResultAssetEntry, SemanticSearchConfig,

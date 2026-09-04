@@ -12,12 +12,14 @@ use crate::jobs::image_formats::{
 };
 use crate::library::storage::{Library, sha256_bytes, sha256_file};
 
+#[cfg(test)]
+use super::DEFAULT_PLACEMENT_TARGET_AREA;
 use super::arrangement::resolve_import_world;
 use super::decode::{install_prepared_canvas_cache, prepare_image_with_helper};
 use super::preview_texture::build_preview_texture;
 use super::{
-    CanvasImageSettings, DEFAULT_PLACEMENT_TARGET_AREA, ImagePrepPreviewTexture, ImagePrepResult,
-    ImagePrepTrace, ImportOrigin, PreparedPlacementImage, SVG_MIME_TYPE, animated_preview_max_side,
+    CanvasImageSettings, ImagePrepPreviewTexture, ImagePrepResult, ImagePrepTrace, ImportOrigin,
+    PreparedPlacementImage, SVG_MIME_TYPE, animated_preview_max_side,
     canvas_source_image_from_rgba, is_svg_path, original_mime_type_is_svg, parse_svg_document,
     read_svg_document, stable_svg_uri_key,
 };
@@ -67,7 +69,7 @@ fn persist_imported_image_with_exact_reuse(
     Ok(placement)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub fn import_path_sync(
     library: &Library,
     source_path: PathBuf,
@@ -83,38 +85,6 @@ pub fn import_path_sync(
         None,
         Some(library.allocate_document_id()),
         source_path,
-        desired_world,
-        None,
-        viewport_world,
-        usize::MAX,
-        CanvasImageSettings::default(),
-        auto_scale,
-        DEFAULT_PLACEMENT_TARGET_AREA,
-        placement_gap,
-        None,
-        None,
-    )
-}
-
-pub fn import_clipboard_sync(
-    library: &Library,
-    rgba: Vec<u8>,
-    width: u32,
-    height: u32,
-    desired_world: egui::Pos2,
-    viewport_world: egui::Rect,
-    auto_scale: bool,
-    placement_gap: f32,
-) -> Result<PreparedPlacementImage, String> {
-    let target_board_id = library.load_user_session()?.active_board_id;
-    import_clipboard_sync_traced(
-        library,
-        target_board_id,
-        0,
-        Some(library.allocate_document_id()),
-        rgba,
-        width,
-        height,
         desired_world,
         None,
         viewport_world,

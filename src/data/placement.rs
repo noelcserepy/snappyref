@@ -39,6 +39,7 @@ pub struct PlacementState {
 }
 
 impl PlacementState {
+    #[cfg(test)]
     pub fn new(
         id: PlacementId,
         asset_id: Option<AssetId>,

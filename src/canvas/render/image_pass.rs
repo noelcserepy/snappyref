@@ -4,12 +4,12 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 use super::annotations::{annotation_should_paint, paint_annotation, paint_annotations};
-use crate::canvas::geometry::{screen_corners_for_placement, screen_rect_for_placement};
+use crate::canvas::geometry::screen_corners_for_placement;
 use crate::canvas::interaction::placement_screen_rect;
 use crate::canvas::{
     ANNOTATION_CULL_MARGIN_SCREEN, CanvasImageLod, CanvasState, CanvasTexture,
-    IMAGE_CULL_MARGIN_SCREEN, IMAGE_DETAIL_PROMOTION_THRESHOLD, ImagePaintStats, ImagePassBatch,
-    ImagePassCallback, ImagePassInstance, ImagePassMetrics, RenderedPlacement,
+    IMAGE_CULL_MARGIN_SCREEN, IMAGE_DETAIL_PROMOTION_THRESHOLD, ImagePassBatch, ImagePassCallback,
+    ImagePassInstance, ImagePassMetrics, RenderedPlacement,
 };
 use crate::data::{CanvasStackItem, PlacementLifecycle};
 
@@ -584,45 +584,4 @@ pub(crate) fn canvas_texture_from_preview(
             CanvasTexture::Svg { uri, bytes, size }
         }
     }
-}
-
-pub(crate) fn image_paint_stats_for_placements(
-    placements: &[crate::data::Placement],
-    rect: egui::Rect,
-    pan: egui::Vec2,
-    zoom: f32,
-    cull_offscreen: bool,
-) -> ImagePaintStats {
-    let mut stats = ImagePaintStats::default();
-    let cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
-    for placement in placements {
-        stats.considered += 1;
-        let image_rect = screen_rect_for_placement(placement, pan, zoom, rect.center());
-        if !cull_offscreen || image_rect.intersects(cull_rect) {
-            stats.drawn += 1;
-        }
-    }
-    stats
-}
-
-pub(crate) fn image_texture_group_count_for_placements(
-    placements: &[crate::data::Placement],
-    rect: egui::Rect,
-    pan: egui::Vec2,
-    zoom: f32,
-) -> usize {
-    let cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
-    let mut groups = 0;
-    let mut previous_asset_id = None;
-    for placement in placements {
-        let image_rect = screen_rect_for_placement(placement, pan, zoom, rect.center());
-        if !image_rect.intersects(cull_rect) {
-            continue;
-        }
-        if previous_asset_id != Some(placement.require_loaded_asset().id) {
-            groups += 1;
-            previous_asset_id = Some(placement.require_loaded_asset().id);
-        }
-    }
-    groups
 }

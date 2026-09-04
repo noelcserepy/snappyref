@@ -13,10 +13,7 @@ pub(super) use background::{
     background_lod_layers, background_screen_step, background_world_step,
     settled_background_lod_level,
 };
-pub(super) use image_pass::{
-    canvas_texture_from_preview, image_paint_stats_for_placements,
-    image_texture_group_count_for_placements, paint_canvas_items,
-};
+pub(super) use image_pass::{canvas_texture_from_preview, paint_canvas_items};
 #[cfg(test)]
 pub(super) use image_pass::{
     optimized_image_pass_eligible_for_state, unified_canvas_paint_order_for_state,

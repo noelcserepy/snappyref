@@ -16,22 +16,20 @@ pub(crate) use decode::print_imageprep_output_from_args;
 use existing_load::backfill_cache_lod;
 pub use existing_load::load_canvas_snapshot_pixels;
 pub(crate) use existing_load::load_existing;
+pub use persist::display_scale_for_placement_target_area;
 #[cfg(test)]
 pub(super) use persist::import_path_sync;
 #[cfg(test)]
 pub(super) use persist::import_url_sync_traced;
-pub use persist::{display_scale_for_placement_target_area, import_clipboard_sync};
-pub(super) use persist::{import_clipboard, import_path, import_path_sync_traced, import_url};
+pub(super) use persist::{import_clipboard, import_path, import_url};
 #[cfg(test)]
 use preview_texture::build_preview_texture;
 pub use preview_texture::{ImagePrepPreviewTexture, NativeTextureHandle};
 pub(super) use request::ImagePrepPriority;
 pub use request::{
     CanvasImageSettings, ExistingLoadDiagnostics, ExistingLoadPriority, ExistingLoadSourceKind,
-    FileImportPerfReport, ImagePrepRequest, ImagePrepResult, ImagePrepTimings, ImagePrepTrace,
-    ImagePrepWorkerStats, ImportOrigin, InteractiveImportPerfReport, PreparedCropPreview,
-    PreparedPlacementImage, StartupPerfReport, StartupTraceEntry,
-    WorkerInteractiveImportPerfReport,
+    ImagePrepRequest, ImagePrepResult, ImagePrepTimings, ImagePrepTrace, ImagePrepWorkerStats,
+    ImportOrigin, PreparedCropPreview, PreparedPlacementImage,
 };
 
 pub const DEFAULT_PLACEMENT_TARGET_AREA: f32 = crate::data::DEFAULT_PLACEMENT_TARGET_AREA;
@@ -44,9 +42,8 @@ const INTERACTIVE_CROP_PREVIEW_MAX_SIDE: u32 = 1024;
 mod worker;
 
 pub use worker::ImagePrepWorker;
-use worker::ImagePrepWorkerConfig;
 #[cfg(test)]
-pub(super) use worker::{RequestQueue, WorkerKind};
+pub(super) use worker::{ImagePrepWorkerConfig, RequestQueue, WorkerKind};
 
 pub fn sort_records_by_viewport_proximity(
     placements: &mut [Placement],
@@ -80,10 +77,6 @@ fn placement_viewport_distance_sq(placement: &Placement, viewport_world: egui::R
             .clamp(viewport_world.top(), viewport_world.bottom()),
     );
     center.distance_sq(clamped)
-}
-
-fn placement_intersects_viewport_world(placement: &Placement, viewport_world: egui::Rect) -> bool {
-    placement_world_rect(placement).intersects(viewport_world)
 }
 
 fn placement_world_rect(placement: &Placement) -> egui::Rect {
@@ -177,10 +170,3 @@ pub use arrangement::arrange_rect_world;
 pub(super) use arrangement::rects_overlap_with_gap;
 #[cfg(test)]
 mod tests;
-
-mod perf;
-
-pub use perf::{
-    file_import_perf_report, interactive_import_perf_report, startup_perf_report, startup_trace,
-    worker_interactive_import_perf_report,
-};

@@ -1,9 +1,8 @@
 use super::{
     CanvasImageSettings, DEFAULT_PLACEMENT_TARGET_AREA, ImagePrepPreviewTexture, ImagePrepResult,
     ImagePrepTimings, ImagePrepTrace, ImagePrepWorker, ImagePrepWorkerConfig, arrange_rect_world,
-    build_preview_texture, crop_item, display_scale_for_placement_target_area,
-    file_import_perf_report, import_clipboard, import_path_sync, import_url_sync_traced,
-    load_existing, rects_overlap_with_gap,
+    build_preview_texture, crop_item, display_scale_for_placement_target_area, import_clipboard,
+    import_path_sync, import_url_sync_traced, load_existing, rects_overlap_with_gap,
 };
 use crate::data::CanvasImageLod;
 use crate::library::storage::Library;
@@ -1021,30 +1020,6 @@ fn traced_clipboard_import_populates_non_negative_timings() {
 }
 
 #[test]
-fn file_import_perf_report_imports_jpeg_and_reports_timings() {
-    let root = temp_library_root("file-import-perf-report");
-    fs::create_dir_all(&root).unwrap();
-    let source_path = write_jpeg(&root, "source.jpg", 64, 48);
-
-    let report = file_import_perf_report(source_path.clone()).unwrap();
-
-    assert_eq!(report.source_path, source_path);
-    assert_eq!(report.source_width, 64);
-    assert_eq!(report.source_height, 48);
-    assert_eq!(report.preview_width, 64);
-    assert_eq!(report.preview_height, 48);
-    assert!(report.source_file_size > 0);
-    assert!(report.canvas_cache_file_size.unwrap_or_default() > 0);
-    assert!(report.timings.decode_or_load >= Duration::ZERO);
-    assert!(report.timings.store_and_persist >= Duration::ZERO);
-    assert!(report.timings.preview_prepare >= Duration::ZERO);
-    assert!(report.timings.worker_total >= report.timings.decode_or_load);
-    assert!(report.total_ms >= 0.0);
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
 fn native_preview_texture_stays_registered_until_last_reference_drops() {
     let Some(render_state) = test_render_state() else {
         eprintln!("skipping native preview texture lifecycle test: no wgpu adapter");
@@ -1407,22 +1382,6 @@ fn write_png(root: &Path, filename: &str, width: u32, height: u32) -> PathBuf {
     .unwrap();
     path
 }
-
-fn write_jpeg(root: &Path, filename: &str, width: u32, height: u32) -> PathBuf {
-    let path = root.join(filename);
-    let rgb = vec![255; width as usize * height as usize * 3];
-    image::save_buffer_with_format(
-        &path,
-        &rgb,
-        width,
-        height,
-        ColorType::Rgb8,
-        ImageFormat::Jpeg,
-    )
-    .unwrap();
-    path
-}
-
 fn write_svg(root: &Path, filename: &str, width: u32, height: u32) -> PathBuf {
     let path = root.join(filename);
     fs::write(&path, svg_bytes(width, height)).unwrap();

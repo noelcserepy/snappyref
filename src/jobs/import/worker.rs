@@ -42,7 +42,7 @@ pub(crate) enum WorkerKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ImagePrepWorkerConfig {
+pub(crate) struct ImagePrepWorkerConfig {
     pub(super) general_workers: usize,
     pub(super) interactive_workers: usize,
     pub(super) background_workers: usize,
