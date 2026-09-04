@@ -44,41 +44,6 @@ pub struct ImagePrepTimings {
     pub ui_integration: Duration,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct StartupPerfReport {
-    pub legacy_first_visible_ms: f64,
-    pub current_first_visible_ms: f64,
-    pub warm_cached_first_visible_ms: f64,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct InteractiveImportPerfReport {
-    pub legacy_interactive_import_under_backlog_ms: f64,
-    pub current_interactive_import_under_backlog_ms: f64,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct WorkerInteractiveImportPerfReport {
-    pub legacy_single_worker_ms: f64,
-    pub current_pooled_ms: f64,
-    pub current_interactive_workers: usize,
-    pub current_background_workers: usize,
-}
-
-#[derive(Clone, Debug)]
-pub struct FileImportPerfReport {
-    pub source_path: PathBuf,
-    pub source_file_size: u64,
-    pub source_width: u32,
-    pub source_height: u32,
-    pub preview_width: u32,
-    pub preview_height: u32,
-    pub canvas_cache_path: Option<PathBuf>,
-    pub canvas_cache_file_size: Option<u64>,
-    pub timings: ImagePrepTimings,
-    pub total_ms: f64,
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ImagePrepWorkerStats {
     pub queued_startup: usize,
@@ -247,14 +212,4 @@ pub struct PreparedCropPreview {
     pub preview_texture: ImagePrepPreviewTexture,
     pub loaded_lod: CanvasImageLod,
     pub crop_offset_local: egui::Vec2,
-}
-
-#[derive(Clone, Debug)]
-pub struct StartupTraceEntry {
-    pub placement: Placement,
-    pub diagnostics: ExistingLoadDiagnostics,
-    pub timings: ImagePrepTimings,
-    pub preview_width: u32,
-    pub preview_height: u32,
-    pub startup_elapsed: Duration,
 }

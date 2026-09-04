@@ -52,15 +52,10 @@ pub struct AppConfig {
     library_root: Result<std::path::PathBuf, String>,
     no_startup_focus: bool,
     perf_log: bool,
-    perf_report: bool,
     perf_decode_path: Option<std::path::PathBuf>,
-    perf_import_path: Option<std::path::PathBuf>,
-    perf_embedding_lod: bool,
-    perf_embedding_lod_limit: usize,
     perf_scenario: Option<String>,
     perf_corpus: Option<std::path::PathBuf>,
     perf_run_dir: Option<std::path::PathBuf>,
-    startup_trace: bool,
     update_smoke_install: bool,
     update_smoke_status_path: Option<std::path::PathBuf>,
 }
@@ -466,17 +461,12 @@ impl AppConfig {
     pub fn from_env() -> Self {
         let mut no_startup_focus = false;
         let mut perf_log = false;
-        let mut perf_report = false;
         let mut perf_decode_path = None;
-        let mut perf_import_path = None;
-        let mut perf_embedding_lod = false;
-        let mut perf_embedding_lod_limit = 30;
         let mut perf_scenario = None;
         let mut perf_corpus = None;
         let mut perf_run_dir = None;
-        let mut startup_trace = false;
         let mut update_smoke_install = false;
-        let mut update_smoke_status_path =
+        let update_smoke_status_path =
             std::env::var_os("SNAPPYREF_UPDATE_SMOKE_STATUS").map(std::path::PathBuf::from);
         let library_root = crate::library::location::resolve_library_root();
         let mut arguments = std::env::args().skip(1);
@@ -488,30 +478,10 @@ impl AppConfig {
                 perf_log = true;
             } else if argument == "--update-smoke-install" {
                 update_smoke_install = true;
-            } else if argument == "--update-smoke-status" {
-                update_smoke_status_path = arguments.next().map(std::path::PathBuf::from);
-            } else if let Some(path) = argument.strip_prefix("--update-smoke-status=") {
-                update_smoke_status_path = Some(std::path::PathBuf::from(path));
-            } else if argument == "--perf-report" {
-                perf_report = true;
             } else if argument == "--perf-decode" {
                 perf_decode_path = arguments.next().map(std::path::PathBuf::from);
             } else if let Some(path) = argument.strip_prefix("--perf-decode=") {
                 perf_decode_path = Some(std::path::PathBuf::from(path));
-            } else if argument == "--perf-import" {
-                perf_import_path = arguments.next().map(std::path::PathBuf::from);
-            } else if let Some(path) = argument.strip_prefix("--perf-import=") {
-                perf_import_path = Some(std::path::PathBuf::from(path));
-            } else if argument == "--perf-embedding-lod" {
-                perf_embedding_lod = true;
-            } else if argument == "--perf-embedding-limit" {
-                if let Some(limit) = arguments.next().and_then(|value| value.parse().ok()) {
-                    perf_embedding_lod_limit = limit;
-                }
-            } else if let Some(limit) = argument.strip_prefix("--perf-embedding-limit=") {
-                if let Ok(limit) = limit.parse() {
-                    perf_embedding_lod_limit = limit;
-                }
             } else if argument == "--perf-scenario" {
                 perf_scenario = arguments.next();
             } else if let Some(scenario) = argument.strip_prefix("--perf-scenario=") {
@@ -524,23 +494,16 @@ impl AppConfig {
                 perf_run_dir = arguments.next().map(std::path::PathBuf::from);
             } else if let Some(path) = argument.strip_prefix("--perf-run-dir=") {
                 perf_run_dir = Some(std::path::PathBuf::from(path));
-            } else if argument == "--startup-trace" {
-                startup_trace = true;
             }
         }
 
         Self {
             no_startup_focus,
             perf_log,
-            perf_report,
             perf_decode_path,
-            perf_import_path,
-            perf_embedding_lod,
-            perf_embedding_lod_limit,
             perf_scenario,
             perf_corpus,
             perf_run_dir,
-            startup_trace,
             library_root,
             update_smoke_install,
             update_smoke_status_path,
@@ -559,24 +522,8 @@ impl AppConfig {
         self.perf_log
     }
 
-    pub fn perf_report_requested(&self) -> bool {
-        self.perf_report
-    }
-
     pub fn perf_decode_path(&self) -> Option<&std::path::Path> {
         self.perf_decode_path.as_deref()
-    }
-
-    pub fn perf_import_path(&self) -> Option<&std::path::Path> {
-        self.perf_import_path.as_deref()
-    }
-
-    pub fn perf_embedding_lod_requested(&self) -> bool {
-        self.perf_embedding_lod
-    }
-
-    pub fn perf_embedding_lod_limit(&self) -> usize {
-        self.perf_embedding_lod_limit
     }
 
     fn perf_scenario_requested(&self) -> bool {
@@ -614,10 +561,6 @@ impl AppConfig {
 
     fn persist_window_state_enabled(&self) -> bool {
         !self.perf_scenario_requested() && !self.update_smoke_install
-    }
-
-    pub fn startup_trace_requested(&self) -> bool {
-        self.startup_trace
     }
 
     pub(crate) fn library_root(&self) -> Result<&std::path::Path, String> {
@@ -5596,22 +5539,10 @@ fn snappyref_updater_path() -> Result<std::path::PathBuf, String> {
 }
 
 fn restart_launch_args() -> Vec<String> {
-    let mut filtered = Vec::new();
-    let mut arguments = std::env::args().skip(1);
-    while let Some(argument) = arguments.next() {
-        if argument == "--update-smoke-install" {
-            continue;
-        }
-        if argument == "--update-smoke-status" {
-            let _ = arguments.next();
-            continue;
-        }
-        if argument.starts_with("--update-smoke-status=") {
-            continue;
-        }
-        filtered.push(argument);
-    }
-    filtered
+    std::env::args()
+        .skip(1)
+        .filter(|argument| argument != "--update-smoke-install")
+        .collect()
 }
 
 #[cfg(target_os = "macos")]

@@ -69,23 +69,6 @@ pub struct CanvasState {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ImagePaintStats {
-    pub considered: usize,
-    pub drawn: usize,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct PaintPerfReport {
-    pub legacy_visibility_pass_ms: f64,
-    pub current_visibility_pass_ms: f64,
-    pub legacy_considered: usize,
-    pub legacy_drawn: usize,
-    pub current_considered: usize,
-    pub current_drawn: usize,
-    pub current_texture_groups: usize,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
 pub struct ImagePassMetrics {
     pub visible_images: usize,
     pub visible_animated_images: usize,
@@ -833,67 +816,6 @@ fn clear_canvas_edit_interaction(state: &mut CanvasState) {
 
 fn rotation_handle_key_held(ctx: &egui::Context) -> bool {
     !ctx.egui_wants_keyboard_input() && ctx.input(|input| input.key_down(egui::Key::R))
-}
-
-pub fn paint_perf_report() -> PaintPerfReport {
-    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(960.0, 640.0));
-    let pan = egui::Vec2::ZERO;
-    let zoom = 1.0;
-    let placements = (0..400)
-        .map(|index| {
-            let x = if index < 24 {
-                (index % 6) as f32 * 140.0 - 320.0
-            } else {
-                4000.0 + index as f32 * 48.0
-            };
-            let y = if index < 24 {
-                (index / 6) as f32 * 140.0 - 220.0
-            } else {
-                2600.0 + index as f32 * 24.0
-            };
-            crate::data::Placement::loaded(
-                crate::data::PlacementState::new(
-                    index as i64 + 1,
-                    Some(index as i64 + 1),
-                    egui::pos2(x, y),
-                    1.0,
-                    0.0,
-                    index as i32,
-                    false,
-                ),
-                crate::data::Asset {
-                    id: index as i64 + 1,
-                    original_path: std::path::PathBuf::new(),
-                    filename: format!("perf-{index}.png"),
-                    mime_type: "image/png".to_owned(),
-                    width: 512,
-                    height: 512,
-                    file_size: 0,
-                },
-            )
-        })
-        .collect::<Vec<_>>();
-
-    let legacy_started_at = std::time::Instant::now();
-    let legacy_stats =
-        render::image_paint_stats_for_placements(&placements, rect, pan, zoom, false);
-    let legacy_visibility_pass_ms = legacy_started_at.elapsed().as_secs_f64() * 1000.0;
-    let current_started_at = std::time::Instant::now();
-    let current_stats =
-        render::image_paint_stats_for_placements(&placements, rect, pan, zoom, true);
-    let current_visibility_pass_ms = current_started_at.elapsed().as_secs_f64() * 1000.0;
-    let current_texture_groups =
-        render::image_texture_group_count_for_placements(&placements, rect, pan, zoom);
-
-    PaintPerfReport {
-        legacy_visibility_pass_ms,
-        current_visibility_pass_ms,
-        legacy_considered: legacy_stats.considered,
-        legacy_drawn: legacy_stats.drawn,
-        current_considered: current_stats.considered,
-        current_drawn: current_stats.drawn,
-        current_texture_groups,
-    }
 }
 
 #[cfg(test)]

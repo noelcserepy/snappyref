@@ -11,8 +11,6 @@ pub use import::{
     ExistingLoadPriority, ImagePrepPreviewTexture, ImagePrepRequest, ImagePrepResult,
     ImagePrepTimings, ImagePrepTrace, ImagePrepWorker, ImagePrepWorkerStats, ImportOrigin,
     NativeTextureHandle, PreparedCropPreview, PreparedPlacementImage, arrange_rect_world,
-    display_scale_for_placement_target_area, file_import_perf_report,
-    interactive_import_perf_report, load_canvas_snapshot_pixels, placement_target_reference_span,
-    sort_records_by_viewport_proximity, startup_perf_report, startup_trace,
-    worker_interactive_import_perf_report,
+    display_scale_for_placement_target_area, load_canvas_snapshot_pixels,
+    placement_target_reference_span, sort_records_by_viewport_proximity,
 };

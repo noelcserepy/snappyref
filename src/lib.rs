@@ -60,48 +60,8 @@ pub fn run() -> eframe::Result<()> {
     }
 
     let config = app::AppConfig::from_env();
-    if config.startup_trace_requested() {
-        if let Err(error) = config
-            .library_root()
-            .and_then(diagnostics::perf::print_startup_trace)
-        {
-            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
-                error,
-            ))));
-        }
-        return Ok(());
-    }
-    if config.perf_report_requested() {
-        if let Err(error) = diagnostics::perf::print_report() {
-            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
-                error,
-            ))));
-        }
-        return Ok(());
-    }
     if let Some(path) = config.perf_decode_path() {
         if let Err(error) = diagnostics::perf::print_file_decode_report(path) {
-            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
-                error,
-            ))));
-        }
-        return Ok(());
-    }
-    if let Some(path) = config.perf_import_path() {
-        if let Err(error) = diagnostics::perf::print_file_import_report(path) {
-            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
-                error,
-            ))));
-        }
-        return Ok(());
-    }
-    if config.perf_embedding_lod_requested() {
-        if let Err(error) = config.library_root().and_then(|library_root| {
-            diagnostics::perf::print_embedding_lod_report(
-                library_root,
-                config.perf_embedding_lod_limit(),
-            )
-        }) {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));

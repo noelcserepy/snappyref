@@ -11,7 +11,7 @@ use crate::library::storage::{AssetSearchHit, EmbeddingStatus, Library};
 
 use super::EmbedModelLoadTimingOutput;
 use super::index::decode_f32_blob;
-use super::model::{EmbeddingModel, ModelLoadTiming, ModelSpec, OrtDualEncoderModel};
+use super::model::{EmbeddingModel, ModelLoadTiming, ModelSpec, OrtTextEncoderModel};
 
 const IMAGE_PIVOT_CANDIDATE_LIMIT: usize = 50;
 
@@ -93,7 +93,7 @@ pub enum SearchQueryResult {
 enum ModelState {
     Uninitialized,
     Loading,
-    Ready(Arc<OrtDualEncoderModel>),
+    Ready(Arc<OrtTextEncoderModel>),
     Failed(String),
 }
 
@@ -762,7 +762,7 @@ fn text_embedding(
     Ok(embedding)
 }
 
-fn ready_model(model_state: &Arc<Mutex<ModelState>>) -> Result<Arc<OrtDualEncoderModel>, String> {
+fn ready_model(model_state: &Arc<Mutex<ModelState>>) -> Result<Arc<OrtTextEncoderModel>, String> {
     let state = model_state
         .lock()
         .map_err(|_| "semantic-search model state poisoned".to_owned())?;
@@ -1052,7 +1052,7 @@ fn ensure_model(
     model_state: &Arc<Mutex<ModelState>>,
     model_spec: &ModelSpec,
     result_tx: &mpsc::Sender<IndexResult>,
-) -> Result<Arc<OrtDualEncoderModel>, String> {
+) -> Result<Arc<OrtTextEncoderModel>, String> {
     {
         let state = model_state
             .lock()
@@ -1077,7 +1077,7 @@ fn ensure_model(
     }
 
     let _ = result_tx.send(IndexResult::ModelLoadStarted);
-    match OrtDualEncoderModel::load_with_progress_timed(model_spec.clone(), |message| {
+    match OrtTextEncoderModel::load_with_progress_timed(model_spec.clone(), |message| {
         let _ = result_tx.send(IndexResult::Progress {
             message: message.to_owned(),
         });

@@ -171,11 +171,12 @@ fn local_model_store_status_for(
     refresh_local_model_store_status(data_root, executable_dir, spec.model_key, &required_files)
 }
 
-pub struct OrtDualEncoderModel {
+/// In-process text encoder for search queries. Image embedding runs in the
+/// `--semantic-embed-server` subprocess via [`OrtImageEmbeddingModel`].
+pub struct OrtTextEncoderModel {
     spec: ModelSpec,
     tokenizer: Tokenizer,
     text_session: Mutex<Session>,
-    vision_session: Mutex<Session>,
 }
 
 pub(crate) struct OrtImageEmbeddingModel {
@@ -206,14 +207,7 @@ pub(crate) struct ModelLoadTiming {
     pub total: Duration,
 }
 
-impl OrtDualEncoderModel {
-    pub fn load_with_progress<F>(spec: ModelSpec, mut on_progress: F) -> Result<Self, String>
-    where
-        F: FnMut(&str),
-    {
-        Self::load_with_progress_timed(spec, &mut on_progress).map(|(model, _timing)| model)
-    }
-
+impl OrtTextEncoderModel {
     pub(crate) fn load_with_progress_timed<F>(
         spec: ModelSpec,
         mut on_progress: F,
@@ -261,20 +255,6 @@ impl OrtDualEncoderModel {
             .commit_from_file(&assets.text_model_path)
             .map_err(|error| format!("failed to load text model: {error}"))?;
         timing.text_session_loaded = text_start.elapsed();
-        let vision_start = Instant::now();
-        let vision_session = Session::builder()
-            .map_err(|error| format!("failed to create vision session builder: {error}"))?
-            .with_memory_pattern(false)
-            .map_err(|error| format!("failed to disable vision memory pattern: {error}"))?
-            .with_execution_providers([ep::CPU::default().with_arena_allocator(false).build()])
-            .map_err(|error| format!("failed to configure vision CPU provider: {error}"))?
-            .with_intra_threads(1)
-            .map_err(|error| format!("failed to configure vision intra-op threads: {error}"))?
-            .with_inter_threads(1)
-            .map_err(|error| format!("failed to configure vision inter-op threads: {error}"))?
-            .commit_from_file(&assets.vision_model_path)
-            .map_err(|error| format!("failed to load vision model: {error}"))?;
-        timing.vision_session_loaded = vision_start.elapsed();
         timing.total = total_start.elapsed();
 
         Ok((
@@ -282,18 +262,9 @@ impl OrtDualEncoderModel {
                 spec,
                 tokenizer,
                 text_session: Mutex::new(text_session),
-                vision_session: Mutex::new(vision_session),
             },
             timing,
         ))
-    }
-
-    #[cfg(feature = "semantic-search")]
-    pub(crate) fn embed_image_path_timed(
-        &self,
-        path: &Path,
-    ) -> Result<(Vec<f32>, ImageEmbeddingTiming), String> {
-        embed_image_path_with_session(&self.spec, &self.vision_session, path)
     }
 }
 
@@ -348,7 +319,7 @@ impl OrtImageEmbeddingModel {
     }
 }
 
-impl EmbeddingModel for OrtDualEncoderModel {
+impl EmbeddingModel for OrtTextEncoderModel {
     fn embed_text(&self, query: &str) -> Result<Vec<f32>, String> {
         let encoding = self
             .tokenizer
