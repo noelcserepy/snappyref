@@ -10,6 +10,8 @@ mod platform;
 #[cfg(feature = "semantic-search")]
 mod search;
 mod sources;
+#[cfg(test)]
+mod test_support;
 mod ui;
 pub mod updater;
 

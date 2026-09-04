@@ -117,24 +117,16 @@ pub(crate) fn close_sidebar_on_outside_click(
     sidebar_open_state: &mut bool,
 ) {
     let clicked_outside = ctx.input(|input| {
-        should_close_sidebar(
-            input.pointer.any_click(),
-            input.pointer.interact_pos(),
-            sidebar_rect,
-        )
+        input.pointer.any_click()
+            && input
+                .pointer
+                .interact_pos()
+                .is_some_and(|pos| !sidebar_rect.contains(pos))
     });
 
     if clicked_outside {
         *sidebar_open_state = false;
     }
-}
-
-pub(crate) fn should_close_sidebar(
-    pointer_clicked: bool,
-    pointer_pos: Option<egui::Pos2>,
-    sidebar_rect: egui::Rect,
-) -> bool {
-    pointer_clicked && pointer_pos.is_some_and(|pos| !sidebar_rect.contains(pos))
 }
 
 pub(crate) fn show_sidebar(

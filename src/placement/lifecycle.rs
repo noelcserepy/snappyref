@@ -201,18 +201,7 @@ pub(crate) fn commit_search_provisional_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn temp_root(prefix: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "{prefix}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        root
-    }
+    use crate::test_support::TempRoot;
 
     #[test]
     fn provisional_batch_start_selects_real_provisional_placements() {
@@ -332,8 +321,8 @@ mod tests {
 
     #[test]
     fn commit_search_asset_provisional_creates_committed_placement_and_clears_provisional() {
-        let root = temp_root("snappyref-placement-lifecycle-commit");
-        let library = Library::initialize(root.clone()).unwrap();
+        let root = TempRoot::new("snappyref-placement-lifecycle-commit");
+        let library = Library::initialize(root.to_path_buf()).unwrap();
         let source_path = library
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
             .unwrap();
@@ -387,14 +376,12 @@ mod tests {
             canvas.selected_placement_ids(),
             committed.added_placement_ids
         );
-
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn loading_provisional_history_uses_current_canvas_stack() {
-        let root = temp_root("snappyref-loading-provisional-history-stack");
-        let library = Library::initialize(root.clone()).unwrap();
+        let root = TempRoot::new("snappyref-loading-provisional-history-stack");
+        let library = Library::initialize(root.to_path_buf()).unwrap();
         let mut canvas = CanvasState::default();
         let existing = (1..=2)
             .map(|index| {
@@ -450,7 +437,5 @@ mod tests {
         let stack_change = history_action.stack_order.as_ref().unwrap();
 
         assert_eq!(stack_change.before, Some(in_memory_stack));
-
-        let _ = std::fs::remove_dir_all(root);
     }
 }

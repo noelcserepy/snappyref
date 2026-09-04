@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support::TempRoot;
 
 #[test]
 fn persist_settings_if_changed_true_calls_save_once() {
@@ -20,8 +21,8 @@ fn persist_settings_if_changed_false_skips_save() {
 
 #[test]
 fn save_user_session_round_trips_placement_gap() {
-    let root = temp_library_root("snappyref-app-gap");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-app-gap");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.settings.auto_image_scaling = false;
     app.settings.placement_gap = 37.0;
@@ -41,20 +42,18 @@ fn save_user_session_round_trips_placement_gap() {
         session.viewport.canvas_background,
         crate::data::CanvasBackground::Grid
     );
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
 fn app_config_restores_always_on_top_workspace_setting() {
-    let root = temp_library_root("snappyref-always-on-top-startup");
-    let library = Library::initialize(root.clone()).unwrap();
+    let root = TempRoot::new("snappyref-always-on-top-startup");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut session = library.load_user_session().unwrap();
     session.settings.always_on_top = true;
     library.save_user_session(&session).unwrap();
 
     let config = AppConfig {
-        library_root: Ok(root.clone()),
+        library_root: Ok(root.to_path_buf()),
         no_startup_focus: false,
         perf_log: false,
         perf_decode_path: None,
@@ -70,6 +69,4 @@ fn app_config_restores_always_on_top_workspace_setting() {
             .restored_workspace_settings()
             .is_some_and(|settings| settings.always_on_top)
     );
-
-    let _ = fs::remove_dir_all(root);
 }

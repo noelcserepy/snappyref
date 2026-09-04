@@ -187,12 +187,13 @@ fn append_internal_text(text: &str) -> Result<(), String> {
 mod tests {
     use super::build_selection_copy_payload;
     use crate::data::{Asset, Placement, PlacementState};
+    use crate::test_support::TempRoot;
 
     #[test]
     fn single_selected_placement_copies_internal_json_and_external_image() {
         let ctx = eframe::egui::Context::default();
-        let root = temp_library_root("snappyref-copy-external-image");
-        let library = crate::library::storage::Library::initialize(root).unwrap();
+        let root = TempRoot::new("snappyref-copy-external-image");
+        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
         let rgba = vec![255, 0, 0, 255, 0, 255, 0, 255];
         let source = library
             .store_rgba_image("copy-source", &rgba, 2, 1)
@@ -266,8 +267,8 @@ mod tests {
     #[test]
     fn oversized_single_placement_copies_metadata_only() {
         let ctx = eframe::egui::Context::default();
-        let root = temp_library_root("snappyref-copy-oversized-image");
-        let library = crate::library::storage::Library::initialize(root).unwrap();
+        let root = TempRoot::new("snappyref-copy-oversized-image");
+        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
         let mut canvas = crate::canvas::CanvasState::default();
         let mut placement = test_record(1, 1);
         placement.require_loaded_asset_mut().width = 20_000;
@@ -290,8 +291,8 @@ mod tests {
     #[test]
     fn unsupported_single_placement_copies_metadata_only() {
         let ctx = eframe::egui::Context::default();
-        let root = temp_library_root("snappyref-copy-unsupported-image");
-        let library = crate::library::storage::Library::initialize(root).unwrap();
+        let root = TempRoot::new("snappyref-copy-unsupported-image");
+        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
         let mut placement = test_record(1, 1);
         placement.require_loaded_asset_mut().mime_type = "image/svg+xml".to_owned();
 
@@ -355,17 +356,5 @@ mod tests {
                 height: 1,
             },
         )
-    }
-
-    fn temp_library_root(prefix: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "{prefix}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        root
     }
 }

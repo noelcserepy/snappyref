@@ -93,6 +93,21 @@ pub(crate) struct UpdateConfig {
     pub diagnostic_path: Option<PathBuf>,
 }
 
+#[cfg(test)]
+impl UpdateConfig {
+    /// Fixed config so tests never read the `SNAPPYREF_UPDATE_*` environment
+    /// or append to a real diagnostic log.
+    pub(crate) fn for_tests() -> Self {
+        Self {
+            manifest_url: "https://example.invalid/manifest.json".to_owned(),
+            release_page_url: "https://example.invalid/releases".to_owned(),
+            current_version: env!("CARGO_PKG_VERSION").to_owned(),
+            install_root: None,
+            diagnostic_path: None,
+        }
+    }
+}
+
 impl Default for UpdateConfig {
     fn default() -> Self {
         Self {
@@ -890,7 +905,7 @@ mod tests {
 
     #[test]
     fn service_stays_hidden_before_settled_idle() {
-        let mut service = UpdateService::new(UpdateConfig::default());
+        let mut service = UpdateService::new(UpdateConfig::for_tests());
         service.fetch_override = Some(Box::new(|| panic!("must not fetch before settled idle")));
         // Many frames before settled idle reports true. The service must
         // not touch the network or the state.
@@ -902,7 +917,7 @@ mod tests {
 
     #[test]
     fn service_waits_through_long_startup_then_checks_once_at_settled_idle() {
-        let mut service = UpdateService::new(UpdateConfig::default());
+        let mut service = UpdateService::new(UpdateConfig::for_tests());
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
         service.fetch_override = Some(Box::new(move || {
@@ -931,7 +946,7 @@ mod tests {
         let mut service = UpdateService::new(UpdateConfig {
             current_version: "0.1.0".to_owned(),
             release_page_url: "https://example/release".to_owned(),
-            ..UpdateConfig::default()
+            ..UpdateConfig::for_tests()
         });
         let key = signing_key();
         let bytes = build_manifest_bytes("1.0.0", &key);
@@ -961,7 +976,7 @@ mod tests {
 
     #[test]
     fn service_reports_failed_on_fetch_failure() {
-        let mut service = UpdateService::new(UpdateConfig::default());
+        let mut service = UpdateService::new(UpdateConfig::for_tests());
         service.fetch_override = Some(Box::new(|| DiscoveryResult {
             outcome: CheckOutcome::Failed,
             manifest: None,
@@ -975,7 +990,7 @@ mod tests {
     fn failure_does_not_clobber_previously_available_state() {
         let mut service = UpdateService::new(UpdateConfig {
             current_version: "0.1.0".to_owned(),
-            ..UpdateConfig::default()
+            ..UpdateConfig::for_tests()
         });
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
@@ -1039,7 +1054,7 @@ mod tests {
 
     #[test]
     fn start_install_is_noop_when_no_manifest_is_cached() {
-        let mut service = UpdateService::new(UpdateConfig::default());
+        let mut service = UpdateService::new(UpdateConfig::for_tests());
         // No discovery has run yet, so last_manifest is None even if the
         // state happens to be Hidden. start_install must not transition.
         service.start_install();
@@ -1048,7 +1063,7 @@ mod tests {
 
     #[test]
     fn start_install_is_noop_unless_state_is_available() {
-        let mut service = UpdateService::new(UpdateConfig::default());
+        let mut service = UpdateService::new(UpdateConfig::for_tests());
         service.last_manifest = Some(manifest_with("1.0.0"));
         // State is still Hidden. start_install must refuse to act so a
         // race between failure and click cannot kick off a phantom
@@ -1061,7 +1076,7 @@ mod tests {
     fn start_install_transitions_to_downloading_with_zero_percent() {
         let mut service = UpdateService::new(UpdateConfig {
             current_version: "0.1.0".to_owned(),
-            ..UpdateConfig::default()
+            ..UpdateConfig::for_tests()
         });
         service.last_manifest = Some(manifest_with("1.0.0"));
         service.state.apply(CheckOutcome::NewerAvailable {
@@ -1087,7 +1102,7 @@ mod tests {
 
     #[test]
     fn drain_install_progress_promotes_to_ready_on_staged() {
-        let mut service = UpdateService::new(UpdateConfig::default());
+        let mut service = UpdateService::new(UpdateConfig::for_tests());
         service.last_manifest = Some(manifest_with("1.0.0"));
         service.state.apply(CheckOutcome::NewerAvailable {
             version: "1.0.0".to_owned(),
@@ -1116,7 +1131,7 @@ mod tests {
 
     #[test]
     fn drain_install_progress_transitions_to_failed_on_install_error() {
-        let mut service = UpdateService::new(UpdateConfig::default());
+        let mut service = UpdateService::new(UpdateConfig::for_tests());
         service.last_manifest = Some(manifest_with("1.0.0"));
         service.state.apply(CheckOutcome::NewerAvailable {
             version: "1.0.0".to_owned(),
@@ -1156,7 +1171,7 @@ mod tests {
 
         let _service = UpdateService::new(UpdateConfig {
             install_root: Some(scratch.clone()),
-            ..UpdateConfig::default()
+            ..UpdateConfig::for_tests()
         });
 
         assert!(!partial.exists(), "partial download must be removed");
@@ -1213,7 +1228,7 @@ mod tests {
         let mut service = UpdateService::new(UpdateConfig {
             current_version: "0.1.0".to_owned(),
             install_root: Some(scratch.clone()),
-            ..UpdateConfig::default()
+            ..UpdateConfig::for_tests()
         });
         let key = signing_key();
         let bytes = build_manifest_bytes("1.0.0", &key);
@@ -1255,7 +1270,7 @@ mod tests {
         let mut service = UpdateService::new(UpdateConfig {
             current_version: "1.0.0".to_owned(),
             install_root: Some(scratch.clone()),
-            ..UpdateConfig::default()
+            ..UpdateConfig::for_tests()
         });
         let key = signing_key();
         let bytes = build_manifest_bytes("1.0.0", &key);
@@ -1299,7 +1314,7 @@ mod tests {
         let mut service = UpdateService::new(UpdateConfig {
             current_version: "0.1.0".to_owned(),
             install_root: Some(scratch.clone()),
-            ..UpdateConfig::default()
+            ..UpdateConfig::for_tests()
         });
         let key = signing_key();
         let bytes = build_manifest_bytes("1.0.0", &key);
@@ -1345,7 +1360,7 @@ mod tests {
         let mut service = UpdateService::new(UpdateConfig {
             current_version: "0.1.0".to_owned(),
             install_root: Some(scratch.clone()),
-            ..UpdateConfig::default()
+            ..UpdateConfig::for_tests()
         });
         let key = signing_key();
         let bytes = build_manifest_bytes("1.0.0", &key);
@@ -1395,7 +1410,7 @@ mod tests {
         let mut service = UpdateService::new(UpdateConfig {
             current_version: "0.1.0".to_owned(),
             install_root: Some(scratch.clone()),
-            ..UpdateConfig::default()
+            ..UpdateConfig::for_tests()
         });
         let key = signing_key();
         let bytes = build_manifest_bytes("1.0.0", &key);
@@ -1421,7 +1436,7 @@ mod tests {
 
     #[test]
     fn last_check_completed_at_records_a_timestamp_after_a_check_returns() {
-        let mut service = UpdateService::new(UpdateConfig::default());
+        let mut service = UpdateService::new(UpdateConfig::for_tests());
         service.fetch_override = Some(Box::new(|| DiscoveryResult {
             outcome: CheckOutcome::UpToDate,
             manifest: None,
@@ -1436,7 +1451,7 @@ mod tests {
 
     #[test]
     fn seed_last_check_completed_at_only_fills_an_empty_slot() {
-        let mut service = UpdateService::new(UpdateConfig::default());
+        let mut service = UpdateService::new(UpdateConfig::for_tests());
         service.seed_last_check_completed_at(Some(1_700_000_000_000));
         assert_eq!(service.last_check_completed_at(), Some(1_700_000_000_000));
         // Seeding again with a different value must not clobber a value
@@ -1447,7 +1462,7 @@ mod tests {
 
     #[test]
     fn request_check_now_forces_an_immediate_check_after_settled_idle() {
-        let mut service = UpdateService::new(UpdateConfig::default());
+        let mut service = UpdateService::new(UpdateConfig::for_tests());
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
         service.fetch_override = Some(Box::new(move || {
@@ -1475,7 +1490,7 @@ mod tests {
 
     #[test]
     fn request_check_now_forces_a_check_before_settled_idle() {
-        let mut service = UpdateService::new(UpdateConfig::default());
+        let mut service = UpdateService::new(UpdateConfig::for_tests());
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
         service.fetch_override = Some(Box::new(move || {
@@ -1499,7 +1514,7 @@ mod tests {
 
     #[test]
     fn time_until_next_check_polls_while_discovery_is_in_flight() {
-        let mut service = UpdateService::new(UpdateConfig::default());
+        let mut service = UpdateService::new(UpdateConfig::for_tests());
         service.fetch_override = Some(Box::new(|| DiscoveryResult {
             outcome: CheckOutcome::UpToDate,
             manifest: None,
@@ -1515,7 +1530,7 @@ mod tests {
 
     #[test]
     fn time_until_next_check_polls_until_settled_idle_latches() {
-        let mut service = UpdateService::new(UpdateConfig::default());
+        let mut service = UpdateService::new(UpdateConfig::for_tests());
 
         service.tick(false);
 
