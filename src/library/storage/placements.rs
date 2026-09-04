@@ -35,65 +35,26 @@ fn load_or_insert_exact_asset(
     Ok(asset)
 }
 
-#[cfg(test)]
-fn insert_placement_row(
-    item_id: i64,
-    transaction: &Transaction<'_>,
-    board_id: i64,
-    asset_id: i64,
-    desired_world: egui::Pos2,
-    display_size: egui::Vec2,
-    initial_scale: f32,
-) -> Result<PlacementState, String> {
-    transaction
-        .execute(
-            "INSERT INTO board_items (
-                id,
-                board_id,
-                asset_id,
-                x,
-                y,
-                scale,
-                width,
-                height,
-                rotation,
-                z_index,
-                archived
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                item_id,
-                board_id,
-                asset_id,
-                desired_world.x,
-                desired_world.y,
-                initial_scale,
-                display_size.x.max(1.0),
-                display_size.y.max(1.0),
-                0.0_f32,
-                0_i64,
-                0_i64
-            ],
-        )
-        .map_err(|error| format!("failed to insert placement: {error}"))?;
-
-    Ok(PlacementState::with_display_size(
-        item_id,
-        Some(asset_id),
-        desired_world,
-        display_size,
-        initial_scale,
-        0.0,
-        0,
-        false,
-    ))
-}
-
 fn placement_content_state(content: &PlacementContent) -> &'static str {
     match content {
         PlacementContent::Loaded { .. } => "loaded",
         PlacementContent::Loading { .. } => "loading",
         PlacementContent::Failed { .. } => "failed",
     }
+}
+
+#[cfg(test)]
+fn append_committed_placement(
+    transaction: &Transaction<'_>,
+    board_id: i64,
+    placement: &Placement,
+) -> Result<(), String> {
+    restore_board_placement(transaction, board_id, placement)?;
+    append_canvas_stack_item(
+        transaction,
+        board_id,
+        CanvasStackItem::Placement(placement.state.id),
+    )
 }
 
 pub(super) fn restore_board_placement(
@@ -406,9 +367,7 @@ impl Library {
         initial_scale: f32,
     ) -> Result<Placement, String> {
         let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| format!("failed to start transaction: {error}"))?;
+        let transaction = write_transaction(&mut connection, "placement import")?;
 
         let asset = load_or_insert_exact_asset(
             &transaction,
@@ -419,25 +378,27 @@ impl Library {
             file_size,
             original_sha256,
         )?;
-        let item = insert_placement_row(
-            self.allocate_document_id(),
-            &transaction,
-            board_id,
-            asset.id,
-            desired_world,
-            egui::vec2(asset.width as f32, asset.height as f32),
-            initial_scale,
-        )?;
-        append_canvas_stack_item(&transaction, board_id, CanvasStackItem::Placement(item.id))?;
-
+        let placement = Placement::loaded(
+            PlacementState::with_display_size(
+                self.allocate_document_id(),
+                Some(asset.id),
+                desired_world,
+                egui::vec2(asset.width as f32, asset.height as f32),
+                initial_scale,
+                0.0,
+                0,
+                false,
+            ),
+            asset,
+        );
+        append_committed_placement(&transaction, board_id, &placement)?;
         transaction
             .commit()
             .map_err(|error| format!("failed to commit transaction: {error}"))?;
-
-        Ok(Placement::loaded(item, asset))
+        Ok(placement)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn persist_imported_image_resolving_placement(
         &self,
         board_id: i64,
@@ -487,11 +448,7 @@ impl Library {
                 "cannot import to missing or archived board {board_id}"
             ));
         }
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| {
-                format!("failed to start placement resolution transaction: {error}")
-            })?;
+        let transaction = write_transaction(&mut connection, "placement resolution")?;
         let asset = load_or_insert_exact_asset(
             &transaction,
             stored_path,
@@ -615,67 +572,39 @@ impl Library {
         display_size: egui::Vec2,
         content: PlacementContent,
     ) -> Result<Placement, String> {
-        let mut connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("failed to start placement transaction: {error}"))?;
-        let content_state = placement_content_state(&content);
-        let content_resolution_source_payload = serde_json::to_string(&content)
-            .map_err(|error| format!("failed to encode placement content: {error}"))?;
-        let item_id = self.allocate_document_id();
-        transaction
-            .execute(
-                "INSERT INTO board_items (
-                    id, board_id, asset_id, x, y, scale, width, height, rotation, z_index, archived,
-                    placement_content_state, placement_lifecycle, content_resolution_intent
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-                params![
-                    item_id,
-                    active_board_id,
-                    rusqlite::types::Null,
-                    desired_world.x,
-                    desired_world.y,
-                    initial_scale,
-                    display_size.x.max(1.0),
-                    display_size.y.max(1.0),
-                    0.0_f32,
-                    0_i64,
-                    0_i64,
-                    content_state,
-                    "committed",
-                    content_resolution_source_payload,
-                ],
-            )
-            .map_err(|error| format!("failed to insert unloaded placement: {error}"))?;
-        append_canvas_stack_item(
-            &transaction,
-            active_board_id,
-            CanvasStackItem::Placement(item_id),
-        )?;
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit placement transaction: {error}"))?;
-
-        let item = PlacementState::with_display_size(
-            item_id,
-            None,
-            desired_world,
-            display_size,
-            initial_scale,
-            0.0,
-            0,
-            false,
-        );
-        Ok(Placement {
-            state: item,
+        let placement = Placement {
+            state: PlacementState::with_display_size(
+                self.allocate_document_id(),
+                None,
+                desired_world,
+                display_size,
+                initial_scale,
+                0.0,
+                0,
+                false,
+            ),
             asset: None,
             content,
             lifecycle: PlacementLifecycle::Committed,
-        })
+        };
+        self.insert_committed_placement(&placement)?;
+        Ok(placement)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Test seam: appends a Placement to the active Board through the same
+    /// row writer durability uses.
+    #[cfg(test)]
+    fn insert_committed_placement(&self, placement: &Placement) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let active_board_id = active_board_id(&connection)?;
+        let transaction = write_transaction(&mut connection, "placement")?;
+        append_committed_placement(&transaction, active_board_id, placement)?;
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit placement transaction: {error}"))
+    }
+
+    #[cfg(test)]
     pub fn load_placements_for_board(&self, board_id: i64) -> Result<Vec<Placement>, String> {
         let connection = self.connection()?;
         if !board_is_non_archived(&connection, board_id)? {
@@ -776,7 +705,6 @@ impl Library {
         self.load_placement_arrangement_inputs_for_board_id(&connection, active_board_id)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn load_placement_arrangement_inputs_for_board(
         &self,
         board_id: i64,
@@ -831,9 +759,7 @@ impl Library {
         }
 
         let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("failed to start archive transaction: {error}"))?;
+        let transaction = write_transaction(&mut connection, "archive")?;
 
         for item_id in placement_ids {
             transaction
@@ -862,172 +788,6 @@ impl Library {
     }
 
     #[cfg(test)]
-    pub fn commit_provisional_placements(
-        &self,
-        provisionals: &[Placement],
-    ) -> Result<Vec<(i64, Placement)>, String> {
-        if provisionals.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let assets = provisionals
-            .iter()
-            .map(|placement| {
-                let asset_id = placement.state.asset_id.ok_or_else(|| {
-                    format!("provisional placement {} has no asset", placement.state.id)
-                })?;
-                self.load_asset(asset_id)
-                    .map(|asset| (placement.state.id, asset))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let mut connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("failed to start provisional commit transaction: {error}"))?;
-
-        let mut committed = Vec::with_capacity(provisionals.len());
-        for (provisional, (_, asset)) in provisionals.iter().zip(assets) {
-            let committed_id = self.allocate_document_id();
-            transaction
-                .execute(
-                    "INSERT INTO board_items (
-                        id,
-                        board_id,
-                        asset_id,
-                        x,
-                        y,
-                        scale,
-                        width,
-                        height,
-                        rotation,
-                        z_index,
-                        archived
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                    params![
-                        committed_id,
-                        active_board_id,
-                        asset.id,
-                        provisional.state.geometry.center.x,
-                        provisional.state.geometry.center.y,
-                        provisional.state.geometry.scale,
-                        provisional.state.geometry.size.x,
-                        provisional.state.geometry.size.y,
-                        provisional.state.geometry.rotation,
-                        provisional.state.geometry.z_index,
-                        0_i64
-                    ],
-                )
-                .map_err(|error| {
-                    format!(
-                        "failed to commit provisional placement {}: {error}",
-                        provisional.state.id
-                    )
-                })?;
-
-            let state = PlacementState::with_display_size(
-                committed_id,
-                Some(asset.id),
-                provisional.state.geometry.center,
-                provisional.state.geometry.size,
-                provisional.state.geometry.scale,
-                provisional.state.geometry.rotation,
-                provisional.state.geometry.z_index,
-                false,
-            );
-            committed.push((provisional.state.id, Placement::loaded(state, asset)));
-        }
-
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit provisional placements: {error}"))?;
-
-        Ok(committed)
-    }
-
-    #[cfg(test)]
-    pub fn commit_provisional_loading_placements(
-        &self,
-        provisionals: &[Placement],
-    ) -> Result<Vec<(i64, Placement)>, String> {
-        if provisionals.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let transaction = connection.transaction().map_err(|error| {
-            format!("failed to start provisional loading commit transaction: {error}")
-        })?;
-
-        let mut committed = Vec::with_capacity(provisionals.len());
-        for provisional in provisionals {
-            let content_state = placement_content_state(&provisional.content);
-            let content_resolution_source_payload = serde_json::to_string(&provisional.content)
-                .map_err(|error| format!("failed to encode placement content: {error}"))?;
-            let committed_id = self.allocate_document_id();
-            transaction
-                .execute(
-                    "INSERT INTO board_items (
-                        id,
-                        board_id,
-                        asset_id,
-                        x,
-                        y,
-                        scale,
-                        width,
-                        height,
-                        rotation,
-                        z_index,
-                        archived,
-                        placement_content_state,
-                        placement_lifecycle,
-                        content_resolution_intent
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-                    params![
-                        committed_id,
-                        active_board_id,
-                        rusqlite::types::Null,
-                        provisional.state.geometry.center.x,
-                        provisional.state.geometry.center.y,
-                        provisional.state.geometry.scale,
-                        provisional.state.geometry.size.x,
-                        provisional.state.geometry.size.y,
-                        provisional.state.geometry.rotation,
-                        provisional.state.geometry.z_index,
-                        0_i64,
-                        content_state,
-                        "committed",
-                        content_resolution_source_payload,
-                    ],
-                )
-                .map_err(|error| {
-                    format!(
-                        "failed to commit provisional loading placement {}: {error}",
-                        provisional.state.id
-                    )
-                })?;
-
-            let mut placement = provisional.clone();
-            append_canvas_stack_item(
-                &transaction,
-                active_board_id,
-                CanvasStackItem::Placement(committed_id),
-            )?;
-            placement.state.id = committed_id;
-            placement.lifecycle = PlacementLifecycle::Committed;
-            committed.push((provisional.state.id, placement));
-        }
-
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit provisional loading placements: {error}"))?;
-
-        Ok(committed)
-    }
-
-    #[cfg(test)]
     pub fn create_placement_from_asset(
         &self,
         asset_id: i64,
@@ -1036,58 +796,21 @@ impl Library {
         rotation: f32,
         z_index: i32,
     ) -> Result<Placement, String> {
-        let connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
         let asset = self.load_asset(asset_id)?;
-        let item_id = self.allocate_document_id();
-
-        connection
-            .execute(
-                "INSERT INTO board_items (
-                    id,
-                    board_id,
-                    asset_id,
-                    x,
-                    y,
-                    scale,
-                    width,
-                    height,
-                    rotation,
-                    z_index,
-                    archived
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![
-                    item_id,
-                    active_board_id,
-                    asset_id,
-                    center_world.x,
-                    center_world.y,
-                    scale,
-                    asset.width as f32,
-                    asset.height as f32,
-                    rotation,
-                    z_index,
-                    0_i64
-                ],
-            )
-            .map_err(|error| format!("failed to create pasted placement: {error}"))?;
-
-        append_canvas_stack_item(
-            &connection,
-            active_board_id,
-            CanvasStackItem::Placement(item_id),
-        )?;
-
-        let item = PlacementState::with_display_size(
-            item_id,
-            Some(asset_id),
-            center_world,
-            egui::vec2(asset.width as f32, asset.height as f32),
-            scale,
-            rotation,
-            z_index,
-            false,
+        let placement = Placement::loaded(
+            PlacementState::with_display_size(
+                self.allocate_document_id(),
+                Some(asset_id),
+                center_world,
+                egui::vec2(asset.width as f32, asset.height as f32),
+                scale,
+                rotation,
+                z_index,
+                false,
+            ),
+            asset,
         );
-        Ok(Placement::loaded(item, asset))
+        self.insert_committed_placement(&placement)?;
+        Ok(placement)
     }
 }

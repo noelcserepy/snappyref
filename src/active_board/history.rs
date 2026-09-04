@@ -483,7 +483,6 @@ struct StoredAnnotation {
 struct StoredBoardDocument {
     board_id: i64,
     board_name: String,
-    board_archived: bool,
     placements: Vec<StoredPlacement>,
     annotations: Vec<StoredAnnotation>,
     stack_order: Vec<(String, i64)>,
@@ -815,7 +814,6 @@ impl From<&crate::data::BoardDocumentSnapshot> for StoredBoardDocument {
         Self {
             board_id: document.board.id,
             board_name: document.board.name.clone(),
-            board_archived: document.board.archived,
             placements: document
                 .placements
                 .iter()
@@ -844,7 +842,6 @@ impl StoredBoardDocument {
             board: crate::data::Board {
                 id: self.board_id,
                 name: self.board_name,
-                archived: self.board_archived,
             },
             placements: self
                 .placements

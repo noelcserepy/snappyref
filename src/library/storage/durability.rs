@@ -16,9 +16,7 @@ impl Library {
     ) -> Result<(), String> {
         let history_payload = history.encode()?;
         let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| format!("failed to start Board durability transaction: {error}"))?;
+        let transaction = write_transaction(&mut connection, "Board durability")?;
 
         match operation {
             BoardDurabilityOperation::Document { board_id, changes } => {
@@ -39,6 +37,21 @@ impl Library {
         transaction
             .commit()
             .map_err(|error| format!("failed to commit Board durability transaction: {error}"))
+    }
+
+    /// Lifecycle change without a history rewrite. Test seam for board setup;
+    /// the app always goes through `persist_board_unit`.
+    #[cfg(test)]
+    pub(crate) fn persist_lifecycle_change(
+        &self,
+        change: &crate::active_board::persistence::BoardLifecyclePersistence,
+    ) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = write_transaction(&mut connection, "Board lifecycle")?;
+        persist_lifecycle_change(&transaction, change)?;
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit Board lifecycle transaction: {error}"))
     }
 
     pub(crate) fn load_document_history(
@@ -90,89 +103,15 @@ fn persist_document_changes(
         super::placements::restore_board_placement(transaction, board_id, &placement)?;
     }
     for annotation in &changes.updated_annotations {
-        let changed = transaction
-            .execute(
-                "UPDATE canvas_annotations
-                 SET start_x = ?1, start_y = ?2, end_x = ?3, end_y = ?4,
-                     text = ?5, text_size = ?6, stroke_width = ?7, color = ?8,
-                     background_enabled = ?9, archived = ?10
-                 WHERE id = ?11 AND board_id = ?12",
-                params![
-                    annotation.start().x,
-                    annotation.start().y,
-                    annotation.end().x,
-                    annotation.end().y,
-                    annotation.text,
-                    annotation.text_size.as_str(),
-                    annotation.stroke_width.as_str(),
-                    annotation.color.as_str(),
-                    if annotation.background_enabled {
-                        1_i64
-                    } else {
-                        0_i64
-                    },
-                    if annotation.archived { 1_i64 } else { 0_i64 },
-                    annotation.id,
-                    board_id,
-                ],
-            )
-            .map_err(|error| {
-                format!(
-                    "failed to update canvas annotation {}: {error}",
-                    annotation.id
-                )
-            })?;
-        if changed == 0 {
-            transaction
-                .execute(
-                    "INSERT INTO canvas_annotations (
-                        id, board_id, kind, start_x, start_y, end_x, end_y, text,
-                        text_size, stroke_width, color, background_enabled, archived
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-                    params![
-                        annotation.id,
-                        board_id,
-                        annotation.kind.as_str(),
-                        annotation.start().x,
-                        annotation.start().y,
-                        annotation.end().x,
-                        annotation.end().y,
-                        annotation.text,
-                        annotation.text_size.as_str(),
-                        annotation.stroke_width.as_str(),
-                        annotation.color.as_str(),
-                        if annotation.background_enabled {
-                            1_i64
-                        } else {
-                            0_i64
-                        },
-                        if annotation.archived { 1_i64 } else { 0_i64 },
-                    ],
-                )
-                .map_err(|error| {
-                    format!(
-                        "failed to insert canvas annotation {}: {error}",
-                        annotation.id
-                    )
-                })?;
-        }
+        super::annotations::upsert_board_annotation(
+            transaction,
+            board_id,
+            annotation,
+            annotation.archived,
+        )?;
     }
     if let Some(stack_order) = &changes.stack_order {
-        transaction
-            .execute(
-                "DELETE FROM canvas_stack_items WHERE board_id = ?1",
-                params![board_id],
-            )
-            .map_err(|error| format!("failed to clear canvas stack order: {error}"))?;
-        for (stack_index, item) in stack_order.iter().enumerate() {
-            transaction
-                .execute(
-                    "INSERT INTO canvas_stack_items (board_id, item_kind, item_id, stack_index)
-                     VALUES (?1, ?2, ?3, ?4)",
-                    params![board_id, item.kind(), item.item_id(), stack_index as i64],
-                )
-                .map_err(|error| format!("failed to save canvas stack order: {error}"))?;
-        }
+        super::stack_order::replace_board_stack_order(transaction, board_id, stack_order)?;
     }
     Ok(())
 }

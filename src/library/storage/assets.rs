@@ -6,7 +6,8 @@ pub struct ExactDedupeReport {
     pub hashed_assets: usize,
     pub duplicate_assets_removed: usize,
     pub placements_relinked: usize,
-    pub canonical_asset_ids: Vec<i64>,
+    /// `(duplicate_id, canonical_id)` pairs; tests read these, the app only
+    /// reports counts.
     pub asset_id_remaps: Vec<(i64, i64)>,
 }
 
@@ -14,6 +15,20 @@ impl ExactDedupeReport {
     pub fn changed(&self) -> bool {
         self.duplicate_assets_removed > 0 || self.placements_relinked > 0
     }
+}
+
+const ASSET_COLUMNS: &str = "id, original_path, filename, mime_type, width, height, file_size";
+
+fn asset_from_row(row: &rusqlite::Row<'_>) -> Result<Asset, rusqlite::Error> {
+    Ok(Asset {
+        id: row.get(0)?,
+        original_path: PathBuf::from(row.get::<_, String>(1)?),
+        filename: row.get(2)?,
+        mime_type: row.get(3)?,
+        width: row.get::<_, u32>(4)?,
+        height: row.get::<_, u32>(5)?,
+        file_size: row.get::<_, i64>(6)? as u64,
+    })
 }
 
 pub(super) fn insert_asset_row(
@@ -75,56 +90,22 @@ pub(super) fn load_exact_asset_for_original(
     file_size: u64,
     original_sha256: &str,
 ) -> Result<Option<Asset>, String> {
-    let mut statement = transaction
-        .prepare(
-            "SELECT
-                id,
-                original_path,
-                filename,
-                mime_type,
-                width,
-                height,
-                file_size
-             FROM assets
-             WHERE archived = 0
-               AND file_size = ?1
-               AND original_sha256 = ?2
-             ORDER BY id ASC
-             LIMIT 1",
+    transaction
+        .query_row(
+            &format!(
+                "SELECT {ASSET_COLUMNS}
+                 FROM assets
+                 WHERE archived = 0
+                   AND file_size = ?1
+                   AND original_sha256 = ?2
+                 ORDER BY id ASC
+                 LIMIT 1"
+            ),
+            params![file_size as i64, original_sha256],
+            asset_from_row,
         )
-        .map_err(|error| format!("failed to prepare exact-asset lookup: {error}"))?;
-    let mut rows = statement
-        .query(params![file_size as i64, original_sha256])
-        .map_err(|error| format!("failed to query exact-asset lookup: {error}"))?;
-    let Some(row) = rows
-        .next()
-        .map_err(|error| format!("failed to read exact-asset lookup: {error}"))?
-    else {
-        return Ok(None);
-    };
-    Ok(Some(Asset {
-        id: row.get(0).map_err(|error| {
-            format!("failed to read exact-asset id for {original_sha256}: {error}")
-        })?,
-        original_path: PathBuf::from(row.get::<_, String>(1).map_err(|error| {
-            format!("failed to read exact-asset path for {original_sha256}: {error}")
-        })?),
-        filename: row.get(2).map_err(|error| {
-            format!("failed to read exact-asset filename for {original_sha256}: {error}")
-        })?,
-        mime_type: row.get(3).map_err(|error| {
-            format!("failed to read exact-asset MIME type for {original_sha256}: {error}")
-        })?,
-        width: row.get::<_, u32>(4).map_err(|error| {
-            format!("failed to read exact-asset width for {original_sha256}: {error}")
-        })?,
-        height: row.get::<_, u32>(5).map_err(|error| {
-            format!("failed to read exact-asset height for {original_sha256}: {error}")
-        })?,
-        file_size: row.get::<_, i64>(6).map_err(|error| {
-            format!("failed to read exact-asset file size for {original_sha256}: {error}")
-        })? as u64,
-    }))
+        .optional()
+        .map_err(|error| format!("failed to read exact asset for {original_sha256}: {error}"))
 }
 
 #[derive(Clone, Debug)]
@@ -203,9 +184,7 @@ impl Library {
         file_size: u64,
     ) -> Result<Asset, String> {
         let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("failed to start asset transaction: {error}"))?;
+        let transaction = write_transaction(&mut connection, "asset")?;
         let asset = insert_asset_row(
             &transaction,
             stored_path,
@@ -234,13 +213,8 @@ impl Library {
             let group_report = self.dedupe_duplicate_asset_group(group)?;
             report.duplicate_assets_removed += group_report.duplicate_assets_removed;
             report.placements_relinked += group_report.placements_relinked;
-            report
-                .canonical_asset_ids
-                .extend(group_report.canonical_asset_ids);
             report.asset_id_remaps.extend(group_report.asset_id_remaps);
         }
-        report.canonical_asset_ids.sort_unstable();
-        report.canonical_asset_ids.dedup();
         report.asset_id_remaps.sort_unstable();
         report.asset_id_remaps.dedup();
         Ok(report)
@@ -371,9 +345,7 @@ impl Library {
             .collect::<HashMap<_, _>>();
 
         let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("failed to start asset dedupe transaction: {error}"))?;
+        let transaction = write_transaction(&mut connection, "asset dedupe")?;
 
         let mut payload_statement = transaction
             .prepare(
@@ -458,7 +430,6 @@ impl Library {
             hashed_assets: 0,
             duplicate_assets_removed,
             placements_relinked,
-            canonical_asset_ids: vec![canonical_id],
             asset_id_remaps: duplicate_ids
                 .into_iter()
                 .map(|duplicate_id| (duplicate_id, canonical_id))
@@ -478,9 +449,7 @@ impl Library {
         desired_world: egui::Pos2,
     ) -> Result<Asset, String> {
         let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("failed to start relink transaction: {error}"))?;
+        let transaction = write_transaction(&mut connection, "relink")?;
 
         let asset = insert_asset_row(
             &transaction,
@@ -516,29 +485,14 @@ impl Library {
         let connection = self.connection()?;
         connection
             .query_row(
-                "SELECT
-                    id,
-                    original_path,
-                    filename,
-                    mime_type,
-                    width,
-                    height,
-                    file_size
-                 FROM assets
-                 WHERE id = ?1
-                   AND archived = 0",
+                &format!(
+                    "SELECT {ASSET_COLUMNS}
+                     FROM assets
+                     WHERE id = ?1
+                       AND archived = 0"
+                ),
                 params![asset_id],
-                |row| {
-                    Ok(Asset {
-                        id: row.get(0)?,
-                        original_path: PathBuf::from(row.get::<_, String>(1)?),
-                        filename: row.get(2)?,
-                        mime_type: row.get(3)?,
-                        width: row.get::<_, u32>(4)?,
-                        height: row.get::<_, u32>(5)?,
-                        file_size: row.get::<_, i64>(6)? as u64,
-                    })
-                },
+                asset_from_row,
             )
             .map_err(|error| format!("failed to load asset {asset_id}: {error}"))
     }
@@ -549,9 +503,7 @@ impl Library {
         }
 
         let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("failed to start asset archive transaction: {error}"))?;
+        let transaction = write_transaction(&mut connection, "asset archive")?;
 
         for asset_id in asset_ids {
             transaction

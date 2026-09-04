@@ -59,6 +59,31 @@ pub(super) fn load_canvas_stack_order_for_board_id(
         .map_err(|error| format!("failed to collect canvas-stack items: {error}"))
 }
 
+/// Replaces the Board's stack order wholesale; stack indices are positions
+/// in `stack_order`.
+pub(super) fn replace_board_stack_order(
+    transaction: &Transaction<'_>,
+    board_id: i64,
+    stack_order: &[CanvasStackItem],
+) -> Result<(), String> {
+    transaction
+        .execute(
+            "DELETE FROM canvas_stack_items WHERE board_id = ?1",
+            params![board_id],
+        )
+        .map_err(|error| format!("failed to clear board {board_id} stack order: {error}"))?;
+    for (stack_index, item) in stack_order.iter().enumerate() {
+        transaction
+            .execute(
+                "INSERT INTO canvas_stack_items (board_id, item_kind, item_id, stack_index)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![board_id, item.kind(), item.item_id(), stack_index as i64],
+            )
+            .map_err(|error| format!("failed to save board {board_id} stack order: {error}"))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub(super) fn append_canvas_stack_item(
     connection: &Connection,
@@ -183,37 +208,10 @@ impl Library {
     pub fn save_canvas_stack_order(&self, stack_order: &[CanvasStackItem]) -> Result<(), String> {
         let mut connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("failed to start canvas-stack transaction: {error}"))?;
-        transaction
-            .execute(
-                "DELETE FROM canvas_stack_items
-                 WHERE board_id = ?1",
-                params![active_board_id],
-            )
-            .map_err(|error| format!("failed to clear canvas stack order: {error}"))?;
-        for (stack_index, item) in stack_order.iter().enumerate() {
-            transaction
-                .execute(
-                    "INSERT INTO canvas_stack_items (
-                        board_id,
-                        item_kind,
-                        item_id,
-                        stack_index
-                     ) VALUES (?1, ?2, ?3, ?4)",
-                    params![
-                        active_board_id,
-                        item.kind(),
-                        item.item_id(),
-                        stack_index as i64
-                    ],
-                )
-                .map_err(|error| format!("failed to save canvas stack order: {error}"))?;
-        }
+        let transaction = write_transaction(&mut connection, "canvas-stack")?;
+        replace_board_stack_order(&transaction, active_board_id, stack_order)?;
         transaction
             .commit()
-            .map_err(|error| format!("failed to commit canvas stack order: {error}"))?;
-        Ok(())
+            .map_err(|error| format!("failed to commit canvas stack order: {error}"))
     }
 }

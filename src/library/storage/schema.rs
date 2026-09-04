@@ -1,107 +1,177 @@
-use super::session::{StoredUserSessionPayload, legacy_user_session_from_row};
+use super::session::StoredUserSessionPayload;
 use super::stack_order::ensure_canvas_stack_items_populated;
 use super::*;
 
 const DEFAULT_VIEWPORT_ZOOM_SQL: &str = "0.45";
-const LEGACY_CONTENT_RESOLUTION_INTENT_COLUMN: &str = "content_resolution_intent";
 
-fn ensure_board_items_archived_column(connection: &Connection) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(board_items)")
-        .map_err(|error| format!("failed to inspect board_items schema: {error}"))?;
+/// Columns added after the tables first shipped, as `(table, column,
+/// definition)`. New databases get them from `CREATE TABLE`; older ones are
+/// upgraded in this order on open. Superseded `user_session` columns stay so
+/// old rows keep loading through `legacy_user_session_from_row`.
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("board_items", "archived", "INTEGER NOT NULL DEFAULT 0"),
+    (
+        "board_items",
+        "placement_content_state",
+        "TEXT NOT NULL DEFAULT 'loaded'",
+    ),
+    (
+        "board_items",
+        "placement_lifecycle",
+        "TEXT NOT NULL DEFAULT 'committed'",
+    ),
+    ("board_items", "width", "REAL NOT NULL DEFAULT 1.0"),
+    ("board_items", "height", "REAL NOT NULL DEFAULT 1.0"),
+    ("board_items", "content_resolution_intent", "TEXT"),
+    ("board_items", "board_id", "INTEGER NOT NULL DEFAULT 1"),
+    ("assets", "archived", "INTEGER NOT NULL DEFAULT 0"),
+    ("assets", "original_sha256", "TEXT"),
+    (
+        "user_session",
+        "auto_image_scaling",
+        "INTEGER NOT NULL DEFAULT 1",
+    ),
+    ("user_session", "placement_gap", "REAL NOT NULL DEFAULT 0.0"),
+    (
+        "user_session",
+        "import_target_canvas_area",
+        "REAL NOT NULL DEFAULT 90000.0",
+    ),
+    (
+        "user_session",
+        "canvas_background",
+        "TEXT NOT NULL DEFAULT 'none'",
+    ),
+    (
+        "user_session",
+        "semantic_search_enabled",
+        "INTEGER NOT NULL DEFAULT 1",
+    ),
+    (
+        "user_session",
+        "canvas_image_mode",
+        "TEXT NOT NULL DEFAULT 'downscale'",
+    ),
+    (
+        "user_session",
+        "canvas_image_max_side",
+        "INTEGER NOT NULL DEFAULT 2000",
+    ),
+    (
+        "user_session",
+        "rotation_snap_degrees",
+        "REAL NOT NULL DEFAULT 15.0",
+    ),
+    (
+        "user_session",
+        "default_textbox_background",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+    ("user_session", "sidebar_open", "INTEGER NOT NULL DEFAULT 0"),
+    (
+        "user_session",
+        "sidebar_tab",
+        "TEXT NOT NULL DEFAULT 'settings'",
+    ),
+    (
+        "user_session",
+        "active_board_id",
+        "INTEGER NOT NULL DEFAULT 1",
+    ),
+    ("user_session", "session_payload", "TEXT"),
+    ("asset_embeddings", "failure_kind", "TEXT"),
+    (
+        "asset_embeddings",
+        "failure_count",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+    ("asset_embeddings", "next_retry_at", "INTEGER"),
+    (
+        "canvas_annotations",
+        "text_size",
+        "TEXT NOT NULL DEFAULT 'm'",
+    ),
+    (
+        "canvas_annotations",
+        "stroke_width",
+        "TEXT NOT NULL DEFAULT 'm'",
+    ),
+    (
+        "canvas_annotations",
+        "color",
+        "TEXT NOT NULL DEFAULT 'default'",
+    ),
+    (
+        "canvas_annotations",
+        "background_enabled",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        "canvas_annotations",
+        "board_id",
+        "INTEGER NOT NULL DEFAULT 1",
+    ),
+];
 
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read board_items schema: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect board_items schema: {error}"))?;
-
-    if columns.iter().any(|column| column == "archived") {
-        return Ok(());
+fn ensure_added_columns(connection: &Connection) -> Result<(), String> {
+    for (table, column, definition) in ADDED_COLUMNS {
+        if table_has_column(connection, table, column)? {
+            continue;
+        }
+        connection
+            .execute(
+                &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+                [],
+            )
+            .map_err(|error| format!("failed to add {column} column to {table}: {error}"))?;
     }
-
-    connection
-        .execute(
-            "ALTER TABLE board_items ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
-            [],
-        )
-        .map_err(|error| format!("failed to add archived column to board_items: {error}"))?;
-
     Ok(())
 }
 
-fn ensure_board_items_placement_columns(connection: &Connection) -> Result<(), String> {
-    ensure_column(
-        connection,
-        "board_items",
-        "placement_content_state",
-        "ALTER TABLE board_items ADD COLUMN placement_content_state TEXT NOT NULL DEFAULT 'loaded'",
-    )?;
-    ensure_column(
-        connection,
-        "board_items",
-        "placement_lifecycle",
-        "ALTER TABLE board_items ADD COLUMN placement_lifecycle TEXT NOT NULL DEFAULT 'committed'",
-    )?;
-    ensure_column(
-        connection,
-        "board_items",
-        "width",
-        "ALTER TABLE board_items ADD COLUMN width REAL NOT NULL DEFAULT 1.0",
-    )?;
-    ensure_column(
-        connection,
-        "board_items",
-        "height",
-        "ALTER TABLE board_items ADD COLUMN height REAL NOT NULL DEFAULT 1.0",
-    )?;
-    ensure_column(
-        connection,
-        "board_items",
-        LEGACY_CONTENT_RESOLUTION_INTENT_COLUMN,
-        "ALTER TABLE board_items ADD COLUMN content_resolution_intent TEXT",
-    )
-}
-
 fn ensure_board_items_asset_id_nullable(connection: &Connection) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(board_items)")
-        .map_err(|error| format!("failed to inspect board_items schema: {error}"))?;
-    let mut rows = statement
-        .query([])
-        .map_err(|error| format!("failed to read board_items schema: {error}"))?;
-    let mut asset_id_is_not_null = false;
-    while let Some(row) = rows
-        .next()
-        .map_err(|error| format!("failed to read board_items schema row: {error}"))?
-    {
-        let name: String = row
-            .get(1)
-            .map_err(|error| format!("failed to read board_items column name: {error}"))?;
-        if name == "asset_id" {
-            let not_null: i64 = row.get(3).map_err(|error| {
-                format!("failed to read board_items asset_id nullability: {error}")
-            })?;
-            asset_id_is_not_null = not_null != 0;
-            break;
-        }
-    }
-    drop(rows);
-    drop(statement);
-
+    let asset_id_is_not_null = {
+        let mut statement = connection
+            .prepare("PRAGMA table_info(board_items)")
+            .map_err(|error| format!("failed to inspect board_items schema: {error}"))?;
+        let columns = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
+            })
+            .map_err(|error| format!("failed to read board_items schema: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect board_items schema: {error}"))?;
+        columns
+            .iter()
+            .any(|(name, not_null)| name == "asset_id" && *not_null != 0)
+    };
     if !asset_id_is_not_null {
         return Ok(());
     }
 
+    // Table rebuilds need foreign keys off outside the transaction; turn them
+    // back on whether or not the rebuild succeeded.
     connection
         .execute_batch("PRAGMA foreign_keys = OFF")
         .map_err(|error| {
             format!("failed to disable foreign keys for board_items migration: {error}")
         })?;
-    let migration_result = connection.execute_batch(
-        "
-        BEGIN;
+    let migration = rebuild_board_items_with_nullable_asset_id(connection);
+    let foreign_keys = connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .map_err(|error| {
+            format!("failed to re-enable foreign keys after board_items migration: {error}")
+        });
+    migration?;
+    foreign_keys
+}
 
+fn rebuild_board_items_with_nullable_asset_id(connection: &Connection) -> Result<(), String> {
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|error| format!("failed to start board_items migration: {error}"))?;
+    transaction
+        .execute_batch(
+            "
         ALTER TABLE board_items RENAME TO board_items_asset_required_old;
 
         CREATE TABLE board_items (
@@ -131,63 +201,15 @@ fn ensure_board_items_asset_id_nullable(connection: &Connection) -> Result<(), S
         FROM board_items_asset_required_old;
 
         DROP TABLE board_items_asset_required_old;
-
-        COMMIT;
         ",
-    );
-    if let Err(error) = migration_result {
-        let _ = connection.execute_batch("ROLLBACK");
-        let _ = connection.execute_batch("PRAGMA foreign_keys = ON");
-        return Err(format!(
-            "failed to migrate board_items asset_id nullability: {error}"
-        ));
-    }
-    connection
-        .execute_batch("PRAGMA foreign_keys = ON")
-        .map_err(|error| {
-            format!("failed to re-enable foreign keys after board_items migration: {error}")
-        })?;
-
-    Ok(())
-}
-
-fn ensure_column(
-    connection: &Connection,
-    table: &str,
-    column: &str,
-    alter_sql: &str,
-) -> Result<(), String> {
-    if table_has_column(connection, table, column)? {
-        return Ok(());
-    }
-    connection
-        .execute(alter_sql, [])
-        .map_err(|error| format!("failed to add {column} column to {table}: {error}"))?;
-    Ok(())
-}
-
-fn ensure_assets_archived_column(connection: &Connection) -> Result<(), String> {
-    if table_has_column(connection, "assets", "archived")? {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE assets ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
-            [],
         )
-        .map_err(|error| format!("failed to add archived column to assets: {error}"))?;
-
-    Ok(())
+        .map_err(|error| format!("failed to migrate board_items asset_id nullability: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("failed to commit board_items migration: {error}"))
 }
 
-fn ensure_assets_original_sha256_column(connection: &Connection) -> Result<(), String> {
-    ensure_column(
-        connection,
-        "assets",
-        "original_sha256",
-        "ALTER TABLE assets ADD COLUMN original_sha256 TEXT",
-    )?;
+fn ensure_asset_dedupe_index(connection: &Connection) -> Result<(), String> {
     connection
         .execute(
             "CREATE INDEX IF NOT EXISTS idx_assets_exact_dedupe
@@ -227,96 +249,41 @@ fn ensure_default_board(connection: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_board_items_board_id_column(connection: &Connection) -> Result<(), String> {
-    if table_has_column(connection, "board_items", "board_id")? {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE board_items ADD COLUMN board_id INTEGER NOT NULL DEFAULT 1",
-            [],
-        )
-        .map_err(|error| format!("failed to add board_id column to board_items: {error}"))?;
-
-    Ok(())
-}
-
-fn ensure_canvas_annotations_board_id_column(connection: &Connection) -> Result<(), String> {
-    if table_has_column(connection, "canvas_annotations", "board_id")? {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE canvas_annotations ADD COLUMN board_id INTEGER NOT NULL DEFAULT 1",
-            [],
-        )
-        .map_err(|error| format!("failed to add board_id column to canvas_annotations: {error}"))?;
-
-    Ok(())
-}
-
-fn ensure_user_session_active_board_id_column(connection: &Connection) -> Result<(), String> {
-    if table_has_column(connection, "user_session", "active_board_id")? {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE user_session ADD COLUMN active_board_id INTEGER NOT NULL DEFAULT 1",
-            [],
-        )
-        .map_err(|error| {
-            format!("failed to add active_board_id column to user_session: {error}")
-        })?;
-
-    Ok(())
-}
-
-fn ensure_user_session_sidebar_open_column(connection: &Connection) -> Result<(), String> {
-    if table_has_column(connection, "user_session", "sidebar_open")? {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE user_session ADD COLUMN sidebar_open INTEGER NOT NULL DEFAULT 0",
-            [],
-        )
-        .map_err(|error| format!("failed to add sidebar_open column to user_session: {error}"))?;
-
-    Ok(())
-}
-
-fn ensure_user_session_sidebar_tab_column(connection: &Connection) -> Result<(), String> {
-    if table_has_column(connection, "user_session", "sidebar_tab")? {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE user_session ADD COLUMN sidebar_tab TEXT NOT NULL DEFAULT 'settings'",
-            [],
-        )
-        .map_err(|error| format!("failed to add sidebar_tab column to user_session: {error}"))?;
-
-    Ok(())
-}
-
-fn ensure_user_session_payload_column(connection: &Connection) -> Result<(), String> {
-    if !table_has_column(connection, "user_session", "session_payload")? {
-        connection
-            .execute(
-                "ALTER TABLE user_session ADD COLUMN session_payload TEXT",
-                [],
-            )
-            .map_err(|error| {
-                format!("failed to add session_payload column to user_session: {error}")
-            })?;
-    }
-
-    backfill_user_session_payload(connection)
+/// Reads the settings columns that predate `session_payload`. Only the
+/// one-time backfill below still needs them; the app reads the payload.
+fn legacy_user_session_from_row(row: &rusqlite::Row<'_>) -> Result<UserSession, rusqlite::Error> {
+    Ok(UserSession {
+        settings: WorkspaceSettings {
+            auto_image_scaling: row.get::<_, i64>(0)? != 0,
+            placement_gap: row.get(1)?,
+            placement_target_area: row
+                .get::<_, f32>(2)
+                .ok()
+                .map(|value| value.max(1.0))
+                .unwrap_or(crate::data::DEFAULT_PLACEMENT_TARGET_AREA),
+            canvas_image_max_side: row
+                .get::<_, i64>(4)
+                .ok()
+                .map(|value| value.max(1) as u32)
+                .unwrap_or(crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE),
+            semantic_search_enabled: row.get::<_, i64>(3).unwrap_or(0) != 0,
+            semantic_search_first_launch_prompt_seen: false,
+            rotation_snap_degrees: row
+                .get::<_, f32>(5)
+                .ok()
+                .map(|value| value.max(0.0))
+                .unwrap_or(crate::data::DEFAULT_ROTATION_SNAP_DEGREES),
+            default_textbox_background: row.get::<_, i64>(6).unwrap_or(0) != 0,
+            pointer_mode: crate::data::PointerMode::default(),
+            always_on_top: false,
+            last_update_check_at: None,
+        },
+        sidebar_open: row.get::<_, i64>(7).unwrap_or(0) != 0,
+        sidebar_tab: row
+            .get::<_, String>(8)
+            .unwrap_or_else(|_| "settings".to_owned()),
+        ..UserSession::default()
+    })
 }
 
 fn backfill_user_session_payload(connection: &Connection) -> Result<(), String> {
@@ -348,7 +315,7 @@ fn backfill_user_session_payload(connection: &Connection) -> Result<(), String> 
             return Ok(None);
         }
 
-        let legacy = legacy_user_session_from_row(row, 1, ViewportState::default())?;
+        let legacy = legacy_user_session_from_row(row)?;
         Ok(Some(StoredUserSessionPayload::from_session(&legacy)))
     });
 
@@ -411,49 +378,6 @@ fn migrate_default_board_viewport(connection: &Connection) -> Result<(), String>
     Ok(())
 }
 
-fn table_has_column(connection: &Connection, table: &str, column: &str) -> Result<bool, String> {
-    let mut statement = connection
-        .prepare(&format!("PRAGMA table_info({table})"))
-        .map_err(|error| format!("failed to inspect {table} schema: {error}"))?;
-
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read {table} schema: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect {table} schema: {error}"))?;
-
-    Ok(columns.iter().any(|existing| existing == column))
-}
-
-fn ensure_asset_embeddings_failure_columns(connection: &Connection) -> Result<(), String> {
-    if !table_has_column(connection, "asset_embeddings", "failure_kind")? {
-        connection
-            .execute(
-                "ALTER TABLE asset_embeddings ADD COLUMN failure_kind TEXT",
-                [],
-            )
-            .map_err(|error| format!("failed to add embedding failure_kind column: {error}"))?;
-    }
-    if !table_has_column(connection, "asset_embeddings", "failure_count")? {
-        connection
-            .execute(
-                "ALTER TABLE asset_embeddings
-                 ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0",
-                [],
-            )
-            .map_err(|error| format!("failed to add embedding failure_count column: {error}"))?;
-    }
-    if !table_has_column(connection, "asset_embeddings", "next_retry_at")? {
-        connection
-            .execute(
-                "ALTER TABLE asset_embeddings ADD COLUMN next_retry_at INTEGER",
-                [],
-            )
-            .map_err(|error| format!("failed to add embedding next_retry_at column: {error}"))?;
-    }
-    Ok(())
-}
-
 fn table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
     let count: i64 = connection
         .query_row(
@@ -468,370 +392,18 @@ fn table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
     Ok(count > 0)
 }
 
-fn ensure_canvas_annotations_text_size_column(connection: &Connection) -> Result<(), String> {
+fn table_has_column(connection: &Connection, table: &str, column: &str) -> Result<bool, String> {
     let mut statement = connection
-        .prepare("PRAGMA table_info(canvas_annotations)")
-        .map_err(|error| format!("failed to inspect canvas_annotations schema: {error}"))?;
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| format!("failed to inspect {table} schema: {error}"))?;
 
     let columns = statement
         .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read canvas_annotations schema: {error}"))?
+        .map_err(|error| format!("failed to read {table} schema: {error}"))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect canvas_annotations schema: {error}"))?;
+        .map_err(|error| format!("failed to collect {table} schema: {error}"))?;
 
-    if columns.iter().any(|column| column == "text_size") {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE canvas_annotations ADD COLUMN text_size TEXT NOT NULL DEFAULT 'm'",
-            [],
-        )
-        .map_err(|error| {
-            format!("failed to add text_size column to canvas_annotations: {error}")
-        })?;
-
-    Ok(())
-}
-
-fn ensure_canvas_annotations_stroke_width_column(connection: &Connection) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(canvas_annotations)")
-        .map_err(|error| format!("failed to inspect canvas_annotations schema: {error}"))?;
-
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read canvas_annotations schema: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect canvas_annotations schema: {error}"))?;
-
-    if columns.iter().any(|column| column == "stroke_width") {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE canvas_annotations ADD COLUMN stroke_width TEXT NOT NULL DEFAULT 'm'",
-            [],
-        )
-        .map_err(|error| {
-            format!("failed to add stroke_width column to canvas_annotations: {error}")
-        })?;
-
-    Ok(())
-}
-
-fn ensure_canvas_annotations_color_column(connection: &Connection) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(canvas_annotations)")
-        .map_err(|error| format!("failed to inspect canvas_annotations schema: {error}"))?;
-
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read canvas_annotations schema: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect canvas_annotations schema: {error}"))?;
-
-    if columns.iter().any(|column| column == "color") {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE canvas_annotations ADD COLUMN color TEXT NOT NULL DEFAULT 'default'",
-            [],
-        )
-        .map_err(|error| format!("failed to add color column to canvas_annotations: {error}"))?;
-
-    Ok(())
-}
-
-fn ensure_canvas_annotations_background_enabled_column(
-    connection: &Connection,
-) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(canvas_annotations)")
-        .map_err(|error| format!("failed to inspect canvas_annotations schema: {error}"))?;
-
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read canvas_annotations schema: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect canvas_annotations schema: {error}"))?;
-
-    if columns.iter().any(|column| column == "background_enabled") {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE canvas_annotations ADD COLUMN background_enabled INTEGER NOT NULL DEFAULT 0",
-            [],
-        )
-        .map_err(|error| {
-            format!("failed to add background_enabled column to canvas_annotations: {error}")
-        })?;
-
-    Ok(())
-}
-
-fn ensure_user_session_auto_image_scaling_column(connection: &Connection) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(user_session)")
-        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
-
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read user_session schema: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
-
-    if columns.iter().any(|column| column == "auto_image_scaling") {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE user_session ADD COLUMN auto_image_scaling INTEGER NOT NULL DEFAULT 1",
-            [],
-        )
-        .map_err(|error| {
-            format!("failed to add auto_image_scaling column to user_session: {error}")
-        })?;
-
-    Ok(())
-}
-
-fn ensure_user_session_placement_gap_column(connection: &Connection) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(user_session)")
-        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
-
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read user_session schema: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
-
-    if columns.iter().any(|column| column == "placement_gap") {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE user_session ADD COLUMN placement_gap REAL NOT NULL DEFAULT 0.0",
-            [],
-        )
-        .map_err(|error| format!("failed to add placement_gap column to user_session: {error}"))?;
-
-    Ok(())
-}
-
-fn ensure_user_session_import_target_canvas_area_column(
-    connection: &Connection,
-) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(user_session)")
-        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
-
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read user_session schema: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
-
-    if columns
-        .iter()
-        .any(|column| column == "import_target_canvas_area")
-    {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE user_session ADD COLUMN import_target_canvas_area REAL NOT NULL DEFAULT 90000.0",
-            [],
-        )
-        .map_err(|error| {
-            format!("failed to add import_target_canvas_area column to user_session: {error}")
-        })?;
-
-    Ok(())
-}
-
-fn ensure_user_session_canvas_background_column(connection: &Connection) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(user_session)")
-        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
-
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read user_session schema: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
-
-    if columns.iter().any(|column| column == "canvas_background") {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE user_session ADD COLUMN canvas_background TEXT NOT NULL DEFAULT 'none'",
-            [],
-        )
-        .map_err(|error| {
-            format!("failed to add canvas_background column to user_session: {error}")
-        })?;
-
-    Ok(())
-}
-
-fn ensure_user_session_semantic_search_enabled_column(
-    connection: &Connection,
-) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(user_session)")
-        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
-
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read user_session schema: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
-
-    if columns
-        .iter()
-        .any(|column| column == "semantic_search_enabled")
-    {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE user_session ADD COLUMN semantic_search_enabled INTEGER NOT NULL DEFAULT 1",
-            [],
-        )
-        .map_err(|error| {
-            format!("failed to add semantic_search_enabled column to user_session: {error}")
-        })?;
-
-    Ok(())
-}
-
-fn ensure_user_session_canvas_image_mode_column(connection: &Connection) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(user_session)")
-        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
-
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read user_session schema: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
-
-    if columns.iter().any(|column| column == "canvas_image_mode") {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE user_session ADD COLUMN canvas_image_mode TEXT NOT NULL DEFAULT 'downscale'",
-            [],
-        )
-        .map_err(|error| format!("failed to add canvas_image_mode column: {error}"))?;
-
-    Ok(())
-}
-
-fn ensure_user_session_canvas_image_max_side_column(connection: &Connection) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(user_session)")
-        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
-
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read user_session schema: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
-
-    if columns
-        .iter()
-        .any(|column| column == "canvas_image_max_side")
-    {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE user_session ADD COLUMN canvas_image_max_side INTEGER NOT NULL DEFAULT 2000",
-            [],
-        )
-        .map_err(|error| format!("failed to add canvas_image_max_side column: {error}"))?;
-
-    Ok(())
-}
-
-fn ensure_user_session_rotation_snap_degrees_column(connection: &Connection) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(user_session)")
-        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
-
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read user_session schema: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
-
-    if columns
-        .iter()
-        .any(|column| column == "rotation_snap_degrees")
-    {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE user_session ADD COLUMN rotation_snap_degrees REAL NOT NULL DEFAULT 15.0",
-            [],
-        )
-        .map_err(|error| {
-            format!("failed to add rotation_snap_degrees column to user_session: {error}")
-        })?;
-
-    Ok(())
-}
-
-fn ensure_user_session_default_textbox_background_column(
-    connection: &Connection,
-) -> Result<(), String> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(user_session)")
-        .map_err(|error| format!("failed to inspect user_session schema: {error}"))?;
-
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("failed to read user_session schema: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect user_session schema: {error}"))?;
-
-    if columns
-        .iter()
-        .any(|column| column == "default_textbox_background")
-    {
-        return Ok(());
-    }
-
-    connection
-        .execute(
-            "ALTER TABLE user_session ADD COLUMN default_textbox_background INTEGER NOT NULL DEFAULT 0",
-            [],
-        )
-        .map_err(|error| {
-            format!("failed to add default_textbox_background column to user_session: {error}")
-        })?;
-
-    Ok(())
+    Ok(columns.iter().any(|existing| existing == column))
 }
 
 impl Library {
@@ -955,32 +527,11 @@ impl Library {
             ))
             .map_err(|error| format!("failed to initialize database schema: {error}"))?;
 
-        ensure_board_items_archived_column(&connection)?;
-        ensure_board_items_placement_columns(&connection)?;
-        ensure_assets_archived_column(&connection)?;
-        ensure_assets_original_sha256_column(&connection)?;
+        ensure_added_columns(&connection)?;
+        ensure_asset_dedupe_index(&connection)?;
         ensure_default_board(&connection)?;
-        ensure_board_items_board_id_column(&connection)?;
         ensure_board_items_asset_id_nullable(&connection)?;
-        ensure_user_session_auto_image_scaling_column(&connection)?;
-        ensure_user_session_placement_gap_column(&connection)?;
-        ensure_user_session_import_target_canvas_area_column(&connection)?;
-        ensure_user_session_canvas_background_column(&connection)?;
-        ensure_user_session_semantic_search_enabled_column(&connection)?;
-        ensure_user_session_canvas_image_mode_column(&connection)?;
-        ensure_user_session_canvas_image_max_side_column(&connection)?;
-        ensure_user_session_rotation_snap_degrees_column(&connection)?;
-        ensure_user_session_default_textbox_background_column(&connection)?;
-        ensure_asset_embeddings_failure_columns(&connection)?;
-        ensure_user_session_sidebar_open_column(&connection)?;
-        ensure_user_session_sidebar_tab_column(&connection)?;
-        ensure_user_session_active_board_id_column(&connection)?;
-        ensure_user_session_payload_column(&connection)?;
-        ensure_canvas_annotations_text_size_column(&connection)?;
-        ensure_canvas_annotations_stroke_width_column(&connection)?;
-        ensure_canvas_annotations_color_column(&connection)?;
-        ensure_canvas_annotations_background_enabled_column(&connection)?;
-        ensure_canvas_annotations_board_id_column(&connection)?;
+        backfill_user_session_payload(&connection)?;
         ensure_canvas_stack_items_populated(&connection)?;
         if should_migrate_default_board_viewport {
             migrate_default_board_viewport(&connection)?;

@@ -5631,7 +5631,6 @@ fn apply_average_selection_area(canvas: &mut crate::canvas::CanvasState, status:
 fn generated_board_name(boards: &[crate::data::Board]) -> String {
     let names = boards
         .iter()
-        .filter(|board| !board.archived)
         .map(|board| board.name.as_str())
         .collect::<std::collections::HashSet<_>>();
     (2..)
