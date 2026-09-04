@@ -399,7 +399,6 @@ fn provisional_loading_placement(
     Placement {
         state: PlacementState::with_display_size(
             placement_id,
-            None,
             center_world,
             size_world,
             1.0,
@@ -407,7 +406,6 @@ fn provisional_loading_placement(
             z_index,
             false,
         ),
-        asset: None,
         content: PlacementContent::Loading {
             source: intent.content,
             status_message: Some("Loading".to_owned()),
@@ -434,7 +432,6 @@ fn provisional_asset_placement(
     Placement {
         state: PlacementState::with_display_size(
             placement_id,
-            Some(asset_id),
             center_world,
             egui::vec2(width as f32, height as f32),
             scale,
@@ -442,7 +439,6 @@ fn provisional_asset_placement(
             z_index,
             false,
         ),
-        asset: None,
         content: PlacementContent::Loading {
             source: ContentResolutionSource::SearchAsset { asset_id },
             status_message: Some("Loading".to_owned()),
@@ -608,7 +604,7 @@ mod tests {
         assert_eq!(canvas.selected_placement_ids(), ids);
         let placement = canvas.placement_for_id(ids[0]).unwrap();
         assert_eq!(placement.lifecycle, PlacementLifecycle::Provisional);
-        assert!(placement.asset.is_none());
+
         assert!(matches!(
             placement.content,
             PlacementContent::Loading {
@@ -640,8 +636,8 @@ mod tests {
 
         let placement = canvas.placement_for_id(ids[0]).unwrap();
         assert_eq!(placement.lifecycle, PlacementLifecycle::Provisional);
-        assert_eq!(placement.state.asset_id, Some(42));
-        assert!(placement.asset.is_none());
+        assert_eq!(placement.asset_id(), Some(42));
+
         assert!(matches!(
             placement.content,
             PlacementContent::Loading {

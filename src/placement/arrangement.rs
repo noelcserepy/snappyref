@@ -1290,7 +1290,6 @@ mod tests {
         Placement {
             state: PlacementState::with_display_size(
                 id,
-                None,
                 center,
                 egui::vec2(20.0, 10.0),
                 2.0,
@@ -1298,7 +1297,6 @@ mod tests {
                 0,
                 false,
             ),
-            asset: None,
             content: PlacementContent::Loading {
                 source: crate::data::ContentResolutionSource::Unknown {
                     description: "test".to_owned(),

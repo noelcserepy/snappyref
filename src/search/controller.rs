@@ -979,8 +979,7 @@ fn selected_image_pivot(
     if selected.len() != 1 {
         return None;
     }
-    let record = canvas.placement_for_id(selected[0])?;
-    let asset_id = record.require_loaded_asset().id;
+    let asset_id = canvas.placement_for_id(selected[0])?.loaded_asset()?.id;
     let asset_preview_path = library
         .map(|library| library.asset_search_preview_paths_for_assets(&[asset_id]))
         .and_then(|mut paths| paths.remove(&asset_id));
@@ -1434,7 +1433,6 @@ mod tests {
             canvas.add_unresolved_placement(Placement::loaded(
                 PlacementState {
                     id: item_id,
-                    asset_id: Some(asset_id),
                     geometry: crate::data::RectGeometry::new(
                         *position,
                         eframe::egui::Vec2::ZERO,
@@ -1526,7 +1524,6 @@ mod tests {
         canvas.add_unresolved_placement(Placement::loaded(
             PlacementState::with_display_size(
                 900,
-                Some(900),
                 eframe::egui::pos2(0.0, 0.0),
                 eframe::egui::vec2(100.0, 100.0),
                 1.0,
@@ -1629,7 +1626,7 @@ mod tests {
             record.lifecycle,
             crate::data::PlacementLifecycle::Provisional
         );
-        assert_eq!(record.state.asset_id, Some(10));
+        assert_eq!(record.asset_id(), Some(10));
         assert!(matches!(
             record.content,
             crate::data::PlacementContent::Loading {

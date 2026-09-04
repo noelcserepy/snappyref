@@ -505,7 +505,6 @@ mod tests {
         let poisoned = crate::canvas::CanvasDocumentChanges {
             updated_placements: vec![crate::data::PlacementState::new(
                 99,
-                Some(1),
                 eframe::egui::Pos2::ZERO,
                 1.0,
                 0.0,

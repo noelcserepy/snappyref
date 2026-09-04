@@ -174,10 +174,8 @@ pub(super) fn crop_center_offset_local(
 
 pub(super) fn merge_cropped_item_fields(
     item: &mut crate::data::PlacementState,
-    asset_id: i64,
     crop_offset_local: egui::Vec2,
 ) {
-    item.asset_id = Some(asset_id);
     let scale = item.geometry.scale.max(0.01);
     item.geometry.center.x += crop_offset_local.x * scale;
     item.geometry.center.y += crop_offset_local.y * scale;

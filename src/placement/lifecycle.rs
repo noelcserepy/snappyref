@@ -133,7 +133,7 @@ pub(crate) fn commit_search_provisional_batch(
     }
 
     for placement in &mut provisional_placements {
-        let Some(asset_id) = placement.state.asset_id else {
+        let Some(asset_id) = placement.asset_id() else {
             continue;
         };
         if !request.asset_ids.contains(&asset_id) {
@@ -231,7 +231,6 @@ mod tests {
         canvas.add_unresolved_placement(Placement {
             state: crate::data::PlacementState::with_display_size(
                 42,
-                None,
                 egui::Pos2::ZERO,
                 egui::vec2(100.0, 100.0),
                 1.0,
@@ -239,7 +238,6 @@ mod tests {
                 12,
                 false,
             ),
-            asset: None,
             content: crate::data::PlacementContent::Loading {
                 source: crate::data::ContentResolutionSource::SearchAsset { asset_id: 42 },
                 status_message: Some("Loading".to_owned()),

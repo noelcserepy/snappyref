@@ -72,7 +72,7 @@ pub(crate) fn integrate_cropped_result(
         return Err("Storage unavailable".to_owned());
     };
 
-    let mut updated_item = match canvas.projected_cropped_item(&cropped) {
+    let updated_item = match canvas.projected_cropped_item(&cropped) {
         Ok(item) => item,
         Err(error) => {
             cleanup_failed_crop(&stored_path);
@@ -95,8 +95,6 @@ pub(crate) fn integrate_cropped_result(
             return Err(error);
         }
     };
-
-    updated_item.asset_id = Some(asset.id);
 
     let updated_item_id = updated_item.id;
     let updated_record = crate::data::Placement::loaded(updated_item.clone(), asset.clone());
@@ -220,7 +218,6 @@ mod tests {
         Placement::loaded(
             PlacementState {
                 id: placement_id,
-                asset_id: Some(asset_id),
                 geometry: crate::data::RectGeometry::new(
                     eframe::egui::Pos2::ZERO,
                     eframe::egui::Vec2::ZERO,

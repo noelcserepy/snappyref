@@ -57,7 +57,6 @@ fn push_test_image(
         placement: Placement::loaded(
             PlacementState::new(
                 placement_id,
-                Some(placement_id),
                 eframe::egui::pos2(center.x, center.y),
                 scale,
                 0.0,
@@ -130,7 +129,6 @@ fn test_record(placement_id: i64, asset_id: i64, width: u32, height: u32) -> Pla
     Placement::loaded(
         PlacementState {
             id: placement_id,
-            asset_id: Some(asset_id),
             geometry: crate::data::RectGeometry::new(
                 eframe::egui::Pos2::ZERO,
                 eframe::egui::Vec2::ZERO,
@@ -162,7 +160,6 @@ fn unloaded_test_record(
     let mut placement = Placement {
         state: PlacementState::with_display_size(
             placement_id,
-            None,
             center,
             eframe::egui::vec2(display_width, display_height),
             scale,
@@ -170,7 +167,6 @@ fn unloaded_test_record(
             placement_id as i32,
             false,
         ),
-        asset: None,
         content: content.clone(),
         lifecycle: PlacementLifecycle::Committed,
     };
@@ -320,7 +316,7 @@ fn crop_replacement_keeps_old_native_texture_until_last_shared_reference_drops()
                 width: 2,
                 height: 2,
             },
-            PlacementState::new(1, Some(2), eframe::egui::pos2(0.0, 0.0), 1.0, 0.0, 1, false),
+            PlacementState::new(1, eframe::egui::pos2(0.0, 0.0), 1.0, 0.0, 1, false),
         )
         .unwrap();
     drop(new_texture);
@@ -385,15 +381,7 @@ fn converts_drag_rect_to_crop_pixels_and_live_scale_position() {
     assert_eq!(crop_rect.width, 100);
     assert_eq!(crop_rect.height, 80);
 
-    let item = PlacementState::new(
-        1,
-        Some(1),
-        eframe::egui::pos2(200.0, 120.0),
-        2.0,
-        0.0,
-        0,
-        false,
-    );
+    let item = PlacementState::new(1, eframe::egui::pos2(200.0, 120.0), 2.0, 0.0, 0, false);
     let asset = Asset {
         id: 1,
         original_path: PathBuf::from("image.png"),
@@ -408,9 +396,8 @@ fn converts_drag_rect_to_crop_pixels_and_live_scale_position() {
     );
     let crop_offset_local = crop_center_offset_local(&asset, kept_local);
     let mut merged_item = item.clone();
-    merge_cropped_item_fields(&mut merged_item, 2, crop_offset_local);
+    merge_cropped_item_fields(&mut merged_item, crop_offset_local);
 
-    assert_eq!(merged_item.asset_id, Some(2));
     assert_eq!(merged_item.geometry.center.x, 150.0);
     assert_eq!(merged_item.geometry.center.y, 110.0);
 }
@@ -1951,19 +1938,10 @@ fn single_selected_annotation_id_is_none_when_selection_is_empty() {
 
 #[test]
 fn merge_only_updates_crop_owned_item_fields() {
-    let mut item = PlacementState::new(
-        7,
-        Some(2),
-        eframe::egui::pos2(12.0, 18.0),
-        1.5,
-        0.25,
-        9,
-        false,
-    );
+    let mut item = PlacementState::new(7, eframe::egui::pos2(12.0, 18.0), 1.5, 0.25, 9, false);
 
-    merge_cropped_item_fields(&mut item, 11, eframe::egui::vec2(80.0, 96.0));
+    merge_cropped_item_fields(&mut item, eframe::egui::vec2(80.0, 96.0));
 
-    assert_eq!(item.asset_id, Some(11));
     assert_eq!(item.geometry.center.x, 132.0);
     assert_eq!(item.geometry.center.y, 162.0);
     assert_eq!(item.geometry.scale, 1.5);
@@ -2239,17 +2217,16 @@ fn final_crop_integration_after_pending_preview_applies_crop_offset_once() {
         loaded_lod: CanvasImageLod::Overview,
         crop_offset_local: eframe::egui::vec2(2.0, 2.0),
     };
-    let mut updated_item = state.projected_cropped_item(&cropped).unwrap();
+    let updated_item = state.projected_cropped_item(&cropped).unwrap();
     let mut asset = test_record(42, 99, 4, 4).require_loaded_asset().clone();
     asset.original_path = std::path::PathBuf::from("cropped.png");
-    updated_item.asset_id = Some(asset.id);
 
     state
         .apply_cropped_item(&ctx, cropped, asset, updated_item)
         .unwrap();
 
     let placement = state.placement_for_id(42).unwrap();
-    assert_eq!(placement.state.asset_id, Some(99));
+    assert_eq!(placement.asset_id(), Some(99));
     assert_eq!(
         (
             placement.state.geometry.center.x,
@@ -3072,7 +3049,6 @@ fn provisional_placements_use_interleaved_image_painting() {
     state.add_provisional_unresolved_placement(Placement {
         state: PlacementState::with_display_size(
             -1,
-            Some(7),
             eframe::egui::pos2(0.0, 0.0),
             eframe::egui::vec2(80.0, 80.0),
             1.0,
@@ -3080,7 +3056,6 @@ fn provisional_placements_use_interleaved_image_painting() {
             1,
             false,
         ),
-        asset: None,
         content: PlacementContent::Loading {
             source: ContentResolutionSource::SearchAsset { asset_id: 7 },
             status_message: Some("Loading".to_owned()),

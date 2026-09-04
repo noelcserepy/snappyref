@@ -63,8 +63,7 @@ pub(super) fn restore_board_placement(
     placement: &Placement,
 ) -> Result<(), String> {
     let content_state = placement_content_state(&placement.content);
-    let content_payload = serde_json::to_string(&placement.content)
-        .map_err(|error| format!("failed to encode placement content: {error}"))?;
+    let content_payload = StoredPlacementContent::encode(&placement.content)?;
     let lifecycle = match placement.lifecycle {
         PlacementLifecycle::Provisional => "provisional",
         PlacementLifecycle::Committed => "committed",
@@ -87,7 +86,7 @@ pub(super) fn restore_board_placement(
              WHERE id = ?13
                AND board_id = ?14",
             params![
-                placement.state.asset_id,
+                placement.asset_id(),
                 placement.state.geometry.center.x,
                 placement.state.geometry.center.y,
                 placement.state.geometry.size.x,
@@ -124,7 +123,7 @@ pub(super) fn restore_board_placement(
                 params![
                     placement.state.id,
                     board_id,
-                    placement.state.asset_id,
+                    placement.asset_id(),
                     placement.state.geometry.center.x,
                     placement.state.geometry.center.y,
                     placement.state.geometry.size.x,
@@ -149,55 +148,61 @@ pub(super) fn restore_board_placement(
     Ok(())
 }
 
+/// `asset` is the joined Asset row for the Placement's `asset_id` column.
+/// A payload that claims loaded content without a live Asset degrades to a
+/// recoverable failure instead of a Placement without an image.
 fn decode_placement_content(
     state: &str,
     content_resolution_source_payload: Option<&str>,
-    asset_id: i64,
+    asset: Option<Asset>,
 ) -> PlacementContent {
-    if let Some(content_resolution_source_payload) = content_resolution_source_payload
-        && let Ok(content) =
-            serde_json::from_str::<PlacementContent>(content_resolution_source_payload)
-    {
-        return match content {
-            PlacementContent::Loading {
+    let stored = content_resolution_source_payload.and_then(StoredPlacementContent::decode);
+    match stored {
+        Some(StoredPlacementContent::Loading {
+            source,
+            status_message,
+        }) => {
+            let resumable = matches!(
                 source,
-                status_message,
-            } => {
-                let resumable = matches!(
+                ContentResolutionSource::ExternalPath { .. }
+                    | ContentResolutionSource::ExternalUrl { .. }
+                    | ContentResolutionSource::SearchAsset { .. }
+            );
+            if resumable {
+                PlacementContent::Loading {
                     source,
-                    ContentResolutionSource::ExternalPath { .. }
-                        | ContentResolutionSource::ExternalUrl { .. }
-                        | ContentResolutionSource::SearchAsset { .. }
-                );
-                if resumable {
-                    PlacementContent::Loading {
-                        source,
-                        status_message,
-                    }
-                } else {
-                    PlacementContent::Failed {
-                        source: Some(source),
-                        message: "Placement content could not be resumed after restart".to_owned(),
-                        recoverable: true,
-                    }
+                    status_message,
+                }
+            } else {
+                PlacementContent::Failed {
+                    source: Some(source),
+                    message: "Placement content could not be resumed after restart".to_owned(),
+                    recoverable: true,
                 }
             }
-            other => other,
-        };
-    }
-
-    match state {
-        "loading" => PlacementContent::Failed {
-            source: None,
-            message: "Placement content could not be resumed after restart".to_owned(),
-            recoverable: true,
+        }
+        Some(StoredPlacementContent::Failed {
+            source,
+            message,
+            recoverable,
+        }) => PlacementContent::Failed {
+            source,
+            message,
+            recoverable,
         },
-        "failed" => PlacementContent::Failed {
-            source: None,
-            message: "Placement content failed to resolve".to_owned(),
-            recoverable: true,
+        Some(StoredPlacementContent::Loaded { .. }) | None => match (state, asset) {
+            ("loading", _) => PlacementContent::Failed {
+                source: None,
+                message: "Placement content could not be resumed after restart".to_owned(),
+                recoverable: true,
+            },
+            (_, Some(asset)) => PlacementContent::Loaded { asset },
+            (_, None) => PlacementContent::Failed {
+                source: None,
+                message: "Placement content failed to resolve".to_owned(),
+                recoverable: true,
+            },
         },
-        _ => PlacementContent::Loaded { asset_id },
     }
 }
 
@@ -220,7 +225,6 @@ impl Library {
         Placement {
             state: PlacementState::with_display_size(
                 self.allocate_document_id(),
-                None,
                 desired_world,
                 display_size,
                 initial_scale,
@@ -228,7 +232,6 @@ impl Library {
                 0,
                 false,
             ),
-            asset: None,
             content: PlacementContent::Loading {
                 source,
                 status_message,
@@ -244,7 +247,7 @@ impl Library {
         provisionals
             .iter()
             .map(|provisional| {
-                let asset_id = provisional.state.asset_id.ok_or_else(|| {
+                let asset_id = provisional.asset_id().ok_or_else(|| {
                     format!(
                         "provisional placement {} has no asset",
                         provisional.state.id
@@ -253,7 +256,6 @@ impl Library {
                 let asset = self.load_asset(asset_id)?;
                 let state = PlacementState::with_display_size(
                     self.allocate_document_id(),
-                    Some(asset_id),
                     provisional.state.geometry.center,
                     provisional.state.geometry.size,
                     provisional.state.geometry.scale,
@@ -292,7 +294,6 @@ impl Library {
         let asset = self.load_asset(asset_id)?;
         let state = PlacementState::with_display_size(
             self.allocate_document_id(),
-            Some(asset_id),
             center_world,
             egui::vec2(asset.width as f32, asset.height as f32),
             scale,
@@ -381,7 +382,6 @@ impl Library {
         let placement = Placement::loaded(
             PlacementState::with_display_size(
                 self.allocate_document_id(),
-                Some(asset.id),
                 desired_world,
                 egui::vec2(asset.width as f32, asset.height as f32),
                 initial_scale,
@@ -460,7 +460,7 @@ impl Library {
         )?;
         let current_state = transaction
             .query_row(
-                "SELECT id, asset_id, x, y, width, height, scale, rotation, z_index, archived
+                "SELECT id, x, y, width, height, scale, rotation, z_index, archived
                  FROM board_items
                  WHERE id = ?1
                    AND board_id = ?2",
@@ -468,13 +468,12 @@ impl Library {
                 |row| {
                     Ok(PlacementState::with_display_size(
                         row.get(0)?,
-                        row.get(1)?,
-                        egui::pos2(row.get(2)?, row.get(3)?),
-                        egui::vec2(row.get(4)?, row.get(5)?),
+                        egui::pos2(row.get(1)?, row.get(2)?),
+                        egui::vec2(row.get(3)?, row.get(4)?),
+                        row.get(5)?,
                         row.get(6)?,
                         row.get(7)?,
-                        row.get(8)?,
-                        row.get::<_, i64>(9)? != 0,
+                        row.get::<_, i64>(8)? != 0,
                     ))
                 },
             )
@@ -483,7 +482,6 @@ impl Library {
         let mut item = current_state.unwrap_or_else(|| {
             PlacementState::with_display_size(
                 placement_id,
-                None,
                 desired_world,
                 egui::vec2(asset.width as f32, asset.height as f32),
                 initial_scale,
@@ -495,7 +493,6 @@ impl Library {
         if item.archived {
             return Err(format!("placement {placement_id} no longer exists"));
         }
-        item.asset_id = Some(asset.id);
         item.geometry.size = RectGeometry::size_preserving_area_for_aspect(
             item.geometry.size,
             asset.width,
@@ -504,12 +501,9 @@ impl Library {
         transaction
             .commit()
             .map_err(|error| format!("failed to commit imported asset: {error}"))?;
-        let content = PlacementContent::Loaded { asset_id: asset.id };
-
         Ok(Placement {
             state: item,
-            asset: Some(asset),
-            content,
+            content: PlacementContent::Loaded { asset },
             lifecycle: PlacementLifecycle::Committed,
         })
     }
@@ -575,7 +569,6 @@ impl Library {
         let placement = Placement {
             state: PlacementState::with_display_size(
                 self.allocate_document_id(),
-                None,
                 desired_world,
                 display_size,
                 initial_scale,
@@ -583,7 +576,6 @@ impl Library {
                 0,
                 false,
             ),
-            asset: None,
             content,
             lifecycle: PlacementLifecycle::Committed,
         };
@@ -622,7 +614,6 @@ impl Library {
             .prepare(
                 "SELECT
                     b.id,
-                    b.asset_id,
                     b.x,
                     b.y,
                     b.width,
@@ -650,28 +641,26 @@ impl Library {
 
         let rows = statement
             .query_map(params![board_id], |row| {
-                let row_asset_id = row.get::<_, Option<i64>>(1)?;
                 let item = PlacementState::with_display_size(
                     row.get(0)?,
-                    row_asset_id,
-                    egui::pos2(row.get(2)?, row.get(3)?),
-                    egui::vec2(row.get(4)?, row.get(5)?),
+                    egui::pos2(row.get(1)?, row.get(2)?),
+                    egui::vec2(row.get(3)?, row.get(4)?),
+                    row.get(5)?,
                     row.get(6)?,
                     row.get(7)?,
-                    row.get(8)?,
                     false,
                 );
-                let content_state: String = row.get(15)?;
-                let lifecycle: String = row.get(16)?;
-                let content_resolution_source_payload: Option<String> = row.get(17)?;
-                let asset = if let Some(asset_id) = row.get::<_, Option<i64>>(9)? {
+                let content_state: String = row.get(14)?;
+                let lifecycle: String = row.get(15)?;
+                let content_resolution_source_payload: Option<String> = row.get(16)?;
+                let asset = if let Some(asset_id) = row.get::<_, Option<i64>>(8)? {
                     Some(Asset {
                         id: asset_id,
-                        original_path: PathBuf::from(row.get::<_, String>(10)?),
-                        filename: row.get(11)?,
-                        mime_type: row.get(12)?,
-                        width: row.get::<_, u32>(13)?,
-                        height: row.get::<_, u32>(14)?,
+                        original_path: PathBuf::from(row.get::<_, String>(9)?),
+                        filename: row.get(10)?,
+                        mime_type: row.get(11)?,
+                        width: row.get::<_, u32>(12)?,
+                        height: row.get::<_, u32>(13)?,
                     })
                 } else {
                     None
@@ -679,12 +668,11 @@ impl Library {
                 let content = decode_placement_content(
                     &content_state,
                     content_resolution_source_payload.as_deref(),
-                    item.asset_id.unwrap_or(0),
+                    asset,
                 );
                 let lifecycle = decode_placement_lifecycle(&lifecycle);
                 Ok(Placement {
                     state: item,
-                    asset,
                     content,
                     lifecycle,
                 })
@@ -798,7 +786,6 @@ impl Library {
         let placement = Placement::loaded(
             PlacementState::with_display_size(
                 self.allocate_document_id(),
-                Some(asset_id),
                 center_world,
                 egui::vec2(asset.width as f32, asset.height as f32),
                 scale,
