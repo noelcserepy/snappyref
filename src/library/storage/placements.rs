@@ -197,11 +197,7 @@ fn decode_placement_content(
                 recoverable: true,
             },
             (_, Some(asset)) => PlacementContent::Loaded { asset },
-            (_, None) => PlacementContent::Failed {
-                source: None,
-                message: "Placement content failed to resolve".to_owned(),
-                recoverable: true,
-            },
+            (_, None) => super::placement_content::missing_asset_content(),
         },
     }
 }

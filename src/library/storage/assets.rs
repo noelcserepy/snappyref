@@ -495,6 +495,31 @@ impl Library {
             .map_err(|error| format!("failed to load asset {asset_id}: {error}"))
     }
 
+    /// Live Assets for `asset_ids`, keyed by id. Archived or unknown ids are
+    /// simply absent so callers can degrade per Placement.
+    pub(crate) fn load_assets(&self, asset_ids: &[i64]) -> Result<HashMap<i64, Asset>, String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare_cached(&format!(
+                "SELECT {ASSET_COLUMNS}
+                 FROM assets
+                 WHERE id = ?1
+                   AND archived = 0"
+            ))
+            .map_err(|error| format!("failed to prepare asset lookup: {error}"))?;
+        let mut assets = HashMap::with_capacity(asset_ids.len());
+        for asset_id in asset_ids {
+            if let Some(asset) = statement
+                .query_row(params![asset_id], asset_from_row)
+                .optional()
+                .map_err(|error| format!("failed to load asset {asset_id}: {error}"))?
+            {
+                assets.insert(*asset_id, asset);
+            }
+        }
+        Ok(assets)
+    }
+
     pub fn archive_assets(&self, asset_ids: &[i64]) -> Result<(), String> {
         if asset_ids.is_empty() {
             return Ok(());

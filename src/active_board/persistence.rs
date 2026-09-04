@@ -57,6 +57,9 @@ pub(crate) enum BoardLifecyclePersistence {
     },
 }
 
+/// Durable writes go through one worker thread that owns the library. With
+/// no library there is no queue: document and session saves are no-ops and
+/// lifecycle changes report storage as unavailable.
 impl DocumentPersistence {
     pub(crate) fn queued(library: crate::library::storage::Library) -> Self {
         Self {
@@ -71,14 +74,13 @@ impl DocumentPersistence {
 
     pub(crate) fn commit_canvas_changes_unit(
         &mut self,
-        library: Option<&crate::library::storage::Library>,
         canvas: &mut crate::canvas::CanvasState,
         board_id: i64,
         history: &crate::active_board::history::DocumentHistory,
         session: crate::data::UserSession,
     ) -> Result<(), String> {
-        let document_result = self.commit_canvas_document_unit(library, canvas, board_id, history);
-        let session_result = self.persist_user_session_if_changed(library, session);
+        let document_result = self.commit_canvas_document_unit(canvas, board_id, history);
+        let session_result = self.persist_user_session_if_changed(session);
         match (document_result, session_result) {
             (Err(error), _) | (_, Err(error)) => Err(error),
             _ => Ok(()),
@@ -87,26 +89,18 @@ impl DocumentPersistence {
 
     pub(crate) fn commit_canvas_document_unit(
         &mut self,
-        library: Option<&crate::library::storage::Library>,
         canvas: &mut crate::canvas::CanvasState,
         board_id: i64,
         history: &crate::active_board::history::DocumentHistory,
     ) -> Result<bool, String> {
-        let Some(library) = library else {
+        if self.queue.is_none() {
             return Ok(false);
-        };
+        }
         let changes = canvas.take_document_changes();
         if !changes.has_changes() {
             return Ok(false);
         }
-        if self.queue.is_some() {
-            self.enqueue_document_unit(board_id, changes, history)?;
-        } else {
-            library.persist_board_unit(
-                &crate::library::storage::BoardDurabilityOperation::Document { board_id, changes },
-                history,
-            )?;
-        }
+        self.enqueue_document_unit(board_id, changes, history)?;
         Ok(true)
     }
 
@@ -119,10 +113,7 @@ impl DocumentPersistence {
         if !changes.has_changes() {
             return Ok(());
         }
-        let Some(queue) = &self.queue else {
-            return Err("persistence queue unavailable".to_owned());
-        };
-        queue.enqueue(PersistenceCommand::CommitBoardUnit {
+        self.queue()?.enqueue(PersistenceCommand::CommitBoardUnit {
             operation: crate::library::storage::BoardDurabilityOperation::Document {
                 board_id,
                 changes,
@@ -133,52 +124,35 @@ impl DocumentPersistence {
 
     pub(crate) fn apply_board_lifecycle_unit(
         &mut self,
-        library: Option<&crate::library::storage::Library>,
         change: BoardLifecyclePersistence,
         history: &crate::active_board::history::DocumentHistory,
     ) -> Result<(), String> {
-        let Some(library) = library else {
-            return Err("Storage unavailable".to_owned());
-        };
-        if let Some(queue) = &self.queue {
-            return queue.enqueue(PersistenceCommand::CommitBoardUnit {
-                operation: crate::library::storage::BoardDurabilityOperation::Lifecycle(change),
-                history: history.clone(),
-            });
-        }
-        library.persist_board_unit(
-            &crate::library::storage::BoardDurabilityOperation::Lifecycle(change),
-            history,
-        )
+        self.queue()?.enqueue(PersistenceCommand::CommitBoardUnit {
+            operation: crate::library::storage::BoardDurabilityOperation::Lifecycle(change),
+            history: history.clone(),
+        })
     }
 
     pub(crate) fn save_user_session(
         &mut self,
-        library: Option<&crate::library::storage::Library>,
         session: crate::data::UserSession,
     ) -> Result<(), String> {
-        let Some(library) = library else {
+        let Some(queue) = &self.queue else {
             return Ok(());
         };
-        if let Some(queue) = &self.queue {
-            queue.enqueue(PersistenceCommand::SaveUserSession(session.clone()))?;
-            self.last_saved_user_session = Some(session);
-            return Ok(());
-        }
-        library.save_user_session(&session)?;
+        queue.enqueue(PersistenceCommand::SaveUserSession(session.clone()))?;
         self.last_saved_user_session = Some(session);
         Ok(())
     }
 
     pub(crate) fn persist_user_session_if_changed(
         &mut self,
-        library: Option<&crate::library::storage::Library>,
         session: crate::data::UserSession,
     ) -> Result<(), String> {
         if self.last_saved_user_session.as_ref() == Some(&session) {
             return Ok(());
         }
-        self.save_user_session(library, session)
+        self.save_user_session(session)
     }
 
     pub(crate) fn user_session_changed(&self, session: &crate::data::UserSession) -> bool {
@@ -194,6 +168,21 @@ impl DocumentPersistence {
 
     pub(crate) fn take_error(&self) -> Option<String> {
         self.queue.as_ref().and_then(PersistenceQueue::take_error)
+    }
+
+    /// Stops the worker after it drains everything queued so far. Reports a
+    /// write the worker had to drop on the way out, or a worker that died.
+    pub(crate) fn shutdown(&mut self) -> Result<(), String> {
+        let Some(queue) = self.queue.take() else {
+            return Ok(());
+        };
+        queue.shutdown()
+    }
+
+    fn queue(&self) -> Result<&PersistenceQueue, String> {
+        self.queue
+            .as_ref()
+            .ok_or_else(|| "Storage unavailable".to_owned())
     }
 }
 
@@ -273,6 +262,20 @@ impl PersistenceQueue {
             Some(error) => Err(error),
             None => Ok(()),
         }
+    }
+}
+
+impl PersistenceQueue {
+    fn shutdown(mut self) -> Result<(), String> {
+        self.tx
+            .send(PersistenceCommand::Shutdown)
+            .map_err(|error| format!("failed to stop persistence worker: {error}"))?;
+        if let Some(worker) = self.worker.take() {
+            worker
+                .join()
+                .map_err(|_| "persistence worker panicked".to_owned())?;
+        }
+        self.drain_errors()
     }
 }
 
@@ -376,7 +379,7 @@ mod tests {
         let session = crate::data::UserSession::default();
         persistence.record_saved_user_session(session.clone());
 
-        let result = persistence.persist_user_session_if_changed(None, session);
+        let result = persistence.persist_user_session_if_changed(session);
 
         assert_eq!(result, Ok(()));
     }
@@ -388,7 +391,6 @@ mod tests {
         canvas.set_canvas_stack_order(vec![crate::data::CanvasStackItem::Annotation(7)]);
 
         let result = persistence.commit_canvas_document_unit(
-            None,
             &mut canvas,
             1,
             &crate::active_board::history::DocumentHistory::default(),
@@ -415,9 +417,7 @@ mod tests {
             ..Default::default()
         };
 
-        persistence
-            .save_user_session(Some(&library), session)
-            .unwrap();
+        persistence.save_user_session(session).unwrap();
         persistence.flush().unwrap();
 
         let stored = library.load_user_session().unwrap();
@@ -527,9 +527,7 @@ mod tests {
             },
             ..Default::default()
         };
-        persistence
-            .save_user_session(Some(&library), session)
-            .unwrap();
+        persistence.save_user_session(session).unwrap();
 
         let flushed = persistence.flush();
 

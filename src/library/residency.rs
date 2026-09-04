@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::time::Instant;
 
 use eframe::egui;
@@ -14,10 +14,11 @@ use crate::placement::content_resolution::{
     LoadedContentResolutionOutcome,
 };
 
+/// Image LOD loads themselves are tracked on the canvas
+/// (`CanvasState::image_lod_loads`); this only owns cache backfills.
 #[derive(Default)]
 pub(crate) struct ImageResidencyCoordinator {
     pending_cache_backfills: HashSet<(i64, CanvasImageLod)>,
-    inflight_image_lod_loads: HashMap<i64, CanvasImageLod>,
 }
 
 #[derive(Debug)]
@@ -32,6 +33,7 @@ impl ImageResidencyCoordinator {
     pub(crate) fn queue_startup_existing_loads(
         &mut self,
         import_worker: &ImagePrepWorker,
+        canvas: &mut CanvasState,
         mut placements: Vec<Placement>,
         viewport_world: eframe::egui::Rect,
         active_board_id: i64,
@@ -56,18 +58,13 @@ impl ImageResidencyCoordinator {
                     timings: ImagePrepTimings::default(),
                 }),
             })?;
-            self.inflight_image_lod_loads
-                .insert(placement_id, target_lod);
+            canvas.note_image_lod_load_dispatched(placement_id, target_lod);
         }
         Ok(())
     }
 
-    pub(crate) fn note_loaded_placement(&mut self, placement_id: i64) {
-        self.inflight_image_lod_loads.remove(&placement_id);
-    }
-
-    pub(crate) fn has_pending_image_work(&self) -> bool {
-        !self.pending_cache_backfills.is_empty() || !self.inflight_image_lod_loads.is_empty()
+    pub(crate) fn has_pending_backfills(&self) -> bool {
+        !self.pending_cache_backfills.is_empty()
     }
 
     pub(crate) fn process_import_result(
@@ -139,7 +136,6 @@ impl ImageResidencyCoordinator {
         let loaded_lod = loaded.loaded_lod;
         let loaded_record = loaded.placement.clone();
         let existing_load_diagnostics = loaded.existing_load_diagnostics.clone();
-        self.note_loaded_placement(loaded.placement.state.id);
 
         if loaded.target_board_id != active_board_id {
             return LoadedContentResolutionOutcome {
@@ -222,8 +218,7 @@ impl ImageResidencyCoordinator {
         placement_id: Option<i64>,
     ) {
         if let Some(placement_id) = placement_id {
-            self.inflight_image_lod_loads.remove(&placement_id);
-            canvas.clear_pending_image_lod_load(placement_id);
+            canvas.clear_image_lod_load(placement_id);
         }
     }
 
@@ -316,19 +311,11 @@ impl ImageResidencyCoordinator {
         };
 
         let mut last_error = None;
-        for (placement_id, target_lod) in canvas.take_pending_image_lod_loads() {
-            if self
-                .inflight_image_lod_loads
-                .get(&placement_id)
-                .is_some_and(|existing| *existing >= target_lod)
-            {
-                continue;
-            }
+        for (placement_id, target_lod) in canvas.undispatched_image_lod_loads() {
             let Some(placement) = canvas.placement_for_id(placement_id) else {
+                canvas.clear_image_lod_load(placement_id);
                 continue;
             };
-            self.inflight_image_lod_loads
-                .insert(placement_id, target_lod);
             if let Err(error) = import_worker.enqueue(ImagePrepRequest::LoadExisting {
                 target_board_id: active_board_id,
                 queue_id: None,
@@ -339,18 +326,12 @@ impl ImageResidencyCoordinator {
                 priority: ExistingLoadPriority::Background,
                 trace: None,
             }) {
-                self.inflight_image_lod_loads.remove(&placement_id);
-                canvas.clear_pending_image_lod_load(placement_id);
+                canvas.clear_image_lod_load(placement_id);
                 last_error = Some(error);
             }
         }
 
         last_error
-    }
-
-    #[cfg(test)]
-    fn inflight_lod_for(&self, placement_id: i64) -> Option<CanvasImageLod> {
-        self.inflight_image_lod_loads.get(&placement_id).copied()
     }
 
     #[cfg(test)]
@@ -387,17 +368,14 @@ mod tests {
     use crate::data::CanvasImageLod;
 
     #[test]
-    fn failed_item_clears_inflight_and_pending_request() {
+    fn failed_item_clears_its_image_lod_load() {
         let mut residency = ImageResidencyCoordinator::default();
         let mut canvas = CanvasState::default();
-        canvas.clear_pending_image_lod_load(7);
-        residency
-            .inflight_image_lod_loads
-            .insert(7, CanvasImageLod::Detail);
+        canvas.note_image_lod_load_dispatched(7, CanvasImageLod::Detail);
 
         residency.note_failed_placement(&mut canvas, Some(7));
 
-        assert_eq!(residency.inflight_lod_for(7), None);
+        assert!(!canvas.has_pending_image_loads());
     }
 
     #[test]

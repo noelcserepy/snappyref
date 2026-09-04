@@ -61,7 +61,7 @@ mod tests {
         );
 
         assert_eq!(
-            state.render.pending_image_lod_loads.get(&7).copied(),
+            state.render.image_lod_loads.get(&7).map(|load| load.lod),
             Some(CanvasImageLod::Working)
         );
     }
