@@ -17,11 +17,9 @@ use existing_load::backfill_cache_lod;
 pub use existing_load::load_canvas_snapshot_pixels;
 pub(crate) use existing_load::load_existing;
 pub use persist::display_scale_for_placement_target_area;
+pub(super) use persist::import;
 #[cfg(test)]
-pub(super) use persist::import_path_sync;
-#[cfg(test)]
-pub(super) use persist::import_url_sync_traced;
-pub(super) use persist::{import_clipboard, import_path, import_url};
+pub(super) use persist::{import_path_sync, import_sync};
 #[cfg(test)]
 use preview_texture::build_preview_texture;
 pub use preview_texture::{ImagePrepPreviewTexture, NativeTextureHandle};
@@ -29,7 +27,7 @@ pub(super) use request::ImagePrepPriority;
 pub use request::{
     CanvasImageSettings, ExistingLoadDiagnostics, ExistingLoadPriority, ExistingLoadSourceKind,
     ImagePrepRequest, ImagePrepResult, ImagePrepTimings, ImagePrepTrace, ImagePrepWorkerStats,
-    ImportOrigin, PreparedCropPreview, PreparedPlacementImage,
+    ImportOrigin, ImportRequest, ImportSource, PreparedCropPreview, PreparedPlacementImage,
 };
 
 pub const DEFAULT_PLACEMENT_TARGET_AREA: f32 = crate::data::DEFAULT_PLACEMENT_TARGET_AREA;

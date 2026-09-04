@@ -17,7 +17,7 @@ pub(super) use placement_transform::{
     compute_resize_snap_preview, compute_uniform_scale_snap_preview,
     hit_test_placement_resize_handle, hit_test_selected_placement_rotation_handle,
     placement_drag_scale_factor, placement_resize_cursor_icon, placement_screen_rect,
-    resized_placement_transform, rotate_vec2, rotated_placement_delta, scaled_placement_transforms,
+    resized_placement_transform, rotated_placement_delta, scaled_placement_transforms,
     selected_placement_rotation_handle_screen_pos,
 };
 pub(super) use selection::{
@@ -39,7 +39,7 @@ pub(super) use viewport::{
 
 #[cfg(test)]
 use super::PlacementScaleStart;
-use super::geometry::{min_loaded_placement_scale, placement_contains_screen_point};
+use super::geometry::{min_loaded_placement_scale, placement_contains_screen_point, rotate_vec2};
 use super::render::textbox_pointer_region;
 use super::{
     ActiveGesture, AnnotationDraftState, CanvasHit, CanvasState, PLACEMENT_DRAG_THRESHOLD_SCREEN,

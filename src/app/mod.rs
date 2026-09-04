@@ -10,6 +10,7 @@ use crate::active_board::history::{
     BoardLifecycleHistoryAction, DocumentHistory, HistoryAction, HistoryChange, HistoryDirection,
 };
 use crate::active_board::persistence::DocumentPersistence;
+use crate::jobs::ImportSource;
 use crate::library::residency::{ImagePrepResultResidencyOutcome, ImageResidencyCoordinator};
 use crate::placement::content_resolution::{
     ContentResolutionRequestConfig, ContentResolutionReservation, ContentResolutionRuntime,
@@ -18,7 +19,6 @@ use crate::placement::content_resolution::{
 #[cfg(feature = "semantic-search")]
 use crate::search::SearchController;
 use crate::sources::crop;
-use crate::sources::import::ExternalImportSource;
 use crate::ui::sidebar::{
     SemanticSearchSettingsAction, SemanticSearchSettingsStatus, SidebarBoardAction, SidebarTab,
     block_sidebar_input, close_sidebar_on_outside_click, show_sidebar, show_sidebar_hint,
@@ -701,128 +701,104 @@ impl SnappyRefApp {
     pub fn new(cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
         crate::platform::native_drop::install_url_drop_bridge(cc);
         let max_texture_side = cc.egui_ctx.input(|input| input.max_texture_side.max(1));
-        let update_smoke = UpdateSmokeState::from_config(&config);
+        let mut app = Self::detached(
+            cc.wgpu_render_state.clone(),
+            max_texture_side,
+            UpdateConfig::default(),
+        );
+        app.persist_window_state = config.persist_window_state_enabled();
+        app.perf_log = config.perf_log_enabled().then(|| PerfLogState {
+            app_started_at: Instant::now(),
+            startup_logged: false,
+        });
+        app.perf_scenario = PerfScenarioState::from_config(&config);
+        app.update_smoke = UpdateSmokeState::from_config(&config);
 
         let library = config
             .library_root()
             .map(std::path::Path::to_path_buf)
             .and_then(crate::library::storage::Library::initialize);
-
-        match library {
-            Ok(library) => {
-                let (document_history, status) = match library.load_document_history() {
-                    Ok(history) => (history, "Library ready".to_owned()),
-                    Err(error) => (
-                        DocumentHistory::default(),
-                        format!("Board history unavailable: {error}"),
-                    ),
-                };
-                let import_worker = crate::jobs::ImagePrepWorker::new(
-                    library.clone(),
-                    cc.egui_ctx.clone(),
-                    cc.wgpu_render_state.clone(),
-                );
-                let mut app = Self {
-                    canvas: crate::canvas::CanvasState::default(),
-                    wgpu_render_state: cc.wgpu_render_state.clone(),
-                    library: Some(library.clone()),
-                    import_worker: Some(import_worker),
-                    active_board_id: 1,
-                    window_state: crate::data::WindowState::default(),
-                    persist_window_state: config.persist_window_state_enabled(),
-                    document_history,
-                    max_texture_side,
-                    settings: crate::data::WorkspaceSettings::default(),
-                    #[cfg(feature = "semantic-search")]
-                    search: SearchController::default(),
-                    sidebar_open: false,
-                    sidebar_tab: SidebarTab::Options,
-                    pending_board_delete: None,
-                    pending_library_remove: None,
-                    #[cfg(feature = "semantic-search")]
-                    pending_semantic_search_remove: false,
-                    context_menu_pos: None,
-                    status,
-                    status_shown: String::new(),
-                    status_shown_since: Instant::now(),
-                    perf_log: config.perf_log_enabled().then(|| PerfLogState {
-                        app_started_at: Instant::now(),
-                        startup_logged: false,
-                    }),
-                    frame_perf: FramePerfState::default(),
-                    perf_scenario: PerfScenarioState::from_config(&config),
-                    content_resolution: ContentResolutionRuntime::new(),
-                    residency: ImageResidencyCoordinator::default(),
-                    pending_import_batches:
-                        crate::placement::creation::PlacementCreationBatchTracker::default(),
-                    hover_preview_dimensions: std::collections::HashMap::new(),
-                    last_hovered_external_drag: None,
-                    external_hover_provisional_placement_ids: Vec::new(),
-                    pending_missing_drop_fallback: None,
-                    document_persistence: DocumentPersistence::queued(library.clone()),
-                    pending_user_session: None,
-                    pending_user_session_save_at: None,
-                    board_summaries_cache: BoardSummariesCache::default(),
-                    update_service: UpdateService::new(UpdateConfig::default()),
-                    user_update_flow_active: false,
-                    update_smoke: update_smoke.clone(),
-                    last_manual_update_check: None,
-                };
-                app.load_user_session();
-                app.refresh_board_summaries();
-                #[cfg(feature = "semantic-search")]
-                app.sync_semantic_search_service();
-                if !config.skip_existing_items_on_start() {
-                    app.enqueue_existing_items();
-                }
-                app
+        let library = match library {
+            Ok(library) => library,
+            Err(error) => {
+                app.status = format!("Storage unavailable: {error}");
+                return app;
             }
-            Err(error) => Self {
-                canvas: crate::canvas::CanvasState::default(),
-                wgpu_render_state: cc.wgpu_render_state.clone(),
-                library: None,
-                import_worker: None,
-                active_board_id: 1,
-                window_state: crate::data::WindowState::default(),
-                persist_window_state: config.persist_window_state_enabled(),
-                document_history: DocumentHistory::default(),
-                max_texture_side,
-                settings: crate::data::WorkspaceSettings::default(),
-                #[cfg(feature = "semantic-search")]
-                search: SearchController::default(),
-                sidebar_open: false,
-                sidebar_tab: SidebarTab::Options,
-                pending_board_delete: None,
-                pending_library_remove: None,
-                #[cfg(feature = "semantic-search")]
-                pending_semantic_search_remove: false,
-                context_menu_pos: None,
-                status: format!("Storage unavailable: {error}"),
-                status_shown: String::new(),
-                status_shown_since: Instant::now(),
-                perf_log: config.perf_log_enabled().then(|| PerfLogState {
-                    app_started_at: Instant::now(),
-                    startup_logged: false,
-                }),
-                frame_perf: FramePerfState::default(),
-                perf_scenario: PerfScenarioState::from_config(&config),
-                content_resolution: ContentResolutionRuntime::new(),
-                residency: ImageResidencyCoordinator::default(),
-                pending_import_batches:
-                    crate::placement::creation::PlacementCreationBatchTracker::default(),
-                hover_preview_dimensions: std::collections::HashMap::new(),
-                last_hovered_external_drag: None,
-                external_hover_provisional_placement_ids: Vec::new(),
-                pending_missing_drop_fallback: None,
-                document_persistence: DocumentPersistence::default(),
-                pending_user_session: None,
-                pending_user_session_save_at: None,
-                board_summaries_cache: BoardSummariesCache::default(),
-                update_service: UpdateService::new(UpdateConfig::default()),
-                user_update_flow_active: false,
-                update_smoke,
-                last_manual_update_check: None,
-            },
+        };
+
+        app.status = match library.load_document_history() {
+            Ok(history) => {
+                app.document_history = history;
+                "Library ready".to_owned()
+            }
+            Err(error) => format!("Board history unavailable: {error}"),
+        };
+        app.import_worker = Some(crate::jobs::ImagePrepWorker::new(
+            library.clone(),
+            cc.egui_ctx.clone(),
+            cc.wgpu_render_state.clone(),
+        ));
+        app.document_persistence = DocumentPersistence::queued(library.clone());
+        app.library = Some(library);
+        app.load_user_session();
+        app.refresh_board_summaries();
+        #[cfg(feature = "semantic-search")]
+        app.sync_semantic_search_service();
+        if !config.skip_existing_items_on_start() {
+            app.enqueue_existing_items();
+        }
+        app
+    }
+
+    /// An app with no library, worker, or config-derived state. `new` and
+    /// tests attach what they need on top.
+    fn detached(
+        wgpu_render_state: Option<eframe::egui_wgpu::RenderState>,
+        max_texture_side: usize,
+        update_config: UpdateConfig,
+    ) -> Self {
+        Self {
+            canvas: crate::canvas::CanvasState::default(),
+            wgpu_render_state,
+            library: None,
+            import_worker: None,
+            active_board_id: 1,
+            window_state: crate::data::WindowState::default(),
+            persist_window_state: true,
+            document_history: DocumentHistory::default(),
+            max_texture_side,
+            settings: crate::data::WorkspaceSettings::default(),
+            #[cfg(feature = "semantic-search")]
+            search: SearchController::default(),
+            sidebar_open: false,
+            sidebar_tab: SidebarTab::default(),
+            pending_board_delete: None,
+            pending_library_remove: None,
+            #[cfg(feature = "semantic-search")]
+            pending_semantic_search_remove: false,
+            context_menu_pos: None,
+            status: String::new(),
+            status_shown: String::new(),
+            status_shown_since: Instant::now(),
+            perf_log: None,
+            frame_perf: FramePerfState::default(),
+            perf_scenario: None,
+            content_resolution: ContentResolutionRuntime::new(),
+            residency: ImageResidencyCoordinator::default(),
+            pending_import_batches:
+                crate::placement::creation::PlacementCreationBatchTracker::default(),
+            hover_preview_dimensions: std::collections::HashMap::new(),
+            last_hovered_external_drag: None,
+            external_hover_provisional_placement_ids: Vec::new(),
+            pending_missing_drop_fallback: None,
+            document_persistence: DocumentPersistence::default(),
+            pending_user_session: None,
+            pending_user_session_save_at: None,
+            board_summaries_cache: BoardSummariesCache::default(),
+            update_service: UpdateService::new(update_config),
+            user_update_flow_active: false,
+            update_smoke: None,
+            last_manual_update_check: None,
         }
     }
 
@@ -908,13 +884,6 @@ impl SnappyRefApp {
 
         let desired_world = self.preferred_import_world(ctx, screen_rect);
         let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let mut layout = match self.import_arrangement_input_snapshot() {
-            Ok(layout) => layout,
-            Err(error) => {
-                self.emit_perf_error_and_close(ctx, error);
-                return;
-            }
-        };
 
         let entries = match self
             .perf_scenario
@@ -932,9 +901,7 @@ impl SnappyRefApp {
             // in via `dispatch_perf_trickle_imports`.
             let mut iter = entries.into_iter();
             if let Some(first) = iter.next() {
-                if let Err(error) =
-                    self.enqueue_perf_entry(&first, &mut layout, desired_world, viewport_world)
-                {
+                if let Err(error) = self.enqueue_perf_entry(&first, desired_world, viewport_world) {
                     self.emit_perf_error_and_close(ctx, error);
                     return;
                 }
@@ -948,9 +915,7 @@ impl SnappyRefApp {
             }
         } else {
             for entry in entries {
-                if let Err(error) =
-                    self.enqueue_perf_entry(&entry, &mut layout, desired_world, viewport_world)
-                {
+                if let Err(error) = self.enqueue_perf_entry(&entry, desired_world, viewport_world) {
                     self.emit_perf_error_and_close(ctx, error);
                     return;
                 }
@@ -962,7 +927,6 @@ impl SnappyRefApp {
     fn enqueue_perf_entry(
         &mut self,
         entry: &PerfCorpusEntry,
-        layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
         desired_world: egui::Pos2,
         viewport_world: egui::Rect,
     ) -> Result<(), String> {
@@ -973,24 +937,19 @@ impl SnappyRefApp {
             .unwrap_or_else(|| PathBuf::from(&entry.file));
         let dimensions = image::image_dimensions(&path).ok();
         let reservation = self.reserve_import(
-            layout,
             dimensions,
             desired_world,
-            viewport_world,
             crate::data::ContentResolutionSource::ExternalPath {
                 path: path.to_string_lossy().into_owned(),
             },
         )?;
-        let request = crate::placement::content_resolution::import_path_request(
-            path.clone(),
+        let request = crate::placement::content_resolution::import_request(
+            ImportSource::Path(path.clone()),
             reservation,
             desired_world,
             viewport_world,
             self.import_request_config(),
-            self.perf_log.as_ref().map(|_| crate::jobs::ImagePrepTrace {
-                queued_at: Instant::now(),
-                timings: crate::jobs::ImagePrepTimings::default(),
-            }),
+            self.import_trace(),
         );
         if let Err(error) = self
             .import_worker
@@ -1049,13 +1008,6 @@ impl SnappyRefApp {
 
         let desired_world = self.preferred_import_world(ctx, screen_rect);
         let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let mut layout = match self.import_arrangement_input_snapshot() {
-            Ok(layout) => layout,
-            Err(error) => {
-                self.emit_perf_error_and_close(ctx, error);
-                return;
-            }
-        };
 
         // Pop one entry now, schedule the next interval if more remain.
         let entry = match self
@@ -1067,9 +1019,7 @@ impl SnappyRefApp {
             None => return,
         };
 
-        if let Err(error) =
-            self.enqueue_perf_entry(&entry, &mut layout, desired_world, viewport_world)
-        {
+        if let Err(error) = self.enqueue_perf_entry(&entry, desired_world, viewport_world) {
             self.emit_perf_error_and_close(ctx, error);
             return;
         }
@@ -2194,68 +2144,40 @@ impl SnappyRefApp {
         })
     }
 
-    fn import_arrangement_input_snapshot(
-        &self,
-    ) -> Result<Vec<crate::placement::arrangement::PlacementArrangementInput>, String> {
-        let layout = if let Some(library) = &self.library {
-            library.load_placement_arrangement_inputs()?
-        } else {
-            Vec::new()
-        };
-        Ok(layout)
-    }
-
+    /// Creates one loading placement at an exact center and reserves its
+    /// content resolution. Used where the caller already knows where the
+    /// placement goes (perf scenarios, tests); interactive imports go through
+    /// `enqueue_import_sources`, which plans layout for the batch.
     fn reserve_import(
         &mut self,
-        layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
         dimensions: Option<(u32, u32)>,
-        desired_world: egui::Pos2,
-        viewport_world: egui::Rect,
-        source: crate::data::ContentResolutionSource,
-    ) -> Result<ContentResolutionReservation, String> {
-        let _ = viewport_world;
-        self.create_committed_loading_import(
-            layout,
-            crate::placement::creation::SourceIntent {
-                dimensions,
-                approximate_dimensions: dimensions.is_none(),
-                content: source,
-            },
-            desired_world,
-        )
-    }
-
-    fn create_committed_loading_import(
-        &mut self,
-        layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
-        intent: crate::placement::creation::SourceIntent,
         center_world: egui::Pos2,
+        source: crate::data::ContentResolutionSource,
     ) -> Result<ContentResolutionReservation, String> {
         let Some(library) = &self.library else {
             return Err("Storage unavailable".to_owned());
         };
-
         let settings = self.placement_creation_settings();
-        let mut batch = crate::placement::creation::create_committed_loading_placement(
-            library,
-            &mut self.content_resolution,
-            &mut self.canvas,
-            layout,
-            self.active_board_id,
-            intent,
-            center_world,
-            settings,
-        )?;
-        if let Some(history_action) = batch.history_action.take() {
+        let (created, history_action) =
+            crate::placement::creation::create_committed_loading_placement(
+                library,
+                &mut self.content_resolution,
+                &mut self.canvas,
+                self.active_board_id,
+                crate::placement::creation::SourceIntent {
+                    dimensions,
+                    approximate_dimensions: dimensions.is_none(),
+                    content: source,
+                },
+                center_world,
+                settings,
+            )?;
+        if let Some(history_action) = history_action {
             self.document_history
                 .record_applied(self.active_board_id, history_action);
         }
         self.persist_recorded_canvas_changes();
-        Ok(batch
-            .created
-            .pop()
-            .expect("single committed creation should return one placement")
-            .reservation)
+        Ok(created.reservation)
     }
 
     fn remove_import_reservation(&mut self, reservation: ContentResolutionReservation) {
@@ -2295,8 +2217,8 @@ impl SnappyRefApp {
         let hovered_paths = hovered_sources
             .iter()
             .filter_map(|source| match source {
-                ExternalImportSource::Path(path) => Some(path.clone()),
-                ExternalImportSource::Url(_) => None,
+                ImportSource::Path(path) => Some(path.clone()),
+                ImportSource::Url(_) | ImportSource::Clipboard { .. } => None,
             })
             .collect::<Vec<_>>();
         self.hover_preview_dimensions
@@ -2308,14 +2230,14 @@ impl SnappyRefApp {
         let mut intents = Vec::with_capacity(hovered_sources.len());
         for source in &hovered_sources {
             let dimensions = match source {
-                ExternalImportSource::Path(path) => {
+                ImportSource::Path(path) => {
                     let dimensions = self
                         .hover_preview_dimensions
                         .entry(path.clone())
                         .or_insert_with(|| image::image_dimensions(path).ok());
                     *dimensions
                 }
-                ExternalImportSource::Url(_) => None,
+                ImportSource::Url(_) | ImportSource::Clipboard { .. } => None,
             };
             intents.push(
                 crate::placement::creation::ProvisionalSourceIntent::SourceIntent(
@@ -2344,7 +2266,7 @@ impl SnappyRefApp {
     #[cfg(test)]
     fn dropped_import_previews(
         &mut self,
-        sources: &[ExternalImportSource],
+        sources: &[ImportSource],
         desired_world: egui::Pos2,
         screen_rect: egui::Rect,
     ) -> Vec<egui::Pos2> {
@@ -2369,11 +2291,12 @@ impl SnappyRefApp {
     }
 
     fn source_intent_for_external_source(
-        source: &ExternalImportSource,
+        source: &ImportSource,
     ) -> crate::placement::creation::SourceIntent {
         let dimensions = match source {
-            ExternalImportSource::Path(path) => image::image_dimensions(path).ok(),
-            ExternalImportSource::Url(_) => None,
+            ImportSource::Path(path) => image::image_dimensions(path).ok(),
+            ImportSource::Url(_) => None,
+            ImportSource::Clipboard { width, height, .. } => Some((*width, *height)),
         };
         crate::placement::creation::SourceIntent {
             dimensions,
@@ -2403,7 +2326,7 @@ impl SnappyRefApp {
         }
 
         let desired_world = self.preferred_import_world_with_pointer(screen_rect, drop_screen_pos);
-        self.enqueue_external_import_sources(dropped_sources, screen_rect, desired_world);
+        self.enqueue_import_sources(dropped_sources, screen_rect, desired_world);
         self.external_hover_provisional_placement_ids.clear();
     }
 
@@ -2529,13 +2452,13 @@ impl SnappyRefApp {
         }
         let sources = crate::platform::native_drop::clipboard_paths()
             .into_iter()
-            .map(ExternalImportSource::Path)
+            .map(ImportSource::Path)
             .collect::<Vec<_>>();
         if sources.is_empty() {
             return false;
         }
 
-        self.enqueue_external_import_sources(sources, screen_rect, desired_world);
+        self.enqueue_import_sources(sources, screen_rect, desired_world);
         true
     }
 
@@ -2557,7 +2480,7 @@ impl SnappyRefApp {
         }
 
         let source_count = sources.len();
-        self.enqueue_external_import_sources(sources, screen_rect, desired_world);
+        self.enqueue_import_sources(sources, screen_rect, desired_world);
         self.status = if source_count == 1 {
             "Queued PureRef paste: 1 image".to_owned()
         } else {
@@ -2591,54 +2514,12 @@ impl SnappyRefApp {
             }
         };
 
-        let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let rgba = clipboard_image.bytes.into_owned();
-        let width = clipboard_image.width as u32;
-        let height = clipboard_image.height as u32;
-        let mut layout = match self.import_arrangement_input_snapshot() {
-            Ok(layout) => layout,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
+        let source = ImportSource::Clipboard {
+            rgba: clipboard_image.bytes.into_owned(),
+            width: clipboard_image.width as u32,
+            height: clipboard_image.height as u32,
         };
-        let reservation = match self.reserve_import(
-            &mut layout,
-            Some((width, height)),
-            desired_world,
-            viewport_world,
-            crate::data::ContentResolutionSource::Clipboard,
-        ) {
-            Ok(reservation) => reservation,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
-
-        if let Err(error) = self
-            .import_worker
-            .as_ref()
-            .expect("checked import worker")
-            .enqueue(
-                crate::placement::content_resolution::import_clipboard_request(
-                    rgba,
-                    width,
-                    height,
-                    reservation,
-                    desired_world,
-                    viewport_world,
-                    self.import_request_config(),
-                    self.import_trace(),
-                ),
-            )
-        {
-            self.remove_import_reservation(reservation);
-            self.status = error;
-            return;
-        }
-
-        self.status = "Queued clipboard image".to_owned();
+        self.enqueue_import_sources(vec![source], screen_rect, desired_world);
     }
 
     fn handle_clipboard_url_import_at(
@@ -2653,54 +2534,13 @@ impl SnappyRefApp {
         let Some(url) = crate::sources::import::normalize_import_url(paste_text) else {
             return false;
         };
-
-        let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let mut layout = match self.import_arrangement_input_snapshot() {
-            Ok(layout) => layout,
-            Err(error) => {
-                self.status = error;
-                return true;
-            }
-        };
-        let reservation = match self.reserve_import(
-            &mut layout,
-            Some((360, 240)),
-            desired_world,
-            viewport_world,
-            crate::data::ContentResolutionSource::ExternalUrl { url: url.clone() },
-        ) {
-            Ok(reservation) => reservation,
-            Err(error) => {
-                self.status = error;
-                return true;
-            }
-        };
-
-        if let Err(error) = self
-            .import_worker
-            .as_ref()
-            .expect("checked import worker")
-            .enqueue(crate::placement::content_resolution::import_url_request(
-                url.clone(),
-                reservation,
-                desired_world,
-                viewport_world,
-                self.import_request_config(),
-                self.import_trace(),
-            ))
-        {
-            self.remove_import_reservation(reservation);
-            self.status = error;
-            return true;
-        }
-
-        self.status = format!("Queued URL import: {url}");
+        self.enqueue_import_sources(vec![ImportSource::Url(url)], screen_rect, desired_world);
         true
     }
 
-    fn enqueue_external_import_sources(
+    fn enqueue_import_sources(
         &mut self,
-        sources: Vec<ExternalImportSource>,
+        sources: Vec<ImportSource>,
         screen_rect: egui::Rect,
         desired_world: egui::Pos2,
     ) {
@@ -2709,14 +2549,6 @@ impl SnappyRefApp {
         }
 
         let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let mut layout = match self.import_arrangement_input_snapshot() {
-            Ok(layout) => layout,
-            Err(error) => {
-                self.status = error;
-                return;
-            }
-        };
-
         let placement_creation_settings = self.placement_creation_settings();
         let (created, history_action) = match self.library.clone().map_or_else(
             || Err("Storage unavailable".to_owned()),
@@ -2726,20 +2558,13 @@ impl SnappyRefApp {
                         &library,
                         &mut self.canvas,
                         &self.external_hover_provisional_placement_ids,
-                    )?;
+                    );
                     let mut created = Vec::with_capacity(committed.placements.len());
                     for placement in committed.placements {
                         let reservation = self.content_resolution.reserve_placement(
                             self.active_board_id,
                             placement.state.id,
                             placement.state.geometry.center,
-                        );
-                        layout.push(
-                            crate::placement::arrangement::PlacementArrangementInput::new(
-                                placement.state.id,
-                                placement.state.geometry.center,
-                                placement.state.geometry.scaled_size(),
-                            ),
                         );
                         created.push(crate::placement::creation::CreatedLoadingPlacement {
                             reservation,
@@ -2757,7 +2582,6 @@ impl SnappyRefApp {
                     &library,
                     &mut self.content_resolution,
                     &mut self.canvas,
-                    &mut layout,
                     self.active_board_id,
                     source_intents,
                     desired_world,
@@ -2784,28 +2608,19 @@ impl SnappyRefApp {
 
         for (source, created) in sources.into_iter().zip(created) {
             let reservation = created.reservation;
-            let request = match &source {
-                ExternalImportSource::Path(source_path) => {
-                    crate::placement::content_resolution::import_path_request(
-                        source_path.clone(),
-                        reservation,
-                        desired_world,
-                        viewport_world,
-                        self.import_request_config(),
-                        self.import_trace(),
-                    )
-                }
-                ExternalImportSource::Url(url) => {
-                    crate::placement::content_resolution::import_url_request(
-                        url.clone(),
-                        reservation,
-                        desired_world,
-                        viewport_world,
-                        self.import_request_config(),
-                        self.import_trace(),
-                    )
-                }
+            let status = match &source {
+                ImportSource::Path(path) => format!("Queued import: {}", path.display()),
+                ImportSource::Url(url) => format!("Queued URL import: {url}"),
+                ImportSource::Clipboard { .. } => "Queued clipboard image".to_owned(),
             };
+            let request = crate::placement::content_resolution::import_request(
+                source,
+                reservation,
+                desired_world,
+                viewport_world,
+                self.import_request_config(),
+                self.import_trace(),
+            );
 
             if let Err(error) = self
                 .import_worker
@@ -2820,12 +2635,7 @@ impl SnappyRefApp {
 
             queued_batch_ids.push(reservation.queue_id);
             queued_placement_ids.push(created.placement.state.id);
-            self.status = match &source {
-                ExternalImportSource::Path(path) => {
-                    format!("Queued import: {}", path.display())
-                }
-                ExternalImportSource::Url(url) => format!("Queued URL import: {url}"),
-            };
+            self.status = status;
         }
         if !queued_placement_ids.is_empty() {
             self.canvas.select_placements(&queued_placement_ids);
@@ -2834,17 +2644,16 @@ impl SnappyRefApp {
     }
 
     fn placement_content_intent_for_external_source(
-        source: &ExternalImportSource,
+        source: &ImportSource,
     ) -> crate::data::ContentResolutionSource {
         match source {
-            ExternalImportSource::Path(path) => {
-                crate::data::ContentResolutionSource::ExternalPath {
-                    path: path.to_string_lossy().into_owned(),
-                }
-            }
-            ExternalImportSource::Url(url) => {
+            ImportSource::Path(path) => crate::data::ContentResolutionSource::ExternalPath {
+                path: path.to_string_lossy().into_owned(),
+            },
+            ImportSource::Url(url) => {
                 crate::data::ContentResolutionSource::ExternalUrl { url: url.clone() }
             }
+            ImportSource::Clipboard { .. } => crate::data::ContentResolutionSource::Clipboard,
         }
     }
 
@@ -3620,8 +3429,8 @@ impl SnappyRefApp {
     }
 
     fn apply_loaded_import_outcome(&mut self, outcome: LoadedContentResolutionOutcome) {
-        let finished = self.content_resolution.finish_loaded_import(outcome);
-        if let (Some(ticket), Some(log)) = (finished.resolution_ticket, finished.log.as_ref()) {
+        let (completion, outcome) = self.content_resolution.finish_loaded_import(outcome);
+        if let (Some(ticket), Some(log)) = (outcome.resolution_ticket, outcome.log.as_ref()) {
             let mut placement = log.placement.clone();
             // An inactive Board has no canvas; its accepted history holds the
             // newest geometry.
@@ -3649,8 +3458,8 @@ impl SnappyRefApp {
                 }
             }
         }
-        let resolution_queue_id = finished.resolution_ticket.map(|ticket| ticket.queue_id);
-        let perf_import_origin = finished.log.as_ref().map(|log| log.origin);
+        let resolution_queue_id = outcome.resolution_ticket.map(|ticket| ticket.queue_id);
+        let perf_import_origin = outcome.log.as_ref().map(|log| log.origin);
         let perf_counts_as_import = perf_import_origin.is_some_and(|origin| {
             matches!(
                 origin,
@@ -3659,17 +3468,17 @@ impl SnappyRefApp {
                     | crate::jobs::ImportOrigin::Url
             )
         });
-        let status = finished.status;
+        let status = outcome.status;
         #[cfg(feature = "semantic-search")]
         let mut status = status;
         #[cfg(feature = "semantic-search")]
-        let indexed_asset = finished.indexed_asset;
+        let indexed_asset = outcome.indexed_asset;
         self.finish_import_queue_id_in_batches(
-            finished.batch_target_board_id,
-            finished.batch_queue_id,
-            finished.loaded_placement_id,
+            completion.target_board_id,
+            completion.queue_id,
+            completion.placement_id,
         );
-        if let Some(log) = finished.log {
+        if let Some(log) = outcome.log {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
                 scenario.loaded_imports += 1;
                 let metadata = resolution_queue_id
@@ -3767,13 +3576,13 @@ impl SnappyRefApp {
     }
 
     fn apply_failed_import_outcome(&mut self, outcome: FailedContentResolutionOutcome) {
-        let finished = self.content_resolution.finish_failed_import(outcome);
+        let completion = self.content_resolution.finish_failed_import(&outcome);
         if let (Some(board_id), Some(placement_id)) =
-            (finished.batch_target_board_id, finished.placement_id)
+            (completion.target_board_id, completion.placement_id)
             && let Some(placement) = self.document_history.fail_accepted_placement(
                 board_id,
                 placement_id,
-                finished.status.clone(),
+                outcome.status.clone(),
             )
         {
             if board_id == self.active_board_id
@@ -3794,13 +3603,12 @@ impl SnappyRefApp {
                 self.status = error;
             }
         }
-        let _ = finished.resolution_ticket;
         self.finish_import_queue_id_in_batches(
-            finished.batch_target_board_id,
-            finished.batch_queue_id,
+            completion.target_board_id,
+            completion.queue_id,
             None,
         );
-        self.status = finished.status;
+        self.status = outcome.status;
     }
 
     fn handle_history_shortcuts(&mut self, ctx: &egui::Context) {
@@ -4920,12 +4728,11 @@ impl SnappyRefApp {
             }
         };
         crate::diagnostics::search_drag_debug(format!(
-            "handle_search_drop committed added={:?} load_existing_count={}",
-            committed.added_placement_ids,
-            committed.load_existing_placements.len()
+            "handle_search_drop committed count={}",
+            committed.placements.len()
         ));
 
-        for placement in &committed.load_existing_placements {
+        for placement in &committed.placements {
             if let Some(import_worker) = &self.import_worker {
                 if let Err(error) =
                     import_worker.enqueue(crate::jobs::ImagePrepRequest::LoadExisting {
@@ -4985,8 +4792,8 @@ impl SnappyRefApp {
             }
         }
 
-        if !committed.added_placement_ids.is_empty() {
-            if let Some(history_action) = committed.history_action.clone() {
+        if !committed.placements.is_empty() {
+            if let Some(history_action) = committed.history_action {
                 self.document_history
                     .record_applied(self.active_board_id, history_action);
                 self.persist_recorded_canvas_changes();
@@ -4994,7 +4801,7 @@ impl SnappyRefApp {
             self.save_user_session();
             self.refresh_board_summaries();
         }
-        let placed_count = committed.placed_count();
+        let placed_count = committed.placements.len();
         let noun = if placed_count == 1 { "image" } else { "images" };
         self.status = format!("Added {placed_count} search {noun}");
         crate::diagnostics::search_drag_debug(format!(

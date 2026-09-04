@@ -146,7 +146,6 @@ fn create_one_committed_loading_placement(
     library: &Library,
     content_resolution: &mut ContentResolutionRuntime,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
     target_board_id: i64,
     intent: SourceIntent,
     center_world: egui::Pos2,
@@ -164,13 +163,6 @@ fn create_one_committed_loading_placement(
     let reservation =
         content_resolution.reserve_placement(target_board_id, placement.state.id, center_world);
 
-    layout.push(
-        crate::placement::arrangement::PlacementArrangementInput::new(
-            placement.state.id,
-            placement.state.geometry.center,
-            placement.state.geometry.scaled_size(),
-        ),
-    );
     canvas.add_unresolved_placement(placement.clone());
     canvas.mark_placement_for_persistence(placement.state.id);
     canvas.mark_stack_order_for_persistence();
@@ -186,39 +178,40 @@ pub(crate) fn create_committed_loading_placement(
     library: &Library,
     content_resolution: &mut ContentResolutionRuntime,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
     target_board_id: i64,
     intent: SourceIntent,
     center_world: egui::Pos2,
     settings: PlacementCreationSettings,
-) -> Result<CommittedLoadingPlacementBatch, String> {
+) -> Result<
+    (
+        CreatedLoadingPlacement,
+        Option<crate::active_board::history::HistoryAction>,
+    ),
+    String,
+> {
     let stack_before = canvas.canvas_stack_order();
     let created = create_one_committed_loading_placement(
         library,
         content_resolution,
         canvas,
-        layout,
         target_board_id,
         intent,
         center_world,
         settings,
     )?;
-    let history_action = committed_loading_batch_history_action(
+    let history_action = committed_batch_history_action(
         std::slice::from_ref(&created.placement),
+        None,
         stack_before,
         canvas.canvas_stack_order(),
     );
-    Ok(CommittedLoadingPlacementBatch {
-        created: vec![created],
-        history_action,
-    })
+    Ok((created, history_action))
 }
 
 pub(crate) fn create_committed_loading_placements(
     library: &Library,
     content_resolution: &mut ContentResolutionRuntime,
     canvas: &mut CanvasState,
-    layout: &mut Vec<crate::placement::arrangement::PlacementArrangementInput>,
     target_board_id: i64,
     intents: Vec<SourceIntent>,
     anchor_world: egui::Pos2,
@@ -234,7 +227,6 @@ pub(crate) fn create_committed_loading_placements(
             library,
             content_resolution,
             canvas,
-            layout,
             target_board_id,
             intent,
             geometry.center,
@@ -250,8 +242,9 @@ pub(crate) fn create_committed_loading_placements(
         .iter()
         .map(|created| created.placement.clone())
         .collect::<Vec<_>>();
-    let history_action = committed_loading_batch_history_action(
+    let history_action = committed_batch_history_action(
         &placements,
+        None,
         stack_before,
         canvas.canvas_stack_order(),
     );
@@ -261,19 +254,23 @@ pub(crate) fn create_committed_loading_placements(
     })
 }
 
-pub(crate) fn committed_loading_batch_history_action(
+/// Undo action for a batch of newly committed placements. Provisional
+/// placements (negative ids) are dropped from the stack snapshots so undo
+/// never resurrects them.
+pub(crate) fn committed_batch_history_action(
     placements: &[Placement],
+    label: Option<&str>,
     stack_before: Vec<CanvasStackItem>,
     stack_after: Vec<CanvasStackItem>,
 ) -> Option<crate::active_board::history::HistoryAction> {
     if placements.is_empty() {
         return None;
     }
-    let label = if placements.len() == 1 {
+    let label = label.unwrap_or(if placements.len() == 1 {
         "Import image"
     } else {
         "Import images"
-    };
+    });
     let committed_stack = |stack: Vec<CanvasStackItem>| {
         stack
             .into_iter()

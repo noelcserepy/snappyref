@@ -26,7 +26,6 @@ pub(super) struct PreparedImage {
     pub(super) source_width: u32,
     pub(super) source_height: u32,
     pub(super) mime_type: String,
-    pub(super) file_size: u64,
     pub(super) cache_path: Option<PathBuf>,
     pub(super) cache_extension: Option<String>,
 }
@@ -40,7 +39,6 @@ struct ImagePrepOutput {
     source_width: u32,
     source_height: u32,
     mime_type: String,
-    file_size: u64,
     cache_path: Option<PathBuf>,
     cache_extension: Option<String>,
 }
@@ -115,7 +113,6 @@ pub(super) fn prepare_image_with_helper(
             source_width: prepared.source_width,
             source_height: prepared.source_height,
             mime_type: prepared.mime_type,
-            file_size: prepared.file_size,
             cache_path: prepared.cache_path,
             cache_extension: prepared.cache_extension,
         }))
@@ -216,7 +213,6 @@ fn print_imageprep_output(
                 source_width: decoded.source_width,
                 source_height: decoded.source_height,
                 mime_type: decoded.mime_type,
-                file_size: decoded.file_size,
                 cache_path: None,
                 cache_extension: None,
             },
@@ -249,7 +245,6 @@ fn print_imageprep_output(
             source_width: decoded.source_width,
             source_height: decoded.source_height,
             mime_type: decoded.mime_type,
-            file_size: decoded.file_size,
             cache_path: Some(cache_path),
             cache_extension: Some(cache_extension.to_owned()),
         },

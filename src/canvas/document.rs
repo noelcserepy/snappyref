@@ -130,40 +130,31 @@ impl CanvasState {
             loaded.preview_texture,
         );
 
-        self.document
-            .rendered_placements
-            .retain(|image| image.placement.state.id != loaded.placement.state.id);
-        self.render
-            .pending_image_lod_loads
-            .remove(&loaded.placement.state.id);
-        self.document.rendered_placements.push(RenderedPlacement {
+        self.insert_rendered_placement(RenderedPlacement {
             placement: loaded.placement,
             texture,
             loaded_lod: loaded.loaded_lod,
             animation,
         });
-        self.append_missing_stack_item(CanvasStackItem::Placement(
-            self.document
-                .rendered_placements
-                .last()
-                .unwrap()
-                .placement
-                .state
-                .id,
-        ));
+    }
+
+    /// Replaces any rendered placement with the same id, registers it in the
+    /// stack order if new, and keeps the render list sorted by z-index.
+    fn insert_rendered_placement(&mut self, rendered: RenderedPlacement) {
+        let placement_id = rendered.placement.state.id;
+        self.document
+            .rendered_placements
+            .retain(|image| image.placement.state.id != placement_id);
+        self.render.pending_image_lod_loads.remove(&placement_id);
+        self.document.rendered_placements.push(rendered);
+        self.append_missing_stack_item(CanvasStackItem::Placement(placement_id));
         self.document
             .rendered_placements
             .sort_by_key(|image| image.placement.state.geometry.z_index);
     }
 
     pub fn add_unresolved_placement(&mut self, placement: Placement) {
-        self.document
-            .rendered_placements
-            .retain(|image| image.placement.state.id != placement.state.id);
-        self.render
-            .pending_image_lod_loads
-            .remove(&placement.state.id);
-        self.document.rendered_placements.push(RenderedPlacement {
+        self.insert_rendered_placement(RenderedPlacement {
             texture: CanvasTexture::Unloaded {
                 size: [
                     placement.state.geometry.size.x.max(1.0).round() as usize,
@@ -174,18 +165,6 @@ impl CanvasState {
             animation: None,
             placement,
         });
-        self.append_missing_stack_item(CanvasStackItem::Placement(
-            self.document
-                .rendered_placements
-                .last()
-                .unwrap()
-                .placement
-                .state
-                .id,
-        ));
-        self.document
-            .rendered_placements
-            .sort_by_key(|image| image.placement.state.geometry.z_index);
     }
 
     pub fn add_provisional_unresolved_placement(&mut self, mut placement: Placement) {
@@ -278,24 +257,12 @@ impl CanvasState {
         let texture = source.texture.clone();
         let animation = source.animation.clone();
 
-        self.document.rendered_placements.push(RenderedPlacement {
+        self.insert_rendered_placement(RenderedPlacement {
             placement,
             texture,
             loaded_lod: CanvasImageLod::Working,
             animation,
         });
-        self.append_missing_stack_item(CanvasStackItem::Placement(
-            self.document
-                .rendered_placements
-                .last()
-                .unwrap()
-                .placement
-                .state
-                .id,
-        ));
-        self.document
-            .rendered_placements
-            .sort_by_key(|image| image.placement.state.geometry.z_index);
         Ok(())
     }
 

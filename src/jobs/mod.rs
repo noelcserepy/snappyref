@@ -10,7 +10,7 @@ pub use import::{
     CanvasImageSettings, DEFAULT_PLACEMENT_TARGET_AREA, ExistingLoadDiagnostics,
     ExistingLoadPriority, ImagePrepPreviewTexture, ImagePrepRequest, ImagePrepResult,
     ImagePrepTimings, ImagePrepTrace, ImagePrepWorker, ImagePrepWorkerStats, ImportOrigin,
-    NativeTextureHandle, PreparedCropPreview, PreparedPlacementImage, arrange_rect_world,
-    display_scale_for_placement_target_area, load_canvas_snapshot_pixels,
+    ImportRequest, ImportSource, NativeTextureHandle, PreparedCropPreview, PreparedPlacementImage,
+    arrange_rect_world, display_scale_for_placement_target_area, load_canvas_snapshot_pixels,
     placement_target_reference_span, sort_records_by_viewport_proximity,
 };

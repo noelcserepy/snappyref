@@ -377,21 +377,16 @@ fn scaled_placement_bounds(
     group_center_world: egui::Pos2,
     factor: f32,
 ) -> Option<egui::Rect> {
-    let mut bounds = egui::Rect::NOTHING;
-    let mut found = false;
-    for item in starting_items {
-        let offset = item.center_world() - group_center_world;
-        let center = group_center_world + offset * factor;
-        let scale = (item.start_scale() * factor).max(item.min_scale);
-        let rect = egui::Rect::from_center_size(center, item.base_display_size() * scale);
-        if found {
-            bounds = bounds.union(rect);
-        } else {
-            bounds = rect;
-            found = true;
-        }
-    }
-    found.then_some(bounds)
+    scaled_placement_transforms(starting_items, group_center_world, factor)
+        .iter()
+        .zip(starting_items)
+        .map(|(transform, item)| {
+            egui::Rect::from_center_size(
+                transform.center_world,
+                item.base_display_size() * transform.scale,
+            )
+        })
+        .reduce(|bounds, rect| bounds.union(rect))
 }
 
 pub(crate) fn rotated_placement_delta(
@@ -413,15 +408,6 @@ pub(crate) fn rotated_placement_delta(
         let snap_radians = snap_degrees.to_radians();
         (rotation / snap_radians).round() * snap_radians
     }
-}
-
-pub(crate) fn rotate_vec2(offset: egui::Vec2, angle: f32) -> egui::Vec2 {
-    let sin = angle.sin();
-    let cos = angle.cos();
-    egui::vec2(
-        offset.x * cos - offset.y * sin,
-        offset.x * sin + offset.y * cos,
-    )
 }
 
 pub(crate) fn compute_resize_snap_preview(

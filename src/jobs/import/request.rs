@@ -90,55 +90,58 @@ pub struct ExistingLoadDiagnostics {
     pub backfilled_cache: bool,
 }
 
-#[derive(Clone, Debug)]
-pub enum ImagePrepRequest {
-    ImportPath {
-        target_board_id: i64,
-        queue_id: u64,
-        placement_id: Option<i64>,
-        source_path: PathBuf,
-        desired_world: egui::Pos2,
-        reserved_world: Option<egui::Pos2>,
-        viewport_world: egui::Rect,
-        max_texture_side: usize,
-        canvas_image_settings: CanvasImageSettings,
-        auto_scale: bool,
-        placement_target_area: f32,
-        placement_gap: f32,
-        trace: Option<ImagePrepTrace>,
-    },
-    ImportClipboard {
-        target_board_id: i64,
-        queue_id: u64,
-        placement_id: Option<i64>,
+/// Where an import's pixels come from. Everything else about an import is
+/// shared, so the worker decodes the source and then runs one common tail.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ImportSource {
+    Path(PathBuf),
+    Url(String),
+    Clipboard {
         rgba: Vec<u8>,
         width: u32,
         height: u32,
-        desired_world: egui::Pos2,
-        reserved_world: Option<egui::Pos2>,
-        viewport_world: egui::Rect,
-        max_texture_side: usize,
-        canvas_image_settings: CanvasImageSettings,
-        auto_scale: bool,
-        placement_target_area: f32,
-        placement_gap: f32,
-        trace: Option<ImagePrepTrace>,
     },
-    ImportUrl {
-        target_board_id: i64,
-        queue_id: u64,
-        placement_id: Option<i64>,
-        url: String,
-        desired_world: egui::Pos2,
-        reserved_world: Option<egui::Pos2>,
-        viewport_world: egui::Rect,
-        max_texture_side: usize,
-        canvas_image_settings: CanvasImageSettings,
-        auto_scale: bool,
-        placement_target_area: f32,
-        placement_gap: f32,
-        trace: Option<ImagePrepTrace>,
-    },
+}
+
+impl ImportSource {
+    pub fn origin(&self) -> ImportOrigin {
+        match self {
+            Self::Path(_) => ImportOrigin::Path,
+            Self::Url(_) => ImportOrigin::Url,
+            Self::Clipboard { .. } => ImportOrigin::Clipboard,
+        }
+    }
+
+    /// Human-readable name used in status messages and failure context.
+    pub fn label(&self) -> String {
+        match self {
+            Self::Path(path) => path.display().to_string(),
+            Self::Url(url) => url.clone(),
+            Self::Clipboard { .. } => "clipboard".to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ImportRequest {
+    pub target_board_id: i64,
+    pub queue_id: u64,
+    pub placement_id: Option<i64>,
+    pub source: ImportSource,
+    pub desired_world: egui::Pos2,
+    pub reserved_world: Option<egui::Pos2>,
+    pub viewport_world: egui::Rect,
+    pub max_texture_side: usize,
+    pub canvas_image_settings: CanvasImageSettings,
+    pub auto_scale: bool,
+    pub placement_target_area: f32,
+    pub placement_gap: f32,
+    pub trace: Option<ImagePrepTrace>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ImagePrepRequest {
+    Import(ImportRequest),
     Crop {
         request: crate::canvas::CanvasCropRequest,
         max_texture_side: usize,

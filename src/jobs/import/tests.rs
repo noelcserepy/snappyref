@@ -1,8 +1,9 @@
 use super::{
     CanvasImageSettings, DEFAULT_PLACEMENT_TARGET_AREA, ImagePrepPreviewTexture, ImagePrepResult,
-    ImagePrepTimings, ImagePrepTrace, ImagePrepWorker, ImagePrepWorkerConfig, arrange_rect_world,
-    build_preview_texture, crop_item, display_scale_for_placement_target_area, import_clipboard,
-    import_path_sync, import_url_sync_traced, load_existing, rects_overlap_with_gap,
+    ImagePrepTimings, ImagePrepTrace, ImagePrepWorker, ImagePrepWorkerConfig, ImportRequest,
+    ImportSource, arrange_rect_world, build_preview_texture, crop_item,
+    display_scale_for_placement_target_area, import, import_path_sync, import_sync, load_existing,
+    rects_overlap_with_gap,
 };
 use crate::data::CanvasImageLod;
 use crate::library::storage::Library;
@@ -120,45 +121,53 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
     let tall_rgba = solid_rgba(390, 844);
     let small_rgba = solid_rgba(160, 200);
 
-    let tall = match import_clipboard(
+    let tall = match import(
         &library,
-        1,
-        1,
-        Some(library.allocate_document_id()),
-        tall_rgba,
-        390,
-        844,
-        eframe::egui::Pos2::ZERO,
-        None,
-        test_viewport_world(),
-        usize::MAX,
-        CanvasImageSettings::default(),
-        true,
-        DEFAULT_PLACEMENT_TARGET_AREA,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-        None,
+        ImportRequest {
+            target_board_id: 1,
+            queue_id: 1,
+            placement_id: Some(library.allocate_document_id()),
+            source: ImportSource::Clipboard {
+                rgba: tall_rgba,
+                width: 390,
+                height: 844,
+            },
+            desired_world: eframe::egui::Pos2::ZERO,
+            reserved_world: None,
+            viewport_world: test_viewport_world(),
+            max_texture_side: usize::MAX,
+            canvas_image_settings: CanvasImageSettings::default(),
+            auto_scale: true,
+            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
+            trace: None,
+        },
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
         other => panic!("expected loaded tall clipboard image, got {other:?}"),
     };
-    let small = match import_clipboard(
+    let small = match import(
         &library,
-        1,
-        2,
-        Some(library.allocate_document_id()),
-        small_rgba,
-        160,
-        200,
-        eframe::egui::Pos2::ZERO,
-        None,
-        test_viewport_world(),
-        usize::MAX,
-        CanvasImageSettings::default(),
-        false,
-        DEFAULT_PLACEMENT_TARGET_AREA,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-        None,
+        ImportRequest {
+            target_board_id: 1,
+            queue_id: 2,
+            placement_id: Some(library.allocate_document_id()),
+            source: ImportSource::Clipboard {
+                rgba: small_rgba,
+                width: 160,
+                height: 200,
+            },
+            desired_world: eframe::egui::Pos2::ZERO,
+            reserved_world: None,
+            viewport_world: test_viewport_world(),
+            max_texture_side: usize::MAX,
+            canvas_image_settings: CanvasImageSettings::default(),
+            auto_scale: false,
+            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
+            trace: None,
+        },
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
@@ -175,23 +184,27 @@ fn clipboard_import_uses_configured_target_area() {
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let target_area = 40_000.0;
 
-    let loaded = match import_clipboard(
+    let loaded = match import(
         &library,
-        1,
-        1,
-        Some(library.allocate_document_id()),
-        solid_rgba(1000, 1500),
-        1000,
-        1500,
-        eframe::egui::Pos2::ZERO,
-        None,
-        test_viewport_world(),
-        usize::MAX,
-        CanvasImageSettings::default(),
-        true,
-        target_area,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-        None,
+        ImportRequest {
+            target_board_id: 1,
+            queue_id: 1,
+            placement_id: Some(library.allocate_document_id()),
+            source: ImportSource::Clipboard {
+                rgba: solid_rgba(1000, 1500),
+                width: 1000,
+                height: 1500,
+            },
+            desired_world: eframe::egui::Pos2::ZERO,
+            reserved_world: None,
+            viewport_world: test_viewport_world(),
+            max_texture_side: usize::MAX,
+            canvas_image_settings: CanvasImageSettings::default(),
+            auto_scale: true,
+            placement_target_area: target_area,
+            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
+            trace: None,
+        },
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
@@ -208,23 +221,27 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
     seed_placement(&library, 42.0, 24.0, 160, 120, 1.0);
     let second = library.create_board("Second").unwrap();
 
-    let loaded = match import_clipboard(
+    let loaded = match import(
         &library,
-        second.id,
-        1,
-        Some(library.allocate_document_id()),
-        solid_rgba(160, 120),
-        160,
-        120,
-        eframe::egui::pos2(42.0, 24.0),
-        None,
-        test_viewport_world(),
-        usize::MAX,
-        CanvasImageSettings::default(),
-        false,
-        DEFAULT_PLACEMENT_TARGET_AREA,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-        None,
+        ImportRequest {
+            target_board_id: second.id,
+            queue_id: 1,
+            placement_id: Some(library.allocate_document_id()),
+            source: ImportSource::Clipboard {
+                rgba: solid_rgba(160, 120),
+                width: 160,
+                height: 120,
+            },
+            desired_world: eframe::egui::pos2(42.0, 24.0),
+            reserved_world: None,
+            viewport_world: test_viewport_world(),
+            max_texture_side: usize::MAX,
+            canvas_image_settings: CanvasImageSettings::default(),
+            auto_scale: false,
+            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
+            trace: None,
+        },
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
@@ -336,23 +353,27 @@ fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
     let gap = 8.0;
     seed_placement(&library, 0.0, 0.0, 200, 200, 1.0);
 
-    let second = match import_clipboard(
+    let second = match import(
         &library,
-        1,
-        2,
-        Some(library.allocate_document_id()),
-        solid_rgba(200, 200),
-        200,
-        200,
-        eframe::egui::Pos2::ZERO,
-        None,
-        test_viewport_world(),
-        usize::MAX,
-        CanvasImageSettings::default(),
-        false,
-        DEFAULT_PLACEMENT_TARGET_AREA,
-        gap,
-        None,
+        ImportRequest {
+            target_board_id: 1,
+            queue_id: 2,
+            placement_id: Some(library.allocate_document_id()),
+            source: ImportSource::Clipboard {
+                rgba: solid_rgba(200, 200),
+                width: 200,
+                height: 200,
+            },
+            desired_world: eframe::egui::Pos2::ZERO,
+            reserved_world: None,
+            viewport_world: test_viewport_world(),
+            max_texture_side: usize::MAX,
+            canvas_image_settings: CanvasImageSettings::default(),
+            auto_scale: false,
+            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+            placement_gap: gap,
+            trace: None,
+        },
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
@@ -382,23 +403,27 @@ fn reserved_world_is_persisted_without_worker_relayout() {
     seed_placement(&library, 0.0, 0.0, 100, 100, 1.0);
     let reserved_world = eframe::egui::pos2(240.0, 36.0);
 
-    let loaded = match import_clipboard(
+    let loaded = match import(
         &library,
-        1,
-        2,
-        Some(library.allocate_document_id()),
-        solid_rgba(100, 100),
-        100,
-        100,
-        eframe::egui::Pos2::ZERO,
-        Some(reserved_world),
-        test_viewport_world(),
-        usize::MAX,
-        CanvasImageSettings::default(),
-        false,
-        DEFAULT_PLACEMENT_TARGET_AREA,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-        None,
+        ImportRequest {
+            target_board_id: 1,
+            queue_id: 2,
+            placement_id: Some(library.allocate_document_id()),
+            source: ImportSource::Clipboard {
+                rgba: solid_rgba(100, 100),
+                width: 100,
+                height: 100,
+            },
+            desired_world: eframe::egui::Pos2::ZERO,
+            reserved_world: Some(reserved_world),
+            viewport_world: test_viewport_world(),
+            max_texture_side: usize::MAX,
+            canvas_image_settings: CanvasImageSettings::default(),
+            auto_scale: false,
+            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
+            trace: None,
+        },
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
@@ -416,23 +441,27 @@ fn overlapping_reserved_world_is_preserved_when_persisting() {
     seed_placement(&library, 0.0, 0.0, 100, 100, 1.0);
     let reserved_world = eframe::egui::Pos2::ZERO;
 
-    let loaded = match import_clipboard(
+    let loaded = match import(
         &library,
-        1,
-        2,
-        Some(library.allocate_document_id()),
-        solid_rgba(100, 100),
-        100,
-        100,
-        reserved_world,
-        Some(reserved_world),
-        test_viewport_world(),
-        usize::MAX,
-        CanvasImageSettings::default(),
-        false,
-        DEFAULT_PLACEMENT_TARGET_AREA,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-        None,
+        ImportRequest {
+            target_board_id: 1,
+            queue_id: 2,
+            placement_id: Some(library.allocate_document_id()),
+            source: ImportSource::Clipboard {
+                rgba: solid_rgba(100, 100),
+                width: 100,
+                height: 100,
+            },
+            desired_world: reserved_world,
+            reserved_world: Some(reserved_world),
+            viewport_world: test_viewport_world(),
+            max_texture_side: usize::MAX,
+            canvas_image_settings: CanvasImageSettings::default(),
+            auto_scale: false,
+            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
+            trace: None,
+        },
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
@@ -452,21 +481,23 @@ fn url_import_downloads_and_persists_original_bytes() {
     let png_bytes = solid_png_bytes(64, 48, [188, 146, 255, 255]);
     let (url, server) = serve_bytes_once("/test-image.png", "image/png", png_bytes.clone());
 
-    let loaded = import_url_sync_traced(
+    let loaded = import_sync(
         &library,
-        1,
-        Some(7),
-        Some(library.allocate_document_id()),
-        &url,
-        eframe::egui::Pos2::ZERO,
-        None,
-        test_viewport_world(),
-        usize::MAX,
-        CanvasImageSettings::default(),
-        false,
-        DEFAULT_PLACEMENT_TARGET_AREA,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-        None,
+        ImportRequest {
+            target_board_id: 1,
+            queue_id: 7,
+            placement_id: Some(library.allocate_document_id()),
+            source: ImportSource::Url(url.clone()),
+            desired_world: eframe::egui::Pos2::ZERO,
+            reserved_world: None,
+            viewport_world: test_viewport_world(),
+            max_texture_side: usize::MAX,
+            canvas_image_settings: CanvasImageSettings::default(),
+            auto_scale: false,
+            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
+            trace: None,
+        },
         None,
     )
     .unwrap();
@@ -563,21 +594,23 @@ fn url_import_preserves_svg_as_vector_source() {
     let svg_bytes = svg_bytes(128, 96);
     let (url, server) = serve_bytes_once("/remote-icon.svg", "image/svg+xml", svg_bytes.clone());
 
-    let loaded = import_url_sync_traced(
+    let loaded = import_sync(
         &library,
-        1,
-        Some(9),
-        Some(library.allocate_document_id()),
-        &url,
-        eframe::egui::Pos2::ZERO,
-        None,
-        test_viewport_world(),
-        usize::MAX,
-        CanvasImageSettings::default(),
-        false,
-        DEFAULT_PLACEMENT_TARGET_AREA,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-        None,
+        ImportRequest {
+            target_board_id: 1,
+            queue_id: 9,
+            placement_id: Some(library.allocate_document_id()),
+            source: ImportSource::Url(url.clone()),
+            desired_world: eframe::egui::Pos2::ZERO,
+            reserved_world: None,
+            viewport_world: test_viewport_world(),
+            max_texture_side: usize::MAX,
+            canvas_image_settings: CanvasImageSettings::default(),
+            auto_scale: false,
+            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
+            trace: None,
+        },
         None,
     )
     .unwrap();
@@ -855,11 +888,11 @@ fn interactive_import_queue_breaks_ties_by_arrival_order() {
 }
 
 fn make_import_path_request(source_path: PathBuf) -> super::ImagePrepRequest {
-    super::ImagePrepRequest::ImportPath {
+    super::ImagePrepRequest::Import(ImportRequest {
         target_board_id: 1,
         queue_id: 0,
         placement_id: None,
-        source_path,
+        source: ImportSource::Path(source_path),
         desired_world: eframe::egui::Pos2::ZERO,
         reserved_world: None,
         viewport_world: test_viewport_world(),
@@ -869,13 +902,16 @@ fn make_import_path_request(source_path: PathBuf) -> super::ImagePrepRequest {
         placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
         placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
         trace: None,
-    }
+    })
 }
 
 fn import_path_source(request: &super::ImagePrepRequest) -> PathBuf {
     match request {
-        super::ImagePrepRequest::ImportPath { source_path, .. } => source_path.clone(),
-        other => panic!("expected ImportPath, got {other:?}"),
+        super::ImagePrepRequest::Import(ImportRequest {
+            source: ImportSource::Path(source_path),
+            ..
+        }) => source_path.clone(),
+        other => panic!("expected path import, got {other:?}"),
     }
 }
 
@@ -942,23 +978,27 @@ fn traced_clipboard_import_populates_non_negative_timings() {
         timings: ImagePrepTimings::default(),
     };
 
-    let loaded = match import_clipboard(
+    let loaded = match import(
         &library,
-        1,
-        1,
-        Some(library.allocate_document_id()),
-        solid_rgba(64, 64),
-        64,
-        64,
-        eframe::egui::Pos2::ZERO,
-        None,
-        test_viewport_world(),
-        usize::MAX,
-        CanvasImageSettings::default(),
-        false,
-        DEFAULT_PLACEMENT_TARGET_AREA,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-        Some(trace),
+        ImportRequest {
+            target_board_id: 1,
+            queue_id: 1,
+            placement_id: Some(library.allocate_document_id()),
+            source: ImportSource::Clipboard {
+                rgba: solid_rgba(64, 64),
+                width: 64,
+                height: 64,
+            },
+            desired_world: eframe::egui::Pos2::ZERO,
+            reserved_world: None,
+            viewport_world: test_viewport_world(),
+            max_texture_side: usize::MAX,
+            canvas_image_settings: CanvasImageSettings::default(),
+            auto_scale: false,
+            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
+            trace: Some(trace),
+        },
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
