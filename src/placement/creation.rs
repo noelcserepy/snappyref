@@ -199,8 +199,9 @@ pub(crate) fn create_committed_loading_placement(
         center_world,
         settings,
     )?;
-    let history_action = committed_loading_batch_history_action(
+    let history_action = committed_batch_history_action(
         std::slice::from_ref(&created.placement),
+        None,
         stack_before,
         canvas.canvas_stack_order(),
     );
@@ -241,8 +242,9 @@ pub(crate) fn create_committed_loading_placements(
         .iter()
         .map(|created| created.placement.clone())
         .collect::<Vec<_>>();
-    let history_action = committed_loading_batch_history_action(
+    let history_action = committed_batch_history_action(
         &placements,
+        None,
         stack_before,
         canvas.canvas_stack_order(),
     );
@@ -252,19 +254,23 @@ pub(crate) fn create_committed_loading_placements(
     })
 }
 
-pub(crate) fn committed_loading_batch_history_action(
+/// Undo action for a batch of newly committed placements. Provisional
+/// placements (negative ids) are dropped from the stack snapshots so undo
+/// never resurrects them.
+pub(crate) fn committed_batch_history_action(
     placements: &[Placement],
+    label: Option<&str>,
     stack_before: Vec<CanvasStackItem>,
     stack_after: Vec<CanvasStackItem>,
 ) -> Option<crate::active_board::history::HistoryAction> {
     if placements.is_empty() {
         return None;
     }
-    let label = if placements.len() == 1 {
+    let label = label.unwrap_or(if placements.len() == 1 {
         "Import image"
     } else {
         "Import images"
-    };
+    });
     let committed_stack = |stack: Vec<CanvasStackItem>| {
         stack
             .into_iter()

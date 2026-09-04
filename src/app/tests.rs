@@ -1,6 +1,6 @@
 use super::{
-    AppConfig, ArrangementAction, BoardSummariesCache, EmbeddingPhaseMarkers,
-    ModelLoadTimingSummary, SUPPORTED_SHORTCUTS, SnappyRefApp, apply_arrangement_action,
+    AppConfig, ArrangementAction, EmbeddingPhaseMarkers, ModelLoadTimingSummary,
+    SUPPORTED_SHORTCUTS, SnappyRefApp, apply_arrangement_action,
 };
 use crate::data::{
     Asset, CanvasAnnotationKind, CanvasBackground, CanvasStackItem, CanvasStrokeWidth,
@@ -7216,49 +7216,8 @@ fn missing_drop_event_fallback_is_single_use_after_hover_ends() {
 }
 
 fn test_app(library: Option<Library>) -> SnappyRefApp {
-    let mut app = SnappyRefApp {
-        canvas: crate::canvas::CanvasState::default(),
-        wgpu_render_state: None,
-        library,
-        import_worker: None,
-        active_board_id: 1,
-        window_state: crate::data::WindowState::default(),
-        persist_window_state: true,
-        document_history: super::DocumentHistory::default(),
-        max_texture_side: 8192,
-        settings: crate::data::WorkspaceSettings::default(),
-        #[cfg(feature = "semantic-search")]
-        search: super::SearchController::default(),
-        frame_perf: super::FramePerfState::default(),
-        content_resolution: super::ContentResolutionRuntime::new(),
-        residency: super::ImageResidencyCoordinator::default(),
-        pending_import_batches: crate::placement::creation::PlacementCreationBatchTracker::default(
-        ),
-        sidebar_open: false,
-        sidebar_tab: super::SidebarTab::default(),
-        pending_board_delete: None,
-        pending_library_remove: None,
-        #[cfg(feature = "semantic-search")]
-        pending_semantic_search_remove: false,
-        context_menu_pos: None,
-        status: String::new(),
-        status_shown: String::new(),
-        status_shown_since: Instant::now(),
-        perf_log: None,
-        perf_scenario: None,
-        hover_preview_dimensions: std::collections::HashMap::new(),
-        last_hovered_external_drag: None,
-        external_hover_provisional_placement_ids: Vec::new(),
-        pending_missing_drop_fallback: None,
-        document_persistence: super::DocumentPersistence::default(),
-        pending_user_session: None,
-        pending_user_session_save_at: None,
-        board_summaries_cache: BoardSummariesCache::default(),
-        update_service: super::UpdateService::new(super::UpdateConfig::for_tests()),
-        user_update_flow_active: false,
-        update_smoke: None,
-        last_manual_update_check: None,
-    };
+    let mut app = SnappyRefApp::detached(None, 8192, super::UpdateConfig::for_tests());
+    app.library = library;
     app.refresh_board_summaries();
     app
 }

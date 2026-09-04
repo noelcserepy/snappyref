@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::canvas::CanvasState;
-use crate::data::{CanvasStackItem, Placement};
+use crate::data::Placement;
 use crate::library::storage::Library;
 use crate::placement::creation::{
     PlacementCreationSettings, ProvisionalSourceIntent, create_provisional_placements,
@@ -21,21 +21,10 @@ pub(crate) struct CommitSearchProvisionalRequest {
     pub(crate) provisional_placement_ids: Vec<i64>,
 }
 
+/// Placements swapped from provisional to committed ids, with the history
+/// action that undoes the whole batch. Empty when nothing was provisional.
 #[derive(Clone, Debug)]
-pub(crate) struct CommittedSearchProvisionalBatch {
-    pub(crate) added_placement_ids: Vec<i64>,
-    pub(crate) load_existing_placements: Vec<Placement>,
-    pub(crate) history_action: Option<crate::active_board::history::HistoryAction>,
-}
-
-impl CommittedSearchProvisionalBatch {
-    pub(crate) fn placed_count(&self) -> usize {
-        self.added_placement_ids.len()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct CommittedLoadingProvisionalBatch {
+pub(crate) struct CommittedProvisionalBatch {
     pub(crate) placements: Vec<Placement>,
     pub(crate) history_action: Option<crate::active_board::history::HistoryAction>,
 }
@@ -67,42 +56,14 @@ pub(crate) fn commit_loading_provisional_batch(
     library: &Library,
     canvas: &mut CanvasState,
     placement_ids: &[i64],
-) -> Result<CommittedLoadingProvisionalBatch, String> {
+) -> CommittedProvisionalBatch {
     let provisional_placements = placement_ids
         .iter()
         .filter_map(|placement_id| canvas.placement_for_id(*placement_id))
         .filter(|placement| placement.lifecycle == crate::data::PlacementLifecycle::Provisional)
         .collect::<Vec<_>>();
-    if provisional_placements.is_empty() {
-        return Ok(CommittedLoadingProvisionalBatch {
-            placements: Vec::new(),
-            history_action: None,
-        });
-    }
-
-    let stack_before = canvas.canvas_stack_order();
     let committed_pairs = library.prepare_committed_loading_placements(&provisional_placements);
-    let placements = canvas.commit_provisional_placements_in_place(committed_pairs);
-    for placement in &placements {
-        canvas.mark_placement_for_persistence(placement.state.id);
-    }
-    canvas.mark_stack_order_for_persistence();
-    let stack_after = canvas.canvas_stack_order();
-    let placement_ids = placements
-        .iter()
-        .map(|placement| placement.state.id)
-        .collect::<Vec<_>>();
-    canvas.select_placements(&placement_ids);
-
-    let history_action = crate::placement::creation::committed_loading_batch_history_action(
-        &placements,
-        stack_before,
-        stack_after,
-    );
-    Ok(CommittedLoadingProvisionalBatch {
-        placements,
-        history_action,
-    })
+    commit_provisional_pairs(canvas, committed_pairs, None)
 }
 
 pub(crate) fn commit_search_provisional_batch(
@@ -110,27 +71,16 @@ pub(crate) fn commit_search_provisional_batch(
     canvas: &mut CanvasState,
     request: CommitSearchProvisionalRequest,
     settings: PlacementCreationSettings,
-) -> Result<CommittedSearchProvisionalBatch, String> {
-    if request.asset_ids.is_empty() {
-        return Ok(CommittedSearchProvisionalBatch {
-            added_placement_ids: Vec::new(),
-            load_existing_placements: Vec::new(),
-            history_action: None,
-        });
-    }
-
-    let mut provisional_placements = request
-        .provisional_placement_ids
-        .iter()
-        .filter_map(|placement_id| canvas.placement_for_id(*placement_id))
-        .collect::<Vec<_>>();
-    if provisional_placements.is_empty() {
-        return Ok(CommittedSearchProvisionalBatch {
-            added_placement_ids: Vec::new(),
-            load_existing_placements: Vec::new(),
-            history_action: None,
-        });
-    }
+) -> Result<CommittedProvisionalBatch, String> {
+    let mut provisional_placements = if request.asset_ids.is_empty() {
+        Vec::new()
+    } else {
+        request
+            .provisional_placement_ids
+            .iter()
+            .filter_map(|placement_id| canvas.placement_for_id(*placement_id))
+            .collect::<Vec<_>>()
+    };
 
     for placement in &mut provisional_placements {
         let Some(asset_id) = placement.asset_id() else {
@@ -149,58 +99,56 @@ pub(crate) fn commit_search_provisional_batch(
         );
     }
 
-    let stack_before = Some(canvas.canvas_stack_order());
     let committed_pairs = library.prepare_committed_asset_placements(&provisional_placements)?;
-    let committed_placements = canvas.commit_provisional_placements_in_place(committed_pairs);
-    for placement in &committed_placements {
+    Ok(commit_provisional_pairs(
+        canvas,
+        committed_pairs,
+        Some("Add search images"),
+    ))
+}
+
+/// Swaps provisional placements for their committed records, marks them and
+/// the stack order for persistence, selects them, and builds the undo action.
+/// `label` overrides the default import label.
+fn commit_provisional_pairs(
+    canvas: &mut CanvasState,
+    committed_pairs: Vec<(i64, Placement)>,
+    label: Option<&str>,
+) -> CommittedProvisionalBatch {
+    if committed_pairs.is_empty() {
+        return CommittedProvisionalBatch {
+            placements: Vec::new(),
+            history_action: None,
+        };
+    }
+    let stack_before = canvas.canvas_stack_order();
+    let placements = canvas.commit_provisional_placements_in_place(committed_pairs);
+    for placement in &placements {
         canvas.mark_placement_for_persistence(placement.state.id);
     }
     canvas.mark_stack_order_for_persistence();
     let stack_after = canvas.canvas_stack_order();
-
-    let added_placement_ids = committed_placements
+    let placement_ids = placements
         .iter()
         .map(|placement| placement.state.id)
         .collect::<Vec<_>>();
-    canvas.select_placements(&added_placement_ids);
-    let load_existing_placements = committed_placements.clone();
-    let history_action = Some(crate::active_board::history::HistoryAction::document(
-        "Add search images".to_owned(),
-        committed_placements
-            .iter()
-            .cloned()
-            .map(|placement| crate::active_board::history::HistoryChange {
-                before: None,
-                after: Some(placement),
-            })
-            .collect(),
-        Vec::new(),
-        stack_before.map(|before| crate::active_board::history::HistoryChange {
-            before: Some(before),
-            after: Some(
-                stack_after
-                    .into_iter()
-                    .filter(|item| {
-                        matches!(
-                            item,
-                            CanvasStackItem::Placement(_) | CanvasStackItem::Annotation(_)
-                        )
-                    })
-                    .collect(),
-            ),
-        }),
-    ));
+    canvas.select_placements(&placement_ids);
 
-    Ok(CommittedSearchProvisionalBatch {
-        added_placement_ids,
-        load_existing_placements,
+    let history_action = crate::placement::creation::committed_batch_history_action(
+        &placements,
+        label,
+        stack_before,
+        stack_after,
+    );
+    CommittedProvisionalBatch {
+        placements,
         history_action,
-    })
+    }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::CanvasStackItem;
     use crate::test_support::TempRoot;
 
     #[test]
@@ -356,15 +304,14 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(committed.added_placement_ids.len(), 1);
-        assert_eq!(committed.load_existing_placements.len(), 1);
+        assert_eq!(committed.placements.len(), 1);
         assert!(
             canvas
                 .provisional_placements_in_selection_order()
                 .is_empty()
         );
         let placement = canvas
-            .placement_for_id(committed.added_placement_ids[0])
+            .placement_for_id(committed.placements[0].state.id)
             .unwrap();
         assert_eq!(
             placement.lifecycle,
@@ -372,7 +319,7 @@ mod tests {
         );
         assert_eq!(
             canvas.selected_placement_ids(),
-            committed.added_placement_ids
+            vec![committed.placements[0].state.id]
         );
     }
 
@@ -425,8 +372,7 @@ mod tests {
         );
 
         let committed =
-            commit_loading_provisional_batch(&library, &mut canvas, &provisional.placement_ids)
-                .unwrap();
+            commit_loading_provisional_batch(&library, &mut canvas, &provisional.placement_ids);
         let crate::active_board::history::HistoryAction::Document(history_action) =
             committed.history_action.unwrap()
         else {

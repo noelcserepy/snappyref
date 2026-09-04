@@ -23,6 +23,15 @@ pub(super) fn screen_size_for_placement(
     placement.scaled_display_size() * zoom
 }
 
+pub(crate) fn rotate_vec2(offset: egui::Vec2, angle: f32) -> egui::Vec2 {
+    let sin = angle.sin();
+    let cos = angle.cos();
+    egui::vec2(
+        offset.x * cos - offset.y * sin,
+        offset.x * sin + offset.y * cos,
+    )
+}
+
 pub(super) fn screen_corners_for_placement(
     placement: &crate::data::Placement,
     pan: egui::Vec2,
@@ -31,14 +40,7 @@ pub(super) fn screen_corners_for_placement(
 ) -> [egui::Pos2; 4] {
     let center = screen_center_for_placement(placement, pan, zoom, screen_center);
     let half_size = screen_size_for_placement(placement, zoom) * 0.5;
-    let sin = placement.state.geometry.rotation.sin();
-    let cos = placement.state.geometry.rotation.cos();
-    let rotate = |offset: egui::Vec2| {
-        egui::vec2(
-            offset.x * cos - offset.y * sin,
-            offset.x * sin + offset.y * cos,
-        )
-    };
+    let rotate = |offset: egui::Vec2| rotate_vec2(offset, placement.state.geometry.rotation);
 
     [
         center + rotate(egui::vec2(-half_size.x, -half_size.y)),
@@ -90,10 +92,7 @@ pub(super) fn placement_contains_screen_point(
     screen_center: egui::Pos2,
 ) -> bool {
     let center = screen_center_for_placement(placement, pan, zoom, screen_center);
-    let local = pointer_pos - center;
-    let sin = (-placement.state.geometry.rotation).sin();
-    let cos = (-placement.state.geometry.rotation).cos();
-    let unrotated = egui::vec2(local.x * cos - local.y * sin, local.x * sin + local.y * cos);
+    let unrotated = rotate_vec2(pointer_pos - center, -placement.state.geometry.rotation);
     let half_size = screen_size_for_placement(placement, zoom) * 0.5;
 
     unrotated.x.abs() <= half_size.x && unrotated.y.abs() <= half_size.y

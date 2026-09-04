@@ -701,128 +701,104 @@ impl SnappyRefApp {
     pub fn new(cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
         crate::platform::native_drop::install_url_drop_bridge(cc);
         let max_texture_side = cc.egui_ctx.input(|input| input.max_texture_side.max(1));
-        let update_smoke = UpdateSmokeState::from_config(&config);
+        let mut app = Self::detached(
+            cc.wgpu_render_state.clone(),
+            max_texture_side,
+            UpdateConfig::default(),
+        );
+        app.persist_window_state = config.persist_window_state_enabled();
+        app.perf_log = config.perf_log_enabled().then(|| PerfLogState {
+            app_started_at: Instant::now(),
+            startup_logged: false,
+        });
+        app.perf_scenario = PerfScenarioState::from_config(&config);
+        app.update_smoke = UpdateSmokeState::from_config(&config);
 
         let library = config
             .library_root()
             .map(std::path::Path::to_path_buf)
             .and_then(crate::library::storage::Library::initialize);
-
-        match library {
-            Ok(library) => {
-                let (document_history, status) = match library.load_document_history() {
-                    Ok(history) => (history, "Library ready".to_owned()),
-                    Err(error) => (
-                        DocumentHistory::default(),
-                        format!("Board history unavailable: {error}"),
-                    ),
-                };
-                let import_worker = crate::jobs::ImagePrepWorker::new(
-                    library.clone(),
-                    cc.egui_ctx.clone(),
-                    cc.wgpu_render_state.clone(),
-                );
-                let mut app = Self {
-                    canvas: crate::canvas::CanvasState::default(),
-                    wgpu_render_state: cc.wgpu_render_state.clone(),
-                    library: Some(library.clone()),
-                    import_worker: Some(import_worker),
-                    active_board_id: 1,
-                    window_state: crate::data::WindowState::default(),
-                    persist_window_state: config.persist_window_state_enabled(),
-                    document_history,
-                    max_texture_side,
-                    settings: crate::data::WorkspaceSettings::default(),
-                    #[cfg(feature = "semantic-search")]
-                    search: SearchController::default(),
-                    sidebar_open: false,
-                    sidebar_tab: SidebarTab::Options,
-                    pending_board_delete: None,
-                    pending_library_remove: None,
-                    #[cfg(feature = "semantic-search")]
-                    pending_semantic_search_remove: false,
-                    context_menu_pos: None,
-                    status,
-                    status_shown: String::new(),
-                    status_shown_since: Instant::now(),
-                    perf_log: config.perf_log_enabled().then(|| PerfLogState {
-                        app_started_at: Instant::now(),
-                        startup_logged: false,
-                    }),
-                    frame_perf: FramePerfState::default(),
-                    perf_scenario: PerfScenarioState::from_config(&config),
-                    content_resolution: ContentResolutionRuntime::new(),
-                    residency: ImageResidencyCoordinator::default(),
-                    pending_import_batches:
-                        crate::placement::creation::PlacementCreationBatchTracker::default(),
-                    hover_preview_dimensions: std::collections::HashMap::new(),
-                    last_hovered_external_drag: None,
-                    external_hover_provisional_placement_ids: Vec::new(),
-                    pending_missing_drop_fallback: None,
-                    document_persistence: DocumentPersistence::queued(library.clone()),
-                    pending_user_session: None,
-                    pending_user_session_save_at: None,
-                    board_summaries_cache: BoardSummariesCache::default(),
-                    update_service: UpdateService::new(UpdateConfig::default()),
-                    user_update_flow_active: false,
-                    update_smoke: update_smoke.clone(),
-                    last_manual_update_check: None,
-                };
-                app.load_user_session();
-                app.refresh_board_summaries();
-                #[cfg(feature = "semantic-search")]
-                app.sync_semantic_search_service();
-                if !config.skip_existing_items_on_start() {
-                    app.enqueue_existing_items();
-                }
-                app
+        let library = match library {
+            Ok(library) => library,
+            Err(error) => {
+                app.status = format!("Storage unavailable: {error}");
+                return app;
             }
-            Err(error) => Self {
-                canvas: crate::canvas::CanvasState::default(),
-                wgpu_render_state: cc.wgpu_render_state.clone(),
-                library: None,
-                import_worker: None,
-                active_board_id: 1,
-                window_state: crate::data::WindowState::default(),
-                persist_window_state: config.persist_window_state_enabled(),
-                document_history: DocumentHistory::default(),
-                max_texture_side,
-                settings: crate::data::WorkspaceSettings::default(),
-                #[cfg(feature = "semantic-search")]
-                search: SearchController::default(),
-                sidebar_open: false,
-                sidebar_tab: SidebarTab::Options,
-                pending_board_delete: None,
-                pending_library_remove: None,
-                #[cfg(feature = "semantic-search")]
-                pending_semantic_search_remove: false,
-                context_menu_pos: None,
-                status: format!("Storage unavailable: {error}"),
-                status_shown: String::new(),
-                status_shown_since: Instant::now(),
-                perf_log: config.perf_log_enabled().then(|| PerfLogState {
-                    app_started_at: Instant::now(),
-                    startup_logged: false,
-                }),
-                frame_perf: FramePerfState::default(),
-                perf_scenario: PerfScenarioState::from_config(&config),
-                content_resolution: ContentResolutionRuntime::new(),
-                residency: ImageResidencyCoordinator::default(),
-                pending_import_batches:
-                    crate::placement::creation::PlacementCreationBatchTracker::default(),
-                hover_preview_dimensions: std::collections::HashMap::new(),
-                last_hovered_external_drag: None,
-                external_hover_provisional_placement_ids: Vec::new(),
-                pending_missing_drop_fallback: None,
-                document_persistence: DocumentPersistence::default(),
-                pending_user_session: None,
-                pending_user_session_save_at: None,
-                board_summaries_cache: BoardSummariesCache::default(),
-                update_service: UpdateService::new(UpdateConfig::default()),
-                user_update_flow_active: false,
-                update_smoke,
-                last_manual_update_check: None,
-            },
+        };
+
+        app.status = match library.load_document_history() {
+            Ok(history) => {
+                app.document_history = history;
+                "Library ready".to_owned()
+            }
+            Err(error) => format!("Board history unavailable: {error}"),
+        };
+        app.import_worker = Some(crate::jobs::ImagePrepWorker::new(
+            library.clone(),
+            cc.egui_ctx.clone(),
+            cc.wgpu_render_state.clone(),
+        ));
+        app.document_persistence = DocumentPersistence::queued(library.clone());
+        app.library = Some(library);
+        app.load_user_session();
+        app.refresh_board_summaries();
+        #[cfg(feature = "semantic-search")]
+        app.sync_semantic_search_service();
+        if !config.skip_existing_items_on_start() {
+            app.enqueue_existing_items();
+        }
+        app
+    }
+
+    /// An app with no library, worker, or config-derived state. `new` and
+    /// tests attach what they need on top.
+    fn detached(
+        wgpu_render_state: Option<eframe::egui_wgpu::RenderState>,
+        max_texture_side: usize,
+        update_config: UpdateConfig,
+    ) -> Self {
+        Self {
+            canvas: crate::canvas::CanvasState::default(),
+            wgpu_render_state,
+            library: None,
+            import_worker: None,
+            active_board_id: 1,
+            window_state: crate::data::WindowState::default(),
+            persist_window_state: true,
+            document_history: DocumentHistory::default(),
+            max_texture_side,
+            settings: crate::data::WorkspaceSettings::default(),
+            #[cfg(feature = "semantic-search")]
+            search: SearchController::default(),
+            sidebar_open: false,
+            sidebar_tab: SidebarTab::default(),
+            pending_board_delete: None,
+            pending_library_remove: None,
+            #[cfg(feature = "semantic-search")]
+            pending_semantic_search_remove: false,
+            context_menu_pos: None,
+            status: String::new(),
+            status_shown: String::new(),
+            status_shown_since: Instant::now(),
+            perf_log: None,
+            frame_perf: FramePerfState::default(),
+            perf_scenario: None,
+            content_resolution: ContentResolutionRuntime::new(),
+            residency: ImageResidencyCoordinator::default(),
+            pending_import_batches:
+                crate::placement::creation::PlacementCreationBatchTracker::default(),
+            hover_preview_dimensions: std::collections::HashMap::new(),
+            last_hovered_external_drag: None,
+            external_hover_provisional_placement_ids: Vec::new(),
+            pending_missing_drop_fallback: None,
+            document_persistence: DocumentPersistence::default(),
+            pending_user_session: None,
+            pending_user_session_save_at: None,
+            board_summaries_cache: BoardSummariesCache::default(),
+            update_service: UpdateService::new(update_config),
+            user_update_flow_active: false,
+            update_smoke: None,
+            last_manual_update_check: None,
         }
     }
 
@@ -2582,7 +2558,7 @@ impl SnappyRefApp {
                         &library,
                         &mut self.canvas,
                         &self.external_hover_provisional_placement_ids,
-                    )?;
+                    );
                     let mut created = Vec::with_capacity(committed.placements.len());
                     for placement in committed.placements {
                         let reservation = self.content_resolution.reserve_placement(
@@ -3453,8 +3429,8 @@ impl SnappyRefApp {
     }
 
     fn apply_loaded_import_outcome(&mut self, outcome: LoadedContentResolutionOutcome) {
-        let finished = self.content_resolution.finish_loaded_import(outcome);
-        if let (Some(ticket), Some(log)) = (finished.resolution_ticket, finished.log.as_ref()) {
+        let (completion, outcome) = self.content_resolution.finish_loaded_import(outcome);
+        if let (Some(ticket), Some(log)) = (outcome.resolution_ticket, outcome.log.as_ref()) {
             let mut placement = log.placement.clone();
             // An inactive Board has no canvas; its accepted history holds the
             // newest geometry.
@@ -3482,8 +3458,8 @@ impl SnappyRefApp {
                 }
             }
         }
-        let resolution_queue_id = finished.resolution_ticket.map(|ticket| ticket.queue_id);
-        let perf_import_origin = finished.log.as_ref().map(|log| log.origin);
+        let resolution_queue_id = outcome.resolution_ticket.map(|ticket| ticket.queue_id);
+        let perf_import_origin = outcome.log.as_ref().map(|log| log.origin);
         let perf_counts_as_import = perf_import_origin.is_some_and(|origin| {
             matches!(
                 origin,
@@ -3492,17 +3468,17 @@ impl SnappyRefApp {
                     | crate::jobs::ImportOrigin::Url
             )
         });
-        let status = finished.status;
+        let status = outcome.status;
         #[cfg(feature = "semantic-search")]
         let mut status = status;
         #[cfg(feature = "semantic-search")]
-        let indexed_asset = finished.indexed_asset;
+        let indexed_asset = outcome.indexed_asset;
         self.finish_import_queue_id_in_batches(
-            finished.batch_target_board_id,
-            finished.batch_queue_id,
-            finished.loaded_placement_id,
+            completion.target_board_id,
+            completion.queue_id,
+            completion.placement_id,
         );
-        if let Some(log) = finished.log {
+        if let Some(log) = outcome.log {
             if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
                 scenario.loaded_imports += 1;
                 let metadata = resolution_queue_id
@@ -3600,13 +3576,13 @@ impl SnappyRefApp {
     }
 
     fn apply_failed_import_outcome(&mut self, outcome: FailedContentResolutionOutcome) {
-        let finished = self.content_resolution.finish_failed_import(outcome);
+        let completion = self.content_resolution.finish_failed_import(&outcome);
         if let (Some(board_id), Some(placement_id)) =
-            (finished.batch_target_board_id, finished.placement_id)
+            (completion.target_board_id, completion.placement_id)
             && let Some(placement) = self.document_history.fail_accepted_placement(
                 board_id,
                 placement_id,
-                finished.status.clone(),
+                outcome.status.clone(),
             )
         {
             if board_id == self.active_board_id
@@ -3627,13 +3603,12 @@ impl SnappyRefApp {
                 self.status = error;
             }
         }
-        let _ = finished.resolution_ticket;
         self.finish_import_queue_id_in_batches(
-            finished.batch_target_board_id,
-            finished.batch_queue_id,
+            completion.target_board_id,
+            completion.queue_id,
             None,
         );
-        self.status = finished.status;
+        self.status = outcome.status;
     }
 
     fn handle_history_shortcuts(&mut self, ctx: &egui::Context) {
@@ -4753,12 +4728,11 @@ impl SnappyRefApp {
             }
         };
         crate::diagnostics::search_drag_debug(format!(
-            "handle_search_drop committed added={:?} load_existing_count={}",
-            committed.added_placement_ids,
-            committed.load_existing_placements.len()
+            "handle_search_drop committed count={}",
+            committed.placements.len()
         ));
 
-        for placement in &committed.load_existing_placements {
+        for placement in &committed.placements {
             if let Some(import_worker) = &self.import_worker {
                 if let Err(error) =
                     import_worker.enqueue(crate::jobs::ImagePrepRequest::LoadExisting {
@@ -4818,8 +4792,8 @@ impl SnappyRefApp {
             }
         }
 
-        if !committed.added_placement_ids.is_empty() {
-            if let Some(history_action) = committed.history_action.clone() {
+        if !committed.placements.is_empty() {
+            if let Some(history_action) = committed.history_action {
                 self.document_history
                     .record_applied(self.active_board_id, history_action);
                 self.persist_recorded_canvas_changes();
@@ -4827,7 +4801,7 @@ impl SnappyRefApp {
             self.save_user_session();
             self.refresh_board_summaries();
         }
-        let placed_count = committed.placed_count();
+        let placed_count = committed.placements.len();
         let noun = if placed_count == 1 { "image" } else { "images" };
         self.status = format!("Added {placed_count} search {noun}");
         crate::diagnostics::search_drag_debug(format!(

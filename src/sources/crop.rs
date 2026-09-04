@@ -56,72 +56,57 @@ pub(crate) fn integrate_cropped_result(
     semantic_search_enabled: bool,
 ) -> Result<CroppedImageIntegration, String> {
     let placement_id = cropped.placement_id;
-    let stored_path = cropped.stored_path.clone();
-    let previous_snapshot = match canvas.snapshot_item_image(placement_id) {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            cleanup_failed_crop(&stored_path);
-            canvas.clear_crop_pending(placement_id);
-            return Err(error);
-        }
-    };
+    let (previous_record, updated_item, asset) =
+        match register_cropped_asset(canvas, library, &cropped) {
+            Ok(registered) => registered,
+            Err(error) => {
+                // No asset row references the crop file yet, so drop it.
+                let _ = std::fs::remove_file(&cropped.stored_path);
+                canvas.clear_crop_pending(placement_id);
+                return Err(error);
+            }
+        };
 
-    let Some(library) = library else {
-        cleanup_failed_crop(&stored_path);
-        canvas.clear_crop_pending(placement_id);
-        return Err("Storage unavailable".to_owned());
-    };
+    let updated_record = crate::data::Placement::loaded(updated_item.clone(), asset.clone());
+    let applied = canvas.apply_cropped_item(ctx, cropped, asset.clone(), updated_item);
+    canvas.clear_crop_pending(placement_id);
+    applied?;
 
-    let updated_item = match canvas.projected_cropped_item(&cropped) {
-        Ok(item) => item,
-        Err(error) => {
-            cleanup_failed_crop(&stored_path);
-            canvas.clear_crop_pending(placement_id);
-            return Err(error);
-        }
-    };
+    let indexed_asset = (semantic_search_enabled
+        && crate::library::residency::asset_mime_type_supports_raster_derivatives(
+            &asset.mime_type,
+        ))
+    .then(|| (asset.id, asset.original_path.clone()));
+    Ok(CroppedImageIntegration {
+        updated_record,
+        previous_record,
+        indexed_asset,
+    })
+}
 
-    let asset = match library.create_asset(
-        &stored_path,
+fn register_cropped_asset(
+    canvas: &crate::canvas::CanvasState,
+    library: Option<&crate::library::storage::Library>,
+    cropped: &crate::jobs::PreparedCropPreview,
+) -> Result<
+    (
+        crate::data::Placement,
+        crate::data::PlacementState,
+        crate::data::Asset,
+    ),
+    String,
+> {
+    let (previous_record, _, _, _) = canvas.snapshot_item_image(cropped.placement_id)?;
+    let library = library.ok_or_else(|| "Storage unavailable".to_owned())?;
+    let updated_item = canvas.projected_cropped_item(cropped)?;
+    let asset = library.create_asset(
+        &cropped.stored_path,
         image::ImageFormat::Png.to_mime_type(),
         cropped.width,
         cropped.height,
         cropped.file_size,
-    ) {
-        Ok(asset) => asset,
-        Err(error) => {
-            cleanup_failed_crop(&stored_path);
-            canvas.clear_crop_pending(placement_id);
-            return Err(error);
-        }
-    };
-
-    let updated_item_id = updated_item.id;
-    let updated_record = crate::data::Placement::loaded(updated_item.clone(), asset.clone());
-
-    match canvas.apply_cropped_item(ctx, cropped, asset.clone(), updated_item) {
-        Ok(()) => {
-            canvas.clear_crop_pending(updated_item_id);
-            let indexed_asset = (semantic_search_enabled
-                && crate::library::residency::asset_mime_type_supports_raster_derivatives(
-                    &asset.mime_type,
-                ))
-            .then(|| (asset.id, asset.original_path.clone()));
-            Ok(CroppedImageIntegration {
-                updated_record,
-                previous_record: previous_snapshot.0,
-                indexed_asset,
-            })
-        }
-        Err(error) => {
-            canvas.clear_crop_pending(updated_item_id);
-            Err(error)
-        }
-    }
-}
-
-fn cleanup_failed_crop(stored_path: &std::path::Path) {
-    let _ = std::fs::remove_file(stored_path);
+    )?;
+    Ok((previous_record, updated_item, asset))
 }
 
 #[cfg(test)]

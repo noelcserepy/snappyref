@@ -69,26 +69,6 @@ pub(crate) struct FailedContentResolutionOutcome {
     pub(crate) status: String,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct FinishedLoadedContentResolution {
-    pub(crate) resolution_ticket: Option<ContentResolutionTicket>,
-    pub(crate) batch_target_board_id: Option<i64>,
-    pub(crate) batch_queue_id: Option<u64>,
-    pub(crate) loaded_placement_id: Option<i64>,
-    pub(crate) status: Option<String>,
-    pub(crate) indexed_asset: Option<(i64, PathBuf)>,
-    pub(crate) log: Option<LoadedContentResolutionLog>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct FinishedFailedContentResolution {
-    pub(crate) resolution_ticket: Option<ContentResolutionTicket>,
-    pub(crate) batch_target_board_id: Option<i64>,
-    pub(crate) batch_queue_id: Option<u64>,
-    pub(crate) placement_id: Option<i64>,
-    pub(crate) status: String,
-}
-
 #[derive(Clone, Copy, Debug)]
 struct PendingContentResolution {
     target_board_id: i64,
@@ -117,13 +97,28 @@ impl ContentResolutionRuntime {
         placement_id: i64,
         reserved_world: egui::Pos2,
     ) -> ContentResolutionReservation {
+        self.reserve(
+            target_board_id,
+            placement_id,
+            reserved_world,
+            PendingContentResolutionSource::Import,
+        )
+    }
+
+    fn reserve(
+        &mut self,
+        target_board_id: i64,
+        placement_id: i64,
+        reserved_world: egui::Pos2,
+        source: PendingContentResolutionSource,
+    ) -> ContentResolutionReservation {
         let queue_id = self.next_queue_id();
         self.pending.insert(
             queue_id,
             PendingContentResolution {
                 target_board_id,
                 placement_id,
-                source: PendingContentResolutionSource::Import,
+                source,
                 stale: false,
             },
         );
@@ -140,12 +135,12 @@ impl ContentResolutionRuntime {
         target_board_id: i64,
         placement_id: i64,
     ) -> ContentResolutionReservation {
-        let reservation = self.reserve_placement(target_board_id, placement_id, egui::Pos2::ZERO);
-        self.pending
-            .get_mut(&reservation.queue_id)
-            .expect("new content-resolution reservation should exist")
-            .source = PendingContentResolutionSource::HistoryReplay;
-        reservation
+        self.reserve(
+            target_board_id,
+            placement_id,
+            egui::Pos2::ZERO,
+            PendingContentResolutionSource::HistoryReplay,
+        )
     }
 
     pub(crate) fn invalidate_placement(&mut self, placement_id: i64) {
@@ -188,20 +183,16 @@ impl ContentResolutionRuntime {
         }
     }
 
+    /// Removes the pending reservation and returns the batch completion plus
+    /// the outcome to surface. History replays load silently: their status,
+    /// index request, and log are dropped.
     pub(crate) fn finish_loaded_import(
         &mut self,
-        outcome: LoadedContentResolutionOutcome,
-    ) -> FinishedLoadedContentResolution {
-        let target_board_id = outcome
-            .resolution_ticket
-            .as_ref()
-            .map(|ticket| ticket.target_board_id);
-        let queue_id = outcome
-            .resolution_ticket
-            .as_ref()
-            .map(|ticket| ticket.queue_id);
-        let history_replay = queue_id.is_some_and(|queue_id| {
-            self.pending.get(&queue_id).is_some_and(|pending| {
+        mut outcome: LoadedContentResolutionOutcome,
+    ) -> (ContentResolutionCompletion, LoadedContentResolutionOutcome) {
+        let ticket = outcome.resolution_ticket;
+        let history_replay = ticket.is_some_and(|ticket| {
+            self.pending.get(&ticket.queue_id).is_some_and(|pending| {
                 matches!(
                     pending.source,
                     PendingContentResolutionSource::HistoryReplay
@@ -209,50 +200,30 @@ impl ContentResolutionRuntime {
             })
         });
         let completion = self.resolve_completion(
-            queue_id,
-            target_board_id,
+            ticket.map(|ticket| ticket.queue_id),
+            ticket.map(|ticket| ticket.target_board_id),
             outcome.log.as_ref().map(|log| log.placement.state.id),
         );
-        let (status, indexed_asset, log) = if history_replay {
-            (None, None, None)
-        } else {
-            (outcome.status, outcome.indexed_asset, outcome.log)
-        };
-        FinishedLoadedContentResolution {
-            resolution_ticket: outcome.resolution_ticket,
-            batch_target_board_id: completion.target_board_id,
-            batch_queue_id: completion.queue_id,
-            loaded_placement_id: completion.placement_id,
-            status,
-            indexed_asset,
-            log,
+        if history_replay {
+            outcome.status = None;
+            outcome.indexed_asset = None;
+            outcome.log = None;
         }
+        (completion, outcome)
     }
 
     pub(crate) fn finish_failed_import(
         &mut self,
-        outcome: FailedContentResolutionOutcome,
-    ) -> FinishedFailedContentResolution {
-        let target_board_id = outcome
-            .resolution_ticket
-            .as_ref()
-            .map(|ticket| ticket.target_board_id);
-        let queue_id = outcome
-            .resolution_ticket
-            .as_ref()
-            .map(|ticket| ticket.queue_id);
-        let completion = self.resolve_completion(
-            queue_id,
-            target_board_id.or(outcome.target_board_id),
+        outcome: &FailedContentResolutionOutcome,
+    ) -> ContentResolutionCompletion {
+        let ticket = outcome.resolution_ticket;
+        self.resolve_completion(
+            ticket.map(|ticket| ticket.queue_id),
+            ticket
+                .map(|ticket| ticket.target_board_id)
+                .or(outcome.target_board_id),
             outcome.placement_id,
-        );
-        FinishedFailedContentResolution {
-            resolution_ticket: outcome.resolution_ticket,
-            batch_target_board_id: completion.target_board_id,
-            batch_queue_id: completion.queue_id,
-            placement_id: completion.placement_id,
-            status: outcome.status,
-        }
+        )
     }
 
     #[cfg(test)]
@@ -399,7 +370,7 @@ mod tests {
         let mut runtime = super::ContentResolutionRuntime::new();
         let reservation = runtime.reserve_placement(1, loading.state.id, eframe::egui::Pos2::ZERO);
 
-        let finished = runtime.finish_failed_import(super::FailedContentResolutionOutcome {
+        let completion = runtime.finish_failed_import(&super::FailedContentResolutionOutcome {
             resolution_ticket: Some(super::ContentResolutionTicket {
                 target_board_id: 1,
                 queue_id: reservation.queue_id,
@@ -409,9 +380,9 @@ mod tests {
             status: "decode failed".to_owned(),
         });
 
-        assert_eq!(finished.batch_target_board_id, Some(1));
-        assert_eq!(finished.batch_queue_id, Some(reservation.queue_id));
-        assert_eq!(finished.placement_id, Some(loading.state.id));
+        assert_eq!(completion.target_board_id, Some(1));
+        assert_eq!(completion.queue_id, Some(reservation.queue_id));
+        assert_eq!(completion.placement_id, Some(loading.state.id));
         assert_eq!(runtime.pending_len(), 0);
     }
 }
