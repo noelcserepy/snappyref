@@ -138,6 +138,7 @@ fn first_launch_semantic_search_prompt_not_now_persists_suppression() {
     app.decline_semantic_search_first_launch_prompt();
 
     assert!(!app.should_show_semantic_search_first_launch_prompt());
+    app.flush_persistence();
     assert!(
         library
             .load_user_session()
@@ -169,6 +170,7 @@ fn first_launch_semantic_search_prompt_enable_persists_seen_and_starts_install()
         app.search.local_model_store_status(),
         LocalModelStoreStatus::Downloading { percent: 0 }
     );
+    app.flush_persistence();
     assert!(
         library
             .load_user_session()
@@ -206,6 +208,7 @@ fn save_user_session_round_trips_sidebar_state() {
     app.sidebar_tab = SidebarTab::Boards;
 
     app.save_user_session();
+    app.flush_persistence();
 
     let mut reopened = test_app(Some(library));
     reopened.load_user_session();
@@ -266,6 +269,7 @@ fn persist_canvas_changes_saves_viewport_changes() {
 
     app.persist_canvas_changes();
 
+    app.flush_persistence();
     let session = library.load_user_session().unwrap();
     assert_eq!(session.viewport.camera_pan_x, 10.0);
     assert_eq!(session.viewport.camera_pan_y, 20.0);
@@ -292,6 +296,7 @@ fn debounced_canvas_persistence_defers_session_only_viewport_changes() {
 
     app.persist_canvas_changes_debounced(&ctx);
 
+    app.flush_persistence();
     let session = library.load_user_session().unwrap();
     assert_ne!(session.viewport.camera_pan_x, 10.0);
     assert!(app.pending_user_session.is_some());
@@ -299,6 +304,7 @@ fn debounced_canvas_persistence_defers_session_only_viewport_changes() {
     app.pending_user_session_save_at = Some(Instant::now() - Duration::from_millis(1));
     app.persist_canvas_changes_debounced(&ctx);
 
+    app.flush_persistence();
     let session = library.load_user_session().unwrap();
     assert_eq!(session.viewport.camera_pan_x, 10.0);
     assert_eq!(session.viewport.camera_pan_y, 20.0);
@@ -429,6 +435,7 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
     app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
         .unwrap();
 
+    app.flush_persistence();
     let pasted_items = library.load_placements_for_board(second.id).unwrap();
     let pasted_annotations = library.load_canvas_annotations().unwrap();
     assert_eq!(pasted_items.len(), 1);
@@ -461,6 +468,7 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
         CanvasStackItem::Annotation(pasted_annotations[0].id),
         CanvasStackItem::Placement(pasted_items[0].state.id),
     ];
+    app.flush_persistence();
     assert_eq!(
         library.load_canvas_stack_order().unwrap(),
         pasted_stack_order
@@ -569,6 +577,7 @@ fn undo_delete_restores_last_placement_to_active_canvas() {
             .placement_for_id(placement.state.id)
             .is_some_and(|placement| placement.is_loaded())
     );
+    app.flush_persistence();
     assert_eq!(library.load_placements().unwrap().len(), 1);
 }
 
@@ -884,6 +893,7 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
             .texture_size,
         egui::vec2(2.0, 2.0)
     );
+    app.flush_persistence();
     let stored_after_undo = &library.load_placements().unwrap()[0];
     assert_eq!(stored_after_undo.require_loaded_asset().id, source_asset_id);
 
@@ -917,6 +927,7 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
             .texture_size,
         egui::vec2(1.0, 1.0)
     );
+    app.flush_persistence();
     let stored = &library.load_placements().unwrap()[0];
     assert_eq!(stored.require_loaded_asset().id, cropped_asset_id);
     assert_eq!(
@@ -1022,6 +1033,7 @@ fn assert_copy_keeps_stack_order(
     let mut expected = stack;
     expected.extend([upper_copy, lower_copy]);
     assert_eq!(app.canvas.canvas_stack_order(), expected);
+    app.flush_persistence();
     assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
 }
 
@@ -1094,6 +1106,7 @@ fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
 
     app.duplicate_selection_with_gap();
 
+    app.flush_persistence();
     let items = library.load_placements().unwrap();
     let annotations = library.load_canvas_annotations().unwrap();
     assert_eq!(items.len(), 2);
@@ -1131,6 +1144,7 @@ fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
         CanvasStackItem::Placement(duplicated_item.state.id),
     ];
     assert_eq!(app.canvas.canvas_stack_order(), expected);
+    app.flush_persistence();
     assert_eq!(library.load_canvas_stack_order().unwrap(), expected);
 }
 
@@ -1179,6 +1193,7 @@ fn undo_after_persisted_duplicate_removes_the_created_placement() {
             .collect::<Vec<_>>(),
         vec![source_item.state.id]
     );
+    app.flush_persistence();
     assert_eq!(
         library.load_canvas_stack_order().unwrap(),
         vec![CanvasStackItem::Placement(source_item.state.id)]
@@ -1674,11 +1689,13 @@ fn remove_from_library_context_action_waits_for_confirmation() {
     );
 
     assert!(app.pending_library_remove.is_some());
+    app.flush_persistence();
     assert_eq!(library.load_placements().unwrap().len(), 1);
 
     app.confirm_pending_library_remove();
 
     assert!(app.pending_library_remove.is_none());
+    app.flush_persistence();
     assert!(library.load_placements().unwrap().is_empty());
     assert!(source_item.require_loaded_asset().original_path.exists());
 }
@@ -1740,6 +1757,7 @@ fn move_to_front_context_action_persists_canvas_stack_order() {
         egui::Rect::EVERYTHING,
     );
 
+    app.flush_persistence();
     assert_eq!(
         library.load_canvas_stack_order().unwrap(),
         vec![
@@ -1755,6 +1773,7 @@ fn move_to_front_context_action_persists_canvas_stack_order() {
         egui::Rect::EVERYTHING,
     );
 
+    app.flush_persistence();
     assert_eq!(
         library.load_canvas_stack_order().unwrap(),
         vec![
@@ -1809,6 +1828,7 @@ fn delete_from_board_archives_image_placements_and_annotations() {
         egui::Rect::EVERYTHING,
     );
 
+    app.flush_persistence();
     assert!(library.load_placements().unwrap().is_empty());
     assert!(
         library
@@ -1900,11 +1920,13 @@ fn sidebar_create_board_generates_name_switches_and_stays_open() {
 
     app.create_and_switch_board(true);
 
+    app.flush_persistence();
     let boards = library.list_boards().unwrap();
     assert_eq!(boards.len(), 2);
     assert_eq!(boards[0].name, "My Board");
     assert_eq!(boards[1].name, "Board 2");
     assert_eq!(app.active_board_id, boards[1].id);
+    app.flush_persistence();
     assert_eq!(
         library.load_user_session().unwrap().active_board_id,
         boards[1].id
@@ -1922,6 +1944,7 @@ fn board_create_undo_and_redo_restore_the_same_identity_once() {
     let mut app = test_app(Some(library.clone()));
 
     app.create_and_switch_board(false);
+    app.flush_persistence();
     let created = library
         .list_boards()
         .unwrap()
@@ -2487,6 +2510,7 @@ fn generated_board_names_fill_smallest_visible_gap() {
 
     app.create_and_switch_board(false);
 
+    app.flush_persistence();
     let boards = library.list_boards().unwrap();
     assert!(boards.iter().any(|board| board.name == "Board 2"));
     assert_eq!(app.active_board_id, boards.last().unwrap().id);
@@ -2522,6 +2546,7 @@ fn command_n_creates_board_without_opening_sidebar() {
         |ui| app.handle_board_shortcuts(ui.ctx()),
     );
 
+    app.flush_persistence();
     let boards = library.list_boards().unwrap();
     assert_eq!(boards.len(), 2);
     assert_eq!(boards[1].name, "Board 2");
@@ -2562,6 +2587,7 @@ fn command_number_switches_visible_board() {
     );
 
     assert_eq!(app.active_board_id, third.id);
+    app.flush_persistence();
     assert_eq!(
         library.load_user_session().unwrap().active_board_id,
         third.id
@@ -2667,6 +2693,7 @@ fn switching_boards_saves_previous_viewport_and_loads_target_viewport() {
 
     let saved_first = {
         library.set_active_board(first.id).unwrap();
+        app.flush_persistence();
         library.load_user_session().unwrap()
     };
     assert_eq!(saved_first.viewport.camera_pan_x, 22.0);
@@ -2717,6 +2744,7 @@ fn board_delete_requires_confirmation_before_archiving_active_board() {
     app.request_board_delete(second.id, second.name.clone());
 
     assert!(app.pending_board_delete.is_some());
+    app.flush_persistence();
     assert_eq!(library.list_boards().unwrap().len(), 2);
 
     app.confirm_pending_board_delete(&ctx);
@@ -2724,6 +2752,7 @@ fn board_delete_requires_confirmation_before_archiving_active_board() {
     assert!(app.pending_board_delete.is_none());
     assert!(app.sidebar_open);
     assert_eq!(app.active_board_id, first.id);
+    app.flush_persistence();
     assert_eq!(
         library
             .list_boards()
@@ -2752,6 +2781,7 @@ fn board_delete_confirmation_keeps_sidebar_open_and_removes_inactive_board() {
     assert!(app.pending_board_delete.is_none());
     assert!(app.sidebar_open);
     assert_eq!(app.active_board_id, first.id);
+    app.flush_persistence();
     assert_eq!(
         library
             .list_boards()
@@ -2830,6 +2860,7 @@ fn board_delete_undo_restores_document_view_history_and_active_fallback() {
     app.confirm_pending_board_delete(&ctx);
 
     assert_eq!(app.active_board_id, first.id);
+    app.flush_persistence();
     assert_eq!(library.list_boards().unwrap(), vec![first.clone()]);
     app.sidebar_open = false;
     app.window_state.inner_width = Some(777.0);
@@ -2894,6 +2925,7 @@ fn board_delete_undo_restores_document_view_history_and_active_fallback() {
     app.flush_persistence();
 
     assert_eq!(app.active_board_id, first.id);
+    app.flush_persistence();
     assert_eq!(library.list_boards().unwrap(), vec![first]);
     let active_assets: i64 = storage_lock
         .query_row(
@@ -2932,6 +2964,7 @@ fn board_delete_modal_click_routes_through_egui_layers() {
     );
     assert!(harness.state().sidebar_open);
     assert_eq!(harness.state().active_board_id, first.id);
+    harness.state_mut().flush_persistence();
     assert_eq!(
         library
             .list_boards()
@@ -2964,6 +2997,7 @@ fn board_sidebar_stays_clickable_after_delete_modal_confirms() {
     harness.get_by_label("New board").click();
     harness.run();
 
+    harness.state_mut().flush_persistence();
     let boards = library.list_boards().unwrap();
     assert_eq!(
         boards
@@ -3149,6 +3183,7 @@ fn rapid_sidebar_board_name_clicks_keep_last_requested_board_active() {
     }
 
     assert_eq!(harness.state().active_board_id, second.id);
+    harness.state_mut().flush_persistence();
     assert_eq!(
         library.load_user_session().unwrap().active_board_id,
         second.id
@@ -3185,6 +3220,7 @@ fn board_delete_modal_blocks_sidebar_board_switches_until_closed() {
     harness.run();
 
     assert_eq!(harness.state().active_board_id, second.id);
+    harness.state_mut().flush_persistence();
     assert_eq!(
         library.load_user_session().unwrap().active_board_id,
         second.id
@@ -3252,6 +3288,7 @@ fn sidebar_board_lifecycle_clicks_create_switch_and_persist_active_board() {
     harness.get_by_label("New board").click();
     harness.run();
 
+    harness.state_mut().flush_persistence();
     let boards = library.list_boards().unwrap();
     assert_eq!(boards.len(), 2);
     assert_eq!(boards[1].name, "Board 2");
@@ -3262,6 +3299,7 @@ fn sidebar_board_lifecycle_clicks_create_switch_and_persist_active_board() {
     harness.run();
 
     assert_eq!(harness.state().active_board_id, first.id);
+    harness.state_mut().flush_persistence();
     assert_eq!(
         library.load_user_session().unwrap().active_board_id,
         first.id
@@ -3501,6 +3539,7 @@ fn search_keyboard_flow_owns_escape_through_app_render_path() {
 
     assert!(!harness.state().search.overlay.open);
     assert!(harness.state().search.overlay.query.is_empty());
+    harness.state_mut().flush_persistence();
     assert_eq!(library.load_user_session().unwrap().active_board_id, 1);
     assert_ne!(second.id, 1);
 }
@@ -3537,6 +3576,7 @@ fn enter_places_unplaced_library_search_result_on_empty_active_board() {
     harness.drop_at(egui::pos2(900.0, 600.0));
     harness.step();
 
+    harness.state_mut().flush_persistence();
     let active_items = library.load_placements().unwrap();
     assert_eq!(active_items.len(), 1);
     assert_eq!(
@@ -3602,6 +3642,7 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
     harness.drop_at(egui::pos2(900.0, 600.0));
     harness.step();
 
+    harness.state_mut().flush_persistence();
     let active_items = library.load_placements().unwrap();
     let expected_scale = crate::jobs::display_scale_for_placement_target_area(
         width,
@@ -3656,6 +3697,7 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
     harness.drop_at(egui::pos2(900.0, 600.0));
     harness.step();
 
+    harness.state_mut().flush_persistence();
     let active_items = library.load_placements().unwrap();
     assert_eq!(active_items.len(), 1);
     assert!(
@@ -4099,6 +4141,7 @@ fn inspect_search_result_drag_to_canvas_writes_artifact() {
     scenario.action("release on canvas", drop_screen);
     harness.drop_at(drop_screen);
     harness.step();
+    harness.state_mut().flush_persistence();
 
     let active_items = library.load_placements().unwrap();
     let committed = active_items.first().cloned();
@@ -6307,6 +6350,8 @@ fn submitted_search_is_saved_to_recent_searches() {
 
     harness.step();
 
+    harness.state_mut().flush_persistence();
+
     assert_eq!(
         library.load_user_session().unwrap().recent_searches,
         vec!["brutalist chair".to_owned()]
@@ -6395,6 +6440,7 @@ fn context_menu_move_to_front_routes_through_rendered_menu_row() {
             CanvasStackItem::Placement(selected_item.state.id),
         ]
     );
+    harness.state_mut().flush_persistence();
     assert_eq!(
         library.load_canvas_stack_order().unwrap(),
         harness.state().canvas.canvas_stack_order()
@@ -7217,6 +7263,9 @@ fn missing_drop_event_fallback_is_single_use_after_hover_ends() {
 
 fn test_app(library: Option<Library>) -> SnappyRefApp {
     let mut app = SnappyRefApp::detached(None, 8192, super::UpdateConfig::for_tests());
+    if let Some(library) = &library {
+        app.document_persistence = super::DocumentPersistence::queued(library.clone());
+    }
     app.library = library;
     app.refresh_board_summaries();
     app

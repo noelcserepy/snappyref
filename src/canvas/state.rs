@@ -101,12 +101,21 @@ impl CanvasInteractionState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ImageLodLoad {
+    pub(crate) lod: CanvasImageLod,
+    /// Set once the residency coordinator handed the load to the worker.
+    pub(crate) dispatched: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct CanvasRenderState {
     pub(super) background_lod_level: i32,
     pub(super) asset_rgba_cache: HashMap<i64, SharedRgba>,
     pub(super) textbox_layout_cache: HashMap<i64, TextboxLayoutCacheEntry>,
-    pub(super) pending_image_lod_loads: HashMap<i64, CanvasImageLod>,
+    /// Image LOD upgrades wanted by rendering. An entry lives until the load
+    /// lands or fails so the same upgrade is never requested twice.
+    pub(super) image_lod_loads: HashMap<i64, ImageLodLoad>,
     pub(super) pending_crop_previews: HashMap<i64, PendingCropPreview>,
     pub(super) animation_time_override_seconds: Option<f32>,
 }

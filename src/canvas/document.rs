@@ -145,7 +145,7 @@ impl CanvasState {
         self.document
             .rendered_placements
             .retain(|image| image.placement.state.id != placement_id);
-        self.render.pending_image_lod_loads.remove(&placement_id);
+        self.render.image_lod_loads.remove(&placement_id);
         self.document.rendered_placements.push(rendered);
         self.append_missing_stack_item(CanvasStackItem::Placement(placement_id));
         self.document
@@ -211,10 +211,8 @@ impl CanvasState {
             {
                 image.placement = placement.clone();
             }
-            if let Some(load) = self.render.pending_image_lod_loads.remove(&provisional_id) {
-                self.render
-                    .pending_image_lod_loads
-                    .insert(committed_id, load);
+            if let Some(load) = self.render.image_lod_loads.remove(&provisional_id) {
+                self.render.image_lod_loads.insert(committed_id, load);
             }
             for selected_id in &mut self.document.selected_placement_ids {
                 if *selected_id == provisional_id {
@@ -464,7 +462,7 @@ impl CanvasState {
         image.texture = texture;
         image.loaded_lod = loaded_lod;
         image.animation = None;
-        self.render.pending_image_lod_loads.remove(&placement_id);
+        self.render.image_lod_loads.remove(&placement_id);
         self.render.pending_crop_previews.remove(&placement_id);
         self.mark_placement_for_persistence(placement_id);
         Ok(())
@@ -787,8 +785,31 @@ impl CanvasState {
         }
     }
 
-    pub fn take_pending_image_lod_loads(&mut self) -> Vec<(i64, CanvasImageLod)> {
-        self.render.pending_image_lod_loads.drain().collect()
+    /// Loads not yet handed to the worker; marks them dispatched.
+    pub fn undispatched_image_lod_loads(&mut self) -> Vec<(i64, CanvasImageLod)> {
+        self.render
+            .image_lod_loads
+            .iter_mut()
+            .filter(|(_, load)| !load.dispatched)
+            .map(|(placement_id, load)| {
+                load.dispatched = true;
+                (*placement_id, load.lod)
+            })
+            .collect()
+    }
+
+    pub fn note_image_lod_load_dispatched(&mut self, placement_id: i64, lod: CanvasImageLod) {
+        self.render.image_lod_loads.insert(
+            placement_id,
+            super::state::ImageLodLoad {
+                lod,
+                dispatched: true,
+            },
+        );
+    }
+
+    pub fn has_pending_image_loads(&self) -> bool {
+        !self.render.image_lod_loads.is_empty()
     }
 
     pub fn mark_crop_pending(&mut self, placement_id: i64) {
@@ -818,8 +839,8 @@ impl CanvasState {
             .retain(|pending_id| *pending_id != placement_id);
     }
 
-    pub fn clear_pending_image_lod_load(&mut self, placement_id: i64) {
-        self.render.pending_image_lod_loads.remove(&placement_id);
+    pub fn clear_image_lod_load(&mut self, placement_id: i64) {
+        self.render.image_lod_loads.remove(&placement_id);
     }
 
     pub fn prune_cached_pixels_to_selected_items(&mut self) {
@@ -968,7 +989,7 @@ impl CanvasState {
         self.interaction = Default::default();
         self.render.asset_rgba_cache.clear();
         self.render.textbox_layout_cache.clear();
-        self.render.pending_image_lod_loads.clear();
+        self.render.image_lod_loads.clear();
     }
 
     pub fn take_document_changes(&mut self) -> CanvasDocumentChanges {
@@ -1491,7 +1512,7 @@ impl CanvasState {
             .crop_pending_placement_ids
             .retain(|placement_id| !removed_ids.contains(placement_id));
         self.render
-            .pending_image_lod_loads
+            .image_lod_loads
             .retain(|placement_id, _| !removed_ids.contains(placement_id));
         self.interaction.pending_crop = None;
         self.prune_cached_pixels_to_selected_items();
@@ -1524,17 +1545,16 @@ impl CanvasState {
         if lod <= image.loaded_lod {
             return;
         }
-        match self
-            .render
-            .pending_image_lod_loads
-            .get(&placement_id)
-            .copied()
-        {
-            Some(pending) if pending >= lod => {}
+        match self.render.image_lod_loads.get(&placement_id) {
+            Some(load) if load.lod >= lod => {}
             _ => {
-                self.render
-                    .pending_image_lod_loads
-                    .insert(placement_id, lod);
+                self.render.image_lod_loads.insert(
+                    placement_id,
+                    super::state::ImageLodLoad {
+                        lod,
+                        dispatched: false,
+                    },
+                );
             }
         }
     }

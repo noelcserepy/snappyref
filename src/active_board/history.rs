@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::data::{CanvasAnnotation, CanvasStackItem, Placement};
+use crate::data::{Asset, CanvasAnnotation, CanvasStackItem, Placement};
 
 #[derive(Clone, Default)]
 pub(crate) struct DocumentHistory {
@@ -154,7 +154,8 @@ impl DocumentHistory {
     ) -> Result<Self, String> {
         let stored: StoredDocumentHistory = serde_json::from_str(payload)
             .map_err(|error| format!("failed to decode Board history: {error}"))?;
-        stored.into_history(library)
+        let assets = library.load_assets(&stored.loaded_asset_ids())?;
+        stored.into_history(&assets)
     }
 
     pub(crate) fn accepted_placement(&self, board_id: i64, placement_id: i64) -> Option<Placement> {
@@ -518,10 +519,21 @@ impl From<&DocumentHistory> for StoredDocumentHistory {
 }
 
 impl StoredDocumentHistory {
-    fn into_history(
-        self,
-        library: &crate::library::storage::Library,
-    ) -> Result<DocumentHistory, String> {
+    fn loaded_asset_ids(&self) -> Vec<i64> {
+        let mut ids = Vec::new();
+        for history in self.histories_by_board.values() {
+            for action in history.undo_stack.iter().chain(&history.redo_stack) {
+                action.collect_loaded_asset_ids(&mut ids);
+            }
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
+
+    /// `assets` holds every live Asset the history references; Loaded content
+    /// whose Asset is missing degrades instead of failing the whole history.
+    fn into_history(self, assets: &HashMap<i64, Asset>) -> Result<DocumentHistory, String> {
         Ok(DocumentHistory {
             histories_by_board: self
                 .histories_by_board
@@ -533,12 +545,12 @@ impl StoredDocumentHistory {
                             undo_stack: history
                                 .undo_stack
                                 .into_iter()
-                                .map(|action| action.into_action(library))
+                                .map(|action| action.into_action(assets))
                                 .collect::<Result<_, _>>()?,
                             redo_stack: history
                                 .redo_stack
                                 .into_iter()
-                                .map(|action| action.into_action(library))
+                                .map(|action| action.into_action(assets))
                                 .collect::<Result<_, _>>()?,
                         },
                     ))
@@ -618,10 +630,32 @@ fn load_stack_item((kind, id): (String, i64)) -> Result<CanvasStackItem, String>
 }
 
 impl StoredHistoryAction {
-    fn into_action(
-        self,
-        library: &crate::library::storage::Library,
-    ) -> Result<HistoryAction, String> {
+    fn collect_loaded_asset_ids(&self, ids: &mut Vec<i64>) {
+        let mut push = |placement: &StoredPlacement| {
+            if let crate::library::storage::StoredPlacementContent::Loaded { asset_id } =
+                placement.content
+            {
+                ids.push(asset_id);
+            }
+        };
+        match self {
+            Self::Document { placements, .. } => {
+                for change in placements {
+                    change
+                        .before
+                        .iter()
+                        .chain(&change.after)
+                        .for_each(&mut push);
+                }
+            }
+            Self::Created { document, .. } | Self::Deleted { document, .. } => {
+                document.placements.iter().for_each(push);
+            }
+            Self::Renamed { .. } => {}
+        }
+    }
+
+    fn into_action(self, assets: &HashMap<i64, Asset>) -> Result<HistoryAction, String> {
         Ok(match self {
             Self::Document {
                 label,
@@ -632,8 +666,8 @@ impl StoredHistoryAction {
                 label,
                 placements
                     .into_iter()
-                    .map(|change| change.into_placement_change(library))
-                    .collect::<Result<_, _>>()?,
+                    .map(|change| change.into_placement_change(assets))
+                    .collect(),
                 annotations
                     .into_iter()
                     .map(StoredHistoryChange::into_annotation_change)
@@ -646,7 +680,7 @@ impl StoredHistoryAction {
                 document,
                 active_before,
             } => HistoryAction::Board(BoardLifecycleHistoryAction::Created {
-                document: document.into_document(library)?,
+                document: document.into_document(assets)?,
                 active_before,
             }),
             Self::Renamed {
@@ -663,7 +697,7 @@ impl StoredHistoryAction {
                 active_before,
                 active_after,
             } => HistoryAction::Board(BoardLifecycleHistoryAction::Deleted {
-                document: document.into_document(library)?,
+                document: document.into_document(assets)?,
                 active_before,
                 active_after,
             }),
@@ -672,20 +706,13 @@ impl StoredHistoryAction {
 }
 
 impl StoredHistoryChange<StoredPlacement> {
-    fn into_placement_change(
-        self,
-        library: &crate::library::storage::Library,
-    ) -> Result<HistoryChange<Placement>, String> {
-        Ok(HistoryChange {
+    fn into_placement_change(self, assets: &HashMap<i64, Asset>) -> HistoryChange<Placement> {
+        HistoryChange {
             before: self
                 .before
-                .map(|placement| placement.into_placement(library))
-                .transpose()?,
-            after: self
-                .after
-                .map(|placement| placement.into_placement(library))
-                .transpose()?,
-        })
+                .map(|placement| placement.into_placement(assets)),
+            after: self.after.map(|placement| placement.into_placement(assets)),
+        }
     }
 }
 
@@ -740,10 +767,7 @@ impl From<&Placement> for StoredPlacement {
 }
 
 impl StoredPlacement {
-    fn into_placement(
-        self,
-        library: &crate::library::storage::Library,
-    ) -> Result<Placement, String> {
+    fn into_placement(self, assets: &HashMap<i64, Asset>) -> Placement {
         let state = crate::data::PlacementState::with_display_size(
             self.id,
             eframe::egui::pos2(self.center_x, self.center_y),
@@ -753,13 +777,13 @@ impl StoredPlacement {
             self.z_index,
             self.archived,
         );
-        Ok(Placement {
+        Placement {
             state,
             content: self
                 .content
-                .into_content(|asset_id| library.load_asset(asset_id))?,
+                .into_content(|asset_id| assets.get(&asset_id).cloned()),
             lifecycle: self.lifecycle,
-        })
+        }
     }
 }
 
@@ -830,7 +854,7 @@ impl From<&crate::data::BoardDocumentSnapshot> for StoredBoardDocument {
 impl StoredBoardDocument {
     fn into_document(
         self,
-        library: &crate::library::storage::Library,
+        assets: &HashMap<i64, Asset>,
     ) -> Result<crate::data::BoardDocumentSnapshot, String> {
         Ok(crate::data::BoardDocumentSnapshot {
             board: crate::data::Board {
@@ -840,8 +864,8 @@ impl StoredBoardDocument {
             placements: self
                 .placements
                 .into_iter()
-                .map(|placement| placement.into_placement(library))
-                .collect::<Result<_, _>>()?,
+                .map(|placement| placement.into_placement(assets))
+                .collect(),
             annotations: self
                 .annotations
                 .into_iter()

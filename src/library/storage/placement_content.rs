@@ -55,14 +55,14 @@ impl StoredPlacementContent {
         serde_json::from_str(payload).ok()
     }
 
-    /// `load_asset` resolves the Asset for Loaded content.
-    pub(crate) fn into_content(
-        self,
-        load_asset: impl FnOnce(i64) -> Result<Asset, String>,
-    ) -> Result<PlacementContent, String> {
-        Ok(match self {
-            Self::Loaded { asset_id } => PlacementContent::Loaded {
-                asset: load_asset(asset_id)?,
+    /// `asset` resolves the live Asset for Loaded content. Loaded content
+    /// whose Asset is gone degrades to a recoverable failure instead of a
+    /// Placement without an image.
+    pub(crate) fn into_content(self, asset: impl FnOnce(i64) -> Option<Asset>) -> PlacementContent {
+        match self {
+            Self::Loaded { asset_id } => match asset(asset_id) {
+                Some(asset) => PlacementContent::Loaded { asset },
+                None => missing_asset_content(),
             },
             Self::Loading {
                 source,
@@ -80,6 +80,14 @@ impl StoredPlacementContent {
                 message,
                 recoverable,
             },
-        })
+        }
+    }
+}
+
+pub(super) fn missing_asset_content() -> PlacementContent {
+    PlacementContent::Failed {
+        source: None,
+        message: "Placement content failed to resolve".to_owned(),
+        recoverable: true,
     }
 }

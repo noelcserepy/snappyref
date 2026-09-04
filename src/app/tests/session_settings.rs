@@ -32,6 +32,7 @@ fn save_user_session_round_trips_placement_gap() {
         .set_background(crate::data::CanvasBackground::Grid);
 
     app.save_user_session();
+    app.flush_persistence();
 
     let session = library.load_user_session().unwrap();
     assert!(!session.settings.auto_image_scaling);

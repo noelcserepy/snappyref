@@ -113,8 +113,7 @@ fn legacy_content_resolution_intent_payload_alias_decodes_as_source() {
     let decode = |payload: &str| {
         super::StoredPlacementContent::decode(payload)
             .unwrap()
-            .into_content(|_| Err("no asset".to_owned()))
-            .unwrap()
+            .into_content(|_| None)
     };
     let loading = decode(loading_payload);
     let failed = decode(failed_payload);
