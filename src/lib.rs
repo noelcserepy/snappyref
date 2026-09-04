@@ -7,7 +7,6 @@ mod jobs;
 mod library;
 mod placement;
 mod platform;
-#[cfg(feature = "semantic-search")]
 mod search;
 mod sources;
 #[cfg(test)]
@@ -34,7 +33,6 @@ pub fn run() -> eframe::Result<()> {
         return Ok(());
     }
 
-    #[cfg(feature = "semantic-search")]
     if let Some(path) = std::env::args().skip(1).find_map(|argument| {
         argument
             .strip_prefix("--semantic-embed-image=")
@@ -48,7 +46,6 @@ pub fn run() -> eframe::Result<()> {
         }
         return Ok(());
     }
-    #[cfg(feature = "semantic-search")]
     if std::env::args()
         .skip(1)
         .any(|argument| argument == "--semantic-embed-server")

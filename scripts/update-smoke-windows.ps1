@@ -24,7 +24,7 @@ if (Test-Path -LiteralPath $smokeRoot) {
 }
 New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
 
-cargo build --profile release-fast --locked --no-default-features --features semantic-search --bins
+cargo build --profile release-fast --locked --no-default-features --bins
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

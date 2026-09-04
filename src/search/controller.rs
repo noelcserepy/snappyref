@@ -146,7 +146,6 @@ impl SearchController {
         self.semantic_install.set_test_installer(installer);
     }
 
-    #[cfg(feature = "semantic-search")]
     pub(crate) fn remove_semantic_search_assets_from_settings(&mut self, status: &mut String) {
         self.semantic_install.force_stop();
         #[cfg(not(test))]

@@ -61,20 +61,7 @@ pub(super) fn paint_settings_section(
         ui,
         "Auto-scale new images",
         "Caps new imports to a default area.",
-        |ui| {
-            #[cfg(feature = "semantic-search")]
-            {
-                paint_switch(ui, &mut settings.auto_image_scaling).changed()
-            }
-            #[cfg(not(feature = "semantic-search"))]
-            {
-                ui.add_enabled(
-                    false,
-                    egui::widgets::Checkbox::without_text(&mut settings.auto_image_scaling),
-                )
-                .changed()
-            }
-        },
+        |ui| paint_switch(ui, &mut settings.auto_image_scaling).changed(),
     );
     paint_setting_divider(ui);
     changed |= paint_setting_row(

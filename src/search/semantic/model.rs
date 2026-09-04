@@ -310,7 +310,6 @@ impl OrtImageEmbeddingModel {
         ))
     }
 
-    #[cfg(feature = "semantic-search")]
     pub(crate) fn embed_image_path_timed(
         &self,
         path: &Path,

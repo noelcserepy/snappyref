@@ -7,8 +7,8 @@ if [[ $# -gt 0 ]]; then
   filter="$1"
   shift
   "$script_dir/windows-remote.sh" \
-    "cargo test --locked --no-default-features --features semantic-search '$filter' $*"
+    "cargo test --locked --no-default-features '$filter' $*"
 else
   "$script_dir/windows-remote.sh" \
-    "cargo test --locked --no-default-features --features semantic-search"
+    "cargo test --locked --no-default-features"
 fi

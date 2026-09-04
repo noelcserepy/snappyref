@@ -119,7 +119,7 @@ jobs:
             cargo build --release --locked --bins
             echo "SNAPPYREF_TARGET_DIR=target/release" >> "$GITHUB_ENV"
           else
-            cargo build --profile release-fast --locked --no-default-features --features semantic-search --bins
+            cargo build --profile release-fast --locked --no-default-features --bins
             echo "SNAPPYREF_TARGET_DIR=target/release-fast" >> "$GITHUB_ENV"
           fi
 

@@ -29,12 +29,10 @@ pub(super) fn destructive_dialog_width() -> f32 {
     340.0
 }
 
-#[cfg(feature = "semantic-search")]
 pub(super) fn semantic_search_prompt_width() -> f32 {
     380.0
 }
 
-#[cfg(feature = "semantic-search")]
 pub(super) fn semantic_search_prompt_frame(ctx: &egui::Context, entrance: f32) -> egui::Frame {
     fade_frame(
         egui::Frame::window(&ctx.global_style())
@@ -46,7 +44,6 @@ pub(super) fn semantic_search_prompt_frame(ctx: &egui::Context, entrance: f32) -
     )
 }
 
-#[cfg(feature = "semantic-search")]
 pub(super) fn semantic_search_prompt_header(ui: &mut egui::Ui, title: &str) {
     ui.add_space(crate::ui::theme::SPACE_3);
     ui.horizontal(|ui| {
@@ -67,7 +64,6 @@ pub(super) fn semantic_search_prompt_header(ui: &mut egui::Ui, title: &str) {
     );
 }
 
-#[cfg(feature = "semantic-search")]
 pub(super) fn semantic_search_prompt_body(
     ui: &mut egui::Ui,
     add_contents: impl FnOnce(&mut egui::Ui),
@@ -139,7 +135,6 @@ pub(super) fn secondary_dialog_button(label: &str) -> egui::Button<'_> {
     .corner_radius(crate::ui::theme::RADIUS_INLINE)
 }
 
-#[cfg(feature = "semantic-search")]
 pub(super) fn primary_dialog_button(label: &str) -> egui::Button<'_> {
     egui::Button::new(
         egui::RichText::new(label)

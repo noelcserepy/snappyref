@@ -175,7 +175,6 @@ impl Library {
         .find(|path| path.is_file())
     }
 
-    #[cfg_attr(not(feature = "semantic-search"), allow(dead_code))]
     pub fn asset_search_preview_paths_for_assets(
         &self,
         asset_ids: &[i64],
