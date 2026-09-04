@@ -5,7 +5,9 @@ use crate::canvas::geometry::{clamped_crop_screen_rect, screen_corners_for_place
 use crate::canvas::interaction::{
     hit_test_placement, placement_screen_rect, selected_placement_rotation_handle_screen_pos,
 };
-use crate::canvas::{CanvasState, IMAGE_CULL_MARGIN_SCREEN, PLACEMENT_ROTATE_HANDLE_RADIUS_SCREEN};
+use crate::canvas::{
+    ActiveGesture, CanvasState, IMAGE_CULL_MARGIN_SCREEN, PLACEMENT_ROTATE_HANDLE_RADIUS_SCREEN,
+};
 use crate::data::{CanvasAnnotationKind, CanvasStackItem, PlacementLifecycle};
 
 const SELECTION_BORDER_WIDTH: f32 = 1.0;
@@ -49,7 +51,7 @@ pub(crate) fn paint_provisional_placement_previews(
 }
 
 pub(crate) fn paint_marquee(painter: &egui::Painter, state: &CanvasState) {
-    let Some(marquee_state) = &state.interaction.marquee_state else {
+    let Some(ActiveGesture::Marquee(marquee_state)) = &state.interaction.gesture else {
         return;
     };
 
@@ -63,7 +65,7 @@ pub(crate) fn paint_marquee(painter: &egui::Painter, state: &CanvasState) {
 }
 
 pub(crate) fn paint_crop_marquee(painter: &egui::Painter, rect: egui::Rect, state: &CanvasState) {
-    let Some(crop_state) = &state.interaction.crop_state else {
+    let Some(ActiveGesture::Crop(crop_state)) = &state.interaction.gesture else {
         return;
     };
     let Some(image) = state.rendered_placement_by_id(crop_state.placement_id) else {
@@ -99,11 +101,7 @@ pub(crate) fn paint_hover_hairline(
     state: &CanvasState,
     pointer_interactions_enabled: bool,
 ) {
-    let interaction_active = state.interaction.drag_state.is_some()
-        || state.interaction.marquee_state.is_some()
-        || state.interaction.crop_state.is_some()
-        || state.interaction.annotation_draft_state.is_some()
-        || state.interaction.placement_transform_state.is_some();
+    let interaction_active = state.interaction.gesture.is_some();
     let hovered_id = if pointer_interactions_enabled && !interaction_active {
         painter
             .ctx()
@@ -308,7 +306,9 @@ fn selected_rotation_handle_screen_pos(
 fn rotation_handle_visible(ctx: &egui::Context, state: &CanvasState) -> bool {
     crate::canvas::rotation_handle_key_held(ctx)
         || matches!(
-            state.interaction.placement_transform_state,
-            Some(crate::canvas::PlacementTransformState::Rotating { .. })
+            state.interaction.gesture,
+            Some(ActiveGesture::PlacementTransform(
+                crate::canvas::PlacementTransformState::Rotating { .. }
+            ))
         )
 }

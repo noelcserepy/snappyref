@@ -2,8 +2,8 @@ use eframe::egui;
 
 use super::super::render::textbox_pointer_region;
 use super::super::{
-    CanvasState, MIN_TEXTBOX_WORLD_SIZE, TEXTBOX_RESIZE_HIT_RADIUS, TextboxPointerRegion,
-    TextboxResizeHandle, TextboxTransformState,
+    ActiveGesture, CanvasState, MIN_TEXTBOX_WORLD_SIZE, TEXTBOX_RESIZE_HIT_RADIUS,
+    TextboxPointerRegion, TextboxResizeHandle, TextboxTransformState,
 };
 use crate::data::{CanvasAnnotation, CanvasAnnotationKind};
 
@@ -29,16 +29,14 @@ fn begin_textbox_pending_move(
         })
         .collect::<Vec<_>>();
     let start_rects_world = state.selected_textbox_start_rects();
-    state.interaction.drag_state = None;
-    state.interaction.marquee_state = None;
-    state.interaction.crop_state = None;
-    state.interaction.annotation_draft_state = None;
-    state.interaction.textbox_transform_state = Some(TextboxTransformState::PendingMove {
-        annotation_ids,
-        pointer_start_world: state.screen_to_world(pointer_pos, rect),
-        pointer_start_screen: pointer_pos,
-        start_rects_world,
-    });
+    state.interaction.gesture = Some(ActiveGesture::TextboxTransform(
+        TextboxTransformState::PendingMove {
+            annotation_ids,
+            pointer_start_world: state.screen_to_world(pointer_pos, rect),
+            pointer_start_screen: pointer_pos,
+            start_rects_world,
+        },
+    ));
 }
 
 pub(crate) fn handle_textbox_primary_press(
@@ -60,24 +58,20 @@ pub(crate) fn handle_textbox_primary_press(
                 } else if state.interaction.editing_text_annotation_id.is_some() {
                     state.finish_textbox_edit();
                 }
-                state.interaction.placement_transform_state = None;
                 begin_textbox_pending_move(state, rect, annotation, pointer_pos);
                 return true;
             }
             let world_rect = textbox_world_rect(annotation);
             state.document.selected_placement_ids.clear();
             state.document.selected_annotation_ids = vec![annotation.id];
-            state.interaction.drag_state = None;
-            state.interaction.placement_transform_state = None;
-            state.interaction.marquee_state = None;
-            state.interaction.crop_state = None;
-            state.interaction.annotation_draft_state = None;
-            state.interaction.textbox_transform_state = Some(TextboxTransformState::Resizing {
-                annotation_id: annotation.id,
-                dragged_handle: handle,
-                anchor_world: textbox_resize_handle_anchor_world_pos(world_rect, handle),
-                start_rect_world: crate::data::RectGeometry::from_bounds(world_rect, 0),
-            });
+            state.interaction.gesture = Some(ActiveGesture::TextboxTransform(
+                TextboxTransformState::Resizing {
+                    annotation_id: annotation.id,
+                    dragged_handle: handle,
+                    anchor_world: textbox_resize_handle_anchor_world_pos(world_rect, handle),
+                    start_rect_world: crate::data::RectGeometry::from_bounds(world_rect, 0),
+                },
+            ));
             true
         }
         TextboxPointerRegion::Text => true,
@@ -87,7 +81,6 @@ pub(crate) fn handle_textbox_primary_press(
             } else if state.interaction.editing_text_annotation_id.is_some() {
                 state.finish_textbox_edit();
             }
-            state.interaction.placement_transform_state = None;
             begin_textbox_pending_move(state, rect, annotation, pointer_pos);
             true
         }

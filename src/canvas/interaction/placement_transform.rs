@@ -4,9 +4,9 @@ use super::super::geometry::{
     min_loaded_placement_scale, placement_rotation_handle_screen_pos, screen_rect_for_placement,
 };
 use super::super::{
-    CanvasState, PLACEMENT_RESIZE_HIT_RADIUS, PLACEMENT_ROTATE_HANDLE_HIT_RADIUS_SCREEN,
-    PLACEMENT_ROTATE_HANDLE_OFFSET_SCREEN, PlacementResizeHandle, PlacementScaleStart,
-    PlacementTransformState, RenderedPlacement,
+    ActiveGesture, CanvasState, PLACEMENT_RESIZE_HIT_RADIUS,
+    PLACEMENT_ROTATE_HANDLE_HIT_RADIUS_SCREEN, PLACEMENT_ROTATE_HANDLE_OFFSET_SCREEN,
+    PlacementResizeHandle, PlacementScaleStart, PlacementTransformState, RenderedPlacement,
 };
 
 const PLACEMENT_DRAG_SCALE_DOUBLING_DISTANCE_SCREEN: f32 = 240.0;
@@ -41,18 +41,14 @@ pub(crate) fn begin_placement_resize(
     state.document.selected_placement_ids.clear();
     state.document.selected_placement_ids.push(placement_id);
     state.document.selected_annotation_ids.clear();
-    state.interaction.drag_state = None;
-    state.interaction.annotation_drag_state = None;
-    state.interaction.marquee_state = None;
-    state.interaction.crop_state = None;
-    state.interaction.annotation_draft_state = None;
-    state.interaction.textbox_transform_state = None;
-    state.interaction.placement_transform_state = Some(PlacementTransformState::Resizing {
-        placement_id,
-        anchor_screen,
-        start_handle_screen,
-        start_scale,
-    });
+    state.interaction.gesture = Some(ActiveGesture::PlacementTransform(
+        PlacementTransformState::Resizing {
+            placement_id,
+            anchor_screen,
+            start_handle_screen,
+            start_scale,
+        },
+    ));
 }
 
 pub(crate) fn begin_placement_drag_scale(
@@ -100,18 +96,14 @@ pub(crate) fn begin_placement_drag_scale(
 
     state.finish_textbox_edit();
     state.document.selected_annotation_ids.clear();
-    state.interaction.drag_state = None;
-    state.interaction.annotation_drag_state = None;
-    state.interaction.marquee_state = None;
-    state.interaction.crop_state = None;
-    state.interaction.annotation_draft_state = None;
-    state.interaction.textbox_transform_state = None;
-    state.interaction.placement_transform_state = Some(PlacementTransformState::Scaling {
-        placement_ids,
-        pointer_start_screen: pointer_pos,
-        group_center_world,
-        starting_items,
-    });
+    state.interaction.gesture = Some(ActiveGesture::PlacementTransform(
+        PlacementTransformState::Scaling {
+            placement_ids,
+            pointer_start_screen: pointer_pos,
+            group_center_world,
+            starting_items,
+        },
+    ));
 }
 
 pub(crate) fn begin_placement_rotation(
@@ -151,19 +143,15 @@ pub(crate) fn begin_placement_rotation(
         .collect::<Vec<_>>();
 
     state.finish_textbox_edit();
-    state.interaction.drag_state = None;
-    state.interaction.annotation_drag_state = None;
-    state.interaction.marquee_state = None;
-    state.interaction.crop_state = None;
-    state.interaction.annotation_draft_state = None;
-    state.interaction.textbox_transform_state = None;
-    state.interaction.placement_transform_state = Some(PlacementTransformState::Rotating {
-        placement_ids,
-        center_screen,
-        center_world,
-        start_pointer_angle,
-        starting_items,
-    });
+    state.interaction.gesture = Some(ActiveGesture::PlacementTransform(
+        PlacementTransformState::Rotating {
+            placement_ids,
+            center_screen,
+            center_world,
+            start_pointer_angle,
+            starting_items,
+        },
+    ));
 }
 
 fn selected_placement_screen_rect_for_placements(

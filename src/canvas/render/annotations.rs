@@ -6,7 +6,7 @@ use super::textbox_editor::textbox_content_rect;
 use crate::canvas::interaction::{
     annotation_screen_points, annotation_screen_rect, pending_annotation_from_draft,
 };
-use crate::canvas::{ANNOTATION_CULL_MARGIN_SCREEN, CanvasState, PendingAnnotation};
+use crate::canvas::{ANNOTATION_CULL_MARGIN_SCREEN, ActiveGesture, CanvasState, PendingAnnotation};
 #[cfg(test)]
 use crate::canvas::{AnnotationPaintStats, CanvasDocumentState};
 use crate::data::{
@@ -147,7 +147,7 @@ pub(crate) fn paint_annotation_draft(
     rect: egui::Rect,
     state: &CanvasState,
 ) {
-    let Some(draft_state) = &state.interaction.annotation_draft_state else {
+    let Some(ActiveGesture::AnnotationDraft(draft_state)) = &state.interaction.gesture else {
         return;
     };
     let draft = pending_annotation_from_draft(draft_state.clone()).unwrap_or_else(|| {

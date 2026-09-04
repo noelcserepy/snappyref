@@ -1338,8 +1338,8 @@ fn textbox_body_press_on_unselected_textbox_starts_pending_move() {
         ));
         assert_eq!(state.document.selected_annotation_ids, vec![15]);
         assert!(matches!(
-            state.interaction.textbox_transform_state,
-            Some(super::TextboxTransformState::PendingMove { ref annotation_ids, .. })
+            state.interaction.gesture,
+            Some(super::ActiveGesture::TextboxTransform(super::TextboxTransformState::PendingMove { ref annotation_ids, .. }))
                 if annotation_ids == &vec![15]
         ));
     });
@@ -1380,8 +1380,8 @@ fn textbox_edge_press_on_unselected_textbox_selects_without_resizing() {
         ));
         assert_eq!(state.document.selected_annotation_ids, vec![18]);
         assert!(matches!(
-            state.interaction.textbox_transform_state,
-            Some(super::TextboxTransformState::PendingMove { ref annotation_ids, .. })
+            state.interaction.gesture,
+            Some(super::ActiveGesture::TextboxTransform(super::TextboxTransformState::PendingMove { ref annotation_ids, .. }))
                 if annotation_ids == &vec![18]
         ));
     });
@@ -1421,12 +1421,14 @@ fn textbox_edge_press_on_selected_textbox_starts_resize() {
             pointer_pos,
         ));
         assert!(matches!(
-            state.interaction.textbox_transform_state,
-            Some(super::TextboxTransformState::Resizing {
-                annotation_id: 19,
-                dragged_handle: TextboxResizeHandle::Right,
-                ..
-            })
+            state.interaction.gesture,
+            Some(super::ActiveGesture::TextboxTransform(
+                super::TextboxTransformState::Resizing {
+                    annotation_id: 19,
+                    dragged_handle: TextboxResizeHandle::Right,
+                    ..
+                }
+            ))
         ));
     });
 }
@@ -1467,8 +1469,8 @@ fn textbox_body_press_while_editing_empty_exits_edit_and_starts_pending_move() {
         assert_eq!(state.interaction.editing_text_annotation_id, None);
         assert!(state.annotation_by_id(16).is_some());
         assert!(matches!(
-            state.interaction.textbox_transform_state,
-            Some(super::TextboxTransformState::PendingMove { ref annotation_ids, .. })
+            state.interaction.gesture,
+            Some(super::ActiveGesture::TextboxTransform(super::TextboxTransformState::PendingMove { ref annotation_ids, .. }))
                 if annotation_ids == &vec![16]
         ));
     });
@@ -1511,8 +1513,8 @@ fn textbox_body_press_on_selected_multi_textbox_keeps_group_move() {
         ));
         assert_eq!(state.document.selected_annotation_ids, vec![21, 22]);
         assert!(matches!(
-            state.interaction.textbox_transform_state,
-            Some(super::TextboxTransformState::PendingMove { ref annotation_ids, .. })
+            state.interaction.gesture,
+            Some(super::ActiveGesture::TextboxTransform(super::TextboxTransformState::PendingMove { ref annotation_ids, .. }))
                 if annotation_ids == &vec![21, 22]
         ));
     });
@@ -1575,7 +1577,7 @@ fn textbox_text_press_while_editing_stays_editor_owned() {
             pointer_pos,
         ));
         assert_eq!(state.interaction.editing_text_annotation_id, Some(17));
-        assert!(state.interaction.textbox_transform_state.is_none());
+        assert!(state.interaction.gesture.is_none());
     });
 }
 

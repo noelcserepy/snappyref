@@ -910,9 +910,7 @@ impl CanvasState {
             self.interaction.editing_text_annotation_id = Some(annotation_id);
             self.interaction.focus_text_editor = true;
             self.document.selected_placement_ids.clear();
-            self.interaction.placement_transform_state = None;
-            self.interaction.textbox_transform_state = None;
-            self.interaction.annotation_drag_state = None;
+            self.interaction.end_transform_gesture();
         }
     }
 
@@ -1290,9 +1288,7 @@ impl CanvasState {
             .collect();
         self.document.selected_annotation_ids.clear();
         self.interaction.editing_text_annotation_id = None;
-        self.interaction.placement_transform_state = None;
-        self.interaction.textbox_transform_state = None;
-        self.interaction.annotation_drag_state = None;
+        self.interaction.end_transform_gesture();
         self.prune_cached_pixels_to_selected_items();
     }
 
@@ -1319,9 +1315,7 @@ impl CanvasState {
             })
             .collect();
         self.interaction.editing_text_annotation_id = None;
-        self.interaction.placement_transform_state = None;
-        self.interaction.textbox_transform_state = None;
-        self.interaction.annotation_drag_state = None;
+        self.interaction.end_transform_gesture();
         self.prune_cached_pixels_to_selected_items();
     }
 
@@ -1453,7 +1447,7 @@ impl CanvasState {
 
     #[cfg(test)]
     pub fn selection_border_visible_for_test(&self, now_seconds: f64) -> bool {
-        let Some(drag_state) = &self.interaction.drag_state else {
+        let Some(drag_state) = self.interaction.placement_drag() else {
             return true;
         };
         !drag_state.moved
@@ -1525,13 +1519,7 @@ impl CanvasState {
         self.document
             .dirty_placement_ids
             .retain(|placement_id| !removed_ids.contains(placement_id));
-        self.interaction.drag_state = None;
-        self.interaction.placement_transform_state = None;
-        self.interaction.textbox_transform_state = None;
-        self.interaction.annotation_drag_state = None;
-        self.interaction.marquee_state = None;
-        self.interaction.crop_state = None;
-        self.interaction.annotation_draft_state = None;
+        self.interaction.end_gesture();
         self.interaction
             .crop_pending_placement_ids
             .retain(|placement_id| !removed_ids.contains(placement_id));
@@ -1590,9 +1578,7 @@ impl CanvasState {
         self.document.selected_placement_ids.push(placement_id);
         self.document.selected_annotation_ids.clear();
         self.interaction.editing_text_annotation_id = None;
-        self.interaction.placement_transform_state = None;
-        self.interaction.textbox_transform_state = None;
-        self.interaction.annotation_drag_state = None;
+        self.interaction.end_transform_gesture();
         self.prune_cached_pixels_to_selected_items();
     }
 
@@ -1601,9 +1587,7 @@ impl CanvasState {
         if !self.document.selected_placement_ids.contains(&placement_id) {
             self.document.selected_placement_ids.push(placement_id);
         }
-        self.interaction.placement_transform_state = None;
-        self.interaction.textbox_transform_state = None;
-        self.interaction.annotation_drag_state = None;
+        self.interaction.end_transform_gesture();
         self.prune_cached_pixels_to_selected_items();
     }
 
@@ -1616,9 +1600,7 @@ impl CanvasState {
         {
             self.document.selected_annotation_ids.push(annotation_id);
         }
-        self.interaction.placement_transform_state = None;
-        self.interaction.textbox_transform_state = None;
-        self.interaction.annotation_drag_state = None;
+        self.interaction.end_transform_gesture();
         self.prune_cached_pixels_to_selected_items();
     }
 
@@ -1627,9 +1609,7 @@ impl CanvasState {
         self.document.selected_placement_ids.clear();
         self.document.selected_annotation_ids.clear();
         self.interaction.editing_text_annotation_id = None;
-        self.interaction.placement_transform_state = None;
-        self.interaction.textbox_transform_state = None;
-        self.interaction.annotation_drag_state = None;
+        self.interaction.end_transform_gesture();
         self.prune_cached_pixels_to_selected_items();
     }
 
@@ -1651,9 +1631,7 @@ impl CanvasState {
             annotation_ids
         };
         self.interaction.editing_text_annotation_id = None;
-        self.interaction.placement_transform_state = None;
-        self.interaction.textbox_transform_state = None;
-        self.interaction.annotation_drag_state = None;
+        self.interaction.end_transform_gesture();
         self.prune_cached_pixels_to_selected_items();
     }
 
@@ -1689,11 +1667,7 @@ impl CanvasState {
             self.interaction.editing_text_annotation_id = None;
         }
         self.interaction.focus_text_editor = false;
-        self.interaction.placement_transform_state = None;
-        if self.interaction.textbox_transform_state.is_some() {
-            self.interaction.textbox_transform_state = None;
-            self.interaction.annotation_drag_state = None;
-        }
+        self.interaction.end_transform_gesture();
         self.document
             .dirty_annotation_ids
             .retain(|dirty_id| *dirty_id != annotation_id);
@@ -1719,9 +1693,7 @@ impl CanvasState {
 
         self.interaction.editing_text_annotation_id = None;
         self.interaction.focus_text_editor = false;
-        self.interaction.placement_transform_state = None;
-        self.interaction.textbox_transform_state = None;
-        self.interaction.annotation_drag_state = None;
+        self.interaction.end_transform_gesture();
 
         let Some(annotation) = self
             .document
@@ -1753,9 +1725,7 @@ impl CanvasState {
     pub(super) fn stop_textbox_edit_without_cleanup(&mut self) {
         self.interaction.editing_text_annotation_id = None;
         self.interaction.focus_text_editor = false;
-        self.interaction.placement_transform_state = None;
-        self.interaction.textbox_transform_state = None;
-        self.interaction.annotation_drag_state = None;
+        self.interaction.end_transform_gesture();
     }
 
     pub(super) fn annotation_by_id(&self, annotation_id: i64) -> Option<&CanvasAnnotation> {

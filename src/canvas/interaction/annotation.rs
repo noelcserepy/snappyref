@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use super::super::{
-    ANNOTATION_HIT_RADIUS, AnnotationDraftState, AnnotationDragState, CanvasState,
+    ANNOTATION_HIT_RADIUS, ActiveGesture, AnnotationDraftState, AnnotationDragState, CanvasState,
     PendingAnnotation,
 };
 use super::{normalized_textbox_rect, textbox_screen_rect, textbox_world_rect};
@@ -47,17 +47,12 @@ pub(crate) fn begin_annotation_drag(
         })
         .collect::<Vec<_>>();
 
-    state.interaction.drag_state = None;
-    state.interaction.marquee_state = None;
-    state.interaction.crop_state = None;
-    state.interaction.annotation_draft_state = None;
-    state.interaction.textbox_transform_state = None;
-    state.interaction.annotation_drag_state = Some(AnnotationDragState {
+    state.interaction.gesture = Some(ActiveGesture::AnnotationDrag(AnnotationDragState {
         annotation_ids,
         pointer_start_world: state.screen_to_world(pointer_pos, rect),
         pointer_start_screen: pointer_pos,
         starting_segments,
-    });
+    }));
 }
 
 pub(crate) fn hit_test_annotation(
