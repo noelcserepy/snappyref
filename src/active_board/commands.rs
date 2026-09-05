@@ -78,15 +78,15 @@ pub(crate) struct ClipboardPlacementState {
     scale: f32,
     rotation: f32,
     z_index: i32,
-    width: u32,
-    height: u32,
+    width: f32,
+    height: f32,
 }
 
 impl ClipboardPlacementState {
     fn geometry(&self) -> RectGeometry {
         RectGeometry::new(
             egui::pos2(self.center_x, self.center_y),
-            egui::vec2(self.width as f32, self.height as f32),
+            egui::vec2(self.width, self.height),
             self.scale,
             self.rotation,
             self.z_index,
@@ -169,8 +169,8 @@ pub(crate) fn copy_selected_board_payload(canvas: &CanvasState) -> Option<Clipbo
             scale: placement.state.geometry.scale,
             rotation: placement.state.geometry.rotation,
             z_index: placement.state.geometry.z_index,
-            width: asset.width,
-            height: asset.height,
+            width: placement.state.geometry.size.x,
+            height: placement.state.geometry.size.y,
         });
     }
 
@@ -293,13 +293,15 @@ pub(crate) fn paste_board_payload_at(
     let mut pasted_placement_ids = Vec::new();
     for placement in &payload.placements {
         let geometry = placement.translated_geometry(delta);
-        let placement = library.new_placement_from_asset(
+        let mut placement = library.new_placement_from_asset(
             placement.asset_id,
             geometry.center,
             geometry.scale,
             geometry.rotation,
             geometry.z_index,
         )?;
+        // Display geometry belongs to the Placement, independently of Asset pixels.
+        placement.state.geometry = geometry;
         pasted_placement_ids.push(placement.state.id);
         let placement_id = placement.state.id;
         if let Err(error) = context
@@ -573,8 +575,10 @@ fn validate_clipboard_payload(payload: &ClipboardBoardSelection) -> Result<(), S
         .iter()
         .any(|n| !n.is_finite())
             || placement.scale <= 0.
-            || placement.width == 0
-            || placement.height == 0
+            || !placement.width.is_finite()
+            || !placement.height.is_finite()
+            || placement.width <= 0.
+            || placement.height <= 0.
         {
             return Err(invalid());
         }
@@ -679,6 +683,132 @@ mod group_tests {
         assert_eq!(context.canvas.groups().len(), 2);
         assert!(context.canvas.groups()[1].members.is_empty());
         assert_ne!(context.canvas.groups()[1].id, source_id);
+    }
+
+    #[test]
+    fn fitted_and_scaled_group_members_keep_display_geometry_through_paste_and_duplicate() {
+        let root = crate::test_support::TempRoot::new("group-clipboard-display-geometry");
+        let library = Library::initialize(root.to_path_buf()).unwrap();
+        let path = library
+            .store_rgba_image("wide", &vec![255; 200 * 100 * 4], 200, 100)
+            .unwrap();
+        let placement = library
+            .persist_imported_image(&path, "image/png", 200, 100, 80000, egui::Pos2::ZERO, 1.)
+            .unwrap();
+        for factor in [1., 1.375] {
+            let mut source = CanvasState::default();
+            source.add_unresolved_placement(placement.clone());
+            let group_id = library.allocate_document_id();
+            source.restore_groups(vec![crate::data::Group {
+                id: group_id,
+                name: "Fitted".into(),
+                members: vec![],
+                container: RectGeometry::new(
+                    egui::pos2(80., 60.),
+                    egui::vec2(120., 100.),
+                    1.,
+                    0.,
+                    0,
+                ),
+                flow: crate::data::GroupFlow::Wrap,
+                spacing: 7.,
+                padding: 10.,
+            }]);
+            source
+                .add_members_to_group(group_id, &[placement.id()])
+                .unwrap();
+            assert_eq!(
+                source
+                    .placement_for_id(placement.id())
+                    .unwrap()
+                    .scaled_display_size(),
+                egui::vec2(100., 50.)
+            );
+            let layout = crate::placement::group_layout::scale_group(
+                &source.groups()[0],
+                &[(
+                    placement.id(),
+                    source
+                        .placement_for_id(placement.id())
+                        .unwrap()
+                        .state
+                        .geometry,
+                )],
+                factor,
+            )
+            .unwrap();
+            let mut scaled = source.placement_for_id(placement.id()).unwrap();
+            scaled.state.geometry = layout.members[0].1;
+            source.apply_placement_history_state(Some(scaled));
+            let mut group = source.groups()[0].clone();
+            group.container = layout.container;
+            group.spacing = layout.spacing;
+            group.padding = layout.padding;
+            source.replace_groups(vec![group]);
+            source.select_group(group_id);
+            let expected = source
+                .placement_for_id(placement.id())
+                .unwrap()
+                .state
+                .geometry;
+            let payload = copy_selection_to_json(&source).unwrap().unwrap();
+            let mut target = CanvasState::default();
+            let viewport = egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(2000., 2000.));
+            let mut target_context = ActiveBoardCommandContext {
+                canvas: &mut target,
+                library: Some(&library),
+                import_worker_available: true,
+                placement_gap: 16.,
+                viewport_world: viewport,
+            };
+            paste_json_at(
+                &mut target_context,
+                &payload.payload_json,
+                egui::pos2(400., 300.),
+            )
+            .unwrap()
+            .unwrap();
+            let pasted_group = &target_context.canvas.groups()[0];
+            let pasted = target_context
+                .canvas
+                .placement_for_id(pasted_group.members[0])
+                .unwrap();
+            assert_eq!(
+                pasted.state.geometry.size, expected.size,
+                "paste after scale {factor}"
+            );
+            assert_eq!(pasted.state.geometry.scale, expected.scale);
+            assert_eq!(
+                pasted.state.geometry.center - pasted_group.container.center,
+                expected.center - source.groups()[0].container.center
+            );
+            assert_eq!(pasted_group.padding, source.groups()[0].padding);
+            assert_eq!(pasted_group.spacing, source.groups()[0].spacing);
+            let mut source_context = ActiveBoardCommandContext {
+                canvas: &mut source,
+                library: Some(&library),
+                import_worker_available: true,
+                placement_gap: 16.,
+                viewport_world: viewport,
+            };
+            duplicate_selection(&mut source_context).unwrap().unwrap();
+            let duplicated_group = &source_context.canvas.groups()[1];
+            let duplicated = source_context
+                .canvas
+                .placement_for_id(duplicated_group.members[0])
+                .unwrap();
+            assert_ne!(duplicated.id(), placement.id());
+            assert_ne!(duplicated_group.id, group_id);
+            assert_eq!(
+                duplicated.state.geometry.size, expected.size,
+                "duplicate after scale {factor}"
+            );
+            assert_eq!(duplicated.state.geometry.scale, expected.scale);
+            assert_eq!(
+                duplicated.state.geometry.center - duplicated_group.container.center,
+                expected.center - source_context.canvas.groups()[0].container.center
+            );
+        }
     }
 
     #[test]
