@@ -77,6 +77,7 @@ fn embedding_phase_markers_report_summary_durations() {
     );
 }
 
+mod groups;
 mod inspect_operations;
 mod session_settings;
 
@@ -1472,6 +1473,9 @@ fn context_menu_items_reflect_mixed_selection_capabilities() {
     assert_eq!(
         items.iter().map(|item| item.label).collect::<Vec<_>>(),
         vec![
+            "Group",
+            "Ungroup",
+            "Add to group",
             "Copy",
             "Paste",
             "Duplicate",
@@ -1488,6 +1492,15 @@ fn context_menu_items_reflect_mixed_selection_capabilities() {
             .map(|item| (item.action, item.shortcut))
             .collect::<Vec<_>>(),
         vec![
+            (
+                super::shortcuts::ContextMenuAction::Group,
+                Some(super::platform_shortcut_label("⌘G", "Ctrl+G"))
+            ),
+            (
+                super::shortcuts::ContextMenuAction::Ungroup,
+                Some(super::platform_shortcut_label("⌘⇧G", "Ctrl+Shift+G"))
+            ),
+            (super::shortcuts::ContextMenuAction::AddToGroup, Some("G")),
             (
                 super::shortcuts::ContextMenuAction::Copy,
                 Some(super::platform_shortcut_label("⌘ C", "Ctrl C")),

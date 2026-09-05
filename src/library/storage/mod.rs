@@ -9,6 +9,8 @@ mod durability;
 pub(crate) use durability::BoardDurabilityOperation;
 mod embeddings;
 mod files;
+mod groups;
+pub(crate) use groups::StoredGroup;
 mod placement_content;
 pub(crate) use placement_content::StoredPlacementContent;
 mod placements;

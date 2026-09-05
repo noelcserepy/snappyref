@@ -330,6 +330,7 @@ impl SnappyRefApp {
         app.refresh_board_summaries();
         app.sync_semantic_search_service();
         if !config.skip_existing_items_on_start() {
+            app.load_groups();
             app.enqueue_existing_items();
         }
         app
@@ -382,6 +383,15 @@ impl SnappyRefApp {
             user_update_flow_active: false,
             update_smoke: None,
             last_manual_update_check: None,
+        }
+    }
+
+    fn load_groups(&mut self) {
+        if let Some(library) = &self.library {
+            match library.load_groups() {
+                Ok(groups) => self.canvas.restore_groups(groups),
+                Err(error) => self.status = error,
+            }
         }
     }
 
@@ -456,6 +466,7 @@ impl SnappyRefApp {
                     board,
                     placements: self.canvas.committed_placements(),
                     annotations: Vec::new(),
+                    groups: self.canvas.groups().to_vec(),
                     stack_order: Vec::new(),
                     viewport: self.canvas.viewport_state(),
                 });
@@ -484,6 +495,7 @@ impl SnappyRefApp {
             board: board.clone(),
             placements: Vec::new(),
             annotations: Vec::new(),
+            groups: Vec::new(),
             stack_order: Vec::new(),
             viewport: crate::data::ViewportState::default(),
         };
@@ -624,6 +636,7 @@ impl SnappyRefApp {
                     board,
                     placements: self.canvas.committed_placements(),
                     annotations: self.canvas.annotations(),
+                    groups: self.canvas.groups().to_vec(),
                     stack_order: self.canvas.canvas_stack_order(),
                     viewport: self.canvas.viewport_state(),
                 }
@@ -1158,6 +1171,25 @@ impl SnappyRefApp {
             return;
         }
 
+        if ctx.input(|i| i.key_pressed(egui::Key::G)) {
+            let modifiers = ctx.input(|i| i.modifiers);
+            if modifiers.command && modifiers.shift {
+                self.canvas.ungroup_selected();
+            } else if modifiers.command
+                && let Some(library) = &self.library
+            {
+                if let Err(error) = self.canvas.create_group(library.allocate_document_id()) {
+                    self.status = error;
+                }
+            } else if !modifiers.alt && !modifiers.shift {
+                self.canvas.open_group_picker();
+            }
+            return;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.canvas.leave_group_member_editing();
+        }
+
         let select_all_requested =
             ctx.input(|input| input.modifiers.command && input.key_pressed(egui::Key::A));
         if select_all_requested {
@@ -1528,6 +1560,8 @@ impl SnappyRefApp {
     }
 
     fn delete_selected_items_from_board(&mut self, screen_rect: egui::Rect) {
+        let before_groups = self.canvas.groups().to_vec();
+        let before_all = self.canvas.committed_placements();
         let before_items = self
             .canvas
             .selected_placement_ids()
@@ -1545,7 +1579,7 @@ impl SnappyRefApp {
         let mut context = self.active_board_command_context(viewport_world);
         match crate::active_board::commands::delete_selected_from_board(&mut context) {
             Ok(Some(status)) => {
-                let placement_changes = before_items
+                let mut placement_changes: Vec<_> = before_items
                     .into_iter()
                     .map(|placement| {
                         let mut archived = placement.clone();
@@ -1556,6 +1590,21 @@ impl SnappyRefApp {
                         }
                     })
                     .collect();
+                placement_changes.extend(
+                    self.canvas
+                        .pending_document_changes_preview()
+                        .updated_placements
+                        .iter()
+                        .filter_map(|state| {
+                            let after = self.canvas.placement_for_id(state.id)?;
+                            let before =
+                                before_all.iter().find(|p| p.state.id == state.id)?.clone();
+                            Some(HistoryChange {
+                                before: Some(before),
+                                after: Some(after),
+                            })
+                        }),
+                );
                 let annotation_changes = before_annotations
                     .into_iter()
                     .map(|annotation| {
@@ -1577,7 +1626,11 @@ impl SnappyRefApp {
                             before: Some(before_stack_order),
                             after: Some(self.canvas.canvas_stack_order()),
                         }),
-                    ),
+                    )
+                    .with_groups(Some(HistoryChange {
+                        before: Some(before_groups),
+                        after: Some(self.canvas.groups().to_vec()),
+                    })),
                 );
                 self.persist_recorded_canvas_changes();
                 self.refresh_board_summaries();
@@ -1876,6 +1929,7 @@ impl crate::active_board::load::ActiveBoardLoadHost for SnappyRefApp {
 
     fn clear_canvas_for_active_board_load(&mut self) {
         self.canvas.clear_for_board_switch();
+        self.load_groups();
     }
 
     fn load_active_board_viewport(&mut self) {

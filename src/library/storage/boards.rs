@@ -191,6 +191,7 @@ pub(super) fn restore_board_document_rows(
                 snapshot.board.id
             )
         })?;
+    super::groups::replace_board_groups(transaction, snapshot.board.id, &snapshot.groups)?;
     for annotation in &snapshot.annotations {
         super::annotations::upsert_board_annotation(
             transaction,
@@ -313,10 +314,12 @@ impl Library {
         let stack_order =
             super::stack_order::load_canvas_stack_order_for_board_id(&transaction, board_id)?;
 
+        let groups = super::groups::load_groups_for_board_id(&transaction, board_id)?;
         let snapshot = crate::data::BoardDocumentSnapshot {
             board,
             placements,
             annotations,
+            groups,
             stack_order,
             viewport,
         };

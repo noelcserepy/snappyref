@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::data::{Asset, CanvasAnnotation, CanvasStackItem, Placement};
+use crate::data::{Asset, CanvasAnnotation, CanvasStackItem, Group, Placement};
 
 #[derive(Clone, Default)]
 pub(crate) struct DocumentHistory {
@@ -43,6 +43,7 @@ pub(crate) struct DocumentHistoryAction {
     pub(crate) placements: Vec<HistoryChange<Placement>>,
     pub(crate) annotations: Vec<HistoryChange<CanvasAnnotation>>,
     pub(crate) stack_order: Option<HistoryChange<Vec<CanvasStackItem>>>,
+    pub(crate) groups: Option<HistoryChange<Vec<Group>>>,
 }
 
 impl HistoryAction {
@@ -57,7 +58,15 @@ impl HistoryAction {
             placements,
             annotations,
             stack_order,
+            groups: None,
         })
+    }
+
+    pub(crate) fn with_groups(mut self, groups: Option<HistoryChange<Vec<Group>>>) -> Self {
+        if let Self::Document(action) = &mut self {
+            action.groups = groups;
+        }
+        self
     }
 
     pub(crate) fn label(&self) -> &str {
@@ -248,6 +257,30 @@ impl DocumentHistory {
             .and_then(|change| change.after.clone())
     }
 
+    pub(crate) fn accepted_groups(&self, board_id: i64) -> Option<Vec<Group>> {
+        let history = self.histories_by_board.get(&board_id)?;
+        let change = |action: &HistoryAction, direction| match action {
+            HistoryAction::Document(action) => action
+                .groups
+                .as_ref()
+                .and_then(|change| change.target(direction)),
+            _ => None,
+        };
+        // Reverted actions override earlier accepted state, just as snapshot replay does.
+        history
+            .redo_stack
+            .iter()
+            .rev()
+            .find_map(|action| change(action, HistoryDirection::Backward))
+            .or_else(|| {
+                history
+                    .undo_stack
+                    .iter()
+                    .rev()
+                    .find_map(|action| change(action, HistoryDirection::Forward))
+            })
+    }
+
     pub(crate) fn accepted_stack_order(&self, board_id: i64) -> Option<Vec<CanvasStackItem>> {
         self.histories_by_board
             .get(&board_id)?
@@ -396,6 +429,13 @@ fn apply_document_action(
             document.annotations.push(target);
         }
     }
+    if let Some(groups) = action
+        .groups
+        .as_ref()
+        .and_then(|change| change.target(direction))
+    {
+        document.groups = groups;
+    }
     if let Some(stack_order) = action
         .stack_order
         .as_ref()
@@ -423,6 +463,8 @@ enum StoredHistoryAction {
         placements: Vec<StoredHistoryChange<StoredPlacement>>,
         annotations: Vec<StoredHistoryChange<StoredAnnotation>>,
         stack_order: Option<StoredHistoryChange<Vec<(String, i64)>>>,
+        #[serde(default)]
+        groups: Option<StoredHistoryChange<Vec<crate::library::storage::StoredGroup>>>,
     },
     Created {
         document: StoredBoardDocument,
@@ -481,6 +523,8 @@ struct StoredAnnotation {
 struct StoredBoardDocument {
     board_id: i64,
     board_name: String,
+    #[serde(default)]
+    groups: Vec<crate::library::storage::StoredGroup>,
     placements: Vec<StoredPlacement>,
     annotations: Vec<StoredAnnotation>,
     stack_order: Vec<(String, i64)>,
@@ -565,6 +609,20 @@ impl From<&HistoryAction> for StoredHistoryAction {
         match action {
             HistoryAction::Document(action) => Self::Document {
                 label: action.label.clone(),
+                groups: action.groups.as_ref().map(|change| StoredHistoryChange {
+                    before: change.before.as_ref().map(|groups| {
+                        groups
+                            .iter()
+                            .map(crate::library::storage::StoredGroup::from)
+                            .collect()
+                    }),
+                    after: change.after.as_ref().map(|groups| {
+                        groups
+                            .iter()
+                            .map(crate::library::storage::StoredGroup::from)
+                            .collect()
+                    }),
+                }),
                 placements: action.placements.iter().map(stored_change).collect(),
                 annotations: action.annotations.iter().map(stored_change).collect(),
                 stack_order: action
@@ -662,6 +720,7 @@ impl StoredHistoryAction {
                 placements,
                 annotations,
                 stack_order,
+                groups,
             } => HistoryAction::document(
                 label,
                 placements
@@ -675,7 +734,17 @@ impl StoredHistoryAction {
                 stack_order
                     .map(|change| change.into_stack_change())
                     .transpose()?,
-            ),
+            )
+            .with_groups(groups.map(|change| {
+                HistoryChange {
+                    before: change
+                        .before
+                        .map(|groups| groups.into_iter().map(Group::from).collect()),
+                    after: change
+                        .after
+                        .map(|groups| groups.into_iter().map(Group::from).collect()),
+                }
+            })),
             Self::Created {
                 document,
                 active_before,
@@ -832,6 +901,11 @@ impl From<&crate::data::BoardDocumentSnapshot> for StoredBoardDocument {
         Self {
             board_id: document.board.id,
             board_name: document.board.name.clone(),
+            groups: document
+                .groups
+                .iter()
+                .map(crate::library::storage::StoredGroup::from)
+                .collect(),
             placements: document
                 .placements
                 .iter()
@@ -857,6 +931,7 @@ impl StoredBoardDocument {
         assets: &HashMap<i64, Asset>,
     ) -> Result<crate::data::BoardDocumentSnapshot, String> {
         Ok(crate::data::BoardDocumentSnapshot {
+            groups: self.groups.into_iter().map(Group::from).collect(),
             board: crate::data::Board {
                 id: self.board_id,
                 name: self.board_name,
