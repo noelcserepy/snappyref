@@ -500,6 +500,16 @@ impl Library {
                     PRIMARY KEY (board_id, item_kind, item_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS document_identity (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    high_watermark INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS board_groups (
+                    board_id INTEGER PRIMARY KEY REFERENCES boards(id),
+                    payload TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS board_document_history (
                     id      INTEGER PRIMARY KEY CHECK (id = 1),
                     payload TEXT NOT NULL

@@ -25,6 +25,10 @@ pub(crate) struct CanvasDocumentState {
     pub(crate) rendered_placements: Vec<RenderedPlacement>,
     pub(super) annotations: Vec<CanvasAnnotation>,
     pub(super) stack_order: Vec<CanvasStackItem>,
+    pub(super) groups: Vec<crate::data::Group>,
+    pub(super) groups_dirty: bool,
+    pub(super) selected_group_ids: Vec<i64>,
+    pub(super) editing_group_id: Option<i64>,
     pub(super) selected_placement_ids: Vec<i64>,
     pub(super) selected_annotation_ids: Vec<i64>,
     pub(super) dirty_placement_ids: Vec<i64>,
@@ -49,6 +53,11 @@ pub(crate) enum ActiveGesture {
 
 #[derive(Default)]
 pub(crate) struct CanvasInteractionState {
+    pub(super) group_controls_start: Option<crate::data::Group>,
+    pub(super) group_gesture: Option<super::groups::GroupGesture>,
+    pub(super) group_transform_changed: bool,
+    pub(super) group_picker: Option<super::groups::GroupPicker>,
+    pub(super) last_group_destination: Option<i64>,
     pub(super) editing_text_annotation_id: Option<i64>,
     pub(super) focus_text_editor: bool,
     pub(crate) gesture: Option<ActiveGesture>,

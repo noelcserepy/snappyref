@@ -1,6 +1,7 @@
 mod annotation;
 mod asset;
 mod geometry;
+mod group;
 mod placement;
 mod session;
 
@@ -11,6 +12,7 @@ pub use annotation::{
 pub use asset::Asset;
 pub(crate) use geometry::rotated_display_size;
 pub use geometry::{RectGeometry, SegmentGeometry};
+pub use group::{Group, GroupFlow, GroupId};
 pub use placement::{
     Board, BoardDocumentSnapshot, BoardSummary, CanvasStackItem, ContentResolutionSource,
     Placement, PlacementContent, PlacementId, PlacementLifecycle, PlacementState,

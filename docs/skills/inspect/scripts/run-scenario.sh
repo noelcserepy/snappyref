@@ -15,6 +15,7 @@ fi
 if [[ "$scenario" == "--help" || "$scenario" == "-h" ]]; then
   echo "usage: $0 <scenario>"
   echo "scenarios:"
+  echo "  group-operations"
   echo "  check-harness"
   echo "  search-drag-to-canvas"
   echo "  semantic-search-install"
@@ -40,6 +41,7 @@ if [[ "$scenario" == "--help" || "$scenario" == "-h" ]]; then
 fi
 
 if [[ "$scenario" == "--list" ]]; then
+  echo "group-operations"
   echo "check-harness"
   echo "search-drag-to-canvas"
   echo "semantic-search-install"
@@ -66,6 +68,9 @@ fi
 
 test_args=""
 case "$scenario" in
+  group-operations)
+    test_filter="inspect_group_operations_writes_artifact"
+    ;;
   search-drag-to-canvas)
     test_filter="inspect_search_result_drag_to_canvas_writes_artifact"
     ;;

@@ -517,7 +517,8 @@ pub(super) fn handle_input(
             }
             Some(ActiveGesture::PlacementTransform(transform_state)) => match transform_state {
                 PlacementTransformState::Resizing { placement_id, .. } => {
-                    state.mark_dirty(placement_id)
+                    state.mark_dirty(placement_id);
+                    state.reflow_group_for_member(placement_id);
                 }
                 PlacementTransformState::Scaling { placement_ids, .. }
                 | PlacementTransformState::Rotating { placement_ids, .. } => {
@@ -545,6 +546,7 @@ pub(super) fn handle_input(
             Some(ActiveGesture::PlacementDrag(drag_state)) => {
                 if drag_state.moved {
                     for item in drag_state.starting_items {
+                        state.finish_group_member_drag(item.id);
                         state.mark_dirty(item.id);
                     }
                 }
@@ -560,6 +562,12 @@ pub(super) fn handle_input(
         && let Some(pointer_pos) = pointer_pos
         && let Some(placement_id) = hit_test_placement(state, rect, pointer_pos)
     {
+        if let Some(id) = state.group_for_member(placement_id) {
+            state.document.editing_group_id = Some(id);
+            state.document.selected_group_ids.clear();
+            state.set_single_selection(placement_id);
+            return;
+        }
         if !state.is_selected(placement_id) {
             state.set_single_selection(placement_id);
         }

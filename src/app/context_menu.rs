@@ -95,11 +95,29 @@ impl SnappyRefApp {
     pub(super) fn context_menu_items(&self) -> Vec<ContextMenuItem> {
         let selected_item_count = self.canvas.selected_placement_ids().len();
         let selected_annotation_count = self.canvas.selected_annotation_ids().len();
-        let has_selection = selected_item_count > 0 || selected_annotation_count > 0;
+        let has_selection = self.canvas.has_selection();
         let has_selected_image = selected_item_count > 0;
         let exactly_one_image_only = selected_item_count == 1 && selected_annotation_count == 0;
 
         vec![
+            ContextMenuItem {
+                action: ContextMenuAction::Group,
+                label: "Group",
+                shortcut: Some(platform_shortcut_label("⌘G", "Ctrl+G")),
+                enabled: has_selected_image,
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::Ungroup,
+                label: "Ungroup",
+                shortcut: Some(platform_shortcut_label("⌘⇧G", "Ctrl+Shift+G")),
+                enabled: !self.canvas.selected_group_ids().is_empty(),
+            },
+            ContextMenuItem {
+                action: ContextMenuAction::AddToGroup,
+                label: "Add to group",
+                shortcut: Some("G"),
+                enabled: has_selected_image,
+            },
             ContextMenuItem {
                 action: ContextMenuAction::Copy,
                 label: "Copy",
@@ -169,6 +187,17 @@ impl SnappyRefApp {
         }
 
         match action {
+            ContextMenuAction::Group => {
+                if let Some(library) = &self.library {
+                    if let Err(error) = self.canvas.create_group(library.allocate_document_id()) {
+                        self.status = error;
+                    }
+                }
+            }
+            ContextMenuAction::Ungroup => {
+                self.canvas.ungroup_selected();
+            }
+            ContextMenuAction::AddToGroup => self.canvas.open_group_picker(),
             ContextMenuAction::Copy => self.copy_selection_to_context_clipboard(ctx),
             ContextMenuAction::Paste => self.handle_clipboard_paste_from_context(ctx, screen_rect),
             ContextMenuAction::Duplicate => self.duplicate_selection_with_gap(),
