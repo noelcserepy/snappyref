@@ -19,27 +19,15 @@ pub fn install_url_drop_bridge(cc: &eframe::CreationContext<'_>) {
 }
 
 pub fn hovered() -> NativeDropPayload {
-    #[cfg(target_os = "windows")]
-    return platform::hovered();
-    #[cfg(not(target_os = "windows"))]
     let mut payload = platform::hovered();
-    #[cfg(not(target_os = "windows"))]
-    {
-        payload.screen_pos = payload.screen_pos.or_else(platform::cursor_screen_pos);
-        payload
-    }
+    payload.screen_pos = payload.screen_pos.or_else(platform::cursor_screen_pos);
+    payload
 }
 
 pub fn take_drop() -> NativeDropPayload {
-    #[cfg(target_os = "windows")]
-    return platform::take_drop();
-    #[cfg(not(target_os = "windows"))]
     let mut payload = platform::take_drop();
-    #[cfg(not(target_os = "windows"))]
-    {
-        payload.screen_pos = payload.screen_pos.or_else(platform::cursor_screen_pos);
-        payload
-    }
+    payload.screen_pos = payload.screen_pos.or_else(platform::cursor_screen_pos);
+    payload
 }
 
 pub fn cursor_screen_pos() -> Option<eframe::egui::Pos2> {

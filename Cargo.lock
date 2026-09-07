@@ -4857,6 +4857,8 @@ dependencies = [
  "turbojpeg",
  "url",
  "usvg",
+ "windows",
+ "windows-core",
  "windows-sys 0.61.2",
  "winit",
  "winresource",
