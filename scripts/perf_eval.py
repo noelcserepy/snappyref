@@ -114,6 +114,12 @@ def evaluate(directory, samples, tree, launch_unix_ms, expected):
     quiet = [row for row in samples if idle + 5000 <= row['elapsed_ms'] < idle + 15000]
     state = background_state(directory / 'library')
     validate_run(summary, events, quiet, state, expected)
+    quiet_tree_main = [row for row in tree if row['role'] == 'main'
+                       and idle + 5000 <= row['elapsed_ms'] < idle + 15000]
+    if len(quiet_tree_main) < 30 or quiet_tree_main[-1]['elapsed_ms'] - quiet_tree_main[0]['elapsed_ms'] < 9000:
+        raise ValueError('process-tree sampling window is incomplete')
+    if not tree or tree[0]['elapsed_ms'] > 1000:
+        raise ValueError('process-tree sampling missed startup')
     def since_launch(name):
         return markers[name]['elapsed_ms'] + offset if name in markers else None
     metrics = {
@@ -256,6 +262,9 @@ def compare(baseline, candidate):
         after = candidate['cases'][case]
         if before['metrics'].keys() != after['metrics'].keys():
             raise ValueError(f'metric coverage differs for {case}')
+        required = set(BUDGETS) - {'launch_to_first_visible_ms', 'queue_to_all_visible_ms'}
+        if not required <= before['metrics'].keys():
+            raise ValueError(f'missing required metrics for {case}')
         for metric, values in before['metrics'].items():
             old, new = values['median'], after['metrics'][metric]['median']
             if not all(math.isfinite(value) and value >= 0 for value in (old, new)):

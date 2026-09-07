@@ -39,6 +39,12 @@ class EvaluationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 compare(before, after)
 
+    def test_comparison_refuses_missing_metrics_even_when_both_sides_match(self):
+        report = self.report()
+        report['cases']['import-1']['metrics'].pop('peak_tree_rss_bytes')
+        with self.assertRaises(ValueError):
+            compare(report, report)
+
     def test_cpu_uses_elapsed_time_and_handles_ps_day_format(self):
         self.assertEqual(cpu_seconds('1-02:03:04.50'), 93784.5)
         self.assertAlmostEqual(cpu_percent([
