@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 mod document;
 mod geometry;
+mod groups;
 pub(crate) mod guide_snap;
 mod interaction;
 mod render;
@@ -94,6 +95,7 @@ pub struct CanvasDocumentChanges {
     pub updated_annotations: Vec<CanvasAnnotation>,
     pub archived_annotation_ids: Vec<i64>,
     pub stack_order: Option<Vec<crate::data::CanvasStackItem>>,
+    pub groups: Option<Vec<crate::data::Group>>,
 }
 
 impl CanvasDocumentChanges {
@@ -103,6 +105,7 @@ impl CanvasDocumentChanges {
             || !self.updated_annotations.is_empty()
             || !self.archived_annotation_ids.is_empty()
             || self.stack_order.is_some()
+            || self.groups.is_some()
     }
 }
 
@@ -763,12 +766,20 @@ pub fn show(
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(8));
     }
-    let toolbar_rect = editing_textbox_toolbar_rect(ui, state, rect)
+    let toolbar_rect = state
+        .show_group_controls(ui, rect)
+        .or_else(|| editing_textbox_toolbar_rect(ui, state, rect))
         .or_else(|| annotation_style_toolbar_rect(ui, state, rect));
     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
     match input_policy {
         CanvasInputPolicy::Full => {
-            handle_input(ui, rect, input_rect, toolbar_rect, state, &response);
+            if state.interaction.group_picker.is_none()
+                && !state.handle_group_pointer(ui, rect, input_rect, toolbar_rect)
+            {
+                let origins = state.group_transform_origins();
+                handle_input(ui, rect, input_rect, toolbar_rect, state, &response);
+                state.follow_group_member_transforms(origins);
+            }
         }
         CanvasInputPolicy::ViewportOnly => {
             state.interaction.end_gesture();
@@ -784,6 +795,8 @@ pub fn show(
 
     painter.rect_filled(rect, 0.0, crate::ui::theme::BACKGROUND);
     paint_background(&painter, rect, state);
+    state.paint_groups(&painter, rect);
+    state.show_group_picker(ui.ctx());
     let image_pass = paint_canvas_items(
         &painter,
         ui,

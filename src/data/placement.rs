@@ -24,6 +24,7 @@ pub struct BoardDocumentSnapshot {
     pub board: Board,
     pub placements: Vec<Placement>,
     pub annotations: Vec<CanvasAnnotation>,
+    pub groups: Vec<super::Group>,
     pub stack_order: Vec<CanvasStackItem>,
     pub viewport: ViewportState,
 }

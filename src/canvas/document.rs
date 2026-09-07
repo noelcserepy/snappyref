@@ -501,7 +501,9 @@ impl CanvasState {
     }
 
     pub fn has_selection(&self) -> bool {
-        self.has_placement_selection() || !self.document.selected_annotation_ids.is_empty()
+        !self.document.selected_group_ids.is_empty()
+            || self.has_placement_selection()
+            || !self.document.selected_annotation_ids.is_empty()
     }
 
     pub fn has_placement_selection(&self) -> bool {
@@ -979,6 +981,7 @@ impl CanvasState {
         self.document.rendered_placements.clear();
         self.document.annotations.clear();
         self.document.stack_order.clear();
+        self.restore_groups(Vec::new());
         self.document.selected_placement_ids.clear();
         self.document.selected_annotation_ids.clear();
         self.document.dirty_placement_ids.clear();
@@ -1025,8 +1028,14 @@ impl CanvasState {
             .stack_order_dirty
             .then(|| self.committed_canvas_items_back_to_front());
         self.document.stack_order_dirty = false;
+        let groups = self
+            .document
+            .groups_dirty
+            .then(|| self.document.groups.clone());
+        self.document.groups_dirty = false;
 
         CanvasDocumentChanges {
+            groups,
             updated_placements,
             archived_placement_ids: std::mem::take(
                 &mut self.document.pending_archived_placement_ids,
@@ -1070,6 +1079,10 @@ impl CanvasState {
             .collect();
 
         CanvasDocumentChanges {
+            groups: self
+                .document
+                .groups_dirty
+                .then(|| self.document.groups.clone()),
             updated_placements,
             archived_placement_ids: self.document.pending_archived_placement_ids.clone(),
             updated_annotations,
@@ -1281,6 +1294,8 @@ impl CanvasState {
     }
 
     pub fn select_content(&mut self, placement_ids: &[i64], annotation_ids: &[i64]) {
+        self.document.selected_group_ids.clear();
+        self.document.editing_group_id = None;
         self.finish_textbox_edit();
         self.document.selected_placement_ids = placement_ids
             .iter()
@@ -1311,6 +1326,7 @@ impl CanvasState {
         let placement_ids = self.all_placement_ids();
         let annotation_ids = self.all_annotation_ids();
         self.select_content(&placement_ids, &annotation_ids);
+        self.document.selected_group_ids = self.groups().iter().map(|g| g.id).collect();
     }
 
     pub fn arrange_selected_horizontal(&mut self, gap: f32) -> usize {
@@ -1472,6 +1488,7 @@ impl CanvasState {
             return Vec::new();
         }
 
+        self.remove_group_members(placement_ids);
         let mut removed_ids = Vec::new();
         let mut removed_committed = false;
         self.document.rendered_placements.retain(|image| {
@@ -1563,6 +1580,8 @@ impl CanvasState {
         self.finish_textbox_edit();
         self.document.selected_placement_ids.clear();
         self.document.selected_placement_ids.push(placement_id);
+        self.document.selected_group_ids.clear();
+        self.expand_group_selection();
         self.document.selected_annotation_ids.clear();
         self.interaction.editing_text_annotation_id = None;
         self.interaction.end_transform_gesture();
@@ -1574,6 +1593,7 @@ impl CanvasState {
         if !self.document.selected_placement_ids.contains(&placement_id) {
             self.document.selected_placement_ids.push(placement_id);
         }
+        self.expand_group_selection();
         self.interaction.end_transform_gesture();
         self.prune_cached_pixels_to_selected_items();
     }
@@ -1592,6 +1612,8 @@ impl CanvasState {
     }
 
     pub(super) fn clear_selection(&mut self) {
+        self.document.selected_group_ids.clear();
+        self.document.editing_group_id = None;
         self.finish_textbox_edit();
         self.document.selected_placement_ids.clear();
         self.document.selected_annotation_ids.clear();
@@ -1617,6 +1639,10 @@ impl CanvasState {
         } else {
             annotation_ids
         };
+        if !additive {
+            self.document.selected_group_ids.clear();
+        }
+        self.expand_group_selection();
         self.interaction.editing_text_annotation_id = None;
         self.interaction.end_transform_gesture();
         self.prune_cached_pixels_to_selected_items();
@@ -2193,6 +2219,14 @@ impl CanvasState {
 
     pub fn selected_world_bounds(&self) -> Option<egui::Rect> {
         let mut selected_rect = self.selected_bounds_world();
+        for group in self
+            .groups()
+            .iter()
+            .filter(|g| self.document.selected_group_ids.contains(&g.id))
+        {
+            let bounds = group.container.unrotated_bounds();
+            selected_rect = Some(selected_rect.map_or(bounds, |existing| existing.union(bounds)));
+        }
 
         for annotation in self.selected_annotations() {
             let annotation_rect = annotation_world_rect(annotation);

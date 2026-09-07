@@ -24,6 +24,9 @@ pub(super) enum SupportedShortcutAction {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ContextMenuAction {
+    Group,
+    Ungroup,
+    AddToGroup,
     Copy,
     Paste,
     Duplicate,
@@ -89,6 +92,24 @@ pub(crate) const fn platform_shortcut_label(
 }
 
 pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
+    SupportedShortcut {
+        action: "Group selection",
+        keys: platform_shortcut_label("⌘G", "Ctrl+G"),
+        binding: None,
+        shortcut_action: None,
+    },
+    SupportedShortcut {
+        action: "Ungroup selection",
+        keys: platform_shortcut_label("⌘⇧G", "Ctrl+Shift+G"),
+        binding: None,
+        shortcut_action: None,
+    },
+    SupportedShortcut {
+        action: "Add to group",
+        keys: "G",
+        binding: None,
+        shortcut_action: None,
+    },
     SupportedShortcut {
         action: "Copy selection",
         keys: platform_shortcut_label("⌘C", "Ctrl+C"),

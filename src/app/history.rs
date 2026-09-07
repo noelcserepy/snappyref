@@ -252,6 +252,7 @@ impl SnappyRefApp {
         self.canvas.clear_for_board_switch();
         self.active_board_id = document.board.id;
         self.canvas.apply_viewport_state(&document.viewport);
+        self.canvas.restore_groups(document.groups.clone());
         for placement in &document.placements {
             self.canvas.add_unresolved_placement(placement.clone());
         }
@@ -296,6 +297,14 @@ impl SnappyRefApp {
             document_changes.updated_placements.push(target.state);
         }
 
+        if let Some(groups) = action
+            .groups
+            .as_ref()
+            .and_then(|change| change.target(direction))
+        {
+            self.canvas.restore_groups(groups.clone());
+            document_changes.groups = Some(groups);
+        }
         if let Some(change) = &action.stack_order {
             let target = change.target(direction);
             if let Some(stack_order) = target {
@@ -409,6 +418,21 @@ impl SnappyRefApp {
                 after: Some(annotation),
             })
             .collect();
+        let groups = self
+            .canvas
+            .pending_document_changes_preview()
+            .groups
+            .map(|after| HistoryChange {
+                before: self
+                    .document_history
+                    .accepted_groups(self.active_board_id)
+                    .or_else(|| {
+                        self.library
+                            .as_ref()
+                            .and_then(|library| library.load_groups().ok())
+                    }),
+                after: Some(after),
+            });
         self.document_history.record_applied(
             self.active_board_id,
             HistoryAction::document(
@@ -419,12 +443,14 @@ impl SnappyRefApp {
                     before: Some(before_stack_order),
                     after: Some(self.canvas.canvas_stack_order()),
                 }),
-            ),
+            )
+            .with_groups(groups),
         );
         self.persist_recorded_canvas_changes();
     }
 
     pub(super) fn record_pending_document_changes_history(&mut self, label: &str) {
+        self.canvas.reflow_dirty_group_members();
         let Some(library) = &self.library else {
             return;
         };
@@ -449,17 +475,14 @@ impl SnappyRefApp {
                             .find(|placement| placement.state.id == after.id)
                             .cloned()
                     });
-                let asset = before
+                let mut placement = before
                     .as_ref()
-                    .and_then(|before| before.loaded_asset().cloned())
-                    .or_else(|| {
-                        self.canvas
-                            .placement_for_id(after.id)
-                            .and_then(|current| current.loaded_asset().cloned())
-                    })?;
+                    .cloned()
+                    .or_else(|| self.canvas.placement_for_id(after.id))?;
+                placement.state = after;
                 Some(HistoryChange {
                     before,
-                    after: Some(crate::data::Placement::loaded(after, asset)),
+                    after: Some(placement),
                 })
             })
             .collect::<Vec<_>>();
@@ -490,6 +513,13 @@ impl SnappyRefApp {
             after: Some(after),
         });
 
+        let groups = changes.groups.map(|after| HistoryChange {
+            before: self
+                .document_history
+                .accepted_groups(self.active_board_id)
+                .or_else(|| library.load_groups().ok()),
+            after: Some(after),
+        });
         self.document_history.record_applied(
             self.active_board_id,
             HistoryAction::document(
@@ -497,7 +527,8 @@ impl SnappyRefApp {
                 placement_changes,
                 annotation_changes,
                 stack_order,
-            ),
+            )
+            .with_groups(groups),
         );
     }
 }

@@ -17,6 +17,7 @@ impl Library {
         let history_payload = history.encode()?;
         let mut connection = self.connection()?;
         let transaction = write_transaction(&mut connection, "Board durability")?;
+        self.persist_document_identity(&transaction)?;
 
         match operation {
             BoardDurabilityOperation::Document { board_id, changes } => {
@@ -109,6 +110,9 @@ fn persist_document_changes(
             annotation,
             annotation.archived,
         )?;
+    }
+    if let Some(groups) = &changes.groups {
+        super::groups::replace_board_groups(transaction, board_id, groups)?;
     }
     if let Some(stack_order) = &changes.stack_order {
         super::stack_order::replace_board_stack_order(transaction, board_id, stack_order)?;
