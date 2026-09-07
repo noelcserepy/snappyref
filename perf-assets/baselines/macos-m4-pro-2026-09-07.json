@@ -10,6 +10,7 @@
     "memory_bytes": "25769803776",
     "corpus_sha256": "23687a94cbb0f63a5d3b71c12890a5e6b361f0ba2f0241c7c61a6173d2b878d6",
     "model_sha256": "c217be5d5b8a0501ad198c40700d65e8d68377525cdf41790c7bef788339f769",
+    "measurement_version": 1,
     "power_source": "Now drawing from 'AC Power'",
     "sampling_interval_ms": 200,
     "idle_hold_seconds": 20,
@@ -21,15 +22,14 @@
     "build": "release/default-features",
     "cache": "fresh process; OS filesystem cache uncontrolled",
     "helper_policy": "shipping defaults",
-    "fixture_version": 1,
-    "measurement_version": 1
+    "fixture_version": 1
   },
   "source": {
-    "commit": "4b6e5df9f9876e177eebd617f417e64aff8404b5",
+    "commit": "ba4ee57abaf528215fc9fd61e8621e7838b57745",
     "dirty": false,
     "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "binary_sha256": "65bf30708d5626ed2e587879a9176a2c14ab63fed259111aaf8d0fb0dd0121f2",
-    "evaluator_sha256": "6c7135526d964a786095c92b1a03afd966e1cb2858f388c96fc4f7c0df8e0f58"
+    "binary_sha256": "e44380d504706206557dc0490d5394aa07f2a38b9a007cff92c7a0b5905c4ae5",
+    "evaluator_sha256": "f35e85ac42ac8914394a357abd8bab48b49164f2a8a4baae9273df91af3e8b69"
   },
   "cases": {
     "import-1": {
@@ -37,24 +37,24 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 168.757909171875,
-          "min": 143.55714746875,
-          "max": 186.998667984375
+          "median": 166.43487401562498,
+          "min": 135.590286140625,
+          "max": 191.438885734375
         },
         "launch_to_first_visible_ms": {
-          "median": 269.437992171875,
-          "min": 238.06585546875,
-          "max": 295.152667984375
+          "median": 269.181874015625,
+          "min": 235.504828140625,
+          "max": 291.918468734375
         },
         "queue_to_all_visible_ms": {
-          "median": 102.61220900000001,
-          "min": 95.47945800000001,
-          "max": 110.388625
+          "median": 101.25791600000001,
+          "min": 101.068834,
+          "max": 104.484375
         },
         "launch_to_idle_ms": {
-          "median": 1017.672076171875,
-          "min": 969.36606346875,
-          "max": 1051.353208984375
+          "median": 1015.867208015625,
+          "min": 958.744119140625,
+          "max": 1040.099427734375
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
@@ -62,14 +62,14 @@
           "max": 0.0
         },
         "quiescent_rss_bytes": {
-          "median": 123650048,
-          "min": 105676800.0,
-          "max": 130629632
+          "median": 128909312,
+          "min": 126844928.0,
+          "max": 131825664.0
         },
         "peak_tree_rss_bytes": {
-          "median": 396001280,
-          "min": 385843200,
-          "max": 415219712
+          "median": 400424960,
+          "min": 395460608,
+          "max": 404701184
         }
       }
     },
@@ -78,39 +78,39 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 183.886495125,
-          "min": 152.844188484375,
-          "max": 187.2957109375
+          "median": 149.052933578125,
+          "min": 144.4908876875,
+          "max": 180.521646484375
         },
         "launch_to_first_visible_ms": {
-          "median": 213.3813359375,
-          "min": 178.861938484375,
-          "max": 224.550828125
+          "median": 160.908350578125,
+          "min": 159.48655468750002,
+          "max": 207.651730484375
         },
         "queue_to_all_visible_ms": {
-          "median": 549.00975,
-          "min": 528.189167,
-          "max": 621.810542
+          "median": 527.8839589999999,
+          "min": 524.7478749999999,
+          "max": 534.9085
         },
         "launch_to_idle_ms": {
-          "median": 2283.468661125,
-          "min": 2254.339771484375,
-          "max": 2350.0600439375
+          "median": 2236.1583466875,
+          "min": 2212.574933578125,
+          "max": 2288.7400634843752
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
           "min": 0.0,
-          "max": 0.6225436223023142
+          "max": 0.0
         },
         "quiescent_rss_bytes": {
-          "median": 115933184.0,
-          "min": 114425856,
-          "max": 181141504
+          "median": 157892608,
+          "min": 146587648.0,
+          "max": 183664640
         },
         "peak_tree_rss_bytes": {
-          "median": 659521536,
-          "min": 563412992,
-          "max": 725368832
+          "median": 684785664,
+          "min": 626622464,
+          "max": 745603072
         }
       }
     },
@@ -119,24 +119,24 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 148.28430859375,
-          "min": 141.328671875,
-          "max": 172.747208984375
+          "median": 158.251485359375,
+          "min": 136.699162109375,
+          "max": 232.173283203125
         },
         "launch_to_first_visible_ms": {
-          "median": 251.87326659375,
-          "min": 243.748588875,
-          "max": 273.828958984375
+          "median": 250.983985359375,
+          "min": 236.476829109375,
+          "max": 344.046158203125
         },
         "queue_to_all_visible_ms": {
-          "median": 4117.629125,
-          "min": 4110.518208,
-          "max": 4118.081416
+          "median": 4117.005958,
+          "min": 4102.892124999999,
+          "max": 4117.156333
         },
         "launch_to_idle_ms": {
-          "median": 5573.562088875,
-          "min": 5565.23430859375,
-          "max": 5596.896750984375
+          "median": 5581.209526359375,
+          "min": 5550.130704109375,
+          "max": 5632.8102832031245
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
@@ -144,14 +144,14 @@
           "max": 0.0
         },
         "quiescent_rss_bytes": {
-          "median": 115736576,
-          "min": 114278400.0,
-          "max": 131514368.0
+          "median": 129875968,
+          "min": 114999296.0,
+          "max": 132841472
         },
         "peak_tree_rss_bytes": {
-          "median": 484392960,
-          "min": 413581312,
-          "max": 487866368
+          "median": 481280000,
+          "min": 407814144,
+          "max": 486883328
         }
       }
     },
@@ -160,24 +160,24 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 149.7167314375,
-          "min": 126.796708015625,
-          "max": 164.6854765625
+          "median": 141.176898453125,
+          "min": 134.8220283125,
+          "max": 144.862884765625
         },
         "launch_to_first_visible_ms": {
-          "median": 165.1424394375,
-          "min": 139.111249015625,
-          "max": 188.0632265625
+          "median": 166.161564453125,
+          "min": 153.6811953125,
+          "max": 167.618009765625
         },
         "queue_to_all_visible_ms": {
-          "median": 234.57725,
-          "min": 233.041458,
-          "max": 236.443375
+          "median": 237.00937499999998,
+          "min": 236.52666700000003,
+          "max": 240.272334
         },
         "launch_to_idle_ms": {
-          "median": 1191.5601064375,
-          "min": 1165.6272910156251,
-          "max": 1228.6763105625
+          "median": 1210.386009765625,
+          "min": 1181.2527783125,
+          "max": 1216.285648453125
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
@@ -185,14 +185,14 @@
           "max": 0.0
         },
         "quiescent_rss_bytes": {
-          "median": 123305984,
-          "min": 107053056,
-          "max": 129712128
+          "median": 123699200.0,
+          "min": 102203392,
+          "max": 146636800.0
         },
         "peak_tree_rss_bytes": {
-          "median": 445300736,
-          "min": 426557440,
-          "max": 454672384
+          "median": 444301312,
+          "min": 434094080,
+          "max": 448724992
         }
       }
     },
@@ -201,39 +201,39 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 168.3703671875,
-          "min": 124.38280760937499,
-          "max": 181.128796875
+          "median": 144.121151359375,
+          "min": 138.525853515625,
+          "max": 146.586441421875
         },
         "launch_to_first_visible_ms": {
-          "median": 184.0621171875,
-          "min": 135.455016609375,
-          "max": 213.897088875
+          "median": 157.763818359375,
+          "min": 151.316353515625,
+          "max": 170.812691421875
         },
         "queue_to_all_visible_ms": {
-          "median": 16.171166,
-          "min": 11.597874999999998,
-          "max": 33.275042
+          "median": 14.187833000000001,
+          "min": 13.361208000000001,
+          "max": 25.105041
         },
         "launch_to_idle_ms": {
-          "median": 909.6791591875,
-          "min": 855.6910576093751,
-          "max": 935.4480468749999
+          "median": 891.560151359375,
+          "min": 877.991686515625,
+          "max": 913.304482421875
         },
         "quiescent_cpu_percent": {
-          "median": 5.213095810995535,
-          "min": 4.861111975668066,
-          "max": 5.673320996923533
+          "median": 5.828238001119434,
+          "min": 5.521580759791982,
+          "max": 6.190419097186349
         },
         "quiescent_rss_bytes": {
-          "median": 104841216.0,
-          "min": 103727104,
-          "max": 107560960
+          "median": 108347392.0,
+          "min": 104054784,
+          "max": 110051328.0
         },
         "peak_tree_rss_bytes": {
-          "median": 353222656,
-          "min": 351453184,
-          "max": 355041280
+          "median": 360022016,
+          "min": 355663872,
+          "max": 366051328
         }
       }
     },
@@ -242,65 +242,24 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 146.009744140625,
-          "min": 115.067903328125,
-          "max": 183.09564746875
+          "median": 150.82025878125,
+          "min": 137.640608390625,
+          "max": 163.808912109375
         },
         "launch_to_first_visible_ms": {
-          "median": 171.326827140625,
-          "min": 128.677611328125,
-          "max": 215.79285546875
+          "median": 167.67596678125,
+          "min": 150.563233390625,
+          "max": 187.633245109375
         },
         "queue_to_all_visible_ms": {
-          "median": 25.871459,
-          "min": 14.138082999999998,
-          "max": 33.434250000000006
+          "median": 17.622374999999998,
+          "min": 13.504458000000001,
+          "max": 24.337874999999997
         },
         "launch_to_idle_ms": {
-          "median": 896.599327140625,
-          "min": 855.427111328125,
-          "max": 942.64739746875
-        },
-        "quiescent_cpu_percent": {
-          "median": 0.0,
-          "min": 0.0,
-          "max": 0.2085804894360091
-        },
-        "quiescent_rss_bytes": {
-          "median": 103284736.0,
-          "min": 101138432,
-          "max": 105578496.0
-        },
-        "peak_tree_rss_bytes": {
-          "median": 358023168,
-          "min": 345931776,
-          "max": 365133824
-        }
-      }
-    },
-    "static-20": {
-      "valid": true,
-      "repeats": 3,
-      "metrics": {
-        "launch_to_first_frame_ms": {
-          "median": 142.436099625,
-          "min": 135.009368171875,
-          "max": 192.612730484375
-        },
-        "launch_to_first_visible_ms": {
-          "median": 163.033849625,
-          "min": 147.667284171875,
-          "max": 225.199605484375
-        },
-        "queue_to_all_visible_ms": {
-          "median": 582.0111670000001,
-          "min": 523.764416,
-          "max": 608.117542
-        },
-        "launch_to_idle_ms": {
-          "median": 2291.942724625,
-          "min": 2192.612159171875,
-          "max": 2296.619855484375
+          "median": 909.4479257812501,
+          "min": 877.080817390625,
+          "max": 921.516745109375
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
@@ -308,14 +267,14 @@
           "max": 0.0
         },
         "quiescent_rss_bytes": {
-          "median": 149192704.0,
-          "min": 125157376.0,
-          "max": 191086592.0
+          "median": 102252544.0,
+          "min": 101089280,
+          "max": 105021440.0
         },
         "peak_tree_rss_bytes": {
-          "median": 581189632,
-          "min": 578928640,
-          "max": 719912960
+          "median": 351207424,
+          "min": 346030080,
+          "max": 363036672
         }
       }
     },
@@ -324,29 +283,29 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 156.771817375,
-          "min": 126.856003921875,
-          "max": 193.716092765625
+          "median": 144.782098625,
+          "min": 130.0567998125,
+          "max": 220.0702578125
         },
         "launch_to_idle_ms": {
-          "median": 1421.309567375,
-          "min": 1391.389336921875,
-          "max": 1467.3677597656251
+          "median": 1404.464140625,
+          "min": 1394.7664248125,
+          "max": 1484.1775488125
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
           "min": 0.0,
-          "max": 0.0
+          "max": 0.10241084604613543
         },
         "quiescent_rss_bytes": {
-          "median": 100843520.0,
-          "min": 95813632.0,
-          "max": 108134400.0
+          "median": 102318080,
+          "min": 101482496,
+          "max": 105955328.0
         },
         "peak_tree_rss_bytes": {
-          "median": 100892672,
-          "min": 100777984,
-          "max": 108265472
+          "median": 104497152,
+          "min": 101531648,
+          "max": 106086400
         }
       }
     },
@@ -355,19 +314,19 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 169.86308984375,
-          "min": 120.561101578125,
-          "max": 272.064495109375
+          "median": 141.476809578125,
+          "min": 139.213385734375,
+          "max": 174.046389640625
         },
         "launch_to_first_visible_ms": {
-          "median": 169.94192284375,
-          "min": 120.767101578125,
-          "max": 272.113704109375
+          "median": 141.562976578125,
+          "min": 139.264385734375,
+          "max": 174.117848640625
         },
         "launch_to_idle_ms": {
-          "median": 1510.37008984375,
-          "min": 1442.348309578125,
-          "max": 1609.912662109375
+          "median": 1461.195177734375,
+          "min": 1455.7474765781249,
+          "max": 1504.2804736406251
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
@@ -375,14 +334,14 @@
           "max": 0.0
         },
         "quiescent_rss_bytes": {
-          "median": 115638272.0,
-          "min": 115245056,
-          "max": 120520704.0
+          "median": 118996992.0,
+          "min": 115048448,
+          "max": 119013376
         },
         "peak_tree_rss_bytes": {
-          "median": 115769344,
-          "min": 115376128,
-          "max": 120668160
+          "median": 119095296,
+          "min": 115097600,
+          "max": 119177216
         }
       }
     },
@@ -391,19 +350,19 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 156.728238265625,
-          "min": 116.682371109375,
-          "max": 157.712130859375
+          "median": 145.181982421875,
+          "min": 135.324347640625,
+          "max": 176.14423340625
         },
         "launch_to_first_visible_ms": {
-          "median": 156.958780265625,
-          "min": 116.755412109375,
-          "max": 157.919755859375
+          "median": 145.268857421875,
+          "min": 135.397389640625,
+          "max": 176.20935840625
         },
         "launch_to_idle_ms": {
-          "median": 1513.323738265625,
-          "min": 1472.285579109375,
-          "max": 1563.805213859375
+          "median": 1495.638649421875,
+          "min": 1478.032639640625,
+          "max": 1541.29398340625
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
@@ -411,14 +370,14 @@
           "max": 0.0
         },
         "quiescent_rss_bytes": {
-          "median": 143294464.0,
-          "min": 132694016,
-          "max": 156794880
+          "median": 145588224.0,
+          "min": 131596288,
+          "max": 157335552
         },
         "peak_tree_rss_bytes": {
-          "median": 156893184,
-          "min": 154599424,
-          "max": 169377792
+          "median": 157679616,
+          "min": 155140096,
+          "max": 170557440
         }
       }
     },
@@ -427,19 +386,19 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 142.82934278125,
-          "min": 134.71644824999998,
-          "max": 155.496932625
+          "median": 140.67917676562502,
+          "min": 127.99851365625,
+          "max": 167.331651359375
         },
         "launch_to_first_visible_ms": {
-          "median": 142.90621778125,
-          "min": 134.82732325,
-          "max": 155.643015625
+          "median": 140.779259765625,
+          "min": 128.19280565625,
+          "max": 167.528026359375
         },
         "launch_to_idle_ms": {
-          "median": 1645.209140625,
-          "min": 1642.20500878125,
-          "max": 1661.1110732500001
+          "median": 1653.83201365625,
+          "min": 1629.261384765625,
+          "max": 1679.776443359375
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
@@ -447,13 +406,13 @@
           "max": 0.0
         },
         "quiescent_rss_bytes": {
-          "median": 195444736,
-          "min": 123797504.0,
-          "max": 221921280.0
+          "median": 217366528.0,
+          "min": 184942592,
+          "max": 220495872
         },
         "peak_tree_rss_bytes": {
-          "median": 231309312,
-          "min": 219201536,
+          "median": 230260736,
+          "min": 220495872,
           "max": 232062976
         }
       }
@@ -463,19 +422,19 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 149.722734390625,
-          "min": 146.117935546875,
-          "max": 174.01021484375
+          "median": 125.576369125,
+          "min": 120.0817168125,
+          "max": 133.324150390625
         },
         "launch_to_first_visible_ms": {
-          "median": 149.889609390625,
-          "min": 146.19918554687501,
-          "max": 174.09513184375
+          "median": 125.662786125,
+          "min": 120.2067168125,
+          "max": 133.429484390625
         },
         "launch_to_idle_ms": {
-          "median": 3562.3486445468748,
-          "min": 3554.807525390625,
-          "max": 3875.72142384375
+          "median": 3542.940286125,
+          "min": 3471.8368418125,
+          "max": 3549.899400390625
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
@@ -483,14 +442,14 @@
           "max": 0.0
         },
         "quiescent_rss_bytes": {
-          "median": 439566336,
-          "min": 210337792.0,
-          "max": 440467456
+          "median": 453246976.0,
+          "min": 427130880,
+          "max": 453443584
         },
         "peak_tree_rss_bytes": {
-          "median": 456065024,
-          "min": 451641344,
-          "max": 472956928
+          "median": 470925312,
+          "min": 467173376,
+          "max": 472694784
         }
       }
     },
@@ -499,29 +458,29 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 185.1306279375,
-          "min": 114.723894515625,
-          "max": 200.8331904375
+          "median": 117.788479484375,
+          "min": 110.283106453125,
+          "max": 166.923376953125
         },
         "launch_to_idle_ms": {
-          "median": 1450.4850029375,
-          "min": 1387.964228515625,
-          "max": 1500.1866484375
+          "median": 1391.885604484375,
+          "min": 1378.0605644531252,
+          "max": 1433.985126953125
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
           "min": 0.0,
-          "max": 0.2063694308338403
+          "max": 0.0
         },
         "quiescent_rss_bytes": {
-          "median": 101122048,
-          "min": 99860480.0,
-          "max": 102973440.0
+          "median": 101695488,
+          "min": 101433344,
+          "max": 102400000.0
         },
         "peak_tree_rss_bytes": {
-          "median": 102383616,
-          "min": 101302272,
-          "max": 103153664
+          "median": 101826560,
+          "min": 101564416,
+          "max": 102531072
         }
       }
     },
@@ -530,29 +489,29 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 151.653203109375,
-          "min": 123.96892578125,
-          "max": 199.645364265625
+          "median": 124.459667984375,
+          "min": 121.53658496875,
+          "max": 130.777762703125
         },
         "launch_to_idle_ms": {
-          "median": 1417.174120109375,
-          "min": 1384.87667578125,
-          "max": 1469.8629472656248
+          "median": 1391.015887703125,
+          "min": 1380.72945996875,
+          "max": 1398.922667984375
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
           "min": 0.0,
-          "max": 0.10295512524295619
+          "max": 0.0
         },
         "quiescent_rss_bytes": {
-          "median": 104423424.0,
-          "min": 101564416.0,
-          "max": 104857600.0
+          "median": 102973440.0,
+          "min": 102170624.0,
+          "max": 103514112.0
         },
         "peak_tree_rss_bytes": {
-          "median": 104906752,
-          "min": 101679104,
-          "max": 105889792
+          "median": 103022592,
+          "min": 102268928,
+          "max": 103628800
         }
       }
     },
@@ -561,34 +520,34 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 157.68541015625,
-          "min": 113.796359390625,
-          "max": 164.80791309375
+          "median": 113.309036140625,
+          "min": 111.39787107812501,
+          "max": 142.078296890625
         },
         "launch_to_first_visible_ms": {
-          "median": 157.73845115625,
-          "min": 113.846859390625,
-          "max": 164.86458009375
+          "median": 113.356494140625,
+          "min": 111.448121078125,
+          "max": 142.121712890625
         },
         "launch_to_idle_ms": {
-          "median": 2763.19912109375,
-          "min": 2721.958109390625,
-          "max": 2790.49095115625
+          "median": 2730.3164521406247,
+          "min": 2703.068121078125,
+          "max": 2843.1957548906253
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
           "min": 0.0,
-          "max": 0.0
+          "max": 0.20703046293896996
         },
         "quiescent_rss_bytes": {
-          "median": 118063104.0,
-          "min": 117080064.0,
-          "max": 119652352
+          "median": 118210560.0,
+          "min": 117866496,
+          "max": 127238144.0
         },
         "peak_tree_rss_bytes": {
-          "median": 230260736,
-          "min": 229146624,
-          "max": 232701952
+          "median": 229670912,
+          "min": 216825856,
+          "max": 239435776
         }
       }
     },
@@ -597,34 +556,34 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 159.402419921875,
-          "min": 131.644180671875,
-          "max": 166.54482325
+          "median": 125.1141796875,
+          "min": 121.031115234375,
+          "max": 127.251850578125
         },
         "launch_to_first_visible_ms": {
-          "median": 159.452960921875,
-          "min": 131.694263671875,
-          "max": 166.59311525
+          "median": 125.1652216875,
+          "min": 121.084323234375,
+          "max": 127.308392578125
         },
         "launch_to_idle_ms": {
-          "median": 8370.431585921875,
-          "min": 8287.900013671875,
-          "max": 8447.91036525
+          "median": 8168.678823234375,
+          "min": 8116.9324296875,
+          "max": 24345.132725578125
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
           "min": 0.0,
-          "max": 0.10231774679410167
+          "max": 0.1016644848410577
         },
         "quiescent_rss_bytes": {
-          "median": 113557504.0,
-          "min": 88932352,
-          "max": 114352128.0
+          "median": 114868224.0,
+          "min": 109838336,
+          "max": 126517248
         },
         "peak_tree_rss_bytes": {
-          "median": 223657984,
-          "min": 219824128,
-          "max": 225083392
+          "median": 225378304,
+          "min": 218824704,
+          "max": 240058368
         }
       }
     },
@@ -633,14 +592,14 @@
       "repeats": 3,
       "metrics": {
         "launch_to_first_frame_ms": {
-          "median": 156.9444404375,
-          "min": 134.354328140625,
-          "max": 199.306648421875
+          "median": 152.740333015625,
+          "min": 143.753171875,
+          "max": 162.385578140625
         },
         "launch_to_idle_ms": {
-          "median": 18453.404119140625,
-          "min": 18440.8758574375,
-          "max": 18476.796107421873
+          "median": 18474.810212875,
+          "min": 18441.751833015627,
+          "max": 18477.171244140623
         },
         "quiescent_cpu_percent": {
           "median": 0.0,
@@ -648,25 +607,294 @@
           "max": 0.0
         },
         "quiescent_rss_bytes": {
-          "median": 90832896.0,
-          "min": 83460096,
-          "max": 100417536
+          "median": 101990400.0,
+          "min": 100794368,
+          "max": 110903296.0
         },
         "peak_tree_rss_bytes": {
-          "median": 437534720,
-          "min": 436568064,
-          "max": 443351040
+          "median": 443465728,
+          "min": 436371456,
+          "max": 453853184
+        }
+      }
+    },
+    "static-20": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 189.980068359375,
+          "min": 173.93762696875,
+          "max": 300.381380859375
+        },
+        "launch_to_first_visible_ms": {
+          "median": 216.963152359375,
+          "min": 192.48058496875,
+          "max": 351.15558885937503
+        },
+        "queue_to_all_visible_ms": {
+          "median": 663.440583,
+          "min": 577.500375,
+          "max": 679.6965829999999
+        },
+        "launch_to_idle_ms": {
+          "median": 2403.487443359375,
+          "min": 2326.95641796875,
+          "max": 2621.4996718593748
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.5157375818675766
+        },
+        "quiescent_rss_bytes": {
+          "median": 165675008,
+          "min": 92930048.0,
+          "max": 193511424.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 659488768,
+          "min": 591478784,
+          "max": 797802496
         }
       }
     }
   },
+  "acquisition": {
+    "reports": [
+      "perf-assets/runs/refactor-baseline-complete-20260907/evaluation.json",
+      "perf-assets/runs/static-timeout-repro-20260907/evaluation.json",
+      "perf-assets/runs/refactor-baseline-remaining-20260907/evaluation.json"
+    ],
+    "selection": "Retain every completed non-static trial in the interrupted suite. Replace the entire static-20 case with its three-trial replay. Complete each remaining board/library case with one further trial. All reports have identical source, binary, evaluator and measurement contract.",
+    "rejected_trials": [
+      {
+        "case": "static-20",
+        "repeat": 3,
+        "valid": false,
+        "error": "static-20 exceeded 180s",
+        "artifact": "/Users/noelcserepy/dev/snappyref/perf-assets/runs/refactor-baseline-complete-20260907/static-20-r3"
+      }
+    ],
+    "superseded_valid_trials": [
+      "/Users/noelcserepy/dev/snappyref/perf-assets/runs/refactor-baseline-complete-20260907/static-20-r1",
+      "/Users/noelcserepy/dev/snappyref/perf-assets/runs/refactor-baseline-complete-20260907/static-20-r2"
+    ],
+    "limitation": "One static-20 trial timed out after all 20 placements painted and demand embeddings completed. No settled-idle marker arrived. Three unchanged-binary repeats passed. Background callback delay is suspected, not proven. The original evaluation remains invalid; no timeout was converted into a passing trial.",
+    "trials": [
+      {
+        "case": "import-1",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/import-1-r1"
+      },
+      {
+        "case": "import-20",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/import-20-r1"
+      },
+      {
+        "case": "trickle-import",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/trickle-import-r1"
+      },
+      {
+        "case": "format:png",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/format:png-r1"
+      },
+      {
+        "case": "animated",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/animated-r1"
+      },
+      {
+        "case": "animated-control",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/animated-control-r1"
+      },
+      {
+        "case": "board-0",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-0-r1"
+      },
+      {
+        "case": "board-1",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-1-r1"
+      },
+      {
+        "case": "board-20",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-20-r1"
+      },
+      {
+        "case": "board-100",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-100-r1"
+      },
+      {
+        "case": "board-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-1000-r1"
+      },
+      {
+        "case": "library-100",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-100-r1"
+      },
+      {
+        "case": "library-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-1000-r1"
+      },
+      {
+        "case": "library-100-board-100",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-100-board-100-r1"
+      },
+      {
+        "case": "library-1000-board-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-1000-board-1000-r1"
+      },
+      {
+        "case": "library-20-backfill",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-20-backfill-r1"
+      },
+      {
+        "case": "import-1",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/import-1-r2"
+      },
+      {
+        "case": "import-20",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/import-20-r2"
+      },
+      {
+        "case": "trickle-import",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/trickle-import-r2"
+      },
+      {
+        "case": "format:png",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/format:png-r2"
+      },
+      {
+        "case": "animated",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/animated-r2"
+      },
+      {
+        "case": "animated-control",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/animated-control-r2"
+      },
+      {
+        "case": "board-0",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-0-r2"
+      },
+      {
+        "case": "board-1",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-1-r2"
+      },
+      {
+        "case": "board-20",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-20-r2"
+      },
+      {
+        "case": "board-100",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-100-r2"
+      },
+      {
+        "case": "board-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-1000-r2"
+      },
+      {
+        "case": "library-100",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-100-r2"
+      },
+      {
+        "case": "library-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-1000-r2"
+      },
+      {
+        "case": "library-100-board-100",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-100-board-100-r2"
+      },
+      {
+        "case": "library-1000-board-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-1000-board-1000-r2"
+      },
+      {
+        "case": "library-20-backfill",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-20-backfill-r2"
+      },
+      {
+        "case": "import-1",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/import-1-r3"
+      },
+      {
+        "case": "import-20",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/import-20-r3"
+      },
+      {
+        "case": "trickle-import",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/trickle-import-r3"
+      },
+      {
+        "case": "format:png",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/format:png-r3"
+      },
+      {
+        "case": "animated",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/animated-r3"
+      },
+      {
+        "case": "animated-control",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/animated-control-r3"
+      },
+      {
+        "case": "static-20",
+        "artifact": "perf-assets/runs/static-timeout-repro-20260907/static-20-r1"
+      },
+      {
+        "case": "static-20",
+        "artifact": "perf-assets/runs/static-timeout-repro-20260907/static-20-r2"
+      },
+      {
+        "case": "static-20",
+        "artifact": "perf-assets/runs/static-timeout-repro-20260907/static-20-r3"
+      },
+      {
+        "case": "board-0",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/board-0-r1"
+      },
+      {
+        "case": "board-1",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/board-1-r1"
+      },
+      {
+        "case": "board-20",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/board-20-r1"
+      },
+      {
+        "case": "board-100",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/board-100-r1"
+      },
+      {
+        "case": "board-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/board-1000-r1"
+      },
+      {
+        "case": "library-100",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/library-100-r1"
+      },
+      {
+        "case": "library-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/library-1000-r1"
+      },
+      {
+        "case": "library-100-board-100",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/library-100-board-100-r1"
+      },
+      {
+        "case": "library-1000-board-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/library-1000-board-1000-r1"
+      },
+      {
+        "case": "library-20-backfill",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/library-20-backfill-r1"
+      }
+    ]
+  },
   "recorded_on": "2026-09-07",
-  "raw_artifacts": "perf-assets/runs/refactor-baseline-20260907-verified",
+  "raw_artifacts": "perf-assets/runs/refactor-baseline-published-20260907",
   "behavior": {
-    "library_tests_passed": 639,
+    "library_tests_passed": 652,
     "networked_tests_ignored": 2,
-    "inspect_scenarios": 11,
-    "inspect_assertions": 67,
+    "inspect_scenarios": 12,
+    "inspect_assertions": 82,
     "release_helper_checks": [
       "release helper downscales and transfers exact pixels",
       "release helper rejects corrupt image"
@@ -674,12 +902,44 @@
     "evaluation_tests_passed": 18
   },
   "notes": [
-    "Fresh processes; OS file cache uncontrolled. Shipping release defaults on AC power.",
-    "Animated imports remain selected and animate, so their CPU is not a resting-board target.",
-    "Memory ranges include allocator/OS variation. Budget crossings require confirmation.",
-    "Two networked tests and Windows/native input checks were not run.",
-    "Baseline includes the cached-index completion fix found by the repeated-import evaluation."
+    "Includes main commit ce7faf8 and its auto-layout groups feature.",
+    "Fresh processes; OS filesystem cache uncontrolled. Shipping defaults on AC power.",
+    "Animated imports remain selected and animate; their CPU is not a resting-board target.",
+    "RSS ranges include allocator/OS variation. Overlapping budget crossings are inconclusive.",
+    "Windows, native external input, and two networked tests were not run.",
+    "One acquisition timed out without an idle marker. See acquisition for the rejected trial and unchanged-binary replay."
   ],
+  "comparison_calibration": {
+    "reference_commit": "356ff2aceba8983e33be235dba35361700703989",
+    "reference_file": "perf-assets/baselines/macos-m4-pro-2026-09-07.json",
+    "application_commit": "4b6e5df9f9876e177eebd617f417e64aff8404b5",
+    "result": {
+      "trials": 6,
+      "same_binary": true,
+      "status": "inconclusive",
+      "metrics_within_budget": 13,
+      "inconclusive": [
+        {
+          "case": "import-20",
+          "metric": "quiescent_rss_bytes",
+          "before": 115933184.0,
+          "after": 143048704.0,
+          "before_range": [
+            114425856,
+            181141504
+          ],
+          "after_range": [
+            121012224.0,
+            179126272.0
+          ],
+          "allowance": 16777216,
+          "status": "inconclusive"
+        }
+      ],
+      "raw_artifacts": "perf-assets/runs/refactor-baseline-control-20260907"
+    },
+    "note": "Earlier unchanged-binary calibration, before the auto-layout feature merged. This final baseline was then refreshed against main."
+  },
   "comparison_checks": [
     {
       "check": "identical",
@@ -692,36 +952,6 @@
     {
       "check": "missing scenario",
       "exit_code": 2
-    },
-    {
-      "check": "unchanged binary with overlapping RSS ranges",
-      "exit_code": 2
     }
-  ],
-  "analysis_note": "Comparison policy and metadata organization changed after acquisition. Numeric metrics unchanged; original acquisition reports retained beside raw runs.",
-  "control_replay": {
-    "trials": 6,
-    "same_binary": true,
-    "status": "inconclusive",
-    "metrics_within_budget": 13,
-    "inconclusive": [
-      {
-        "case": "import-20",
-        "metric": "quiescent_rss_bytes",
-        "before": 115933184.0,
-        "after": 143048704.0,
-        "before_range": [
-          114425856,
-          181141504
-        ],
-        "after_range": [
-          121012224.0,
-          179126272.0
-        ],
-        "allowance": 16777216,
-        "status": "inconclusive"
-      }
-    ],
-    "raw_artifacts": "perf-assets/runs/refactor-baseline-control-20260907"
-  }
+  ]
 }
