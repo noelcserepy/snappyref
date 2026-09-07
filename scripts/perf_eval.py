@@ -325,6 +325,10 @@ def main():
     if not model_files:
         raise ValueError('no installed models; pass --models with the installed model directory')
     contract = dict(platform=platform.platform(), cpu=output('sysctl', '-n', 'machdep.cpu.brand_string'),
+                    rustc=output('rustc', '--version'), turbojpeg=output('pkg-config', '--modversion', 'libturbojpeg'),
+                    build_overrides={key: value for key, value in os.environ.items()
+                                     if key in ('RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_TARGET')
+                                     or key.startswith('CARGO_PROFILE_RELEASE_')},
                     memory_bytes=output('sysctl', '-n', 'hw.memsize'),
                     corpus_sha256=fingerprint(corpus_files), model_sha256=fingerprint(model_files),
                     evaluator_sha256=fingerprint([(name, ROOT / 'scripts' / name) for name in
@@ -340,7 +344,7 @@ def main():
                   source=dict(commit=output('git', 'rev-parse', 'HEAD'),
                               dirty=bool(output('git', 'status', '--porcelain')),
                               diff_sha256=hashlib.sha256(output('git', 'diff', 'HEAD').encode()).hexdigest(),
-                              binary_sha256=fingerprint([('snappyref', binary)]), rustc=output('rustc', '--version')),
+                              binary_sha256=fingerprint([('snappyref', binary)])),
                   runs=[], cases={})
     report_path = directory / 'evaluation.json'
     write_json(report_path, report)

@@ -66,7 +66,8 @@ scripts/run-perf-format-suite.sh jpg png webp
 
 `import-1` uses the medium JPEG. `import-20` uses the mixed 20-file corpus.
 `trickle-import` queues the same file three times, two seconds apart, to check
-reuse of the embedding helper. `static-20` cycles nonanimated corpus files.
+cached embedding completion and return to idle. Deduplication means the later
+placements reuse an asset; this case does not prove repeated model inference. `static-20` cycles nonanimated corpus files.
 `animated-control` uses the manifest's static controls. Animation follows
 shipping interaction rules; a quiet, unselected animated image does not have
 to advance. Inspect `last_canvas_frame.active_animated_images` in the raw

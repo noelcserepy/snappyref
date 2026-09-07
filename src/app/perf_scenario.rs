@@ -45,6 +45,8 @@ pub(super) struct PerfScenarioState {
     pub(super) expected_imports: usize,
     pub(super) loaded_imports: usize,
     pub(super) visible_imports: usize,
+    /// Like the search controller, count one outstanding request per Asset.
+    pub(super) pending_embedding_asset_ids: std::collections::HashSet<i64>,
     pub(super) demand_embeddings_queued: usize,
     pub(super) demand_embeddings_done: usize,
     pub(super) first_loaded_logged: bool,
@@ -167,6 +169,7 @@ impl PerfScenarioState {
             expected_imports: 0,
             loaded_imports: 0,
             visible_imports: 0,
+            pending_embedding_asset_ids: Default::default(),
             demand_embeddings_queued: 0,
             demand_embeddings_done: 0,
             first_loaded_logged: false,
@@ -718,6 +721,9 @@ impl SnappyRefApp {
                         }
                     }
                     crate::search::SemanticPerfEvent::ImportEmbeddingFinished { asset_id } => {
+                        if !scenario.pending_embedding_asset_ids.remove(&asset_id) {
+                            continue;
+                        }
                         scenario.demand_embeddings_done += 1;
                         let metadata = scenario.asset_by_asset_id.get(&asset_id).cloned();
                         let (format_value, source_file) = match &metadata {
@@ -748,6 +754,7 @@ impl SnappyRefApp {
                 }
             }
             if scenario.demand_embeddings_queued > 0
+                && scenario.loaded_imports >= scenario.expected_imports
                 && scenario.pending_trickle_imports.is_empty()
                 && scenario.demand_embeddings_done >= scenario.demand_embeddings_queued
                 && !scenario.all_embeddings_done_logged

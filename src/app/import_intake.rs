@@ -844,7 +844,10 @@ impl SnappyRefApp {
             );
         }
         if let Some((asset_id, original_path)) = indexed_asset {
-            if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
+            if perf_counts_as_import
+                && let Some(scenario) = &mut self.perf_scenario
+                && scenario.pending_embedding_asset_ids.insert(asset_id)
+            {
                 scenario.demand_embeddings_queued += 1;
                 let metadata = scenario.asset_by_asset_id.get(&asset_id).cloned();
                 let (format_value, source_file) = match &metadata {
