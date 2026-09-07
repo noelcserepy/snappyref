@@ -266,14 +266,28 @@ def compare(baseline, candidate):
         if not required <= before['metrics'].keys():
             raise ValueError(f'missing required metrics for {case}')
         for metric, values in before['metrics'].items():
-            old, new = values['median'], after['metrics'][metric]['median']
-            if not all(math.isfinite(value) and value >= 0 for value in (old, new)):
-                raise ValueError('nonfinite or negative comparison metric')
+            candidate_values = after['metrics'][metric]
+            for stats in (values, candidate_values):
+                if not all(math.isfinite(value) and value >= 0 for value in stats.values()):
+                    raise ValueError('nonfinite or negative comparison metric')
+                if not stats['min'] <= stats['median'] <= stats['max']:
+                    raise ValueError('median lies outside the observed range')
+            old, new = values['median'], candidate_values['median']
             relative, absolute = BUDGETS[metric]
             limit = max(old * relative, absolute)
+            status = 'pass'
+            if new - old > limit:
+                # A median shift inside the observed spread is not enough
+                # evidence to blame a refactor. Require another measurement.
+                status = 'regression' if candidate_values['min'] > values['max'] else 'inconclusive'
             changes.append(dict(case=case, metric=metric, before=old, after=new,
-                                allowance=limit, regression=new-old > limit))
-    return dict(passed=not any(change['regression'] for change in changes), changes=changes)
+                                before_range=[values['min'], values['max']],
+                                after_range=[candidate_values['min'], candidate_values['max']],
+                                allowance=limit, status=status))
+    statuses = {change['status'] for change in changes}
+    status = 'regression' if 'regression' in statuses else 'inconclusive' if 'inconclusive' in statuses else 'pass'
+    return dict(status=status, changes=changes)
+
 
 
 def main():
@@ -297,9 +311,9 @@ def main():
         result = compare(json.loads(args.baseline.read_text()), json.loads(args.candidate.read_text()))
         if args.output:
             write_json(args.output, result)
-        failures = [change for change in result['changes'] if change['regression']]
-        print(json.dumps(dict(passed=result['passed'], regressions=failures), indent=2))
-        return 0 if result['passed'] else 1
+        findings = [change for change in result['changes'] if change['status'] != 'pass']
+        print(json.dumps(dict(status=result['status'], findings=findings), indent=2))
+        return {'pass': 0, 'regression': 1, 'inconclusive': 2}[result['status']]
     if sys.platform != 'darwin':
         raise ValueError('this sampler currently supports macOS only')
     # One local sampler at a time; overlapping runs contaminate CPU/RSS timings.
@@ -324,6 +338,8 @@ def main():
     model_files = [(str(path.relative_to(args.models)), path) for path in args.models.rglob('*') if path.is_file()]
     if not model_files:
         raise ValueError('no installed models; pass --models with the installed model directory')
+    # Version the meaning of measurements, not the comparison policy. Script
+    # hashes remain provenance so analysis changes can reuse recorded samples.
     contract = dict(platform=platform.platform(), cpu=output('sysctl', '-n', 'machdep.cpu.brand_string'),
                     rustc=output('rustc', '--version'), turbojpeg=output('pkg-config', '--modversion', 'libturbojpeg'),
                     build_overrides={key: value for key, value in os.environ.items()
@@ -331,8 +347,7 @@ def main():
                                      or key.startswith('CARGO_PROFILE_RELEASE_')},
                     memory_bytes=output('sysctl', '-n', 'hw.memsize'),
                     corpus_sha256=fingerprint(corpus_files), model_sha256=fingerprint(model_files),
-                    evaluator_sha256=fingerprint([(name, ROOT / 'scripts' / name) for name in
-                        ['perf_eval.py', '_perf_sampling.py', '_perf_library_seed.py']]),
+                    measurement_version=1,
                     power_source=output('pmset', '-g', 'batt').splitlines()[0],
                     sampling_interval_ms=200, idle_hold_seconds=20, external_stop_after_idle_ms=17000, quiescent_window_ms=[5000, 15000],
                     build='release/default-features', cache='fresh process; OS filesystem cache uncontrolled',
@@ -344,7 +359,9 @@ def main():
                   source=dict(commit=output('git', 'rev-parse', 'HEAD'),
                               dirty=bool(output('git', 'status', '--porcelain')),
                               diff_sha256=hashlib.sha256(output('git', 'diff', 'HEAD').encode()).hexdigest(),
-                              binary_sha256=fingerprint([('snappyref', binary)])),
+                              binary_sha256=fingerprint([('snappyref', binary)]),
+                              evaluator_sha256=fingerprint([(name, ROOT / 'scripts' / name) for name in
+                                  ['perf_eval.py', '_perf_sampling.py', '_perf_library_seed.py']])),
                   runs=[], cases={})
     report_path = directory / 'evaluation.json'
     write_json(report_path, report)

@@ -1,0 +1,727 @@
+{
+  "schema": 1,
+  "valid": true,
+  "contract": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "cpu": "Apple M4 Pro",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "turbojpeg": "3.2.0",
+    "build_overrides": {},
+    "memory_bytes": "25769803776",
+    "corpus_sha256": "23687a94cbb0f63a5d3b71c12890a5e6b361f0ba2f0241c7c61a6173d2b878d6",
+    "model_sha256": "c217be5d5b8a0501ad198c40700d65e8d68377525cdf41790c7bef788339f769",
+    "power_source": "Now drawing from 'AC Power'",
+    "sampling_interval_ms": 200,
+    "idle_hold_seconds": 20,
+    "external_stop_after_idle_ms": 17000,
+    "quiescent_window_ms": [
+      5000,
+      15000
+    ],
+    "build": "release/default-features",
+    "cache": "fresh process; OS filesystem cache uncontrolled",
+    "helper_policy": "shipping defaults",
+    "fixture_version": 1,
+    "measurement_version": 1
+  },
+  "source": {
+    "commit": "4b6e5df9f9876e177eebd617f417e64aff8404b5",
+    "dirty": false,
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary_sha256": "65bf30708d5626ed2e587879a9176a2c14ab63fed259111aaf8d0fb0dd0121f2",
+    "evaluator_sha256": "6c7135526d964a786095c92b1a03afd966e1cb2858f388c96fc4f7c0df8e0f58"
+  },
+  "cases": {
+    "import-1": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 168.757909171875,
+          "min": 143.55714746875,
+          "max": 186.998667984375
+        },
+        "launch_to_first_visible_ms": {
+          "median": 269.437992171875,
+          "min": 238.06585546875,
+          "max": 295.152667984375
+        },
+        "queue_to_all_visible_ms": {
+          "median": 102.61220900000001,
+          "min": 95.47945800000001,
+          "max": 110.388625
+        },
+        "launch_to_idle_ms": {
+          "median": 1017.672076171875,
+          "min": 969.36606346875,
+          "max": 1051.353208984375
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 123650048,
+          "min": 105676800.0,
+          "max": 130629632
+        },
+        "peak_tree_rss_bytes": {
+          "median": 396001280,
+          "min": 385843200,
+          "max": 415219712
+        }
+      }
+    },
+    "import-20": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 183.886495125,
+          "min": 152.844188484375,
+          "max": 187.2957109375
+        },
+        "launch_to_first_visible_ms": {
+          "median": 213.3813359375,
+          "min": 178.861938484375,
+          "max": 224.550828125
+        },
+        "queue_to_all_visible_ms": {
+          "median": 549.00975,
+          "min": 528.189167,
+          "max": 621.810542
+        },
+        "launch_to_idle_ms": {
+          "median": 2283.468661125,
+          "min": 2254.339771484375,
+          "max": 2350.0600439375
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.6225436223023142
+        },
+        "quiescent_rss_bytes": {
+          "median": 115933184.0,
+          "min": 114425856,
+          "max": 181141504
+        },
+        "peak_tree_rss_bytes": {
+          "median": 659521536,
+          "min": 563412992,
+          "max": 725368832
+        }
+      }
+    },
+    "trickle-import": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 148.28430859375,
+          "min": 141.328671875,
+          "max": 172.747208984375
+        },
+        "launch_to_first_visible_ms": {
+          "median": 251.87326659375,
+          "min": 243.748588875,
+          "max": 273.828958984375
+        },
+        "queue_to_all_visible_ms": {
+          "median": 4117.629125,
+          "min": 4110.518208,
+          "max": 4118.081416
+        },
+        "launch_to_idle_ms": {
+          "median": 5573.562088875,
+          "min": 5565.23430859375,
+          "max": 5596.896750984375
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 115736576,
+          "min": 114278400.0,
+          "max": 131514368.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 484392960,
+          "min": 413581312,
+          "max": 487866368
+        }
+      }
+    },
+    "format:png": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 149.7167314375,
+          "min": 126.796708015625,
+          "max": 164.6854765625
+        },
+        "launch_to_first_visible_ms": {
+          "median": 165.1424394375,
+          "min": 139.111249015625,
+          "max": 188.0632265625
+        },
+        "queue_to_all_visible_ms": {
+          "median": 234.57725,
+          "min": 233.041458,
+          "max": 236.443375
+        },
+        "launch_to_idle_ms": {
+          "median": 1191.5601064375,
+          "min": 1165.6272910156251,
+          "max": 1228.6763105625
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 123305984,
+          "min": 107053056,
+          "max": 129712128
+        },
+        "peak_tree_rss_bytes": {
+          "median": 445300736,
+          "min": 426557440,
+          "max": 454672384
+        }
+      }
+    },
+    "animated": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 168.3703671875,
+          "min": 124.38280760937499,
+          "max": 181.128796875
+        },
+        "launch_to_first_visible_ms": {
+          "median": 184.0621171875,
+          "min": 135.455016609375,
+          "max": 213.897088875
+        },
+        "queue_to_all_visible_ms": {
+          "median": 16.171166,
+          "min": 11.597874999999998,
+          "max": 33.275042
+        },
+        "launch_to_idle_ms": {
+          "median": 909.6791591875,
+          "min": 855.6910576093751,
+          "max": 935.4480468749999
+        },
+        "quiescent_cpu_percent": {
+          "median": 5.213095810995535,
+          "min": 4.861111975668066,
+          "max": 5.673320996923533
+        },
+        "quiescent_rss_bytes": {
+          "median": 104841216.0,
+          "min": 103727104,
+          "max": 107560960
+        },
+        "peak_tree_rss_bytes": {
+          "median": 353222656,
+          "min": 351453184,
+          "max": 355041280
+        }
+      }
+    },
+    "animated-control": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 146.009744140625,
+          "min": 115.067903328125,
+          "max": 183.09564746875
+        },
+        "launch_to_first_visible_ms": {
+          "median": 171.326827140625,
+          "min": 128.677611328125,
+          "max": 215.79285546875
+        },
+        "queue_to_all_visible_ms": {
+          "median": 25.871459,
+          "min": 14.138082999999998,
+          "max": 33.434250000000006
+        },
+        "launch_to_idle_ms": {
+          "median": 896.599327140625,
+          "min": 855.427111328125,
+          "max": 942.64739746875
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.2085804894360091
+        },
+        "quiescent_rss_bytes": {
+          "median": 103284736.0,
+          "min": 101138432,
+          "max": 105578496.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 358023168,
+          "min": 345931776,
+          "max": 365133824
+        }
+      }
+    },
+    "static-20": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 142.436099625,
+          "min": 135.009368171875,
+          "max": 192.612730484375
+        },
+        "launch_to_first_visible_ms": {
+          "median": 163.033849625,
+          "min": 147.667284171875,
+          "max": 225.199605484375
+        },
+        "queue_to_all_visible_ms": {
+          "median": 582.0111670000001,
+          "min": 523.764416,
+          "max": 608.117542
+        },
+        "launch_to_idle_ms": {
+          "median": 2291.942724625,
+          "min": 2192.612159171875,
+          "max": 2296.619855484375
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 149192704.0,
+          "min": 125157376.0,
+          "max": 191086592.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 581189632,
+          "min": 578928640,
+          "max": 719912960
+        }
+      }
+    },
+    "board-0": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 156.771817375,
+          "min": 126.856003921875,
+          "max": 193.716092765625
+        },
+        "launch_to_idle_ms": {
+          "median": 1421.309567375,
+          "min": 1391.389336921875,
+          "max": 1467.3677597656251
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 100843520.0,
+          "min": 95813632.0,
+          "max": 108134400.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 100892672,
+          "min": 100777984,
+          "max": 108265472
+        }
+      }
+    },
+    "board-1": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 169.86308984375,
+          "min": 120.561101578125,
+          "max": 272.064495109375
+        },
+        "launch_to_first_visible_ms": {
+          "median": 169.94192284375,
+          "min": 120.767101578125,
+          "max": 272.113704109375
+        },
+        "launch_to_idle_ms": {
+          "median": 1510.37008984375,
+          "min": 1442.348309578125,
+          "max": 1609.912662109375
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 115638272.0,
+          "min": 115245056,
+          "max": 120520704.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 115769344,
+          "min": 115376128,
+          "max": 120668160
+        }
+      }
+    },
+    "board-20": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 156.728238265625,
+          "min": 116.682371109375,
+          "max": 157.712130859375
+        },
+        "launch_to_first_visible_ms": {
+          "median": 156.958780265625,
+          "min": 116.755412109375,
+          "max": 157.919755859375
+        },
+        "launch_to_idle_ms": {
+          "median": 1513.323738265625,
+          "min": 1472.285579109375,
+          "max": 1563.805213859375
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 143294464.0,
+          "min": 132694016,
+          "max": 156794880
+        },
+        "peak_tree_rss_bytes": {
+          "median": 156893184,
+          "min": 154599424,
+          "max": 169377792
+        }
+      }
+    },
+    "board-100": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 142.82934278125,
+          "min": 134.71644824999998,
+          "max": 155.496932625
+        },
+        "launch_to_first_visible_ms": {
+          "median": 142.90621778125,
+          "min": 134.82732325,
+          "max": 155.643015625
+        },
+        "launch_to_idle_ms": {
+          "median": 1645.209140625,
+          "min": 1642.20500878125,
+          "max": 1661.1110732500001
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 195444736,
+          "min": 123797504.0,
+          "max": 221921280.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 231309312,
+          "min": 219201536,
+          "max": 232062976
+        }
+      }
+    },
+    "board-1000": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 149.722734390625,
+          "min": 146.117935546875,
+          "max": 174.01021484375
+        },
+        "launch_to_first_visible_ms": {
+          "median": 149.889609390625,
+          "min": 146.19918554687501,
+          "max": 174.09513184375
+        },
+        "launch_to_idle_ms": {
+          "median": 3562.3486445468748,
+          "min": 3554.807525390625,
+          "max": 3875.72142384375
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 439566336,
+          "min": 210337792.0,
+          "max": 440467456
+        },
+        "peak_tree_rss_bytes": {
+          "median": 456065024,
+          "min": 451641344,
+          "max": 472956928
+        }
+      }
+    },
+    "library-100": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 185.1306279375,
+          "min": 114.723894515625,
+          "max": 200.8331904375
+        },
+        "launch_to_idle_ms": {
+          "median": 1450.4850029375,
+          "min": 1387.964228515625,
+          "max": 1500.1866484375
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.2063694308338403
+        },
+        "quiescent_rss_bytes": {
+          "median": 101122048,
+          "min": 99860480.0,
+          "max": 102973440.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 102383616,
+          "min": 101302272,
+          "max": 103153664
+        }
+      }
+    },
+    "library-1000": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 151.653203109375,
+          "min": 123.96892578125,
+          "max": 199.645364265625
+        },
+        "launch_to_idle_ms": {
+          "median": 1417.174120109375,
+          "min": 1384.87667578125,
+          "max": 1469.8629472656248
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.10295512524295619
+        },
+        "quiescent_rss_bytes": {
+          "median": 104423424.0,
+          "min": 101564416.0,
+          "max": 104857600.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 104906752,
+          "min": 101679104,
+          "max": 105889792
+        }
+      }
+    },
+    "library-100-board-100": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 157.68541015625,
+          "min": 113.796359390625,
+          "max": 164.80791309375
+        },
+        "launch_to_first_visible_ms": {
+          "median": 157.73845115625,
+          "min": 113.846859390625,
+          "max": 164.86458009375
+        },
+        "launch_to_idle_ms": {
+          "median": 2763.19912109375,
+          "min": 2721.958109390625,
+          "max": 2790.49095115625
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 118063104.0,
+          "min": 117080064.0,
+          "max": 119652352
+        },
+        "peak_tree_rss_bytes": {
+          "median": 230260736,
+          "min": 229146624,
+          "max": 232701952
+        }
+      }
+    },
+    "library-1000-board-1000": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 159.402419921875,
+          "min": 131.644180671875,
+          "max": 166.54482325
+        },
+        "launch_to_first_visible_ms": {
+          "median": 159.452960921875,
+          "min": 131.694263671875,
+          "max": 166.59311525
+        },
+        "launch_to_idle_ms": {
+          "median": 8370.431585921875,
+          "min": 8287.900013671875,
+          "max": 8447.91036525
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.10231774679410167
+        },
+        "quiescent_rss_bytes": {
+          "median": 113557504.0,
+          "min": 88932352,
+          "max": 114352128.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 223657984,
+          "min": 219824128,
+          "max": 225083392
+        }
+      }
+    },
+    "library-20-backfill": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 156.9444404375,
+          "min": 134.354328140625,
+          "max": 199.306648421875
+        },
+        "launch_to_idle_ms": {
+          "median": 18453.404119140625,
+          "min": 18440.8758574375,
+          "max": 18476.796107421873
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 90832896.0,
+          "min": 83460096,
+          "max": 100417536
+        },
+        "peak_tree_rss_bytes": {
+          "median": 437534720,
+          "min": 436568064,
+          "max": 443351040
+        }
+      }
+    }
+  },
+  "recorded_on": "2026-09-07",
+  "raw_artifacts": "perf-assets/runs/refactor-baseline-20260907-verified",
+  "behavior": {
+    "library_tests_passed": 639,
+    "networked_tests_ignored": 2,
+    "inspect_scenarios": 11,
+    "inspect_assertions": 67,
+    "release_helper_checks": [
+      "release helper downscales and transfers exact pixels",
+      "release helper rejects corrupt image"
+    ],
+    "evaluation_tests_passed": 18
+  },
+  "notes": [
+    "Fresh processes; OS file cache uncontrolled. Shipping release defaults on AC power.",
+    "Animated imports remain selected and animate, so their CPU is not a resting-board target.",
+    "Memory ranges include allocator/OS variation. Budget crossings require confirmation.",
+    "Two networked tests and Windows/native input checks were not run.",
+    "Baseline includes the cached-index completion fix found by the repeated-import evaluation."
+  ],
+  "comparison_checks": [
+    {
+      "check": "identical",
+      "exit_code": 0
+    },
+    {
+      "check": "synthetic slowdown",
+      "exit_code": 1
+    },
+    {
+      "check": "missing scenario",
+      "exit_code": 2
+    },
+    {
+      "check": "unchanged binary with overlapping RSS ranges",
+      "exit_code": 2
+    }
+  ],
+  "analysis_note": "Comparison policy and metadata organization changed after acquisition. Numeric metrics unchanged; original acquisition reports retained beside raw runs.",
+  "control_replay": {
+    "trials": 6,
+    "same_binary": true,
+    "status": "inconclusive",
+    "metrics_within_budget": 13,
+    "inconclusive": [
+      {
+        "case": "import-20",
+        "metric": "quiescent_rss_bytes",
+        "before": 115933184.0,
+        "after": 143048704.0,
+        "before_range": [
+          114425856,
+          181141504
+        ],
+        "after_range": [
+          121012224.0,
+          179126272.0
+        ],
+        "allowance": 16777216,
+        "status": "inconclusive"
+      }
+    ],
+    "raw_artifacts": "perf-assets/runs/refactor-baseline-control-20260907"
+  }
+}

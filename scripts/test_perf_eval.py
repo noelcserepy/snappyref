@@ -18,11 +18,20 @@ class EvaluationTests(unittest.TestCase):
     def test_comparison_accepts_noise_and_rejects_slowdown(self):
         before = self.report()
         after = copy.deepcopy(before)
-        self.assertTrue(compare(before, after)['passed'])
-        after['cases']['import-1']['metrics']['launch_to_idle_ms']['median'] = 1150
-        self.assertTrue(compare(before, after)['passed'])
-        after['cases']['import-1']['metrics']['launch_to_idle_ms']['median'] = 1500
-        self.assertFalse(compare(before, after)['passed'])
+        self.assertEqual(compare(before, after)['status'], 'pass')
+        after['cases']['import-1']['metrics']['launch_to_idle_ms'] = dict(min=1150, median=1150, max=1150)
+        self.assertEqual(compare(before, after)['status'], 'pass')
+        after['cases']['import-1']['metrics']['launch_to_idle_ms'] = dict(min=1500, median=1500, max=1500)
+        self.assertEqual(compare(before, after)['status'], 'regression')
+
+    def test_overlapping_ranges_are_inconclusive_not_a_regression_or_pass(self):
+        before = self.report()
+        after = self.report()
+        before['cases']['import-1']['metrics']['launch_to_idle_ms'] = dict(min=900, median=1000, max=1600)
+        after['cases']['import-1']['metrics']['launch_to_idle_ms'] = dict(min=1000, median=1300, max=1700)
+        result = compare(before, after)
+        self.assertEqual(result['status'], 'inconclusive')
+        self.assertFalse(any(change['status'] == 'regression' for change in result['changes']))
 
     def test_comparison_refuses_incomplete_or_different_experiments(self):
         before = self.report()

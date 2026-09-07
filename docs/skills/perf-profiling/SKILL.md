@@ -138,9 +138,15 @@ can be near zero. Use the model's own load timing in `summary.json` for model
 mount cost, and queue-to-completion for embedding drain.
 
 Comparisons refuse invalid runs, missing cases/metrics, insufficient repeats,
-or different measurement contracts. Exit codes are 0 for pass, 1 for detected
-regression, and 2 for invalid/incompatible evaluation. Source/binary hashes
-may differ; model/corpus/evaluator/machine/settings must match.
+or different measurement contracts. Exit codes are 0 for pass, 1 for a budget
+crossing with nonoverlapping observed ranges, and 2 for inconclusive or invalid
+results. A median above budget with overlapping ranges is inconclusive, never
+a green result. Repeat or investigate it before merging the refactor.
+
+Source/binary/evaluator hashes are provenance and may differ. Model, corpus,
+machine, compiler, settings, and `measurement_version` must match. Bump that
+version when changing timing/sampling or metric definitions. Comparison-policy
+changes can reuse recorded measurements without pretending they were rerun.
 
 Initial regression budgets require both a relative and an absolute increase:
 
@@ -152,7 +158,8 @@ Initial regression budgets require both a relative and an absolute increase:
 | Quiescent RSS | 10% | 16 MiB |
 | Tree peak RSS | 10% | 32 MiB |
 
-These are review thresholds, not statistical significance claims. Three trials
+These are review thresholds, not statistical significance claims. Observed
+ranges are a conservative noise check, not confidence intervals. Three trials
 support a median and range, not a useful p95. Inspect spread and rerun suspicious
 cases. Never update the reference baseline merely to make a regression pass.
 
