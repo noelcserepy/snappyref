@@ -1,0 +1,960 @@
+{
+  "schema": 1,
+  "valid": true,
+  "runs": [
+    {
+      "case": "import-1",
+      "repeat": 1,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/import-1-r1",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 112.1308984375,
+        "launch_to_first_visible_ms": 206.52702343750002,
+        "queue_to_all_visible_ms": 95.17150000000001,
+        "launch_to_idle_ms": 944.5912324375
+      },
+      "state": {
+        "assets": 1,
+        "placements": 1,
+        "ready_embeddings": 1,
+        "excluded_embeddings": 0,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 1.7114177080220543,
+        "cleanup_seconds": 0.04507258301600814,
+        "including_fixture_seconds": 1.7116494579822756
+      }
+    },
+    {
+      "case": "import-20",
+      "repeat": 1,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/import-20-r1",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 122.552056625,
+        "launch_to_first_visible_ms": 137.900598625,
+        "queue_to_all_visible_ms": 559.8446670000001,
+        "launch_to_idle_ms": 2166.6180986249997
+      },
+      "state": {
+        "assets": 20,
+        "placements": 20,
+        "ready_embeddings": 19,
+        "excluded_embeddings": 1,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 2.870456665987149,
+        "cleanup_seconds": 0.050652500009164214,
+        "including_fixture_seconds": 2.870754959003534
+      }
+    },
+    {
+      "case": "board-0",
+      "repeat": 1,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/board-0-r1",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 116.548853515625,
+        "launch_to_first_visible_ms": null,
+        "queue_to_all_visible_ms": null,
+        "launch_to_idle_ms": 1390.738353515625
+      },
+      "state": {
+        "assets": 1,
+        "placements": 0,
+        "ready_embeddings": 1,
+        "excluded_embeddings": 0,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 1.9731467919773422,
+        "cleanup_seconds": 0.04564283398212865,
+        "including_fixture_seconds": 1.9857357500004582
+      }
+    },
+    {
+      "case": "board-1000",
+      "repeat": 1,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/board-1000-r1",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 114.600848640625,
+        "launch_to_first_visible_ms": 114.668473640625,
+        "queue_to_all_visible_ms": null,
+        "launch_to_idle_ms": 3509.7740986406247
+      },
+      "state": {
+        "assets": 1,
+        "placements": 1000,
+        "ready_embeddings": 1,
+        "excluded_embeddings": 0,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 4.274161125009414,
+        "cleanup_seconds": 0.049644207989331335,
+        "including_fixture_seconds": 4.289646666962653
+      }
+    },
+    {
+      "case": "library-1000",
+      "repeat": 1,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/library-1000-r1",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 116.793505859375,
+        "launch_to_first_visible_ms": null,
+        "queue_to_all_visible_ms": null,
+        "launch_to_idle_ms": 1376.616213859375
+      },
+      "state": {
+        "assets": 1000,
+        "placements": 0,
+        "ready_embeddings": 1000,
+        "excluded_embeddings": 0,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 1.9701117500080727,
+        "cleanup_seconds": 0.04429412499302998,
+        "including_fixture_seconds": 2.8954776659957133
+      }
+    },
+    {
+      "case": "import-1",
+      "repeat": 2,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/import-1-r2",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 129.33981446875,
+        "launch_to_first_visible_ms": 224.29060546875002,
+        "queue_to_all_visible_ms": 95.704625,
+        "launch_to_idle_ms": 955.16006446875
+      },
+      "state": {
+        "assets": 1,
+        "placements": 1,
+        "ready_embeddings": 1,
+        "excluded_embeddings": 0,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 1.7190799160161987,
+        "cleanup_seconds": 0.04715195897733793,
+        "including_fixture_seconds": 1.719333707995247
+      }
+    },
+    {
+      "case": "import-20",
+      "repeat": 2,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/import-20-r2",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 125.952910171875,
+        "launch_to_first_visible_ms": 140.341285171875,
+        "queue_to_all_visible_ms": 509.89808300000004,
+        "launch_to_idle_ms": 2168.282826171875
+      },
+      "state": {
+        "assets": 20,
+        "placements": 20,
+        "ready_embeddings": 19,
+        "excluded_embeddings": 1,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 2.8860298339859582,
+        "cleanup_seconds": 0.046083958994131535,
+        "including_fixture_seconds": 2.8863156660227105
+      }
+    },
+    {
+      "case": "board-0",
+      "repeat": 2,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/board-0-r2",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 129.0623359375,
+        "launch_to_first_visible_ms": null,
+        "queue_to_all_visible_ms": null,
+        "launch_to_idle_ms": 1397.3024609375
+      },
+      "state": {
+        "assets": 1,
+        "placements": 0,
+        "ready_embeddings": 1,
+        "excluded_embeddings": 0,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 2.171634541999083,
+        "cleanup_seconds": 0.035158249957021326,
+        "including_fixture_seconds": 2.1806027499842457
+      }
+    },
+    {
+      "case": "board-1000",
+      "repeat": 2,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/board-1000-r2",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 126.58799609375001,
+        "launch_to_first_visible_ms": 126.65107909375,
+        "queue_to_all_visible_ms": null,
+        "launch_to_idle_ms": 3534.6342460937503
+      },
+      "state": {
+        "assets": 1,
+        "placements": 1000,
+        "ready_embeddings": 1,
+        "excluded_embeddings": 0,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 4.289112916972954,
+        "cleanup_seconds": 0.05024637503083795,
+        "including_fixture_seconds": 4.304271999979392
+      }
+    },
+    {
+      "case": "library-1000",
+      "repeat": 2,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/library-1000-r2",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 109.477568359375,
+        "launch_to_first_visible_ms": null,
+        "queue_to_all_visible_ms": null,
+        "launch_to_idle_ms": 1377.3552763593748
+      },
+      "state": {
+        "assets": 1000,
+        "placements": 0,
+        "ready_embeddings": 1000,
+        "excluded_embeddings": 0,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 1.9731778749846853,
+        "cleanup_seconds": 0.04771979100769386,
+        "including_fixture_seconds": 2.9152466249652207
+      }
+    },
+    {
+      "case": "import-1",
+      "repeat": 3,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/import-1-r3",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 120.59617090625,
+        "launch_to_first_visible_ms": 221.70487890625,
+        "queue_to_all_visible_ms": 102.04195800000001,
+        "launch_to_idle_ms": 960.95442090625
+      },
+      "state": {
+        "assets": 1,
+        "placements": 1,
+        "ready_embeddings": 1,
+        "excluded_embeddings": 0,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 1.7368698329664767,
+        "cleanup_seconds": 0.04667662503197789,
+        "including_fixture_seconds": 1.7371192090213299
+      }
+    },
+    {
+      "case": "import-20",
+      "repeat": 3,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/import-20-r3",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 131.871212875,
+        "launch_to_first_visible_ms": 144.302837875,
+        "queue_to_all_visible_ms": 515.687042,
+        "launch_to_idle_ms": 2172.4820048750003
+      },
+      "state": {
+        "assets": 20,
+        "placements": 20,
+        "ready_embeddings": 19,
+        "excluded_embeddings": 1,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 2.8953220000257716,
+        "cleanup_seconds": 0.046746207983233035,
+        "including_fixture_seconds": 2.8956040409975685
+      }
+    },
+    {
+      "case": "board-0",
+      "repeat": 3,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/board-0-r3",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 119.095057625,
+        "launch_to_first_visible_ms": null,
+        "queue_to_all_visible_ms": null,
+        "launch_to_idle_ms": 1385.1420156249999
+      },
+      "state": {
+        "assets": 1,
+        "placements": 0,
+        "ready_embeddings": 1,
+        "excluded_embeddings": 0,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 1.9708959580166265,
+        "cleanup_seconds": 0.04169145901687443,
+        "including_fixture_seconds": 1.9870339169865474
+      }
+    },
+    {
+      "case": "board-1000",
+      "repeat": 3,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/board-1000-r3",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 131.314957046875,
+        "launch_to_first_visible_ms": 131.375040046875,
+        "queue_to_all_visible_ms": null,
+        "launch_to_idle_ms": 3531.2369150468753
+      },
+      "state": {
+        "assets": 1,
+        "placements": 1000,
+        "ready_embeddings": 1,
+        "excluded_embeddings": 0,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 4.3146069580107,
+        "cleanup_seconds": 0.05142812500707805,
+        "including_fixture_seconds": 4.329784583009314
+      }
+    },
+    {
+      "case": "library-1000",
+      "repeat": 3,
+      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/library-1000-r3",
+      "valid": true,
+      "metrics": {
+        "launch_to_first_frame_ms": 124.854703109375,
+        "launch_to_first_visible_ms": null,
+        "queue_to_all_visible_ms": null,
+        "launch_to_idle_ms": 1383.598328109375
+      },
+      "state": {
+        "assets": 1000,
+        "placements": 0,
+        "ready_embeddings": 1000,
+        "excluded_embeddings": 0,
+        "unfinished_embeddings": 0,
+        "failed_embeddings": 0
+      },
+      "timing": {
+        "total_seconds": 1.9915523339877836,
+        "cleanup_seconds": 0.05197516700718552,
+        "including_fixture_seconds": 2.931245291023515
+      }
+    }
+  ],
+  "cases": {
+    "import-1": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 120.59617090625,
+          "min": 112.1308984375,
+          "max": 129.33981446875
+        },
+        "launch_to_first_visible_ms": {
+          "median": 221.70487890625,
+          "min": 206.52702343750002,
+          "max": 224.29060546875002
+        },
+        "queue_to_all_visible_ms": {
+          "median": 95.704625,
+          "min": 95.17150000000001,
+          "max": 102.04195800000001
+        },
+        "launch_to_idle_ms": {
+          "median": 955.16006446875,
+          "min": 944.5912324375,
+          "max": 960.95442090625
+        }
+      }
+    },
+    "import-20": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 125.952910171875,
+          "min": 122.552056625,
+          "max": 131.871212875
+        },
+        "launch_to_first_visible_ms": {
+          "median": 140.341285171875,
+          "min": 137.900598625,
+          "max": 144.302837875
+        },
+        "queue_to_all_visible_ms": {
+          "median": 515.687042,
+          "min": 509.89808300000004,
+          "max": 559.8446670000001
+        },
+        "launch_to_idle_ms": {
+          "median": 2168.282826171875,
+          "min": 2166.6180986249997,
+          "max": 2172.4820048750003
+        }
+      }
+    },
+    "board-0": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 119.095057625,
+          "min": 116.548853515625,
+          "max": 129.0623359375
+        },
+        "launch_to_idle_ms": {
+          "median": 1390.738353515625,
+          "min": 1385.1420156249999,
+          "max": 1397.3024609375
+        }
+      }
+    },
+    "board-1000": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 126.58799609375001,
+          "min": 114.600848640625,
+          "max": 131.314957046875
+        },
+        "launch_to_first_visible_ms": {
+          "median": 126.65107909375,
+          "min": 114.668473640625,
+          "max": 131.375040046875
+        },
+        "launch_to_idle_ms": {
+          "median": 3531.2369150468753,
+          "min": 3509.7740986406247,
+          "max": 3534.6342460937503
+        }
+      }
+    },
+    "library-1000": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 116.793505859375,
+          "min": 109.477568359375,
+          "max": 124.854703109375
+        },
+        "launch_to_idle_ms": {
+          "median": 1377.3552763593748,
+          "min": 1376.616213859375,
+          "max": 1383.598328109375
+        }
+      }
+    }
+  },
+  "timing": {
+    "build_seconds": 1.2497184798121452e-07,
+    "setup_seconds": 0.3042844160227105,
+    "seed_seconds": 1.7083257079939358,
+    "prepared_seconds": 43.6680180420517,
+    "over_target": false,
+    "command_seconds": 43.668019958015066
+  },
+  "contract": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "cpu": "Apple M4 Pro",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "turbojpeg": "3.2.0",
+    "build_overrides": {},
+    "memory_bytes": "25769803776",
+    "corpus_sha256": "23687a94cbb0f63a5d3b71c12890a5e6b361f0ba2f0241c7c61a6173d2b878d6",
+    "model_sha256": "c217be5d5b8a0501ad198c40700d65e8d68377525cdf41790c7bef788339f769",
+    "measurement_version": 2,
+    "power_source": "Now drawing from 'AC Power'",
+    "sampling_interval_ms": 200,
+    "idle_hold_seconds": 20,
+    "external_stop_after_idle_ms": 500,
+    "quiescent_window_ms": null,
+    "build": "release/default-features",
+    "cache": "fresh process; OS filesystem cache uncontrolled",
+    "helper_policy": "shipping defaults",
+    "fixture_version": 1,
+    "profile": "fast",
+    "metrics": [
+      "launch_to_first_frame_ms",
+      "launch_to_first_visible_ms",
+      "queue_to_all_visible_ms",
+      "launch_to_idle_ms"
+    ],
+    "cases": [
+      "import-1",
+      "import-20",
+      "board-0",
+      "board-1000",
+      "library-1000"
+    ],
+    "repeats": 3
+  },
+  "source": {
+    "commit": "eebf2f205776e61be0e77de13c04cbddc8fb98aa",
+    "dirty": false,
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary_sha256": "972b79e678c735641749d247cf57a45681f81892d12cccab8c19930c4f53bac2",
+    "evaluator_sha256": "d7c6f488139a055bf1dc65c3d49b56c49e0e1cb4297b4692261da39f57cc61c9"
+  },
+  "recorded_on": "2026-09-07",
+  "acquisition": {
+    "raw_report": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/evaluation.json",
+    "external_command_timing": {
+      "command": [
+        "python3",
+        "scripts/perf_eval.py",
+        "run",
+        "--binary",
+        "target/release/snappyref",
+        "--assets",
+        "/Users/noelcserepy/dev/snappyref/perf-assets/images",
+        "--models",
+        "/Users/noelcserepy/dev/snappyref/target/release/models",
+        "--output",
+        "perf-assets/runs/fast-reference-2026-09-07"
+      ],
+      "external_wall_seconds": 43.7385199580458,
+      "exit_code": 0
+    },
+    "conditions": [
+      "Apple M4 Pro, 24 GiB RAM, macOS 26.6.2, AC power; full contract and fingerprints above.",
+      "Sequential fresh processes using the unchanged clean release binary. No builds or tests overlapped either acquisition.",
+      "Ordinary desktop activity remained. Before reference: WindowServer 42.9%, Zen 27.1%, Codex GPU 26.5%, Zen GPU 19.3%. Before control: WindowServer 44.3%, Codex GPU 37.0%, Zen 26.2%, Zen GPU 18.3%. These are point observations, not a continuous external-load trace.",
+      "No competing heavy build or benchmark was observed. No process, display or power settings were changed."
+    ],
+    "limitations": [
+      "Two complete commands in one session do not satisfy the ten-run, two-session runtime/noise calibration.",
+      "Filesystem cache was uncontrolled and prepared; models and corpus were already installed. Build and installation were excluded from these command timings.",
+      "Three repeats give a median and range, not p95 or a runtime guarantee. Fast excludes full resource and omitted workload coverage."
+    ],
+    "control": {
+      "raw_report": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-control-2026-09-07/evaluation.json",
+      "source": {
+        "commit": "eebf2f205776e61be0e77de13c04cbddc8fb98aa",
+        "dirty": false,
+        "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "binary_sha256": "972b79e678c735641749d247cf57a45681f81892d12cccab8c19930c4f53bac2",
+        "evaluator_sha256": "d7c6f488139a055bf1dc65c3d49b56c49e0e1cb4297b4692261da39f57cc61c9"
+      },
+      "valid": true,
+      "trials": 15,
+      "timing": {
+        "build_seconds": 1.25030055642128e-07,
+        "setup_seconds": 0.28770624997559935,
+        "seed_seconds": 1.676345333980862,
+        "prepared_seconds": 44.08222845895216,
+        "over_target": false,
+        "command_seconds": 44.08222966699395
+      },
+      "external_command_timing": {
+        "command": [
+          "python3",
+          "scripts/perf_eval.py",
+          "run",
+          "--binary",
+          "target/release/snappyref",
+          "--assets",
+          "/Users/noelcserepy/dev/snappyref/perf-assets/images",
+          "--models",
+          "/Users/noelcserepy/dev/snappyref/target/release/models",
+          "--output",
+          "perf-assets/runs/fast-reference-control-2026-09-07"
+        ],
+        "external_wall_seconds": 44.159307082998566,
+        "exit_code": 0
+      },
+      "cases": {
+        "import-1": {
+          "valid": true,
+          "repeats": 3,
+          "metrics": {
+            "launch_to_first_frame_ms": {
+              "median": 132.9009501875,
+              "min": 128.987902328125,
+              "max": 136.337903328125
+            },
+            "launch_to_first_visible_ms": {
+              "median": 228.97370018750001,
+              "min": 223.229444328125,
+              "max": 240.797944328125
+            },
+            "queue_to_all_visible_ms": {
+              "median": 96.861458,
+              "min": 95.012292,
+              "max": 105.792333
+            },
+            "launch_to_idle_ms": {
+              "median": 970.5128613281249,
+              "min": 957.0812421875,
+              "max": 997.198861328125
+            }
+          }
+        },
+        "import-20": {
+          "valid": true,
+          "repeats": 3,
+          "metrics": {
+            "launch_to_first_frame_ms": {
+              "median": 128.909192375,
+              "min": 127.708598640625,
+              "max": 154.370461921875
+            },
+            "launch_to_first_visible_ms": {
+              "median": 141.301859375,
+              "min": 140.466014640625,
+              "max": 168.533836921875
+            },
+            "queue_to_all_visible_ms": {
+              "median": 524.296167,
+              "min": 507.49133400000005,
+              "max": 665.2931249999999
+            },
+            "launch_to_idle_ms": {
+              "median": 2177.839109375,
+              "min": 2168.573014640625,
+              "max": 2387.7984619218746
+            }
+          }
+        },
+        "board-0": {
+          "valid": true,
+          "repeats": 3,
+          "metrics": {
+            "launch_to_first_frame_ms": {
+              "median": 117.331589828125,
+              "min": 116.81459864062501,
+              "max": 123.44417090625
+            },
+            "launch_to_idle_ms": {
+              "median": 1390.63500390625,
+              "min": 1384.3450488281248,
+              "max": 1390.990556640625
+            }
+          }
+        },
+        "board-1000": {
+          "valid": true,
+          "repeats": 3,
+          "metrics": {
+            "launch_to_first_frame_ms": {
+              "median": 126.0351581875,
+              "min": 117.520458984375,
+              "max": 127.22602734375
+            },
+            "launch_to_first_visible_ms": {
+              "median": 126.0955751875,
+              "min": 117.57862598437501,
+              "max": 127.29927734375
+            },
+            "launch_to_idle_ms": {
+              "median": 3538.96856934375,
+              "min": 3534.343833984375,
+              "max": 3568.3366171875
+            }
+          }
+        },
+        "library-1000": {
+          "valid": true,
+          "repeats": 3,
+          "metrics": {
+            "launch_to_first_frame_ms": {
+              "median": 121.58042284375,
+              "min": 115.10122459375,
+              "max": 131.217742203125
+            },
+            "launch_to_idle_ms": {
+              "median": 1388.8995478437498,
+              "min": 1384.8940585937498,
+              "max": 1390.835700203125
+            }
+          }
+        }
+      },
+      "comparison": {
+        "status": "pass",
+        "changes": [
+          {
+            "case": "import-1",
+            "metric": "launch_to_first_frame_ms",
+            "before": 120.59617090625,
+            "after": 132.9009501875,
+            "before_range": [
+              112.1308984375,
+              129.33981446875
+            ],
+            "after_range": [
+              128.987902328125,
+              136.337903328125
+            ],
+            "allowance": 100,
+            "status": "pass"
+          },
+          {
+            "case": "import-1",
+            "metric": "launch_to_first_visible_ms",
+            "before": 221.70487890625,
+            "after": 228.97370018750001,
+            "before_range": [
+              206.52702343750002,
+              224.29060546875002
+            ],
+            "after_range": [
+              223.229444328125,
+              240.797944328125
+            ],
+            "allowance": 100,
+            "status": "pass"
+          },
+          {
+            "case": "import-1",
+            "metric": "queue_to_all_visible_ms",
+            "before": 95.704625,
+            "after": 96.861458,
+            "before_range": [
+              95.17150000000001,
+              102.04195800000001
+            ],
+            "after_range": [
+              95.012292,
+              105.792333
+            ],
+            "allowance": 100,
+            "status": "pass"
+          },
+          {
+            "case": "import-1",
+            "metric": "launch_to_idle_ms",
+            "before": 955.16006446875,
+            "after": 970.5128613281249,
+            "before_range": [
+              944.5912324375,
+              960.95442090625
+            ],
+            "after_range": [
+              957.0812421875,
+              997.198861328125
+            ],
+            "allowance": 200,
+            "status": "pass"
+          },
+          {
+            "case": "import-20",
+            "metric": "launch_to_first_frame_ms",
+            "before": 125.952910171875,
+            "after": 128.909192375,
+            "before_range": [
+              122.552056625,
+              131.871212875
+            ],
+            "after_range": [
+              127.708598640625,
+              154.370461921875
+            ],
+            "allowance": 100,
+            "status": "pass"
+          },
+          {
+            "case": "import-20",
+            "metric": "launch_to_first_visible_ms",
+            "before": 140.341285171875,
+            "after": 141.301859375,
+            "before_range": [
+              137.900598625,
+              144.302837875
+            ],
+            "after_range": [
+              140.466014640625,
+              168.533836921875
+            ],
+            "allowance": 100,
+            "status": "pass"
+          },
+          {
+            "case": "import-20",
+            "metric": "queue_to_all_visible_ms",
+            "before": 515.687042,
+            "after": 524.296167,
+            "before_range": [
+              509.89808300000004,
+              559.8446670000001
+            ],
+            "after_range": [
+              507.49133400000005,
+              665.2931249999999
+            ],
+            "allowance": 103.13740840000001,
+            "status": "pass"
+          },
+          {
+            "case": "import-20",
+            "metric": "launch_to_idle_ms",
+            "before": 2168.282826171875,
+            "after": 2177.839109375,
+            "before_range": [
+              2166.6180986249997,
+              2172.4820048750003
+            ],
+            "after_range": [
+              2168.573014640625,
+              2387.7984619218746
+            ],
+            "allowance": 325.2424239257812,
+            "status": "pass"
+          },
+          {
+            "case": "board-0",
+            "metric": "launch_to_first_frame_ms",
+            "before": 119.095057625,
+            "after": 117.331589828125,
+            "before_range": [
+              116.548853515625,
+              129.0623359375
+            ],
+            "after_range": [
+              116.81459864062501,
+              123.44417090625
+            ],
+            "allowance": 100,
+            "status": "pass"
+          },
+          {
+            "case": "board-0",
+            "metric": "launch_to_idle_ms",
+            "before": 1390.738353515625,
+            "after": 1390.63500390625,
+            "before_range": [
+              1385.1420156249999,
+              1397.3024609375
+            ],
+            "after_range": [
+              1384.3450488281248,
+              1390.990556640625
+            ],
+            "allowance": 208.61075302734375,
+            "status": "pass"
+          },
+          {
+            "case": "board-1000",
+            "metric": "launch_to_first_frame_ms",
+            "before": 126.58799609375001,
+            "after": 126.0351581875,
+            "before_range": [
+              114.600848640625,
+              131.314957046875
+            ],
+            "after_range": [
+              117.520458984375,
+              127.22602734375
+            ],
+            "allowance": 100,
+            "status": "pass"
+          },
+          {
+            "case": "board-1000",
+            "metric": "launch_to_first_visible_ms",
+            "before": 126.65107909375,
+            "after": 126.0955751875,
+            "before_range": [
+              114.668473640625,
+              131.375040046875
+            ],
+            "after_range": [
+              117.57862598437501,
+              127.29927734375
+            ],
+            "allowance": 100,
+            "status": "pass"
+          },
+          {
+            "case": "board-1000",
+            "metric": "launch_to_idle_ms",
+            "before": 3531.2369150468753,
+            "after": 3538.96856934375,
+            "before_range": [
+              3509.7740986406247,
+              3534.6342460937503
+            ],
+            "after_range": [
+              3534.343833984375,
+              3568.3366171875
+            ],
+            "allowance": 529.6855372570312,
+            "status": "pass"
+          },
+          {
+            "case": "library-1000",
+            "metric": "launch_to_first_frame_ms",
+            "before": 116.793505859375,
+            "after": 121.58042284375,
+            "before_range": [
+              109.477568359375,
+              124.854703109375
+            ],
+            "after_range": [
+              115.10122459375,
+              131.217742203125
+            ],
+            "allowance": 100,
+            "status": "pass"
+          },
+          {
+            "case": "library-1000",
+            "metric": "launch_to_idle_ms",
+            "before": 1377.3552763593748,
+            "after": 1388.8995478437498,
+            "before_range": [
+              1376.616213859375,
+              1383.598328109375
+            ],
+            "after_range": [
+              1384.8940585937498,
+              1390.835700203125
+            ],
+            "allowance": 206.60329145390622,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    "verification": "Re-read all 30 final trial database states and checked both seeds and every trial process group had no live members. No acquisition failures or 60-second overruns in this pair."
+  }
+}

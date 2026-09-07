@@ -63,7 +63,9 @@ There is no standalone design-system document. Treat the code as the canonical v
 ## Before Architecture Refactors
 
 Run `python3 scripts/check-refactor-behavior.py`, then the repeated release-app
-baseline and comparison described in `docs/skills/perf-profiling/SKILL.md`.
+fast baseline and comparison described in `docs/skills/perf-profiling/SKILL.md`.
+Fast is the regular default. Run full performance only on explicit user demand,
+never automatically for refactors, releases, or inconclusive fast results.
 Do not run performance concurrently with builds or behavior tests. Keep the
 reference baseline unchanged until measured differences have been reviewed.
 

@@ -1,0 +1,51 @@
+{
+  "kind": "fast functional verification, not an idle-session reference",
+  "date": "2026-09-07",
+  "limitations": [
+    "Active desktop/audio/GPU load. No ten-run noise/runtime calibration or separately acquired idle-session fast reference.",
+    "Runner timings omit interpreter startup and the final timing-report rewrite. External command timing remains part of calibration.",
+    "Model/corpus already installed. Clean release build took 71 seconds; download/installation was not repeated."
+  ],
+  "full_baseline_sha256": "88270b4b0bb819d68c272779df4a3e65da7def8448b4b33599130def7869c484",
+  "binary_sha256": "972b79e678c735641749d247cf57a45681f81892d12cccab8c19930c4f53bac2",
+  "functional": {
+    "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-functional-reference/evaluation.json",
+    "valid": true,
+    "trials": 15,
+    "timing": {
+      "build_seconds": 1.25030055642128e-07,
+      "setup_seconds": 0.2572875829646364,
+      "seed_seconds": 1.7162107920157723,
+      "prepared_seconds": 43.57988541695522,
+      "over_target": false,
+      "command_seconds": 43.579886834020726
+    }
+  },
+  "controlled_delay": {
+    "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-controlled-delay/evaluation.json",
+    "method": "Temporary 750ms sleep in main before snappyref::run, only when --perf-scenario is present. Removed, rebuilt, and original binary fingerprint verified.",
+    "valid": true,
+    "trials": 15,
+    "timing": {
+      "build_seconds": 1.66997779160738e-07,
+      "setup_seconds": 0.26910458295606077,
+      "seed_seconds": 3.140377250034362,
+      "prepared_seconds": 57.01172695797868,
+      "over_target": false,
+      "command_seconds": 57.01172841596417
+    },
+    "comparison_status": "regression",
+    "regression_metrics": 13
+  },
+  "retained_failure": {
+    "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-smoke/evaluation.json",
+    "reason": "Initial seed completed but cleanup hit macOS EPERM for exited process-group members. Evaluation stayed invalid. Fixed by checking live group members; subsequent smoke and complete acquisitions passed."
+  },
+  "checks": [
+    "13 evaluator tests passed; timeout helper ignores SIGTERM and cleanup still completes.",
+    "10 sampler self-tests passed.",
+    "Saved full reference self-comparison passes; full reference unchanged; no full acquisition.",
+    "One-repeat and fast/full comparisons exit 2 with saved invalid reports.",
+    "Controlled delay comparison exits 1; actual fast self-comparison exits 0."
+  ]
+}
