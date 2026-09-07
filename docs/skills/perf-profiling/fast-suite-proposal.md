@@ -185,6 +185,17 @@ omitted workloads, or inconclusive fast results. Explain coverage limits and let
 the user request full when needed. A fast pass is never described as a full pass.
 Behavior checks remain separate. No new push or merge gate is part of this scope.
 
+## Delivery agent settings
+
+For this PR, the user requires `gpt-6-astra` with `reasoning_effort: low` for the
+implementer, every fresh reviewer, and all their subagents. "Light" maps to the
+available `low` reasoning setting. This explicit instruction overrides the
+spec-plugin skill and role protocol's medium defaults for this delivery only.
+Carry it into every role/helper launch and handoff instruction, including repairs
+and replacement agents. Keep the existing clean-history and role-isolation rules.
+Do not change global plugin defaults. Recording these settings does not authorize
+starting implementation or review.
+
 ## Ordered implementation plan, awaiting implementation authorization
 
 1. Start only after an explicit instruction to implement. Apply the approved
