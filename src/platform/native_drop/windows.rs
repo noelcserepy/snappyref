@@ -26,7 +26,7 @@ use windows_sys::core::{GUID, HRESULT};
 
 type IUnknown = c_void;
 
-static STATE: OnceLock<Mutex<super::payload::NativeDropState>> = OnceLock::new();
+static STATE: OnceLock<Mutex<NativeDropState>> = OnceLock::new();
 static REGISTRATION: OnceLock<Mutex<Option<DropTargetRegistration>>> = OnceLock::new();
 static WINDOW_HWND: OnceLock<isize> = OnceLock::new();
 
@@ -67,16 +67,29 @@ pub(super) fn install(cc: &eframe::CreationContext<'_>) {
     }
 }
 
-pub(super) fn hovered() -> super::NativeDropPayload {
+fn hovered_urls() -> Vec<String> {
     state()
         .lock()
         .expect("native drop state mutex poisoned")
-        .hovered
+        .hovered_urls
         .clone()
 }
 
-// Winit's file-drop events carry no position. Keep the HWND even when
-// its registered target wins, and query the OS cursor for placement.
+fn hovered_paths() -> Vec<std::path::PathBuf> {
+    state()
+        .lock()
+        .expect("native drop state mutex poisoned")
+        .hovered_paths
+        .clone()
+}
+
+fn hovered_screen_pos() -> Option<egui::Pos2> {
+    state()
+        .lock()
+        .expect("native drop state mutex poisoned")
+        .hovered_pos
+}
+
 pub(super) fn cursor_screen_pos() -> Option<egui::Pos2> {
     let hwnd = *WINDOW_HWND.get()? as HWND;
     let mut cursor = POINT { x: 0, y: 0 };
@@ -94,17 +107,34 @@ pub(super) fn cursor_screen_pos() -> Option<egui::Pos2> {
     }
 }
 
-pub(super) fn take_drop() -> super::NativeDropPayload {
+fn take_dropped_urls() -> Vec<String> {
     std::mem::take(
         &mut state()
             .lock()
             .expect("native drop state mutex poisoned")
-            .dropped,
+            .dropped_urls,
     )
 }
 
-fn state() -> &'static Mutex<super::payload::NativeDropState> {
-    STATE.get_or_init(|| Mutex::new(super::payload::NativeDropState::default()))
+fn take_dropped_paths() -> Vec<std::path::PathBuf> {
+    std::mem::take(
+        &mut state()
+            .lock()
+            .expect("native drop state mutex poisoned")
+            .dropped_paths,
+    )
+}
+
+fn take_dropped_screen_pos() -> Option<egui::Pos2> {
+    state()
+        .lock()
+        .expect("native drop state mutex poisoned")
+        .dropped_pos
+        .take()
+}
+
+fn state() -> &'static Mutex<NativeDropState> {
+    STATE.get_or_init(|| Mutex::new(NativeDropState::default()))
 }
 
 pub(super) fn clipboard_paths() -> Vec<std::path::PathBuf> {
@@ -156,9 +186,6 @@ struct IDataObjectVtbl {
     ) -> HRESULT,
 }
 
-// windows 0.62.2 generated Win32::System::Ole::IDropTarget_Vtbl passes
-// POINTL by value for DragEnter, DragOver, and Drop. A pointer here changes
-// the COM ABI and can break Explorer drops before import intake.
 #[repr(C)]
 struct IDropTargetVtbl {
     parent: IUnknownVtbl,
@@ -166,13 +193,13 @@ struct IDropTargetVtbl {
         this: *mut IDropTarget,
         data_object: *const c_void,
         key_state: u32,
-        point: POINTL,
+        point: *const POINTL,
         effect: *mut u32,
     ) -> HRESULT,
     DragOver: unsafe extern "system" fn(
         this: *mut IDropTarget,
         key_state: u32,
-        point: POINTL,
+        point: *const POINTL,
         effect: *mut u32,
     ) -> HRESULT,
     DragLeave: unsafe extern "system" fn(this: *mut IDropTarget) -> HRESULT,
@@ -180,7 +207,7 @@ struct IDropTargetVtbl {
         this: *mut IDropTarget,
         data_object: *const c_void,
         key_state: u32,
-        point: POINTL,
+        point: *const POINTL,
         effect: *mut u32,
     ) -> HRESULT,
 }
@@ -280,13 +307,13 @@ impl DropTarget {
         this: *mut IDropTarget,
         data_object: *const c_void,
         _key_state: u32,
-        point: POINTL,
+        point: *const POINTL,
         effect: *mut u32,
     ) -> HRESULT {
         let data = unsafe { Self::from_interface(this) };
         let payload = unsafe { extract_drop_payload(data_object) };
         data.hovered_is_valid = !payload.is_empty();
-        let pos = unsafe { client_point(data.hwnd, point) };
+        let pos = unsafe { client_point_from_ptr(data.hwnd, point) };
         data.cursor_effect = if data.hovered_is_valid {
             state()
                 .lock()
@@ -305,11 +332,11 @@ impl DropTarget {
     unsafe extern "system" fn drag_over(
         this: *mut IDropTarget,
         _key_state: u32,
-        point: POINTL,
+        point: *const POINTL,
         effect: *mut u32,
     ) -> HRESULT {
         let data = unsafe { Self::from_interface(this) };
-        let pos = unsafe { client_point(data.hwnd, point) };
+        let pos = unsafe { client_point_from_ptr(data.hwnd, point) };
         if data.hovered_is_valid {
             state()
                 .lock()
@@ -339,12 +366,12 @@ impl DropTarget {
         this: *mut IDropTarget,
         data_object: *const c_void,
         _key_state: u32,
-        point: POINTL,
+        point: *const POINTL,
         effect: *mut u32,
     ) -> HRESULT {
         let data = unsafe { Self::from_interface(this) };
         let payload = unsafe { extract_drop_payload(data_object) };
-        let pos = unsafe { client_point(data.hwnd, point) };
+        let pos = unsafe { client_point_from_ptr(data.hwnd, point) };
         if !payload.is_empty() {
             state()
                 .lock()
@@ -366,6 +393,11 @@ impl DropTarget {
     unsafe fn from_interface<'a, InterfaceT>(this: *mut InterfaceT) -> &'a mut DropTargetData {
         unsafe { &mut *(this as *mut DropTargetData) }
     }
+}
+
+unsafe fn client_point_from_ptr(hwnd: HWND, point: *const POINTL) -> Option<egui::Pos2> {
+    let point = unsafe { point.as_ref()? };
+    unsafe { client_point(hwnd, *point) }
 }
 
 unsafe fn client_point(hwnd: HWND, point: POINTL) -> Option<egui::Pos2> {
@@ -555,4 +587,63 @@ fn bytes_hglobal_text(pointer: *const u8, size: usize) -> Option<String> {
         .unwrap_or(bytes.len());
     let value = String::from_utf8_lossy(&bytes[..end]).trim().to_owned();
     (!value.is_empty()).then_some(value)
+}
+// Preserve the established Windows read order until native verification.
+#[derive(Default)]
+struct NativeDropState {
+    hovered_urls: Vec<String>,
+    dropped_urls: Vec<String>,
+    hovered_paths: Vec<std::path::PathBuf>,
+    dropped_paths: Vec<std::path::PathBuf>,
+    hovered_pos: Option<egui::Pos2>,
+    dropped_pos: Option<egui::Pos2>,
+}
+
+impl NativeDropState {
+    fn set_hovered(&mut self, payload: super::NativeDropPayload, pos: Option<egui::Pos2>) {
+        self.hovered_urls = payload.urls;
+        self.hovered_paths = payload.paths;
+        self.hovered_pos = pos;
+    }
+
+    fn set_hovered_pos(&mut self, pos: Option<egui::Pos2>) {
+        self.hovered_pos = pos;
+    }
+
+    fn clear_hovered(&mut self) {
+        self.hovered_urls.clear();
+        self.hovered_paths.clear();
+        self.hovered_pos = None;
+    }
+
+    fn set_dropped(&mut self, payload: super::NativeDropPayload, pos: Option<egui::Pos2>) {
+        self.clear_hovered();
+        self.dropped_urls.extend(payload.urls);
+        self.dropped_paths.extend(payload.paths);
+        self.dropped_pos = pos;
+    }
+}
+
+pub(super) fn hovered() -> super::NativeDropPayload {
+    let paths = hovered_paths();
+    let urls = hovered_urls();
+    let position = hovered_screen_pos();
+    let cursor = cursor_screen_pos();
+    super::NativeDropPayload {
+        paths,
+        urls,
+        screen_pos: position.or(cursor),
+    }
+}
+
+pub(super) fn take_drop() -> super::NativeDropPayload {
+    let paths = take_dropped_paths();
+    let urls = take_dropped_urls();
+    let position = take_dropped_screen_pos();
+    let cursor = cursor_screen_pos();
+    super::NativeDropPayload {
+        paths,
+        urls,
+        screen_pos: position.or(cursor),
+    }
 }

@@ -1616,6 +1616,9 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
     let source_asset_id = source.require_loaded_asset().id;
 
     let mut app = test_app(Some(library.clone()));
+    app.settings.semantic_search_first_launch_prompt_seen = true;
+    app.search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Missing);
     app.board_editing.persistence = crate::app::DocumentPersistence::queued(library.clone());
     let mut harness = app_full_harness(app);
     let ctx = harness.ctx.clone();
@@ -1808,6 +1811,11 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
 
     harness.state_mut().flush_persistence();
     let durable = &library.load_placements().unwrap()[0];
+    assert!(
+        durable.is_loaded(),
+        "crop durability lost loaded content: {durable:?}; status={}",
+        harness.state().status
+    );
     scenario.assertion(
         "explicit flush preserves the cropped Asset relation",
         durable.require_loaded_asset().id == cropped_asset_id,

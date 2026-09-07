@@ -564,6 +564,10 @@ fn inspect_canvas_navigation_and_boards_writes_artifact() {
                 .placement_for_id(green.state.id)
                 .is_some(),
     );
+    scenario.assertion(
+        "returning after Board creation preserves the focused view",
+        harness.state().canvas.viewport_state() == focused,
+    );
     scenario.capture_screen("screen-006-back-on-first-board", &mut harness);
 
     harness.state_mut().flush_persistence();
