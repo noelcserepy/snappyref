@@ -73,6 +73,7 @@ pub(crate) fn paint_images(
             fallback_images.push(*placement_id);
             continue;
         }
+        metrics.painted_images += 1;
         if image.animation.is_some() {
             metrics.visible_animated_images += 1;
             if animation_active {
@@ -322,6 +323,7 @@ fn paint_canvas_items_interleaved(
                     paint_image_overlay(painter, image, image_rect, debug_labels);
                     continue;
                 }
+                metrics.painted_images += 1;
                 if image.animation.is_some() {
                     metrics.visible_animated_images += 1;
                     if animation_active {

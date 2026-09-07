@@ -1,0 +1,957 @@
+{
+  "schema": 1,
+  "valid": true,
+  "contract": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "cpu": "Apple M4 Pro",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "turbojpeg": "3.2.0",
+    "build_overrides": {},
+    "memory_bytes": "25769803776",
+    "corpus_sha256": "23687a94cbb0f63a5d3b71c12890a5e6b361f0ba2f0241c7c61a6173d2b878d6",
+    "model_sha256": "c217be5d5b8a0501ad198c40700d65e8d68377525cdf41790c7bef788339f769",
+    "measurement_version": 1,
+    "power_source": "Now drawing from 'AC Power'",
+    "sampling_interval_ms": 200,
+    "idle_hold_seconds": 20,
+    "external_stop_after_idle_ms": 17000,
+    "quiescent_window_ms": [
+      5000,
+      15000
+    ],
+    "build": "release/default-features",
+    "cache": "fresh process; OS filesystem cache uncontrolled",
+    "helper_policy": "shipping defaults",
+    "fixture_version": 1
+  },
+  "source": {
+    "commit": "ba4ee57abaf528215fc9fd61e8621e7838b57745",
+    "dirty": false,
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "binary_sha256": "e44380d504706206557dc0490d5394aa07f2a38b9a007cff92c7a0b5905c4ae5",
+    "evaluator_sha256": "f35e85ac42ac8914394a357abd8bab48b49164f2a8a4baae9273df91af3e8b69"
+  },
+  "cases": {
+    "import-1": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 166.43487401562498,
+          "min": 135.590286140625,
+          "max": 191.438885734375
+        },
+        "launch_to_first_visible_ms": {
+          "median": 269.181874015625,
+          "min": 235.504828140625,
+          "max": 291.918468734375
+        },
+        "queue_to_all_visible_ms": {
+          "median": 101.25791600000001,
+          "min": 101.068834,
+          "max": 104.484375
+        },
+        "launch_to_idle_ms": {
+          "median": 1015.867208015625,
+          "min": 958.744119140625,
+          "max": 1040.099427734375
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 128909312,
+          "min": 126844928.0,
+          "max": 131825664.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 400424960,
+          "min": 395460608,
+          "max": 404701184
+        }
+      }
+    },
+    "import-20": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 149.052933578125,
+          "min": 144.4908876875,
+          "max": 180.521646484375
+        },
+        "launch_to_first_visible_ms": {
+          "median": 160.908350578125,
+          "min": 159.48655468750002,
+          "max": 207.651730484375
+        },
+        "queue_to_all_visible_ms": {
+          "median": 527.8839589999999,
+          "min": 524.7478749999999,
+          "max": 534.9085
+        },
+        "launch_to_idle_ms": {
+          "median": 2236.1583466875,
+          "min": 2212.574933578125,
+          "max": 2288.7400634843752
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 157892608,
+          "min": 146587648.0,
+          "max": 183664640
+        },
+        "peak_tree_rss_bytes": {
+          "median": 684785664,
+          "min": 626622464,
+          "max": 745603072
+        }
+      }
+    },
+    "trickle-import": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 158.251485359375,
+          "min": 136.699162109375,
+          "max": 232.173283203125
+        },
+        "launch_to_first_visible_ms": {
+          "median": 250.983985359375,
+          "min": 236.476829109375,
+          "max": 344.046158203125
+        },
+        "queue_to_all_visible_ms": {
+          "median": 4117.005958,
+          "min": 4102.892124999999,
+          "max": 4117.156333
+        },
+        "launch_to_idle_ms": {
+          "median": 5581.209526359375,
+          "min": 5550.130704109375,
+          "max": 5632.8102832031245
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 129875968,
+          "min": 114999296.0,
+          "max": 132841472
+        },
+        "peak_tree_rss_bytes": {
+          "median": 481280000,
+          "min": 407814144,
+          "max": 486883328
+        }
+      }
+    },
+    "format:png": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 141.176898453125,
+          "min": 134.8220283125,
+          "max": 144.862884765625
+        },
+        "launch_to_first_visible_ms": {
+          "median": 166.161564453125,
+          "min": 153.6811953125,
+          "max": 167.618009765625
+        },
+        "queue_to_all_visible_ms": {
+          "median": 237.00937499999998,
+          "min": 236.52666700000003,
+          "max": 240.272334
+        },
+        "launch_to_idle_ms": {
+          "median": 1210.386009765625,
+          "min": 1181.2527783125,
+          "max": 1216.285648453125
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 123699200.0,
+          "min": 102203392,
+          "max": 146636800.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 444301312,
+          "min": 434094080,
+          "max": 448724992
+        }
+      }
+    },
+    "animated": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 144.121151359375,
+          "min": 138.525853515625,
+          "max": 146.586441421875
+        },
+        "launch_to_first_visible_ms": {
+          "median": 157.763818359375,
+          "min": 151.316353515625,
+          "max": 170.812691421875
+        },
+        "queue_to_all_visible_ms": {
+          "median": 14.187833000000001,
+          "min": 13.361208000000001,
+          "max": 25.105041
+        },
+        "launch_to_idle_ms": {
+          "median": 891.560151359375,
+          "min": 877.991686515625,
+          "max": 913.304482421875
+        },
+        "quiescent_cpu_percent": {
+          "median": 5.828238001119434,
+          "min": 5.521580759791982,
+          "max": 6.190419097186349
+        },
+        "quiescent_rss_bytes": {
+          "median": 108347392.0,
+          "min": 104054784,
+          "max": 110051328.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 360022016,
+          "min": 355663872,
+          "max": 366051328
+        }
+      }
+    },
+    "animated-control": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 150.82025878125,
+          "min": 137.640608390625,
+          "max": 163.808912109375
+        },
+        "launch_to_first_visible_ms": {
+          "median": 167.67596678125,
+          "min": 150.563233390625,
+          "max": 187.633245109375
+        },
+        "queue_to_all_visible_ms": {
+          "median": 17.622374999999998,
+          "min": 13.504458000000001,
+          "max": 24.337874999999997
+        },
+        "launch_to_idle_ms": {
+          "median": 909.4479257812501,
+          "min": 877.080817390625,
+          "max": 921.516745109375
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 102252544.0,
+          "min": 101089280,
+          "max": 105021440.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 351207424,
+          "min": 346030080,
+          "max": 363036672
+        }
+      }
+    },
+    "board-0": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 144.782098625,
+          "min": 130.0567998125,
+          "max": 220.0702578125
+        },
+        "launch_to_idle_ms": {
+          "median": 1404.464140625,
+          "min": 1394.7664248125,
+          "max": 1484.1775488125
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.10241084604613543
+        },
+        "quiescent_rss_bytes": {
+          "median": 102318080,
+          "min": 101482496,
+          "max": 105955328.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 104497152,
+          "min": 101531648,
+          "max": 106086400
+        }
+      }
+    },
+    "board-1": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 141.476809578125,
+          "min": 139.213385734375,
+          "max": 174.046389640625
+        },
+        "launch_to_first_visible_ms": {
+          "median": 141.562976578125,
+          "min": 139.264385734375,
+          "max": 174.117848640625
+        },
+        "launch_to_idle_ms": {
+          "median": 1461.195177734375,
+          "min": 1455.7474765781249,
+          "max": 1504.2804736406251
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 118996992.0,
+          "min": 115048448,
+          "max": 119013376
+        },
+        "peak_tree_rss_bytes": {
+          "median": 119095296,
+          "min": 115097600,
+          "max": 119177216
+        }
+      }
+    },
+    "board-20": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 145.181982421875,
+          "min": 135.324347640625,
+          "max": 176.14423340625
+        },
+        "launch_to_first_visible_ms": {
+          "median": 145.268857421875,
+          "min": 135.397389640625,
+          "max": 176.20935840625
+        },
+        "launch_to_idle_ms": {
+          "median": 1495.638649421875,
+          "min": 1478.032639640625,
+          "max": 1541.29398340625
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 145588224.0,
+          "min": 131596288,
+          "max": 157335552
+        },
+        "peak_tree_rss_bytes": {
+          "median": 157679616,
+          "min": 155140096,
+          "max": 170557440
+        }
+      }
+    },
+    "board-100": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 140.67917676562502,
+          "min": 127.99851365625,
+          "max": 167.331651359375
+        },
+        "launch_to_first_visible_ms": {
+          "median": 140.779259765625,
+          "min": 128.19280565625,
+          "max": 167.528026359375
+        },
+        "launch_to_idle_ms": {
+          "median": 1653.83201365625,
+          "min": 1629.261384765625,
+          "max": 1679.776443359375
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 217366528.0,
+          "min": 184942592,
+          "max": 220495872
+        },
+        "peak_tree_rss_bytes": {
+          "median": 230260736,
+          "min": 220495872,
+          "max": 232062976
+        }
+      }
+    },
+    "board-1000": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 125.576369125,
+          "min": 120.0817168125,
+          "max": 133.324150390625
+        },
+        "launch_to_first_visible_ms": {
+          "median": 125.662786125,
+          "min": 120.2067168125,
+          "max": 133.429484390625
+        },
+        "launch_to_idle_ms": {
+          "median": 3542.940286125,
+          "min": 3471.8368418125,
+          "max": 3549.899400390625
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 453246976.0,
+          "min": 427130880,
+          "max": 453443584
+        },
+        "peak_tree_rss_bytes": {
+          "median": 470925312,
+          "min": 467173376,
+          "max": 472694784
+        }
+      }
+    },
+    "library-100": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 117.788479484375,
+          "min": 110.283106453125,
+          "max": 166.923376953125
+        },
+        "launch_to_idle_ms": {
+          "median": 1391.885604484375,
+          "min": 1378.0605644531252,
+          "max": 1433.985126953125
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 101695488,
+          "min": 101433344,
+          "max": 102400000.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 101826560,
+          "min": 101564416,
+          "max": 102531072
+        }
+      }
+    },
+    "library-1000": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 124.459667984375,
+          "min": 121.53658496875,
+          "max": 130.777762703125
+        },
+        "launch_to_idle_ms": {
+          "median": 1391.015887703125,
+          "min": 1380.72945996875,
+          "max": 1398.922667984375
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 102973440.0,
+          "min": 102170624.0,
+          "max": 103514112.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 103022592,
+          "min": 102268928,
+          "max": 103628800
+        }
+      }
+    },
+    "library-100-board-100": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 113.309036140625,
+          "min": 111.39787107812501,
+          "max": 142.078296890625
+        },
+        "launch_to_first_visible_ms": {
+          "median": 113.356494140625,
+          "min": 111.448121078125,
+          "max": 142.121712890625
+        },
+        "launch_to_idle_ms": {
+          "median": 2730.3164521406247,
+          "min": 2703.068121078125,
+          "max": 2843.1957548906253
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.20703046293896996
+        },
+        "quiescent_rss_bytes": {
+          "median": 118210560.0,
+          "min": 117866496,
+          "max": 127238144.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 229670912,
+          "min": 216825856,
+          "max": 239435776
+        }
+      }
+    },
+    "library-1000-board-1000": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 125.1141796875,
+          "min": 121.031115234375,
+          "max": 127.251850578125
+        },
+        "launch_to_first_visible_ms": {
+          "median": 125.1652216875,
+          "min": 121.084323234375,
+          "max": 127.308392578125
+        },
+        "launch_to_idle_ms": {
+          "median": 8168.678823234375,
+          "min": 8116.9324296875,
+          "max": 24345.132725578125
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.1016644848410577
+        },
+        "quiescent_rss_bytes": {
+          "median": 114868224.0,
+          "min": 109838336,
+          "max": 126517248
+        },
+        "peak_tree_rss_bytes": {
+          "median": 225378304,
+          "min": 218824704,
+          "max": 240058368
+        }
+      }
+    },
+    "library-20-backfill": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 152.740333015625,
+          "min": 143.753171875,
+          "max": 162.385578140625
+        },
+        "launch_to_idle_ms": {
+          "median": 18474.810212875,
+          "min": 18441.751833015627,
+          "max": 18477.171244140623
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "quiescent_rss_bytes": {
+          "median": 101990400.0,
+          "min": 100794368,
+          "max": 110903296.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 443465728,
+          "min": 436371456,
+          "max": 453853184
+        }
+      }
+    },
+    "static-20": {
+      "valid": true,
+      "repeats": 3,
+      "metrics": {
+        "launch_to_first_frame_ms": {
+          "median": 189.980068359375,
+          "min": 173.93762696875,
+          "max": 300.381380859375
+        },
+        "launch_to_first_visible_ms": {
+          "median": 216.963152359375,
+          "min": 192.48058496875,
+          "max": 351.15558885937503
+        },
+        "queue_to_all_visible_ms": {
+          "median": 663.440583,
+          "min": 577.500375,
+          "max": 679.6965829999999
+        },
+        "launch_to_idle_ms": {
+          "median": 2403.487443359375,
+          "min": 2326.95641796875,
+          "max": 2621.4996718593748
+        },
+        "quiescent_cpu_percent": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.5157375818675766
+        },
+        "quiescent_rss_bytes": {
+          "median": 165675008,
+          "min": 92930048.0,
+          "max": 193511424.0
+        },
+        "peak_tree_rss_bytes": {
+          "median": 659488768,
+          "min": 591478784,
+          "max": 797802496
+        }
+      }
+    }
+  },
+  "acquisition": {
+    "reports": [
+      "perf-assets/runs/refactor-baseline-complete-20260907/evaluation.json",
+      "perf-assets/runs/static-timeout-repro-20260907/evaluation.json",
+      "perf-assets/runs/refactor-baseline-remaining-20260907/evaluation.json"
+    ],
+    "selection": "Retain every completed non-static trial in the interrupted suite. Replace the entire static-20 case with its three-trial replay. Complete each remaining board/library case with one further trial. All reports have identical source, binary, evaluator and measurement contract.",
+    "rejected_trials": [
+      {
+        "case": "static-20",
+        "repeat": 3,
+        "valid": false,
+        "error": "static-20 exceeded 180s",
+        "artifact": "/Users/noelcserepy/dev/snappyref/perf-assets/runs/refactor-baseline-complete-20260907/static-20-r3"
+      }
+    ],
+    "superseded_valid_trials": [
+      "/Users/noelcserepy/dev/snappyref/perf-assets/runs/refactor-baseline-complete-20260907/static-20-r1",
+      "/Users/noelcserepy/dev/snappyref/perf-assets/runs/refactor-baseline-complete-20260907/static-20-r2"
+    ],
+    "limitation": "One static-20 trial timed out after all 20 placements painted and demand embeddings completed. No settled-idle marker arrived. Three unchanged-binary repeats passed. Background callback delay is suspected, not proven. The original evaluation remains invalid; no timeout was converted into a passing trial.",
+    "trials": [
+      {
+        "case": "import-1",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/import-1-r1"
+      },
+      {
+        "case": "import-20",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/import-20-r1"
+      },
+      {
+        "case": "trickle-import",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/trickle-import-r1"
+      },
+      {
+        "case": "format:png",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/format:png-r1"
+      },
+      {
+        "case": "animated",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/animated-r1"
+      },
+      {
+        "case": "animated-control",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/animated-control-r1"
+      },
+      {
+        "case": "board-0",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-0-r1"
+      },
+      {
+        "case": "board-1",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-1-r1"
+      },
+      {
+        "case": "board-20",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-20-r1"
+      },
+      {
+        "case": "board-100",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-100-r1"
+      },
+      {
+        "case": "board-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-1000-r1"
+      },
+      {
+        "case": "library-100",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-100-r1"
+      },
+      {
+        "case": "library-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-1000-r1"
+      },
+      {
+        "case": "library-100-board-100",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-100-board-100-r1"
+      },
+      {
+        "case": "library-1000-board-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-1000-board-1000-r1"
+      },
+      {
+        "case": "library-20-backfill",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-20-backfill-r1"
+      },
+      {
+        "case": "import-1",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/import-1-r2"
+      },
+      {
+        "case": "import-20",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/import-20-r2"
+      },
+      {
+        "case": "trickle-import",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/trickle-import-r2"
+      },
+      {
+        "case": "format:png",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/format:png-r2"
+      },
+      {
+        "case": "animated",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/animated-r2"
+      },
+      {
+        "case": "animated-control",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/animated-control-r2"
+      },
+      {
+        "case": "board-0",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-0-r2"
+      },
+      {
+        "case": "board-1",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-1-r2"
+      },
+      {
+        "case": "board-20",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-20-r2"
+      },
+      {
+        "case": "board-100",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-100-r2"
+      },
+      {
+        "case": "board-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/board-1000-r2"
+      },
+      {
+        "case": "library-100",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-100-r2"
+      },
+      {
+        "case": "library-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-1000-r2"
+      },
+      {
+        "case": "library-100-board-100",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-100-board-100-r2"
+      },
+      {
+        "case": "library-1000-board-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-1000-board-1000-r2"
+      },
+      {
+        "case": "library-20-backfill",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/library-20-backfill-r2"
+      },
+      {
+        "case": "import-1",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/import-1-r3"
+      },
+      {
+        "case": "import-20",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/import-20-r3"
+      },
+      {
+        "case": "trickle-import",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/trickle-import-r3"
+      },
+      {
+        "case": "format:png",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/format:png-r3"
+      },
+      {
+        "case": "animated",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/animated-r3"
+      },
+      {
+        "case": "animated-control",
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/animated-control-r3"
+      },
+      {
+        "case": "static-20",
+        "artifact": "perf-assets/runs/static-timeout-repro-20260907/static-20-r1"
+      },
+      {
+        "case": "static-20",
+        "artifact": "perf-assets/runs/static-timeout-repro-20260907/static-20-r2"
+      },
+      {
+        "case": "static-20",
+        "artifact": "perf-assets/runs/static-timeout-repro-20260907/static-20-r3"
+      },
+      {
+        "case": "board-0",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/board-0-r1"
+      },
+      {
+        "case": "board-1",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/board-1-r1"
+      },
+      {
+        "case": "board-20",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/board-20-r1"
+      },
+      {
+        "case": "board-100",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/board-100-r1"
+      },
+      {
+        "case": "board-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/board-1000-r1"
+      },
+      {
+        "case": "library-100",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/library-100-r1"
+      },
+      {
+        "case": "library-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/library-1000-r1"
+      },
+      {
+        "case": "library-100-board-100",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/library-100-board-100-r1"
+      },
+      {
+        "case": "library-1000-board-1000",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/library-1000-board-1000-r1"
+      },
+      {
+        "case": "library-20-backfill",
+        "artifact": "perf-assets/runs/refactor-baseline-remaining-20260907/library-20-backfill-r1"
+      }
+    ]
+  },
+  "recorded_on": "2026-09-07",
+  "raw_artifacts": "perf-assets/runs/refactor-baseline-published-20260907",
+  "behavior": {
+    "library_tests_passed": 652,
+    "networked_tests_ignored": 2,
+    "inspect_scenarios": 12,
+    "inspect_assertions": 82,
+    "release_helper_checks": [
+      "release helper downscales and transfers exact pixels",
+      "release helper rejects corrupt image"
+    ],
+    "evaluation_tests_passed": 18
+  },
+  "notes": [
+    "Includes main commit ce7faf8 and its auto-layout groups feature.",
+    "Fresh processes; OS filesystem cache uncontrolled. Shipping defaults on AC power.",
+    "Animated imports remain selected and animate; their CPU is not a resting-board target.",
+    "RSS ranges include allocator/OS variation. Overlapping budget crossings are inconclusive.",
+    "Windows, native external input, and two networked tests were not run.",
+    "One acquisition timed out without an idle marker. See acquisition for the rejected trial and unchanged-binary replay."
+  ],
+  "comparison_calibration": {
+    "reference_commit": "356ff2aceba8983e33be235dba35361700703989",
+    "reference_file": "perf-assets/baselines/macos-m4-pro-2026-09-07.json",
+    "application_commit": "4b6e5df9f9876e177eebd617f417e64aff8404b5",
+    "result": {
+      "trials": 6,
+      "same_binary": true,
+      "status": "inconclusive",
+      "metrics_within_budget": 13,
+      "inconclusive": [
+        {
+          "case": "import-20",
+          "metric": "quiescent_rss_bytes",
+          "before": 115933184.0,
+          "after": 143048704.0,
+          "before_range": [
+            114425856,
+            181141504
+          ],
+          "after_range": [
+            121012224.0,
+            179126272.0
+          ],
+          "allowance": 16777216,
+          "status": "inconclusive"
+        }
+      ],
+      "raw_artifacts": "perf-assets/runs/refactor-baseline-control-20260907"
+    },
+    "note": "Earlier unchanged-binary calibration, before the auto-layout feature merged. This final baseline was then refreshed against main."
+  },
+  "comparison_checks": [
+    {
+      "check": "identical",
+      "exit_code": 0
+    },
+    {
+      "check": "synthetic slowdown",
+      "exit_code": 1
+    },
+    {
+      "check": "missing scenario",
+      "exit_code": 2
+    }
+  ]
+}

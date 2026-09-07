@@ -117,6 +117,7 @@ pub struct SemanticSearchService {
     text_embedding_cache: Arc<Mutex<HashMap<String, Vec<f32>>>>,
     search_embedding_cache: Arc<Mutex<SearchEmbeddingCache>>,
     index_tx: mpsc::Sender<IndexRequest>,
+    result_tx: mpsc::Sender<IndexResult>,
     result_rx: mpsc::Receiver<IndexResult>,
     search_tx: mpsc::Sender<SearchRequest>,
     search_result_rx: mpsc::Receiver<SearchQueryResult>,
@@ -131,6 +132,7 @@ impl SemanticSearchService {
         let model_state = Arc::new(Mutex::new(ModelState::Uninitialized));
         let text_embedding_cache = Arc::new(Mutex::new(HashMap::new()));
         let search_embedding_cache = Arc::new(Mutex::new(SearchEmbeddingCache::default()));
+        let worker_result_tx = result_tx.clone();
         let worker_library = library.clone();
         let worker_state = model_state.clone();
         let worker_search_embedding_cache = search_embedding_cache.clone();
@@ -146,7 +148,7 @@ impl SemanticSearchService {
                     &worker_library,
                     &worker_state,
                     &model_spec,
-                    &result_tx,
+                    &worker_result_tx,
                     &worker_search_embedding_cache,
                     canvas_image_max_side,
                     helper,
@@ -219,6 +221,7 @@ impl SemanticSearchService {
             text_embedding_cache,
             search_embedding_cache,
             index_tx,
+            result_tx,
             result_rx,
             search_tx,
             search_result_rx,
@@ -235,7 +238,12 @@ impl SemanticSearchService {
             .load_asset_embedding(asset_id, self.model_key)?
             .is_some()
         {
-            return Ok(());
+            // Every accepted request completes, including cache hits. The
+            // controller otherwise keeps this asset pending indefinitely.
+            return self
+                .result_tx
+                .send(IndexResult::Indexed { asset_id })
+                .map_err(|error| format!("failed to report cached asset indexing: {error}"));
         }
 
         self.index_tx
@@ -1371,7 +1379,7 @@ mod tests {
     }
 
     #[test]
-    fn enqueue_asset_index_skips_assets_with_ready_embedding() {
+    fn cached_asset_index_reports_completion_without_loading_model() {
         let root = TempRoot::new("snappyref-ready-index-skip-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
         let source_path = library
@@ -1410,6 +1418,10 @@ mod tests {
             .enqueue_asset_index(record.require_loaded_asset().id, source_path)
             .unwrap();
 
+        assert!(matches!(
+            service.result_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            IndexResult::Indexed { asset_id } if asset_id == record.require_loaded_asset().id
+        ));
         assert!(service.try_recv_all().is_empty());
         let embedding = library
             .load_asset_embedding(record.require_loaded_asset().id, "test-model")

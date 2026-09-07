@@ -719,6 +719,25 @@ impl SnappyRefApp {
     }
 
     pub(super) fn apply_loaded_import_outcome(&mut self, outcome: LoadedContentResolutionOutcome) {
+        if let Some(scenario) = &mut self.perf_scenario
+            && scenario.name == "startup"
+            && let Some(log) = &outcome.log
+            && log.origin == crate::jobs::ImportOrigin::Existing
+            && scenario
+                .startup_loaded_placement_ids
+                .insert(log.placement.id())
+        {
+            // Count Placements once, including when several LOD results land.
+            scenario.loaded_imports = scenario.startup_loaded_placement_ids.len();
+            if !scenario.first_loaded_logged {
+                scenario.first_loaded_logged = true;
+                scenario.emit("first_placement_loaded", serde_json::json!({}));
+            }
+            if scenario.loaded_imports == scenario.expected_imports {
+                scenario.all_loaded_logged = true;
+                scenario.emit("all_placements_loaded", serde_json::json!({}));
+            }
+        }
         let (completion, outcome) = self.content_resolution.finish_loaded_import(outcome);
         if let (Some(ticket), Some(log)) = (outcome.resolution_ticket, outcome.log.as_ref()) {
             let mut placement = log.placement.clone();
@@ -825,7 +844,10 @@ impl SnappyRefApp {
             );
         }
         if let Some((asset_id, original_path)) = indexed_asset {
-            if perf_counts_as_import && let Some(scenario) = &mut self.perf_scenario {
+            if perf_counts_as_import
+                && let Some(scenario) = &mut self.perf_scenario
+                && scenario.pending_embedding_asset_ids.insert(asset_id)
+            {
                 scenario.demand_embeddings_queued += 1;
                 let metadata = scenario.asset_by_asset_id.get(&asset_id).cloned();
                 let (format_value, source_file) = match &metadata {

@@ -1,36 +1,5 @@
 #!/usr/bin/env python3
-"""Sampling and summary helpers shared by perf scripts.
-
-Why a separate module: `run-perf-scenario.sh` keeps its sampling loop
-inline so a single invocation produces the canonical perf artifacts.
-The pieces that are testable in isolation -- discovering the process
-tree, computing whole-tree peak memory, and rolling per-asset
-`events.ndjson` events into a before/after-friendly phase summary --
-live here so they can be exercised by `--self-test` without touching
-the real app binary.
-
-This module exposes:
-
-- :func:`parse_ps_axwo_output` parses `ps` tree output into per-pid rows.
-- :func:`select_descendants` walks the parent/child links to return the
-  PIDs that belong to the main app and its helper children.
-- :func:`tree_rss_stats` aggregates whole-process-tree RSS samples into
-  the same shape the existing main-process `rss_stats` produces, plus a
-  `peak_tree_rss_bytes` value that is the headline child-process-aware
-  peak. The main-process value is **Quiescent Memory** when measured
-  during the post-tail quiescent window; the tree value is the peak of
-  the whole **Embedding Helper Process** + **Image Preparation Helper
-  Process** + main-process working set during active work.
-- :func:`per_helper_peaks` rolls per-pid samples up by helper role.
-- :func:`phase_summary_from_events` produces a before/after-friendly
-  phase-timing summary from a scenario's `events.ndjson`.
-- :func:`per_format_groups_from_events` is a thin re-export of the
-  `summarize-perf-by-format.py` join so the same artifact can carry
-  per-format aggregates without a second tool invocation.
-
-Run ``scripts/_perf_sampling.py --self-test`` to execute the bundled
-unit tests.
-"""
+"""Process-tree sampling and phase/format summaries for perf_eval.py."""
 
 from __future__ import annotations
 
@@ -122,19 +91,14 @@ def select_descendants(rows: list[dict[str, Any]], root_pid: int) -> list[dict[s
 
 
 def classify_helper(command: str, main_pid: int, pid: int) -> str:
-    """Label a sampled pid as ``main``, ``embedding_helper``, or ``other_helper``.
-
-    The embedding helper re-execs the app binary with
-    ``--semantic-embed-server``. The image preparation helper, when it
-    lands as a separate process, can use the same pattern with a new
-    flag; until then anything else under the main pid is bucketed as
-    ``other_helper``.
-    """
+    """Identify the main app and its shipping helper commands."""
 
     if pid == main_pid:
         return "main"
     if "--semantic-embed-server" in command:
         return "embedding_helper"
+    if "--imageprep" in command:
+        return "imageprep_helper"
     return "other_helper"
 
 
@@ -215,7 +179,7 @@ def per_helper_peaks(
 # ---------------------------------------------------------------------------
 
 
-# Phase boundary events emitted by `src/app.rs`. Each pair maps to the
+# Phase boundary events emitted by `src/app/perf_scenario.rs`. Each pair maps to the
 # elapsed_ms reading on the corresponding event; missing events are left
 # as None so before/after comparisons fail loudly rather than quietly
 # averaging to zero.
@@ -326,59 +290,28 @@ def per_format_groups_from_events(events: list[dict[str, Any]]) -> list[dict[str
     run without re-running the script.
     """
 
-    rows: dict[str, dict[str, Any]] = {}
-    asset_id_to_file: dict[int, str] = {}
-    queued_basename_to_file: dict[str, str] = {}
-
-    for event in events:
-        if event.get("event") != "import_queued":
-            continue
-        manifest_file = event.get("file")
-        if not isinstance(manifest_file, str):
-            continue
-        rows.setdefault(
-            manifest_file,
-            {
-                "file": manifest_file,
-                "format": event.get("format"),
-                "queued_ms": event.get("elapsed_ms"),
-                "placement_ms": None,
-                "embedding_queued_ms": None,
-                "embedding_done_ms": None,
-                "bytes": event.get("bytes"),
-            },
-        )
-        queued_basename_to_file[manifest_file.rsplit("/", 1)[-1]] = manifest_file
-
-    visible_seen: set[str] = set()
+    rows = {}
+    asset_rows = defaultdict(list)
     for event in events:
         kind = event.get("event")
-        if kind == "placement_loaded":
-            filename = event.get("filename") or ""
-            manifest_file: str | None = None
-            for basename, candidate in queued_basename_to_file.items():
-                if filename.endswith(basename) and candidate not in visible_seen:
-                    manifest_file = candidate
-                    break
-            if manifest_file is None:
-                continue
-            visible_seen.add(manifest_file)
-            rows[manifest_file]["placement_ms"] = event.get("elapsed_ms")
-            asset_id = event.get("asset_id")
-            if isinstance(asset_id, int):
-                asset_id_to_file[asset_id] = manifest_file
-        elif kind == "import_embedding_queued":
-            asset_id = event.get("asset_id")
-            if isinstance(asset_id, int):
-                manifest_file = asset_id_to_file.get(asset_id)
-                if manifest_file:
-                    rows[manifest_file]["embedding_queued_ms"] = event.get("elapsed_ms")
-        elif kind == "import_embedding_done":
-            asset_id = event.get("asset_id")
-            if isinstance(asset_id, int):
-                manifest_file = asset_id_to_file.get(asset_id)
-                if manifest_file:
-                    rows[manifest_file]["embedding_done_ms"] = event.get("elapsed_ms")
+        queue_id = event.get("queue_id")
+        if kind == "import_queued":
+            if queue_id in rows:
+                raise ValueError(f"duplicate import queue id {queue_id}")
+            rows[queue_id] = dict(file=event["file"], format=event["format"],
+                                  queued_ms=event["elapsed_ms"], placement_ms=None,
+                                  embedding_queued_ms=None, embedding_done_ms=None)
+        elif kind == "placement_loaded" and queue_id in rows:
+            row = rows[queue_id]
+            row["placement_ms"] = event["elapsed_ms"]
+            asset_rows[event["asset_id"]].append(row)
+        elif kind in ("import_embedding_queued", "import_embedding_done"):
+            key = "embedding_queued_ms" if kind.endswith("queued") else "embedding_done_ms"
+            # One embedding can satisfy several placements of the same asset.
+            # A later trickle request must not rewrite the earlier duration.
+            for row in asset_rows[event["asset_id"]]:
+                if row[key] is None:
+                    row[key] = event["elapsed_ms"]
 
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows.values():
@@ -427,7 +360,7 @@ def per_format_groups_from_events(events: list[dict[str, Any]]) -> list[dict[str
 
 
 def load_events_ndjson(path: pathlib.Path) -> list[dict[str, Any]]:
-    """Read an events.ndjson file, tolerating partial lines."""
+    """Read a live event stream; completed-run validation parses it strictly."""
 
     if not path.exists():
         return []
@@ -586,6 +519,7 @@ class _Tests(unittest.TestCase):
                 "event": "import_queued",
                 "elapsed_ms": 5.0,
                 "file": "jpg/a.jpg",
+                "queue_id": 1,
                 "format": "jpg",
                 "bytes": 1000,
             },
@@ -593,6 +527,7 @@ class _Tests(unittest.TestCase):
                 "event": "import_queued",
                 "elapsed_ms": 6.0,
                 "file": "png/b.png",
+                "queue_id": 2,
                 "format": "png",
                 "bytes": 2000,
             },
@@ -600,6 +535,7 @@ class _Tests(unittest.TestCase):
                 "event": "placement_loaded",
                 "elapsed_ms": 50.0,
                 "filename": "999-0-a.jpg",
+                "queue_id": 1,
                 "asset_id": 1,
             },
             {"event": "first_placement_loaded", "elapsed_ms": 50.0},
@@ -607,6 +543,7 @@ class _Tests(unittest.TestCase):
                 "event": "placement_loaded",
                 "elapsed_ms": 200.0,
                 "filename": "999-1-b.png",
+                "queue_id": 2,
                 "asset_id": 2,
             },
             {"event": "all_placements_loaded", "elapsed_ms": 200.0},
