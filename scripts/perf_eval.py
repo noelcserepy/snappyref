@@ -27,7 +27,8 @@ IMPORTS = ['import-1', 'import-20', 'trickle-import', 'format:png', 'animated',
 BOARDS = [f'board-{n}' for n in (0, 1, 20, 100, 1000)]
 LIBRARIES = ['library-100', 'library-1000', 'library-100-board-100',
              'library-1000-board-1000', 'library-20-backfill']
-SUITES = dict(core=IMPORTS, boards=BOARDS, libraries=LIBRARIES,
+FAST_CASES = ['import-1', 'import-20', 'board-0', 'board-1000', 'library-1000']
+SUITES = dict(fast=FAST_CASES, core=IMPORTS, boards=BOARDS, libraries=LIBRARIES,
               full=IMPORTS + BOARDS + LIBRARIES)
 # Both relative and absolute allowances must be exceeded to flag a regression.
 BUDGETS = {
@@ -39,6 +40,21 @@ BUDGETS = {
     'quiescent_rss_bytes': (0.10, 16 * 1024**2),
     'peak_tree_rss_bytes': (0.10, 32 * 1024**2),
 }
+
+FAST_METRICS = tuple(key for key in BUDGETS if key.endswith('_ms'))
+PROFILES = {
+    'full': dict(stop_ms=17000, metrics=tuple(BUDGETS)),
+    'fast': dict(stop_ms=500, metrics=FAST_METRICS),
+}
+
+def settled_marker(summary, events):
+    markers = {event['event']: event for event in events}
+    idle = markers['settled_idle']['elapsed_ms']
+    resumed = markers.get('work_resumed', {}).get('elapsed_ms', -1)
+    if resumed >= idle or abs(summary['time_to_idle_ms'] - idle) > 10:
+        raise ValueError('summary disagrees with current settled idle')
+    clock = markers['scenario_clock']
+    return clock['unix_ms'] - clock['elapsed_ms'] + idle
 
 
 def write_json(path, value):
@@ -76,7 +92,7 @@ def cpu_percent(rows):
     return delta / elapsed * 100
 
 
-def validate_run(summary, events, rows, state, expected):
+def validate_run(summary, events, rows, state, expected, profile="full"):
     markers = {event['event']: event for event in events}
     for name in ('scenario_clock', 'scenario_started', 'first_frame_painted', 'settled_idle'):
         if name not in markers:
@@ -98,13 +114,18 @@ def validate_run(summary, events, rows, state, expected):
         raise ValueError(f'fixture cardinality changed: wanted {expected}, got {state}')
     if state['placements'] != count:
         raise ValueError('persisted placement count disagrees with scenario')
+    if profile == 'fast':
+        settled_marker(summary, events)
+        if summary['scenario'] != 'startup' and 'all_placements_visible' not in markers:
+            raise ValueError('missing all painted imports marker')
+        return
     if len(rows) < 30 or rows[-1]['elapsed_ms'] - rows[0]['elapsed_ms'] < 9000:
         raise ValueError('quiescent window is incomplete')
     if max(b['elapsed_ms'] - a['elapsed_ms'] for a, b in zip(rows, rows[1:])) > 1000:
         raise ValueError('sampling gap exceeds one second')
 
 
-def evaluate(directory, samples, tree, launch_unix_ms, expected):
+def evaluate(directory, samples, tree, launch_unix_ms, expected, profile="full"):
     summary = json.loads((directory / 'summary.json').read_text())
     events = [json.loads(line) for line in (directory / 'events.ndjson').read_text().splitlines()]
     markers = {event['event']: event for event in events}
@@ -113,10 +134,10 @@ def evaluate(directory, samples, tree, launch_unix_ms, expected):
     idle = markers['settled_idle']['elapsed_ms'] + offset
     quiet = [row for row in samples if idle + 5000 <= row['elapsed_ms'] < idle + 15000]
     state = background_state(directory / 'library')
-    validate_run(summary, events, quiet, state, expected)
+    validate_run(summary, events, quiet, state, expected, profile)
     quiet_tree_main = [row for row in tree if row['role'] == 'main'
                        and idle + 5000 <= row['elapsed_ms'] < idle + 15000]
-    if len(quiet_tree_main) < 30 or quiet_tree_main[-1]['elapsed_ms'] - quiet_tree_main[0]['elapsed_ms'] < 9000:
+    if profile == 'full' and (len(quiet_tree_main) < 30 or quiet_tree_main[-1]['elapsed_ms'] - quiet_tree_main[0]['elapsed_ms'] < 9000):
         raise ValueError('process-tree sampling window is incomplete')
     if not tree or tree[0]['elapsed_ms'] > 1000:
         raise ValueError('process-tree sampling missed startup')
@@ -129,10 +150,11 @@ def evaluate(directory, samples, tree, launch_unix_ms, expected):
             markers['all_placements_visible']['elapsed_ms'] - markers['scenario_started']['elapsed_ms']
             if summary['scenario'] != 'startup' else None),
         'launch_to_idle_ms': idle,
-        'quiescent_cpu_percent': cpu_percent(quiet),
-        'quiescent_rss_bytes': statistics.median(row['rss_bytes'] for row in quiet),
-        'peak_tree_rss_bytes': sampling.tree_rss_stats(tree)['peak_tree_rss_bytes'],
     }
+    if profile == 'full':
+        metrics.update(quiescent_cpu_percent=cpu_percent(quiet),
+                       quiescent_rss_bytes=statistics.median(row['rss_bytes'] for row in quiet),
+                       peak_tree_rss_bytes=sampling.tree_rss_stats(tree)['peak_tree_rss_bytes'])
     for value in metrics.values():
         if value is not None and (not math.isfinite(value) or value < 0):
             raise ValueError(f'invalid metric: {metrics}')
@@ -148,7 +170,39 @@ def evaluate(directory, samples, tree, launch_unix_ms, expected):
     return result
 
 
-def run_case(binary, assets, directory, data_root, scenario, timeout, expected=None):
+def live_process_group(group):
+    rows = output('ps', '-axo', 'pgid=,stat=').splitlines()
+    return any(int(parts[0]) == group and not parts[1].startswith('Z')
+               for row in rows if len(parts := row.split()) == 2)
+
+
+def cleanup_process_group(process):
+    def send(sig):
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            # macOS can return EPERM for a group containing only exited members.
+            if live_process_group(process.pid):
+                raise
+    send(signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        send(signal.SIGKILL)
+        process.wait(timeout=5)
+    if live_process_group(process.pid):
+        send(signal.SIGKILL)
+    deadline = time.monotonic() + 5
+    while live_process_group(process.pid):
+        if time.monotonic() >= deadline:
+            raise TimeoutError('trial process group survived cleanup')
+        time.sleep(0.01)
+
+
+def run_case(binary, assets, directory, data_root, scenario, timeout, expected=None, profile="full"):
+    trial_start = time.monotonic()
     directory.mkdir(parents=True, exist_ok=True)
     env = {key: value for key, value in os.environ.items() if not key.startswith('SNAPPYREF_')}
     env.update(SNAPPYREF_LIBRARY_ROOT=str(directory / 'library'), SNAPPYREF_DATA_ROOT=str(data_root),
@@ -163,6 +217,7 @@ def run_case(binary, assets, directory, data_root, scenario, timeout, expected=N
         launch_unix_ms = time.time() * 1000
         start = time.monotonic()
         process = subprocess.Popen(cmd, env=env, stdout=log, stderr=log, start_new_session=True)
+        collection_complete = False
         try:
             while process.poll() is None:
                 summary_path = directory / 'summary.json'
@@ -172,11 +227,15 @@ def run_case(binary, assets, directory, data_root, scenario, timeout, expected=N
                     try:
                         settled = json.loads(summary_path.read_text())
                         events = sampling.load_events_ndjson(directory / 'events.ndjson')
-                        clock = events[0]
-                        idle_unix = clock['unix_ms'] - clock['elapsed_ms'] + settled['time_to_idle_ms']
-                        if (time.monotonic() - start) * 1000 >= idle_unix - launch_unix_ms + 17000:
+                        if profile == 'fast':
+                            idle_unix = settled_marker(settled, events)
+                        else:
+                            clock = events[0]
+                            idle_unix = clock['unix_ms'] - clock['elapsed_ms'] + settled['time_to_idle_ms']
+                        if (time.monotonic() - start) * 1000 >= idle_unix - launch_unix_ms + PROFILES[profile]['stop_ms']:
+                            collection_complete = True
                             break
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, KeyError, ValueError):
                         pass
                 if time.monotonic() - start > timeout:
                     raise TimeoutError(f'{scenario} exceeded {timeout}s')
@@ -194,27 +253,30 @@ def run_case(binary, assets, directory, data_root, scenario, timeout, expected=N
                 time.sleep(0.2)
             if process.poll() is not None and process.returncode != 0:
                 raise ValueError(f'app exited with status {process.returncode}')
-            return evaluate(directory, samples, tree, launch_unix_ms, expected)
+            if profile == 'fast' and not collection_complete:
+                raise ValueError('app exited before the fast observation guard completed')
+            return evaluate(directory, samples, tree, launch_unix_ms, expected, profile)
         except Exception as error:
             write_json(directory / 'result.json', dict(valid=False, error=str(error)))
             raise
         finally:
-            # Kill only the private process group, including helpers after a timeout.
+            cleanup_start = time.monotonic()
             try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-            for name, rows in [('samples.csv', samples), ('samples-tree.csv', tree)]:
-                if rows:
-                    with (directory / name).open('w') as handle:
-                        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
-                        writer.writeheader()
-                        writer.writerows(rows)
+                cleanup_process_group(process)
+            except Exception as error:
+                write_json(directory / 'result.json', dict(valid=False, error=f'cleanup failed: {error}'))
+                raise
+            finally:
+                for name, rows in [('samples.csv', samples), ('samples-tree.csv', tree)]:
+                    if rows:
+                        with (directory / name).open('w') as handle:
+                            writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+                            writer.writeheader()
+                            writer.writerows(rows)
+
+                write_json(directory / 'timing.json', dict(
+                    total_seconds=time.monotonic() - trial_start,
+                    cleanup_seconds=time.monotonic() - cleanup_start))
 
 
 def fixture_size(case):
@@ -226,7 +288,7 @@ def fixture_size(case):
     return None
 
 
-def aggregate(runs):
+def aggregate(runs, profile="full"):
     by_case = {}
     for run in runs:
         by_case.setdefault(run['case'], []).append(run)
@@ -236,7 +298,7 @@ def aggregate(runs):
             result[case] = dict(valid=False)
             continue
         metrics = {}
-        for key in BUDGETS:
+        for key in PROFILES[profile]['metrics']:
             values = [trial['metrics'][key] for trial in trials]
             if all(value is None for value in values):
                 continue
@@ -257,12 +319,31 @@ def compare(baseline, candidate):
         raise ValueError('machine, corpus, model, or measurement settings differ')
     if baseline['cases'].keys() != candidate['cases'].keys():
         raise ValueError('case lists differ')
+    profile = baseline['contract'].get('profile', 'full')
+    if profile == 'fast':
+        for report in (baseline, candidate):
+            selected = report['contract']['cases']
+            if set(report['cases']) != set(selected):
+                raise ValueError('incomplete case coverage')
+            runs = report.get('runs', [])
+            expected_trials = {(case, repeat) for case in selected
+                               for repeat in range(1, report['contract']['repeats'] + 1)}
+            if len(runs) != len(expected_trials) or {(r['case'], r['repeat']) for r in runs} != expected_trials:
+                raise ValueError('incomplete trial coverage')
+            if not all(r['valid'] for r in runs) or aggregate(runs, profile) != report['cases']:
+                raise ValueError('trial data disagrees with aggregates')
     changes = []
     for case, before in baseline['cases'].items():
         after = candidate['cases'][case]
         if before['metrics'].keys() != after['metrics'].keys():
             raise ValueError(f'metric coverage differs for {case}')
-        required = set(BUDGETS) - {'launch_to_first_visible_ms', 'queue_to_all_visible_ms'}
+        required = set(PROFILES[profile]['metrics']) - {'launch_to_first_visible_ms', 'queue_to_all_visible_ms'}
+        if profile == 'fast':
+            size = fixture_size(case)
+            if not size or size[1]:
+                required.add('launch_to_first_visible_ms')
+            if not size:
+                required.add('queue_to_all_visible_ms')
         if not required <= before['metrics'].keys():
             raise ValueError(f'missing required metrics for {case}')
         for metric, values in before['metrics'].items():
@@ -295,7 +376,7 @@ def main():
     commands = parser.add_subparsers(dest='command', required=True)
     run = commands.add_parser('run')
     run.add_argument('cases', nargs='*', help='Scenario names, board-N or library-N[-board-N|-backfill]')
-    run.add_argument('--suite', choices=SUITES)
+    run.add_argument('--suite', choices=SUITES, help='Default: fast. Other suites retain full observation windows.')
     run.add_argument('--repeats', type=int, default=3)
     run.add_argument('--output', type=Path)
     run.add_argument('--timeout', type=float, default=180)
@@ -307,13 +388,18 @@ def main():
     diff.add_argument('candidate', type=Path)
     diff.add_argument('--output', type=Path)
     args = parser.parse_args()
+    command_start = time.monotonic()
     if args.command == 'compare':
-        result = compare(json.loads(args.baseline.read_text()), json.loads(args.candidate.read_text()))
+        try:
+            result = compare(json.loads(args.baseline.read_text()), json.loads(args.candidate.read_text()))
+        except (ValueError, KeyError) as error:
+            result = dict(status='invalid', error=str(error), changes=[])
         if args.output:
             write_json(args.output, result)
         findings = [change for change in result['changes'] if change['status'] != 'pass']
-        print(json.dumps(dict(status=result['status'], findings=findings), indent=2))
-        return {'pass': 0, 'regression': 1, 'inconclusive': 2}[result['status']]
+        print(json.dumps(dict(status=result['status'], findings=findings,
+                              **({'error': result['error']} if 'error' in result else {})), indent=2))
+        return {'pass': 0, 'regression': 1, 'inconclusive': 2, 'invalid': 2}[result['status']]
     if sys.platform != 'darwin':
         raise ValueError('this sampler currently supports macOS only')
     # One local sampler at a time; overlapping runs contaminate CPU/RSS timings.
@@ -323,74 +409,107 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         raise ValueError('another performance evaluation is running') from None
-    cases = args.cases or SUITES[args.suite or 'core']
+    cases = args.cases or SUITES[args.suite or 'fast']
+    profile = 'fast' if (args.suite == 'fast' or not args.suite and not args.cases) else 'full'
     if len(set(cases)) != len(cases) or args.repeats < 1 or args.timeout < 25:
         raise ValueError('unique cases, positive repeats, and timeout >=25 seconds required')
     binary = (args.binary or ROOT / 'target/release/snappyref').resolve()
+    build_start = time.monotonic()
     if args.binary is None:
         subprocess.run(['cargo', 'build', '--locked', '--release'], cwd=ROOT, check=True)
+    build_seconds = time.monotonic() - build_start
+    prepared_start = time.monotonic()
     directory = (args.output or ROOT / 'perf-assets/runs' / time.strftime('%Y%m%d-%H%M%S-eval')).resolve()
     directory.mkdir(parents=True, exist_ok=False)
-    assets = args.assets.resolve()
-    manifest = json.loads((assets.parent / 'manifest.json').read_text())
-    corpus_files = [('manifest.json', assets.parent / 'manifest.json')]
-    corpus_files += [(entry['file'], assets / entry['file']) for entry in manifest]
-    model_files = [(str(path.relative_to(args.models)), path) for path in args.models.rglob('*') if path.is_file()]
-    if not model_files:
-        raise ValueError('no installed models; pass --models with the installed model directory')
-    # Version the meaning of measurements, not the comparison policy. Script
-    # hashes remain provenance so analysis changes can reuse recorded samples.
-    contract = dict(platform=platform.platform(), cpu=output('sysctl', '-n', 'machdep.cpu.brand_string'),
-                    rustc=output('rustc', '--version'), turbojpeg=output('pkg-config', '--modversion', 'libturbojpeg'),
-                    build_overrides={key: value for key, value in os.environ.items()
-                                     if key in ('RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_TARGET')
-                                     or key.startswith('CARGO_PROFILE_RELEASE_')},
-                    memory_bytes=output('sysctl', '-n', 'hw.memsize'),
-                    corpus_sha256=fingerprint(corpus_files), model_sha256=fingerprint(model_files),
-                    measurement_version=1,
-                    power_source=output('pmset', '-g', 'batt').splitlines()[0],
-                    sampling_interval_ms=200, idle_hold_seconds=20, external_stop_after_idle_ms=17000, quiescent_window_ms=[5000, 15000],
-                    build='release/default-features', cache='fresh process; OS filesystem cache uncontrolled',
-                    helper_policy='shipping defaults', fixture_version=1)
-    data = directory / 'data'
-    import shutil
-    shutil.copytree(args.models, data / 'models', copy_function=copy_file)
-    report = dict(schema=1, valid=False, contract=contract,
-                  source=dict(commit=output('git', 'rev-parse', 'HEAD'),
-                              dirty=bool(output('git', 'status', '--porcelain')),
-                              diff_sha256=hashlib.sha256(output('git', 'diff', 'HEAD').encode()).hexdigest(),
-                              binary_sha256=fingerprint([('snappyref', binary)]),
-                              evaluator_sha256=fingerprint([(name, ROOT / 'scripts' / name) for name in
-                                  ['perf_eval.py', '_perf_sampling.py', '_perf_library_seed.py']])),
-                  runs=[], cases={})
     report_path = directory / 'evaluation.json'
+    report = dict(schema=1, valid=False, runs=[], cases={}, timing=dict(build_seconds=build_seconds))
     write_json(report_path, report)
-    print(f'run_dir={directory}', flush=True)
-    seed = directory / 'seed'
-    if any(fixture_size(case) for case in cases):
-        print('Preparing seed with real import and embedding', flush=True)
-        run_case(binary, assets, seed, data, 'import-1', args.timeout)
-    for repeat in range(1, args.repeats + 1):
-        for case in cases:
-            trial = directory / f'{case}-r{repeat}'
-            size = fixture_size(case)
-            print(f'[{repeat}/{args.repeats}] {case}', flush=True)
+    try:
+        assets = args.assets.resolve()
+        manifest = json.loads((assets.parent / 'manifest.json').read_text())
+        corpus_files = [('manifest.json', assets.parent / 'manifest.json')]
+        corpus_files += [(entry['file'], assets / entry['file']) for entry in manifest]
+        model_files = [(str(path.relative_to(args.models)), path) for path in args.models.rglob('*') if path.is_file()]
+        if not model_files:
+            raise ValueError('no installed models; pass --models with the installed model directory')
+        # Version the meaning of measurements, not the comparison policy. Script
+        # hashes remain provenance so analysis changes can reuse recorded samples.
+        contract = dict(platform=platform.platform(), cpu=output('sysctl', '-n', 'machdep.cpu.brand_string'),
+                        rustc=output('rustc', '--version'), turbojpeg=output('pkg-config', '--modversion', 'libturbojpeg'),
+                        build_overrides={key: value for key, value in os.environ.items()
+                                         if key in ('RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_TARGET')
+                                         or key.startswith('CARGO_PROFILE_RELEASE_')},
+                        memory_bytes=output('sysctl', '-n', 'hw.memsize'),
+                        corpus_sha256=fingerprint(corpus_files), model_sha256=fingerprint(model_files),
+                        measurement_version=1,
+                        power_source=output('pmset', '-g', 'batt').splitlines()[0],
+                        sampling_interval_ms=200, idle_hold_seconds=20, external_stop_after_idle_ms=17000, quiescent_window_ms=[5000, 15000],
+                        build='release/default-features', cache='fresh process; OS filesystem cache uncontrolled',
+                        helper_policy='shipping defaults', fixture_version=1)
+        if profile == 'fast':
+            contract.update(profile='fast', measurement_version=2, external_stop_after_idle_ms=500,
+                            quiescent_window_ms=None, metrics=list(FAST_METRICS),
+                            cases=cases, repeats=args.repeats)
+        data = directory / 'data'
+        import shutil
+        shutil.copytree(args.models, data / 'models', copy_function=copy_file)
+        report.update(contract=contract,
+                      source=dict(commit=output('git', 'rev-parse', 'HEAD'),
+                                  dirty=bool(output('git', 'status', '--porcelain')),
+                                  diff_sha256=hashlib.sha256(output('git', 'diff', 'HEAD').encode()).hexdigest(),
+                                  binary_sha256=fingerprint([('snappyref', binary)]),
+                                  evaluator_sha256=fingerprint([(name, ROOT / 'scripts' / name) for name in
+                                      ['perf_eval.py', '_perf_sampling.py', '_perf_library_seed.py']])),
+                      )
+        write_json(report_path, report)
+        print(f'run_dir={directory}', flush=True)
+        report['timing']['setup_seconds'] = time.monotonic() - prepared_start
+        seed_start = time.monotonic()
+        seed = directory / 'seed'
+        if any(fixture_size(case) for case in cases):
+            print('Preparing seed with real import and embedding', flush=True)
             try:
-                if size:
-                    trial.mkdir()
-                    initial = seed_library(seed / 'library', trial / 'library', *size, ready=not case.endswith('-backfill'))
-                    write_json(trial / 'fixture.json', initial)
-                result = run_case(binary, assets, trial, data, 'startup' if size else case, args.timeout, size)
-                report['runs'].append(dict(case=case, repeat=repeat, artifact=str(trial), **result))
-                print(json.dumps(result['metrics']), flush=True)
-            except Exception as error:
-                report['runs'].append(dict(case=case, repeat=repeat, valid=False, error=str(error), artifact=str(trial)))
+                run_case(binary, assets, seed, data, 'import-1', args.timeout, profile=profile)
+            finally:
+                report['timing']['seed_seconds'] = time.monotonic() - seed_start
+        for repeat in range(1, args.repeats + 1):
+            for case in cases:
+                trial = directory / f'{case}-r{repeat}'
+                size = fixture_size(case)
+                print(f'[{repeat}/{args.repeats}] {case}', flush=True)
+                trial_start = time.monotonic()
+                try:
+                    if size:
+                        trial.mkdir()
+                        initial = seed_library(seed / 'library', trial / 'library', *size, ready=not case.endswith('-backfill'))
+                        write_json(trial / 'fixture.json', initial)
+                    result = run_case(binary, assets, trial, data, 'startup' if size else case, args.timeout, size, profile)
+                    report['runs'].append(dict(case=case, repeat=repeat, artifact=str(trial), **result,
+                                               timing=dict(**json.loads((trial / 'timing.json').read_text()),
+                                                           including_fixture_seconds=time.monotonic() - trial_start)))
+                    print(json.dumps(result['metrics']), flush=True)
+                except Exception as error:
+                    report['runs'].append(dict(case=case, repeat=repeat, valid=False, error=str(error), artifact=str(trial),
+                                              timing=dict(including_fixture_seconds=time.monotonic() - trial_start,
+                                                          **(json.loads((trial / 'timing.json').read_text())
+                                                             if (trial / 'timing.json').exists() else {}))))
+                    write_json(report_path, report)
+                    raise
+                report['cases'] = aggregate(report['runs'], profile)
                 write_json(report_path, report)
-                raise
-            report['cases'] = aggregate(report['runs'])
-            write_json(report_path, report)
-    report['valid'] = True
-    write_json(report_path, report)
+        report['valid'] = True
+    except Exception as error:
+        report['valid'] = False
+        report['error'] = str(error)
+        raise
+    finally:
+        report['timing'].setdefault('setup_seconds', time.monotonic() - prepared_start)
+        # Write the complete report before measuring reporting overhead itself.
+        write_json(report_path, report)
+        report['timing']['prepared_seconds'] = time.monotonic() - command_start - build_seconds
+        report['timing']['over_target'] = report['timing']['prepared_seconds'] >= 60
+        report['timing']['command_seconds'] = time.monotonic() - command_start
+        write_json(report_path, report)
     print(f'evaluation={report_path}', flush=True)
     return 0
 
