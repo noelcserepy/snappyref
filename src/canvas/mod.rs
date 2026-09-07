@@ -1,4 +1,6 @@
-use std::sync::{Arc, Mutex};
+pub(crate) mod residency;
+use render::images::{CanvasTexture, PendingCropPreview, PlacementImage, RenderedPlacement};
+use std::sync::Arc;
 
 mod document;
 mod geometry;
@@ -10,7 +12,7 @@ mod state;
 
 use crate::data::{
     CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationGeometry, CanvasAnnotationKind,
-    CanvasBackground, CanvasImageLod, CanvasTextSize, Placement, RectGeometry, SegmentGeometry,
+    CanvasBackground, CanvasImageLod, CanvasTextSize, RectGeometry, SegmentGeometry,
 };
 use crate::placement::arrangement::PlacementArrangementInput;
 use eframe::egui;
@@ -90,7 +92,7 @@ pub struct CanvasFrameMetrics {
 
 #[derive(Clone, Debug, Default)]
 pub struct CanvasDocumentChanges {
-    pub updated_placements: Vec<crate::data::PlacementState>,
+    pub updated_placements: Vec<crate::data::Placement>,
     pub archived_placement_ids: Vec<i64>,
     pub updated_annotations: Vec<CanvasAnnotation>,
     pub archived_annotation_ids: Vec<i64>,
@@ -145,126 +147,6 @@ struct AnnotationPaintStats {
     considered: usize,
     drawn: usize,
 }
-
-#[derive(Clone)]
-pub(crate) struct RenderedPlacement {
-    pub(crate) placement: Placement,
-    texture: CanvasTexture,
-    loaded_lod: CanvasImageLod,
-    animation: Option<AnimatedCanvasImage>,
-}
-
-#[derive(Clone)]
-struct PendingCropPreview {
-    image: RenderedPlacement,
-    rgba: SharedRgba,
-}
-
-#[derive(Clone)]
-enum CanvasTexture {
-    Managed(egui::TextureHandle),
-    Native(Arc<crate::jobs::NativeTextureHandle>),
-    Svg {
-        uri: String,
-        bytes: Arc<[u8]>,
-        size: [usize; 2],
-    },
-    Unloaded {
-        size: [usize; 2],
-    },
-}
-
-impl CanvasTexture {
-    fn id(&self) -> egui::TextureId {
-        match self {
-            Self::Managed(texture) => texture.id(),
-            Self::Native(texture) => texture.texture_id(),
-            Self::Svg { .. } => egui::TextureId::Managed(0),
-            Self::Unloaded { .. } => egui::TextureId::Managed(0),
-        }
-    }
-
-    fn size(&self) -> [usize; 2] {
-        match self {
-            Self::Managed(texture) => texture.size(),
-            Self::Native(texture) => texture.size(),
-            Self::Svg { size, .. } => *size,
-            Self::Unloaded { size } => *size,
-        }
-    }
-}
-
-#[derive(Clone)]
-struct ImagePassBatch {
-    texture: Arc<crate::jobs::NativeTextureHandle>,
-    instance_range: std::ops::Range<u32>,
-}
-
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
-struct ImagePassVertex {
-    pos: [f32; 2],
-}
-
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
-struct ImagePassInstance {
-    min_ndc: [f32; 2],
-    max_ndc: [f32; 2],
-    min_uv: [f32; 2],
-    max_uv: [f32; 2],
-}
-
-struct PreparedImagePass {
-    instance_buffer: eframe::wgpu::Buffer,
-    bind_groups: Vec<eframe::wgpu::BindGroup>,
-}
-
-struct ImagePassResources {
-    pipeline: eframe::wgpu::RenderPipeline,
-    vertex_buffer: eframe::wgpu::Buffer,
-    texture_bind_group_layout: eframe::wgpu::BindGroupLayout,
-    sampler: eframe::wgpu::Sampler,
-}
-
-struct ImagePassCallback {
-    target_format: eframe::wgpu::TextureFormat,
-    instances: Vec<ImagePassInstance>,
-    batches: Vec<ImagePassBatch>,
-    prepared: Mutex<Option<PreparedImagePass>>,
-}
-
-const IMAGE_PASS_SHADER: &str = r#"
-struct VsIn {
-    @location(0) unit_pos: vec2<f32>,
-    @location(1) min_ndc: vec2<f32>,
-    @location(2) max_ndc: vec2<f32>,
-    @location(3) min_uv: vec2<f32>,
-    @location(4) max_uv: vec2<f32>,
-};
-
-struct VsOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
-
-@vertex
-fn vs_main(input: VsIn) -> VsOut {
-    var output: VsOut;
-    let ndc = mix(input.min_ndc, input.max_ndc, input.unit_pos);
-    output.position = vec4<f32>(ndc, 0.0, 1.0);
-    output.uv = mix(input.min_uv, input.max_uv, input.unit_pos);
-    return output;
-}
-
-@group(0) @binding(0) var image_tex: texture_2d<f32>;
-@group(0) @binding(1) var image_sampler: sampler;
-
-@fragment
-fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
-    return textureSample(image_tex, image_sampler, input.uv);
-}
-"#;
 
 #[derive(Clone)]
 pub(crate) struct PlacementScaleStart {
@@ -420,20 +302,6 @@ pub(crate) struct CropState {
     current_screen: egui::Pos2,
 }
 
-#[derive(Clone, Debug)]
-struct AnimatedCanvasFrame {
-    rgba: SharedRgba,
-    delay_seconds: f32,
-}
-
-#[derive(Clone, Debug)]
-struct AnimatedCanvasImage {
-    frames: Vec<AnimatedCanvasFrame>,
-    width: u32,
-    height: u32,
-    current_frame: usize,
-}
-
 #[derive(Clone)]
 pub(crate) struct AnnotationDraftState {
     kind: CanvasAnnotationKind,
@@ -545,210 +413,6 @@ fn merge_ids(existing: &[i64], incoming: &[i64]) -> Vec<i64> {
         }
     }
     merged
-}
-
-impl ImagePassResources {
-    fn new(device: &eframe::wgpu::Device, target_format: eframe::wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(eframe::wgpu::ShaderModuleDescriptor {
-            label: Some("snappyref_canvas_image_shader"),
-            source: eframe::wgpu::ShaderSource::Wgsl(IMAGE_PASS_SHADER.into()),
-        });
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&eframe::wgpu::BindGroupLayoutDescriptor {
-                label: Some("snappyref_canvas_image_bind_group_layout"),
-                entries: &[
-                    eframe::wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: eframe::wgpu::ShaderStages::FRAGMENT,
-                        ty: eframe::wgpu::BindingType::Texture {
-                            sample_type: eframe::wgpu::TextureSampleType::Float {
-                                filterable: true,
-                            },
-                            view_dimension: eframe::wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    eframe::wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: eframe::wgpu::ShaderStages::FRAGMENT,
-                        ty: eframe::wgpu::BindingType::Sampler(
-                            eframe::wgpu::SamplerBindingType::Filtering,
-                        ),
-                        count: None,
-                    },
-                ],
-            });
-        let sampler = device.create_sampler(&eframe::wgpu::SamplerDescriptor {
-            label: Some("snappyref_canvas_image_sampler"),
-            mag_filter: eframe::wgpu::FilterMode::Linear,
-            min_filter: eframe::wgpu::FilterMode::Linear,
-            mipmap_filter: eframe::wgpu::MipmapFilterMode::Linear,
-            ..Default::default()
-        });
-        let pipeline_layout =
-            device.create_pipeline_layout(&eframe::wgpu::PipelineLayoutDescriptor {
-                label: Some("snappyref_canvas_image_pipeline_layout"),
-                bind_group_layouts: &[Some(&texture_bind_group_layout)],
-                immediate_size: 0,
-            });
-        let vertex_attributes = eframe::wgpu::vertex_attr_array![0 => Float32x2];
-        let instance_attributes = eframe::wgpu::vertex_attr_array![1 => Float32x2, 2 => Float32x2, 3 => Float32x2, 4 => Float32x2];
-        let pipeline = device.create_render_pipeline(&eframe::wgpu::RenderPipelineDescriptor {
-            label: Some("snappyref_canvas_image_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: eframe::wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: eframe::wgpu::PipelineCompilationOptions::default(),
-                buffers: &[
-                    eframe::wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<ImagePassVertex>() as u64,
-                        step_mode: eframe::wgpu::VertexStepMode::Vertex,
-                        attributes: &vertex_attributes,
-                    },
-                    eframe::wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<ImagePassInstance>() as u64,
-                        step_mode: eframe::wgpu::VertexStepMode::Instance,
-                        attributes: &instance_attributes,
-                    },
-                ],
-            },
-            primitive: eframe::wgpu::PrimitiveState {
-                topology: eframe::wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: eframe::wgpu::MultisampleState::default(),
-            fragment: Some(eframe::wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: eframe::wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(eframe::wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(eframe::wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: eframe::wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-        let vertices = [
-            ImagePassVertex { pos: [0.0, 0.0] },
-            ImagePassVertex { pos: [1.0, 0.0] },
-            ImagePassVertex { pos: [1.0, 1.0] },
-            ImagePassVertex { pos: [0.0, 0.0] },
-            ImagePassVertex { pos: [1.0, 1.0] },
-            ImagePassVertex { pos: [0.0, 1.0] },
-        ];
-        let vertex_buffer = eframe::wgpu::util::DeviceExt::create_buffer_init(
-            device,
-            &eframe::wgpu::util::BufferInitDescriptor {
-                label: Some("snappyref_canvas_image_vertices"),
-                contents: bytemuck::cast_slice(&vertices),
-                usage: eframe::wgpu::BufferUsages::VERTEX,
-            },
-        );
-        Self {
-            pipeline,
-            vertex_buffer,
-            texture_bind_group_layout,
-            sampler,
-        }
-    }
-}
-
-impl ImagePassCallback {
-    fn new(
-        target_format: eframe::wgpu::TextureFormat,
-        instances: Vec<ImagePassInstance>,
-        batches: Vec<ImagePassBatch>,
-    ) -> Self {
-        Self {
-            target_format,
-            instances,
-            batches,
-            prepared: Mutex::new(None),
-        }
-    }
-}
-
-impl eframe::egui_wgpu::CallbackTrait for ImagePassCallback {
-    fn prepare(
-        &self,
-        device: &eframe::wgpu::Device,
-        _queue: &eframe::wgpu::Queue,
-        _screen_descriptor: &eframe::egui_wgpu::ScreenDescriptor,
-        _egui_encoder: &mut eframe::wgpu::CommandEncoder,
-        callback_resources: &mut eframe::egui_wgpu::CallbackResources,
-    ) -> Vec<eframe::wgpu::CommandBuffer> {
-        if callback_resources.get::<ImagePassResources>().is_none() {
-            callback_resources.insert(ImagePassResources::new(device, self.target_format));
-        }
-        let Some(resources) = callback_resources.get::<ImagePassResources>() else {
-            return Vec::new();
-        };
-        let instance_buffer = eframe::wgpu::util::DeviceExt::create_buffer_init(
-            device,
-            &eframe::wgpu::util::BufferInitDescriptor {
-                label: Some("snappyref_canvas_image_instances"),
-                contents: bytemuck::cast_slice(&self.instances),
-                usage: eframe::wgpu::BufferUsages::VERTEX,
-            },
-        );
-        let bind_groups = self
-            .batches
-            .iter()
-            .filter_map(|batch| {
-                batch.texture.create_bind_group(
-                    device,
-                    &resources.texture_bind_group_layout,
-                    &resources.sampler,
-                )
-            })
-            .collect::<Vec<_>>();
-        *self.prepared.lock().expect("image pass mutex poisoned") = Some(PreparedImagePass {
-            instance_buffer,
-            bind_groups,
-        });
-        Vec::new()
-    }
-
-    fn paint(
-        &self,
-        info: egui::PaintCallbackInfo,
-        render_pass: &mut eframe::wgpu::RenderPass<'static>,
-        callback_resources: &eframe::egui_wgpu::CallbackResources,
-    ) {
-        let Some(resources) = callback_resources.get::<ImagePassResources>() else {
-            return;
-        };
-        let Some(prepared) = self
-            .prepared
-            .lock()
-            .expect("image pass mutex poisoned")
-            .take()
-        else {
-            return;
-        };
-        if prepared.bind_groups.len() != self.batches.len() {
-            return;
-        }
-        let clip = info.clip_rect_in_pixels();
-        render_pass.set_scissor_rect(
-            clip.left_px.max(0) as u32,
-            clip.top_px.max(0) as u32,
-            clip.width_px.max(0) as u32,
-            clip.height_px.max(0) as u32,
-        );
-        render_pass.set_pipeline(&resources.pipeline);
-        render_pass.set_vertex_buffer(0, resources.vertex_buffer.slice(..));
-        render_pass.set_vertex_buffer(1, prepared.instance_buffer.slice(..));
-        for (index, batch) in self.batches.iter().enumerate() {
-            render_pass.set_bind_group(0, &prepared.bind_groups[index], &[]);
-            render_pass.draw(0..6, batch.instance_range.clone());
-        }
-    }
 }
 
 pub fn show(

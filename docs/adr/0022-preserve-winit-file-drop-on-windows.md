@@ -1,7 +1,7 @@
 # Keep Windows drop target ABI correct
 
 Carryover note: not absorbed by the ADR cleanup yet. Current
-`src/platform/native_drop/mod.rs` still appears to use `*const POINTL` in the
+`src/platform/native_drop/windows.rs` still appears to use `*const POINTL` in the
 manual `IDropTarget` vtable, while this note says the ABI should pass `POINTL`
 by value. Verify the current `windows` crate ABI on a real Windows checkout
 before either fixing the bridge or deleting this file.

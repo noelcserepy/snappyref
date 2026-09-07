@@ -1,4 +1,9 @@
-use super::*;
+use super::connection::Library;
+use crate::data::Board;
+use crate::data::DEFAULT_VIEWPORT_ZOOM;
+use rusqlite::Connection;
+use rusqlite::Transaction;
+use rusqlite::params;
 
 pub(super) fn active_board_id(connection: &Connection) -> Result<i64, String> {
     let candidate = connection

@@ -1,6 +1,3 @@
-mod support;
-use support::*;
-
 mod annotations;
 mod assets;
 mod boards;

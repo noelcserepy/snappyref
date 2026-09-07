@@ -26,15 +26,15 @@ pub(crate) fn paint_provisional_placement_previews(
     let mut painted = Vec::new();
     for image in state
         .document
-        .rendered_placements
+        .placements
         .iter()
-        .filter(|image| image.placement.lifecycle == PlacementLifecycle::Provisional)
+        .filter(|image| image.lifecycle == PlacementLifecycle::Provisional)
     {
-        if state.is_selected(image.placement.state.id) {
+        if state.is_selected(image.state.id) {
             continue;
         }
         let image_rect = placement_screen_rect(state, rect, image);
-        painted.push((image.placement.state.id, image_rect));
+        painted.push((image.state.id, image_rect));
         painter.rect_stroke(
             image_rect,
             crate::ui::theme::RADIUS_NONE,
@@ -68,7 +68,7 @@ pub(crate) fn paint_crop_marquee(painter: &egui::Painter, rect: egui::Rect, stat
     let Some(ActiveGesture::Crop(crop_state)) = &state.interaction.gesture else {
         return;
     };
-    let Some(image) = state.rendered_placement_by_id(crop_state.placement_id) else {
+    let Some(image) = state.placement_by_id(crop_state.placement_id) else {
         return;
     };
 
@@ -113,15 +113,15 @@ pub(crate) fn paint_hover_hairline(
     };
 
     let cull_rect = rect.expand(IMAGE_CULL_MARGIN_SCREEN);
-    for image in &state.document.rendered_placements {
-        let placement_id = image.placement.state.id;
+    for image in &state.document.placements {
+        let placement_id = image.state.id;
         let image_rect = placement_screen_rect(state, rect, image);
         if !image_rect.intersects(cull_rect) {
             continue;
         }
         let hot = hovered_id == Some(placement_id)
             && !state.is_selected(placement_id)
-            && image.placement.lifecycle != PlacementLifecycle::Provisional;
+            && image.lifecycle != PlacementLifecycle::Provisional;
         let fade = crate::ui::motion::hover_dissolve(
             painter.ctx(),
             egui::Id::new(("placement_hover_hairline", placement_id)),
@@ -131,7 +131,7 @@ pub(crate) fn paint_hover_hairline(
             continue;
         }
         let corners = screen_corners_for_placement(
-            &image.placement,
+            &image,
             state.pan,
             state.zoom,
             painter.clip_rect().center(),
@@ -154,11 +154,11 @@ pub(crate) fn paint_selected_placement_borders(
 ) {
     let now_seconds = painter.ctx().input(|input| input.time);
     for placement_id in selected_placement_border_paint_ids(state, rect, now_seconds) {
-        let Some(image) = state.rendered_placement_by_id(placement_id) else {
+        let Some(image) = state.placement_by_id(placement_id) else {
             continue;
         };
         let corners = screen_corners_for_placement(
-            &image.placement,
+            &image,
             state.pan,
             state.zoom,
             painter.clip_rect().center(),
@@ -189,12 +189,12 @@ pub(super) fn selected_placement_border_paint_ids(
             CanvasStackItem::Annotation(_) => None,
         })
         .filter(|placement_id| {
-            let Some(image) = state.rendered_placement_by_id(*placement_id) else {
+            let Some(image) = state.placement_by_id(*placement_id) else {
                 return false;
             };
             state.is_selected(*placement_id)
                 && placement_screen_rect(state, rect, image).intersects(cull_rect)
-                && (image.placement.lifecycle == PlacementLifecycle::Provisional
+                && (image.lifecycle == PlacementLifecycle::Provisional
                     || selection_border_visible(state, now_seconds))
         })
         .collect()
@@ -209,14 +209,14 @@ pub(crate) fn paint_selection_bounds(
         return;
     }
 
-    if state.document.selected_annotation_ids.is_empty()
-        && state.document.selected_placement_ids.len() <= 1
+    if state.interaction.selected_annotation_ids.is_empty()
+        && state.interaction.selected_placement_ids.len() <= 1
     {
         paint_rotation_handle(painter, rect, state);
         return;
     }
 
-    if state.document.selected_placement_ids.is_empty()
+    if state.interaction.selected_placement_ids.is_empty()
         && let Some(annotation) = state.selected_annotation()
         && annotation.kind == CanvasAnnotationKind::Textbox
     {

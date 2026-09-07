@@ -1,7 +1,9 @@
+mod view;
 use eframe::egui;
 
 mod annotation;
 mod crop;
+pub(super) mod movement;
 mod placement_transform;
 mod selection;
 mod textbox;
@@ -163,7 +165,7 @@ pub(super) fn handle_input(
     }
 
     if let Some(pointer_pos) = pointer_pos
-        && let Some(image) = state.selected_single_rendered_placement()
+        && let Some(image) = state.selected_single_placement()
         && let Some(handle) = hit_test_placement_resize_handle(state, rect, image, pointer_pos)
     {
         ui.ctx()
@@ -197,9 +199,9 @@ pub(super) fn handle_input(
             if !begin_crop(state, placement_id, pointer_pos) {
                 return;
             }
-        } else if let Some(image) = state.selected_single_rendered_placement().map(|image| {
+        } else if let Some(image) = state.selected_single_placement().map(|image| {
             (
-                image.placement.state.id,
+                image.state.id,
                 hit_test_placement_resize_handle(state, rect, image, pointer_pos),
             )
         }) && let (placement_id, Some(handle)) = image
@@ -243,8 +245,8 @@ pub(super) fn handle_input(
                         if state.interaction.editing_text_annotation_id.is_some() {
                             state.finish_textbox_edit();
                         }
-                        state.document.selected_placement_ids.clear();
-                        state.document.selected_annotation_ids = vec![annotation_id];
+                        state.interaction.selected_placement_ids.clear();
+                        state.interaction.selected_annotation_ids = vec![annotation_id];
                         begin_annotation_drag(state, rect, annotation_id, pointer_pos);
                         return;
                     }
@@ -258,7 +260,7 @@ pub(super) fn handle_input(
 
                     let pointer_world = state.screen_to_world(pointer_pos, rect);
                     let now = ui.input(|input| input.time);
-                    crate::placement::movement::begin_selected_placement_drag(
+                    crate::canvas::interaction::movement::begin_selected_placement_drag(
                         state,
                         pointer_world,
                         now,
@@ -371,9 +373,9 @@ pub(super) fn handle_input(
                 start_handle_screen,
                 start_scale,
             } => {
-                if let Some(image) = state.rendered_placement_by_id(placement_id).cloned() {
+                if let Some(image) = state.placement_by_id(placement_id).cloned() {
                     let (center_screen, scale) = resized_placement_transform(
-                        image.placement.require_loaded_asset(),
+                        image.require_loaded_asset(),
                         start_scale,
                         anchor_screen,
                         start_handle_screen,
@@ -381,11 +383,9 @@ pub(super) fn handle_input(
                     );
                     let center_world = state.screen_to_world(center_screen, rect);
                     let anchor_world = state.screen_to_world(anchor_screen, rect);
-                    let base_size = image.placement.base_display_size();
-                    let base_display_size = crate::data::rotated_display_size(
-                        base_size,
-                        image.placement.state.geometry.rotation,
-                    );
+                    let base_size = image.base_display_size();
+                    let base_display_size =
+                        crate::data::rotated_display_size(base_size, image.state.geometry.rotation);
                     let desired_rect = egui::Rect::from_center_size(
                         center_world,
                         base_display_size * scale.max(0.01),
@@ -403,18 +403,15 @@ pub(super) fn handle_input(
                             desired_rect,
                             anchor_world,
                             base_display_size,
-                            min_loaded_placement_scale(image.placement.require_loaded_asset()),
+                            min_loaded_placement_scale(image.require_loaded_asset()),
                         )
                     };
                     let (center_world, scale) = snap_result
                         .map(|snap_rect| {
                             (
                                 snap_rect.center(),
-                                (snap_rect.width() / base_display_size.x.max(f32::EPSILON)).max(
-                                    min_loaded_placement_scale(
-                                        image.placement.require_loaded_asset(),
-                                    ),
-                                ),
+                                (snap_rect.width() / base_display_size.x.max(f32::EPSILON))
+                                    .max(min_loaded_placement_scale(image.require_loaded_asset())),
                             )
                         })
                         .unwrap_or((center_world, scale));
@@ -495,7 +492,7 @@ pub(super) fn handle_input(
         let pointer_world = state.screen_to_world(pointer_pos, rect);
         let guide_snap_disabled = ui.input(|input| guide_snap_disabled(input.modifiers));
         let now = ui.input(|input| input.time);
-        crate::placement::movement::update_selected_placement_drag(
+        crate::canvas::interaction::movement::update_selected_placement_drag(
             state,
             rect,
             pointer_world,
@@ -563,8 +560,8 @@ pub(super) fn handle_input(
         && let Some(placement_id) = hit_test_placement(state, rect, pointer_pos)
     {
         if let Some(id) = state.group_for_member(placement_id) {
-            state.document.editing_group_id = Some(id);
-            state.document.selected_group_ids.clear();
+            state.interaction.editing_group_id = Some(id);
+            state.interaction.selected_group_ids.clear();
             state.set_single_selection(placement_id);
             return;
         }
@@ -610,7 +607,7 @@ pub(super) fn handle_input(
         return;
     }
 
-    if !state.document.selected_annotation_ids.is_empty()
+    if !state.interaction.selected_annotation_ids.is_empty()
         && ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
     {
         return;
@@ -654,19 +651,19 @@ pub(crate) fn hit_test_placement(
 ) -> Option<i64> {
     state
         .document
-        .rendered_placements
+        .placements
         .iter()
         .rev()
         .find(|image| {
             placement_contains_screen_point(
-                &image.placement,
+                &image,
                 pointer_pos,
                 state.pan,
                 state.zoom,
                 rect.center(),
             )
         })
-        .map(|image| image.placement.state.id)
+        .map(|image| image.state.id)
 }
 
 #[cfg(test)]
@@ -677,13 +674,15 @@ mod tests {
         map_mouse_mode_scroll_events, placement_drag_scale_factor, scaled_placement_transforms,
         selected_placement_rotation_handle_screen_pos, step_mouse_wheel_zoom_animation,
     };
+    use crate::canvas::interaction::movement::{
+        compute_drag_snap_preview, layout_bounds_with_offset,
+    };
     use crate::canvas::{ActiveGesture, CanvasState, DragState};
     use crate::data::{
         Asset, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
         CanvasStrokeWidth, CanvasTextSize, Placement, PlacementState,
     };
-    use crate::jobs::{ImagePrepPreviewTexture, ImportOrigin, PreparedPlacementImage};
-    use crate::placement::movement::{compute_drag_snap_preview, layout_bounds_with_offset};
+    use crate::image_preparation::{ImagePrepPreviewTexture, ImportOrigin, PreparedPlacementImage};
     use eframe::egui;
     use std::path::PathBuf;
 

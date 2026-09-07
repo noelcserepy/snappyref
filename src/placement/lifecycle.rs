@@ -91,7 +91,7 @@ pub(crate) fn commit_search_provisional_batch(
         }
         let asset = library.load_asset(asset_id)?;
         placement.state.geometry.size = egui::vec2(asset.width as f32, asset.height as f32);
-        placement.state.geometry.scale = crate::jobs::display_scale_for_placement_target_area(
+        placement.state.geometry.scale = crate::placement::display_scale_for_placement_target_area(
             asset.width,
             asset.height,
             true,

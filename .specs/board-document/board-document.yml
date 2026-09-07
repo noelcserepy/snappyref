@@ -250,6 +250,8 @@ interface:
     accepted-state-survives-write-failure: A failed durable write must leave the accepted in-memory document, Canvas identity, and history visible while persistence retries.
     durable-write-atomic: A durable write must commit the complete document change, including Placements, Groups, ordered membership, layout configuration, shared stack order, identities, and history, or leave the prior durable state unchanged.
     durable-retry-idempotent: Retrying a failed durable write must not duplicate Placements, Groups, memberships, stack entries, identities, or history entries.
+    complete-edit-ownership: Board Document must own accepted edit application, history recording or replay, required content reload scheduling, and ordered persistence submission. Callers must not coordinate these steps separately for an edit to be complete.
+    self-contained-durable-change: A queued document change must carry the accepted content and geometry needed to persist it. Storage must not reconstruct Placement content by querying undo history.
     mixed-item-stack: Placements and annotations share one durable stack order.
     stable-total-stack-order: Every active Board item has one stable position in a total back-to-front order; creating an item places it at the front unless an explicit reorder is part of the same change.
     relative-order-preserved: Reordering a multi-item selection must preserve the selected items' relative order.
@@ -264,6 +266,9 @@ interface:
     group-durable-state: Group identities, names, ordered memberships, container geometry, flow, spacing, and padding must survive restart and participate in document history.
 
   requires:
+    replay-image-preparation:
+      target: "[[image-preparation#/interface/operations/prepare-asset]]"
+      reason: Schedules display content required by accepted edits and history replay without asking document callers to coordinate image loading.
     placement-definition:
       target: "[[placement#/interface/operations/create/outcomes/created]]"
       reason: Defines the image-shaped document objects stored by a Board.

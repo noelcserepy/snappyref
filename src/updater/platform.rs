@@ -1,10 +1,9 @@
 //! Per-platform release-shape constants for the auto-updater.
 //!
-//! The updater operates on a "swap unit": a single filesystem entity the
-//! helper renames into place. On macOS that's `SnappyRef.app` (a directory
-//! bundle); on Windows it's `snappyref.exe` (a regular file). The updater's
-//! staging and apply flows both encode this name — this module is
-//! the single source of truth so the two halves cannot disagree.
+//! The replacement unit is `SnappyRef.app` on macOS and `snappyref.exe`
+//! on Windows. The macOS helper replaces the app bundle; the staged Windows
+//! executable runs its own replacement mode. Staging and application use
+//! these names so they agree on the file or directory being replaced.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TargetPlatform {

@@ -1,6 +1,8 @@
 use eframe::egui;
 
-use crate::app::{SUPPORTED_SHORTCUTS, SupportedShortcut, platform_shortcut_label};
+use crate::app::{
+    CORE_SHORTCUTS, LAYOUT_AND_HISTORY_SHORTCUTS, SupportedShortcut, platform_shortcut_label,
+};
 
 pub(super) fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
     let pad = crate::ui::theme::SPACE_3;
@@ -10,10 +12,9 @@ pub(super) fn paint_supported_shortcuts_section(ui: &mut egui::Ui) {
     );
     ui.scope_builder(egui::UiBuilder::new().max_rect(indent_rect), |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-        let (core_shortcuts, layout_shortcuts) = SUPPORTED_SHORTCUTS.split_at(10);
-        paint_shortcut_group(ui, "Core actions", core_shortcuts);
+        paint_shortcut_group(ui, "Core actions", CORE_SHORTCUTS);
         ui.add_space(crate::ui::theme::SPACE_3);
-        paint_shortcut_group(ui, "Layout + history", layout_shortcuts);
+        paint_shortcut_group(ui, "Layout + history", LAYOUT_AND_HISTORY_SHORTCUTS);
     });
 }
 
@@ -30,7 +31,7 @@ fn paint_shortcut_row(ui: &mut egui::Ui, shortcut: &SupportedShortcut) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            paint_shortcut_pill(ui, shortcut.keys);
+            paint_shortcut_keys(ui, shortcut.keys);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.label(
                     egui::RichText::new(shortcut.action)
@@ -45,7 +46,7 @@ fn paint_shortcut_row(ui: &mut egui::Ui, shortcut: &SupportedShortcut) {
 
 /// Shortcut keys read as quiet tabular metadata: bare monospace text with
 /// no pill chrome. The key column stays right-aligned for scanning.
-fn paint_shortcut_pill(ui: &mut egui::Ui, keys: &str) {
+fn paint_shortcut_keys(ui: &mut egui::Ui, keys: &str) {
     let keys = display_shortcut_label(keys);
     let mut font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
     if shortcut_label_uses_small_symbol_glyphs(&keys) {

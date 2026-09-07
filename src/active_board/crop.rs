@@ -9,7 +9,7 @@ pub(crate) fn enqueue_pending_requests(
     ctx: &eframe::egui::Context,
     canvas: &mut crate::canvas::CanvasState,
     library: Option<&crate::library::storage::Library>,
-    import_worker: Option<&crate::jobs::ImagePrepWorker>,
+    import_worker: Option<&crate::image_preparation::ImagePrepWorker>,
     max_texture_side: usize,
     canvas_image_max_side: u32,
 ) -> Result<bool, String> {
@@ -32,13 +32,15 @@ pub(crate) fn enqueue_pending_requests(
             canvas.clear_crop_pending(placement_id);
             return Err(error);
         }
-        if let Err(error) = import_worker.enqueue(crate::jobs::ImagePrepRequest::Crop {
-            request,
-            max_texture_side,
-            canvas_image_settings: crate::jobs::CanvasImageSettings {
-                max_side: canvas_image_max_side,
-            },
-        }) {
+        if let Err(error) =
+            import_worker.enqueue(crate::image_preparation::ImagePrepRequest::Crop {
+                request,
+                max_texture_side,
+                canvas_image_settings: crate::image_preparation::CanvasImageSettings {
+                    max_side: canvas_image_max_side,
+                },
+            })
+        {
             canvas.clear_crop_pending(placement_id);
             return Err(error);
         }
@@ -52,8 +54,7 @@ pub(crate) fn integrate_cropped_result(
     ctx: &eframe::egui::Context,
     canvas: &mut crate::canvas::CanvasState,
     library: Option<&crate::library::storage::Library>,
-    cropped: crate::jobs::PreparedCropPreview,
-    semantic_search_enabled: bool,
+    cropped: crate::image_preparation::PreparedCropPreview,
 ) -> Result<CroppedImageIntegration, String> {
     let placement_id = cropped.placement_id;
     let (previous_record, updated_item, asset) =
@@ -72,11 +73,9 @@ pub(crate) fn integrate_cropped_result(
     canvas.clear_crop_pending(placement_id);
     applied?;
 
-    let indexed_asset = (semantic_search_enabled
-        && crate::library::residency::asset_mime_type_supports_raster_derivatives(
-            &asset.mime_type,
-        ))
-    .then(|| (asset.id, asset.original_path.clone()));
+    let indexed_asset =
+        (crate::canvas::residency::asset_mime_type_supports_raster_derivatives(&asset.mime_type))
+            .then(|| (asset.id, asset.original_path.clone()));
     Ok(CroppedImageIntegration {
         updated_record,
         previous_record,
@@ -87,7 +86,7 @@ pub(crate) fn integrate_cropped_result(
 fn register_cropped_asset(
     canvas: &crate::canvas::CanvasState,
     library: Option<&crate::library::storage::Library>,
-    cropped: &crate::jobs::PreparedCropPreview,
+    cropped: &crate::image_preparation::PreparedCropPreview,
 ) -> Result<
     (
         crate::data::Placement,
@@ -117,7 +116,7 @@ mod tests {
 
     use crate::canvas::{CanvasCropRequest, CanvasState, PixelCropRect};
     use crate::data::{Asset, CanvasImageLod, Placement, PlacementState};
-    use crate::jobs::{
+    use crate::image_preparation::{
         ImagePrepPreviewTexture, ImagePrepWorker, ImportOrigin, PreparedPlacementImage,
     };
     use crate::library::storage::Library;

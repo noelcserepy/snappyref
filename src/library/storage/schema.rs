@@ -1,6 +1,11 @@
+use super::connection::Library;
 use super::session::StoredUserSessionPayload;
 use super::stack_order::ensure_canvas_stack_items_populated;
-use super::*;
+use crate::data::DEFAULT_VIEWPORT_ZOOM;
+use crate::data::UserSession;
+use crate::data::WorkspaceSettings;
+use rusqlite::Connection;
+use rusqlite::params;
 
 const DEFAULT_VIEWPORT_ZOOM_SQL: &str = "0.45";
 
@@ -266,7 +271,6 @@ fn legacy_user_session_from_row(row: &rusqlite::Row<'_>) -> Result<UserSession, 
                 .ok()
                 .map(|value| value.max(1) as u32)
                 .unwrap_or(crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE),
-            semantic_search_enabled: row.get::<_, i64>(3).unwrap_or(0) != 0,
             semantic_search_first_launch_prompt_seen: false,
             rotation_snap_degrees: row
                 .get::<_, f32>(5)

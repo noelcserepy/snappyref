@@ -4,20 +4,20 @@ use eframe::egui;
 
 impl CanvasState {
     pub fn select_pasted_groups(&mut self, ids: Vec<GroupId>) {
-        self.document.selected_group_ids = ids;
-        self.document.editing_group_id = None;
+        self.interaction.selected_group_ids = ids;
+        self.interaction.editing_group_id = None;
     }
     pub fn groups(&self) -> &[Group] {
         &self.document.groups
     }
     pub fn selected_group_ids(&self) -> Vec<GroupId> {
-        self.document.selected_group_ids.clone()
+        self.interaction.selected_group_ids.clone()
     }
     pub fn restore_groups(&mut self, groups: Vec<Group>) {
         self.document.groups = groups;
         self.document.groups_dirty = false;
-        self.document.selected_group_ids.clear();
-        self.document.editing_group_id = None;
+        self.interaction.selected_group_ids.clear();
+        self.interaction.editing_group_id = None;
     }
     pub fn replace_groups(&mut self, groups: Vec<Group>) {
         if self.document.groups != groups {
@@ -35,24 +35,24 @@ impl CanvasState {
         let Some(group) = self.groups().iter().find(|g| g.id == id).cloned() else {
             return;
         };
-        self.document.selected_group_ids = vec![id];
-        self.document.selected_placement_ids = group.members;
-        self.document.selected_annotation_ids.clear();
-        self.document.editing_group_id = None;
+        self.interaction.selected_group_ids = vec![id];
+        self.interaction.selected_placement_ids = group.members;
+        self.interaction.selected_annotation_ids.clear();
+        self.interaction.editing_group_id = None;
     }
     pub(super) fn expand_group_selection(&mut self) {
-        if self.document.editing_group_id.is_some() {
+        if self.interaction.editing_group_id.is_some() {
             return;
         }
-        let selected = self.document.selected_placement_ids.clone();
+        let selected = self.interaction.selected_placement_ids.clone();
         for group in self.document.groups.iter() {
             if group.members.iter().any(|id| selected.contains(id)) {
-                if !self.document.selected_group_ids.contains(&group.id) {
-                    self.document.selected_group_ids.push(group.id);
+                if !self.interaction.selected_group_ids.contains(&group.id) {
+                    self.interaction.selected_group_ids.push(group.id);
                 }
                 for id in &group.members {
-                    if !self.document.selected_placement_ids.contains(id) {
-                        self.document.selected_placement_ids.push(*id);
+                    if !self.interaction.selected_placement_ids.contains(id) {
+                        self.interaction.selected_placement_ids.push(*id);
                     }
                 }
             }
@@ -173,11 +173,11 @@ impl CanvasState {
         for (id, geometry) in layouts {
             if let Some(image) = self
                 .document
-                .rendered_placements
+                .placements
                 .iter_mut()
-                .find(|p| p.placement.state.id == id)
+                .find(|p| p.state.id == id)
             {
-                image.placement.state.geometry = geometry;
+                image.state.geometry = geometry;
             }
             self.mark_dirty(id);
         }
@@ -203,8 +203,8 @@ impl CanvasState {
         groups.retain(|g| !selected.contains(&g.id));
         let changed = groups.len() != self.groups().len();
         self.replace_groups(groups);
-        self.document.selected_group_ids.clear();
-        self.document.editing_group_id = None;
+        self.interaction.selected_group_ids.clear();
+        self.interaction.editing_group_id = None;
         changed
     }
     pub(super) fn remove_group_members(&mut self, ids: &[i64]) {
@@ -249,11 +249,11 @@ impl CanvasState {
         for (id, geometry) in layout.members {
             if let Some(image) = self
                 .document
-                .rendered_placements
+                .placements
                 .iter_mut()
-                .find(|p| p.placement.state.id == id)
+                .find(|p| p.state.id == id)
             {
-                image.placement.state.geometry = geometry;
+                image.state.geometry = geometry;
             }
             self.mark_dirty(id);
         }
@@ -268,7 +268,7 @@ impl CanvasState {
         }
     }
     pub(super) fn finish_group_member_drag(&mut self, id: i64) {
-        let Some(group_id) = self.document.editing_group_id else {
+        let Some(group_id) = self.interaction.editing_group_id else {
             return;
         };
         let Some(mut group) = self.groups().iter().find(|g| g.id == group_id).cloned() else {
@@ -306,12 +306,12 @@ impl CanvasState {
 
 impl CanvasState {
     pub fn leave_group_member_editing(&mut self) {
-        if let Some(id) = self.document.editing_group_id {
+        if let Some(id) = self.interaction.editing_group_id {
             self.select_group(id);
         }
     }
     pub(super) fn group_transform_origins(&self) -> Vec<(i64, RectGeometry)> {
-        if self.document.editing_group_id.is_some() {
+        if self.interaction.editing_group_id.is_some() {
             return Vec::new();
         }
         self.selected_group_ids()
@@ -457,8 +457,8 @@ impl CanvasState {
                 self.world_to_screen(bounds.min, viewport),
                 self.world_to_screen(bounds.max, viewport),
             );
-            let color = if self.document.selected_group_ids.contains(&group.id)
-                || self.document.editing_group_id == Some(group.id)
+            let color = if self.interaction.selected_group_ids.contains(&group.id)
+                || self.interaction.editing_group_id == Some(group.id)
             {
                 theme::ACCENT
             } else {
@@ -500,8 +500,8 @@ impl CanvasState {
                 }
             }
         }
-        let id = *self.document.selected_group_ids.first()?;
-        if self.document.selected_group_ids.len() != 1 {
+        let id = *self.interaction.selected_group_ids.first()?;
+        if self.interaction.selected_group_ids.len() != 1 {
             return None;
         }
         let mut group = self.groups().iter().find(|g| g.id == id)?.clone();
@@ -648,11 +648,11 @@ impl CanvasState {
                             geometry.center += delta;
                             if let Some(image) = self
                                 .document
-                                .rendered_placements
+                                .placements
                                 .iter_mut()
-                                .find(|p| p.placement.state.id == id)
+                                .find(|p| p.state.id == id)
                             {
-                                image.placement.state.geometry = geometry;
+                                image.state.geometry = geometry;
                             }
                         }
                         if let Some(target) =
@@ -675,11 +675,11 @@ impl CanvasState {
                             for (id, geometry) in layout.members {
                                 if let Some(image) = self
                                     .document
-                                    .rendered_placements
+                                    .placements
                                     .iter_mut()
-                                    .find(|p| p.placement.state.id == id)
+                                    .find(|p| p.state.id == id)
                                 {
-                                    image.placement.state.geometry = geometry;
+                                    image.state.geometry = geometry;
                                 }
                             }
                             if let Some(target) =
@@ -726,7 +726,7 @@ impl CanvasState {
                 self.world_to_screen(bounds.min, viewport),
                 self.world_to_screen(bounds.max, viewport),
             );
-            let selected = self.document.selected_group_ids.contains(&group.id);
+            let selected = self.interaction.selected_group_ids.contains(&group.id);
             let resize = selected && pointer.distance(rect.right_bottom()) < 12.;
             let scale = selected
                 && ui.input(|i| i.modifiers.command && i.modifiers.alt)

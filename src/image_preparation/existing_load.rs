@@ -5,7 +5,7 @@ use std::time::Instant;
 use image::RgbaImage;
 
 use crate::data::{CanvasImageLod, Placement};
-use crate::jobs::image_formats::{
+use crate::image_preparation::image_formats::{
     AnimatedPreview, PreviewImage, decode_image_file, decode_image_file_with_max_side,
     preview_animation_from_frames, preview_image_from_rgba,
 };

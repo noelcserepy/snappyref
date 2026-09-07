@@ -1,7 +1,7 @@
 use image::RgbaImage;
 
 use crate::data::CanvasImageLod;
-use crate::jobs::image_formats::{PreviewImage, decode_image_file};
+use crate::image_preparation::image_formats::{PreviewImage, decode_image_file};
 use crate::library::storage::Library;
 
 use super::preview_texture::build_preview_texture;
@@ -155,7 +155,11 @@ fn fast_preview_image_from_rgba(
     max_side: usize,
 ) -> Result<PreviewImage, String> {
     let (preview_width, preview_height) =
-        crate::jobs::image_formats::fitted_texture_size(width as usize, height as usize, max_side);
+        crate::image_preparation::image_formats::fitted_texture_size(
+            width as usize,
+            height as usize,
+            max_side,
+        );
 
     if preview_width == width as usize && preview_height == height as usize {
         return Ok(PreviewImage {

@@ -158,6 +158,8 @@ interface:
     boundary-validation: Raw files, URLs, clipboard payloads, PureRef content, and platform drop data must become typed source intent before internal use.
     target-board-isolation: A creation remains bound to its target Board through preparation, commit, failure, and final layout.
     one-accepted-batch-history-entry: One accepted multi-item addition creates exactly one Board Document history entry.
+    complete-resolution-ownership: Placement Creation must own result correlation, stale-result rejection, reservation completion, final batch layout, and submission of accepted content changes through Board Document. Callers must not coordinate these steps separately.
+    diagnostics-independent: Disabling or omitting diagnostic reporting must not alter Placement resolution, accepted content, history, persistence, batch completion, or eligibility for semantic indexing.
 
   requires:
     canonical-asset-registration:

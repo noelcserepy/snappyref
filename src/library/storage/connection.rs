@@ -1,4 +1,10 @@
-use super::*;
+use rusqlite::Connection;
+use rusqlite::Transaction;
+use rusqlite::TransactionBehavior;
+use rusqlite::params;
+use std::fs;
+use std::path::PathBuf;
+
 use std::sync::{
     Arc,
     atomic::{AtomicI64, Ordering},
@@ -85,7 +91,7 @@ impl Library {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::Library;
 
     #[test]
     fn document_identity_does_not_reuse_removed_group_ids_after_restart() {
@@ -108,4 +114,15 @@ mod tests {
         let reopened = Library::initialize(root.to_path_buf()).unwrap();
         assert!(reopened.allocate_document_id() > group_id);
     }
+}
+
+/// Every Library write starts as an Immediate transaction so the writer takes
+/// the lock up front instead of failing with SQLITE_BUSY at commit.
+pub(super) fn write_transaction<'c>(
+    connection: &'c mut Connection,
+    label: &str,
+) -> Result<Transaction<'c>, String> {
+    connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("failed to start {label} transaction: {error}"))
 }

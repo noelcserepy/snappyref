@@ -10,7 +10,8 @@
 //! 3. If the manifest version is greater than the running version, the
 //!    update state enters Available; otherwise it stays Hidden.
 //! 4. Failures back off exponentially up to 6 hours and never raise a
-//!    popup; the update state stays in its last known value.
+//!    popup. Hidden becomes Failed; known available, downloading, and ready
+//!    updates retain their state.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -185,7 +186,7 @@ impl UpdateService {
     /// shape, or the install root cannot be resolved.
     ///
     /// `launch_args` should be the argv tail (everything after argv[0])
-    /// that the helper will replay on the new binary.
+    /// replayed by the macOS helper or Windows self-replacement runner.
     pub(crate) fn pending_restart_descriptor(
         &self,
         launch_args: Vec<String>,

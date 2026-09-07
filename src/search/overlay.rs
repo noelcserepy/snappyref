@@ -325,7 +325,7 @@ impl SearchController {
                                 }
                                 if let Some((index, mode)) = clicked_index {
                                     self.overlay.scroll_lead_result_into_view = true;
-                                    self.update_result_selection(index, mode);
+                                    self.overlay.result_selection.update(index, mode);
                                 }
                                 if let Some(index) = drag_start_index {
                                     self.start_result_drag(index);
@@ -469,11 +469,15 @@ impl SearchController {
             };
             if ctx.input(|input| input.key_pressed(egui::Key::ArrowRight)) {
                 let index = (lead_index + 1).min(last_index);
-                self.update_result_selection(index, arrow_selection_mode);
+                self.overlay
+                    .result_selection
+                    .update(index, arrow_selection_mode);
                 self.overlay.scroll_lead_result_into_view = true;
             } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowLeft)) {
                 let index = lead_index.saturating_sub(1);
-                self.update_result_selection(index, arrow_selection_mode);
+                self.overlay
+                    .result_selection
+                    .update(index, arrow_selection_mode);
                 self.overlay.scroll_lead_result_into_view = true;
             } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
                 if lead_is_on_bottom_row && self.overlay.has_more_results {
@@ -489,12 +493,16 @@ impl SearchController {
                     }
                 } else {
                     let index = (lead_index + grid_layout.columns).min(last_index);
-                    self.update_result_selection(index, arrow_selection_mode);
+                    self.overlay
+                        .result_selection
+                        .update(index, arrow_selection_mode);
                     self.overlay.scroll_lead_result_into_view = true;
                 }
             } else if ctx.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
                 let index = lead_index.saturating_sub(grid_layout.columns);
-                self.update_result_selection(index, arrow_selection_mode);
+                self.overlay
+                    .result_selection
+                    .update(index, arrow_selection_mode);
                 self.overlay.scroll_lead_result_into_view = true;
             }
 

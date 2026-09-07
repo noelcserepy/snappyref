@@ -10,7 +10,7 @@ use image::codecs::webp::WebPEncoder;
 use image::{ExtendedColorType, ImageEncoder};
 
 use crate::data::CanvasImageLod;
-use crate::jobs::image_formats::decode_image_file_with_max_side;
+use crate::image_preparation::image_formats::decode_image_file_with_max_side;
 use crate::library::storage::Library;
 
 use super::{CanvasImageSettings, canvas_source_image_from_rgba};

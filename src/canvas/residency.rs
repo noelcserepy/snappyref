@@ -1,17 +1,11 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use eframe::egui;
-
 use crate::canvas::CanvasState;
 use crate::data::{CanvasImageLod, Placement, WorkspaceSettings};
-use crate::jobs::{
-    CanvasImageSettings, ExistingLoadPriority, ImagePrepRequest, ImagePrepResult, ImagePrepTimings,
-    ImagePrepTrace, ImagePrepWorker, PreparedCropPreview, PreparedPlacementImage,
-};
-use crate::placement::content_resolution::{
-    ContentResolutionTicket, FailedContentResolutionOutcome, LoadedContentResolutionLog,
-    LoadedContentResolutionOutcome,
+use crate::image_preparation::{
+    CanvasImageSettings, ExistingLoadPriority, ImagePrepRequest, ImagePrepTimings, ImagePrepTrace,
+    ImagePrepWorker,
 };
 
 /// Image LOD loads themselves are tracked on the canvas
@@ -19,14 +13,6 @@ use crate::placement::content_resolution::{
 #[derive(Default)]
 pub(crate) struct ImageResidencyCoordinator {
     pending_cache_backfills: HashSet<(i64, CanvasImageLod)>,
-}
-
-#[derive(Debug)]
-pub(crate) enum ImagePrepResultResidencyOutcome {
-    Loaded(LoadedContentResolutionOutcome),
-    Cropped(PreparedCropPreview),
-    Failed(FailedContentResolutionOutcome),
-    Status(Option<String>),
 }
 
 impl ImageResidencyCoordinator {
@@ -41,7 +27,10 @@ impl ImageResidencyCoordinator {
         max_texture_side: usize,
         trace_enabled: bool,
     ) -> Result<(), String> {
-        crate::jobs::sort_records_by_viewport_proximity(&mut placements, viewport_world);
+        crate::image_preparation::sort_records_by_viewport_proximity(
+            &mut placements,
+            viewport_world,
+        );
         let (canvas_image_settings, target_lod) = startup_existing_image_load_settings(settings);
         for placement in placements {
             let placement_id = placement.state.id;
@@ -67,151 +56,6 @@ impl ImageResidencyCoordinator {
         !self.pending_cache_backfills.is_empty()
     }
 
-    pub(crate) fn process_import_result(
-        &mut self,
-        ctx: &egui::Context,
-        canvas: &mut CanvasState,
-        import_worker: Option<&ImagePrepWorker>,
-        active_board_id: i64,
-        settings: &WorkspaceSettings,
-        result: ImagePrepResult,
-    ) -> ImagePrepResultResidencyOutcome {
-        match result {
-            ImagePrepResult::Loaded(loaded) => {
-                ImagePrepResultResidencyOutcome::Loaded(self.integrate_loaded_import(
-                    ctx,
-                    canvas,
-                    import_worker,
-                    active_board_id,
-                    settings,
-                    loaded,
-                ))
-            }
-            ImagePrepResult::Cropped(cropped) => ImagePrepResultResidencyOutcome::Cropped(cropped),
-            ImagePrepResult::CacheLodBackfilled { asset_id, lod } => {
-                let status = self.note_backfill_completed(asset_id, lod, None);
-                ImagePrepResultResidencyOutcome::Status(status)
-            }
-            ImagePrepResult::CacheLodBackfillFailed {
-                asset_id,
-                lod,
-                error,
-            } => {
-                let status = self.note_backfill_completed(asset_id, lod, Some(error));
-                ImagePrepResultResidencyOutcome::Status(status)
-            }
-            ImagePrepResult::Failed {
-                target_board_id,
-                queue_id,
-                placement_id,
-                context,
-                error,
-            } => ImagePrepResultResidencyOutcome::Failed(self.integrate_failed_import(
-                canvas,
-                active_board_id,
-                target_board_id,
-                queue_id,
-                placement_id,
-                context,
-                error,
-            )),
-        }
-    }
-
-    pub(crate) fn integrate_loaded_import(
-        &mut self,
-        ctx: &egui::Context,
-        canvas: &mut CanvasState,
-        import_worker: Option<&ImagePrepWorker>,
-        active_board_id: i64,
-        settings: &WorkspaceSettings,
-        mut loaded: PreparedPlacementImage,
-    ) -> LoadedContentResolutionOutcome {
-        let resolution_ticket = loaded.queue_id.map(|queue_id| ContentResolutionTicket {
-            target_board_id: loaded.target_board_id,
-            queue_id,
-        });
-        let reports_import = resolution_ticket.is_some();
-        let origin = loaded.origin;
-        let loaded_lod = loaded.loaded_lod;
-        let loaded_record = loaded.placement.clone();
-        let existing_load_diagnostics = loaded.existing_load_diagnostics.clone();
-
-        if loaded.target_board_id != active_board_id {
-            return LoadedContentResolutionOutcome {
-                resolution_ticket,
-                status: reports_import.then(|| "Imported image".to_owned()),
-                indexed_asset: None,
-                log: Some(LoadedContentResolutionLog {
-                    origin,
-                    placement: loaded_record,
-                    diagnostics: existing_load_diagnostics,
-                    trace: loaded.trace,
-                }),
-            };
-        }
-
-        if canvas
-            .placement_for_id(loaded.placement.state.id)
-            .is_some_and(|current| {
-                current.is_loaded() && current.asset_id() != loaded.placement.asset_id()
-            })
-        {
-            return LoadedContentResolutionOutcome {
-                resolution_ticket,
-                status: None,
-                indexed_asset: None,
-                log: None,
-            };
-        }
-
-        if let Some(current) = canvas.placement_for_id(loaded.placement.state.id) {
-            loaded.placement.adopt_geometry_of(&current);
-        }
-        let loaded_record = loaded.placement.clone();
-
-        let indexed_asset = (reports_import
-            && settings.semantic_search_enabled
-            && asset_mime_type_supports_raster_derivatives(
-                &loaded.placement.require_loaded_asset().mime_type,
-            ))
-        .then(|| {
-            (
-                loaded.placement.require_loaded_asset().id,
-                loaded
-                    .placement
-                    .require_loaded_asset()
-                    .original_path
-                    .clone(),
-            )
-        });
-
-        let mut trace = loaded.trace;
-        let ui_integration_started_at = Instant::now();
-        canvas.add_prepared_placement_image(ctx, loaded);
-        if let Some(trace) = &mut trace {
-            trace.timings.ui_integration = ui_integration_started_at.elapsed();
-        }
-        let _ = self.queue_overview_backfill_after_working_load(
-            import_worker,
-            &loaded_record,
-            settings,
-            loaded_lod,
-        );
-
-        LoadedContentResolutionOutcome {
-            resolution_ticket,
-            status: reports_import.then(|| "Imported image".to_owned()),
-            indexed_asset,
-            log: Some(LoadedContentResolutionLog {
-                origin,
-                placement: loaded_record,
-                diagnostics: existing_load_diagnostics,
-                trace,
-            }),
-        }
-    }
-
     pub(crate) fn note_failed_placement(
         &mut self,
         canvas: &mut CanvasState,
@@ -219,32 +63,6 @@ impl ImageResidencyCoordinator {
     ) {
         if let Some(placement_id) = placement_id {
             canvas.clear_image_lod_load(placement_id);
-        }
-    }
-
-    fn integrate_failed_import(
-        &mut self,
-        canvas: &mut CanvasState,
-        active_board_id: i64,
-        target_board_id: Option<i64>,
-        queue_id: Option<u64>,
-        placement_id: Option<i64>,
-        context: String,
-        error: String,
-    ) -> FailedContentResolutionOutcome {
-        let resolution_ticket = queue_id.map(|queue_id| ContentResolutionTicket {
-            target_board_id: target_board_id.unwrap_or(active_board_id),
-            queue_id,
-        });
-        self.note_failed_placement(canvas, placement_id);
-        if let Some(placement_id) = placement_id {
-            canvas.clear_crop_pending(placement_id);
-        }
-        FailedContentResolutionOutcome {
-            resolution_ticket,
-            placement_id,
-            target_board_id,
-            status: format!("{context}: {error}"),
         }
     }
 

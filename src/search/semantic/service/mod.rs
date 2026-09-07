@@ -1,22 +1,22 @@
+mod helper;
+use helper::{EmbeddingHelperClient, embed_image_in_helper, ensure_embedding_helper};
+pub(crate) use helper::{print_embed_image_output, run_embed_image_server};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::library::storage::{AssetSearchHit, EmbeddingStatus, Library};
+use crate::library::storage::{EmbeddingStatus, Library};
 
-use super::EmbedModelLoadTimingOutput;
-use super::index::decode_f32_blob;
+mod index;
 use super::model::{EmbeddingModel, ModelLoadTiming, ModelSpec, OrtTextEncoderModel};
+use index::AssetIndex;
 
 const IMAGE_PIVOT_CANDIDATE_LIMIT: usize = 50;
 
 pub struct SemanticSearchConfig {
-    pub enabled: bool,
     pub model: ModelSpec,
     pub canvas_image_max_side: u32,
 }
@@ -97,25 +97,11 @@ enum ModelState {
     Failed(String),
 }
 
-#[derive(Clone, Debug)]
-struct DecodedAssetEmbedding {
-    asset_id: i64,
-    embedding: Vec<f32>,
-}
-
-#[derive(Default)]
-struct SearchEmbeddingCache {
-    library_embeddings: Option<Arc<Vec<DecodedAssetEmbedding>>>,
-    warming: bool,
-    generation: u64,
-}
-
 pub struct SemanticSearchService {
     library: Library,
-    model_key: &'static str,
     model_state: Arc<Mutex<ModelState>>,
     text_embedding_cache: Arc<Mutex<HashMap<String, Vec<f32>>>>,
-    search_embedding_cache: Arc<Mutex<SearchEmbeddingCache>>,
+    asset_index: AssetIndex,
     index_tx: mpsc::Sender<IndexRequest>,
     result_tx: mpsc::Sender<IndexResult>,
     result_rx: mpsc::Receiver<IndexResult>,
@@ -131,14 +117,13 @@ impl SemanticSearchService {
         let (search_result_tx, search_result_rx) = mpsc::channel::<SearchQueryResult>();
         let model_state = Arc::new(Mutex::new(ModelState::Uninitialized));
         let text_embedding_cache = Arc::new(Mutex::new(HashMap::new()));
-        let search_embedding_cache = Arc::new(Mutex::new(SearchEmbeddingCache::default()));
+        let asset_index = AssetIndex::new(library.clone(), config.model.model_key);
         let worker_result_tx = result_tx.clone();
         let worker_library = library.clone();
         let worker_state = model_state.clone();
-        let worker_search_embedding_cache = search_embedding_cache.clone();
+        let worker_index = asset_index.clone();
         let model_spec = config.model.clone();
         let canvas_image_max_side = config.canvas_image_max_side;
-        let model_key = config.model.model_key;
 
         thread::spawn(move || {
             let grace = embedding_helper_grace();
@@ -149,7 +134,7 @@ impl SemanticSearchService {
                     &worker_state,
                     &model_spec,
                     &worker_result_tx,
-                    &worker_search_embedding_cache,
+                    &worker_index,
                     canvas_image_max_side,
                     helper,
                 );
@@ -159,8 +144,7 @@ impl SemanticSearchService {
         let search_state = model_state.clone();
         let search_index_tx = index_tx.clone();
         let search_text_embedding_cache = text_embedding_cache.clone();
-        let worker_search_embedding_cache = search_embedding_cache.clone();
-        let search_model_key = model_key;
+        let worker_index = asset_index.clone();
         thread::spawn(move || {
             while let Ok(request) = search_rx.recv() {
                 let (request_id, result) = match request {
@@ -172,11 +156,10 @@ impl SemanticSearchService {
                         request_id,
                         search_with_limit_for(
                             &search_library,
-                            search_model_key,
                             &search_state,
                             &search_index_tx,
                             &search_text_embedding_cache,
-                            &worker_search_embedding_cache,
+                            &worker_index,
                             &query,
                             limit,
                         ),
@@ -190,11 +173,10 @@ impl SemanticSearchService {
                         request_id,
                         search_with_image_pivot_with_limit_for(
                             &search_library,
-                            search_model_key,
                             &search_state,
                             &search_index_tx,
                             &search_text_embedding_cache,
-                            &worker_search_embedding_cache,
+                            &worker_index,
                             source_asset_id,
                             text_query.as_deref(),
                             limit,
@@ -216,28 +198,20 @@ impl SemanticSearchService {
 
         let service = Self {
             library,
-            model_key,
             model_state,
             text_embedding_cache,
-            search_embedding_cache,
+            asset_index,
             index_tx,
             result_tx,
             result_rx,
             search_tx,
             search_result_rx,
         };
-        if config.enabled {
-            let _ = service.index_tx.send(IndexRequest::Init);
-        }
         Ok(service)
     }
 
     pub fn enqueue_asset_index(&self, asset_id: i64, original_path: PathBuf) -> Result<(), String> {
-        if self
-            .library
-            .load_asset_embedding(asset_id, self.model_key)?
-            .is_some()
-        {
+        if self.asset_index.contains(asset_id)? {
             // Every accepted request completes, including cache hits. The
             // controller otherwise keeps this asset pending indefinitely.
             return self
@@ -301,11 +275,10 @@ impl SemanticSearchService {
     ) -> Result<Vec<SearchResultAssetEntry>, String> {
         search_with_image_pivot_with_limit_for(
             &self.library,
-            self.model_key,
             &self.model_state,
             &self.index_tx,
             &self.text_embedding_cache,
-            &self.search_embedding_cache,
+            &self.asset_index,
             source_asset_id,
             text_query,
             limit,
@@ -325,11 +298,10 @@ impl SemanticSearchService {
 
         search_with_limit_for(
             &self.library,
-            self.model_key,
             &self.model_state,
             &self.index_tx,
             &self.text_embedding_cache,
-            &self.search_embedding_cache,
+            &self.asset_index,
             query,
             limit,
         )
@@ -368,14 +340,11 @@ impl SemanticSearchService {
     }
 
     pub fn search_embedding_cache_warming(&self) -> bool {
-        self.search_embedding_cache
-            .lock()
-            .map(|cache| cache.warming)
-            .unwrap_or(false)
+        self.asset_index.is_warming()
     }
 
     pub fn invalidate_search_embedding_cache(&self) {
-        clear_search_embedding_cache(&self.search_embedding_cache);
+        self.asset_index.invalidate();
     }
 }
 
@@ -402,47 +371,23 @@ fn release_allocator_pressure() {}
 
 fn search_with_image_pivot_with_limit_for(
     library: &Library,
-    model_key: &'static str,
     model_state: &Arc<Mutex<ModelState>>,
     index_tx: &mpsc::Sender<IndexRequest>,
     text_embedding_cache: &Arc<Mutex<HashMap<String, Vec<f32>>>>,
-    search_embedding_cache: &Arc<Mutex<SearchEmbeddingCache>>,
+    asset_index: &AssetIndex,
     source_asset_id: i64,
     text_query: Option<&str>,
     limit: usize,
 ) -> Result<Vec<SearchResultAssetEntry>, String> {
-    let source_blob = library
-        .load_asset_embedding(source_asset_id, model_key)?
-        .ok_or_else(|| "Source image not indexed yet".to_owned())?;
-    let source_embedding = normalized_embedding_blob(&source_blob)?;
-
-    let mut hits = search_assets(
-        library,
-        search_embedding_cache,
-        model_key,
-        &source_embedding,
-        IMAGE_PIVOT_CANDIDATE_LIMIT,
-    )?;
+    let source_embedding = asset_index.pivot_embedding(source_asset_id)?;
+    let mut hits = asset_index.search(&source_embedding, IMAGE_PIVOT_CANDIDATE_LIMIT)?;
     hits.retain(|hit| hit.asset_id != source_asset_id);
 
     let text_query = text_query.map(str::trim).filter(|query| !query.is_empty());
     if let Some(query) = text_query {
         let query_embedding = text_embedding(query, model_state, index_tx, text_embedding_cache)?;
 
-        let asset_ids = hits.iter().map(|hit| hit.asset_id).collect::<Vec<_>>();
-        let mut candidate_embeddings: HashMap<i64, Vec<f32>> = HashMap::new();
-        for asset_id in &asset_ids {
-            if let Some(blob) = library.load_asset_embedding(*asset_id, model_key)? {
-                candidate_embeddings.insert(*asset_id, decode_f32_blob(&blob)?);
-            }
-        }
-
-        for hit in hits.iter_mut() {
-            if let Some(embedding) = candidate_embeddings.get(&hit.asset_id) {
-                hit.similarity = super::index::cosine_similarity(&query_embedding, embedding)?;
-            }
-        }
-        hits.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));
+        asset_index.rerank(&mut hits, &query_embedding)?;
     }
 
     hits.truncate(limit);
@@ -452,11 +397,10 @@ fn search_with_image_pivot_with_limit_for(
 
 fn search_with_limit_for(
     library: &Library,
-    model_key: &'static str,
     model_state: &Arc<Mutex<ModelState>>,
     index_tx: &mpsc::Sender<IndexRequest>,
     text_embedding_cache: &Arc<Mutex<HashMap<String, Vec<f32>>>>,
-    search_embedding_cache: &Arc<Mutex<SearchEmbeddingCache>>,
+    asset_index: &AssetIndex,
     query: &str,
     limit: usize,
 ) -> Result<Vec<SearchResultAssetEntry>, String> {
@@ -466,13 +410,7 @@ fn search_with_limit_for(
     }
 
     let query_embedding = text_embedding(query, model_state, index_tx, text_embedding_cache)?;
-    let hits = search_assets(
-        library,
-        search_embedding_cache,
-        model_key,
-        &query_embedding,
-        limit,
-    )?;
+    let hits = asset_index.search(&query_embedding, limit)?;
     group_hits(library, hits)
 }
 
@@ -482,7 +420,7 @@ fn process_index_request(
     worker_state: &Arc<Mutex<ModelState>>,
     model_spec: &ModelSpec,
     result_tx: &mpsc::Sender<IndexResult>,
-    worker_search_embedding_cache: &Arc<Mutex<SearchEmbeddingCache>>,
+    worker_index: &AssetIndex,
     canvas_image_max_side: u32,
     helper: &mut Option<EmbeddingHelperClient>,
 ) {
@@ -510,12 +448,7 @@ fn process_index_request(
                     error,
                 });
             } else {
-                clear_search_embedding_cache(worker_search_embedding_cache);
-                warm_search_embedding_cache(
-                    worker_library.clone(),
-                    model_spec.model_key,
-                    worker_search_embedding_cache.clone(),
-                );
+                worker_index.refresh();
                 let _ = result_tx.send(IndexResult::Indexed { asset_id });
             }
         }
@@ -547,12 +480,7 @@ fn process_index_request(
                 false,
             ) {
                 Ok(()) => {
-                    clear_search_embedding_cache(worker_search_embedding_cache);
-                    warm_search_embedding_cache(
-                        worker_library.clone(),
-                        model_spec.model_key,
-                        worker_search_embedding_cache.clone(),
-                    );
+                    worker_index.refresh();
                     let _ = result_tx.send(IndexResult::BackfillIndexed);
                 }
                 Err(error) => {
@@ -563,155 +491,6 @@ fn process_index_request(
             }
         }
     }
-}
-
-fn search_assets(
-    library: &Library,
-    search_embedding_cache: &Arc<Mutex<SearchEmbeddingCache>>,
-    model_key: &'static str,
-    query_embedding: &[f32],
-    limit: usize,
-) -> Result<Vec<AssetSearchHit>, String> {
-    search_cached_library_embeddings(
-        library,
-        search_embedding_cache,
-        model_key,
-        query_embedding,
-        limit,
-    )
-}
-
-fn search_cached_library_embeddings(
-    library: &Library,
-    search_embedding_cache: &Arc<Mutex<SearchEmbeddingCache>>,
-    model_key: &'static str,
-    query_embedding: &[f32],
-    limit: usize,
-) -> Result<Vec<AssetSearchHit>, String> {
-    let cached_embeddings = search_embedding_cache
-        .lock()
-        .map_err(|_| "semantic-search embedding cache poisoned".to_owned())?
-        .library_embeddings
-        .clone();
-    let embeddings = if let Some(embeddings) = cached_embeddings {
-        embeddings
-    } else {
-        let decoded_embeddings = load_decoded_library_embeddings(library, model_key)?;
-        let mut cache = search_embedding_cache
-            .lock()
-            .map_err(|_| "semantic-search embedding cache poisoned".to_owned())?;
-        cache.warming = false;
-        if cache.library_embeddings.is_none() {
-            cache.library_embeddings = Some(decoded_embeddings.clone());
-        }
-        decoded_embeddings
-    };
-
-    let hits = score_decoded_embeddings(&embeddings, query_embedding, limit)?;
-    Ok(hits)
-}
-
-fn load_decoded_library_embeddings(
-    library: &Library,
-    model_key: &'static str,
-) -> Result<Arc<Vec<DecodedAssetEmbedding>>, String> {
-    library
-        .load_library_embeddings(model_key)?
-        .into_iter()
-        .map(|row| {
-            Ok(DecodedAssetEmbedding {
-                asset_id: row.asset_id,
-                embedding: normalized_embedding_blob(&row.embedding_blob)?,
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()
-        .map(Arc::new)
-}
-
-fn score_decoded_embeddings(
-    embeddings: &[DecodedAssetEmbedding],
-    query_embedding: &[f32],
-    limit: usize,
-) -> Result<Vec<AssetSearchHit>, String> {
-    let query_embedding = normalized_embedding(query_embedding);
-    let mut hits = embeddings
-        .iter()
-        .map(|row| {
-            Ok(AssetSearchHit {
-                asset_id: row.asset_id,
-                similarity: dot_product(&query_embedding, &row.embedding)?,
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    hits.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));
-    hits.truncate(limit);
-    Ok(hits)
-}
-
-fn normalized_embedding_blob(blob: &[u8]) -> Result<Vec<f32>, String> {
-    decode_f32_blob(blob).map(|embedding| normalized_embedding(&embedding))
-}
-
-fn normalized_embedding(embedding: &[f32]) -> Vec<f32> {
-    let norm = embedding
-        .iter()
-        .map(|value| value * value)
-        .sum::<f32>()
-        .sqrt();
-    if norm <= f32::EPSILON {
-        return vec![0.0; embedding.len()];
-    }
-    embedding.iter().map(|value| value / norm).collect()
-}
-
-fn dot_product(left: &[f32], right: &[f32]) -> Result<f32, String> {
-    if left.len() != right.len() {
-        return Err("embedding dimensions do not match".to_owned());
-    }
-    Ok(left
-        .iter()
-        .zip(right.iter())
-        .map(|(lhs, rhs)| lhs * rhs)
-        .sum())
-}
-
-fn clear_search_embedding_cache(search_embedding_cache: &Arc<Mutex<SearchEmbeddingCache>>) {
-    if let Ok(mut cache) = search_embedding_cache.lock() {
-        cache.library_embeddings = None;
-        cache.warming = false;
-        cache.generation = cache.generation.wrapping_add(1);
-    }
-}
-
-fn warm_search_embedding_cache(
-    library: Library,
-    model_key: &'static str,
-    search_embedding_cache: Arc<Mutex<SearchEmbeddingCache>>,
-) {
-    let generation = match search_embedding_cache.lock() {
-        Ok(mut cache) => {
-            if cache.library_embeddings.is_some() || cache.warming {
-                return;
-            }
-            cache.warming = true;
-            cache.generation
-        }
-        Err(_) => return,
-    };
-
-    thread::spawn(move || {
-        let decoded_embeddings = load_decoded_library_embeddings(&library, model_key);
-        let Ok(mut cache) = search_embedding_cache.lock() else {
-            return;
-        };
-        if cache.generation != generation {
-            return;
-        }
-        cache.warming = false;
-        if let Ok(decoded_embeddings) = decoded_embeddings {
-            cache.library_embeddings = Some(decoded_embeddings);
-        }
-    });
 }
 
 fn group_hits(
@@ -818,141 +597,6 @@ fn index_asset(
     let embedding = embed_image_in_helper(&source_path, helper)?;
     library.upsert_asset_embedding_blob(asset_id, model_spec.model_key, &embedding)?;
     Ok(())
-}
-
-#[derive(serde::Deserialize)]
-struct EmbedImageHelperOutput {
-    embedding: Option<Vec<f32>>,
-    error: Option<String>,
-    model_load_timing: Option<EmbedModelLoadTimingOutput>,
-}
-
-struct EmbeddingHelperClient {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-}
-
-impl EmbeddingHelperClient {
-    fn new() -> Result<(Self, ModelLoadTiming), String> {
-        let executable = std::env::current_exe()
-            .map_err(|error| format!("failed to find app executable: {error}"))?;
-        let mut child = Command::new(executable)
-            .arg("--semantic-embed-server")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("failed to run embedding helper: {error}"))?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "embedding helper stdin unavailable".to_owned())?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "embedding helper stdout unavailable".to_owned())?;
-        let mut client = Self {
-            child,
-            stdin,
-            stdout: BufReader::new(stdout),
-        };
-        let timing = client.read_ready_timing()?;
-        Ok((client, timing))
-    }
-
-    fn read_ready_timing(&mut self) -> Result<ModelLoadTiming, String> {
-        let mut line = String::new();
-        let bytes = self
-            .stdout
-            .read_line(&mut line)
-            .map_err(|error| format!("failed to read embedding helper ready output: {error}"))?;
-        if bytes == 0 {
-            let status = self.child.try_wait().ok().flatten();
-            return Err(match status {
-                Some(status) => {
-                    format!("embedding helper exited before ready output with {status}")
-                }
-                None => "embedding helper closed stdout before ready output".to_owned(),
-            });
-        }
-        let output: EmbedImageHelperOutput = serde_json::from_str(&line)
-            .map_err(|error| format!("failed to decode embedding helper ready output: {error}"))?;
-        if let Some(error) = output.error {
-            return Err(error);
-        }
-        output
-            .model_load_timing
-            .map(Into::into)
-            .ok_or_else(|| "embedding helper ready output missing model timing".to_owned())
-    }
-
-    fn embed_image(&mut self, source_path: &PathBuf) -> Result<Vec<f32>, String> {
-        serde_json::to_writer(&mut self.stdin, source_path)
-            .map_err(|error| format!("failed to write embedding helper input: {error}"))?;
-        self.stdin
-            .write_all(b"\n")
-            .map_err(|error| format!("failed to finish embedding helper input: {error}"))?;
-        self.stdin
-            .flush()
-            .map_err(|error| format!("failed to flush embedding helper input: {error}"))?;
-
-        let mut line = String::new();
-        let bytes = self
-            .stdout
-            .read_line(&mut line)
-            .map_err(|error| format!("failed to read embedding helper output: {error}"))?;
-        if bytes == 0 {
-            let status = self.child.try_wait().ok().flatten();
-            return Err(match status {
-                Some(status) => format!("embedding helper exited before output with {status}"),
-                None => "embedding helper closed stdout before output".to_owned(),
-            });
-        }
-        let output: EmbedImageHelperOutput = serde_json::from_str(&line)
-            .map_err(|error| format!("failed to decode embedding helper output: {error}"))?;
-        if let Some(error) = output.error {
-            return Err(error);
-        }
-        output
-            .embedding
-            .ok_or_else(|| "embedding helper output missing embedding".to_owned())
-    }
-}
-
-impl Drop for EmbeddingHelperClient {
-    fn drop(&mut self) {
-        let _ = self.stdin.flush();
-        if matches!(self.child.try_wait(), Ok(None)) {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
-}
-
-fn embed_image_in_helper(
-    source_path: &PathBuf,
-    helper: &mut Option<EmbeddingHelperClient>,
-) -> Result<Vec<f32>, String> {
-    if helper.is_none() {
-        let (client, _) = EmbeddingHelperClient::new()?;
-        *helper = Some(client);
-    }
-    helper
-        .as_mut()
-        .ok_or_else(|| "embedding helper unavailable".to_owned())?
-        .embed_image(source_path)
-}
-
-fn ensure_embedding_helper(
-    helper: &mut Option<EmbeddingHelperClient>,
-) -> Result<Option<ModelLoadTiming>, String> {
-    if helper.is_none() {
-        let (client, timing) = EmbeddingHelperClient::new()?;
-        *helper = Some(client);
-        Ok(Some(timing))
-    } else {
-        Ok(None)
-    }
 }
 
 fn record_embedding_failure(
@@ -1193,7 +837,6 @@ mod tests {
         let service = SemanticSearchService::new(
             library.clone(),
             SemanticSearchConfig {
-                enabled: false,
                 model: test_model_spec(),
                 canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             },
@@ -1287,7 +930,6 @@ mod tests {
         let service = SemanticSearchService::new(
             library.clone(),
             SemanticSearchConfig {
-                enabled: false,
                 model: test_model_spec(),
                 canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             },
@@ -1353,7 +995,6 @@ mod tests {
         let service = SemanticSearchService::new(
             library.clone(),
             SemanticSearchConfig {
-                enabled: false,
                 model: test_model_spec(),
                 canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             },
@@ -1407,7 +1048,6 @@ mod tests {
         let service = SemanticSearchService::new(
             library.clone(),
             SemanticSearchConfig {
-                enabled: false,
                 model: test_model_spec(),
                 canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             },
@@ -1428,7 +1068,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            crate::search::semantic::index::decode_f32_blob(&embedding).unwrap(),
+            embedding
+                .chunks_exact(4)
+                .map(|bytes| f32::from_ne_bytes(bytes.try_into().unwrap()))
+                .collect::<Vec<_>>(),
             vec![1.0, 0.0]
         );
     }
@@ -1440,7 +1083,6 @@ mod tests {
         let service = SemanticSearchService::new(
             library.clone(),
             SemanticSearchConfig {
-                enabled: false,
                 model: test_model_spec(),
                 canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             },
@@ -1591,7 +1233,6 @@ mod tests {
         let service = SemanticSearchService::new(
             library.clone(),
             SemanticSearchConfig {
-                enabled: true,
                 model: DEFAULT_SEMANTIC_SEARCH_MODEL,
                 canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             },
@@ -1600,6 +1241,8 @@ mod tests {
         service
             .enqueue_asset_index(record.require_loaded_asset().id, stored_path.clone())
             .unwrap();
+        // Queries initialize the text model lazily, just as in the app.
+        let _ = service.search_with_limit("cat", 5);
 
         let deadline = Instant::now() + Duration::from_secs(180);
         let mut indexed = false;
@@ -1618,7 +1261,7 @@ mod tests {
                 }
             }
 
-            if indexed {
+            if indexed && service.is_ready() {
                 break;
             }
             std::thread::sleep(Duration::from_millis(50));

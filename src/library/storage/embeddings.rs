@@ -1,5 +1,9 @@
 use super::boards::active_board_id;
-use super::*;
+use super::connection::Library;
+use super::files::unix_timestamp_seconds;
+use rusqlite::params;
+use rusqlite::params_from_iter;
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EmbeddingStatus {

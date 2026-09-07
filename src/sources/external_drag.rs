@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use eframe::egui;
 
-use crate::jobs::ImportSource;
-use crate::sources::import::normalize_import_url;
+use crate::image_preparation::ImportSource;
+use crate::sources::url::normalize_import_url;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct ExternalDragIntake {
@@ -13,19 +13,16 @@ pub(crate) struct ExternalDragIntake {
 
 pub(crate) fn hovered(ui: &egui::Ui) -> ExternalDragIntake {
     let raw_hovered_files = ui.input(|input| input.raw.hovered_files.clone());
-    let native_paths = crate::platform::native_drop::hovered_paths();
-    let native_urls = crate::platform::native_drop::hovered_url_strings();
-    let native_pos = crate::platform::native_drop::hovered_screen_pos();
-    let cursor_pos = crate::platform::native_drop::cursor_screen_pos();
+    let native = crate::platform::native_drop::hovered();
     let egui_pos = ui.ctx().input(|input| input.pointer.latest_pos());
     let sources = merge_sources(
         raw_hovered_files
             .into_iter()
             .filter_map(|file| file.path.map(source_from_path_or_url_name)),
-        native_paths.into_iter().map(ImportSource::Path),
-        native_urls.into_iter().map(ImportSource::Url),
+        native.paths.into_iter().map(ImportSource::Path),
+        native.urls.into_iter().map(ImportSource::Url),
     );
-    let screen_pos = resolve_screen_pos(native_pos, cursor_pos, egui_pos);
+    let screen_pos = native.screen_pos.or(egui_pos);
 
     ExternalDragIntake {
         sources,
@@ -35,32 +32,21 @@ pub(crate) fn hovered(ui: &egui::Ui) -> ExternalDragIntake {
 
 pub(crate) fn take_drop(ui: &egui::Ui) -> ExternalDragIntake {
     let raw_dropped_files = ui.input(|input| input.raw.dropped_files.clone());
-    let native_paths = crate::platform::native_drop::take_dropped_paths();
-    let native_urls = crate::platform::native_drop::take_dropped_url_strings();
-    let native_pos = crate::platform::native_drop::take_dropped_screen_pos();
-    let cursor_pos = crate::platform::native_drop::cursor_screen_pos();
+    let native = crate::platform::native_drop::take_drop();
     let egui_pos = ui.ctx().input(|input| input.pointer.latest_pos());
     let sources = merge_sources(
         raw_dropped_files
             .into_iter()
             .filter_map(source_from_dropped_file),
-        native_paths.into_iter().map(ImportSource::Path),
-        native_urls.into_iter().map(ImportSource::Url),
+        native.paths.into_iter().map(ImportSource::Path),
+        native.urls.into_iter().map(ImportSource::Url),
     );
-    let screen_pos = resolve_screen_pos(native_pos, cursor_pos, egui_pos);
+    let screen_pos = native.screen_pos.or(egui_pos);
 
     ExternalDragIntake {
         sources,
         screen_pos,
     }
-}
-
-pub(crate) fn resolve_screen_pos(
-    native_drag_pos: Option<egui::Pos2>,
-    os_cursor_pos: Option<egui::Pos2>,
-    egui_latest_pos: Option<egui::Pos2>,
-) -> Option<egui::Pos2> {
-    native_drag_pos.or(os_cursor_pos).or(egui_latest_pos)
 }
 
 fn source_from_dropped_file(file: egui::DroppedFile) -> Option<ImportSource> {
@@ -96,33 +82,4 @@ fn merge_sources(
     }
 
     sources
-}
-
-#[cfg(test)]
-mod tests {
-    use super::resolve_screen_pos;
-
-    #[test]
-    fn import_screen_pos_prefers_native_drag_then_os_cursor_then_egui_pointer() {
-        let native_drag_pos = eframe::egui::pos2(10.0, 20.0);
-        let os_cursor_pos = eframe::egui::pos2(30.0, 40.0);
-        let egui_latest_pos = eframe::egui::pos2(50.0, 60.0);
-
-        assert_eq!(
-            resolve_screen_pos(
-                Some(native_drag_pos),
-                Some(os_cursor_pos),
-                Some(egui_latest_pos),
-            ),
-            Some(native_drag_pos)
-        );
-        assert_eq!(
-            resolve_screen_pos(None, Some(os_cursor_pos), Some(egui_latest_pos)),
-            Some(os_cursor_pos)
-        );
-        assert_eq!(
-            resolve_screen_pos(None, None, Some(egui_latest_pos)),
-            Some(egui_latest_pos)
-        );
-    }
 }

@@ -211,6 +211,77 @@ impl DocumentHistory {
         false
     }
 
+    /// Completion updates the latest accepted values, including incidental
+    /// textbox cleanup and Group layout, without creating another Undo entry.
+    pub(crate) fn update_accepted_document_changes(
+        &mut self,
+        board_id: i64,
+        changes: &crate::canvas::CanvasDocumentChanges,
+    ) -> bool {
+        let mut changed = false;
+        for placement in &changes.updated_placements {
+            changed |= self.update_accepted_placement(board_id, placement.clone());
+        }
+        let Some(history) = self.histories_by_board.get_mut(&board_id) else {
+            return changed;
+        };
+        let mut annotation_ids = std::collections::HashSet::new();
+        let mut stack_updated = false;
+        let mut groups_updated = false;
+        for action in history.undo_stack.iter_mut().rev() {
+            let HistoryAction::Document(action) = action else {
+                continue;
+            };
+            for change in &mut action.annotations {
+                let Some(annotation) = change.after.as_ref().or(change.before.as_ref()) else {
+                    continue;
+                };
+                let id = annotation.id;
+                if !annotation_ids.insert(id) {
+                    continue;
+                }
+                if changes.archived_annotation_ids.contains(&id) {
+                    let mut archived = annotation.clone();
+                    archived.archived = true;
+                    change.after = Some(archived);
+                    changed = true;
+                } else if let Some(updated) = changes
+                    .updated_annotations
+                    .iter()
+                    .find(|item| item.id == id)
+                {
+                    change.after = Some(updated.clone());
+                    changed = true;
+                }
+            }
+            if !stack_updated {
+                if let (Some(change), Some(order)) = (&mut action.stack_order, &changes.stack_order)
+                {
+                    // Do not add later-created items to an earlier action. Its
+                    // replay can happen before those items are restored.
+                    let previous = change.after.as_deref().unwrap_or_default();
+                    change.after = Some(
+                        order
+                            .iter()
+                            .copied()
+                            .filter(|item| previous.contains(item))
+                            .collect(),
+                    );
+                    stack_updated = true;
+                    changed = true;
+                }
+            }
+            if !groups_updated {
+                if let (Some(change), Some(groups)) = (&mut action.groups, &changes.groups) {
+                    change.after = Some(groups.clone());
+                    groups_updated = true;
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+
     pub(crate) fn fail_accepted_placement(
         &mut self,
         board_id: i64,

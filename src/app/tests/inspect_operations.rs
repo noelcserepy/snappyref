@@ -46,7 +46,7 @@ fn seed_loaded_placement(
             size.0,
             size.1,
             None,
-            crate::jobs::ImportOrigin::Existing,
+            crate::image_preparation::ImportOrigin::Existing,
         ),
     );
     harness.step();
@@ -166,7 +166,7 @@ fn inspect_canvas_edit_operations_writes_artifact() {
     let root = TempRoot::new("snappyref-inspect-canvas-edit-operations");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.document_persistence =
+    app.board_editing.persistence =
         crate::active_board::persistence::DocumentPersistence::queued(library.clone());
     let mut harness = app_full_harness(app);
     let blue = seed_loaded_placement(
@@ -448,11 +448,11 @@ fn inspect_canvas_navigation_and_boards_writes_artifact() {
     let root = TempRoot::new("snappyref-inspect-canvas-navigation");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.document_persistence =
+    app.board_editing.persistence =
         crate::active_board::persistence::DocumentPersistence::queued(library.clone());
     let mut harness = app_full_harness(app);
     let ctx = harness.ctx.clone();
-    harness.state_mut().import_worker = Some(crate::jobs::ImagePrepWorker::new(
+    harness.state_mut().import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
         library.clone(),
         ctx,
         None,
@@ -564,6 +564,10 @@ fn inspect_canvas_navigation_and_boards_writes_artifact() {
                 .placement_for_id(green.state.id)
                 .is_some(),
     );
+    scenario.assertion(
+        "returning after Board creation preserves the focused view",
+        harness.state().canvas.viewport_state() == focused,
+    );
     scenario.capture_screen("screen-006-back-on-first-board", &mut harness);
 
     harness.state_mut().flush_persistence();
@@ -589,7 +593,7 @@ fn inspect_session_restart_restore_writes_artifact() {
     let root = TempRoot::new("snappyref-inspect-session-restart");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.document_persistence =
+    app.board_editing.persistence =
         crate::active_board::persistence::DocumentPersistence::queued(library.clone());
     let mut harness = app_full_harness(app);
     let red = seed_loaded_placement(
@@ -640,16 +644,16 @@ fn inspect_session_restart_restore_writes_artifact() {
     let startup_library = library.clone();
     let mut harness = app_full_harness_with_startup(1.0 / 4.0, move |ctx| {
         let mut app = test_app(Some(startup_library.clone()));
-        app.document_persistence =
+        app.board_editing.persistence =
             crate::active_board::persistence::DocumentPersistence::queued(startup_library.clone());
-        app.import_worker = Some(crate::jobs::ImagePrepWorker::new(
+        app.import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
             startup_library,
             ctx.clone(),
             None,
         ));
         app.load_user_session();
         app.refresh_board_summaries();
-        app.enqueue_existing_items();
+        app.board_lifecycle().restore().unwrap();
         app
     });
     let loaded = step_until_placement_loaded(&mut harness, red.state.id);
@@ -703,7 +707,7 @@ fn inspect_persistence_dropped_write_writes_artifact() {
     let root = TempRoot::new("snappyref-inspect-dropped-write");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.document_persistence =
+    app.board_editing.persistence =
         crate::active_board::persistence::DocumentPersistence::queued(library.clone());
     let mut harness = app_full_harness(app);
     let blue = seed_loaded_placement(
