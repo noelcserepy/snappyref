@@ -1,7 +1,20 @@
 use super::boards::active_board_id;
+use super::connection::Library;
+#[cfg(test)]
+use super::connection::write_transaction;
 #[cfg(test)]
 use super::stack_order::append_canvas_stack_item;
-use super::*;
+use crate::data::CanvasAnnotation;
+use crate::data::CanvasAnnotationColor;
+use crate::data::CanvasAnnotationKind;
+#[cfg(test)]
+use crate::data::CanvasStackItem;
+use crate::data::CanvasStrokeWidth;
+use crate::data::CanvasTextSize;
+use eframe::egui;
+use rusqlite::Connection;
+use rusqlite::Transaction;
+use rusqlite::params;
 
 impl Library {
     pub(crate) fn new_canvas_annotation(

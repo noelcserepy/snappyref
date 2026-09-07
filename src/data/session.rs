@@ -90,8 +90,6 @@ pub struct WorkspaceSettings {
     pub placement_target_area: f32,
     #[serde(default = "default_canvas_image_max_side")]
     pub canvas_image_max_side: u32,
-    #[serde(default = "default_semantic_search_enabled")]
-    pub semantic_search_enabled: bool,
     #[serde(default)]
     pub semantic_search_first_launch_prompt_seen: bool,
     #[serde(default = "default_rotation_snap_degrees")]
@@ -125,10 +123,6 @@ fn default_canvas_image_max_side() -> u32 {
     DEFAULT_CANVAS_IMAGE_MAX_SIDE
 }
 
-fn default_semantic_search_enabled() -> bool {
-    true
-}
-
 fn default_rotation_snap_degrees() -> f32 {
     DEFAULT_ROTATION_SNAP_DEGREES
 }
@@ -140,7 +134,6 @@ impl Default for WorkspaceSettings {
             placement_gap: DEFAULT_PLACEMENT_GAP,
             placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
             canvas_image_max_side: DEFAULT_CANVAS_IMAGE_MAX_SIDE,
-            semantic_search_enabled: true,
             semantic_search_first_launch_prompt_seen: false,
             rotation_snap_degrees: DEFAULT_ROTATION_SNAP_DEGREES,
             default_textbox_background: false,
@@ -151,27 +144,9 @@ impl Default for WorkspaceSettings {
     }
 }
 
-impl WorkspaceSettings {
-    pub fn normalize_core_features(&mut self) {
-        self.semantic_search_enabled = true;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::WorkspaceSettings;
-
-    #[test]
-    fn normalizes_semantic_search_to_enabled_for_core_search() {
-        let mut settings = WorkspaceSettings {
-            semantic_search_enabled: false,
-            ..Default::default()
-        };
-
-        settings.normalize_core_features();
-
-        assert!(settings.semantic_search_enabled);
-    }
 
     #[test]
     fn first_launch_semantic_search_prompt_starts_unseen() {

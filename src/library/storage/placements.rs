@@ -1,8 +1,27 @@
 use super::assets::{insert_asset_row, load_exact_asset_for_original};
 use super::boards::{active_board_id, board_is_non_archived};
+use super::connection::Library;
+use super::connection::write_transaction;
+use super::placement_content::StoredPlacementContent;
 #[cfg(test)]
 use super::stack_order::append_canvas_stack_item;
-use super::*;
+use crate::data::Asset;
+#[cfg(test)]
+use crate::data::CanvasStackItem;
+use crate::data::ContentResolutionSource;
+use crate::data::Placement;
+use crate::data::PlacementContent;
+use crate::data::PlacementLifecycle;
+use crate::data::PlacementState;
+use crate::data::RectGeometry;
+use crate::placement::arrangement::PlacementArrangementInput;
+use eframe::egui;
+use rusqlite::Connection;
+use rusqlite::Transaction;
+use rusqlite::params;
+use std::path::Path;
+use std::path::PathBuf;
+
 use rusqlite::OptionalExtension;
 
 // The SQLite table is still named `board_items` for migration compatibility.

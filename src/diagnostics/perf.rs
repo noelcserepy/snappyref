@@ -1,5 +1,5 @@
 pub fn print_file_decode_report(path: &std::path::Path) -> Result<(), String> {
-    let report = crate::jobs::decode_image_file_perf_report(path)?;
+    let report = crate::image_preparation::decode_image_file_perf_report(path)?;
     let frames = report
         .animated_frame_count
         .map(|count| format!(" animated_frames={count}"))

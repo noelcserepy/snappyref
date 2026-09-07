@@ -15,8 +15,8 @@ pub(crate) fn open_context_menu_at_pointer(
             CanvasHit::Annotation(annotation_id) => {
                 if !state.is_annotation_selected(annotation_id) {
                     state.finish_textbox_edit();
-                    state.document.selected_placement_ids.clear();
-                    state.document.selected_annotation_ids = vec![annotation_id];
+                    state.interaction.selected_placement_ids.clear();
+                    state.interaction.selected_annotation_ids = vec![annotation_id];
                 }
             }
             CanvasHit::Placement(placement_id) => {
@@ -44,10 +44,10 @@ pub(crate) fn hit_test_canvas_item(
         .rev()
         .find_map(|item| match item {
             CanvasStackItem::Placement(placement_id) => state
-                .rendered_placement_by_id(placement_id)
+                .placement_by_id(placement_id)
                 .filter(|image| {
                     placement_contains_screen_point(
-                        &image.placement,
+                        &image,
                         pointer_pos,
                         state.pan,
                         state.zoom,
@@ -90,10 +90,10 @@ pub(crate) fn update_marquee_selection(
         egui::Rect::from_two_pos(marquee_state.start_screen, marquee_state.current_screen);
     let selected = state
         .document
-        .rendered_placements
+        .placements
         .iter()
         .filter(|image| placement_screen_rect(state, rect, image).intersects(selection_rect))
-        .map(|image| image.placement.state.id)
+        .map(|image| image.state.id)
         .collect::<Vec<_>>();
     let selected_annotation_ids = state
         .document

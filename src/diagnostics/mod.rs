@@ -1,3 +1,4 @@
+pub(crate) mod import_completion;
 pub(crate) mod perf;
 
 pub(crate) fn search_drag_debug(message: impl AsRef<str>) {

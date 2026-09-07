@@ -140,7 +140,6 @@ pub(crate) fn show_sidebar(
     boards: &[crate::data::BoardSummary],
     active_board_id: i64,
     forced_board_hover_index: Option<usize>,
-    _update_state: &crate::updater::UpdateState,
     about_updates: AboutUpdatesView,
 ) -> SidebarRenderResult {
     let entrance =

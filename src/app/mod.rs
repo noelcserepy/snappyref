@@ -2,15 +2,14 @@ use eframe::egui;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::active_board::commands::{ActiveBoardCommandContext, PasteCommandOutcome};
-use crate::active_board::history::{
-    BoardLifecycleHistoryAction, DocumentHistory, HistoryAction, HistoryChange,
-};
+use crate::active_board::catalog::BoardSummariesCache;
+use crate::active_board::crop;
+#[cfg(test)]
+use crate::active_board::history::{HistoryAction, HistoryChange};
 use crate::active_board::persistence::DocumentPersistence;
-use crate::library::residency::ImageResidencyCoordinator;
-use crate::placement::content_resolution::ContentResolutionRuntime;
+use crate::canvas::residency::ImageResidencyCoordinator;
+use crate::placement::content_resolution::PlacementCreation;
 use crate::search::SearchController;
-use crate::sources::crop;
 use crate::ui::sidebar::{
     SidebarBoardAction, SidebarTab, block_sidebar_input, close_sidebar_on_outside_click,
     show_sidebar, show_sidebar_hint, show_status_message, sidebar_rect,
@@ -19,13 +18,11 @@ use crate::updater::{UpdateConfig, UpdateService};
 
 const STARTUP_VIEWPORT_SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
 const USER_SESSION_SAVE_DEBOUNCE: Duration = Duration::from_millis(750);
-const BOARD_LOAD_DEDUPE_HASH_LIMIT: usize = 32;
-const BOARD_LOAD_DEDUPE_GROUP_LIMIT: usize = 8;
 
 mod context_menu;
 mod history;
 mod import_intake;
-mod perf_scenario;
+pub(crate) mod perf_scenario;
 
 use perf_scenario::{FramePerfState, PerfLogState, PerfScenarioState};
 mod semantic_search;
@@ -38,7 +35,9 @@ use shortcuts::{
     ArrangementAction, PendingBoardDelete, PendingLibraryRemove, SupportedShortcutAction,
     delete_shortcut_pressed, settle_direction_pressed, shortcut_pressed,
 };
-pub(crate) use shortcuts::{SUPPORTED_SHORTCUTS, SupportedShortcut, platform_shortcut_label};
+pub(crate) use shortcuts::{
+    CORE_SHORTCUTS, LAYOUT_AND_HISTORY_SHORTCUTS, SupportedShortcut, platform_shortcut_label,
+};
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -64,7 +63,7 @@ impl AppConfig {
         let mut update_smoke_install = false;
         let update_smoke_status_path =
             std::env::var_os("SNAPPYREF_UPDATE_SMOKE_STATUS").map(std::path::PathBuf::from);
-        let library_root = crate::library::location::resolve_library_root();
+        let library_root = crate::local_data_location::resolve_library_root();
         let mut arguments = std::env::args().skip(1);
 
         while let Some(argument) = arguments.next() {
@@ -170,11 +169,11 @@ pub struct SnappyRefApp {
     canvas: crate::canvas::CanvasState,
     wgpu_render_state: Option<eframe::egui_wgpu::RenderState>,
     library: Option<crate::library::storage::Library>,
-    import_worker: Option<crate::jobs::ImagePrepWorker>,
+    import_worker: Option<crate::image_preparation::ImagePrepWorker>,
     active_board_id: i64,
     window_state: crate::data::WindowState,
     persist_window_state: bool,
-    document_history: DocumentHistory,
+    board_editing: crate::active_board::editing::BoardEditing,
     max_texture_side: usize,
     settings: crate::data::WorkspaceSettings,
     search: SearchController,
@@ -192,14 +191,12 @@ pub struct SnappyRefApp {
     perf_log: Option<PerfLogState>,
     frame_perf: FramePerfState,
     perf_scenario: Option<PerfScenarioState>,
-    content_resolution: ContentResolutionRuntime,
+    placement_creation: PlacementCreation,
     residency: ImageResidencyCoordinator,
-    pending_import_batches: crate::placement::creation::PlacementCreationBatchTracker,
     hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
     last_hovered_external_drag: Option<crate::sources::external_drag::ExternalDragIntake>,
     external_hover_provisional_placement_ids: Vec<i64>,
     pending_missing_drop_fallback: Option<crate::sources::external_drag::ExternalDragIntake>,
-    document_persistence: DocumentPersistence,
     pending_user_session: Option<crate::data::UserSession>,
     pending_user_session_save_at: Option<Instant>,
     board_summaries_cache: BoardSummariesCache,
@@ -210,77 +207,6 @@ pub struct SnappyRefApp {
     /// the Settings Tab button to one invocation per minute
     /// independent of wall-clock noise. `None` until the first click.
     last_manual_update_check: Option<Instant>,
-}
-
-#[derive(Default)]
-struct BoardSummariesCache {
-    summaries: Vec<crate::data::BoardSummary>,
-}
-
-struct HistoryCanvasReplay {
-    document_changes: crate::canvas::CanvasDocumentChanges,
-    placements_needing_content: Vec<crate::data::Placement>,
-}
-
-impl BoardSummariesCache {
-    fn summaries(&self) -> Vec<crate::data::BoardSummary> {
-        self.summaries.clone()
-    }
-
-    fn clear(&mut self) {
-        self.summaries.clear();
-    }
-
-    fn refresh_from(&mut self, library: &crate::library::storage::Library) -> Result<(), String> {
-        let accepted = std::mem::take(&mut self.summaries);
-        self.summaries = library.list_board_summaries()?;
-        for summary in accepted {
-            if !self
-                .summaries
-                .iter()
-                .any(|durable| durable.board.id == summary.board.id)
-            {
-                self.summaries.push(summary);
-            }
-        }
-        self.summaries.sort_by_key(|summary| summary.board.id);
-        Ok(())
-    }
-
-    fn restore_document(&mut self, document: &crate::data::BoardDocumentSnapshot) {
-        self.summaries
-            .retain(|summary| summary.board.id != document.board.id);
-        self.summaries.push(crate::data::BoardSummary {
-            board: document.board.clone(),
-            placement_count: document.placements.len(),
-        });
-        self.summaries.sort_by_key(|summary| summary.board.id);
-    }
-
-    fn archive(&mut self, board_id: i64) {
-        self.summaries
-            .retain(|summary| summary.board.id != board_id);
-    }
-
-    fn rename(&mut self, board_id: i64, name: &str) {
-        if let Some(summary) = self
-            .summaries
-            .iter_mut()
-            .find(|summary| summary.board.id == board_id)
-        {
-            summary.board.name = name.to_owned();
-        }
-    }
-
-    fn set_placement_count(&mut self, board_id: i64, placement_count: usize) {
-        if let Some(summary) = self
-            .summaries
-            .iter_mut()
-            .find(|summary| summary.board.id == board_id)
-        {
-            summary.placement_count = placement_count;
-        }
-    }
 }
 
 impl SnappyRefApp {
@@ -314,24 +240,30 @@ impl SnappyRefApp {
 
         app.status = match library.load_document_history() {
             Ok(history) => {
-                app.document_history = history;
+                app.board_editing.history = history;
                 "Library ready".to_owned()
             }
             Err(error) => format!("Board history unavailable: {error}"),
         };
-        app.import_worker = Some(crate::jobs::ImagePrepWorker::new(
+        app.import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
             library.clone(),
             cc.egui_ctx.clone(),
             cc.wgpu_render_state.clone(),
         ));
-        app.document_persistence = DocumentPersistence::queued(library.clone());
+        app.board_editing.persistence = DocumentPersistence::queued(library.clone());
         app.library = Some(library);
         app.load_user_session();
         app.refresh_board_summaries();
         app.sync_semantic_search_service();
         if !config.skip_existing_items_on_start() {
-            app.load_groups();
-            app.enqueue_existing_items();
+            if let Err(error) = app.board_lifecycle().restore() {
+                app.status = error;
+            }
+            if let Some(scenario) = &mut app.perf_scenario
+                && scenario.name == "startup"
+            {
+                scenario.expected_imports = app.canvas.committed_placements().len();
+            }
         }
         app
     }
@@ -351,7 +283,7 @@ impl SnappyRefApp {
             active_board_id: 1,
             window_state: crate::data::WindowState::default(),
             persist_window_state: true,
-            document_history: DocumentHistory::default(),
+            board_editing: Default::default(),
             max_texture_side,
             settings: crate::data::WorkspaceSettings::default(),
             search: SearchController::default(),
@@ -367,15 +299,12 @@ impl SnappyRefApp {
             perf_log: None,
             frame_perf: FramePerfState::default(),
             perf_scenario: None,
-            content_resolution: ContentResolutionRuntime::new(),
+            placement_creation: PlacementCreation::new(),
             residency: ImageResidencyCoordinator::default(),
-            pending_import_batches:
-                crate::placement::creation::PlacementCreationBatchTracker::default(),
             hover_preview_dimensions: std::collections::HashMap::new(),
             last_hovered_external_drag: None,
             external_hover_provisional_placement_ids: Vec::new(),
             pending_missing_drop_fallback: None,
-            document_persistence: DocumentPersistence::default(),
             pending_user_session: None,
             pending_user_session_save_at: None,
             board_summaries_cache: BoardSummariesCache::default(),
@@ -383,60 +312,6 @@ impl SnappyRefApp {
             user_update_flow_active: false,
             update_smoke: None,
             last_manual_update_check: None,
-        }
-    }
-
-    fn load_groups(&mut self) {
-        if let Some(library) = &self.library {
-            match library.load_groups() {
-                Ok(groups) => self.canvas.restore_groups(groups),
-                Err(error) => self.status = error,
-            }
-        }
-    }
-
-    fn enqueue_existing_items(&mut self) {
-        let Some(library) = &self.library else {
-            return;
-        };
-        let Some(import_worker) = &self.import_worker else {
-            return;
-        };
-
-        match library.load_canvas_stack_order() {
-            Ok(stack_order) => self.canvas.restore_canvas_stack_order(stack_order),
-            Err(error) => self.status = error,
-        }
-
-        match library.load_placements() {
-            Ok(placements) => {
-                if let Some(scenario) = &mut self.perf_scenario
-                    && scenario.name == "startup"
-                {
-                    scenario.expected_imports = placements.len();
-                }
-                let viewport_world = self.startup_viewport_world_rect();
-                if let Err(error) = self.residency.queue_startup_existing_loads(
-                    import_worker,
-                    &mut self.canvas,
-                    placements,
-                    viewport_world,
-                    self.active_board_id,
-                    &self.settings,
-                    self.max_texture_side,
-                    self.perf_log.is_some(),
-                ) {
-                    self.status = error;
-                }
-            }
-            Err(error) => {
-                self.status = error;
-            }
-        }
-
-        match library.load_canvas_annotations() {
-            Ok(annotations) => self.canvas.add_annotations(annotations),
-            Err(error) => self.status = error,
         }
     }
 
@@ -483,58 +358,17 @@ impl SnappyRefApp {
     }
 
     fn create_and_switch_board(&mut self, keep_sidebar_open: bool) {
-        let Some(library) = &self.library else {
-            self.status = "Storage unavailable".to_owned();
-            return;
-        };
-
-        let boards = self
-            .board_summaries()
-            .into_iter()
-            .map(|summary| summary.board)
-            .collect::<Vec<_>>();
-        let active_before = self.active_board_id;
-        let name = generated_board_name(&boards);
-        let board = library.new_board(name);
-        let document = crate::data::BoardDocumentSnapshot {
-            board: board.clone(),
-            placements: Vec::new(),
-            annotations: Vec::new(),
-            groups: Vec::new(),
-            stack_order: Vec::new(),
-            viewport: crate::data::ViewportState::default(),
-        };
-        self.document_history.record_applied(
-            board.id,
-            HistoryAction::Board(BoardLifecycleHistoryAction::Created {
-                document: document.clone(),
-                active_before,
-            }),
-        );
-        if let Err(error) = self.document_persistence.apply_board_lifecycle_unit(
-            crate::active_board::persistence::BoardLifecyclePersistence::Create {
-                document: document.clone(),
-                active_board_id: board.id,
-            },
-            &self.document_history,
-        ) {
-            self.status = error;
-            return;
+        match self.board_lifecycle().create() {
+            Ok(status) => {
+                self.sidebar_open |= keep_sidebar_open;
+                self.status = status;
+            }
+            Err(error) => self.status = error,
         }
-        self.clear_active_board_transients();
-        self.canvas.clear_for_board_switch();
-        self.active_board_id = board.id;
-        self.canvas.apply_viewport_state(&document.viewport);
-        self.save_user_session();
-        self.board_summaries_cache.restore_document(&document);
-        if keep_sidebar_open {
-            self.sidebar_open = true;
-        }
-        self.status = format!("Created {}", board.name);
     }
 
     fn switch_to_board(&mut self, board_id: i64) {
-        if let Err(error) = crate::active_board::switch::switch_to_board(self, board_id) {
+        if let Err(error) = self.board_lifecycle().activate(board_id) {
             self.status = error;
         }
     }
@@ -544,43 +378,9 @@ impl SnappyRefApp {
             Some(SidebarBoardAction::CreateBoard) => self.create_and_switch_board(true),
             Some(SidebarBoardAction::SwitchBoard(board_id)) => self.switch_to_board(board_id),
             Some(SidebarBoardAction::RenameBoard(board_id, name)) => {
-                let Some(before) = self
-                    .board_summaries()
-                    .into_iter()
-                    .find(|summary| summary.board.id == board_id)
-                    .map(|summary| summary.board.name)
-                else {
-                    self.status = "Board unavailable".to_owned();
-                    return;
-                };
-                if self.library.is_none() {
-                    self.status = "Storage unavailable".to_owned();
-                    return;
-                }
-                let after = name.trim().to_owned();
-                if after.is_empty() || after == before {
-                    return;
-                }
-                self.document_history.record_applied(
-                    self.active_board_id,
-                    HistoryAction::Board(BoardLifecycleHistoryAction::Renamed {
-                        board_id,
-                        before_name: before,
-                        after_name: after.clone(),
-                    }),
-                );
-                match self.document_persistence.apply_board_lifecycle_unit(
-                    crate::active_board::persistence::BoardLifecyclePersistence::Rename {
-                        board_id,
-                        name: after.clone(),
-                    },
-                    &self.document_history,
-                ) {
-                    Ok(()) => {
-                        self.board_summaries_cache.rename(board_id, &after);
-                        self.status = "Renamed board".to_owned();
-                    }
-                    Err(error) => self.status = error,
+                match self.board_lifecycle().rename(board_id, &name) {
+                    Ok(Some(status)) | Err(status) => self.status = status,
+                    Ok(None) => {}
                 }
             }
             Some(SidebarBoardAction::RequestDeleteBoard(board_id)) => {
@@ -611,113 +411,9 @@ impl SnappyRefApp {
         let Some(pending) = self.pending_board_delete.take() else {
             return;
         };
-
-        self.persist_canvas_changes();
-        self.save_user_session();
-
-        let Some(library) = &self.library else {
-            self.status = "Storage unavailable".to_owned();
-            return;
+        self.status = match self.board_lifecycle().delete(ctx, pending.board_id) {
+            Ok(status) | Err(status) => status,
         };
-
-        let active_before = self.active_board_id;
-        let mut document = match library.load_board_document(pending.board_id) {
-            Ok(document) => document,
-            Err(error) if pending.board_id != self.active_board_id => {
-                self.status = error;
-                return;
-            }
-            Err(_) => {
-                let Some(board) = self
-                    .board_summaries()
-                    .into_iter()
-                    .find(|summary| summary.board.id == pending.board_id)
-                    .map(|summary| summary.board)
-                else {
-                    self.status = "Board unavailable".to_owned();
-                    return;
-                };
-                crate::data::BoardDocumentSnapshot {
-                    board,
-                    placements: self.canvas.committed_placements(),
-                    annotations: self.canvas.annotations(),
-                    groups: self.canvas.groups().to_vec(),
-                    stack_order: self.canvas.canvas_stack_order(),
-                    viewport: self.canvas.viewport_state(),
-                }
-            }
-        };
-        self.document_history
-            .apply_accepted_document_state(pending.board_id, &mut document);
-        if pending.board_id == self.active_board_id {
-            document.viewport = self.canvas.viewport_state();
-        }
-        if let Some(board) = self
-            .board_summaries()
-            .into_iter()
-            .find(|summary| summary.board.id == pending.board_id)
-            .map(|summary| summary.board)
-        {
-            document.board = board;
-        }
-        let board_ids = self
-            .board_summaries()
-            .into_iter()
-            .map(|summary| summary.board.id)
-            .collect::<Vec<_>>();
-        let Some(deleted_index) = board_ids.iter().position(|id| *id == pending.board_id) else {
-            self.status = "Board unavailable".to_owned();
-            return;
-        };
-        if board_ids.len() == 1 {
-            self.status = "cannot delete the last board".to_owned();
-            return;
-        }
-        let active_after = if active_before != pending.board_id {
-            active_before
-        } else if deleted_index > 0 {
-            board_ids[deleted_index - 1]
-        } else {
-            board_ids[deleted_index + 1]
-        };
-        let active_document = if active_before != active_after {
-            match self.accepted_board_document(library, active_after) {
-                Ok(document) => Some(document),
-                Err(error) => {
-                    self.status = error;
-                    return;
-                }
-            }
-        } else {
-            None
-        };
-        self.document_history.record_applied(
-            active_after,
-            HistoryAction::Board(BoardLifecycleHistoryAction::Deleted {
-                document: document.clone(),
-                active_before,
-                active_after,
-            }),
-        );
-        if let Err(error) = self.document_persistence.apply_board_lifecycle_unit(
-            crate::active_board::persistence::BoardLifecyclePersistence::Archive {
-                board_id: pending.board_id,
-                active_board_id: active_after,
-            },
-            &self.document_history,
-        ) {
-            self.status = error;
-            return;
-        }
-
-        self.board_summaries_cache.archive(pending.board_id);
-        if let Some(active_document) = active_document
-            && let Err(error) = self.open_board_document_snapshot(ctx, &active_document)
-        {
-            self.status = error;
-            return;
-        }
-        self.status = format!("Deleted {}", pending.board_name);
     }
 
     fn save_active_board_before_transition(&mut self) {
@@ -727,7 +423,29 @@ impl SnappyRefApp {
     }
 
     fn load_active_board(&mut self) {
-        crate::active_board::load::load_active_board(self);
+        if let Err(error) = self.board_lifecycle().reload_active() {
+            self.status = error;
+        }
+    }
+
+    fn board_lifecycle(&mut self) -> crate::active_board::lifecycle::BoardLifecycle<'_> {
+        let session = self.current_user_session();
+        self.pending_user_session = None;
+        self.pending_user_session_save_at = None;
+        crate::active_board::lifecycle::BoardLifecycle {
+            editing: &mut self.board_editing,
+            canvas: &mut self.canvas,
+            library: self.library.as_ref(),
+            active_board_id: &mut self.active_board_id,
+            catalog: &mut self.board_summaries_cache,
+            search: &mut self.search,
+            placement_creation: &mut self.placement_creation,
+            residency: &mut self.residency,
+            worker: self.import_worker.as_ref(),
+            max_texture_side: self.max_texture_side,
+            session,
+            trace_enabled: self.perf_log.is_some(),
+        }
     }
 
     fn dedupe_library_exact(
@@ -754,11 +472,6 @@ impl SnappyRefApp {
         }
     }
 
-    fn dedupe_library_for_board_load(&mut self) {
-        let _ =
-            self.dedupe_library_exact(BOARD_LOAD_DEDUPE_HASH_LIMIT, BOARD_LOAD_DEDUPE_GROUP_LIMIT);
-    }
-
     fn dedupe_library_from_shortcut(&mut self) {
         self.save_active_board_before_transition();
         let Some(report) = self.dedupe_library_exact(usize::MAX, usize::MAX) else {
@@ -776,13 +489,6 @@ impl SnappyRefApp {
             self.status = format!("Checked {} assets; no duplicates", report.hashed_assets);
         } else {
             self.status = "No exact duplicates found".to_owned();
-        }
-    }
-
-    fn clear_active_board_transients(&mut self) {
-        {
-            self.search.close_overlay(Some(&mut self.canvas));
-            self.search.reset_embedding_backfill();
         }
     }
 
@@ -858,7 +564,6 @@ impl SnappyRefApp {
                 self.active_board_id = session.active_board_id;
                 self.window_state = session.window;
                 self.settings = session.settings;
-                self.settings.normalize_core_features();
                 self.sidebar_open = session.sidebar_open;
                 self.sidebar_tab = sidebar_tab_from_session(&session.sidebar_tab);
                 self.search.set_recent_searches(session.recent_searches);
@@ -868,23 +573,8 @@ impl SnappyRefApp {
                 self.canvas.set_pointer_mode(self.settings.pointer_mode);
                 self.update_service
                     .seed_last_check_completed_at(self.settings.last_update_check_at);
-                self.document_persistence
-                    .record_saved_user_session(self.current_user_session());
-            }
-            Err(error) => self.status = error,
-        }
-    }
-
-    fn load_session_viewport(&mut self) {
-        let Some(library) = &self.library else {
-            return;
-        };
-
-        match library.load_session_viewport() {
-            Ok((active_board_id, viewport)) => {
-                self.active_board_id = active_board_id;
-                self.canvas.apply_viewport_state(&viewport);
-                self.document_persistence
+                self.board_editing
+                    .persistence
                     .record_saved_user_session(self.current_user_session());
             }
             Err(error) => self.status = error,
@@ -962,28 +652,21 @@ impl SnappyRefApp {
     }
 
     fn move_selected_canvas_items_to_front(&mut self) {
-        let before_stack_order = self.canvas.canvas_stack_order();
-        let viewport_world = self.startup_viewport_world_rect();
-        let mut context = self.active_board_command_context(viewport_world);
-        match crate::active_board::commands::move_selected_to_front(&mut context) {
-            Ok(true) => {
-                self.record_stack_order_history("Move selection to front", before_stack_order)
-            }
-            Ok(false) => {}
-            Err(error) => self.status = error,
+        if let Err(error) =
+            self.board_editing
+                .move_selection_in_stack(&mut self.canvas, self.active_board_id, true)
+        {
+            self.status = error;
         }
     }
 
     fn move_selected_canvas_items_to_back(&mut self) {
-        let before_stack_order = self.canvas.canvas_stack_order();
-        let viewport_world = self.startup_viewport_world_rect();
-        let mut context = self.active_board_command_context(viewport_world);
-        match crate::active_board::commands::move_selected_to_back(&mut context) {
-            Ok(true) => {
-                self.record_stack_order_history("Move selection to back", before_stack_order)
-            }
-            Ok(false) => {}
-            Err(error) => self.status = error,
+        if let Err(error) = self.board_editing.move_selection_in_stack(
+            &mut self.canvas,
+            self.active_board_id,
+            false,
+        ) {
+            self.status = error;
         }
     }
 
@@ -1105,8 +788,8 @@ impl SnappyRefApp {
     #[cfg(test)]
     fn copy_selected_board_payload(
         &self,
-    ) -> Option<crate::active_board::commands::ClipboardBoardSelection> {
-        crate::active_board::commands::copy_selected_board_payload(&self.canvas)
+    ) -> Option<crate::sources::clipboard::ClipboardBoardSelection> {
+        crate::sources::clipboard::copy_selected_board_payload(&self.canvas)
     }
 
     fn handle_internal_clipboard_paste_at(
@@ -1114,17 +797,12 @@ impl SnappyRefApp {
         paste_text: &str,
         anchor_world: egui::Pos2,
     ) -> bool {
-        let viewport_world = self.import_viewport_world_rect(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            STARTUP_VIEWPORT_SIZE,
-        ));
-        let before_stack_order = self.canvas.canvas_stack_order();
-        let mut context = self.active_board_command_context(viewport_world);
-        match crate::active_board::commands::paste_json_at(&mut context, paste_text, anchor_world) {
-            Ok(Some(outcome)) => {
-                let label = outcome.status.clone();
-                self.apply_paste_command_outcome(outcome);
-                self.record_created_selection_history(label, before_stack_order);
+        let viewport = self.startup_viewport_world_rect();
+        let (owner, mut context) = self.board_edit_context(viewport);
+        match owner.paste_json(&mut context, paste_text, anchor_world) {
+            Ok(Some(status)) => {
+                self.status = status;
+                self.refresh_board_summaries();
                 true
             }
             Ok(None) => false,
@@ -1138,33 +816,14 @@ impl SnappyRefApp {
     #[cfg(test)]
     fn paste_board_payload_at(
         &mut self,
-        payload: &crate::active_board::commands::ClipboardBoardSelection,
-        requested_anchor_world: egui::Pos2,
+        payload: &crate::sources::clipboard::ClipboardBoardSelection,
+        anchor: egui::Pos2,
     ) -> Result<(), String> {
-        let viewport_world = self.import_viewport_world_rect(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            STARTUP_VIEWPORT_SIZE,
-        ));
-        let before_stack_order = self.canvas.canvas_stack_order();
-        let mut context = self.active_board_command_context(viewport_world);
-        let outcome = crate::active_board::commands::paste_board_payload_at(
-            &mut context,
-            payload,
-            requested_anchor_world,
-        )?;
-        let label = outcome.status.clone();
-        self.apply_paste_command_outcome(outcome);
-        self.record_created_selection_history(label, before_stack_order);
-        Ok(())
-    }
-
-    fn apply_paste_command_outcome(&mut self, outcome: PasteCommandOutcome) {
-        let needs_existing_reload = outcome.needs_existing_reload;
-        self.status = outcome.status;
-        if needs_existing_reload {
-            self.enqueue_existing_items();
-        }
+        let viewport = self.startup_viewport_world_rect();
+        let (owner, mut context) = self.board_edit_context(viewport);
+        self.status = owner.paste_payload(&mut context, payload, anchor)?;
         self.refresh_board_summaries();
+        Ok(())
     }
 
     fn handle_selection_shortcuts(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
@@ -1179,13 +838,9 @@ impl SnappyRefApp {
         if ctx.input(|i| i.key_pressed(egui::Key::G)) {
             let modifiers = ctx.input(|i| i.modifiers);
             if modifiers.command && modifiers.shift {
-                self.canvas.ungroup_selected();
-            } else if modifiers.command
-                && let Some(library) = &self.library
-            {
-                if let Err(error) = self.canvas.create_group(library.allocate_document_id()) {
-                    self.status = error;
-                }
+                self.ungroup_selection();
+            } else if modifiers.command {
+                self.group_selection();
             } else if !modifiers.alt && !modifiers.shift {
                 self.canvas.open_group_picker();
             }
@@ -1214,7 +869,7 @@ impl SnappyRefApp {
             return;
         }
 
-        for shortcut in SUPPORTED_SHORTCUTS {
+        for shortcut in CORE_SHORTCUTS.iter().chain(LAYOUT_AND_HISTORY_SHORTCUTS) {
             let Some(shortcut_action) = shortcut.shortcut_action else {
                 continue;
             };
@@ -1360,18 +1015,33 @@ impl SnappyRefApp {
         }
     }
 
+    fn group_selection(&mut self) {
+        if let Err(error) = self.board_editing.group_selection(
+            &mut self.canvas,
+            self.library.as_ref(),
+            self.active_board_id,
+        ) {
+            self.status = error;
+        }
+    }
+
+    fn ungroup_selection(&mut self) {
+        if let Err(error) = self.board_editing.ungroup_selection(
+            &mut self.canvas,
+            self.library.as_ref(),
+            self.active_board_id,
+        ) {
+            self.status = error;
+        }
+    }
+
     fn duplicate_selection_with_gap(&mut self) {
-        let viewport_world = self.import_viewport_world_rect(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            STARTUP_VIEWPORT_SIZE,
-        ));
-        let before_stack_order = self.canvas.canvas_stack_order();
-        let mut context = self.active_board_command_context(viewport_world);
-        match crate::active_board::commands::duplicate_selection(&mut context) {
-            Ok(Some(outcome)) => {
-                let label = outcome.status.clone();
-                self.apply_paste_command_outcome(outcome);
-                self.record_created_selection_history(label, before_stack_order);
+        let viewport = self.startup_viewport_world_rect();
+        let (owner, mut context) = self.board_edit_context(viewport);
+        match owner.duplicate(&mut context) {
+            Ok(Some(status)) => {
+                self.status = status;
+                self.refresh_board_summaries();
             }
             Ok(None) => {}
             Err(error) => self.status = error,
@@ -1394,89 +1064,27 @@ impl SnappyRefApp {
     }
 
     fn handle_pending_annotation_requests(&mut self) {
-        let Some(library) = self.library.clone() else {
-            return;
-        };
-
-        while let Some(request) = self.canvas.take_pending_annotation() {
-            let before_stack_order = self.canvas.canvas_stack_order();
-            let background_enabled = request.kind == crate::data::CanvasAnnotationKind::Textbox
-                && self.settings.default_textbox_background;
-            let annotation = library.new_canvas_annotation(
-                request.kind,
-                request.start_world(),
-                request.end_world(),
-                request.text,
-                request.text_size,
-                crate::data::CanvasStrokeWidth::default(),
-                crate::data::CanvasAnnotationColor::default(),
-                background_enabled,
-            );
-            let should_focus_text = annotation.kind == crate::data::CanvasAnnotationKind::Textbox;
-            let annotation_id = annotation.id;
-            self.canvas.add_annotation(annotation);
-            self.canvas.mark_annotation_for_persistence(annotation_id);
-            if let Some(created) = self.canvas.annotation_for_id(annotation_id) {
-                self.document_history.record_applied(
-                    self.active_board_id,
-                    HistoryAction::document(
-                        match request.kind {
-                            crate::data::CanvasAnnotationKind::Arrow => "Added arrow",
-                            crate::data::CanvasAnnotationKind::Line => "Added line",
-                            crate::data::CanvasAnnotationKind::Textbox => "Added textbox",
-                        }
-                        .to_owned(),
-                        Vec::new(),
-                        vec![HistoryChange {
-                            before: None,
-                            after: Some(created),
-                        }],
-                        Some(HistoryChange {
-                            before: Some(before_stack_order),
-                            after: Some(self.canvas.canvas_stack_order()),
-                        }),
-                    ),
-                );
-                self.persist_recorded_canvas_changes();
-            }
-            if should_focus_text {
-                self.canvas.begin_textbox_edit(annotation_id);
-            }
-            self.status = match request.kind {
-                crate::data::CanvasAnnotationKind::Arrow => "Added arrow".to_owned(),
-                crate::data::CanvasAnnotationKind::Line => "Added line".to_owned(),
-                crate::data::CanvasAnnotationKind::Textbox => "Added textbox".to_owned(),
-            };
+        let viewport = self.startup_viewport_world_rect();
+        let (owner, mut context) = self.board_edit_context(viewport);
+        match owner.accept_pending_annotations(&mut context) {
+            Ok(Some(status)) | Err(status) => self.status = status,
+            Ok(None) => {}
         }
     }
 
     fn persist_canvas_changes(&mut self) {
         self.record_pending_document_changes_history("Edit board");
-        self.persist_recorded_canvas_changes();
-    }
-
-    fn persist_recorded_canvas_changes(&mut self) {
-        let session = self.current_user_session();
-        if let Err(error) = self.document_persistence.commit_canvas_changes_unit(
-            &mut self.canvas,
-            self.active_board_id,
-            &self.document_history,
-            session,
-        ) {
-            self.status = error;
-        }
-        self.pending_user_session = None;
-        self.pending_user_session_save_at = None;
+        self.save_user_session();
     }
 
     fn persist_canvas_changes_debounced(&mut self, ctx: &egui::Context) {
-        self.record_pending_document_changes_history("Edit board");
-        let document_changed = match self.document_persistence.commit_canvas_document_unit(
+        let document_changed = match self.board_editing.record_pending_document_changes_history(
             &mut self.canvas,
+            self.library.as_ref(),
             self.active_board_id,
-            &self.document_history,
+            "Edit board",
         ) {
-            Ok(document_changed) => document_changed,
+            Ok(changed) => changed,
             Err(error) => {
                 self.status = error;
                 false
@@ -1484,7 +1092,7 @@ impl SnappyRefApp {
         };
         let session = self.current_user_session();
         if document_changed {
-            if let Err(error) = self.document_persistence.save_user_session(session) {
+            if let Err(error) = self.board_editing.persistence.save_user_session(session) {
                 self.status = error;
             }
             self.pending_user_session = None;
@@ -1492,7 +1100,11 @@ impl SnappyRefApp {
             return;
         }
 
-        if !self.document_persistence.user_session_changed(&session) {
+        if !self
+            .board_editing
+            .persistence
+            .user_session_changed(&session)
+        {
             self.pending_user_session = None;
             self.pending_user_session_save_at = None;
             return;
@@ -1509,7 +1121,7 @@ impl SnappyRefApp {
         let now = Instant::now();
         if now >= save_at {
             if let Some(session) = self.pending_user_session.take()
-                && let Err(error) = self.document_persistence.save_user_session(session)
+                && let Err(error) = self.board_editing.persistence.save_user_session(session)
             {
                 self.status = error;
             }
@@ -1551,95 +1163,35 @@ impl SnappyRefApp {
         }
     }
 
-    fn active_board_command_context(
+    fn board_edit_context(
         &mut self,
         viewport_world: egui::Rect,
-    ) -> ActiveBoardCommandContext<'_> {
-        ActiveBoardCommandContext {
-            canvas: &mut self.canvas,
-            library: self.library.as_ref(),
-            import_worker_available: self.import_worker.is_some(),
-            placement_gap: self.settings.placement_gap,
-            viewport_world,
-        }
+    ) -> (
+        &mut crate::active_board::editing::BoardEditing,
+        crate::active_board::editing::BoardEditContext<'_>,
+    ) {
+        (
+            &mut self.board_editing,
+            crate::active_board::editing::BoardEditContext {
+                canvas: &mut self.canvas,
+                library: self.library.as_ref(),
+                board_id: self.active_board_id,
+                worker: self.import_worker.as_ref(),
+                resolution: &mut self.placement_creation,
+                max_texture_side: self.max_texture_side,
+                settings: &self.settings,
+                viewport_world,
+            },
+        )
     }
 
     fn delete_selected_items_from_board(&mut self, screen_rect: egui::Rect) {
-        let before_groups = self.canvas.groups().to_vec();
-        let before_all = self.canvas.committed_placements();
-        let before_items = self
-            .canvas
-            .selected_placement_ids()
-            .into_iter()
-            .filter_map(|placement_id| self.canvas.placement_for_id(placement_id))
-            .collect::<Vec<_>>();
-        let before_annotations = self
-            .canvas
-            .selected_annotation_ids()
-            .into_iter()
-            .filter_map(|annotation_id| self.canvas.annotation_for_id(annotation_id))
-            .collect::<Vec<_>>();
-        let before_stack_order = self.canvas.canvas_stack_order();
-        let viewport_world = self.import_viewport_world_rect(screen_rect);
-        let mut context = self.active_board_command_context(viewport_world);
-        match crate::active_board::commands::delete_selected_from_board(&mut context) {
+        let viewport = self.import_viewport_world_rect(screen_rect);
+        let (owner, mut context) = self.board_edit_context(viewport);
+        match owner.delete_selection(&mut context) {
             Ok(Some(status)) => {
-                let mut placement_changes: Vec<_> = before_items
-                    .into_iter()
-                    .map(|placement| {
-                        let mut archived = placement.clone();
-                        archived.state.archived = true;
-                        HistoryChange {
-                            before: Some(placement),
-                            after: Some(archived),
-                        }
-                    })
-                    .collect();
-                placement_changes.extend(
-                    self.canvas
-                        .pending_document_changes_preview()
-                        .updated_placements
-                        .iter()
-                        .filter_map(|state| {
-                            let after = self.canvas.placement_for_id(state.id)?;
-                            let before =
-                                before_all.iter().find(|p| p.state.id == state.id)?.clone();
-                            Some(HistoryChange {
-                                before: Some(before),
-                                after: Some(after),
-                            })
-                        }),
-                );
-                let annotation_changes = before_annotations
-                    .into_iter()
-                    .map(|annotation| {
-                        let mut archived = annotation.clone();
-                        archived.archived = true;
-                        HistoryChange {
-                            before: Some(annotation),
-                            after: Some(archived),
-                        }
-                    })
-                    .collect();
-                self.document_history.record_applied(
-                    self.active_board_id,
-                    HistoryAction::document(
-                        status.clone(),
-                        placement_changes,
-                        annotation_changes,
-                        Some(HistoryChange {
-                            before: Some(before_stack_order),
-                            after: Some(self.canvas.canvas_stack_order()),
-                        }),
-                    )
-                    .with_groups(Some(HistoryChange {
-                        before: Some(before_groups),
-                        after: Some(self.canvas.groups().to_vec()),
-                    })),
-                );
-                self.persist_recorded_canvas_changes();
-                self.refresh_board_summaries();
                 self.status = status;
+                self.refresh_board_summaries();
             }
             Ok(None) => {}
             Err(error) => self.status = error,
@@ -1648,7 +1200,7 @@ impl SnappyRefApp {
 
     fn save_user_session(&mut self) {
         let session = self.current_user_session();
-        if let Err(error) = self.document_persistence.save_user_session(session) {
+        if let Err(error) = self.board_editing.persistence.save_user_session(session) {
             self.status = error;
         }
         self.pending_user_session = None;
@@ -1656,7 +1208,7 @@ impl SnappyRefApp {
     }
 
     fn flush_persistence(&mut self) {
-        if let Err(error) = self.document_persistence.flush() {
+        if let Err(error) = self.board_editing.persistence.flush() {
             self.status = error;
         }
     }
@@ -1805,7 +1357,7 @@ impl eframe::App for SnappyRefApp {
         self.drive_embedding_backfill(ui.ctx());
         self.handle_pending_annotation_requests();
         self.persist_canvas_changes_debounced(ui.ctx());
-        if let Some(error) = self.document_persistence.take_error() {
+        if let Some(error) = self.board_editing.persistence.take_error() {
             self.status = error;
         }
         let settled_idle = self.app_settled_idle();
@@ -1837,7 +1389,6 @@ impl eframe::App for SnappyRefApp {
             &board_summaries,
             self.active_board_id,
             None,
-            self.update_service.state(),
             about_updates,
         );
         let board_action = if self.modal_open() {
@@ -1893,60 +1444,13 @@ impl eframe::App for SnappyRefApp {
 
     fn on_exit(&mut self) {
         self.save_active_board_before_transition();
-        if let Err(error) = self.document_persistence.shutdown() {
+        if let Err(error) = self.board_editing.persistence.shutdown() {
             eprintln!("persistence shutdown: {error}");
         }
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         crate::ui::theme::BACKGROUND.to_normalized_gamma_f32()
-    }
-}
-
-impl crate::active_board::switch::BoardSwitchHost for SnappyRefApp {
-    fn active_board_id(&self) -> i64 {
-        self.active_board_id
-    }
-
-    fn persist_active_board_before_switch(&mut self) {
-        self.save_active_board_before_transition();
-    }
-
-    fn set_active_board_in_library(&mut self, board_id: i64) -> Result<(), String> {
-        let Some(library) = &self.library else {
-            return Err("Storage unavailable".to_owned());
-        };
-        // Written directly so a failure stops the switch before the current
-        // board is unloaded. Safe to bypass the persistence queue only because
-        // `persist_active_board_before_switch` drained it first.
-        library.set_active_board(board_id)
-    }
-
-    fn load_active_board(&mut self) {
-        SnappyRefApp::load_active_board(self);
-    }
-}
-
-impl crate::active_board::load::ActiveBoardLoadHost for SnappyRefApp {
-    fn clear_board_local_transients(&mut self) {
-        self.clear_active_board_transients();
-    }
-
-    fn clear_canvas_for_active_board_load(&mut self) {
-        self.canvas.clear_for_board_switch();
-        self.load_groups();
-    }
-
-    fn load_active_board_viewport(&mut self) {
-        SnappyRefApp::load_session_viewport(self);
-    }
-
-    fn dedupe_library_for_active_board_load(&mut self) {
-        SnappyRefApp::dedupe_library_for_board_load(self);
-    }
-
-    fn enqueue_active_board_existing_items(&mut self) {
-        SnappyRefApp::enqueue_existing_items(self);
     }
 }
 
@@ -2002,8 +1506,8 @@ fn apply_default_average_area_to_selection(
     canvas: &mut crate::canvas::CanvasState,
     status: &mut String,
 ) {
-    let changed =
-        canvas.apply_target_area_to_selected_placements(crate::jobs::DEFAULT_PLACEMENT_TARGET_AREA);
+    let changed = canvas
+        .apply_target_area_to_selected_placements(crate::placement::DEFAULT_PLACEMENT_TARGET_AREA);
     let noun = if changed == 1 { "image" } else { "images" };
     *status = format!("Applied default average area to {changed} {noun}");
 }
@@ -2018,16 +1522,27 @@ fn apply_average_selection_area(canvas: &mut crate::canvas::CanvasState, status:
     *status = format!("Averaged area across {changed} {noun}");
 }
 
-fn generated_board_name(boards: &[crate::data::Board]) -> String {
-    let names = boards
-        .iter()
-        .map(|board| board.name.as_str())
-        .collect::<std::collections::HashSet<_>>();
-    (2..)
-        .map(|number| format!("Board {number}"))
-        .find(|name| !names.contains(name.as_str()))
-        .unwrap_or_else(|| "Board 2".to_owned())
-}
-
 #[cfg(test)]
 mod tests;
+
+impl SnappyRefApp {
+    pub(super) fn app_settled_idle(&self) -> bool {
+        if self.library.is_none() {
+            // Storage failed at startup; treat as settled so the user
+            // still gets Available Update controls if one exists.
+            return true;
+        }
+        let worker_stats = self
+            .import_worker
+            .as_ref()
+            .map(crate::image_preparation::ImagePrepWorker::stats)
+            .unwrap_or_default();
+        let embedding_idle = self.search.demand_embedding_pending_count() == 0
+            && self.search.embedding_backfill_is_idle();
+        !worker_stats.has_work()
+            && !self.canvas.has_pending_crop_work()
+            && !self.canvas.has_pending_image_loads()
+            && !self.residency.has_pending_backfills()
+            && embedding_idle
+    }
+}

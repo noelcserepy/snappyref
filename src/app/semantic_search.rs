@@ -59,7 +59,6 @@ impl SnappyRefApp {
 
     pub(super) fn sync_semantic_search_service(&mut self) {
         self.search.sync_service(
-            self.settings.semantic_search_enabled,
             self.library.as_ref(),
             &mut self.status,
             Some(&mut self.canvas),
@@ -233,7 +232,6 @@ impl SnappyRefApp {
     pub(super) fn handle_search_shortcut(&mut self, ctx: &egui::Context) {
         self.search.handle_shortcut(
             ctx,
-            self.settings.semantic_search_enabled,
             self.library.as_ref(),
             &mut self.canvas,
             &mut self.status,
@@ -263,7 +261,6 @@ impl SnappyRefApp {
 
     pub(super) fn search_using_selected_image(&mut self) {
         self.search.search_using_selected_image(
-            self.settings.semantic_search_enabled,
             self.library.as_ref(),
             &mut self.canvas,
             &mut self.status,

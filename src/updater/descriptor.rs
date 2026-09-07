@@ -1,32 +1,17 @@
-//! Pending-update descriptor exchanged between the running app and the
-//! `snappyref-updater` helper binary.
+//! Pending-update descriptor for the macOS `snappyref-updater` helper and
+//! the staged Windows executable's self-replacement runner.
 //!
-//! The app writes this descriptor as JSON into `<install_root>/updates/`
-//! right before it exits and hands the path to the helper as argv[1]. The
-//! helper reads it, waits for the app's PID to exit, swaps the bundle in
-//! place, and relaunches the new version.
+//! Before restart, the app writes JSON into `<install_root>/updates/`.
+//! The macOS helper receives its path as argv[1]; the Windows runner receives
+//! it through self-replacement arguments. Both wait for the old process,
+//! replace the app, and relaunch with the original arguments.
 //!
-//! Descriptor layout contract:
-//!
-//! * Every path is absolute so the helper does not need to inherit the
-//!   app's working directory.
-//! * `current_bundle` and `staged_bundle` are the *swap units* — on macOS
-//!   that's `<install_root>/SnappyRef.app` and
-//!   `<staging>/SnappyRef/SnappyRef.app`; on Windows it's
-//!   `<install_root>/snappyref.exe` and `<staging>/SnappyRef/snappyref.exe`.
-//! * `staging_dir` is `<install_root>/updates/staging-{version}/` so the
-//!   helper can remove the staging tree after a successful relaunch.
-//! * `launch_args` carries the original argv tail (everything after argv[0])
-//!   so the helper can re-invoke the app with the same flags the user
-//!   started it with.
-//! * `expected_new_version` is recorded so post-mortem inspection of an
-//!   abandoned descriptor explains what swap was intended.
-//! * `parent_pid` is the PID the helper waits on before it touches the
-//!   bundle. The app's PID at descriptor-write time is captured.
-//!
-//! Malformed input is rejected up front: missing fields, non-UTF-8 bytes,
-//! and unknown fields all surface as a [`DescriptorError`]. The helper
-//! refuses to act on anything other than a fully-valid descriptor.
+//! All paths are absolute. The replacement unit is `SnappyRef.app` on macOS
+//! and `snappyref.exe` on Windows. The staging directory is
+//! `<install_root>/updates/staging-{version}/` and is removed after relaunch.
+//! The expected version records which replacement an abandoned descriptor
+//! intended. Missing fields, unknown fields, and invalid JSON are rejected
+//! before replacement through [`DescriptorError`].
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -36,30 +21,28 @@ use serde::{Deserialize, Serialize};
 /// On-disk filename of the descriptor inside `<install_root>/updates/`.
 pub const DESCRIPTOR_FILE_NAME: &str = "pending-update.json";
 
-/// Serializable descriptor handed from the running app to the helper.
+/// Serializable descriptor handed from the running app to the replacement process.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PendingUpdateDescriptor {
-    /// PID of the app process the helper must wait on before swapping.
+    /// PID of the app process the replacement process must wait on before swapping.
     pub parent_pid: u32,
     /// Version string of the staged update (matches the manifest entry).
     pub expected_new_version: String,
-    /// Absolute path to the install root, parent of `library/`, `models/`,
-    /// and `updates/`.
+    /// Absolute install root, which owns `updates/`. Library and model data
+    /// may live under a separate writable data root.
     pub install_root: PathBuf,
     /// Absolute path to the *swap unit* that will be moved aside:
     /// `<install_root>/SnappyRef.app` on macOS,
     /// `<install_root>/snappyref.exe` on Windows.
     pub current_bundle: PathBuf,
-    /// Absolute path to the *swap unit* inside the staging tree. The helper
-    /// renames this onto `current_bundle`'s slot once the parent has exited.
+    /// Absolute staged replacement path, moved to `current_bundle` after
+    /// the parent exits.
     pub staged_bundle: PathBuf,
-    /// Absolute path to the staging directory the helper must remove after
-    /// the swap and relaunch succeed:
+    /// Absolute staging directory, removed after replacement and relaunch:
     /// `<install_root>/updates/staging-{version}/`.
     pub staging_dir: PathBuf,
-    /// Original launch args the helper should replay on the new binary
-    /// (everything after argv[0]).
+    /// Original launch arguments after argv[0], replayed on the new binary.
     pub launch_args: Vec<String>,
 }
 
@@ -117,7 +100,7 @@ pub fn read(path: &Path) -> Result<PendingUpdateDescriptor, DescriptorError> {
     parse(&bytes)
 }
 
-/// Parse `bytes` as a descriptor. Public for tests and for the helper to
+/// Parse `bytes` as a descriptor. Public for tests and for the replacement process to
 /// re-validate after read.
 pub fn parse(bytes: &[u8]) -> Result<PendingUpdateDescriptor, DescriptorError> {
     let descriptor: PendingUpdateDescriptor = serde_json::from_slice(bytes)
@@ -221,7 +204,7 @@ mod tests {
     #[test]
     fn parse_rejects_missing_required_field() {
         // Drop `parent_pid` from an otherwise-valid object. The schema
-        // must reject so the helper never reads a half-populated record.
+        // must reject so the replacement process never reads a half-populated record.
         let bytes = br#"{
             "expected_new_version": "1.0.0",
             "install_root": "/tmp/x",

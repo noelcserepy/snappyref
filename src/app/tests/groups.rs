@@ -61,7 +61,7 @@ fn inspect_group_operations_writes_artifact() {
     let root = TempRoot::new("snappyref-inspect-group-operations");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.document_persistence =
+    app.board_editing.persistence =
         crate::active_board::persistence::DocumentPersistence::queued(library.clone());
     let mut harness = app_full_harness_with_step_dt(app, 1.0 / 60.0);
     let mut ids = Vec::new();
@@ -98,7 +98,7 @@ fn inspect_group_operations_writes_artifact() {
                 120,
                 90,
                 None,
-                crate::jobs::ImportOrigin::Existing,
+                crate::image_preparation::ImportOrigin::Existing,
             ),
         );
     }
@@ -385,7 +385,7 @@ fn group_document_history_survives_transfer_delete_restart_and_board_archive() {
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let other_board = library.create_board("Other").unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.document_persistence =
+    app.board_editing.persistence =
         crate::active_board::persistence::DocumentPersistence::queued(library.clone());
     let ctx = egui::Context::default();
     let mut ids = Vec::new();
@@ -414,7 +414,9 @@ fn group_document_history_survives_transfer_delete_restart_and_board_archive() {
     }
     let record = |app: &mut SnappyRefApp| {
         app.record_pending_document_changes_history("Edit group");
-        app.persist_recorded_canvas_changes();
+        app.board_editing
+            .accept_created_batch(&mut app.canvas, app.active_board_id, None)
+            .unwrap();
     };
     app.canvas.select_placements(&ids[..2]);
     let first = library.allocate_document_id();
@@ -460,12 +462,13 @@ fn group_document_history_survives_transfer_delete_restart_and_board_archive() {
     let reopened = Library::initialize(root.to_path_buf()).unwrap();
     assert_eq!(reopened.load_groups().unwrap(), deleted);
     let mut restored = test_app(Some(reopened.clone()));
-    restored.document_persistence =
+    restored.board_editing.persistence =
         crate::active_board::persistence::DocumentPersistence::queued(reopened.clone());
-    restored.document_history = reopened.load_document_history().unwrap();
+    restored.board_editing.history = reopened.load_document_history().unwrap();
     let snapshot = reopened.load_board_document(1).unwrap();
     restored
-        .open_board_document_snapshot(&ctx, &snapshot)
+        .board_lifecycle()
+        .open_board_document_snapshot(Some(&ctx), &snapshot)
         .unwrap();
     restored.undo_document_history(&ctx);
     assert_eq!(restored.canvas.groups(), transferred);
@@ -486,7 +489,7 @@ fn group_document_history_survives_transfer_delete_restart_and_board_archive() {
         panic!(
             "{error}; app status={}; persistence={:?}",
             restored.status,
-            restored.document_persistence.take_error()
+            restored.board_editing.persistence.take_error()
         )
     });
     assert_eq!(durable.groups, deleted);

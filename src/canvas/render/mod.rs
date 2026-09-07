@@ -1,6 +1,7 @@
 mod annotations;
 mod background;
 mod image_pass;
+pub(super) mod images;
 mod overlays;
 mod textbox_editor;
 
@@ -36,23 +37,16 @@ pub(super) use textbox_editor::{
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::canvas::{
-        CanvasDocumentState, CanvasImageLod, CanvasRenderState, CanvasState, CanvasTexture,
-        RenderedPlacement,
-    };
+    use crate::canvas::{CanvasImageLod, CanvasState, CanvasTexture, PlacementImage};
     use crate::data::{Asset, Placement, PlacementState};
     use eframe::egui;
     use std::path::PathBuf;
 
     #[test]
     fn visible_overview_image_promotes_to_working_lod() {
-        let mut state = CanvasState {
-            document: CanvasDocumentState {
-                rendered_placements: vec![test_image(7, CanvasImageLod::Overview, [256, 256])],
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let mut state = CanvasState::default();
+        let (placement, image) = test_image(7, CanvasImageLod::Overview, [256, 256]);
+        state.install_placement_image(placement, image);
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
 
         state.request_image_lod_load(
@@ -68,15 +62,12 @@ mod tests {
 
     #[test]
     fn working_image_promotes_to_detail_only_when_screen_size_exceeds_texture_threshold() {
-        let state = CanvasState {
+        let mut state = CanvasState {
             zoom: 2.0,
-            document: CanvasDocumentState {
-                rendered_placements: vec![test_image(9, CanvasImageLod::Working, [256, 256])],
-                ..Default::default()
-            },
-            render: CanvasRenderState::default(),
             ..Default::default()
         };
+        let (placement, image) = test_image(9, CanvasImageLod::Working, [256, 256]);
+        state.install_placement_image(placement, image);
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
 
         assert_eq!(
@@ -117,21 +108,13 @@ mod tests {
 
     #[test]
     fn selected_placement_border_top_overlay_includes_lower_z_selection() {
-        let mut state = CanvasState {
-            document: CanvasDocumentState {
-                rendered_placements: vec![
-                    test_image_at(1, CanvasImageLod::Working, [100, 100], egui::Pos2::ZERO),
-                    test_image_at(2, CanvasImageLod::Working, [100, 100], egui::Pos2::ZERO),
-                ],
-                stack_order: vec![
-                    crate::data::CanvasStackItem::Placement(1),
-                    crate::data::CanvasStackItem::Placement(2),
-                ],
-                selected_placement_ids: vec![1],
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let mut state = CanvasState::default();
+        for id in [1, 2] {
+            let (placement, image) =
+                test_image_at(id, CanvasImageLod::Working, [100, 100], egui::Pos2::ZERO);
+            state.install_placement_image(placement, image);
+        }
+        state.select_placements(&[1]);
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
 
         assert_eq!(
@@ -146,7 +129,7 @@ mod tests {
             vec![1]
         );
 
-        state.document.selected_placement_ids = vec![2];
+        state.interaction.selected_placement_ids = vec![2];
         assert_eq!(
             overlays::selected_placement_border_paint_ids(&state, rect, 0.0),
             vec![2]
@@ -157,7 +140,7 @@ mod tests {
         placement_id: i64,
         loaded_lod: CanvasImageLod,
         texture_size: [usize; 2],
-    ) -> RenderedPlacement {
+    ) -> (Placement, PlacementImage) {
         test_image_at(placement_id, loaded_lod, texture_size, egui::Pos2::ZERO)
     }
 
@@ -166,9 +149,9 @@ mod tests {
         loaded_lod: CanvasImageLod,
         texture_size: [usize; 2],
         center_world: egui::Pos2,
-    ) -> RenderedPlacement {
-        RenderedPlacement {
-            placement: Placement::loaded(
+    ) -> (Placement, PlacementImage) {
+        (
+            Placement::loaded(
                 PlacementState::new(
                     placement_id,
                     eframe::egui::pos2(center_world.x, center_world.y),
@@ -186,13 +169,15 @@ mod tests {
                     height: texture_size[1] as u32,
                 },
             ),
-            texture: CanvasTexture::Svg {
-                uri: format!("bytes://image-{placement_id}.svg"),
-                bytes: std::sync::Arc::<[u8]>::from([]),
-                size: texture_size,
+            PlacementImage {
+                texture: CanvasTexture::Svg {
+                    uri: format!("bytes://image-{placement_id}.svg"),
+                    bytes: std::sync::Arc::<[u8]>::from([]),
+                    size: texture_size,
+                },
+                loaded_lod,
+                animation: None,
             },
-            loaded_lod,
-            animation: None,
-        }
+        )
     }
 }

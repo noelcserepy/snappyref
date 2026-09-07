@@ -8,9 +8,7 @@ use crate::data::{
     PlacementState, RectGeometry,
 };
 use crate::library::storage::Library;
-use crate::placement::content_resolution::{
-    ContentResolutionReservation, ContentResolutionRuntime,
-};
+use crate::placement::content_resolution::{ContentResolutionReservation, PlacementCreation};
 
 // Placement Creation converts user source intent into real Placements. It owns
 // preview geometry and initial loading state; source-specific adapters
@@ -76,7 +74,7 @@ pub(crate) fn display_size_for_dimensions(
 ) -> egui::Vec2 {
     let width = width.max(1);
     let height = height.max(1);
-    let scale = crate::jobs::display_scale_for_placement_target_area(
+    let scale = crate::placement::display_scale_for_placement_target_area(
         width,
         height,
         true,
@@ -144,7 +142,7 @@ pub(crate) fn plan_source_intent_geometries(
 
 fn create_one_committed_loading_placement(
     library: &Library,
-    content_resolution: &mut ContentResolutionRuntime,
+    placement_creation: &mut PlacementCreation,
     canvas: &mut CanvasState,
     target_board_id: i64,
     intent: SourceIntent,
@@ -161,7 +159,7 @@ fn create_one_committed_loading_placement(
         Some("Loading".to_owned()),
     );
     let reservation =
-        content_resolution.reserve_placement(target_board_id, placement.state.id, center_world);
+        placement_creation.reserve_placement(target_board_id, placement.state.id, center_world);
 
     canvas.add_unresolved_placement(placement.clone());
     canvas.mark_placement_for_persistence(placement.state.id);
@@ -176,7 +174,7 @@ fn create_one_committed_loading_placement(
 
 pub(crate) fn create_committed_loading_placement(
     library: &Library,
-    content_resolution: &mut ContentResolutionRuntime,
+    placement_creation: &mut PlacementCreation,
     canvas: &mut CanvasState,
     target_board_id: i64,
     intent: SourceIntent,
@@ -192,7 +190,7 @@ pub(crate) fn create_committed_loading_placement(
     let stack_before = canvas.canvas_stack_order();
     let created = create_one_committed_loading_placement(
         library,
-        content_resolution,
+        placement_creation,
         canvas,
         target_board_id,
         intent,
@@ -210,7 +208,7 @@ pub(crate) fn create_committed_loading_placement(
 
 pub(crate) fn create_committed_loading_placements(
     library: &Library,
-    content_resolution: &mut ContentResolutionRuntime,
+    placement_creation: &mut PlacementCreation,
     canvas: &mut CanvasState,
     target_board_id: i64,
     intents: Vec<SourceIntent>,
@@ -225,7 +223,7 @@ pub(crate) fn create_committed_loading_placements(
     for (intent, geometry) in intents.into_iter().zip(geometry) {
         created.push(create_one_committed_loading_placement(
             library,
-            content_resolution,
+            placement_creation,
             canvas,
             target_board_id,
             intent,
@@ -420,7 +418,7 @@ fn provisional_asset_placement(
     settings: PlacementCreationSettings,
 ) -> Placement {
     let (width, height) = (dimensions.0.max(1), dimensions.1.max(1));
-    let scale = crate::jobs::display_scale_for_placement_target_area(
+    let scale = crate::placement::display_scale_for_placement_target_area(
         width,
         height,
         true,

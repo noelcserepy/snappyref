@@ -91,7 +91,7 @@ pub(crate) const fn platform_shortcut_label(
     }
 }
 
-pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
+pub(crate) const CORE_SHORTCUTS: &[SupportedShortcut] = &[
     SupportedShortcut {
         action: "Group selection",
         keys: platform_shortcut_label("⌘G", "Ctrl+G"),
@@ -152,6 +152,9 @@ pub(crate) const SUPPORTED_SHORTCUTS: &[SupportedShortcut] = &[
         binding: None,
         shortcut_action: None,
     },
+];
+
+pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     SupportedShortcut {
         action: "Rotate selection",
         keys: "R + Drag",

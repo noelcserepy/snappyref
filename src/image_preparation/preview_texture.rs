@@ -123,7 +123,7 @@ impl Drop for NativeTextureHandle {
 
 pub(super) fn build_preview_texture(
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
-    preview: &crate::jobs::image_formats::PreviewImage,
+    preview: &crate::image_preparation::image_formats::PreviewImage,
 ) -> Result<ImagePrepPreviewTexture, String> {
     let Some(render_state) = wgpu_render_state else {
         return Ok(ImagePrepPreviewTexture::Cpu);

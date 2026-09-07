@@ -5,9 +5,8 @@ use eframe::egui;
 
 use super::{
     AnnotationDraftState, AnnotationDragState, CanvasContextMenuRequest, CanvasCropRequest,
-    CropState, DragState, MarqueeState, PendingAnnotation, PendingCropPreview,
-    PlacementTransformState, RenderedPlacement, SharedRgba, TextboxLayoutCacheEntry,
-    TextboxTransformState,
+    CropState, DragState, MarqueeState, PendingAnnotation, PendingCropPreview, PlacementImage,
+    PlacementTransformState, SharedRgba, TextboxLayoutCacheEntry, TextboxTransformState,
 };
 use crate::data::{CanvasAnnotation, CanvasImageLod, CanvasStackItem};
 
@@ -22,15 +21,11 @@ pub(super) struct MouseWheelZoomAnimation {
 
 #[derive(Default)]
 pub(crate) struct CanvasDocumentState {
-    pub(crate) rendered_placements: Vec<RenderedPlacement>,
+    pub(crate) placements: Vec<crate::data::Placement>,
     pub(super) annotations: Vec<CanvasAnnotation>,
     pub(super) stack_order: Vec<CanvasStackItem>,
     pub(super) groups: Vec<crate::data::Group>,
     pub(super) groups_dirty: bool,
-    pub(super) selected_group_ids: Vec<i64>,
-    pub(super) editing_group_id: Option<i64>,
-    pub(super) selected_placement_ids: Vec<i64>,
-    pub(super) selected_annotation_ids: Vec<i64>,
     pub(super) dirty_placement_ids: Vec<i64>,
     pub(super) pending_archived_placement_ids: Vec<i64>,
     pub(super) dirty_annotation_ids: Vec<i64>,
@@ -53,6 +48,11 @@ pub(crate) enum ActiveGesture {
 
 #[derive(Default)]
 pub(crate) struct CanvasInteractionState {
+    pub(super) selected_group_ids: Vec<i64>,
+    pub(super) editing_group_id: Option<i64>,
+    pub(super) selected_placement_ids: Vec<i64>,
+    pub(super) selected_annotation_ids: Vec<i64>,
+
     pub(super) group_controls_start: Option<crate::data::Group>,
     pub(super) group_gesture: Option<super::groups::GroupGesture>,
     pub(super) group_transform_changed: bool,
@@ -119,6 +119,7 @@ pub(crate) struct ImageLodLoad {
 
 #[derive(Default)]
 pub(crate) struct CanvasRenderState {
+    pub(super) placement_images: HashMap<i64, PlacementImage>,
     pub(super) background_lod_level: i32,
     pub(super) asset_rgba_cache: HashMap<i64, SharedRgba>,
     pub(super) textbox_layout_cache: HashMap<i64, TextboxLayoutCacheEntry>,

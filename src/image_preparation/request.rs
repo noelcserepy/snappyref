@@ -194,7 +194,7 @@ pub struct PreparedPlacementImage {
     pub preview_rgba: Vec<u8>,
     pub preview_width: u32,
     pub preview_height: u32,
-    pub animated_preview: Option<crate::jobs::image_formats::AnimatedPreview>,
+    pub animated_preview: Option<crate::image_preparation::image_formats::AnimatedPreview>,
     pub preview_texture: ImagePrepPreviewTexture,
     pub loaded_lod: CanvasImageLod,
     pub existing_load_diagnostics: Option<ExistingLoadDiagnostics>,

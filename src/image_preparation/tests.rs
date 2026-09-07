@@ -1,12 +1,12 @@
 use super::{
     CanvasImageSettings, DEFAULT_PLACEMENT_TARGET_AREA, ImagePrepPreviewTexture, ImagePrepResult,
     ImagePrepTimings, ImagePrepTrace, ImagePrepWorker, ImagePrepWorkerConfig, ImportRequest,
-    ImportSource, arrange_rect_world, build_preview_texture, crop_item,
-    display_scale_for_placement_target_area, import, import_path_sync, import_sync, load_existing,
-    rects_overlap_with_gap,
+    ImportSource, build_preview_texture, crop_item, display_scale_for_placement_target_area,
+    import, import_path_sync, import_sync, load_existing, rects_overlap_with_gap,
 };
 use crate::data::CanvasImageLod;
 use crate::library::storage::Library;
+use crate::placement::arrange_rect_world;
 use crate::test_support::TempRoot;
 use image::{ColorType, ImageFormat};
 use pollster::block_on;
@@ -1021,9 +1021,13 @@ fn native_preview_texture_stays_registered_until_last_reference_drops() {
         eprintln!("skipping native preview texture lifecycle test: no wgpu adapter");
         return;
     };
-    let preview =
-        crate::jobs::image_formats::preview_image_from_rgba(8, 8, &solid_rgba(8, 8), usize::MAX)
-            .unwrap();
+    let preview = crate::image_preparation::image_formats::preview_image_from_rgba(
+        8,
+        8,
+        &solid_rgba(8, 8),
+        usize::MAX,
+    )
+    .unwrap();
 
     let handle = match build_preview_texture(Some(&render_state), &preview).unwrap() {
         ImagePrepPreviewTexture::Native(handle) => handle,
@@ -1108,7 +1112,7 @@ fn load_existing_backfills_versioned_canvas_cache_and_prefers_it_on_second_load(
     assert_eq!(second.preview_width, 2000);
     assert_eq!(second.preview_height, 1500);
 
-    let cached = crate::jobs::image_formats::decode_image_file(&cache_path).unwrap();
+    let cached = crate::image_preparation::image_formats::decode_image_file(&cache_path).unwrap();
     assert_eq!(cached.width, 2000);
     assert_eq!(cached.height, 1500);
 }
@@ -1331,7 +1335,8 @@ fn crop_redecodes_original_path_and_preserves_exact_pixels() {
         ImagePrepResult::Cropped(cropped) => cropped,
         other => panic!("expected cropped result, got {other:?}"),
     };
-    let decoded = crate::jobs::image_formats::decode_image_file(&cropped.stored_path).unwrap();
+    let decoded =
+        crate::image_preparation::image_formats::decode_image_file(&cropped.stored_path).unwrap();
 
     assert_eq!(decoded.width, 2);
     assert_eq!(decoded.height, 2);

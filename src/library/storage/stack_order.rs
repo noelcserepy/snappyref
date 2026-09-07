@@ -1,5 +1,11 @@
 use super::boards::active_board_id;
-use super::*;
+use super::connection::Library;
+#[cfg(test)]
+use super::connection::write_transaction;
+use crate::data::CanvasStackItem;
+use rusqlite::Connection;
+use rusqlite::Transaction;
+use rusqlite::params;
 
 pub(super) fn load_canvas_stack_order_for_board_id(
     connection: &Connection,

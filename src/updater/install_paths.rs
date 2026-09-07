@@ -9,7 +9,7 @@
 //!   bundle for a specific manifest version, used by the restart-apply step.
 //!
 //! The install-root resolution itself reuses
-//! [`crate::library::location::install_root_from_exe_path`] so plain-binary
+//! [`crate::local_data_location::install_root_from_exe_path`] so plain-binary
 //! and macOS `.app` bundle layouts share one source of truth. Tests pin
 //! the env-override case via [`SNAPPYREF_INSTALL_ROOT_ENV`] which lets a
 //! dev or test fixture redirect the entire updates tree to a temporary
@@ -20,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::library::location::install_root_from_exe_path;
+use crate::local_data_location::install_root_from_exe_path;
 
 /// Env override consulted by [`resolve_install_root`]. Documented as a dev/test
 /// hook only; production builds rely on the exe-derived install root.
@@ -31,7 +31,7 @@ pub(crate) const UPDATES_DIR_NAME: &str = "updates";
 
 /// Resolve `<install_root>` for the running process. The env override
 /// wins; otherwise we derive the install root from the executable path
-/// using the same rules as `library_location::resolve_install_root`.
+/// using the same rules as `local_data_location::install_root_from_exe_path`.
 pub(crate) fn resolve_install_root() -> Result<PathBuf, String> {
     if let Some(override_root) = std::env::var_os(SNAPPYREF_INSTALL_ROOT_ENV) {
         return Ok(PathBuf::from(override_root));

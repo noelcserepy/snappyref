@@ -1,4 +1,7 @@
-use super::*;
+use super::connection::Library;
+use super::connection::write_transaction;
+use rusqlite::Transaction;
+use rusqlite::params;
 
 pub(crate) enum BoardDurabilityOperation {
     Document {
@@ -21,7 +24,7 @@ impl Library {
 
         match operation {
             BoardDurabilityOperation::Document { board_id, changes } => {
-                persist_document_changes(&transaction, *board_id, changes, history)?;
+                persist_document_changes(&transaction, *board_id, changes)?;
             }
             BoardDurabilityOperation::Lifecycle(change) => {
                 persist_lifecycle_change(&transaction, change)?;
@@ -76,7 +79,6 @@ fn persist_document_changes(
     transaction: &Transaction<'_>,
     board_id: i64,
     changes: &crate::canvas::CanvasDocumentChanges,
-    history: &crate::active_board::history::DocumentHistory,
 ) -> Result<(), String> {
     for placement_id in &changes.archived_placement_ids {
         transaction
@@ -96,12 +98,8 @@ fn persist_document_changes(
                 format!("failed to archive canvas annotation {annotation_id}: {error}")
             })?;
     }
-    for item in &changes.updated_placements {
-        let mut placement = history
-            .accepted_placement(board_id, item.id)
-            .ok_or_else(|| format!("missing accepted placement {}", item.id))?;
-        placement.state = item.clone();
-        super::placements::restore_board_placement(transaction, board_id, &placement)?;
+    for placement in &changes.updated_placements {
+        super::placements::restore_board_placement(transaction, board_id, placement)?;
     }
     for annotation in &changes.updated_annotations {
         super::annotations::upsert_board_annotation(

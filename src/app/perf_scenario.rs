@@ -8,129 +8,129 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::jobs::ImportSource;
+use crate::image_preparation::ImportSource;
 
 use super::AppConfig;
 use super::SnappyRefApp;
 
 #[derive(Clone, Debug)]
-pub(super) struct PerfLogState {
-    pub(super) app_started_at: Instant,
-    pub(super) startup_logged: bool,
+pub(crate) struct PerfLogState {
+    pub(crate) app_started_at: Instant,
+    pub(crate) startup_logged: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub(super) struct FramePerfState {
-    pub(super) import_results_drained: usize,
-    pub(super) import_result_drain_ms: f64,
-    pub(super) canvas: crate::canvas::CanvasFrameMetrics,
+pub(crate) struct FramePerfState {
+    pub(crate) import_results_drained: usize,
+    pub(crate) import_result_drain_ms: f64,
+    pub(crate) canvas: crate::canvas::CanvasFrameMetrics,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct PerfCorpusAsset {
-    pub(super) file: String,
-    pub(super) format: String,
-    pub(super) animated: bool,
-    pub(super) bytes: Option<u64>,
+pub(crate) struct PerfCorpusAsset {
+    pub(crate) file: String,
+    pub(crate) format: String,
+    pub(crate) animated: bool,
+    pub(crate) bytes: Option<u64>,
 }
 
 #[derive(Debug)]
-pub(super) struct PerfScenarioState {
-    pub(super) name: String,
-    pub(super) corpus_root: PathBuf,
-    pub(super) run_dir: PathBuf,
-    pub(super) events: File,
-    pub(super) started_at: Instant,
-    pub(super) queued: bool,
-    pub(super) expected_imports: usize,
-    pub(super) loaded_imports: usize,
-    pub(super) visible_imports: usize,
+pub(crate) struct PerfScenarioState {
+    pub(crate) name: String,
+    pub(crate) corpus_root: PathBuf,
+    pub(crate) run_dir: PathBuf,
+    pub(crate) events: File,
+    pub(crate) started_at: Instant,
+    pub(crate) queued: bool,
+    pub(crate) expected_imports: usize,
+    pub(crate) loaded_imports: usize,
+    pub(crate) visible_imports: usize,
     /// Like the search controller, count one outstanding request per Asset.
-    pub(super) pending_embedding_asset_ids: std::collections::HashSet<i64>,
-    pub(super) demand_embeddings_queued: usize,
-    pub(super) demand_embeddings_done: usize,
-    pub(super) first_loaded_logged: bool,
-    pub(super) all_loaded_logged: bool,
-    pub(super) first_visible_logged: bool,
+    pub(crate) pending_embedding_asset_ids: std::collections::HashSet<i64>,
+    pub(crate) demand_embeddings_queued: usize,
+    pub(crate) demand_embeddings_done: usize,
+    pub(crate) first_loaded_logged: bool,
+    pub(crate) all_loaded_logged: bool,
+    pub(crate) first_visible_logged: bool,
     first_frame_logged: bool,
-    pub(super) startup_loaded_placement_ids: std::collections::HashSet<i64>,
-    pub(super) all_visible_logged: bool,
-    pub(super) first_embedding_queued_logged: bool,
-    pub(super) first_embedding_done_logged: bool,
-    pub(super) all_embeddings_done_logged: bool,
-    pub(super) embedding_phases: EmbeddingPhaseMarkers,
-    pub(super) idle_since: Option<Instant>,
-    pub(super) settled_idle_at: Option<Instant>,
-    pub(super) model_unload_logged: bool,
+    pub(crate) startup_loaded_placement_ids: std::collections::HashSet<i64>,
+    pub(crate) all_visible_logged: bool,
+    pub(crate) first_embedding_queued_logged: bool,
+    pub(crate) first_embedding_done_logged: bool,
+    pub(crate) all_embeddings_done_logged: bool,
+    pub(crate) embedding_phases: EmbeddingPhaseMarkers,
+    pub(crate) idle_since: Option<Instant>,
+    pub(crate) settled_idle_at: Option<Instant>,
+    pub(crate) model_unload_logged: bool,
     /// Per-asset corpus metadata indexed by import queue id, so events
     /// emitted after `import_queued` can still report `format`.
-    pub(super) asset_by_queue_id: std::collections::HashMap<u64, PerfCorpusAsset>,
+    pub(crate) asset_by_queue_id: std::collections::HashMap<u64, PerfCorpusAsset>,
     /// Per-asset corpus metadata indexed by stored asset id, used to
     /// stamp `format` onto embedding events once an asset id is known.
-    pub(super) asset_by_asset_id: std::collections::HashMap<i64, PerfCorpusAsset>,
+    pub(crate) asset_by_asset_id: std::collections::HashMap<i64, PerfCorpusAsset>,
     /// `trickle-import` only: entries still to enqueue, popped one per
     /// `trickle_interval` to reproduce **Embedding Helper Process** churn.
-    pub(super) pending_trickle_imports: Vec<PerfCorpusEntry>,
+    pub(crate) pending_trickle_imports: Vec<PerfCorpusEntry>,
     /// Spacing between successive trickle imports. The default value
     /// keeps the bug-reproduction precise: longer than the previous
     /// "drop helper immediately" behavior so the second import always
     /// reloads, but shorter than the new 3s grace so post-fix the
     /// helper stays alive.
-    pub(super) trickle_interval: Duration,
+    pub(crate) trickle_interval: Duration,
     /// Earliest instant at which the next trickle import should be
     /// enqueued; `None` once the trickle queue is empty.
-    pub(super) trickle_next_at: Option<Instant>,
+    pub(crate) trickle_next_at: Option<Instant>,
 }
 
 #[derive(Clone, Copy, Debug, Default, serde::Serialize)]
-pub(super) struct ModelLoadTimingSummary {
-    pub(super) assets_resolved_ms: f64,
-    pub(super) tokenizer_loaded_ms: f64,
-    pub(super) text_session_loaded_ms: f64,
-    pub(super) vision_session_loaded_ms: f64,
-    pub(super) total_ms: f64,
+pub(crate) struct ModelLoadTimingSummary {
+    pub(crate) assets_resolved_ms: f64,
+    pub(crate) tokenizer_loaded_ms: f64,
+    pub(crate) text_session_loaded_ms: f64,
+    pub(crate) vision_session_loaded_ms: f64,
+    pub(crate) total_ms: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub(super) struct EmbeddingPhaseMarkers {
-    pub(super) first_embedding_queued_ms: Option<f64>,
-    pub(super) semantic_model_load_started_ms: Option<f64>,
-    pub(super) semantic_model_ready_ms: Option<f64>,
-    pub(super) first_embedding_started_ms: Option<f64>,
-    pub(super) first_embedding_done_ms: Option<f64>,
-    pub(super) all_embeddings_done_ms: Option<f64>,
-    pub(super) semantic_model_unload_requested_ms: Option<f64>,
-    pub(super) semantic_model_unloaded_ms: Option<f64>,
-    pub(super) model_load_timing: Option<ModelLoadTimingSummary>,
+pub(crate) struct EmbeddingPhaseMarkers {
+    pub(crate) first_embedding_queued_ms: Option<f64>,
+    pub(crate) semantic_model_load_started_ms: Option<f64>,
+    pub(crate) semantic_model_ready_ms: Option<f64>,
+    pub(crate) first_embedding_started_ms: Option<f64>,
+    pub(crate) first_embedding_done_ms: Option<f64>,
+    pub(crate) all_embeddings_done_ms: Option<f64>,
+    pub(crate) semantic_model_unload_requested_ms: Option<f64>,
+    pub(crate) semantic_model_unloaded_ms: Option<f64>,
+    pub(crate) model_load_timing: Option<ModelLoadTimingSummary>,
 }
 
 #[derive(Clone, Copy, Debug, serde::Serialize)]
-pub(super) struct EmbeddingPhaseSummary {
-    pub(super) queue_to_model_load_started_ms: Option<f64>,
-    pub(super) model_cold_mount_ms: Option<f64>,
-    pub(super) first_embedding_start_after_model_ready_ms: Option<f64>,
-    pub(super) first_embedding_after_model_ready_ms: Option<f64>,
-    pub(super) first_embedding_run_ms: Option<f64>,
-    pub(super) total_import_embedding_drain_ms: Option<f64>,
-    pub(super) model_unload_ms: Option<f64>,
-    pub(super) model_load_timing: Option<ModelLoadTimingSummary>,
+pub(crate) struct EmbeddingPhaseSummary {
+    pub(crate) queue_to_model_load_started_ms: Option<f64>,
+    pub(crate) model_cold_mount_ms: Option<f64>,
+    pub(crate) first_embedding_start_after_model_ready_ms: Option<f64>,
+    pub(crate) first_embedding_after_model_ready_ms: Option<f64>,
+    pub(crate) first_embedding_run_ms: Option<f64>,
+    pub(crate) total_import_embedding_drain_ms: Option<f64>,
+    pub(crate) model_unload_ms: Option<f64>,
+    pub(crate) model_load_timing: Option<ModelLoadTimingSummary>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
-pub(super) struct PerfCorpusEntry {
-    pub(super) file: String,
-    pub(super) format: String,
-    pub(super) role: String,
+pub(crate) struct PerfCorpusEntry {
+    pub(crate) file: String,
+    pub(crate) format: String,
+    pub(crate) role: String,
     #[serde(default)]
-    pub(super) animated: bool,
+    pub(crate) animated: bool,
     #[serde(default)]
-    pub(super) animation_control: bool,
+    pub(crate) animation_control: bool,
 }
 
 impl PerfScenarioState {
     /// `None` when no scenario was requested. A requested scenario that
     /// cannot start is reported on stderr and the app runs without it.
-    pub(super) fn from_config(config: &AppConfig) -> Option<Self> {
+    pub(crate) fn from_config(config: &AppConfig) -> Option<Self> {
         let name = config.perf_scenario.clone()?;
         match Self::start(name, config) {
             Ok(state) => Some(state),
@@ -199,7 +199,7 @@ impl PerfScenarioState {
         self.started_at.elapsed().as_secs_f64() * 1000.0
     }
 
-    pub(super) fn emit(&mut self, event: &str, mut extra: serde_json::Value) {
+    pub(crate) fn emit(&mut self, event: &str, mut extra: serde_json::Value) {
         let elapsed_ms = self.elapsed_ms();
         self.embedding_phases.record_event(event, elapsed_ms);
         if let Some(object) = extra.as_object_mut() {
@@ -313,7 +313,7 @@ impl PerfScenarioState {
 
     fn write_summary(
         &mut self,
-        worker_stats: crate::jobs::ImagePrepWorkerStats,
+        worker_stats: crate::image_preparation::ImagePrepWorkerStats,
         image_pass: crate::canvas::ImagePassMetrics,
     ) {
         let summary = serde_json::json!({
@@ -383,7 +383,7 @@ impl EmbeddingPhaseMarkers {
         }
     }
 
-    pub(super) fn summary(&self) -> Option<EmbeddingPhaseSummary> {
+    pub(crate) fn summary(&self) -> Option<EmbeddingPhaseSummary> {
         let has_embedding_phase = self.first_embedding_queued_ms.is_some()
             || self.semantic_model_load_started_ms.is_some()
             || self.semantic_model_ready_ms.is_some()
@@ -430,7 +430,7 @@ impl EmbeddingPhaseMarkers {
     }
 }
 
-pub(super) fn duration_between(start_ms: Option<f64>, end_ms: Option<f64>) -> Option<f64> {
+pub(crate) fn duration_between(start_ms: Option<f64>, end_ms: Option<f64>) -> Option<f64> {
     match (start_ms, end_ms) {
         (Some(start_ms), Some(end_ms)) => Some((end_ms - start_ms).max(0.0)),
         _ => None,
@@ -438,7 +438,7 @@ pub(super) fn duration_between(start_ms: Option<f64>, end_ms: Option<f64>) -> Op
 }
 
 impl SnappyRefApp {
-    pub(super) fn drive_perf_scenario(
+    pub(crate) fn drive_perf_scenario(
         &mut self,
         ctx: &egui::Context,
         screen_rect: egui::Rect,
@@ -461,7 +461,7 @@ impl SnappyRefApp {
         self.finish_perf_scenario_if_idle(ctx)
     }
 
-    pub(super) fn enqueue_perf_scenario_imports(
+    pub(crate) fn enqueue_perf_scenario_imports(
         &mut self,
         ctx: &egui::Context,
         screen_rect: egui::Rect,
@@ -539,7 +539,7 @@ impl SnappyRefApp {
         ctx.request_repaint_after(Duration::from_millis(16));
     }
 
-    pub(super) fn enqueue_perf_entry(
+    pub(crate) fn enqueue_perf_entry(
         &mut self,
         entry: &PerfCorpusEntry,
         desired_world: egui::Pos2,
@@ -603,7 +603,7 @@ impl SnappyRefApp {
         Ok(())
     }
 
-    pub(super) fn dispatch_perf_trickle_imports(
+    pub(crate) fn dispatch_perf_trickle_imports(
         &mut self,
         ctx: &egui::Context,
         screen_rect: egui::Rect,
@@ -658,14 +658,14 @@ impl SnappyRefApp {
         }
     }
 
-    pub(super) fn emit_perf_error_and_close(&mut self, ctx: &egui::Context, error: String) {
+    pub(crate) fn emit_perf_error_and_close(&mut self, ctx: &egui::Context, error: String) {
         if let Some(scenario) = &mut self.perf_scenario {
             scenario.emit("error", serde_json::json!({ "message": error }));
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
-    pub(super) fn update_perf_scenario_embedding_progress(&mut self) {
+    pub(crate) fn update_perf_scenario_embedding_progress(&mut self) {
         let Some(scenario) = &mut self.perf_scenario else {
             return;
         };
@@ -765,7 +765,7 @@ impl SnappyRefApp {
         }
     }
 
-    pub(super) fn finish_perf_scenario_if_idle(&mut self, ctx: &egui::Context) -> bool {
+    pub(crate) fn finish_perf_scenario_if_idle(&mut self, ctx: &egui::Context) -> bool {
         let Some(scenario) = &mut self.perf_scenario else {
             return false;
         };
@@ -777,7 +777,7 @@ impl SnappyRefApp {
         let worker_stats = self
             .import_worker
             .as_ref()
-            .map(crate::jobs::ImagePrepWorker::stats)
+            .map(crate::image_preparation::ImagePrepWorker::stats)
             .unwrap_or_default();
         let embedding_idle = self.search.demand_embedding_pending_count() == 0
             && self.search.embedding_backfill_is_idle();
@@ -845,7 +845,7 @@ impl SnappyRefApp {
         false
     }
 
-    pub(super) fn record_perf_painted_frame(&mut self) {
+    pub(crate) fn record_perf_painted_frame(&mut self) {
         let Some(scenario) = &mut self.perf_scenario else {
             return;
         };
@@ -891,134 +891,5 @@ impl SnappyRefApp {
             scenario.all_visible_logged = true;
             scenario.emit("all_placements_visible", frame);
         }
-    }
-
-    /// True once all visible startup work queues have drained at least
-    /// once — the same work-queue notion of Settled Idle that perf
-    /// scenarios use, computed independently of the perf scenario.
-    /// The update-discovery scheduler latches its own
-    /// `settled_idle_at` on the first true return so subsequent dips
-    /// back into busy state never re-block discovery.
-    pub(super) fn app_settled_idle(&self) -> bool {
-        if self.library.is_none() {
-            // Storage failed at startup; treat as settled so the user
-            // still gets Available Update controls if one exists.
-            return true;
-        }
-        let worker_stats = self
-            .import_worker
-            .as_ref()
-            .map(crate::jobs::ImagePrepWorker::stats)
-            .unwrap_or_default();
-        let embedding_idle = self.search.demand_embedding_pending_count() == 0
-            && self.search.embedding_backfill_is_idle();
-        !worker_stats.has_work()
-            && !self.canvas.has_pending_crop_work()
-            && !self.canvas.has_pending_image_loads()
-            && !self.residency.has_pending_backfills()
-            && embedding_idle
-    }
-
-    pub(super) fn log_loaded_timing(
-        &mut self,
-        origin: crate::jobs::ImportOrigin,
-        placement: Option<&crate::data::Placement>,
-        diagnostics: Option<&crate::jobs::ExistingLoadDiagnostics>,
-        trace: Option<crate::jobs::ImagePrepTrace>,
-    ) {
-        let Some(perf_log) = &mut self.perf_log else {
-            return;
-        };
-
-        let format_trace = |trace: crate::jobs::ImagePrepTrace| {
-            format!(
-                " total_ms={:.2} queue_ms={:.2} decode_ms={:.2} store_ms={:.2} preview_ms={:.2} worker_ms={:.2} ui_ms={:.2}",
-                trace.queued_at.elapsed().as_secs_f64() * 1000.0,
-                trace.timings.queue_wait.as_secs_f64() * 1000.0,
-                trace.timings.decode_or_load.as_secs_f64() * 1000.0,
-                trace.timings.store_and_persist.as_secs_f64() * 1000.0,
-                trace.timings.preview_prepare.as_secs_f64() * 1000.0,
-                trace.timings.worker_total.as_secs_f64() * 1000.0,
-                trace.timings.ui_integration.as_secs_f64() * 1000.0,
-            )
-        };
-
-        match origin {
-            crate::jobs::ImportOrigin::Existing if !perf_log.startup_logged => {
-                perf_log.startup_logged = true;
-                let startup_ms = perf_log.app_started_at.elapsed().as_secs_f64() * 1000.0;
-                if let Some(trace) = trace {
-                    eprintln!(
-                        "[perf] startup_first_image_ms={startup_ms:.2}{}",
-                        format_trace(trace)
-                    );
-                } else {
-                    eprintln!("[perf] startup_first_image_ms={startup_ms:.2}");
-                }
-            }
-            crate::jobs::ImportOrigin::Existing => {
-                let startup_ms = perf_log.app_started_at.elapsed().as_secs_f64() * 1000.0;
-                let asset = placement.map(|placement| {
-                    format!(
-                        " placement_id={} asset_id={} file={}",
-                        placement.state.id,
-                        placement.require_loaded_asset().id,
-                        placement.require_loaded_asset().filename
-                    )
-                });
-                let source = diagnostics.map(|diagnostics| {
-                    format!(
-                        " source_kind={:?} source_mb={:.2} backfilled_cache={} source={} source_dims={}x{}",
-                        diagnostics.source_kind,
-                        diagnostics.source_file_size as f64 / 1024.0 / 1024.0,
-                        diagnostics.backfilled_cache,
-                        diagnostics.source_path.display(),
-                        diagnostics.source_width,
-                        diagnostics.source_height
-                    )
-                });
-                let trace_text = trace.map(format_trace).unwrap_or_default();
-                eprintln!(
-                    "[perf] startup_image_visible startup_ms={startup_ms:.2}{}{}{}{}",
-                    asset.unwrap_or_default(),
-                    source.unwrap_or_default(),
-                    if trace_text.is_empty() { "" } else { " " },
-                    trace_text
-                );
-            }
-            crate::jobs::ImportOrigin::Clipboard => {
-                if let Some(trace) = trace {
-                    eprintln!("[perf] clipboard_import{}", format_trace(trace));
-                }
-            }
-            crate::jobs::ImportOrigin::Path => {
-                if let Some(trace) = trace {
-                    eprintln!("[perf] dropped_file_import{}", format_trace(trace));
-                }
-            }
-            crate::jobs::ImportOrigin::Url => {
-                if let Some(trace) = trace {
-                    eprintln!("[perf] url_import{}", format_trace(trace));
-                }
-            }
-        }
-    }
-
-    pub(super) fn log_cropped_timing(
-        &mut self,
-        placement: &crate::data::Placement,
-        ui_integration_ms: f64,
-    ) {
-        if self.perf_log.is_none() {
-            return;
-        }
-
-        eprintln!(
-            "[perf] crop_integrated placement_id={} asset_id={} file={} ui_ms={:.2}",
-            placement.state.id,
-            placement.require_loaded_asset().id,
-            placement.require_loaded_asset().filename,
-            ui_integration_ms
-        );
     }
 }

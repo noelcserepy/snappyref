@@ -34,7 +34,7 @@ pub fn arrange_rect_world(
     ))
 }
 
-pub(super) fn resolve_import_world(
+pub(crate) fn resolve_import_world(
     library: &Library,
     target_board_id: i64,
     desired_world: egui::Pos2,

@@ -3,8 +3,9 @@ mod app;
 mod canvas;
 mod data;
 mod diagnostics;
-mod jobs;
+mod image_preparation;
 mod library;
+mod local_data_location;
 mod placement;
 mod platform;
 mod search;
@@ -25,7 +26,7 @@ pub fn run() -> eframe::Result<()> {
         .skip(1)
         .any(|argument| argument == "--imageprep")
     {
-        if let Err(error) = jobs::print_imageprep_output_from_args() {
+        if let Err(error) = image_preparation::print_imageprep_output_from_args() {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));

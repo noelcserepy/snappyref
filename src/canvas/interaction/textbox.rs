@@ -13,12 +13,12 @@ fn begin_textbox_pending_move(
     annotation: &CanvasAnnotation,
     pointer_pos: egui::Pos2,
 ) {
-    state.document.selected_placement_ids.clear();
+    state.interaction.selected_placement_ids.clear();
     if !state.is_annotation_selected(annotation.id) {
-        state.document.selected_annotation_ids = vec![annotation.id];
+        state.interaction.selected_annotation_ids = vec![annotation.id];
     }
     let annotation_ids = state
-        .document
+        .interaction
         .selected_annotation_ids
         .iter()
         .copied()
@@ -62,8 +62,8 @@ pub(crate) fn handle_textbox_primary_press(
                 return true;
             }
             let world_rect = textbox_world_rect(annotation);
-            state.document.selected_placement_ids.clear();
-            state.document.selected_annotation_ids = vec![annotation.id];
+            state.interaction.selected_placement_ids.clear();
+            state.interaction.selected_annotation_ids = vec![annotation.id];
             state.interaction.gesture = Some(ActiveGesture::TextboxTransform(
                 TextboxTransformState::Resizing {
                     annotation_id: annotation.id,

@@ -1,5 +1,11 @@
 use super::boards::{active_board_id, board_is_non_archived};
-use super::*;
+use super::connection::Library;
+use crate::data::CanvasBackground;
+use crate::data::UserSession;
+use crate::data::ViewportState;
+use crate::data::WorkspaceSettings;
+use rusqlite::Connection;
+use rusqlite::params;
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub(super) struct StoredUserSessionPayload {

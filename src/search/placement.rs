@@ -13,7 +13,9 @@ impl SearchController {
             self.overlay.results.len()
         ));
         if !self.overlay.result_selection.contains(index) {
-            self.update_result_selection(index, SearchSelectionMode::Replace);
+            self.overlay
+                .result_selection
+                .update(index, SearchSelectionMode::Replace);
         }
 
         let asset_ids = self.selected_result_asset_ids();

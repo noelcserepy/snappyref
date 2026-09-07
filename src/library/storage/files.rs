@@ -1,4 +1,23 @@
-use super::*;
+use super::connection::Library;
+use crate::data::CanvasImageLod;
+use image::ColorType;
+use image::ExtendedColorType;
+use image::ImageEncoder;
+use image::ImageFormat;
+use image::codecs::jpeg::JpegEncoder;
+use image::codecs::png::CompressionType;
+use image::codecs::png::FilterType;
+use image::codecs::png::PngEncoder;
+use image::codecs::webp::WebPEncoder;
+use std::fs;
+use std::fs::File;
+use std::io::BufWriter;
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 static DESTINATION_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -297,4 +316,11 @@ impl Library {
         self.originals_dir
             .join(format!("{timestamp}-{sequence}-{safe_name}.{extension}"))
     }
+}
+
+pub(super) fn unix_timestamp_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
 }

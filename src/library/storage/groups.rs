@@ -1,4 +1,9 @@
-use super::*;
+use super::connection::Library;
+use rusqlite::Connection;
+use rusqlite::OptionalExtension;
+use rusqlite::Transaction;
+use rusqlite::params;
+
 use crate::data::{Group, GroupFlow, RectGeometry};
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -98,7 +103,9 @@ impl Library {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Group, GroupFlow, Library, RectGeometry};
+    use crate::library::storage::BoardDurabilityOperation;
+
     use crate::active_board::history::{DocumentHistory, HistoryAction, HistoryChange};
     use crate::canvas::CanvasDocumentChanges;
 

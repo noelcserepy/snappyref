@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use crate::data::Placement;
-use crate::jobs::{ExistingLoadDiagnostics, ImagePrepTrace, ImportOrigin};
+use crate::image_preparation::{ExistingLoadDiagnostics, ImagePrepTrace, ImportOrigin};
 
 // Content Resolution correlates async worker results back to the Placement
 // that reserved a canvas position. The queue id is the runtime handle; the
@@ -27,7 +27,8 @@ pub(crate) struct ContentResolutionRequestConfig {
 }
 
 #[derive(Default)]
-pub(crate) struct ContentResolutionRuntime {
+pub(crate) struct PlacementCreation {
+    pub(crate) batches: super::creation::PlacementCreationBatchTracker,
     next_queue_id: u64,
     pending: HashMap<u64, PendingContentResolution>,
 }
@@ -46,7 +47,7 @@ pub(crate) struct ContentResolutionTicket {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct LoadedContentResolutionLog {
+pub(crate) struct ResolvedPlacement {
     pub(crate) origin: ImportOrigin,
     pub(crate) placement: Placement,
     pub(crate) diagnostics: Option<ExistingLoadDiagnostics>,
@@ -58,15 +59,7 @@ pub(crate) struct LoadedContentResolutionOutcome {
     pub(crate) resolution_ticket: Option<ContentResolutionTicket>,
     pub(crate) status: Option<String>,
     pub(crate) indexed_asset: Option<(i64, PathBuf)>,
-    pub(crate) log: Option<LoadedContentResolutionLog>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct FailedContentResolutionOutcome {
-    pub(crate) resolution_ticket: Option<ContentResolutionTicket>,
-    pub(crate) placement_id: Option<i64>,
-    pub(crate) target_board_id: Option<i64>,
-    pub(crate) status: String,
+    pub(crate) resolved: Option<ResolvedPlacement>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -83,9 +76,10 @@ enum PendingContentResolutionSource {
     HistoryReplay,
 }
 
-impl ContentResolutionRuntime {
+impl PlacementCreation {
     pub(crate) fn new() -> Self {
         Self {
+            batches: Default::default(),
             next_queue_id: 1,
             pending: HashMap::new(),
         }
@@ -163,6 +157,10 @@ impl ContentResolutionRuntime {
         }
     }
 
+    pub(super) fn reservation_finished(&self, queue_id: u64) -> bool {
+        queue_id < self.next_queue_id && !self.pending.contains_key(&queue_id)
+    }
+
     pub(crate) fn cancel(&mut self, reservation: ContentResolutionReservation) {
         self.pending.remove(&reservation.queue_id);
     }
@@ -185,7 +183,7 @@ impl ContentResolutionRuntime {
 
     /// Removes the pending reservation and returns the batch completion plus
     /// the outcome to surface. History replays load silently: their status,
-    /// index request, and log are dropped.
+    /// index request, and diagnostics are dropped. Accepted content still completes.
     pub(crate) fn finish_loaded_import(
         &mut self,
         mut outcome: LoadedContentResolutionOutcome,
@@ -202,28 +200,17 @@ impl ContentResolutionRuntime {
         let completion = self.resolve_completion(
             ticket.map(|ticket| ticket.queue_id),
             ticket.map(|ticket| ticket.target_board_id),
-            outcome.log.as_ref().map(|log| log.placement.state.id),
+            outcome.resolved.as_ref().map(|log| log.placement.state.id),
         );
         if history_replay {
             outcome.status = None;
             outcome.indexed_asset = None;
-            outcome.log = None;
+            if let Some(resolved) = &mut outcome.resolved {
+                resolved.diagnostics = None;
+                resolved.trace = None;
+            }
         }
         (completion, outcome)
-    }
-
-    pub(crate) fn finish_failed_import(
-        &mut self,
-        outcome: &FailedContentResolutionOutcome,
-    ) -> ContentResolutionCompletion {
-        let ticket = outcome.resolution_ticket;
-        self.resolve_completion(
-            ticket.map(|ticket| ticket.queue_id),
-            ticket
-                .map(|ticket| ticket.target_board_id)
-                .or(outcome.target_board_id),
-            outcome.placement_id,
-        )
     }
 
     #[cfg(test)]
@@ -242,14 +229,14 @@ impl ContentResolutionRuntime {
 }
 
 pub(crate) fn import_request(
-    source: crate::jobs::ImportSource,
+    source: crate::image_preparation::ImportSource,
     reservation: ContentResolutionReservation,
     desired_world: egui::Pos2,
     viewport_world: egui::Rect,
     config: ContentResolutionRequestConfig,
-    trace: Option<crate::jobs::ImagePrepTrace>,
-) -> crate::jobs::ImagePrepRequest {
-    crate::jobs::ImagePrepRequest::Import(crate::jobs::ImportRequest {
+    trace: Option<crate::image_preparation::ImagePrepTrace>,
+) -> crate::image_preparation::ImagePrepRequest {
+    crate::image_preparation::ImagePrepRequest::Import(crate::image_preparation::ImportRequest {
         target_board_id: reservation.target_board_id,
         queue_id: reservation.queue_id,
         placement_id: reservation.placement_id,
@@ -258,7 +245,7 @@ pub(crate) fn import_request(
         reserved_world: reservation.reserved_world,
         viewport_world,
         max_texture_side: config.max_texture_side,
-        canvas_image_settings: crate::jobs::CanvasImageSettings {
+        canvas_image_settings: crate::image_preparation::CanvasImageSettings {
             max_side: config.canvas_image_max_side,
         },
         auto_scale: config.auto_image_scaling,
@@ -270,11 +257,10 @@ pub(crate) fn import_request(
 
 #[cfg(test)]
 mod tests {
-    use crate::test_support::TempRoot;
 
     #[test]
     fn reservation_tracks_queue_and_placement_correlation() {
-        let mut runtime = super::ContentResolutionRuntime::new();
+        let mut runtime = super::PlacementCreation::new();
 
         let reservation = runtime.reserve_placement(2, 41, eframe::egui::pos2(10.0, 20.0));
 
@@ -291,7 +277,7 @@ mod tests {
 
     #[test]
     fn cancel_removes_pending_resolution() {
-        let mut runtime = super::ContentResolutionRuntime::new();
+        let mut runtime = super::PlacementCreation::new();
         let reservation = runtime.reserve_placement(1, 7, eframe::egui::Pos2::ZERO);
 
         runtime.cancel(reservation);
@@ -303,7 +289,7 @@ mod tests {
 
     #[test]
     fn explicit_completion_values_win_over_pending_fallbacks() {
-        let mut runtime = super::ContentResolutionRuntime::new();
+        let mut runtime = super::PlacementCreation::new();
         let reservation = runtime.reserve_placement(2, 41, eframe::egui::pos2(10.0, 20.0));
 
         let completion = runtime.resolve_completion(Some(reservation.queue_id), Some(3), Some(42));
@@ -315,7 +301,7 @@ mod tests {
 
     #[test]
     fn import_path_request_carries_resolution_correlation() {
-        let mut runtime = super::ContentResolutionRuntime::new();
+        let mut runtime = super::PlacementCreation::new();
         let reservation = runtime.reserve_placement(2, 41, eframe::egui::pos2(10.0, 20.0));
         let viewport_world = eframe::egui::Rect::from_min_size(
             eframe::egui::Pos2::ZERO,
@@ -323,7 +309,7 @@ mod tests {
         );
 
         let request = super::import_request(
-            crate::jobs::ImportSource::Path(std::path::PathBuf::from("image.png")),
+            crate::image_preparation::ImportSource::Path(std::path::PathBuf::from("image.png")),
             reservation,
             eframe::egui::pos2(12.0, 24.0),
             viewport_world,
@@ -337,7 +323,7 @@ mod tests {
             None,
         );
 
-        let crate::jobs::ImagePrepRequest::Import(request) = request else {
+        let crate::image_preparation::ImagePrepRequest::Import(request) = request else {
             panic!("expected import request");
         };
         assert_eq!(request.target_board_id, 2);
@@ -349,40 +335,5 @@ mod tests {
         assert!(request.auto_scale);
         assert_eq!(request.placement_target_area, 14400.0);
         assert_eq!(request.placement_gap, 18.0);
-    }
-
-    #[test]
-    fn failed_import_resolves_correlated_reservation() {
-        let root = TempRoot::new("snappyref-content-resolution-failure");
-        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
-        let loading = library
-            .persist_committed_loading_placement(
-                eframe::egui::pos2(10.0, 20.0),
-                1.0,
-                100.0,
-                80.0,
-                crate::data::ContentResolutionSource::Unknown {
-                    description: "test".to_owned(),
-                },
-                Some("Queued".to_owned()),
-            )
-            .unwrap();
-        let mut runtime = super::ContentResolutionRuntime::new();
-        let reservation = runtime.reserve_placement(1, loading.state.id, eframe::egui::Pos2::ZERO);
-
-        let completion = runtime.finish_failed_import(&super::FailedContentResolutionOutcome {
-            resolution_ticket: Some(super::ContentResolutionTicket {
-                target_board_id: 1,
-                queue_id: reservation.queue_id,
-            }),
-            placement_id: None,
-            target_board_id: None,
-            status: "decode failed".to_owned(),
-        });
-
-        assert_eq!(completion.target_board_id, Some(1));
-        assert_eq!(completion.queue_id, Some(reservation.queue_id));
-        assert_eq!(completion.placement_id, Some(loading.state.id));
-        assert_eq!(runtime.pending_len(), 0);
     }
 }

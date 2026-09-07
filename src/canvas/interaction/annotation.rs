@@ -14,13 +14,13 @@ pub(crate) fn begin_annotation_drag(
     pointer_pos: egui::Pos2,
 ) {
     state.finish_textbox_edit();
-    state.document.selected_placement_ids.clear();
+    state.interaction.selected_placement_ids.clear();
     if !state.is_annotation_selected(annotation_id) {
-        state.document.selected_annotation_ids = vec![annotation_id];
+        state.interaction.selected_annotation_ids = vec![annotation_id];
     }
 
     let annotation_ids = state
-        .document
+        .interaction
         .selected_annotation_ids
         .iter()
         .copied()

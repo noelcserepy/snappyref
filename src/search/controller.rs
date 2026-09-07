@@ -149,7 +149,7 @@ impl SearchController {
     pub(crate) fn remove_semantic_search_assets_from_settings(&mut self, status: &mut String) {
         self.semantic_install.force_stop();
         #[cfg(not(test))]
-        match crate::library::location::resolve_data_root() {
+        match crate::local_data_location::resolve_data_root() {
             Ok(data_root) => {
                 let descriptor = default_semantic_search_asset_descriptor();
                 match remove_semantic_search_assets(&data_root, &descriptor) {
@@ -222,18 +222,11 @@ impl SearchController {
 
     pub(crate) fn sync_service(
         &mut self,
-        enabled: bool,
         library: Option<&Library>,
         status: &mut String,
         canvas: Option<&mut CanvasState>,
         canvas_image_max_side: u32,
     ) {
-        if !enabled {
-            self.service = None;
-            self.close_overlay(canvas);
-            return;
-        }
-
         if self.service.is_some() {
             return;
         }
@@ -262,7 +255,6 @@ impl SearchController {
         match SemanticSearchService::new(
             library.clone(),
             SemanticSearchConfig {
-                enabled: false,
                 model: DEFAULT_SEMANTIC_SEARCH_MODEL,
                 canvas_image_max_side,
             },
@@ -689,7 +681,6 @@ impl SearchController {
 
     pub(crate) fn search_using_selected_image(
         &mut self,
-        enabled: bool,
         library: Option<&Library>,
         canvas: &mut CanvasState,
         status: &mut String,
@@ -699,13 +690,7 @@ impl SearchController {
             return false;
         };
 
-        self.sync_service(
-            enabled,
-            library,
-            status,
-            Some(canvas),
-            canvas_image_max_side,
-        );
+        self.sync_service(library, status, Some(canvas), canvas_image_max_side);
         self.open_image_pivot_search(pivot, canvas);
         self.overlay.open = true;
         self.overlay.focus_requested = true;
@@ -716,29 +701,18 @@ impl SearchController {
     pub(crate) fn handle_shortcut(
         &mut self,
         ctx: &egui::Context,
-        enabled: bool,
         library: Option<&Library>,
         canvas: &mut CanvasState,
         status: &mut String,
         canvas_image_max_side: u32,
     ) {
-        if !enabled {
-            return;
-        }
-
         let triggered =
             ctx.input(|input| input.modifiers.command && input.key_pressed(egui::Key::F));
         if !triggered {
             return;
         }
 
-        self.sync_service(
-            enabled,
-            library,
-            status,
-            Some(canvas),
-            canvas_image_max_side,
-        );
+        self.sync_service(library, status, Some(canvas), canvas_image_max_side);
 
         let pivot = selected_image_pivot(library, canvas);
 
@@ -955,7 +929,9 @@ impl SearchController {
 
     fn select_after_results_refresh(&mut self) {
         let Some(pending) = self.pending_result_selection.take() else {
-            self.select_initial_result();
+            self.overlay
+                .result_selection
+                .select_initial(self.overlay.results.len());
             return;
         };
 
@@ -965,7 +941,7 @@ impl SearchController {
         }
 
         let index = pending.index.min(self.overlay.results.len() - 1);
-        self.update_result_selection(index, pending.mode);
+        self.overlay.result_selection.update(index, pending.mode);
         self.overlay.scroll_lead_result_into_view = true;
     }
 }
@@ -1277,7 +1253,6 @@ mod tests {
                 crate::search::semantic::SemanticSearchService::new(
                     library,
                     crate::search::semantic::SemanticSearchConfig {
-                        enabled: false,
                         model: crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL,
                         canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
                     },
@@ -1774,13 +1749,22 @@ mod tests {
     fn result_selection_toggles_additive_indices() {
         let mut search = SearchController::default();
 
-        search.update_result_selection(1, SearchSelectionMode::Replace);
+        search
+            .overlay
+            .result_selection
+            .update(1, SearchSelectionMode::Replace);
         assert_eq!(search.overlay.result_selection.selected(), &[1]);
 
-        search.update_result_selection(3, SearchSelectionMode::Toggle);
+        search
+            .overlay
+            .result_selection
+            .update(3, SearchSelectionMode::Toggle);
         assert_eq!(search.overlay.result_selection.selected(), &[1, 3]);
 
-        search.update_result_selection(1, SearchSelectionMode::Toggle);
+        search
+            .overlay
+            .result_selection
+            .update(1, SearchSelectionMode::Toggle);
         assert_eq!(search.overlay.result_selection.selected(), &[3]);
     }
 
@@ -1788,10 +1772,16 @@ mod tests {
     fn selection_lead_stays_selected() {
         let mut search = SearchController::default();
 
-        search.update_result_selection(1, SearchSelectionMode::Replace);
+        search
+            .overlay
+            .result_selection
+            .update(1, SearchSelectionMode::Replace);
         assert_eq!(search.overlay.result_selection.lead(), Some(1));
 
-        search.update_result_selection(3, SearchSelectionMode::Range);
+        search
+            .overlay
+            .result_selection
+            .update(3, SearchSelectionMode::Range);
         assert_eq!(search.overlay.result_selection.lead(), Some(3));
         assert!(
             search
@@ -1800,7 +1790,10 @@ mod tests {
                 .contains(search.overlay.result_selection.lead().unwrap())
         );
 
-        search.update_result_selection(3, SearchSelectionMode::Toggle);
+        search
+            .overlay
+            .result_selection
+            .update(3, SearchSelectionMode::Toggle);
         assert_eq!(search.overlay.result_selection.lead(), Some(1));
         assert!(
             search
@@ -1814,8 +1807,14 @@ mod tests {
     fn result_selection_shift_selects_anchor_range() {
         let mut search = SearchController::default();
 
-        search.update_result_selection(1, SearchSelectionMode::Replace);
-        search.update_result_selection(4, SearchSelectionMode::Range);
+        search
+            .overlay
+            .result_selection
+            .update(1, SearchSelectionMode::Replace);
+        search
+            .overlay
+            .result_selection
+            .update(4, SearchSelectionMode::Range);
 
         assert_eq!(search.overlay.result_selection.selected(), &[1, 2, 3, 4]);
     }
@@ -1824,9 +1823,18 @@ mod tests {
     fn result_selection_range_keeps_anchor_when_contracting() {
         let mut search = SearchController::default();
 
-        search.update_result_selection(2, SearchSelectionMode::Replace);
-        search.update_result_selection(5, SearchSelectionMode::Range);
-        search.update_result_selection(3, SearchSelectionMode::Range);
+        search
+            .overlay
+            .result_selection
+            .update(2, SearchSelectionMode::Replace);
+        search
+            .overlay
+            .result_selection
+            .update(5, SearchSelectionMode::Range);
+        search
+            .overlay
+            .result_selection
+            .update(3, SearchSelectionMode::Range);
 
         assert_eq!(search.overlay.result_selection.selected(), &[2, 3]);
         assert_eq!(search.overlay.result_selection.lead(), Some(3));
@@ -1889,8 +1897,14 @@ mod tests {
             })
             .collect();
 
-        search.select_initial_result();
-        search.update_result_selection(3, SearchSelectionMode::Range);
+        search
+            .overlay
+            .result_selection
+            .select_initial(search.overlay.results.len());
+        search
+            .overlay
+            .result_selection
+            .update(3, SearchSelectionMode::Range);
 
         assert_eq!(search.overlay.result_selection.selected(), &[0, 1, 2, 3]);
     }
@@ -1913,7 +1927,10 @@ mod tests {
             },
         ];
         search.overlay.result_selection.replace(0);
-        search.update_result_selection(1, SearchSelectionMode::Toggle);
+        search
+            .overlay
+            .result_selection
+            .update(1, SearchSelectionMode::Toggle);
 
         search.start_result_drag(1);
 

@@ -187,16 +187,8 @@ impl SnappyRefApp {
         }
 
         match action {
-            ContextMenuAction::Group => {
-                if let Some(library) = &self.library {
-                    if let Err(error) = self.canvas.create_group(library.allocate_document_id()) {
-                        self.status = error;
-                    }
-                }
-            }
-            ContextMenuAction::Ungroup => {
-                self.canvas.ungroup_selected();
-            }
+            ContextMenuAction::Group => self.group_selection(),
+            ContextMenuAction::Ungroup => self.ungroup_selection(),
             ContextMenuAction::AddToGroup => self.canvas.open_group_picker(),
             ContextMenuAction::Copy => self.copy_selection_to_context_clipboard(ctx),
             ContextMenuAction::Paste => self.handle_clipboard_paste_from_context(ctx, screen_rect),

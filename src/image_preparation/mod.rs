@@ -1,25 +1,30 @@
+mod image_formats;
+pub use image_formats::decode_image_file_perf_report;
+#[cfg(test)]
+pub(crate) use image_formats::{AnimatedPreview, AnimatedPreviewFrame};
 use std::path::Path;
 
 use crate::data::Placement;
-use crate::jobs::image_formats::{PreviewImage, preview_image_from_rgba};
+use crate::image_preparation::image_formats::{PreviewImage, preview_image_from_rgba};
 use eframe::egui;
 
 mod crop;
 mod decode;
 mod existing_load;
-mod persist;
+mod prepare_source;
 mod preview_texture;
 mod request;
 
+#[cfg(test)]
+use crate::placement::{DEFAULT_PLACEMENT_TARGET_AREA, display_scale_for_placement_target_area};
 use crop::crop_item;
 pub(crate) use decode::print_imageprep_output_from_args;
 use existing_load::backfill_cache_lod;
 pub use existing_load::load_canvas_snapshot_pixels;
 pub(crate) use existing_load::load_existing;
-pub use persist::display_scale_for_placement_target_area;
-pub(super) use persist::import;
+pub(super) use prepare_source::import;
 #[cfg(test)]
-pub(super) use persist::{import_path_sync, import_sync};
+pub(super) use prepare_source::{import_path_sync, import_sync};
 #[cfg(test)]
 use preview_texture::build_preview_texture;
 pub use preview_texture::{ImagePrepPreviewTexture, NativeTextureHandle};
@@ -29,11 +34,6 @@ pub use request::{
     ImagePrepRequest, ImagePrepResult, ImagePrepTimings, ImagePrepTrace, ImagePrepWorkerStats,
     ImportOrigin, ImportRequest, ImportSource, PreparedCropPreview, PreparedPlacementImage,
 };
-
-pub const DEFAULT_PLACEMENT_TARGET_AREA: f32 = crate::data::DEFAULT_PLACEMENT_TARGET_AREA;
-pub fn placement_target_reference_span() -> f32 {
-    DEFAULT_PLACEMENT_TARGET_AREA.sqrt()
-}
 
 const INTERACTIVE_CROP_PREVIEW_MAX_SIDE: u32 = 1024;
 
@@ -161,10 +161,7 @@ pub(super) fn animated_preview_max_side(
     (canvas_image_settings.max_side as usize).min(max_texture_side)
 }
 
-mod arrangement;
-
-pub use arrangement::arrange_rect_world;
 #[cfg(test)]
-pub(super) use arrangement::rects_overlap_with_gap;
+use crate::placement::initial_layout::rects_overlap_with_gap;
 #[cfg(test)]
 mod tests;

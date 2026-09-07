@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -8,8 +8,8 @@ use crate::canvas::geometry::screen_corners_for_placement;
 use crate::canvas::interaction::placement_screen_rect;
 use crate::canvas::{
     ANNOTATION_CULL_MARGIN_SCREEN, CanvasImageLod, CanvasState, CanvasTexture,
-    IMAGE_CULL_MARGIN_SCREEN, IMAGE_DETAIL_PROMOTION_THRESHOLD, ImagePassBatch, ImagePassCallback,
-    ImagePassInstance, ImagePassMetrics, RenderedPlacement,
+    IMAGE_CULL_MARGIN_SCREEN, IMAGE_DETAIL_PROMOTION_THRESHOLD, ImagePassMetrics,
+    RenderedPlacement,
 };
 use crate::data::{CanvasStackItem, PlacementLifecycle};
 
@@ -27,13 +27,13 @@ pub(crate) fn paint_images(
     let mut metrics = ImagePassMetrics::default();
     let visible_images = state
         .document
-        .rendered_placements
+        .placements
         .iter()
         .filter_map(|image| {
             let image_rect = placement_screen_rect(state, rect, image);
             image_rect
                 .intersects(cull_rect)
-                .then_some((image.placement.state.id, image_rect))
+                .then_some((image.state.id, image_rect))
         })
         .collect::<Vec<_>>();
     metrics.visible_images = visible_images.len();
@@ -57,7 +57,7 @@ pub(crate) fn paint_images(
         if animation_active
             && let Some((rgba, width, height)) =
                 state.advance_animated_image(*placement_id, animation_time)
-            && let Some(image) = state.rendered_placement_by_id_mut(*placement_id)
+            && let Some(image) = state.render.placement_images.get_mut(placement_id)
             && let CanvasTexture::Managed(texture) = &mut image.texture
         {
             texture.set(
@@ -104,7 +104,7 @@ pub(crate) fn paint_images(
         let mut native_batches = Vec::new();
         let mut current_batch: Option<(
             egui::TextureId,
-            Arc<crate::jobs::NativeTextureHandle>,
+            Arc<crate::image_preparation::NativeTextureHandle>,
             u32,
         )> = None;
         for (placement_id, image_rect) in &native_images {
@@ -155,17 +155,17 @@ pub(crate) fn paint_images(
         let Some(image) = state.rendered_placement_by_id(placement_id) else {
             continue;
         };
-        paint_svg_image(ui, image, image_rect);
+        paint_svg_image(ui, &image, image_rect);
     }
     for placement_id in fallback_images {
         let Some(image) = state.rendered_placement_by_id(placement_id) else {
             continue;
         };
         if image.placement.is_loaded() {
-            paint_image_mesh(painter, state, rect, image);
+            paint_image_mesh(painter, state, rect, &image);
         } else {
-            let image_rect = placement_screen_rect(state, rect, image);
-            paint_unloaded_placement(painter, image, image_rect);
+            let image_rect = placement_screen_rect(state, rect, image.placement);
+            paint_unloaded_placement(painter, image.placement, image_rect);
         }
     }
 
@@ -183,7 +183,7 @@ pub(crate) fn paint_images(
         }
     }
 
-    for image in &state.document.rendered_placements {
+    for image in &state.document.placements {
         let image_rect = placement_screen_rect(state, rect, image);
         if !image_rect.intersects(cull_rect) {
             continue;
@@ -237,9 +237,9 @@ pub(crate) fn optimized_image_pass_eligible_for_state(state: &CanvasState) -> bo
 fn canvas_stack_matches_existing_layering(state: &CanvasState) -> bool {
     if state
         .document
-        .rendered_placements
+        .placements
         .iter()
-        .any(|image| image.placement.lifecycle == PlacementLifecycle::Provisional)
+        .any(|image| image.lifecycle == PlacementLifecycle::Provisional)
     {
         return false;
     }
@@ -247,9 +247,9 @@ fn canvas_stack_matches_existing_layering(state: &CanvasState) -> bool {
     let ordered = state.ordered_canvas_items_back_to_front();
     let existing = state
         .document
-        .rendered_placements
+        .placements
         .iter()
-        .map(|image| CanvasStackItem::Placement(image.placement.state.id))
+        .map(|image| CanvasStackItem::Placement(image.state.id))
         .chain(
             state
                 .document
@@ -288,7 +288,7 @@ fn paint_canvas_items_interleaved(
                 let Some(image) = state.rendered_placement_by_id(placement_id) else {
                     continue;
                 };
-                let image_rect = placement_screen_rect(state, rect, image);
+                let image_rect = placement_screen_rect(state, rect, image.placement);
                 if !image_rect.intersects(image_cull_rect) {
                     continue;
                 }
@@ -301,7 +301,7 @@ fn paint_canvas_items_interleaved(
                 if animation_active
                     && let Some((rgba, width, height)) =
                         state.advance_animated_image(placement_id, animation_time)
-                    && let Some(image) = state.rendered_placement_by_id_mut(placement_id)
+                    && let Some(image) = state.render.placement_images.get_mut(&placement_id)
                     && let CanvasTexture::Managed(texture) = &mut image.texture
                 {
                     texture.set(
@@ -319,8 +319,8 @@ fn paint_canvas_items_interleaved(
                 if !image.placement.is_loaded()
                     || matches!(image.texture, CanvasTexture::Unloaded { .. })
                 {
-                    paint_unloaded_placement(painter, image, image_rect);
-                    paint_image_overlay(painter, image, image_rect, debug_labels);
+                    paint_unloaded_placement(painter, image.placement, image_rect);
+                    paint_image_overlay(painter, image.placement, image_rect, debug_labels);
                     continue;
                 }
                 metrics.painted_images += 1;
@@ -335,11 +335,11 @@ fn paint_canvas_items_interleaved(
                     }
                 }
                 if matches!(image.texture, CanvasTexture::Svg { .. }) {
-                    paint_svg_image(ui, image, image_rect);
+                    paint_svg_image(ui, &image, image_rect);
                 } else {
-                    paint_image_mesh(painter, state, rect, image);
+                    paint_image_mesh(painter, state, rect, &image);
                 }
-                paint_image_overlay(painter, image, image_rect, debug_labels);
+                paint_image_overlay(painter, image.placement, image_rect, debug_labels);
             }
             CanvasStackItem::Annotation(annotation_id) => {
                 let Some(annotation) = state.annotation_by_id(annotation_id).cloned() else {
@@ -374,10 +374,10 @@ fn paint_canvas_items_interleaved(
 
 fn paint_unloaded_placement(
     painter: &egui::Painter,
-    image: &RenderedPlacement,
+    image: &crate::data::Placement,
     image_rect: egui::Rect,
 ) {
-    let (fill, stroke, label, loading) = match &image.placement.content {
+    let (fill, stroke, label, loading) = match &image.content {
         crate::data::PlacementContent::Loading { .. } => (
             crate::ui::theme::SURFACE,
             egui::Stroke::new(1.0, crate::ui::theme::BORDER_STRONG),
@@ -489,7 +489,7 @@ pub(crate) fn desired_image_lod(
     if image.loaded_lod >= CanvasImageLod::Detail {
         return None;
     }
-    let image_rect = placement_screen_rect(state, rect, image);
+    let image_rect = placement_screen_rect(state, rect, image.placement);
     let on_screen_max_side = image_rect.width().max(image_rect.height());
     let texture_max_side = image.texture.size()[0].max(image.texture.size()[1]) as f32;
     (texture_max_side > 0.0
@@ -499,16 +499,14 @@ pub(crate) fn desired_image_lod(
 
 fn paint_image_overlay(
     painter: &egui::Painter,
-    image: &RenderedPlacement,
+    image: &crate::data::Placement,
     image_rect: egui::Rect,
     debug_labels: bool,
 ) {
     if debug_labels {
         let label = format!(
             "#{}  ({:.0}, {:.0})",
-            image.placement.state.id,
-            image.placement.state.geometry.center.x,
-            image.placement.state.geometry.center.y
+            image.state.id, image.state.geometry.center.x, image.state.geometry.center.y
         );
         painter.text(
             image_rect.min + egui::vec2(crate::ui::theme::SPACE_2, crate::ui::theme::SPACE_2),
@@ -570,20 +568,300 @@ pub(crate) fn canvas_texture_from_preview(
     preview_rgba: &[u8],
     preview_width: u32,
     preview_height: u32,
-    preview_texture: crate::jobs::ImagePrepPreviewTexture,
+    preview_texture: crate::image_preparation::ImagePrepPreviewTexture,
 ) -> CanvasTexture {
     match preview_texture {
-        crate::jobs::ImagePrepPreviewTexture::Cpu => CanvasTexture::Managed(ctx.load_texture(
-            texture_name,
-            egui::ColorImage::from_rgba_unmultiplied(
-                [preview_width as usize, preview_height as usize],
-                preview_rgba,
-            ),
-            egui::TextureOptions::LINEAR,
-        )),
-        crate::jobs::ImagePrepPreviewTexture::Native(texture) => CanvasTexture::Native(texture),
-        crate::jobs::ImagePrepPreviewTexture::Svg { uri, bytes, size } => {
+        crate::image_preparation::ImagePrepPreviewTexture::Cpu => {
+            CanvasTexture::Managed(ctx.load_texture(
+                texture_name,
+                egui::ColorImage::from_rgba_unmultiplied(
+                    [preview_width as usize, preview_height as usize],
+                    preview_rgba,
+                ),
+                egui::TextureOptions::LINEAR,
+            ))
+        }
+        crate::image_preparation::ImagePrepPreviewTexture::Native(texture) => {
+            CanvasTexture::Native(texture)
+        }
+        crate::image_preparation::ImagePrepPreviewTexture::Svg { uri, bytes, size } => {
             CanvasTexture::Svg { uri, bytes, size }
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ImagePassBatch {
+    texture: Arc<crate::image_preparation::NativeTextureHandle>,
+    instance_range: std::ops::Range<u32>,
+}
+
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct ImagePassVertex {
+    pos: [f32; 2],
+}
+
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct ImagePassInstance {
+    min_ndc: [f32; 2],
+    max_ndc: [f32; 2],
+    min_uv: [f32; 2],
+    max_uv: [f32; 2],
+}
+
+struct PreparedImagePass {
+    instance_buffer: eframe::wgpu::Buffer,
+    bind_groups: Vec<eframe::wgpu::BindGroup>,
+}
+
+struct ImagePassResources {
+    pipeline: eframe::wgpu::RenderPipeline,
+    vertex_buffer: eframe::wgpu::Buffer,
+    texture_bind_group_layout: eframe::wgpu::BindGroupLayout,
+    sampler: eframe::wgpu::Sampler,
+}
+
+struct ImagePassCallback {
+    target_format: eframe::wgpu::TextureFormat,
+    instances: Vec<ImagePassInstance>,
+    batches: Vec<ImagePassBatch>,
+    prepared: Mutex<Option<PreparedImagePass>>,
+}
+
+const IMAGE_PASS_SHADER: &str = r#"
+struct VsIn {
+    @location(0) unit_pos: vec2<f32>,
+    @location(1) min_ndc: vec2<f32>,
+    @location(2) max_ndc: vec2<f32>,
+    @location(3) min_uv: vec2<f32>,
+    @location(4) max_uv: vec2<f32>,
+};
+
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(input: VsIn) -> VsOut {
+    var output: VsOut;
+    let ndc = mix(input.min_ndc, input.max_ndc, input.unit_pos);
+    output.position = vec4<f32>(ndc, 0.0, 1.0);
+    output.uv = mix(input.min_uv, input.max_uv, input.unit_pos);
+    return output;
+}
+
+@group(0) @binding(0) var image_tex: texture_2d<f32>;
+@group(0) @binding(1) var image_sampler: sampler;
+
+@fragment
+fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
+    return textureSample(image_tex, image_sampler, input.uv);
+}
+"#;
+
+impl ImagePassResources {
+    fn new(device: &eframe::wgpu::Device, target_format: eframe::wgpu::TextureFormat) -> Self {
+        let shader = device.create_shader_module(eframe::wgpu::ShaderModuleDescriptor {
+            label: Some("snappyref_canvas_image_shader"),
+            source: eframe::wgpu::ShaderSource::Wgsl(IMAGE_PASS_SHADER.into()),
+        });
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&eframe::wgpu::BindGroupLayoutDescriptor {
+                label: Some("snappyref_canvas_image_bind_group_layout"),
+                entries: &[
+                    eframe::wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: eframe::wgpu::ShaderStages::FRAGMENT,
+                        ty: eframe::wgpu::BindingType::Texture {
+                            sample_type: eframe::wgpu::TextureSampleType::Float {
+                                filterable: true,
+                            },
+                            view_dimension: eframe::wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    eframe::wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: eframe::wgpu::ShaderStages::FRAGMENT,
+                        ty: eframe::wgpu::BindingType::Sampler(
+                            eframe::wgpu::SamplerBindingType::Filtering,
+                        ),
+                        count: None,
+                    },
+                ],
+            });
+        let sampler = device.create_sampler(&eframe::wgpu::SamplerDescriptor {
+            label: Some("snappyref_canvas_image_sampler"),
+            mag_filter: eframe::wgpu::FilterMode::Linear,
+            min_filter: eframe::wgpu::FilterMode::Linear,
+            mipmap_filter: eframe::wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
+        let pipeline_layout =
+            device.create_pipeline_layout(&eframe::wgpu::PipelineLayoutDescriptor {
+                label: Some("snappyref_canvas_image_pipeline_layout"),
+                bind_group_layouts: &[Some(&texture_bind_group_layout)],
+                immediate_size: 0,
+            });
+        let vertex_attributes = eframe::wgpu::vertex_attr_array![0 => Float32x2];
+        let instance_attributes = eframe::wgpu::vertex_attr_array![1 => Float32x2, 2 => Float32x2, 3 => Float32x2, 4 => Float32x2];
+        let pipeline = device.create_render_pipeline(&eframe::wgpu::RenderPipelineDescriptor {
+            label: Some("snappyref_canvas_image_pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: eframe::wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: eframe::wgpu::PipelineCompilationOptions::default(),
+                buffers: &[
+                    eframe::wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<ImagePassVertex>() as u64,
+                        step_mode: eframe::wgpu::VertexStepMode::Vertex,
+                        attributes: &vertex_attributes,
+                    },
+                    eframe::wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<ImagePassInstance>() as u64,
+                        step_mode: eframe::wgpu::VertexStepMode::Instance,
+                        attributes: &instance_attributes,
+                    },
+                ],
+            },
+            primitive: eframe::wgpu::PrimitiveState {
+                topology: eframe::wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: eframe::wgpu::MultisampleState::default(),
+            fragment: Some(eframe::wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: eframe::wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(eframe::wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(eframe::wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: eframe::wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let vertices = [
+            ImagePassVertex { pos: [0.0, 0.0] },
+            ImagePassVertex { pos: [1.0, 0.0] },
+            ImagePassVertex { pos: [1.0, 1.0] },
+            ImagePassVertex { pos: [0.0, 0.0] },
+            ImagePassVertex { pos: [1.0, 1.0] },
+            ImagePassVertex { pos: [0.0, 1.0] },
+        ];
+        let vertex_buffer = eframe::wgpu::util::DeviceExt::create_buffer_init(
+            device,
+            &eframe::wgpu::util::BufferInitDescriptor {
+                label: Some("snappyref_canvas_image_vertices"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: eframe::wgpu::BufferUsages::VERTEX,
+            },
+        );
+        Self {
+            pipeline,
+            vertex_buffer,
+            texture_bind_group_layout,
+            sampler,
+        }
+    }
+}
+
+impl ImagePassCallback {
+    fn new(
+        target_format: eframe::wgpu::TextureFormat,
+        instances: Vec<ImagePassInstance>,
+        batches: Vec<ImagePassBatch>,
+    ) -> Self {
+        Self {
+            target_format,
+            instances,
+            batches,
+            prepared: Mutex::new(None),
+        }
+    }
+}
+
+impl eframe::egui_wgpu::CallbackTrait for ImagePassCallback {
+    fn prepare(
+        &self,
+        device: &eframe::wgpu::Device,
+        _queue: &eframe::wgpu::Queue,
+        _screen_descriptor: &eframe::egui_wgpu::ScreenDescriptor,
+        _egui_encoder: &mut eframe::wgpu::CommandEncoder,
+        callback_resources: &mut eframe::egui_wgpu::CallbackResources,
+    ) -> Vec<eframe::wgpu::CommandBuffer> {
+        if callback_resources.get::<ImagePassResources>().is_none() {
+            callback_resources.insert(ImagePassResources::new(device, self.target_format));
+        }
+        let Some(resources) = callback_resources.get::<ImagePassResources>() else {
+            return Vec::new();
+        };
+        let instance_buffer = eframe::wgpu::util::DeviceExt::create_buffer_init(
+            device,
+            &eframe::wgpu::util::BufferInitDescriptor {
+                label: Some("snappyref_canvas_image_instances"),
+                contents: bytemuck::cast_slice(&self.instances),
+                usage: eframe::wgpu::BufferUsages::VERTEX,
+            },
+        );
+        let bind_groups = self
+            .batches
+            .iter()
+            .filter_map(|batch| {
+                batch.texture.create_bind_group(
+                    device,
+                    &resources.texture_bind_group_layout,
+                    &resources.sampler,
+                )
+            })
+            .collect::<Vec<_>>();
+        *self.prepared.lock().expect("image pass mutex poisoned") = Some(PreparedImagePass {
+            instance_buffer,
+            bind_groups,
+        });
+        Vec::new()
+    }
+
+    fn paint(
+        &self,
+        info: egui::PaintCallbackInfo,
+        render_pass: &mut eframe::wgpu::RenderPass<'static>,
+        callback_resources: &eframe::egui_wgpu::CallbackResources,
+    ) {
+        let Some(resources) = callback_resources.get::<ImagePassResources>() else {
+            return;
+        };
+        let Some(prepared) = self
+            .prepared
+            .lock()
+            .expect("image pass mutex poisoned")
+            .take()
+        else {
+            return;
+        };
+        if prepared.bind_groups.len() != self.batches.len() {
+            return;
+        }
+        let clip = info.clip_rect_in_pixels();
+        render_pass.set_scissor_rect(
+            clip.left_px.max(0) as u32,
+            clip.top_px.max(0) as u32,
+            clip.width_px.max(0) as u32,
+            clip.height_px.max(0) as u32,
+        );
+        render_pass.set_pipeline(&resources.pipeline);
+        render_pass.set_vertex_buffer(0, resources.vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, prepared.instance_buffer.slice(..));
+        for (index, batch) in self.batches.iter().enumerate() {
+            render_pass.set_bind_group(0, &prepared.bind_groups[index], &[]);
+            render_pass.draw(0..6, batch.instance_range.clone());
         }
     }
 }

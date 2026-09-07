@@ -72,22 +72,7 @@ impl DocumentPersistence {
         self.last_saved_user_session = Some(session);
     }
 
-    pub(crate) fn commit_canvas_changes_unit(
-        &mut self,
-        canvas: &mut crate::canvas::CanvasState,
-        board_id: i64,
-        history: &crate::active_board::history::DocumentHistory,
-        session: crate::data::UserSession,
-    ) -> Result<(), String> {
-        let document_result = self.commit_canvas_document_unit(canvas, board_id, history);
-        let session_result = self.persist_user_session_if_changed(session);
-        match (document_result, session_result) {
-            (Err(error), _) | (_, Err(error)) => Err(error),
-            _ => Ok(()),
-        }
-    }
-
-    pub(crate) fn commit_canvas_document_unit(
+    pub(crate) fn queue_canvas_document(
         &mut self,
         canvas: &mut crate::canvas::CanvasState,
         board_id: i64,
@@ -110,7 +95,7 @@ impl DocumentPersistence {
         changes: crate::canvas::CanvasDocumentChanges,
         history: &crate::active_board::history::DocumentHistory,
     ) -> Result<(), String> {
-        if !changes.has_changes() {
+        if self.queue.is_none() || !changes.has_changes() {
             return Ok(());
         }
         self.queue()?.enqueue(PersistenceCommand::CommitBoardUnit {
@@ -122,7 +107,7 @@ impl DocumentPersistence {
         })
     }
 
-    pub(crate) fn apply_board_lifecycle_unit(
+    pub(crate) fn enqueue_board_lifecycle_unit(
         &mut self,
         change: BoardLifecyclePersistence,
         history: &crate::active_board::history::DocumentHistory,
@@ -143,16 +128,6 @@ impl DocumentPersistence {
         queue.enqueue(PersistenceCommand::SaveUserSession(session.clone()))?;
         self.last_saved_user_session = Some(session);
         Ok(())
-    }
-
-    pub(crate) fn persist_user_session_if_changed(
-        &mut self,
-        session: crate::data::UserSession,
-    ) -> Result<(), String> {
-        if self.last_saved_user_session.as_ref() == Some(&session) {
-            return Ok(());
-        }
-        self.save_user_session(session)
     }
 
     pub(crate) fn user_session_changed(&self, session: &crate::data::UserSession) -> bool {
@@ -374,23 +349,12 @@ mod tests {
     use super::DocumentPersistence;
 
     #[test]
-    fn unchanged_session_skips_save() {
-        let mut persistence = DocumentPersistence::default();
-        let session = crate::data::UserSession::default();
-        persistence.record_saved_user_session(session.clone());
-
-        let result = persistence.persist_user_session_if_changed(session);
-
-        assert_eq!(result, Ok(()));
-    }
-
-    #[test]
     fn missing_library_does_not_drain_canvas_changes() {
         let mut persistence = DocumentPersistence::default();
         let mut canvas = crate::canvas::CanvasState::default();
         canvas.set_canvas_stack_order(vec![crate::data::CanvasStackItem::Annotation(7)]);
 
-        let result = persistence.commit_canvas_document_unit(
+        let result = persistence.queue_canvas_document(
             &mut canvas,
             1,
             &crate::active_board::history::DocumentHistory::default(),
@@ -470,7 +434,7 @@ mod tests {
             .enqueue_document_unit(
                 board_id,
                 crate::canvas::CanvasDocumentChanges {
-                    updated_placements: vec![moved.state.clone()],
+                    updated_placements: vec![moved.clone()],
                     ..Default::default()
                 },
                 &history,
@@ -500,22 +464,28 @@ mod tests {
         let library = crate::library::storage::Library::initialize(root.clone()).unwrap();
         let board_id = library.list_boards().unwrap()[0].id;
         let mut persistence = DocumentPersistence::queued(library.clone());
-        // A Document unit whose Placement has no accepted state can never
-        // persist, whatever the retry count.
+        // A foreign-key violation remains poisoned through every retry.
         let poisoned = crate::canvas::CanvasDocumentChanges {
-            updated_placements: vec![crate::data::PlacementState::new(
-                99,
-                eframe::egui::Pos2::ZERO,
-                1.0,
-                0.0,
-                0,
-                false,
-            )],
+            updated_placements: vec![crate::data::Placement {
+                state: crate::data::PlacementState::new(
+                    99,
+                    eframe::egui::Pos2::ZERO,
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                content: crate::data::PlacementContent::Loading {
+                    source: crate::data::ContentResolutionSource::Clipboard,
+                    status_message: None,
+                },
+                lifecycle: crate::data::PlacementLifecycle::Committed,
+            }],
             ..Default::default()
         };
         persistence
             .enqueue_document_unit(
-                board_id,
+                board_id + 10000,
                 poisoned,
                 &crate::active_board::history::DocumentHistory::default(),
             )

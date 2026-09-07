@@ -1,3 +1,4 @@
+use crate::placement::display_scale_for_placement_target_area;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -6,7 +7,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 use crate::data::CanvasImageLod;
-use crate::jobs::image_formats::{
+use crate::image_preparation::image_formats::{
     DecodedAnimation, PreviewImage, decode_image_bytes_with_max_side,
     decode_image_file_with_max_side, preview_animation_from_frames, preview_image_from_rgba,
 };
@@ -14,7 +15,6 @@ use crate::library::storage::{Library, sha256_bytes, sha256_file};
 
 #[cfg(test)]
 use super::DEFAULT_PLACEMENT_TARGET_AREA;
-use super::arrangement::resolve_import_world;
 use super::decode::{PreparedImage, install_prepared_canvas_cache, prepare_image_with_helper};
 use super::preview_texture::build_preview_texture;
 use super::{
@@ -23,6 +23,7 @@ use super::{
     canvas_source_image_from_rgba, is_svg_path, original_mime_type_is_svg, parse_svg_document,
     read_svg_document, stable_svg_uri_key,
 };
+use crate::placement::initial_layout::resolve_import_world;
 
 const URL_IMPORT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const URL_IMPORT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -570,19 +571,4 @@ fn remote_image_source_name(url: &url::Url) -> String {
         let host = url.host_str().unwrap_or("remote-image").replace('.', "-");
         format!("{host}-image")
     })
-}
-
-pub fn display_scale_for_placement_target_area(
-    asset_width: u32,
-    asset_height: u32,
-    auto_scale: bool,
-    placement_target_area: f32,
-) -> f32 {
-    if !auto_scale || asset_width == 0 || asset_height == 0 {
-        return 1.0;
-    }
-
-    let placement_target_area = placement_target_area.max(1.0);
-    let asset_area = asset_width as f32 * asset_height as f32;
-    (placement_target_area / asset_area).sqrt().min(1.0)
 }

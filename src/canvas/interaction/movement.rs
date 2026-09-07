@@ -157,20 +157,15 @@ fn guide_snap_candidate_rects(
     let viewport = viewport_near_world_rect(state, screen_rect);
     state
         .document
-        .rendered_placements
+        .placements
         .iter()
-        .filter(|image| !excluded_placement_ids.contains(&image.placement.state.id))
+        .filter(|image| !excluded_placement_ids.contains(&image.state.id))
         .filter_map(|image| {
-            let display_size = image.placement.state.geometry.scaled_size();
-            let rotated_display_size = crate::data::rotated_display_size(
-                display_size,
-                image.placement.state.geometry.rotation,
-            );
+            let display_size = image.state.geometry.scaled_size();
+            let rotated_display_size =
+                crate::data::rotated_display_size(display_size, image.state.geometry.rotation);
             let rect = egui::Rect::from_center_size(
-                egui::pos2(
-                    image.placement.state.geometry.center.x,
-                    image.placement.state.geometry.center.y,
-                ),
+                egui::pos2(image.state.geometry.center.x, image.state.geometry.center.y),
                 rotated_display_size,
             );
             rect.intersects(viewport)
@@ -225,14 +220,12 @@ fn apply_dragged_item_positions(
     for item in items {
         if let Some(image) = state
             .document
-            .rendered_placements
+            .placements
             .iter_mut()
-            .find(|image| image.placement.state.id == item.id)
+            .find(|image| image.state.id == item.id)
         {
-            image.placement.state.geometry.center.x =
-                item.center().x + world_delta.x + snap_offset.x;
-            image.placement.state.geometry.center.y =
-                item.center().y + world_delta.y + snap_offset.y;
+            image.state.geometry.center.x = item.center().x + world_delta.x + snap_offset.x;
+            image.state.geometry.center.y = item.center().y + world_delta.y + snap_offset.y;
             moved += 1;
         }
     }
