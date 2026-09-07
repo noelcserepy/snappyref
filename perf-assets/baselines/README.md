@@ -1,5 +1,32 @@
 # Performance references
 
+[The fast reference](macos-m4-pro-fast-2026-09-07.json) contains all 15 trials,
+three per selected case, acquired from clean source `eebf2f2`. It retains the
+matching contract, fingerprints, trial metrics/states, aggregates and raw paths.
+A separate same-binary control passed every comparison budget.
+
+External complete-command times were 43.739 seconds for the reference and
+44.159 seconds for the control, including interpreter startup, setup, seed,
+fixtures, trials, cleanup and reporting. Both passed without failures or
+60-second overruns. Models/corpus were already installed; no builds or tests
+overlapped acquisition. Ordinary WindowServer, Zen and Codex activity remained.
+The JSON records observed conditions and each command. This pair is one session,
+not the ten-run, two-session runtime/noise calibration or a sub-minute guarantee.
+
+Compare a prepared candidate with the committed fast reference:
+
+```sh
+python3 scripts/perf_eval.py run --binary target/release/snappyref \
+  --output perf-assets/runs/fast-candidate
+python3 scripts/perf_eval.py compare \
+  perf-assets/baselines/macos-m4-pro-fast-2026-09-07.json \
+  perf-assets/runs/fast-candidate/evaluation.json
+```
+
+Supply `--models` and `--assets` when prerequisites are outside the default
+locations. Comparison requires the same machine, model, corpus, toolchain and
+measurement contract. Build the shipping release binary before prepared timing.
+
 `macos-m4-pro-2026-09-07.json` contains 51 valid trials across 17 scenarios,
 three trials per scenario. Measured on an Apple M4 Pro with 24 GiB RAM,
 macOS 26.6.2, AC power, and the shipping optimized release build.
@@ -37,7 +64,7 @@ It stops after a 500 ms guard following settled idle and compares latency only.
 It omits CPU/RSS, trickle, format/animation controls, intermediate and combined
 sizes, and backfill. A fast pass is not full coverage. The prepared-command goal
 is below 60 seconds, including setup and cleanup but excluding build and model
-installation. Complete runtime remains unmeasured.
+installation. The two command times above do not establish a runtime guarantee.
 
 Use `--suite full` only when the user explicitly requests full, with a matching
 full reference. Never run full automatically for refactors, releases, omitted
@@ -67,4 +94,5 @@ when a refactor touches them.
 
 [Fast functional evidence](fast-validation-2026-09-07.json) records a loaded-desktop
 15-trial run at 43.58 seconds and detection of a temporary 750 ms startup delay.
-This is not the required ten-run idle-session calibration or a reusable fast reference.
+That earlier functional check is not a reference. The separately acquired fast
+reference above is comparable; ten-run calibration remains outstanding.
