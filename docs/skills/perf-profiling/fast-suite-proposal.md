@@ -1,14 +1,14 @@
 # Fast performance suite proposal
 
-Provisional planning only. Implementation is blocked on the user's answers below.
-No new performance requirement is approved by this document. Keep the full suite
-and committed reference baseline unchanged. This proposal belongs to its draft PR;
-after decisions settle, move lasting usage/contract facts into the perf-profiling
-skill and runner, then remove this temporary proposal.
+Planning only. The user approved the runtime boundary, default usage and five-case
+selection below. Implementation is explicitly not authorized. Preserve the full
+measurement contract and committed reference baseline. During later implementation,
+move lasting usage/contract facts into the perf-profiling skill and runner, then
+remove this temporary planning artifact.
 
 ## Outcome and evidence
 
-Recommend a frequent release-app latency check with five cases and three fresh
+Plan a default release-app latency check with five cases and three fresh
 processes per case. Aim below 60 seconds on the baseline Mac with prerequisites
 ready. This is a hypothesis to validate, not a measured runtime promise.
 
@@ -38,9 +38,10 @@ RSS; tree peak covers launch through collection. The 51 holds alone cost 867
 seconds. Scaling adds a seed process with the same hold. Full launch-to-idle
 medians sum to 167.9 seconds over three repetitions, before holds and setup.
 
-## Proposed scope and selection
+## Approved scope and selection
 
-All entries below are recommendations awaiting intent approval.
+The user accepted these five cases, each repeated three times. Keep `board-1000`;
+do not replace it with trickle imports.
 
 | Case | Idle median / observed max, seconds | Useful detection | Coverage sacrificed |
 | --- | ---: | --- | --- |
@@ -74,8 +75,8 @@ success does not establish release-app timing or replace that trickle workload.
 
 Extend the existing evaluator with one named fast profile. Reuse launch,
 provenance, fixture, completion, and cleanup code. Avoid a second sampler or
-runner. Keep the existing full profile, defaults, artifacts, and comparison
-requirements intact.
+runner. Make fast the default profiling path, including regular refactor work.
+Keep the explicit full profile, artifacts and comparison requirements intact.
 
 Fast uses shipping release/default features, private libraries/process groups,
 installed models, nonactivating windows, cleared overrides, and shipping helper
@@ -112,7 +113,7 @@ Do not slice the published full baseline into a purported fast baseline. Its
 numbers here are runtime estimates only. Shared latency names do not prove that
 shorter observation and changed seed scheduling preserve distributions.
 
-Propose three repetitions, interleaved in a fixed recorded case order as today.
+Use three repetitions, interleaved in a fixed recorded case order as today.
 Report median/min/max and every trial. No selective retries, dropped outliers,
 confidence intervals or p95 claims from three observations. One repetition is a
 smoke result and cannot receive a comparative pass. Investigate noisy runs with
@@ -127,9 +128,9 @@ making this a gate; do not loosen budgets merely to get green results.
 
 Preserve exit meanings: 0 comparative pass, 1 demonstrated regression, 2 invalid
 or inconclusive, with distinct report reasons. A suite deadline produces an
-incomplete non-pass, never a partial green report. Recommend a 60-second soft
-runtime objective initially, with explicit overrun reporting; a mandatory hard
-abort and its cleanup allowance remain a user decision.
+incomplete non-pass, never a partial green report. The approved 60-second goal is
+a normal-run target, not a hard abort deadline. Report overruns; do not discard
+trials or weaken completion checks to meet it. Retain bounded failure timeouts.
 
 ## Runtime estimate, not a benchmark result
 
@@ -150,8 +151,10 @@ do not supply a reliable complete command runtime.
 Model hashing reads all model bytes even when copies use APFS clones. Each
 1,000-asset fixture creates files and hashes content. A non-APFS copy fallback,
 slower machine, scheduling, or delayed window callback can break this estimate.
-Fresh process does not mean cold filesystem cache. No claim yet includes
-compilation, model acquisition or truly cold setup. See Q1.
+Fresh process does not mean cold filesystem cache. The approved normal-run clock
+excludes compilation and model download/installation, includes all per-command
+fingerprinting, copying, fixture seed/construction, trials, cleanup and reporting.
+Report cold setup separately. The complete runtime still needs measurement.
 
 ## Alternatives and tradeoffs
 
@@ -174,16 +177,19 @@ compilation, model acquisition or truly cold setup. See Q1.
   helper/model startup and isolation. Parallel app trials contaminate measurements.
   Neither is a substitute for this release-app proposal.
 
-Full remains required for architecture refactors under current repository rules.
-Recommend it for release candidates and targeted full-contract cases for changes
-affecting omitted workloads or idle/helper/memory behavior. Fast passing never
-waives those checks. Any lighter full-suite cadence requires a separate decision.
+The user chose fast profiling for regular use, including architecture refactors,
+and full only on explicit demand. Later implementation must remove the automatic
+full before/after requirement from `AGENTS.md` and update the perf skill and baseline
+README examples to match. Do not introduce automatic full runs for releases,
+omitted workloads, or inconclusive fast results. Explain coverage limits and let
+the user request full when needed. A fast pass is never described as a full pass.
+Behavior checks remain separate. No new push or merge gate is part of this scope.
 
-## Ordered implementation plan, blocked on intent
+## Ordered implementation plan, awaiting implementation authorization
 
-1. Settle Q1..Q3 and dependent questions. Update this PR's scope and acceptance.
-   Put only approved lasting contract facts in the existing perf skill/owning
-   evaluator. No new product spec module, ADR, or glossary is currently justified.
+1. Start only after an explicit instruction to implement. Apply the approved
+   runtime boundary, five-case selection and fast-default/full-on-demand policy.
+   No new product spec module, ADR, or glossary is justified.
 2. Reinspect the exact implementation base, especially #201's completion changes.
    Add one profile definition in `scripts/perf_eval.py` for cases, metrics and
    stop/completeness rules. Retain the full contract and separate fast reference.
@@ -197,24 +203,27 @@ waives those checks. Any lighter full-suite cadence requires a separate decision
 5. When the machine is free, acquire a new fast reference and unchanged-binary
    controls. Measure actual command runtime, retained failures and case spread.
    Confirm full-contract behavior still matches the published measurement rules.
-6. Publish measured runtime/coverage limits and commands in the existing perf skill.
+6. Update `AGENTS.md`, the perf skill and baseline README for fast-default usage
+   and full only on demand. Publish measured runtime/coverage limits and commands.
    Remove this provisional document when its decisions and tasks live in their
    permanent owner and the PR. Do not replace the existing reference baseline.
 
 ## Acceptance evidence for later implementation
 
-The task's explicit constraints govern preservation/isolation. Fast budgets and
-coverage below are proposed, not newly approved canonical clauses.
+The task's explicit constraints govern preservation/isolation. Runtime scope and
+coverage are settled below; measurement details remain the proposed design to
+validate during later authorized implementation.
 
 | Acceptance | Required evidence |
 | --- | --- |
-| Full preserved | Existing evaluator tests, unchanged baseline hash, unchanged full contract/case/metric sets, and a later full acquisition reviewed against its matching reference |
+| Full preserved | Existing evaluator tests, unchanged baseline hash, unchanged full contract/case/metric sets, and a full acquisition only if explicitly requested, reviewed against its matching reference |
+| Default usage | No-suite profiling selects fast; explicit full still selects all 17 cases and its original windows. Repository instructions require no automatic full run for regular refactors or releases |
 | Useful fast detection | Three fresh trials of every selected case with complete paint/work/cardinality evidence; synthetic recorded latency shifts prove pass/regression/inconclusive classification, but do not claim end-to-end sensitivity |
 | No false green | Missing clock/summary/metric/case/repeat, timeout, resumed work and incomplete embeddings produce non-pass with retained artifacts; profile mismatch refuses comparison |
 | Runtime claim | At least 10 sequential warm-prepared complete commands on the baseline-class Mac, across two idle sessions. Report each total and setup/trial/cleanup durations, min/median/max, failures and overruns. No p95 guarantee from 10 runs |
 | Noise calibration | Compare same-binary acquisitions against the new fast reference. Review every false alarm/inconclusive result before enabling a gate; do not silently replace controls or widen budgets |
 | End-to-end sensitivity | Later isolated controlled delay in a measured startup/import path above its allowance, then remove it. Show the complete runner detects it. This is future validation, not authorization to edit app code now |
-| Setup honesty | Separately measure first prepared run and cold/build/model setup matching Q1's answer. Include fingerprinting, fixture seed/construction, cleanup and reporting in command totals |
+| Setup honesty | Separately measure first prepared run and cold/build/model setup using the approved runtime boundary. Include fingerprinting, fixture seed/construction, cleanup and reporting in command totals |
 
 Relevant existing spec context: `active-board` operation `activate` behavior
 `startup-visible-prepared`, and `image-preparation` operation `request-residency`
@@ -230,32 +239,24 @@ this PR does not change it.
 head `0648682be84570208442016aa1aa3ff6dfbedca2`. Its file list includes
 `src/app/perf_scenario.rs` and new `src/diagnostics/import_completion.rs`, so
 implementation must recheck marker/completion ownership if it lands first.
-There is no planning dependency on #201, and this proposal does not change its
-required full evaluation. Do not reuse its running artifacts as fast baselines
+There is no planning dependency on #201. This planning PR does not alter work
+already underway in that task. Do not reuse its running artifacts as fast baselines
 or interrupt its processes. Its branch and artifacts were read-only here.
 
-## Unresolved intent, first grilling round
+## Settled user decisions and remaining evidence
 
-These are independent questions. Recommendations are not answers or approval.
+- Normal prepared runs target less than one minute. Include per-command setup and
+  cleanup; exclude compilation and model download/installation. Report cold setup
+  separately. This is not a hard deadline.
+- Fast profiling is the regular default, including refactor work. Full runs only
+  on explicit demand. Remove the old automatic full-refactor requirement during
+  implementation. Do not add a new push/merge gate.
+- Keep `import-1`, `import-20`, `board-0`, `board-1000`, and `library-1000`, with
+  three repetitions each. The user accepted leaving the omitted workloads and
+  CPU/memory metrics to full, including the known trickle coverage tradeoff.
+- Update this draft PR only. Do not implement, start a delivery loop, or merge.
 
-1. What does the one-minute clock include: compilation, model download/install,
-   model copying/fingerprints, fixture preparation, and cold setup? Is 60 seconds
-   a hard deadline or a normal-run target? Recommendation: normal prepared-run
-   target, excluding compilation/download/install, including all per-command
-   hashing, copying, fresh fixture seed/construction, trials, cleanup and reporting.
-   Report cold setup separately. A cold all-inclusive limit needs a different plan.
-2. What decision should a fast result authorize: local feedback, a push gate,
-   or merge approval? Recommendation: local feedback initially, with no waiver
-   of the existing full refactor checks. Gate adoption waits for noise calibration.
-3. Which coverage loss is acceptable to buy the minute: idle CPU/memory, trickle
-   reuse, backfill, combined scaling, or large Board latency? Recommendation:
-   choose the five latency cases above and keep the other workloads in full.
-   If cached-completion hangs matter more than large Board latency, replace
-   `board-1000` with trickle and validate the smaller runtime margin.
-
-After these answers, ask only the newly unblocked decisions: acceptable overrun
-and retry behavior, tolerated inconclusive frequency if gating is desired,
-mandatory targeted/full-run triggers, and which coverage to cut if measured
-setup exceeds the allocation. Do not silently sacrifice repetitions or completion
-checks to hit the deadline. No implementer/reviewer loop, merge, or implementation
-approval belongs to this planning task.
+No intent question from the first round remains open. Runtime overhead, noise and
+short-window validity still need evidence. If the measured budget cannot hold,
+report it before proposing coverage changes. Do not silently cut cases, repetitions
+or completion checks. Technical calibration is future work, not permission to start.
