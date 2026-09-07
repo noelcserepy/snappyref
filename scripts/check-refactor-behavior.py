@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCENARIOS = ['sample-image-import', 'pending-drop-batch-undo', 'search-drag-to-canvas',
              'blue-image-search-drag', 'board-lifecycle-undo-redo', 'canvas-edit-operations',
              'canvas-navigation-boards', 'session-restart-restore', 'persistence-dropped-write',
-             'delete-undo-redo-placement', 'crop-undo-redo-placement']
+             'delete-undo-redo-placement', 'crop-undo-redo-placement', 'group-operations']
 
 
 def require(condition, message):
