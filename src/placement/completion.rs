@@ -3,7 +3,7 @@ use super::content_resolution::{
     ContentResolutionTicket, LoadedContentResolutionOutcome, PlacementCreation, ResolvedPlacement,
 };
 use crate::canvas::{CanvasState, residency::ImageResidencyCoordinator};
-use crate::data::{Placement, WorkspaceSettings};
+use crate::data::WorkspaceSettings;
 use crate::image_preparation::{
     ImagePrepResult, ImagePrepWorker, PreparedCropPreview, PreparedPlacementImage,
 };

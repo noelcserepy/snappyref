@@ -79,9 +79,30 @@ fn batch_completion_persists_empty_textbox_cleanup_without_an_extra_history_entr
     let mut app = test_app(Some(library.clone()));
     app.board_editing.persistence = crate::app::DocumentPersistence::queued(library.clone());
     app.canvas.add_annotation(annotation.clone());
+    app.board_editing.history.record_applied(
+        app.active_board_id,
+        crate::app::HistoryAction::document(
+            "Added textbox".to_owned(),
+            Vec::new(),
+            vec![crate::app::HistoryChange {
+                before: None,
+                after: Some(annotation.clone()),
+            }],
+            Some(crate::app::HistoryChange {
+                before: Some(Vec::new()),
+                after: Some(app.canvas.canvas_stack_order()),
+            }),
+        ),
+    );
     let mut prepared = Vec::new();
     for id in [1, 2] {
-        let mut loaded = persisted_loaded_item(&library, id, app.active_board_id);
+        let path = library
+            .store_rgba_image(&format!("batch-{id}"), &[id as u8, 0, 0, 255], 1, 1)
+            .unwrap();
+        let placement = library
+            .persist_imported_image(&path, "image/png", 1, 1, 4, egui::Pos2::ZERO, 1.0)
+            .unwrap();
+        let mut loaded = loaded_record(placement);
         loaded.queue_id = Some(id as u64);
         loaded.origin = crate::image_preparation::ImportOrigin::Path;
         prepared.push(loaded);
@@ -108,7 +129,7 @@ fn batch_completion_persists_empty_textbox_cleanup_without_an_extra_history_entr
         app.install_test_prepared_image(&ctx, loaded);
     }
     assert!(app.canvas.annotation_for_id(annotation.id).is_none());
-    app.flush_persistence();
+    app.board_editing.persistence.flush().unwrap();
     assert!(
         library.load_canvas_annotations().unwrap().is_empty(),
         "the empty textbox must not return after restart"
@@ -119,10 +140,48 @@ fn batch_completion_persists_empty_textbox_cleanup_without_an_extra_history_entr
             .stack_order
             .contains(&crate::data::CanvasStackItem::Annotation(annotation.id))
     );
+    let board_id = app.active_board_id;
+    let other = library.create_board("Other").unwrap();
+    app.switch_to_board(other.id);
+    app.switch_to_board(board_id);
+    assert!(
+        app.canvas.annotation_for_id(annotation.id).is_none(),
+        "Board reopening must not resurrect the empty textbox"
+    );
+    app.undo_document_history(&ctx);
+    assert!(app.canvas.committed_placements().is_empty());
+    assert!(app.canvas.annotation_for_id(annotation.id).is_none());
+    app.redo_document_history(&ctx);
+    assert_eq!(app.canvas.committed_placements().len(), 2);
+    assert!(app.canvas.annotation_for_id(annotation.id).is_none());
+    app.undo_document_history(&ctx);
+    app.undo_document_history(&ctx);
+    assert!(app.canvas.annotation_for_id(annotation.id).is_none());
+    app.redo_document_history(&ctx);
+    app.redo_document_history(&ctx);
+    assert_eq!(app.canvas.committed_placements().len(), 2);
+    assert!(app.canvas.annotation_for_id(annotation.id).is_none());
+    app.board_editing.persistence.flush().unwrap();
+    let mut restarted = test_app(Some(library.clone()));
+    restarted.board_editing.history = library.load_document_history().unwrap();
+    let accepted = restarted
+        .board_editing
+        .accepted_board_document(&library, board_id)
+        .unwrap();
+    assert!(accepted.annotations.is_empty());
+    assert!(
+        !accepted
+            .stack_order
+            .contains(&crate::data::CanvasStackItem::Annotation(annotation.id))
+    );
     let mut history = library.load_document_history().unwrap();
     assert_eq!(
-        history.undo(app.active_board_id).unwrap().action.label(),
+        history.undo(board_id).unwrap().action.label(),
         "Import images"
+    );
+    assert_eq!(
+        history.undo(board_id).unwrap().action.label(),
+        "Added textbox"
     );
     assert!(
         history.undo(app.active_board_id).is_none(),

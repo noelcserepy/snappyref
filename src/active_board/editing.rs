@@ -351,12 +351,9 @@ impl BoardEditing {
         board_id: i64,
         changes: crate::canvas::CanvasDocumentChanges,
     ) -> Result<bool, String> {
-        let mut changed = false;
-        for placement in &changes.updated_placements {
-            changed |= self
-                .history
-                .update_accepted_placement(board_id, placement.clone());
-        }
+        let changed = self
+            .history
+            .update_accepted_document_changes(board_id, &changes);
         self.persistence
             .enqueue_document_unit(board_id, changes, &self.history)?;
         Ok(changed)
