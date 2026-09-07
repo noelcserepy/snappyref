@@ -60,6 +60,13 @@ There is no standalone design-system document. Treat the code as the canonical v
 - Windows verification follows one invariant: make changes on Mac, run `scripts/windows-sync.sh`, then verify on Windows. Do not develop directly in the Windows checkout.
 - Do not make Windows verification a mandatory pre-push gate; the Windows machine may be unavailable. Run targeted Windows checks for platform-sensitive work and the full Windows suite before release candidates.
 
+## Before Architecture Refactors
+
+Run `python3 scripts/check-refactor-behavior.py`, then the repeated release-app
+baseline and comparison described in `docs/skills/perf-profiling/SKILL.md`.
+Do not run performance concurrently with builds or behavior tests. Keep the
+reference baseline unchanged until measured differences have been reviewed.
+
 ## Pre-push Checks
 
 The pre-push gate (fmt + `cargo check` under shipping features + the

@@ -107,7 +107,7 @@ impl AppConfig {
     }
 
     fn skip_existing_items_on_start(&self) -> bool {
-        self.perf_scenario_requested()
+        self.perf_scenario_requested() && self.perf_scenario.as_deref() != Some("startup")
     }
 
     pub(crate) fn startup_viewport_size(&self) -> egui::Vec2 {
@@ -400,6 +400,11 @@ impl SnappyRefApp {
 
         match library.load_placements() {
             Ok(placements) => {
+                if let Some(scenario) = &mut self.perf_scenario
+                    && scenario.name == "startup"
+                {
+                    scenario.expected_imports = placements.len();
+                }
                 let viewport_world = self.startup_viewport_world_rect();
                 if let Err(error) = self.residency.queue_startup_existing_loads(
                     import_worker,

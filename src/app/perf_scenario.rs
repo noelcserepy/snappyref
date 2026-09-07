@@ -50,6 +50,8 @@ pub(super) struct PerfScenarioState {
     pub(super) first_loaded_logged: bool,
     pub(super) all_loaded_logged: bool,
     pub(super) first_visible_logged: bool,
+    first_frame_logged: bool,
+    pub(super) startup_loaded_placement_ids: std::collections::HashSet<i64>,
     pub(super) all_visible_logged: bool,
     pub(super) first_embedding_queued_logged: bool,
     pub(super) first_embedding_done_logged: bool,
@@ -155,7 +157,7 @@ impl PerfScenarioState {
         let events_path = run_dir.join("events.ndjson");
         let events = File::create(&events_path)
             .map_err(|error| format!("failed to create {}: {error}", events_path.display()))?;
-        Ok(Self {
+        let mut state = Self {
             name,
             corpus_root,
             run_dir,
@@ -170,6 +172,8 @@ impl PerfScenarioState {
             first_loaded_logged: false,
             all_loaded_logged: false,
             first_visible_logged: false,
+            first_frame_logged: false,
+            startup_loaded_placement_ids: Default::default(),
             all_visible_logged: false,
             first_embedding_queued_logged: false,
             first_embedding_done_logged: false,
@@ -183,7 +187,9 @@ impl PerfScenarioState {
             pending_trickle_imports: Vec::new(),
             trickle_interval: Duration::from_secs(2),
             trickle_next_at: None,
-        })
+        };
+        state.emit("scenario_clock", serde_json::json!({}));
+        Ok(state)
     }
 
     fn elapsed_ms(&self) -> f64 {
@@ -194,6 +200,17 @@ impl PerfScenarioState {
         let elapsed_ms = self.elapsed_ms();
         self.embedding_phases.record_event(event, elapsed_ms);
         if let Some(object) = extra.as_object_mut() {
+            // Align external process samples with the app's Instant-based clock.
+            object.insert(
+                "unix_ms".to_owned(),
+                serde_json::json!(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs_f64()
+                        * 1000.0
+                ),
+            );
             object.insert("event".to_owned(), serde_json::json!(event));
             object.insert("elapsed_ms".to_owned(), serde_json::json!(elapsed_ms));
             object.insert("scenario".to_owned(), serde_json::json!(self.name));
@@ -313,6 +330,7 @@ impl PerfScenarioState {
             },
             "last_canvas_frame": {
                 "visible_images": image_pass.visible_images,
+                "painted_images": image_pass.painted_images,
                 "visible_animated_images": image_pass.visible_animated_images,
                 "active_animated_images": image_pass.active_animated_images,
                 "fallback_images": image_pass.fallback_images,
@@ -449,6 +467,16 @@ impl SnappyRefApp {
             return;
         };
         scenario.queued = true;
+        // Observe the normal startup load queued by `new`; do not import or
+        // change the restored viewport to make the measurement look faster.
+        if scenario.name == "startup" {
+            scenario.emit(
+                "scenario_started",
+                serde_json::json!({ "expected_imports": scenario.expected_imports }),
+            );
+            self.perf_scenario = Some(scenario);
+            return;
+        }
         let entries = match scenario.selected_entries() {
             Ok(entries) => entries,
             Err(error) => {
@@ -720,6 +748,7 @@ impl SnappyRefApp {
                 }
             }
             if scenario.demand_embeddings_queued > 0
+                && scenario.pending_trickle_imports.is_empty()
                 && scenario.demand_embeddings_done >= scenario.demand_embeddings_queued
                 && !scenario.all_embeddings_done_logged
             {
@@ -746,7 +775,12 @@ impl SnappyRefApp {
         let embedding_idle = self.search.demand_embedding_pending_count() == 0
             && self.search.embedding_backfill_is_idle();
         let idle = scenario.queued
-            && scenario.visible_imports >= scenario.expected_imports
+            && scenario.loaded_imports >= scenario.expected_imports
+            && (if scenario.name == "startup" {
+                scenario.expected_imports == 0 || scenario.visible_imports > 0
+            } else {
+                scenario.visible_imports >= scenario.expected_imports
+            })
             && !worker_stats.has_work()
             && !self.canvas.has_pending_crop_work()
             && !self.canvas.has_pending_image_loads()
@@ -791,6 +825,11 @@ impl SnappyRefApp {
             }
         } else {
             scenario.idle_since = None;
+            if scenario.settled_idle_logged {
+                scenario.settled_idle_logged = false;
+                scenario.emit("work_resumed", serde_json::json!({}));
+                let _ = std::fs::remove_file(scenario.run_dir.join("summary.json"));
+            }
         }
         ctx.request_repaint_after(Duration::from_millis(16));
         false
@@ -800,13 +839,17 @@ impl SnappyRefApp {
         let Some(scenario) = &mut self.perf_scenario else {
             return;
         };
+        if !scenario.first_frame_logged {
+            scenario.first_frame_logged = true;
+            scenario.emit("first_frame_painted", serde_json::json!({}));
+        }
         if scenario.expected_imports == 0 || scenario.loaded_imports == 0 {
             return;
         }
 
         let image_pass = self.frame_perf.canvas.image_pass;
         let visible = image_pass
-            .visible_images
+            .painted_images
             .min(scenario.loaded_imports)
             .min(scenario.expected_imports);
         if visible > scenario.visible_imports {
@@ -821,6 +864,7 @@ impl SnappyRefApp {
             "expected": scenario.expected_imports,
             "canvas_frame": {
                 "visible_images": image_pass.visible_images,
+                "painted_images": image_pass.painted_images,
                 "visible_animated_images": image_pass.visible_animated_images,
                 "active_animated_images": image_pass.active_animated_images,
                 "fallback_images": image_pass.fallback_images,

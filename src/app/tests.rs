@@ -6220,6 +6220,8 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
     harness.drop_at(egui::pos2(900.0, 600.0));
     harness.step();
 
+    // The drop commits in memory first; wait for its queued write before reading SQLite.
+    harness.state_mut().document_persistence.flush().unwrap();
     let mut asset_ids = library
         .load_placements()
         .unwrap()
@@ -6296,6 +6298,7 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
     harness.drop_at(egui::pos2(900.0, 600.0));
     harness.step();
 
+    harness.state_mut().document_persistence.flush().unwrap();
     let mut asset_ids = library
         .load_placements()
         .unwrap()
@@ -7684,6 +7687,10 @@ impl InspectScenario {
         );
         harness.step();
         self.capture_screen("screen-001-during-import-loading", harness);
+        self.assertion(
+            "loading placeholders do not count as painted images",
+            harness.state().frame_perf.canvas.image_pass.painted_images == 0,
+        );
 
         let ctx = harness.ctx.clone();
         let active_board_id = harness.state().active_board_id;
@@ -7708,6 +7715,10 @@ impl InspectScenario {
         );
         harness.step();
         self.capture_screen("screen-002-after-import-loaded", harness);
+        self.assertion(
+            "loaded sample textures count as painted images",
+            harness.state().frame_perf.canvas.image_pass.painted_images == samples.len(),
+        );
 
         self.assertion(
             "sample imports created loading placements",

@@ -300,3 +300,18 @@ Report:
   service behavior
 
 Be concise. The artifact is the detailed evidence.
+
+## Before architecture refactors
+
+Run `python3 scripts/check-refactor-behavior.py`. It runs the library suite
+sequentially, rejects stale or incomplete artifacts for the main interaction
+and persistence scenarios, then checks the actual release image-preparation
+subprocess. The report is `target/refactor-behavior.json`.
+
+Keep the existing tests that describe user-visible outcomes. Add a focused
+scenario only when the boundary being changed lacks coverage. Search ranking
+and live model installation are separate from deterministic search interaction
+tests. Native clipboard/external drops and Windows behavior still need platform
+checks when those paths change.
+
+Run performance separately afterward with [perf-profiling](../perf-profiling/SKILL.md).

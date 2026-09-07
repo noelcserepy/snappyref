@@ -72,6 +72,8 @@ pub struct CanvasState {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ImagePassMetrics {
     pub visible_images: usize,
+    /// Loaded images with paintable textures, excluding loading placeholders.
+    pub painted_images: usize,
     pub visible_animated_images: usize,
     pub active_animated_images: usize,
     pub fallback_images: usize,
