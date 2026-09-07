@@ -278,15 +278,9 @@ impl PlacementCreation {
             }
             canvas.select_placements(&ids);
             canvas.arrange_selected_compact_preserving_sizes(context.settings.placement_gap);
-            let placements = ids
-                .into_iter()
-                .filter_map(|id| canvas.placement_for_id(id))
-                .collect::<Vec<Placement>>();
             context
                 .editing
-                .resolve_placements(batch.target_board_id, placements)?;
-            // These geometry edits complete the accepted batch, not a second user action.
-            canvas.take_document_changes();
+                .resolve_document_changes(batch.target_board_id, canvas.take_document_changes())?;
         }
         Ok(())
     }

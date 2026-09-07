@@ -335,20 +335,30 @@ impl BoardEditing {
         board_id: i64,
         placements: Vec<crate::data::Placement>,
     ) -> Result<bool, String> {
-        let mut changed = false;
-        for placement in &placements {
-            changed |= self
-                .history
-                .update_accepted_placement(board_id, placement.clone());
-        }
-        self.persistence.enqueue_document_unit(
+        self.resolve_document_changes(
             board_id,
             crate::canvas::CanvasDocumentChanges {
                 updated_placements: placements,
                 ..Default::default()
             },
-            &self.history,
-        )?;
+        )
+    }
+
+    /// Batch completion can also finish text editing or reflow Groups. Submit
+    /// every resulting document change without adding a second batch Undo entry.
+    pub(crate) fn resolve_document_changes(
+        &mut self,
+        board_id: i64,
+        changes: crate::canvas::CanvasDocumentChanges,
+    ) -> Result<bool, String> {
+        let mut changed = false;
+        for placement in &changes.updated_placements {
+            changed |= self
+                .history
+                .update_accepted_placement(board_id, placement.clone());
+        }
+        self.persistence
+            .enqueue_document_unit(board_id, changes, &self.history)?;
         Ok(changed)
     }
 
