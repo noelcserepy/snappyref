@@ -1,7 +1,8 @@
 # Fast performance suite proposal
 
-Planning only. The user approved the runtime boundary, default usage and five-case
-selection below. Implementation is explicitly not authorized. Preserve the full
+Implementation brief. The user approved implementation of the runtime boundary,
+default usage and five-case selection below. Do not run the full performance suite
+during this delivery, including implementation, review, or helper-agent work. Preserve the full
 measurement contract and committed reference baseline. During later implementation,
 move lasting usage/contract facts into the perf-profiling skill and runner, then
 remove this temporary planning artifact.
@@ -185,20 +186,9 @@ omitted workloads, or inconclusive fast results. Explain coverage limits and let
 the user request full when needed. A fast pass is never described as a full pass.
 Behavior checks remain separate. No new push or merge gate is part of this scope.
 
-## Delivery agent settings
+## Ordered implementation plan
 
-For this PR, the user requires `gpt-6-astra` with `reasoning_effort: low` for the
-implementer, every fresh reviewer, and all their subagents. "Light" maps to the
-available `low` reasoning setting. This explicit instruction overrides the
-spec-plugin skill and role protocol's medium defaults for this delivery only.
-Carry it into every role/helper launch and handoff instruction, including repairs
-and replacement agents. Keep the existing clean-history and role-isolation rules.
-Do not change global plugin defaults. Recording these settings does not authorize
-starting implementation or review.
-
-## Ordered implementation plan, awaiting implementation authorization
-
-1. Start only after an explicit instruction to implement. Apply the approved
+1. Apply the approved
    runtime boundary, five-case selection and fast-default/full-on-demand policy.
    No new product spec module, ADR, or glossary is justified.
 2. Reinspect the exact implementation base, especially #201's completion changes.
@@ -227,13 +217,13 @@ validate during later authorized implementation.
 
 | Acceptance | Required evidence |
 | --- | --- |
-| Full preserved | Existing evaluator tests, unchanged baseline hash, unchanged full contract/case/metric sets, and a full acquisition only if explicitly requested, reviewed against its matching reference |
+| Full preserved | Existing evaluator tests, unchanged baseline hash, unchanged full contract/case/metric sets, with source inspection and saved-artifact comparison; no full acquisition during this delivery |
 | Default usage | No-suite profiling selects fast; explicit full still selects all 17 cases and its original windows. Repository instructions require no automatic full run for regular refactors or releases |
 | Useful fast detection | Three fresh trials of every selected case with complete paint/work/cardinality evidence; synthetic recorded latency shifts prove pass/regression/inconclusive classification, but do not claim end-to-end sensitivity |
 | No false green | Missing clock/summary/metric/case/repeat, timeout, resumed work and incomplete embeddings produce non-pass with retained artifacts; profile mismatch refuses comparison |
 | Runtime claim | At least 10 sequential warm-prepared complete commands on the baseline-class Mac, across two idle sessions. Report each total and setup/trial/cleanup durations, min/median/max, failures and overruns. No p95 guarantee from 10 runs |
 | Noise calibration | Compare same-binary acquisitions against the new fast reference. Review every false alarm/inconclusive result before enabling a gate; do not silently replace controls or widen budgets |
-| End-to-end sensitivity | Later isolated controlled delay in a measured startup/import path above its allowance, then remove it. Show the complete runner detects it. This is future validation, not authorization to edit app code now |
+| End-to-end sensitivity | Later isolated controlled delay in a measured startup/import path above its allowance, then remove it. Show the complete runner detects it. Use only the fast suite for this validation; remove the controlled delay afterward |
 | Setup honesty | Separately measure first prepared run and cold/build/model setup using the approved runtime boundary. Include fingerprinting, fixture seed/construction, cleanup and reporting in command totals |
 
 Relevant existing spec context: `active-board` operation `activate` behavior
@@ -265,9 +255,10 @@ or interrupt its processes. Its branch and artifacts were read-only here.
 - Keep `import-1`, `import-20`, `board-0`, `board-1000`, and `library-1000`, with
   three repetitions each. The user accepted leaving the omitted workloads and
   CPU/memory metrics to full, including the known trickle coverage tradeoff.
-- Update this draft PR only. Do not implement, start a delivery loop, or merge.
+- Implementation and independent review are authorized. No full performance suite
+  runs by any role or helper during this delivery. Do not merge.
 
 No intent question from the first round remains open. Runtime overhead, noise and
 short-window validity still need evidence. If the measured budget cannot hold,
 report it before proposing coverage changes. Do not silently cut cases, repetitions
-or completion checks. Technical calibration is future work, not permission to start.
+or completion checks. Technical calibration is part of the authorized implementation, using fast runs only.
