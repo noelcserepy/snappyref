@@ -60,7 +60,7 @@ pub(super) struct PerfScenarioState {
     pub(super) all_embeddings_done_logged: bool,
     pub(super) embedding_phases: EmbeddingPhaseMarkers,
     pub(super) idle_since: Option<Instant>,
-    pub(super) settled_idle_logged: bool,
+    pub(super) settled_idle_at: Option<Instant>,
     pub(super) model_unload_logged: bool,
     /// Per-asset corpus metadata indexed by import queue id, so events
     /// emitted after `import_queued` can still report `format`.
@@ -183,7 +183,7 @@ impl PerfScenarioState {
             all_embeddings_done_logged: false,
             embedding_phases: EmbeddingPhaseMarkers::default(),
             idle_since: None,
-            settled_idle_logged: false,
+            settled_idle_at: None,
             model_unload_logged: false,
             asset_by_queue_id: std::collections::HashMap::new(),
             asset_by_asset_id: std::collections::HashMap::new(),
@@ -796,17 +796,21 @@ impl SnappyRefApp {
 
         if idle {
             let idle_since = *scenario.idle_since.get_or_insert_with(Instant::now);
-            if idle_since.elapsed() >= Duration::from_millis(500) && !scenario.settled_idle_logged {
+            if idle_since.elapsed() >= Duration::from_millis(500)
+                && scenario.settled_idle_at.is_none()
+            {
                 scenario.emit("settled_idle", serde_json::json!({}));
                 scenario.write_summary(worker_stats, self.frame_perf.canvas.image_pass);
-                scenario.settled_idle_logged = true;
+                // Background callbacks may arrive late. Give the sampler its
+                // full hold after this marker, not after the earlier idle candidate.
+                scenario.settled_idle_at = Some(Instant::now());
             }
-            if scenario.settled_idle_logged && idle_since.elapsed() >= idle_hold {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                return true;
-            }
-            if scenario.settled_idle_logged {
-                let mut next_repaint_after = idle_hold.saturating_sub(idle_since.elapsed());
+            if let Some(settled_idle_at) = scenario.settled_idle_at {
+                if settled_idle_at.elapsed() >= idle_hold {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    return true;
+                }
+                let mut next_repaint_after = idle_hold.saturating_sub(settled_idle_at.elapsed());
                 if let Some(unload_after) =
                     std::env::var("SNAPPYREF_PERF_MODEL_UNLOAD_AFTER_IDLE_MS")
                         .ok()
@@ -832,8 +836,7 @@ impl SnappyRefApp {
             }
         } else {
             scenario.idle_since = None;
-            if scenario.settled_idle_logged {
-                scenario.settled_idle_logged = false;
+            if scenario.settled_idle_at.take().is_some() {
                 scenario.emit("work_resumed", serde_json::json!({}));
                 let _ = std::fs::remove_file(scenario.run_dir.join("summary.json"));
             }
