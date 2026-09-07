@@ -83,3 +83,23 @@ fn merge_sources(
 
     sources
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn framework_and_native_sources_keep_first_seen_order_without_duplicates() {
+        let path = ImportSource::Path("reference.png".into());
+        let second = ImportSource::Path("second.png".into());
+        let url = ImportSource::Url("https://example.com/reference.png".into());
+        assert_eq!(
+            merge_sources(
+                [path.clone(), url.clone()],
+                [path.clone(), second.clone()],
+                [url.clone()]
+            ),
+            vec![path, url, second],
+        );
+    }
+}

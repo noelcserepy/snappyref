@@ -17,6 +17,12 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+pub(super) const INSPECT_DELETE_KEY: egui::Key = if cfg!(target_os = "macos") {
+    egui::Key::Backspace
+} else {
+    egui::Key::Delete
+};
+
 pub(super) fn test_app(library: Option<Library>) -> SnappyRefApp {
     let mut app = SnappyRefApp::detached(None, 8192, crate::updater::UpdateConfig::for_tests());
     if let Some(library) = &library {

@@ -87,6 +87,7 @@ fn drag_image_url_score(url: &str) -> i32 {
 pub(crate) struct NativeDropPayload {
     pub(crate) urls: Vec<String>,
     pub(crate) paths: Vec<PathBuf>,
+    // Window-local egui points, ready for Canvas screen_to_world conversion.
     pub(crate) screen_pos: Option<egui::Pos2>,
 }
 

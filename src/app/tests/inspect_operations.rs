@@ -2,6 +2,7 @@
 //! and Board switching, session restore across a restart, and recovery from a
 //! dropped durable write.
 
+use super::support::INSPECT_DELETE_KEY;
 use super::*;
 use crate::test_support::TempRoot;
 
@@ -401,10 +402,10 @@ fn inspect_canvas_edit_operations_writes_artifact() {
     let blue_screen = inspect_world_to_screen(center_of(&harness, blue_id), screen);
     inspect_click_at(&harness, blue_screen, egui::Modifiers::NONE);
     harness.step();
-    harness.key_press(egui::Key::Backspace);
+    harness.key_press(INSPECT_DELETE_KEY);
     harness.step();
     scenario.assertion(
-        "Backspace deletes the selected placement",
+        "Delete shortcut removes the selected placement",
         harness.state().canvas.placement_for_id(blue_id).is_none(),
     );
     scenario.capture_screen("screen-007-deleted", &mut harness);
