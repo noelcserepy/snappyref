@@ -172,38 +172,17 @@ fn decode_image_bytes_with_path_hint(
         return Err(unsupported_format_error(source_path, Some(format)));
     }
 
-    #[cfg(feature = "turbojpeg-native")]
-    let decoded = if format == ImageFormat::Gif {
-        decode_gif(bytes, file_size)
-    } else if format == ImageFormat::WebP {
-        decode_webp(bytes, file_size)
-    } else if format == ImageFormat::OpenExr {
-        decode_exr(bytes, file_size)
-    } else if format == ImageFormat::Jpeg {
-        decode_jpeg_with_turbojpeg(bytes, file_size, target_max_side)
-            .or_else(|_| decode_with_image_crate(bytes, file_size, format))
-    } else if format == ImageFormat::Png {
-        decode_png_with_streaming_resize(bytes, file_size, target_max_side)
-            .or_else(|_| decode_with_image_crate(bytes, file_size, format))
-    } else {
-        decode_with_image_crate(bytes, file_size, format)
+    let decoded = match format {
+        ImageFormat::Gif => decode_gif(bytes, file_size),
+        ImageFormat::WebP => decode_webp(bytes, file_size),
+        ImageFormat::OpenExr => decode_exr(bytes, file_size),
+        #[cfg(feature = "turbojpeg-native")]
+        ImageFormat::Jpeg => decode_jpeg_with_turbojpeg(bytes, file_size, target_max_side)
+            .or_else(|_| decode_with_image_crate(bytes, file_size, format)),
+        ImageFormat::Png => decode_png_with_streaming_resize(bytes, file_size, target_max_side)
+            .or_else(|_| decode_with_image_crate(bytes, file_size, format)),
+        _ => decode_with_image_crate(bytes, file_size, format),
     }?;
-
-    #[cfg(not(feature = "turbojpeg-native"))]
-    let decoded = {
-        if format == ImageFormat::Gif {
-            decode_gif(bytes, file_size)
-        } else if format == ImageFormat::WebP {
-            decode_webp(bytes, file_size)
-        } else if format == ImageFormat::OpenExr {
-            decode_exr(bytes, file_size)
-        } else if format == ImageFormat::Png {
-            decode_png_with_streaming_resize(bytes, file_size, target_max_side)
-                .or_else(|_| decode_with_image_crate(bytes, file_size, format))
-        } else {
-            decode_with_image_crate(bytes, file_size, format)
-        }?
-    };
 
     normalize_orientation(decoded, image_orientation(bytes, format))
 }
@@ -1398,7 +1377,7 @@ fn parse_xpm_color(definition: &str) -> Result<[u8; 4], String> {
 /// * `target_max_side == 0` or `source_long_side == 0` -> `(8, 8)` (no scaling).
 /// * If even 8/8 does not satisfy the target (target larger than source),
 ///   return `(8, 8)` so we hand back the original size.
-#[cfg_attr(not(feature = "turbojpeg-native"), allow(dead_code))]
+#[cfg(any(feature = "turbojpeg-native", test))]
 fn select_jpeg_scaling_factor(source_long_side: u32, target_max_side: u32) -> (u32, u32) {
     if target_max_side == 0 || source_long_side == 0 {
         return (8, 8);

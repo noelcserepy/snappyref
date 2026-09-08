@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
 use eframe::egui;
 
 use crate::data::CanvasImageLod;
@@ -28,53 +29,11 @@ const URL_IMPORT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const URL_IMPORT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const URL_IMPORT_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 
-struct ImportedImagePersistRequest<'a> {
-    library: &'a Library,
-    target_board_id: i64,
-    placement_id: i64,
-    stored_path: &'a std::path::Path,
-    mime_type: &'a str,
-    width: u32,
-    height: u32,
-    file_size: u64,
-    original_sha256: &'a str,
-    arranged_world: egui::Pos2,
-    initial_scale: f32,
-}
-
-fn persist_imported_image_with_exact_reuse(
-    request: ImportedImagePersistRequest<'_>,
-) -> Result<crate::data::Placement, String> {
-    let placement = request
-        .library
-        .persist_imported_image_resolving_placement_with_hash(
-            request.target_board_id,
-            Some(request.placement_id),
-            request.stored_path,
-            request.mime_type,
-            request.width,
-            request.height,
-            request.file_size,
-            Some(request.original_sha256),
-            request.arranged_world,
-            request.initial_scale,
-        )?;
-    if placement.require_loaded_asset().original_path != request.stored_path {
-        match std::fs::remove_file(request.stored_path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(format!("failed to remove duplicate original: {error}")),
-        }
-    }
-    Ok(placement)
-}
-
 #[cfg(test)]
 pub fn import_path_sync(
     library: &Library,
     source_path: PathBuf,
     desired_world: egui::Pos2,
-    auto_scale: bool,
 ) -> Result<PreparedPlacementImage, String> {
     let target_board_id = library.load_user_session()?.active_board_id;
     import_sync(
@@ -89,7 +48,6 @@ pub fn import_path_sync(
                 reserved_world: desired_world,
                 max_texture_side: usize::MAX,
                 canvas_image_settings: CanvasImageSettings::default(),
-                auto_scale,
                 placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
                 trace: None,
             },
@@ -133,7 +91,6 @@ pub(crate) fn import_sync(
         reserved_world,
         max_texture_side,
         canvas_image_settings,
-        auto_scale,
         placement_target_area,
         mut trace,
     } = request;
@@ -151,25 +108,23 @@ pub(crate) fn import_sync(
     let initial_scale = display_scale_for_placement_target_area(
         decoded.source_width,
         decoded.source_height,
-        auto_scale,
         placement_target_area,
     );
 
     let store_started_at = Instant::now();
     let stored = store_original(library, &decoded)?;
-    let placement = persist_imported_image_with_exact_reuse(ImportedImagePersistRequest {
-        library,
+    let placement = library.register_imported_asset_for_placement(
         target_board_id,
         placement_id,
-        stored_path: &stored.path,
-        mime_type: &decoded.mime_type,
-        width: decoded.source_width,
-        height: decoded.source_height,
-        file_size: stored.file_size,
-        original_sha256: &stored.sha256,
-        arranged_world: reserved_world,
+        &stored.path,
+        &decoded.mime_type,
+        decoded.source_width,
+        decoded.source_height,
+        stored.file_size,
+        Some(&stored.sha256),
+        reserved_world,
         initial_scale,
-    })?;
+    )?;
     let store_and_persist = store_started_at.elapsed();
 
     let preview_started_at = Instant::now();

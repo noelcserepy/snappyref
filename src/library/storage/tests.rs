@@ -81,7 +81,6 @@ fn update_preservation_smoke() {
     session.viewport.camera_pan_y = 456.0;
     session.viewport.camera_zoom = 1.75;
     session.viewport.canvas_background = CanvasBackground::Grid;
-    session.settings.auto_image_scaling = false;
     session.settings.placement_gap = 36.0;
     session.settings.placement_target_area = 54_321.0;
     session.settings.canvas_image_max_side = 4096;
@@ -116,7 +115,6 @@ fn update_preservation_smoke() {
         reloaded_session.viewport.canvas_background,
         CanvasBackground::Grid
     );
-    assert!(!reloaded_session.settings.auto_image_scaling);
     assert_eq!(reloaded_session.settings.placement_gap, 36.0);
     assert_eq!(reloaded_session.settings.placement_target_area, 54_321.0);
     assert_eq!(reloaded_session.settings.canvas_image_max_side, 4096);
@@ -151,7 +149,6 @@ fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
     let library = Library::initialize(root.to_path_buf()).unwrap();
 
     let mut session = library.load_user_session().unwrap();
-    session.settings.auto_image_scaling = false;
     session.settings.placement_gap = 48.0;
     session.settings.placement_target_area = 45_000.0;
     session.settings.canvas_image_max_side = 4096;
@@ -201,7 +198,6 @@ fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let reloaded = library.load_user_session().unwrap();
 
-    assert!(!reloaded.settings.auto_image_scaling);
     assert_eq!(reloaded.settings.placement_gap, 48.0);
     assert_eq!(reloaded.settings.placement_target_area, 45_000.0);
     assert_eq!(reloaded.settings.canvas_image_max_side, 4096);
@@ -284,7 +280,6 @@ fn existing_legacy_user_session_columns_backfill_payload() {
     assert_eq!(session.viewport.camera_pan_y, 20.0);
     assert_eq!(session.viewport.camera_zoom, 1.5);
     assert_eq!(session.viewport.canvas_background, CanvasBackground::Grid);
-    assert!(!session.settings.auto_image_scaling);
     assert_eq!(session.settings.placement_gap, 48.0);
     assert_eq!(session.settings.placement_target_area, 45_000.0);
     assert_eq!(session.settings.canvas_image_max_side, 4096);
@@ -356,7 +351,6 @@ fn existing_user_session_rows_migrate_to_default_preferences() {
     assert_eq!(session.viewport.camera_pan_x, 10.0);
     assert_eq!(session.viewport.camera_pan_y, 20.0);
     assert_eq!(session.viewport.camera_zoom, 1.5);
-    assert!(session.settings.auto_image_scaling);
     assert_eq!(
         session.settings.placement_gap,
         crate::data::DEFAULT_PLACEMENT_GAP

@@ -5,7 +5,7 @@ fn destructive_confirmation_shell_has_no_destructive_outline() {
     let ctx = egui::Context::default();
     crate::ui::theme::configure_theme(&ctx);
 
-    let frame = crate::app::dialogs::destructive_confirmation_frame(&ctx, 1.0);
+    let frame = crate::app::dialogs::dialog_frame(&ctx, 1.0);
 
     assert_eq!(frame.stroke, egui::Stroke::NONE);
     assert_eq!(frame.fill, crate::ui::theme::SURFACE);
@@ -359,7 +359,7 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
     let source = library
         .persist_imported_image_resolving_placement(
             library.load_user_session().unwrap().active_board_id,
-            Some(loading.state.id),
+            loading.state.id,
             &source_path,
             "image/png",
             2,
@@ -370,6 +370,15 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
         )
         .unwrap();
     let source_asset_id = source.require_loaded_asset().id;
+    library
+        .upsert_asset_embedding_blob(source_asset_id, "crop-test", &[1.0, 0.0])
+        .unwrap();
+    assert!(
+        library
+            .next_embedding_backfill_job_for_model("crop-test", 0)
+            .unwrap()
+            .is_none()
+    );
     let cropped_path = library
         .store_cropped_rgba_image("source-crop", &[0, 255, 0, 255], 1, 1)
         .unwrap();
@@ -414,6 +423,14 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
         .id;
     assert_ne!(cropped_asset_id, source_asset_id);
     app.flush_persistence();
+    assert_eq!(
+        library
+            .next_embedding_backfill_job_for_model("crop-test", 0)
+            .unwrap()
+            .unwrap()
+            .asset_id,
+        cropped_asset_id
+    );
     let stored_after_crop = &library.load_placements().unwrap()[0];
     assert_eq!(
         stored_after_crop.require_loaded_asset().id,
@@ -1464,8 +1481,34 @@ fn url_batch_previews_use_balanced_layout_for_approximate_dimensions() {
         })
         .collect::<Vec<_>>();
 
-    let previews =
-        app.dropped_import_previews(&sources, egui::pos2(100.0, 200.0), test_screen_rect());
+    let intents = sources
+        .iter()
+        .map(|source| {
+            crate::placement::creation::ProvisionalSourceIntent::SourceIntent(
+                crate::placement::content_resolution::PlacementCreation::source_intent(source),
+            )
+        })
+        .collect();
+    let settings = app.placement_creation_settings();
+    let batch = crate::placement::lifecycle::start_provisional_batch(
+        &mut app.canvas,
+        intents,
+        egui::pos2(100.0, 200.0),
+        test_screen_rect(),
+        settings,
+    );
+    let previews = batch
+        .placement_ids
+        .iter()
+        .map(|id| {
+            app.canvas
+                .placement_for_id(*id)
+                .unwrap()
+                .state
+                .geometry
+                .center
+        })
+        .collect::<Vec<_>>();
     let distinct_x = previews
         .iter()
         .fold(Vec::<i32>::new(), |mut values, center| {

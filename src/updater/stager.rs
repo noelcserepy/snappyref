@@ -12,11 +12,11 @@
 //! absolute paths before any filesystem write. A traversal attempt
 //! aborts staging and unwinds the partially-extracted tree.
 
-use std::fs::{self, File};
+use std::fs;
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
-use zip::ZipArchive;
+use crate::zip_extraction::{self, ExtractError};
 
 use crate::updater::platform::TargetPlatform;
 
@@ -65,6 +65,17 @@ impl From<io::Error> for StageError {
     }
 }
 
+impl From<ExtractError> for StageError {
+    fn from(error: ExtractError) -> Self {
+        match error {
+            ExtractError::Io(error) => Self::Io(error),
+            ExtractError::InvalidZip(error) => Self::InvalidZip(error),
+            ExtractError::PathTraversal { entry } => Self::PathTraversal { entry },
+            ExtractError::InvalidLayout(error) => Self::InvalidLayout(error),
+        }
+    }
+}
+
 /// Outcome of a successful staging.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct StageOutcome {
@@ -109,7 +120,7 @@ pub(crate) fn extract_and_validate(
     }
     fs::create_dir_all(staging_root)?;
 
-    match extract_inner(zip_path, staging_root) {
+    match zip_extraction::extract(zip_path, staging_root, true).map_err(StageError::from) {
         Ok(_) => {}
         Err(error) => {
             let _ = fs::remove_dir_all(staging_root);
@@ -130,91 +141,11 @@ pub(crate) fn extract_and_validate(
     }
 }
 
-fn extract_inner(zip_path: &Path, staging_root: &Path) -> Result<(), StageError> {
-    let file = File::open(zip_path).map_err(StageError::Io)?;
-    let mut archive =
-        ZipArchive::new(file).map_err(|error| StageError::InvalidZip(error.to_string()))?;
-
-    for i in 0..archive.len() {
-        let mut entry = archive
-            .by_index(i)
-            .map_err(|error| StageError::InvalidZip(error.to_string()))?;
-        let raw_name = entry.name().to_owned();
-        let safe_relative = sanitize_entry_path(&raw_name)?;
-        let out_path = staging_root.join(&safe_relative);
-
-        if entry.is_dir() {
-            fs::create_dir_all(&out_path)?;
-            continue;
-        }
-
-        if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut out_file = File::create(&out_path)?;
-        io::copy(&mut entry, &mut out_file)?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Some(mode) = entry.unix_mode() {
-                let _ = fs::set_permissions(&out_path, fs::Permissions::from_mode(mode));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Reject entries whose name contains `..`, an absolute path, a Windows
-/// drive prefix, or any other component that would escape the staging
-/// root. Returns the cleaned `Path` (forward-slash-normalized).
-fn sanitize_entry_path(name: &str) -> Result<PathBuf, StageError> {
-    if name.is_empty() {
-        return Err(StageError::InvalidLayout(
-            "zip contains an empty entry name".to_owned(),
-        ));
-    }
-    // Reject Windows drive prefixes (`C:`) and the back-slash absolute
-    // form before parsing as a Path so we don't accidentally accept them
-    // on a non-Windows host.
-    if name.starts_with('/') || name.starts_with('\\') {
-        return Err(StageError::PathTraversal {
-            entry: name.to_owned(),
-        });
-    }
-    if name.len() >= 2 && name.as_bytes()[1] == b':' {
-        return Err(StageError::PathTraversal {
-            entry: name.to_owned(),
-        });
-    }
-
-    // Treat both kinds of separator as path separators so a back-slash
-    // crafted on a Windows-style zip cannot evade Component matching on
-    // a Unix host.
-    let normalized = name.replace('\\', "/");
-    let mut clean = PathBuf::new();
-    for component in Path::new(&normalized).components() {
-        match component {
-            Component::Normal(part) => clean.push(part),
-            Component::CurDir => continue,
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(StageError::PathTraversal {
-                    entry: name.to_owned(),
-                });
-            }
-        }
-    }
-    if clean.as_os_str().is_empty() {
-        return Err(StageError::InvalidLayout(format!(
-            "zip entry `{name}` resolves to no path"
-        )));
-    }
-    Ok(clean)
-}
-
 /// Verify the extracted tree matches the platform's expected layout.
-fn validate_layout(bundle_root: &Path, platform: TargetPlatform) -> Result<(), StageError> {
+pub(crate) fn validate_layout(
+    bundle_root: &Path,
+    platform: TargetPlatform,
+) -> Result<(), StageError> {
     if !bundle_root.is_dir() {
         return Err(StageError::InvalidLayout(format!(
             "expected top-level `{}/` folder inside the zip",
@@ -223,7 +154,7 @@ fn validate_layout(bundle_root: &Path, platform: TargetPlatform) -> Result<(), S
     }
     match platform {
         TargetPlatform::Macos => {
-            // Match the macOS install layout used by library_location:
+            // Match the macOS install layout used by install_paths:
             //   SnappyRef/SnappyRef.app/Contents/MacOS/{executable}
             // We don't pin the executable filename — slices that build
             // the manifest may rename it — but Contents/MacOS must
@@ -273,28 +204,11 @@ fn validate_layout(bundle_root: &Path, platform: TargetPlatform) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempRoot;
+    use std::fs::File;
     use std::io::Write;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
     use zip::write::SimpleFileOptions;
     use zip::{CompressionMethod, ZipWriter};
-
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    fn unique_temp_dir(prefix: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "snappyref-stager-{prefix}-{}-{}-{nanos}",
-            std::process::id(),
-            counter,
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
 
     fn options() -> SimpleFileOptions {
         SimpleFileOptions::default().compression_method(CompressionMethod::Stored)
@@ -341,7 +255,7 @@ mod tests {
 
     #[test]
     fn extracts_macos_zip_with_expected_layout() {
-        let dir = unique_temp_dir("macos-ok");
+        let dir = TempRoot::new("macos-ok");
         let zip_path = dir.join("ok.zip");
         write_zip(&zip_path, &macos_zip_entries());
         let staging = dir.join("staging-1.0.0");
@@ -355,13 +269,11 @@ mod tests {
                 .join("SnappyRef/SnappyRef.app/Contents/MacOS/snappyref")
                 .is_file()
         );
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn extracts_windows_zip_with_expected_layout() {
-        let dir = unique_temp_dir("windows-ok");
+        let dir = TempRoot::new("windows-ok");
         let zip_path = dir.join("ok.zip");
         write_zip(&zip_path, &windows_zip_entries());
         let staging = dir.join("staging-1.0.0");
@@ -370,13 +282,11 @@ mod tests {
 
         assert_eq!(outcome.bundle_root, staging.join("SnappyRef"));
         assert!(staging.join("SnappyRef/snappyref.exe").is_file());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rejects_zip_entry_with_parent_traversal() {
-        let dir = unique_temp_dir("traversal");
+        let dir = TempRoot::new("traversal");
         let zip_path = dir.join("evil.zip");
         // The malicious entry: a sibling outside SnappyRef.
         write_zip(
@@ -398,13 +308,11 @@ mod tests {
         );
         // The escape sibling must not exist on disk.
         assert!(!dir.join("escape.txt").exists());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rejects_zip_entry_with_absolute_path() {
-        let dir = unique_temp_dir("absolute");
+        let dir = TempRoot::new("absolute");
         let zip_path = dir.join("abs.zip");
         write_zip(&zip_path, &[("/etc/passwd", b"nope")]);
         let staging = dir.join("staging-abs");
@@ -412,41 +320,35 @@ mod tests {
         let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap_err();
         assert!(matches!(err, StageError::PathTraversal { .. }), "{err:?}");
         assert!(!staging.exists());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rejects_zip_entry_with_windows_drive_prefix() {
-        let dir = unique_temp_dir("drive");
+        let dir = TempRoot::new("drive");
         let zip_path = dir.join("drive.zip");
         write_zip(&zip_path, &[("C:/SnappyRef/snappyref.exe", b"nope")]);
         let staging = dir.join("staging-drive");
 
         let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Windows).unwrap_err();
         assert!(matches!(err, StageError::PathTraversal { .. }), "{err:?}");
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rejects_zip_entry_with_backslash_parent_traversal() {
         // On a publisher built on Windows, separator may be `\`. The
         // sanitizer must normalize so it can still catch `..`.
-        let dir = unique_temp_dir("backslash");
+        let dir = TempRoot::new("backslash");
         let zip_path = dir.join("bs.zip");
         write_zip(&zip_path, &[("SnappyRef\\..\\escape.txt", b"nope")]);
         let staging = dir.join("staging-bs");
 
         let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap_err();
         assert!(matches!(err, StageError::PathTraversal { .. }), "{err:?}");
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rejects_malformed_zip() {
-        let dir = unique_temp_dir("malformed");
+        let dir = TempRoot::new("malformed");
         let zip_path = dir.join("garbage.zip");
         fs::write(&zip_path, b"this is not a zip file").unwrap();
         let staging = dir.join("staging-malformed");
@@ -454,13 +356,11 @@ mod tests {
         let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap_err();
         assert!(matches!(err, StageError::InvalidZip(_)), "{err:?}");
         assert!(!staging.exists());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rejects_zip_missing_top_level_folder() {
-        let dir = unique_temp_dir("no-top");
+        let dir = TempRoot::new("no-top");
         let zip_path = dir.join("flat.zip");
         // Note: no `SnappyRef/` prefix; valid archives always have one
         // portable install root.
@@ -473,13 +373,11 @@ mod tests {
             other => panic!("expected InvalidLayout, got {other:?}"),
         }
         assert!(!staging.exists());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rejects_macos_zip_missing_app_bundle() {
-        let dir = unique_temp_dir("no-app");
+        let dir = TempRoot::new("no-app");
         let zip_path = dir.join("no-app.zip");
         write_zip(
             &zip_path,
@@ -498,13 +396,11 @@ mod tests {
             other => panic!("expected InvalidLayout, got {other:?}"),
         }
         assert!(!staging.exists());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rejects_windows_zip_missing_exe() {
-        let dir = unique_temp_dir("no-exe");
+        let dir = TempRoot::new("no-exe");
         let zip_path = dir.join("no-exe.zip");
         write_zip(
             &zip_path,
@@ -519,13 +415,11 @@ mod tests {
             }
             other => panic!("expected InvalidLayout, got {other:?}"),
         }
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rejects_macos_zip_missing_updater_helper() {
-        let dir = unique_temp_dir("macos-no-helper");
+        let dir = TempRoot::new("macos-no-helper");
         let zip_path = dir.join("no-helper.zip");
         write_zip(
             &zip_path,
@@ -550,13 +444,11 @@ mod tests {
             }
             other => panic!("expected InvalidLayout, got {other:?}"),
         }
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn extract_replaces_existing_staging_dir() {
-        let dir = unique_temp_dir("replace");
+        let dir = TempRoot::new("replace");
         let zip_path = dir.join("ok.zip");
         write_zip(&zip_path, &macos_zip_entries());
         let staging = dir.join("staging-1.0.0");
@@ -571,7 +463,5 @@ mod tests {
             !staging.join("stale-file.txt").exists(),
             "previous staging contents must be wiped before re-extract",
         );
-
-        let _ = fs::remove_dir_all(&dir);
     }
 }

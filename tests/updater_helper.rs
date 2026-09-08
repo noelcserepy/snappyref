@@ -328,3 +328,43 @@ fn helper_rejects_malformed_descriptor() {
     let probe = fs::read(fixture.current_bundle.join("Contents/MacOS/snappyref")).unwrap();
     assert_eq!(probe, b"old-binary");
 }
+
+/// Moving the current bundle also removes this deliberately nested source path,
+/// causing the actual promotion rename to fail after backup succeeds.
+#[test]
+fn helper_restores_current_bundle_when_promotion_fails() {
+    let fixture = Fixture::new("9.9.9");
+    let staged_bundle = fixture.current_bundle.join("nested-staging.app");
+    fs::create_dir_all(&staged_bundle).unwrap();
+    let value = PendingUpdateDescriptor {
+        parent_pid: 0,
+        expected_new_version: "9.9.9".to_owned(),
+        install_root: fixture.install_root.clone(),
+        current_bundle: fixture.current_bundle.clone(),
+        staged_bundle,
+        staging_dir: fixture.staging_dir.clone(),
+        launch_args: vec![],
+    };
+    let path = descriptor::default_path(&fixture.install_root);
+    descriptor::write(&path, &value).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_snappyref-updater"))
+        .arg(path)
+        .env("SNAPPYREF_UPDATER_PARENT_WAIT_TIMEOUT_MS", "0")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("failed to move staged bundle"));
+    assert_eq!(
+        fs::read(fixture.current_bundle.join("Contents/MacOS/snappyref")).unwrap(),
+        b"old-binary"
+    );
+    assert!(!fixture.backup_path().exists());
+    assert_eq!(
+        fs::read(fixture.library_dir.join("workspace.db")).unwrap(),
+        b"library-data"
+    );
+    assert_eq!(
+        fs::read(fixture.models_dir.join("model.bin")).unwrap(),
+        b"model-data"
+    );
+}

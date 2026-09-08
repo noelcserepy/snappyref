@@ -21,11 +21,9 @@ pub(crate) struct ContentResolutionReservation {
 pub(crate) struct ContentResolutionRequestConfig {
     pub(crate) max_texture_side: usize,
     pub(crate) canvas_image_max_side: u32,
-    pub(crate) auto_image_scaling: bool,
     pub(crate) placement_target_area: f32,
 }
 
-#[derive(Default)]
 pub(crate) struct PlacementCreation {
     pub(crate) batches: super::creation::PlacementCreationBatchTracker,
     next_queue_id: u64,
@@ -123,6 +121,31 @@ impl PlacementCreation {
         }
     }
 
+    pub(crate) fn enqueue_history_placement(
+        &mut self,
+        worker: &crate::image_preparation::ImagePrepWorker,
+        board_id: i64,
+        placement: Placement,
+        max_texture_side: usize,
+        canvas_image_settings: crate::image_preparation::CanvasImageSettings,
+    ) -> Result<(), String> {
+        let reservation = self.reserve_history_placement(board_id, placement.id());
+        let result = worker.enqueue(crate::image_preparation::ImagePrepRequest::LoadExisting {
+            target_board_id: board_id,
+            queue_id: Some(reservation.queue_id),
+            placement,
+            max_texture_side,
+            canvas_image_settings,
+            target_lod: crate::data::CanvasImageLod::Working,
+            priority: crate::image_preparation::ExistingLoadPriority::Background,
+            trace: None,
+        });
+        if result.is_err() {
+            self.cancel(reservation);
+        }
+        result
+    }
+
     pub(crate) fn reserve_history_placement(
         &mut self,
         target_board_id: i64,
@@ -218,9 +241,6 @@ impl PlacementCreation {
     }
 
     fn next_queue_id(&mut self) -> u64 {
-        if self.next_queue_id == 0 {
-            self.next_queue_id = 1;
-        }
         let queue_id = self.next_queue_id;
         self.next_queue_id = self.next_queue_id.saturating_add(1);
         queue_id
@@ -243,7 +263,6 @@ pub(crate) fn import_request(
         canvas_image_settings: crate::image_preparation::CanvasImageSettings {
             max_side: config.canvas_image_max_side,
         },
-        auto_scale: config.auto_image_scaling,
         placement_target_area: config.placement_target_area,
         trace,
     })
@@ -304,7 +323,6 @@ mod tests {
             super::ContentResolutionRequestConfig {
                 max_texture_side: 512,
                 canvas_image_max_side: 1024,
-                auto_image_scaling: true,
                 placement_target_area: 14400.0,
             },
             None,
@@ -319,7 +337,6 @@ mod tests {
         assert_eq!(request.reserved_world, eframe::egui::pos2(10.0, 20.0));
         assert_eq!(request.max_texture_side, 512);
         assert_eq!(request.canvas_image_settings.max_side, 1024);
-        assert!(request.auto_scale);
         assert_eq!(request.placement_target_area, 14400.0);
     }
 }

@@ -5,8 +5,6 @@ use super::boards::board_is_non_archived;
 use super::connection::Library;
 use super::connection::write_transaction;
 use super::placement_content::StoredPlacementContent;
-#[cfg(test)]
-use super::stack_order::append_canvas_stack_item;
 use crate::data::Asset;
 #[cfg(test)]
 use crate::data::CanvasStackItem;
@@ -61,20 +59,6 @@ fn placement_content_state(content: &PlacementContent) -> &'static str {
         PlacementContent::Loading { .. } => "loading",
         PlacementContent::Failed { .. } => "failed",
     }
-}
-
-#[cfg(test)]
-fn append_committed_placement(
-    transaction: &Transaction<'_>,
-    board_id: i64,
-    placement: &Placement,
-) -> Result<(), String> {
-    restore_board_placement(transaction, board_id, placement)?;
-    append_canvas_stack_item(
-        transaction,
-        board_id,
-        CanvasStackItem::Placement(placement.state.id),
-    )
 }
 
 pub(super) fn restore_board_placement(
@@ -321,6 +305,23 @@ impl Library {
     }
 
     #[cfg(test)]
+    fn fixture_append_placement(&self, board_id: i64, placement: &Placement) -> Result<(), String> {
+        let mut stack = self.load_board_document(board_id)?.stack_order;
+        stack.push(CanvasStackItem::Placement(placement.state.id));
+        self.persist_board_unit(
+            &super::BoardDurabilityOperation::Document {
+                board_id,
+                changes: crate::canvas::CanvasDocumentChanges {
+                    updated_placements: vec![placement.clone()],
+                    stack_order: Some(stack),
+                    ..Default::default()
+                },
+            },
+            &self.load_document_history()?,
+        )
+    }
+
+    #[cfg(test)]
     pub fn persist_imported_image(
         &self,
         stored_path: &Path,
@@ -383,34 +384,19 @@ impl Library {
         desired_world: egui::Pos2,
         initial_scale: f32,
     ) -> Result<Placement, String> {
-        let mut connection = self.connection()?;
-        let transaction = write_transaction(&mut connection, "placement import")?;
-
-        let asset = load_or_insert_exact_asset(
-            &transaction,
+        let placement = self.register_imported_asset_for_placement(
+            board_id,
+            self.allocate_document_id(),
             stored_path,
             mime_type,
             width,
             height,
             file_size,
             original_sha256,
+            desired_world,
+            initial_scale,
         )?;
-        let placement = Placement::loaded(
-            PlacementState::with_display_size(
-                self.allocate_document_id(),
-                desired_world,
-                egui::vec2(asset.width as f32, asset.height as f32),
-                initial_scale,
-                0.0,
-                0,
-                false,
-            ),
-            asset,
-        );
-        append_committed_placement(&transaction, board_id, &placement)?;
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit transaction: {error}"))?;
+        self.fixture_append_placement(board_id, &placement)?;
         Ok(placement)
     }
 
@@ -418,7 +404,7 @@ impl Library {
     pub fn persist_imported_image_resolving_placement(
         &self,
         board_id: i64,
-        placement_id: Option<i64>,
+        placement_id: i64,
         stored_path: &Path,
         mime_type: &str,
         width: u32,
@@ -427,7 +413,7 @@ impl Library {
         desired_world: egui::Pos2,
         initial_scale: f32,
     ) -> Result<Placement, String> {
-        self.persist_imported_image_resolving_placement_with_hash(
+        self.register_imported_asset_for_placement(
             board_id,
             placement_id,
             stored_path,
@@ -441,10 +427,13 @@ impl Library {
         )
     }
 
-    pub fn persist_imported_image_resolving_placement_with_hash(
+    /// Registers or reuses prepared Asset content and returns proposed Placement state.
+    /// The caller supplies an accepted identity and persists the resulting Board change.
+    /// Successful reuse removes the redundant prepared original.
+    pub fn register_imported_asset_for_placement(
         &self,
         board_id: i64,
-        placement_id: Option<i64>,
+        placement_id: i64,
         stored_path: &Path,
         mime_type: &str,
         width: u32,
@@ -454,10 +443,6 @@ impl Library {
         desired_world: egui::Pos2,
         initial_scale: f32,
     ) -> Result<Placement, String> {
-        let Some(placement_id) = placement_id else {
-            return Err("import persistence requires an accepted Placement".to_owned());
-        };
-
         let mut connection = self.connection()?;
         if !board_is_non_archived(&connection, board_id)? {
             return Err(format!(
@@ -517,6 +502,13 @@ impl Library {
         transaction
             .commit()
             .map_err(|error| format!("failed to commit imported asset: {error}"))?;
+        if asset.original_path != stored_path {
+            match std::fs::remove_file(stored_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("failed to remove duplicate original: {error}")),
+            }
+        }
         Ok(Placement {
             state: item,
             content: PlacementContent::Loaded { asset },
@@ -600,17 +592,10 @@ impl Library {
         Ok(placement)
     }
 
-    /// Test seam: appends a Placement to the active Board through the same
-    /// row writer durability uses.
     #[cfg(test)]
     fn insert_committed_placement(&self, placement: &Placement) -> Result<(), String> {
-        let mut connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let transaction = write_transaction(&mut connection, "placement")?;
-        append_committed_placement(&transaction, active_board_id, placement)?;
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit placement transaction: {error}"))
+        let board_id = self.load_user_session()?.active_board_id;
+        self.fixture_append_placement(board_id, placement)
     }
 
     #[cfg(test)]
@@ -702,37 +687,11 @@ impl Library {
 
     #[cfg(test)]
     pub fn archive_placements(&self, placement_ids: &[i64]) -> Result<(), String> {
-        if placement_ids.is_empty() {
-            return Ok(());
-        }
-
-        let mut connection = self.connection()?;
-        let transaction = write_transaction(&mut connection, "archive")?;
-
-        for item_id in placement_ids {
-            transaction
-                .execute(
-                    "UPDATE board_items SET archived = 1 WHERE id = ?1",
-                    params![item_id],
-                )
-                .map_err(|error| format!("failed to archive placement {item_id}: {error}"))?;
-            transaction
-                .execute(
-                    "DELETE FROM canvas_stack_items
-                     WHERE item_kind = 'placement'
-                       AND item_id = ?1",
-                    params![item_id],
-                )
-                .map_err(|error| {
-                    format!("failed to remove placement {item_id} from canvas stack: {error}")
-                })?;
-        }
-
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit archive transaction: {error}"))?;
-
-        Ok(())
+        self.fixture_document_changes(crate::canvas::CanvasDocumentChanges {
+            archived_placement_ids: placement_ids.to_vec(),
+            stack_order: Some(self.load_canvas_stack_order()?.into_iter().filter(|item| !matches!(item, CanvasStackItem::Placement(id) if placement_ids.contains(id))).collect()),
+            ..Default::default()
+        })
     }
 
     #[cfg(test)]

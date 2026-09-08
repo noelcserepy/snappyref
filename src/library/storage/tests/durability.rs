@@ -136,12 +136,11 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
             1_000,
         )
         .unwrap();
-    assert_eq!(
+    assert!(
         library
-            .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 1_000)
+            .next_embedding_backfill_job_for_model("mobileclip_s0", 1_000)
             .unwrap()
-            .len(),
-        1
+            .is_some()
     );
 
     library
@@ -155,16 +154,15 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
         .unwrap();
     assert!(
         library
-            .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 1_309)
+            .next_embedding_backfill_job_for_model("mobileclip_s0", 1_309)
             .unwrap()
-            .is_empty()
+            .is_none()
     );
-    assert_eq!(
+    assert!(
         library
-            .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 1_310)
+            .next_embedding_backfill_job_for_model("mobileclip_s0", 1_310)
             .unwrap()
-            .len(),
-        1
+            .is_some()
     );
 
     library
@@ -178,9 +176,9 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
         .unwrap();
     assert!(
         library
-            .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 2_000)
+            .next_embedding_backfill_job_for_model("mobileclip_s0", 2_000)
             .unwrap()
-            .is_empty()
+            .is_none()
     );
 }
 
@@ -225,16 +223,15 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
 
     assert!(
         library
-            .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 1_309)
+            .next_embedding_backfill_job_for_model("mobileclip_s0", 1_309)
             .unwrap()
-            .is_empty()
+            .is_none()
     );
-    assert_eq!(
+    assert!(
         library
-            .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 1_310)
+            .next_embedding_backfill_job_for_model("mobileclip_s0", 1_310)
             .unwrap()
-            .len(),
-        1
+            .is_some()
     );
 
     library
@@ -246,9 +243,9 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
         .unwrap();
     assert!(
         library
-            .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 2_000)
+            .next_embedding_backfill_job_for_model("mobileclip_s0", 2_000)
             .unwrap()
-            .is_empty()
+            .is_none()
     );
 }
 
@@ -274,14 +271,8 @@ fn terminal_embedding_failures_are_not_automatic_retry_jobs() {
 
     assert!(
         library
-            .missing_live_canvas_asset_jobs_for_model("mobileclip_s0")
+            .next_embedding_backfill_job_for_model("mobileclip_s0", 10_000)
             .unwrap()
-            .is_empty()
-    );
-    assert!(
-        library
-            .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 10_000)
-            .unwrap()
-            .is_empty()
+            .is_none()
     );
 }

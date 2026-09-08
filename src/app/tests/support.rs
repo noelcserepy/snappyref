@@ -958,7 +958,7 @@ pub(super) fn persisted_loaded_item(
     let placement = library
         .persist_imported_image_resolving_placement(
             target_board_id,
-            Some(placement_id),
+            placement_id,
             &stored,
             "image/png",
             1,

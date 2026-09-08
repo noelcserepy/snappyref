@@ -1591,7 +1591,6 @@ fn board_delete_modal_blocks_sidebar_tabs_and_settings() {
     let mut app = test_app(Some(library.clone()));
     app.sidebar_open = true;
     app.sidebar_tab = SidebarTab::Boards;
-    app.settings.auto_image_scaling = true;
     app.canvas.set_background(CanvasBackground::Grid);
     app.request_board_delete(second.id, second.name.clone());
     let mut harness = app_harness(app, |ctx, app| {
@@ -1624,7 +1623,6 @@ fn board_delete_modal_blocks_sidebar_tabs_and_settings() {
     assert_eq!(harness.state().sidebar_tab, SidebarTab::Options);
     assert_eq!(harness.state().canvas.background(), CanvasBackground::Grid);
     assert_eq!(harness.state().settings.rotation_snap_degrees, 15.0);
-    assert!(harness.state().settings.auto_image_scaling);
     assert!(harness.state().pending_board_delete.is_some());
 }
 

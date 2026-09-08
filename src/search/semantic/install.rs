@@ -1,12 +1,12 @@
 #![cfg_attr(test, allow(dead_code))]
 
-use std::fs::{self, File};
+use std::fs;
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use zip::ZipArchive;
+use crate::zip_extraction::{self, ExtractError};
 
 use super::model_store::model_store_root;
 use crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
@@ -60,6 +60,17 @@ impl std::fmt::Display for SemanticSearchInstallError {
 impl From<io::Error> for SemanticSearchInstallError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
+    }
+}
+
+impl From<ExtractError> for SemanticSearchInstallError {
+    fn from(error: ExtractError) -> Self {
+        match error {
+            ExtractError::Io(error) => Self::Io(error),
+            ExtractError::InvalidZip(error) => Self::InvalidZip(error),
+            ExtractError::PathTraversal { entry } => Self::PathTraversal { entry },
+            ExtractError::InvalidLayout(error) => Self::InvalidLayout(error),
+        }
     }
 }
 
@@ -211,7 +222,8 @@ fn stage_and_promote(
         fs::remove_dir_all(staging_root)?;
     }
     fs::create_dir_all(staging_root)?;
-    match extract_zip(zip_path, staging_root)
+    match zip_extraction::extract(zip_path, staging_root, false)
+        .map_err(SemanticSearchInstallError::from)
         .and_then(|()| validate_staged_model(staging_root, descriptor))
         .and_then(|model_root| promote_staged_model(data_root, descriptor, &model_root))
     {
@@ -224,61 +236,6 @@ fn stage_and_promote(
             Err(error)
         }
     }
-}
-
-fn extract_zip(zip_path: &Path, staging_root: &Path) -> Result<(), SemanticSearchInstallError> {
-    let file = File::open(zip_path)?;
-    let mut archive = ZipArchive::new(file)
-        .map_err(|error| SemanticSearchInstallError::InvalidZip(error.to_string()))?;
-    for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|error| SemanticSearchInstallError::InvalidZip(error.to_string()))?;
-        let raw_name = entry.name().to_owned();
-        let safe_relative = sanitize_entry_path(&raw_name)?;
-        let out_path = staging_root.join(safe_relative);
-        if entry.is_dir() {
-            fs::create_dir_all(out_path)?;
-            continue;
-        }
-        if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut out_file = File::create(out_path)?;
-        io::copy(&mut entry, &mut out_file)?;
-    }
-    Ok(())
-}
-
-fn sanitize_entry_path(name: &str) -> Result<PathBuf, SemanticSearchInstallError> {
-    if name.is_empty()
-        || name.starts_with('/')
-        || name.starts_with('\\')
-        || (name.len() >= 2 && name.as_bytes()[1] == b':')
-    {
-        return Err(SemanticSearchInstallError::PathTraversal {
-            entry: name.to_owned(),
-        });
-    }
-    let normalized = name.replace('\\', "/");
-    let mut clean = PathBuf::new();
-    for component in Path::new(&normalized).components() {
-        match component {
-            Component::Normal(part) => clean.push(part),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(SemanticSearchInstallError::PathTraversal {
-                    entry: name.to_owned(),
-                });
-            }
-        }
-    }
-    if clean.as_os_str().is_empty() {
-        return Err(SemanticSearchInstallError::PathTraversal {
-            entry: name.to_owned(),
-        });
-    }
-    Ok(clean)
 }
 
 fn validate_staged_model(
@@ -410,31 +367,14 @@ fn cleanup_attempt_paths(zip_path: &Path, staging_root: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempRoot;
+    use std::fs::File;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc::channel;
     use std::thread;
-    use std::time::{SystemTime, UNIX_EPOCH};
     use zip::write::SimpleFileOptions;
     use zip::{CompressionMethod, ZipWriter};
-
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    fn unique_temp_dir(prefix: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "snappyref-semantic-install-{prefix}-{}-{}-{nanos}",
-            std::process::id(),
-            counter
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
 
     fn options() -> SimpleFileOptions {
         SimpleFileOptions::default().compression_method(CompressionMethod::Stored)
@@ -589,7 +529,7 @@ mod tests {
 
     #[test]
     fn semantic_search_asset_download_success_installs_local_model_store() {
-        let root = unique_temp_dir("download-ok");
+        let root = TempRoot::new("download-ok");
         let zip_path = root.join("semantic.zip");
         write_zip(&zip_path, &model_entries());
         let zip_bytes = fs::read(&zip_path).unwrap();
@@ -609,13 +549,11 @@ mod tests {
         assert!(model_root.join("onnx/vision_model_int8.onnx").is_file());
         assert!(progress.contains(&SemanticSearchInstallProgress::Installed));
         assert!(!install_artifacts_exist(&root));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn semantic_search_asset_download_rejects_size_mismatch_and_cleans_up() {
-        let root = unique_temp_dir("download-size");
+        let root = TempRoot::new("download-size");
         let zip_path = root.join("semantic.zip");
         write_zip(&zip_path, &model_entries());
         let zip_bytes = fs::read(&zip_path).unwrap();
@@ -639,13 +577,11 @@ mod tests {
         )));
         assert!(!root.join("models").join(&descriptor.model_key).exists());
         assert!(!install_artifacts_exist(&root));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn semantic_search_asset_download_rejects_sha_mismatch_and_cleans_up() {
-        let root = unique_temp_dir("download-sha");
+        let root = TempRoot::new("download-sha");
         let zip_path = root.join("semantic.zip");
         write_zip(&zip_path, &model_entries());
         let zip_bytes = fs::read(&zip_path).unwrap();
@@ -667,12 +603,11 @@ mod tests {
         assert!(!install_artifacts_exist(&root));
 
         descriptor.url = "https://example.invalid/unused.zip".to_owned();
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn semantic_search_asset_download_rejects_corrupt_zip_and_removes_staging() {
-        let root = unique_temp_dir("download-corrupt");
+        let root = TempRoot::new("download-corrupt");
         let zip_bytes = b"not a zip".to_vec();
         let (url, handle) = serve_once(zip_bytes.clone());
         let mut descriptor = descriptor_for_bytes(&zip_bytes);
@@ -686,13 +621,11 @@ mod tests {
         assert!(error.contains("corrupt zip"));
         assert!(!root.join("models").join(&descriptor.model_key).exists());
         assert!(!install_artifacts_exist(&root));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn canceled_semantic_search_install_cleans_partial_paths() {
-        let root = unique_temp_dir("cancel-cleanup");
+        let root = TempRoot::new("cancel-cleanup");
         let descriptor = SemanticSearchAssetDescriptor {
             url: "https://example.invalid/snappyref-semantic-search.zip".to_owned(),
             sha256: "0".repeat(64),
@@ -727,13 +660,11 @@ mod tests {
                 .join(format!("{}.installing", descriptor.model_key))
                 .exists()
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn semantic_search_install_reports_unwritable_data_root() {
-        let root = unique_temp_dir("unwritable-root");
+        let root = TempRoot::new("unwritable-root");
         let data_root = root.join("SnappyRef");
         fs::write(&data_root, b"not a directory").unwrap();
         let descriptor = SemanticSearchAssetDescriptor {
@@ -749,13 +680,11 @@ mod tests {
 
         assert!(error.contains("io:"));
         assert!(!data_root.join("updates").exists());
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn staged_semantic_search_zip_promotes_valid_local_model_store_layout() {
-        let root = unique_temp_dir("promote");
+        let root = TempRoot::new("promote");
         let zip_path = root.join("semantic.zip");
         write_zip(&zip_path, &model_entries());
         let descriptor = descriptor_for(&zip_path);
@@ -768,13 +697,11 @@ mod tests {
         assert!(model_root.join("onnx/text_model_int8.onnx").is_file());
         assert!(model_root.join("onnx/vision_model_int8.onnx").is_file());
         assert!(!staging_root.exists());
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn failed_semantic_search_promotion_preserves_existing_local_model_store() {
-        let root = unique_temp_dir("promote-preserve");
+        let root = TempRoot::new("promote-preserve");
         let descriptor = SemanticSearchAssetDescriptor {
             url: "https://example.invalid/snappyref-semantic-search.zip".to_owned(),
             sha256: "0".repeat(64),
@@ -834,13 +761,11 @@ mod tests {
                 .join(format!("{}.previous", descriptor.model_key))
                 .exists()
         );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn staged_semantic_search_zip_rejects_unsafe_paths_and_removes_staging() {
-        let root = unique_temp_dir("unsafe");
+        let root = TempRoot::new("unsafe");
         let zip_path = root.join("semantic.zip");
         write_zip(
             &zip_path,
@@ -858,13 +783,11 @@ mod tests {
         assert!(error.to_string().contains("unsafe zip path"));
         assert!(!root.join("escape.txt").exists());
         assert!(!staging_root.exists());
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn removing_semantic_search_assets_keeps_library_and_embeddings() {
-        let root = unique_temp_dir("remove");
+        let root = TempRoot::new("remove");
         let descriptor = SemanticSearchAssetDescriptor {
             url: "https://example.invalid/snappyref-semantic-search.zip".to_owned(),
             sha256: "0".repeat(64),
@@ -883,7 +806,5 @@ mod tests {
 
         assert!(!model_root.exists());
         assert!(library_root.join("embeddings/cache.bin").is_file());
-
-        let _ = fs::remove_dir_all(root);
     }
 }

@@ -2,12 +2,8 @@ use super::connection::Library;
 use super::connection::write_transaction;
 use super::files::unix_timestamp_seconds;
 use super::placement_content::StoredPlacementContent;
-#[cfg(test)]
-use super::placement_content::encode_loaded_placement_content;
 use crate::data::Asset;
 use crate::data::ContentResolutionSource;
-#[cfg(test)]
-use eframe::egui;
 use rusqlite::OptionalExtension;
 use rusqlite::Transaction;
 use rusqlite::params;
@@ -455,50 +451,6 @@ impl Library {
                 .map(|duplicate_id| (duplicate_id, canonical_id))
                 .collect(),
         })
-    }
-
-    #[cfg(test)]
-    pub fn create_asset_and_relink_placement(
-        &self,
-        item_id: i64,
-        stored_path: &Path,
-        mime_type: &str,
-        width: u32,
-        height: u32,
-        file_size: u64,
-        desired_world: egui::Pos2,
-    ) -> Result<Asset, String> {
-        let mut connection = self.connection()?;
-        let transaction = write_transaction(&mut connection, "relink")?;
-
-        let asset = insert_asset_row(
-            &transaction,
-            stored_path,
-            mime_type,
-            width,
-            height,
-            file_size,
-            None,
-        )?;
-        let content = encode_loaded_placement_content(asset.id)?;
-        transaction
-            .execute(
-                "UPDATE board_items
-                 SET asset_id = ?1,
-                     x = ?2,
-                     y = ?3,
-                     placement_content_state = 'loaded',
-                     content_resolution_intent = ?4
-                 WHERE id = ?5",
-                params![asset.id, desired_world.x, desired_world.y, content, item_id],
-            )
-            .map_err(|error| format!("failed to relink placement {item_id}: {error}"))?;
-
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit relink transaction: {error}"))?;
-
-        Ok(asset)
     }
 
     pub fn load_asset(&self, asset_id: i64) -> Result<Asset, String> {

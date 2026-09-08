@@ -97,33 +97,6 @@ impl SnappyRefApp {
         self.external_hover_provisional_placement_ids = batch.placement_ids;
     }
 
-    #[cfg(test)]
-    pub(super) fn dropped_import_previews(
-        &mut self,
-        sources: &[ImportSource],
-        desired_world: egui::Pos2,
-        screen_rect: egui::Rect,
-    ) -> Vec<egui::Pos2> {
-        let specs = sources
-            .iter()
-            .map(crate::placement::content_resolution::PlacementCreation::source_intent)
-            .collect::<Vec<_>>();
-
-        crate::placement::creation::plan_source_intent_geometries(
-            &mut self.canvas,
-            &specs,
-            desired_world,
-            screen_rect,
-            crate::placement::creation::PlacementCreationSettings {
-                placement_target_area: self.settings.placement_target_area,
-                gap: self.settings.placement_gap,
-            },
-        )
-        .into_iter()
-        .map(|geometry| geometry.center)
-        .collect()
-    }
-
     pub(super) fn handle_dropped_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
         if self.import_worker.is_none() {
             return;
@@ -519,7 +492,6 @@ impl SnappyRefApp {
         ContentResolutionRequestConfig {
             max_texture_side: self.max_texture_side,
             canvas_image_max_side: self.settings.canvas_image_max_side,
-            auto_image_scaling: true,
             placement_target_area: self.settings.placement_target_area,
         }
     }
@@ -546,7 +518,6 @@ impl SnappyRefApp {
         &mut self,
         ctx: &egui::Context,
         request: crate::search::SearchDropRequest,
-        _screen_rect: egui::Rect,
     ) {
         if request.asset_ids.is_empty() {
             return;

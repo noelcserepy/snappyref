@@ -24,22 +24,20 @@ fn downscaled_canvas_settings(max_side: u32) -> CanvasImageSettings {
 
 #[test]
 fn scales_down_large_portrait_images_to_target_area() {
-    let scale =
-        display_scale_for_placement_target_area(1000, 1500, true, DEFAULT_PLACEMENT_TARGET_AREA);
+    let scale = display_scale_for_placement_target_area(1000, 1500, DEFAULT_PLACEMENT_TARGET_AREA);
     assert!((scale - (DEFAULT_PLACEMENT_TARGET_AREA / 1_500_000.0).sqrt()).abs() < f32::EPSILON);
 }
 
 #[test]
 fn scales_down_large_landscape_images_by_area_cap() {
-    let scale =
-        display_scale_for_placement_target_area(1920, 1080, true, DEFAULT_PLACEMENT_TARGET_AREA);
+    let scale = display_scale_for_placement_target_area(1920, 1080, DEFAULT_PLACEMENT_TARGET_AREA);
     assert!((scale - (DEFAULT_PLACEMENT_TARGET_AREA / 2_073_600.0).sqrt()).abs() < f32::EPSILON);
 }
 
 #[test]
 fn scales_down_large_images_to_configured_target_area() {
     let target_area = 40_000.0;
-    let scale = display_scale_for_placement_target_area(1000, 1500, true, target_area);
+    let scale = display_scale_for_placement_target_area(1000, 1500, target_area);
 
     assert!((scale - (target_area / 1_500_000.0).sqrt()).abs() < f32::EPSILON);
 }
@@ -47,15 +45,7 @@ fn scales_down_large_images_to_configured_target_area() {
 #[test]
 fn keeps_smaller_images_at_full_scale() {
     assert_eq!(
-        display_scale_for_placement_target_area(180, 240, true, DEFAULT_PLACEMENT_TARGET_AREA),
-        1.0
-    );
-}
-
-#[test]
-fn disabling_auto_scale_keeps_full_scale() {
-    assert_eq!(
-        display_scale_for_placement_target_area(1200, 2000, false, DEFAULT_PLACEMENT_TARGET_AREA),
+        display_scale_for_placement_target_area(180, 240, DEFAULT_PLACEMENT_TARGET_AREA),
         1.0
     );
 }
@@ -70,12 +60,10 @@ fn file_imports_land_in_same_area_band() {
     let square_path = write_png(&root, "square.png", 1000, 1000);
     let small_path = write_png(&root, "small.png", 180, 240);
 
-    let portrait =
-        import_path_sync(&library, portrait_path, eframe::egui::Pos2::ZERO, true).unwrap();
-    let landscape =
-        import_path_sync(&library, landscape_path, eframe::egui::Pos2::ZERO, true).unwrap();
-    let square = import_path_sync(&library, square_path, eframe::egui::Pos2::ZERO, true).unwrap();
-    let small = import_path_sync(&library, small_path, eframe::egui::Pos2::ZERO, true).unwrap();
+    let portrait = import_path_sync(&library, portrait_path, eframe::egui::Pos2::ZERO).unwrap();
+    let landscape = import_path_sync(&library, landscape_path, eframe::egui::Pos2::ZERO).unwrap();
+    let square = import_path_sync(&library, square_path, eframe::egui::Pos2::ZERO).unwrap();
+    let small = import_path_sync(&library, small_path, eframe::egui::Pos2::ZERO).unwrap();
 
     assert!((displayed_area(&portrait) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
     assert!((displayed_area(&landscape) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
@@ -84,7 +72,7 @@ fn file_imports_land_in_same_area_band() {
 }
 
 #[test]
-fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
+fn clipboard_import_caps_large_images_and_keeps_small_assets_unchanged() {
     let root = TempRoot::new("clipboard-import-scaling");
     let library = Library::initialize(root.to_path_buf()).unwrap();
 
@@ -108,7 +96,6 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
 
                 max_texture_side: usize::MAX,
                 canvas_image_settings: CanvasImageSettings::default(),
-                auto_scale: true,
                 placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
 
                 trace: None,
@@ -136,7 +123,6 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
 
                 max_texture_side: usize::MAX,
                 canvas_image_settings: CanvasImageSettings::default(),
-                auto_scale: false,
                 placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
 
                 trace: None,
@@ -175,7 +161,6 @@ fn clipboard_import_uses_configured_target_area() {
 
                 max_texture_side: usize::MAX,
                 canvas_image_settings: CanvasImageSettings::default(),
-                auto_scale: true,
                 placement_target_area: target_area,
 
                 trace: None,
@@ -214,7 +199,6 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
 
                 max_texture_side: usize::MAX,
                 canvas_image_settings: CanvasImageSettings::default(),
-                auto_scale: false,
                 placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
 
                 trace: None,
@@ -375,7 +359,6 @@ fn reserved_import_preserves_custom_gap_in_displayed_bounds() {
 
                 max_texture_side: usize::MAX,
                 canvas_image_settings: CanvasImageSettings::default(),
-                auto_scale: false,
                 placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
 
                 trace: None,
@@ -427,7 +410,6 @@ fn reserved_world_is_persisted_without_worker_relayout() {
 
                 max_texture_side: usize::MAX,
                 canvas_image_settings: CanvasImageSettings::default(),
-                auto_scale: false,
                 placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
 
                 trace: None,
@@ -467,7 +449,6 @@ fn overlapping_reserved_world_is_preserved_when_persisting() {
 
                 max_texture_side: usize::MAX,
                 canvas_image_settings: CanvasImageSettings::default(),
-                auto_scale: false,
                 placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
 
                 trace: None,
@@ -505,7 +486,6 @@ fn url_import_downloads_and_persists_original_bytes() {
 
                 max_texture_side: usize::MAX,
                 canvas_image_settings: CanvasImageSettings::default(),
-                auto_scale: false,
                 placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
 
                 trace: None,
@@ -553,9 +533,8 @@ fn path_import_reuses_existing_exact_asset_and_removes_duplicate_original() {
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let source = write_png(&root, "source.png", 64, 48);
 
-    let first =
-        import_path_sync(&library, source.clone(), eframe::egui::Pos2::ZERO, false).unwrap();
-    let second = import_path_sync(&library, source, eframe::egui::pos2(100.0, 0.0), false).unwrap();
+    let first = import_path_sync(&library, source.clone(), eframe::egui::Pos2::ZERO).unwrap();
+    let second = import_path_sync(&library, source, eframe::egui::pos2(100.0, 0.0)).unwrap();
 
     assert_eq!(
         second.placement.require_loaded_asset().id,
@@ -605,7 +584,6 @@ fn url_import_preserves_svg_as_vector_source() {
 
                 max_texture_side: usize::MAX,
                 canvas_image_settings: CanvasImageSettings::default(),
-                auto_scale: false,
                 placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
 
                 trace: None,
@@ -646,8 +624,7 @@ fn svg_import_preserves_vector_source_and_skips_canvas_cache() {
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let svg_path = write_svg(&root, "icon.svg", 320, 180);
 
-    let loaded =
-        import_path_sync(&library, svg_path.clone(), eframe::egui::Pos2::ZERO, false).unwrap();
+    let loaded = import_path_sync(&library, svg_path.clone(), eframe::egui::Pos2::ZERO).unwrap();
 
     assert_eq!(
         loaded.placement.require_loaded_asset().mime_type,
@@ -688,8 +665,7 @@ static char * sample_xpm[] = {
     )
     .unwrap();
 
-    let loaded =
-        import_path_sync(&library, source.clone(), eframe::egui::Pos2::ZERO, false).unwrap();
+    let loaded = import_path_sync(&library, source.clone(), eframe::egui::Pos2::ZERO).unwrap();
 
     assert_eq!(
         loaded.placement.require_loaded_asset().mime_type,
@@ -714,7 +690,7 @@ fn crop_item_rejects_svg_with_clear_error() {
     let root = TempRoot::new("svg-crop");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let svg_path = write_svg(&root, "icon.svg", 100, 80);
-    let loaded = import_path_sync(&library, svg_path, eframe::egui::Pos2::ZERO, false).unwrap();
+    let loaded = import_path_sync(&library, svg_path, eframe::egui::Pos2::ZERO).unwrap();
 
     let result = crop_item(
         &library,
@@ -752,7 +728,7 @@ fn load_existing_svg_uses_original_vector_source() {
     let root = TempRoot::new("svg-existing-load");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let svg_path = write_svg(&root, "icon.svg", 240, 120);
-    let imported = import_path_sync(&library, svg_path, eframe::egui::Pos2::ZERO, false).unwrap();
+    let imported = import_path_sync(&library, svg_path, eframe::egui::Pos2::ZERO).unwrap();
 
     let loaded = match load_existing(
         &library,
@@ -869,7 +845,6 @@ fn make_import_path_request(source_path: PathBuf) -> super::ImagePrepRequest {
 
         max_texture_side: usize::MAX,
         canvas_image_settings: CanvasImageSettings::default(),
-        auto_scale: true,
         placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
 
         trace: None,
@@ -966,7 +941,6 @@ fn traced_clipboard_import_populates_non_negative_timings() {
 
                 max_texture_side: usize::MAX,
                 canvas_image_settings: CanvasImageSettings::default(),
-                auto_scale: false,
                 placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
 
                 trace: Some(trace),

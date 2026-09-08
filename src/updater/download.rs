@@ -262,32 +262,12 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempRoot;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc::channel;
     use std::thread;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    fn unique_temp_dir(prefix: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "snappyref-download-{prefix}-{}-{}-{nanos}",
-            std::process::id(),
-            counter,
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    /// Tiny one-shot HTTP/1.1 server. Binds 127.0.0.1:0, returns the
-    /// chosen URL, and serves `payload` exactly once with HTTP 200.
     fn serve_once(payload: Vec<u8>) -> (String, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -320,7 +300,7 @@ mod tests {
 
     #[test]
     fn download_from_reader_writes_file_when_hash_matches() {
-        let dir = unique_temp_dir("ok");
+        let dir = TempRoot::new("ok");
         let payload = b"hello-snappyref-zip".to_vec();
         let expected = sha256_hex(&payload);
         let destination = dir.join("ok.zip");
@@ -344,13 +324,11 @@ mod tests {
         assert!(destination.exists());
         assert_eq!(fs::read(&destination).unwrap(), payload);
         assert_eq!(last, (payload.len() as u64, payload.len() as u64));
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn download_from_reader_emits_progress_during_download() {
-        let dir = unique_temp_dir("progress");
+        let dir = TempRoot::new("progress");
         // Big enough to span multiple READ_CHUNK reads.
         let payload = vec![0u8; READ_CHUNK * 3 + 7];
         let expected = sha256_hex(&payload);
@@ -385,13 +363,11 @@ mod tests {
                 "progress went backwards: {ticks:?}",
             );
         }
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn download_from_reader_rejects_sha_mismatch_and_cleans_up() {
-        let dir = unique_temp_dir("hash-mismatch");
+        let dir = TempRoot::new("hash-mismatch");
         let payload = b"valid-bytes".to_vec();
         let wrong = "0".repeat(64);
         let destination = dir.join("bad.zip");
@@ -418,13 +394,11 @@ mod tests {
             !destination.exists(),
             "verified-bad download must not leave bytes on disk",
         );
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn download_from_reader_rejects_size_mismatch_and_cleans_up() {
-        let dir = unique_temp_dir("size-mismatch");
+        let dir = TempRoot::new("size-mismatch");
         let payload = b"too-short".to_vec();
         let expected = sha256_hex(&payload);
         let destination = dir.join("short.zip");
@@ -448,13 +422,11 @@ mod tests {
             other => panic!("expected SizeMismatch, got {other:?}"),
         }
         assert!(!destination.exists());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn download_from_url_against_local_http_fixture_rejects_sha_mismatch() {
-        let dir = unique_temp_dir("http-mismatch");
+        let dir = TempRoot::new("http-mismatch");
         let payload = b"http-served-bytes".to_vec();
         let wrong = "f".repeat(64);
         let destination = dir.join("served.zip");
@@ -478,13 +450,11 @@ mod tests {
             !destination.exists(),
             "mismatched download must be cleaned up",
         );
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn download_from_url_against_local_http_fixture_succeeds_on_match() {
-        let dir = unique_temp_dir("http-ok");
+        let dir = TempRoot::new("http-ok");
         let payload = b"http-good-bytes".to_vec();
         let expected = sha256_hex(&payload);
         let destination = dir.join("served.zip");
@@ -504,8 +474,6 @@ mod tests {
         assert_eq!(outcome.bytes_written, payload.len() as u64);
         assert!(destination.exists());
         assert_eq!(fs::read(&destination).unwrap(), payload);
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -522,7 +490,7 @@ mod tests {
         let bytes = b"abc";
         let lower = sha256_hex(bytes);
         let upper = lower.to_uppercase();
-        let dir = unique_temp_dir("case");
+        let dir = TempRoot::new("case");
         let dest = dir.join("case.zip");
         let mut source = &bytes[..];
         let mut progress = |_, _| {};
@@ -535,6 +503,5 @@ mod tests {
         )
         .unwrap();
         assert_eq!(outcome.bytes_written, bytes.len() as u64);
-        let _ = fs::remove_dir_all(&dir);
     }
 }

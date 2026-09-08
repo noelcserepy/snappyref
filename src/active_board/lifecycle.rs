@@ -31,34 +31,30 @@ impl BoardLifecycle<'_> {
         &mut self,
         ctx: &egui::Context,
     ) -> Result<Option<String>, String> {
-        if self.library.is_none() {
-            return Err("Storage unavailable".to_owned());
-        }
-        let owner_before = *self.active_board_id;
-        let Some(applied) = self.editing.history.undo(owner_before) else {
-            return Ok(None);
-        };
-        let owner_after = applied
-            .action
-            .owner_after_replay(owner_before, applied.direction);
-        self.editing
-            .history
-            .reassign_applied(owner_before, owner_after, applied.direction);
-        if let Err(error) = self.apply_history_action(ctx, &applied.action, applied.direction) {
-            return Err(error);
-        }
-        Ok(Some(format!("Undid {}", applied.action.label())))
+        self.replay_document_history(ctx, HistoryDirection::Backward)
     }
 
     pub(crate) fn redo_document_history(
         &mut self,
         ctx: &egui::Context,
     ) -> Result<Option<String>, String> {
+        self.replay_document_history(ctx, HistoryDirection::Forward)
+    }
+
+    fn replay_document_history(
+        &mut self,
+        ctx: &egui::Context,
+        direction: HistoryDirection,
+    ) -> Result<Option<String>, String> {
         if self.library.is_none() {
             return Err("Storage unavailable".to_owned());
         }
         let owner_before = *self.active_board_id;
-        let Some(applied) = self.editing.history.redo(owner_before) else {
+        let applied = match direction {
+            HistoryDirection::Backward => self.editing.history.undo(owner_before),
+            HistoryDirection::Forward => self.editing.history.redo(owner_before),
+        };
+        let Some(applied) = applied else {
             return Ok(None);
         };
         let owner_after = applied
@@ -67,10 +63,12 @@ impl BoardLifecycle<'_> {
         self.editing
             .history
             .reassign_applied(owner_before, owner_after, applied.direction);
-        if let Err(error) = self.apply_history_action(ctx, &applied.action, applied.direction) {
-            return Err(error);
-        }
-        Ok(Some(format!("Redid {}", applied.action.label())))
+        self.apply_history_action(ctx, &applied.action, applied.direction)?;
+        let verb = match direction {
+            HistoryDirection::Backward => "Undid",
+            HistoryDirection::Forward => "Redid",
+        };
+        Ok(Some(format!("{verb} {}", applied.action.label())))
     }
 
     pub(crate) fn apply_history_action(
@@ -326,26 +324,15 @@ impl BoardLifecycle<'_> {
         };
         for placement in placements {
             if let Some(import_worker) = &self.worker {
-                let reservation = self
-                    .placement_creation
-                    .reserve_history_placement(*self.active_board_id, placement.state.id);
-                if let Err(error) = import_worker.enqueue(
-                    crate::image_preparation::ImagePrepRequest::LoadExisting {
-                        target_board_id: *self.active_board_id,
-                        queue_id: Some(reservation.queue_id),
-                        placement,
-                        max_texture_side: self.max_texture_side,
-                        canvas_image_settings: crate::image_preparation::CanvasImageSettings {
-                            max_side: self.session.settings.canvas_image_max_side,
-                        },
-                        target_lod: crate::data::CanvasImageLod::Working,
-                        priority: crate::image_preparation::ExistingLoadPriority::Background,
-                        trace: None,
+                self.placement_creation.enqueue_history_placement(
+                    import_worker,
+                    *self.active_board_id,
+                    placement,
+                    self.max_texture_side,
+                    crate::image_preparation::CanvasImageSettings {
+                        max_side: self.session.settings.canvas_image_max_side,
                     },
-                ) {
-                    self.placement_creation.cancel(reservation);
-                    return Err(error);
-                }
+                )?;
                 continue;
             }
             match crate::image_preparation::load_existing(

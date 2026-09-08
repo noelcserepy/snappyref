@@ -12,15 +12,10 @@ pub(crate) const SNAPPYREF_LIBRARY_ROOT_ENV: &str = "SNAPPYREF_LIBRARY_ROOT";
 pub(crate) const SNAPPYREF_DATA_ROOT_ENV: &str = "SNAPPYREF_DATA_ROOT";
 
 pub(crate) fn resolve_library_root() -> Result<PathBuf, String> {
-    let current_exe = std::env::current_exe()
-        .map_err(|error| format!("Failed to resolve current executable path: {error}"))?;
-    let install_root = install_root_from_exe_path(&current_exe)?;
-    let override_root = std::env::var_os(SNAPPYREF_LIBRARY_ROOT_ENV).map(PathBuf::from);
-
-    Ok(library_root_from_parts(
-        override_root,
-        resolve_data_root_from_install_root(&install_root)?,
-    ))
+    if let Some(root) = std::env::var_os(SNAPPYREF_LIBRARY_ROOT_ENV) {
+        return Ok(PathBuf::from(root));
+    }
+    Ok(resolve_data_root()?.join("library"))
 }
 
 pub(crate) fn resolve_data_root() -> Result<PathBuf, String> {
@@ -33,31 +28,11 @@ pub(crate) fn resolve_data_root() -> Result<PathBuf, String> {
     resolve_data_root_from_install_root(&install_root)
 }
 
-fn library_root_from_parts(override_root: Option<PathBuf>, data_root: PathBuf) -> PathBuf {
-    override_root.unwrap_or_else(|| data_root.join("library"))
-}
-
 fn resolve_data_root_from_install_root(install_root: &Path) -> Result<PathBuf, String> {
-    if let Some(override_root) = std::env::var_os(SNAPPYREF_DATA_ROOT_ENV) {
-        return Ok(PathBuf::from(override_root));
+    if install_root_is_writable(install_root) {
+        return Ok(install_root.to_path_buf());
     }
-    Ok(data_root_from_parts(
-        install_root,
-        install_root_is_writable(install_root),
-        platform_user_data_root()?,
-    ))
-}
-
-fn data_root_from_parts(
-    install_root: &Path,
-    install_root_writable: bool,
-    user_data_root: PathBuf,
-) -> PathBuf {
-    if install_root_writable {
-        install_root.to_path_buf()
-    } else {
-        user_data_root
-    }
+    platform_user_data_root()
 }
 
 fn install_root_is_writable(install_root: &Path) -> bool {
@@ -152,42 +127,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn override_root_wins() {
-        let override_root = PathBuf::from("/tmp/snappyref-library");
-        let data_root = PathBuf::from("/tmp/snappyref-data");
-
-        let root = library_root_from_parts(Some(override_root.clone()), data_root);
-
-        assert_eq!(root, override_root);
-    }
-
-    #[test]
-    fn default_root_uses_install_root_library() {
-        let data_root = PathBuf::from("/fake/SnappyRef");
-
-        let root = library_root_from_parts(None, data_root);
-
-        assert_eq!(root, PathBuf::from("/fake/SnappyRef/library"));
-    }
-
-    #[test]
-    fn data_root_uses_install_root_when_writable() {
-        let install_root = Path::new("/fake/SnappyRef");
-        let user_data_root = PathBuf::from("/Users/alice/Library/Application Support/SnappyRef");
-
-        let root = data_root_from_parts(install_root, true, user_data_root);
-
-        assert_eq!(root, install_root);
-    }
-
-    #[test]
-    fn data_root_falls_back_to_user_data_when_install_root_is_not_writable() {
-        let install_root = Path::new("/Applications");
-        let user_data_root = PathBuf::from("/Users/alice/Library/Application Support/SnappyRef");
-
-        let root = data_root_from_parts(install_root, false, user_data_root.clone());
-
-        assert_eq!(root, user_data_root);
+    fn explicit_and_portable_roots_do_not_need_user_data_fallback() {
+        const CHILD: &str = "SNAPPYREF_ROOT_TEST_CHILD";
+        if let Ok(kind) = std::env::var(CHILD) {
+            let root = PathBuf::from(std::env::var_os("SNAPPYREF_ROOT_TEST_PATH").unwrap());
+            match kind.as_str() {
+                "library" => assert_eq!(resolve_library_root().unwrap(), root),
+                "data" => {
+                    assert_eq!(resolve_data_root().unwrap(), root);
+                    assert_eq!(resolve_library_root().unwrap(), root.join("library"));
+                }
+                "portable" => {
+                    assert_eq!(resolve_data_root_from_install_root(&root).unwrap(), root);
+                    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+                }
+                "fallback" => assert_eq!(
+                    resolve_data_root_from_install_root(&root.join("missing-install")).unwrap(),
+                    platform_user_data_root().unwrap(),
+                ),
+                _ => unreachable!(),
+            }
+            return;
+        }
+        let root = crate::test_support::TempRoot::new("root-resolution");
+        for kind in ["library", "data", "portable", "fallback"] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child.args(["--exact", "local_data_location::tests::explicit_and_portable_roots_do_not_need_user_data_fallback"])
+                .env(CHILD, kind).env("SNAPPYREF_ROOT_TEST_PATH", &*root);
+            for name in [
+                "HOME",
+                "LOCALAPPDATA",
+                "APPDATA",
+                "XDG_DATA_HOME",
+                SNAPPYREF_LIBRARY_ROOT_ENV,
+                SNAPPYREF_DATA_ROOT_ENV,
+            ] {
+                child.env_remove(name);
+            }
+            if kind == "library" {
+                child.env(SNAPPYREF_LIBRARY_ROOT_ENV, &*root);
+            } else if kind == "data" {
+                child.env(SNAPPYREF_DATA_ROOT_ENV, &*root);
+            }
+            if kind == "fallback" {
+                child
+                    .env("HOME", &*root)
+                    .env("LOCALAPPDATA", &*root)
+                    .env("XDG_DATA_HOME", &*root);
+            }
+            assert!(
+                child.status().unwrap().success(),
+                "{kind} root resolution failed"
+            );
+        }
     }
 
     #[test]

@@ -131,7 +131,6 @@ pub struct ImportRequest {
     pub reserved_world: egui::Pos2,
     pub max_texture_side: usize,
     pub canvas_image_settings: CanvasImageSettings,
-    pub auto_scale: bool,
     pub placement_target_area: f32,
     pub trace: Option<ImagePrepTrace>,
 }

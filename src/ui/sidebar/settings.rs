@@ -59,13 +59,6 @@ pub(super) fn paint_settings_section(
     paint_setting_divider(ui);
     changed |= paint_setting_row(
         ui,
-        "Auto-scale new images",
-        "Caps new imports to a default area.",
-        |ui| paint_switch(ui, &mut settings.auto_image_scaling).changed(),
-    );
-    paint_setting_divider(ui);
-    changed |= paint_setting_row(
-        ui,
         "Placement gap",
         "Spacing used when placing and arranging placements.",
         |ui| {

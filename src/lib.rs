@@ -117,3 +117,5 @@ fn app_icon() -> eframe::egui::IconData {
     eframe::icon_data::from_png_bytes(include_bytes!("../assets/app-icon/snappyref-128.png"))
         .expect("embedded SnappyRef app icon should be valid PNG")
 }
+
+mod zip_extraction;

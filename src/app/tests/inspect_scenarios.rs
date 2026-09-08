@@ -165,6 +165,7 @@ fn inspect_semantic_search_install_accepts_prompt() {
             .state()
             .should_show_semantic_search_first_launch_prompt(),
     );
+    scenario.capture_screen("screen-prompt", &mut harness);
     let enable_rect = harness.get_by_label("Enable").rect();
     scenario.target("snap.semantic-search.install.enable", "button", enable_rect);
     scenario.action("click semantic search enable", enable_rect.center());
@@ -195,6 +196,8 @@ fn inspect_semantic_search_install_accepts_prompt() {
             .semantic_search_first_launch_prompt_seen,
     );
 
+    scenario.capture_screen("screen-install-started", &mut harness);
+
     let report = scenario.finish();
     assert!(
         report.passed,
@@ -223,6 +226,8 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
     app.search
         .set_local_model_store_status_for_test(actual_status.clone());
     let mut harness = app_full_harness(app);
+
+    scenario.capture_screen("screen-settings-top", &mut harness);
 
     let section_rect = harness.get_by_label("Semantic Search").rect();
     scenario.target(
@@ -1604,7 +1609,7 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
     let source = library
         .persist_imported_image_resolving_placement(
             library.load_user_session().unwrap().active_board_id,
-            Some(loading.state.id),
+            loading.state.id,
             &source_path,
             "image/png",
             width,
@@ -1947,7 +1952,7 @@ fn inspect_pending_drop_batch_undo_writes_artifact() {
     let loaded_placement = library
         .persist_imported_image_resolving_placement(
             harness.state().active_board_id,
-            Some(placement_ids[0]),
+            placement_ids[0],
             &sources[0].0,
             "image/png",
             sources[0].2,

@@ -89,9 +89,3 @@ pub(super) fn missing_asset_content() -> PlacementContent {
         recoverable: true,
     }
 }
-
-#[cfg(test)]
-pub(super) fn encode_loaded_placement_content(asset_id: i64) -> Result<String, String> {
-    serde_json::to_string(&StoredPlacementContent::Loaded { asset_id })
-        .map_err(|error| format!("failed to encode loaded placement content: {error}"))
-}

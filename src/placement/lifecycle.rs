@@ -8,7 +8,7 @@ use crate::placement::creation::{
 };
 
 // Provisional Placement batches are real canvas Placements with negative
-// temporary ids. Commit swaps them in place for persisted ids; cancel removes
+// temporary ids. Commit swaps them in place for committed IDs; cancel removes
 // them without touching history.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ProvisionalPlacementBatch {
@@ -21,7 +21,7 @@ pub(crate) struct CommitSearchProvisionalRequest {
     pub(crate) provisional_placement_ids: Vec<i64>,
 }
 
-/// Placements swapped from provisional to committed ids, with the history
+/// Placements swapped from provisional to committed IDs, with the history
 /// action that undoes the whole batch. Empty when nothing was provisional.
 #[derive(Clone, Debug)]
 pub(crate) struct CommittedProvisionalBatch {
@@ -94,7 +94,6 @@ pub(crate) fn commit_search_provisional_batch(
         placement.state.geometry.scale = crate::placement::display_scale_for_placement_target_area(
             asset.width,
             asset.height,
-            true,
             settings.placement_target_area,
         );
     }

@@ -43,19 +43,29 @@ impl Library {
             .map_err(|error| format!("failed to commit Board durability transaction: {error}"))
     }
 
-    /// Lifecycle change without a history rewrite. Test seam for board setup;
-    /// the app always goes through `persist_board_unit`.
     #[cfg(test)]
     pub(crate) fn persist_lifecycle_change(
         &self,
         change: &crate::active_board::persistence::BoardLifecyclePersistence,
     ) -> Result<(), String> {
-        let mut connection = self.connection()?;
-        let transaction = write_transaction(&mut connection, "Board lifecycle")?;
-        persist_lifecycle_change(&transaction, change)?;
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit Board lifecycle transaction: {error}"))
+        self.persist_board_unit(
+            &BoardDurabilityOperation::Lifecycle(change.clone()),
+            &self.load_document_history()?,
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_document_changes(
+        &self,
+        changes: crate::canvas::CanvasDocumentChanges,
+    ) -> Result<(), String> {
+        self.persist_board_unit(
+            &BoardDurabilityOperation::Document {
+                board_id: self.load_user_session()?.active_board_id,
+                changes,
+            },
+            &self.load_document_history()?,
+        )
     }
 
     pub(crate) fn load_document_history(

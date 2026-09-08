@@ -12,10 +12,9 @@ pub fn placement_target_reference_span() -> f32 {
 pub fn display_scale_for_placement_target_area(
     asset_width: u32,
     asset_height: u32,
-    auto_scale: bool,
     placement_target_area: f32,
 ) -> f32 {
-    if !auto_scale || asset_width == 0 || asset_height == 0 {
+    if asset_width == 0 || asset_height == 0 {
         return 1.0;
     }
 

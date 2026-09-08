@@ -6,7 +6,6 @@ fn save_user_session_round_trips_placement_gap() {
     let root = TempRoot::new("snappyref-app-gap");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.settings.auto_image_scaling = false;
     app.settings.placement_gap = 37.0;
     app.settings.placement_target_area = 45_000.0;
     app.settings.canvas_image_max_side = 4096;
@@ -17,7 +16,6 @@ fn save_user_session_round_trips_placement_gap() {
     app.flush_persistence();
 
     let session = library.load_user_session().unwrap();
-    assert!(!session.settings.auto_image_scaling);
     assert_eq!(session.settings.placement_gap, 37.0);
     assert_eq!(session.settings.placement_target_area, 45_000.0);
     assert_eq!(session.settings.canvas_image_max_side, 4096);

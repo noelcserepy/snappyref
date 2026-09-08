@@ -80,7 +80,6 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
     let expected_scale = crate::placement::display_scale_for_placement_target_area(
         width,
         height,
-        true,
         crate::data::DEFAULT_PLACEMENT_TARGET_AREA,
     );
     assert_eq!(active_items.len(), 1);
@@ -479,16 +478,6 @@ fn normalize_import_url_accepts_http_and_https_only() {
         None
     );
     assert_eq!(crate::sources::url::normalize_import_url("not a url"), None);
-}
-
-#[test]
-fn import_requests_preserve_import_area_cap_when_auto_scaling_setting_is_off() {
-    let mut app = test_app(None);
-    app.settings.auto_image_scaling = false;
-
-    let config = app.import_request_config();
-
-    assert!(config.auto_image_scaling);
 }
 
 #[test]

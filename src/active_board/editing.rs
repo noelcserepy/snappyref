@@ -189,26 +189,15 @@ impl BoardEditContext<'_> {
             return Ok(());
         };
         for placement in placements {
-            let reservation = self
-                .resolution
-                .reserve_history_placement(self.board_id, placement.id());
-            if let Err(error) =
-                worker.enqueue(crate::image_preparation::ImagePrepRequest::LoadExisting {
-                    target_board_id: self.board_id,
-                    queue_id: Some(reservation.queue_id),
-                    placement,
-                    max_texture_side: self.max_texture_side,
-                    canvas_image_settings: crate::image_preparation::CanvasImageSettings {
-                        max_side: self.settings.canvas_image_max_side,
-                    },
-                    target_lod: crate::data::CanvasImageLod::Working,
-                    priority: crate::image_preparation::ExistingLoadPriority::Background,
-                    trace: None,
-                })
-            {
-                self.resolution.cancel(reservation);
-                return Err(error);
-            }
+            self.resolution.enqueue_history_placement(
+                worker,
+                self.board_id,
+                placement,
+                self.max_texture_side,
+                crate::image_preparation::CanvasImageSettings {
+                    max_side: self.settings.canvas_image_max_side,
+                },
+            )?;
         }
         Ok(())
     }

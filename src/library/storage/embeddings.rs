@@ -27,7 +27,7 @@ pub struct ImageEmbeddingJob {
 }
 
 #[derive(Clone, Debug)]
-pub struct ActiveCanvasEmbedding {
+pub struct LibraryAssetEmbedding {
     pub asset_id: i64,
     pub embedding_blob: Vec<u8>,
 }
@@ -238,210 +238,80 @@ impl Library {
         Ok(())
     }
 
-    pub fn missing_live_canvas_asset_jobs_for_model(
-        &self,
-        model_key: &str,
-    ) -> Result<Vec<ImageEmbeddingJob>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT
-                    a.id,
-                    a.original_path
-                 FROM assets a
-                 LEFT JOIN asset_embeddings e
-                    ON e.asset_id = a.id
-                    AND e.model_key = ?1
-                 WHERE e.asset_id IS NULL
-                   AND a.archived = 0
-                   AND lower(trim(a.mime_type)) <> 'image/svg+xml'
-                 GROUP BY a.id, a.original_path
-                 ORDER BY a.id ASC",
-            )
-            .map_err(|error| format!("failed to prepare embedding-backfill query: {error}"))?;
-
-        let rows = statement
-            .query_map(params![model_key], |row| {
-                Ok(ImageEmbeddingJob {
-                    asset_id: row.get(0)?,
-                    original_path: PathBuf::from(row.get::<_, String>(1)?),
-                })
-            })
-            .map_err(|error| format!("failed to read embedding-backfill query: {error}"))?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("failed to collect embedding backfill jobs: {error}"))
-    }
-
-    pub fn retryable_live_canvas_asset_jobs_for_model(
-        &self,
-        model_key: &str,
-        now: i64,
-    ) -> Result<Vec<ImageEmbeddingJob>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT
-                    a.id,
-                    a.original_path
-                 FROM assets a
-                 JOIN asset_embeddings e
-                    ON e.asset_id = a.id
-                    AND e.model_key = ?1
-                 WHERE a.archived = 0
-                   AND lower(trim(a.mime_type)) <> 'image/svg+xml'
-                   AND e.status = 'failed'
-                   AND e.failure_kind = 'retryable'
-                   AND e.next_retry_at IS NOT NULL
-                   AND e.next_retry_at <= ?2
-                 GROUP BY a.id, a.original_path
-                 ORDER BY e.next_retry_at ASC, a.id ASC",
-            )
-            .map_err(|error| {
-                format!("failed to prepare embedding-retry backfill query: {error}")
-            })?;
-
-        let rows = statement
-            .query_map(params![model_key, now], |row| {
-                Ok(ImageEmbeddingJob {
-                    asset_id: row.get(0)?,
-                    original_path: PathBuf::from(row.get::<_, String>(1)?),
-                })
-            })
-            .map_err(|error| format!("failed to read embedding-retry backfill query: {error}"))?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("failed to collect embedding retry backfill jobs: {error}"))
-    }
-
-    pub fn missing_active_board_asset_jobs_for_model(
-        &self,
-        model_key: &str,
-    ) -> Result<Vec<ImageEmbeddingJob>, String> {
-        let connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let mut statement = connection
-            .prepare(
-                "SELECT
-                    a.id,
-                    a.original_path
-                 FROM assets a
-                 JOIN board_items b
-                    ON b.asset_id = a.id
-                 LEFT JOIN asset_embeddings e
-                    ON e.asset_id = a.id
-                    AND e.model_key = ?1
-                 WHERE e.asset_id IS NULL
-                   AND a.archived = 0
-                   AND lower(trim(a.mime_type)) <> 'image/svg+xml'
-                   AND b.archived = 0
-                   AND b.board_id = ?2
-                 GROUP BY a.id, a.original_path
-                 ORDER BY MIN(b.z_index) ASC, a.id ASC",
-            )
-            .map_err(|error| {
-                format!("failed to prepare active-board embedding-backfill query: {error}")
-            })?;
-
-        let rows = statement
-            .query_map(params![model_key, active_board_id], |row| {
-                Ok(ImageEmbeddingJob {
-                    asset_id: row.get(0)?,
-                    original_path: PathBuf::from(row.get::<_, String>(1)?),
-                })
-            })
-            .map_err(|error| {
-                format!("failed to read active-board embedding-backfill query: {error}")
-            })?;
-
-        rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
-            format!("failed to collect active-board embedding backfill jobs: {error}")
-        })
-    }
-
-    pub fn retryable_active_board_asset_jobs_for_model(
-        &self,
-        model_key: &str,
-        now: i64,
-    ) -> Result<Vec<ImageEmbeddingJob>, String> {
-        let connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let mut statement = connection
-            .prepare(
-                "SELECT
-                    a.id,
-                    a.original_path
-                 FROM assets a
-                 JOIN board_items b
-                    ON b.asset_id = a.id
-                 JOIN asset_embeddings e
-                    ON e.asset_id = a.id
-                    AND e.model_key = ?1
-                 WHERE a.archived = 0
-                   AND lower(trim(a.mime_type)) <> 'image/svg+xml'
-                   AND b.archived = 0
-                   AND b.board_id = ?2
-                   AND e.status = 'failed'
-                   AND e.failure_kind = 'retryable'
-                   AND e.next_retry_at IS NOT NULL
-                   AND e.next_retry_at <= ?3
-                 GROUP BY a.id, a.original_path
-                 ORDER BY e.next_retry_at ASC, MIN(b.z_index) ASC, a.id ASC",
-            )
-            .map_err(|error| {
-                format!("failed to prepare active-board embedding-retry query: {error}")
-            })?;
-
-        let rows = statement
-            .query_map(params![model_key, active_board_id, now], |row| {
-                Ok(ImageEmbeddingJob {
-                    asset_id: row.get(0)?,
-                    original_path: PathBuf::from(row.get::<_, String>(1)?),
-                })
-            })
-            .map_err(|error| {
-                format!("failed to read active-board embedding-retry query: {error}")
-            })?;
-
-        rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
-            format!("failed to collect active-board embedding retry jobs: {error}")
-        })
-    }
-
     pub fn next_embedding_backfill_job_for_model(
         &self,
         model_key: &str,
         now: i64,
     ) -> Result<Option<ImageEmbeddingJob>, String> {
-        if let Some(job) = self
-            .missing_active_board_asset_jobs_for_model(model_key)?
-            .into_iter()
-            .next()
-        {
-            return Ok(Some(job));
+        let connection = self.connection()?;
+        let board_id = active_board_id(&connection)?;
+        // Fresh active-Board work, fresh Library work, then eligible retries in the same order.
+        for (retry, active_board) in [(false, true), (false, false), (true, true), (true, false)] {
+            let board_join = if active_board {
+                "JOIN board_items b ON b.asset_id = a.id AND b.archived = 0 AND b.board_id = ?2"
+            } else {
+                ""
+            };
+            let eligibility = if retry {
+                "e.status = 'failed' AND e.failure_kind = 'retryable'
+                 AND e.next_retry_at IS NOT NULL AND e.next_retry_at <= ?3"
+            } else {
+                "e.asset_id IS NULL"
+            };
+            let retry_order = if retry { "e.next_retry_at ASC," } else { "" };
+            let board_order = if active_board {
+                "MIN(b.z_index) ASC,"
+            } else {
+                ""
+            };
+            let sql = format!(
+                "SELECT a.id, a.original_path FROM assets a
+                 {board_join}
+                 LEFT JOIN asset_embeddings e ON e.asset_id = a.id AND e.model_key = ?1
+                 WHERE a.archived = 0 AND lower(trim(a.mime_type)) <> 'image/svg+xml'
+                   AND {eligibility}
+                 GROUP BY a.id, a.original_path
+                 ORDER BY {retry_order} {board_order} a.id ASC LIMIT 1"
+            );
+            let mut statement = connection
+                .prepare(&sql)
+                .map_err(|error| format!("failed to prepare next embedding job: {error}"))?;
+            statement
+                .raw_bind_parameter(1, model_key)
+                .map_err(|error| format!("failed to bind embedding model: {error}"))?;
+            if active_board {
+                statement
+                    .raw_bind_parameter(2, board_id)
+                    .map_err(|error| format!("failed to bind embedding Board: {error}"))?;
+            }
+            if retry {
+                statement
+                    .raw_bind_parameter(3, now)
+                    .map_err(|error| format!("failed to bind embedding retry time: {error}"))?;
+            }
+            let mut rows = statement.raw_query();
+            if let Some(row) = rows
+                .next()
+                .map_err(|error| format!("failed to read next embedding job: {error}"))?
+            {
+                return Ok(Some(ImageEmbeddingJob {
+                    asset_id: row
+                        .get(0)
+                        .map_err(|error| format!("invalid embedding Asset: {error}"))?,
+                    original_path: PathBuf::from(
+                        row.get::<_, String>(1)
+                            .map_err(|error| format!("invalid embedding source: {error}"))?,
+                    ),
+                }));
+            }
         }
-        if let Some(job) = self
-            .missing_live_canvas_asset_jobs_for_model(model_key)?
-            .into_iter()
-            .next()
-        {
-            return Ok(Some(job));
-        }
-        if let Some(job) = self
-            .retryable_active_board_asset_jobs_for_model(model_key, now)?
-            .into_iter()
-            .next()
-        {
-            return Ok(Some(job));
-        }
-        self.retryable_live_canvas_asset_jobs_for_model(model_key, now)
-            .map(|jobs| jobs.into_iter().next())
+        Ok(None)
     }
 
     pub fn load_library_embeddings(
         &self,
         model_key: &str,
-    ) -> Result<Vec<ActiveCanvasEmbedding>, String> {
+    ) -> Result<Vec<LibraryAssetEmbedding>, String> {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
@@ -460,7 +330,7 @@ impl Library {
 
         let rows = statement
             .query_map(params![model_key], |row| {
-                Ok(ActiveCanvasEmbedding {
+                Ok(LibraryAssetEmbedding {
                     asset_id: row.get(0)?,
                     embedding_blob: row.get(1)?,
                 })

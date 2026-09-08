@@ -1,7 +1,5 @@
 use super::connection::Library;
 use crate::data::Board;
-#[cfg(test)]
-use crate::data::DEFAULT_VIEWPORT_ZOOM;
 use rusqlite::Connection;
 use rusqlite::Transaction;
 use rusqlite::params;
@@ -28,25 +26,6 @@ pub(super) fn active_board_id(connection: &Connection) -> Result<i64, String> {
         .map_err(|error| format!("failed to load active board: {error}"))
 }
 
-#[cfg(test)]
-pub(super) fn list_non_archived_board_ids(connection: &Connection) -> Result<Vec<i64>, String> {
-    let mut statement = connection
-        .prepare(
-            "SELECT id
-             FROM boards
-             WHERE archived = 0
-             ORDER BY id ASC",
-        )
-        .map_err(|error| format!("failed to prepare board id query: {error}"))?;
-
-    let rows = statement
-        .query_map([], |row| row.get(0))
-        .map_err(|error| format!("failed to read board id query: {error}"))?;
-
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to collect board ids: {error}"))
-}
-
 pub(super) fn board_is_non_archived(
     connection: &Connection,
     board_id: i64,
@@ -59,30 +38,6 @@ pub(super) fn board_is_non_archived(
         )
         .map_err(|error| format!("failed to inspect board {board_id}: {error}"))?;
     Ok(count > 0)
-}
-
-#[cfg(test)]
-fn active_board_after_delete(
-    boards: &[i64],
-    board_id: i64,
-    active_board_id: i64,
-) -> Result<i64, String> {
-    let Some(target_index) = boards.iter().position(|id| *id == board_id) else {
-        return Err(format!(
-            "cannot delete missing or archived board {board_id}"
-        ));
-    };
-    if boards.len() == 1 {
-        return Err("cannot delete the last board".to_owned());
-    }
-    if active_board_id != board_id {
-        return Ok(active_board_id);
-    }
-    if target_index > 0 {
-        Ok(boards[target_index - 1])
-    } else {
-        Ok(boards[target_index + 1])
-    }
 }
 
 pub(super) fn archive_board_rows(
@@ -334,27 +289,22 @@ impl Library {
 
     #[cfg(test)]
     pub fn create_board(&self, name: &str) -> Result<Board, String> {
-        let connection = self.connection()?;
-        let board_id = self.allocate_document_id();
-        connection
-            .execute(
-                "INSERT INTO boards (
-                    id,
-                    name,
-                    archived,
-                    camera_pan_x,
-                    camera_pan_y,
-                    camera_zoom,
-                    canvas_background
-                 ) VALUES (?1, ?2, 0, 0.0, 0.0, ?3, 'none')",
-                params![board_id, name, DEFAULT_VIEWPORT_ZOOM],
-            )
-            .map_err(|error| format!("failed to create board: {error}"))?;
-
-        Ok(Board {
-            id: board_id,
-            name: name.to_owned(),
-        })
+        let board = self.new_board(name.to_owned());
+        let document = crate::data::BoardDocumentSnapshot {
+            board: board.clone(),
+            placements: vec![],
+            annotations: vec![],
+            groups: vec![],
+            stack_order: vec![],
+            viewport: Default::default(),
+        };
+        self.persist_lifecycle_change(
+            &crate::active_board::persistence::BoardLifecyclePersistence::Create {
+                document,
+                active_board_id: self.load_user_session()?.active_board_id,
+            },
+        )?;
+        Ok(board)
     }
 
     #[cfg(test)]
@@ -364,14 +314,6 @@ impl Library {
             board_id,
             name: name.to_owned(),
         })
-    }
-
-    #[cfg(test)]
-    pub fn active_board_after_delete(&self, board_id: i64) -> Result<i64, String> {
-        let connection = self.connection()?;
-        let boards = list_non_archived_board_ids(&connection)?;
-        let current_active_board_id = active_board_id(&connection)?;
-        active_board_after_delete(&boards, board_id, current_active_board_id)
     }
 
     #[cfg(test)]

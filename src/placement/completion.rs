@@ -371,7 +371,7 @@ impl PlacementCreation {
                 anchor,
                 screen_rect,
                 settings,
-            )?;
+            );
             (batch.created, batch.history_action)
         };
         context
@@ -418,7 +418,7 @@ impl PlacementCreation {
     ) -> Result<super::content_resolution::ContentResolutionReservation, String> {
         let (created, action) = super::creation::create_committed_loading_placement(
             library, self, canvas, board_id, intent, center, settings,
-        )?;
+        );
         editing.accept_created_batch(canvas, board_id, action)?;
         Ok(created.reservation)
     }

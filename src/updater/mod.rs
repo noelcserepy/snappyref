@@ -44,10 +44,6 @@ use state::{CheckOutcome, InstallProgress};
 pub(crate) const DEFAULT_MANIFEST_URL: &str =
     "https://github.com/noelcserepy/snappyref-dist/releases/latest/download/latest.json";
 
-/// Release page offered by Settings alongside the in-app updater.
-pub(crate) const DEFAULT_RELEASE_PAGE_URL: &str =
-    "https://github.com/noelcserepy/snappyref-dist/releases/latest";
-
 /// Network/parse timeout for the fetch worker. Keep small so a hung TCP
 /// connection cannot keep a background thread alive past the next 6h tick.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
@@ -67,7 +63,7 @@ pub(crate) struct UpdateService {
     /// and sha256 without re-fetching.
     last_manifest: Option<Manifest>,
     /// Wall-clock unix millis at which the most recent discovery check
-    /// completed (success or failure). Settings Tab renders this; `None`
+    /// completed (success or failure). About / Updates renders this; `None`
     /// before the first check returns.
     last_check_completed_at: Option<u64>,
     /// Set to true when [`request_check_now`] fires; consumed by the next
@@ -88,7 +84,6 @@ pub(crate) struct UpdateService {
 #[derive(Clone)]
 pub(crate) struct UpdateConfig {
     pub manifest_url: String,
-    pub release_page_url: String,
     pub current_version: String,
     /// Install root override, applied to the in-app updates/staging
     /// resolution. `None` resolves via `install_paths::resolve_install_root`.
@@ -103,7 +98,6 @@ impl UpdateConfig {
     pub(crate) fn for_tests() -> Self {
         Self {
             manifest_url: "https://example.invalid/manifest.json".to_owned(),
-            release_page_url: "https://example.invalid/releases".to_owned(),
             current_version: env!("CARGO_PKG_VERSION").to_owned(),
             install_root: None,
             diagnostic_path: None,
@@ -116,8 +110,6 @@ impl Default for UpdateConfig {
         Self {
             manifest_url: std::env::var("SNAPPYREF_UPDATE_MANIFEST_URL")
                 .unwrap_or_else(|_| DEFAULT_MANIFEST_URL.to_owned()),
-            release_page_url: std::env::var("SNAPPYREF_UPDATE_RELEASE_PAGE_URL")
-                .unwrap_or_else(|_| DEFAULT_RELEASE_PAGE_URL.to_owned()),
             current_version: std::env::var("SNAPPYREF_UPDATE_CURRENT_VERSION")
                 .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned()),
             install_root: None,
@@ -141,7 +133,7 @@ pub(crate) struct InstallContext {
 
 /// Internal channel payload from the discovery worker. Carries both the
 /// observable outcome and the parsed manifest so the service can store
-/// the latter for use by the Install button.
+/// the latter for use by the Update button.
 #[derive(Clone, Debug)]
 pub(crate) struct DiscoveryResult {
     pub outcome: CheckOutcome,
@@ -245,7 +237,7 @@ impl UpdateService {
     }
 
     /// Start the real download + verify + stage flow for the current
-    /// Available update. Called when the user clicks Install in Settings.
+    /// Available update. Called when the user clicks Update in Settings.
     pub(crate) fn start_install(&mut self) {
         // Only allowed while we have a verified manifest and the update UI
         // is showing Available.
@@ -254,9 +246,7 @@ impl UpdateService {
             _ => return,
         };
         let Some(platform) = TargetPlatform::current() else {
-            // No platform entry for the running OS; the update UI stays
-            // Available so the user can still open the release page
-            // manually via the Settings release-notes link.
+            // No update package is available for this OS.
             return;
         };
         let entry = manifest.entry_for(platform);
@@ -318,7 +308,7 @@ impl UpdateService {
         // Validate the staged layout matches what restart-apply will swap into
         // place. We only accept a structurally-valid bundle as Ready;
         // otherwise leave the update UI alone.
-        if validate_existing_staging(&staging, platform).is_err() {
+        if stager::validate_layout(&staging.join(stager::EXPECTED_TOP_LEVEL), platform).is_err() {
             // Stale or corrupt staging directory — clean it up so the
             // next download has a clean target.
             let _ = std::fs::remove_dir_all(&staging);
@@ -454,7 +444,7 @@ impl UpdateService {
 
         self.drain_install_progress();
 
-        // Manual check (Settings Tab "Check for updates now") jumps the
+        // The manual About / Updates action jumps the
         // queue regardless of the schedule. Throttling is the caller's
         // responsibility — the UI gates the button to one click per
         // minute so a wedged network does not get pinged repeatedly.
@@ -479,7 +469,7 @@ impl UpdateService {
 
     /// Schedule an immediate discovery cycle the next time [`tick`] runs,
     /// bypassing the steady-state poll interval. Used by the Settings
-    /// Tab "Check for updates now" button.
+    /// Tab "Check for updates" button.
     pub(crate) fn request_check_now(&mut self) {
         self.manual_check_requested = true;
         self.write_diagnostic("manual_check_requested");
@@ -493,7 +483,7 @@ impl UpdateService {
 
     /// Restore the persisted last-check timestamp on app launch. Called
     /// by [`crate::app::SnappyRefApp`] right after the User Session
-    /// loads so the Settings Tab can render the timestamp before the
+    /// loads so the About / Updates can render the timestamp before the
     /// first discovery cycle of this session completes.
     pub(crate) fn seed_last_check_completed_at(&mut self, unix_millis: Option<u64>) {
         if self.last_check_completed_at.is_none() {
@@ -613,43 +603,6 @@ pub(crate) fn current_swap_unit(
     install_root.join(platform.swap_unit_name())
 }
 
-/// Re-validate a staged bundle on disk using the same rules
-/// [`stager::extract_and_validate`] applied when it was created. Returns
-/// `Ok(())` only when the layout is still structurally valid.
-fn validate_existing_staging(
-    staging_root: &std::path::Path,
-    platform: TargetPlatform,
-) -> Result<(), String> {
-    let bundle_root = staging_root.join(stager::EXPECTED_TOP_LEVEL);
-    if !bundle_root.is_dir() {
-        return Err("missing top-level SnappyRef/".to_owned());
-    }
-    match platform {
-        TargetPlatform::Macos => {
-            let macos_dir = bundle_root
-                .join("SnappyRef.app")
-                .join("Contents")
-                .join("MacOS");
-            if !macos_dir.is_dir() {
-                return Err("missing Contents/MacOS".to_owned());
-            }
-            let any = std::fs::read_dir(&macos_dir)
-                .map_err(|e| e.to_string())?
-                .filter_map(Result::ok)
-                .any(|entry| entry.file_type().map(|t| t.is_file()).unwrap_or(false));
-            if !any {
-                return Err("Contents/MacOS is empty".to_owned());
-            }
-        }
-        TargetPlatform::Windows => {
-            if !bundle_root.join("snappyref.exe").is_file() {
-                return Err("missing snappyref.exe".to_owned());
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Production install pipeline: download the zip, verify sha, extract
 /// into staging, validate layout. Each phase reports progress through
 /// `tx`. Drop semantics on the channel act as a failure signal too.
@@ -667,10 +620,7 @@ fn run_install(context: InstallContext, tx: Sender<InstallProgress>) {
                 .round()
                 .clamp(0.0, 100.0) as u8
         };
-        // Throttle: forward only on a percent change or every >= 250ms,
-        // whichever comes first. Guarantees > 1 update per second per
-        // the issue's "updates >= 1/sec" requirement while keeping the
-        // egui repaint cadence light.
+        // Forward each percent change, or after 500 ms, to limit repaints.
         let now = std::time::Instant::now();
         if pct != last_pct
             || now.saturating_duration_since(last_emit.get()) >= Duration::from_millis(500)
@@ -762,7 +712,7 @@ fn run_fetch(config: &UpdateConfig) -> DiscoveryResult {
             };
         }
     };
-    let outcome = classify(&manifest, &config.current_version, &config.release_page_url);
+    let outcome = classify(&manifest, &config.current_version);
     if let Some(path) = &config.diagnostic_path {
         write_diagnostic(
             path,
@@ -824,16 +774,10 @@ fn write_diagnostic(path: &Path, message: &str) {
 
 /// Compare a verified manifest's version against `current_version` and
 /// translate into the outcome the state machine consumes.
-pub(crate) fn classify(
-    manifest: &Manifest,
-    current_version: &str,
-    release_page_url: &str,
-) -> CheckOutcome {
+pub(crate) fn classify(manifest: &Manifest, current_version: &str) -> CheckOutcome {
     if version::is_newer_than(&manifest.version, current_version) {
         CheckOutcome::NewerAvailable {
             version: manifest.version.clone(),
-            notes_url: manifest.notes_url.clone(),
-            release_page_url: release_page_url.to_owned(),
         }
     } else {
         CheckOutcome::UpToDate
@@ -878,15 +822,9 @@ mod tests {
         let bytes = build_manifest_bytes("9.9.9", &signing_key());
         let manifest = manifest::parse_and_verify_with_key(&bytes, &signing_key().verifying_key())
             .expect("test manifest verifies");
-        match classify(&manifest, "0.1.0", "https://example/release") {
-            CheckOutcome::NewerAvailable {
-                version,
-                notes_url,
-                release_page_url,
-            } => {
+        match classify(&manifest, "0.1.0") {
+            CheckOutcome::NewerAvailable { version } => {
                 assert_eq!(version, "9.9.9");
-                assert_eq!(notes_url, "https://example/notes");
-                assert_eq!(release_page_url, "https://example/release");
             }
             other => panic!("expected NewerAvailable, got {other:?}"),
         }
@@ -897,10 +835,7 @@ mod tests {
         let bytes = build_manifest_bytes("0.1.0", &signing_key());
         let manifest = manifest::parse_and_verify_with_key(&bytes, &signing_key().verifying_key())
             .expect("test manifest verifies");
-        assert_eq!(
-            classify(&manifest, "0.1.0", "https://example/release"),
-            CheckOutcome::UpToDate
-        );
+        assert_eq!(classify(&manifest, "0.1.0"), CheckOutcome::UpToDate);
     }
 
     fn drive_until_quiescent(service: &mut UpdateService) {
@@ -956,7 +891,6 @@ mod tests {
     fn service_promotes_to_available_when_fetch_yields_newer() {
         let mut service = UpdateService::new(UpdateConfig {
             current_version: "0.1.0".to_owned(),
-            release_page_url: "https://example/release".to_owned(),
             ..UpdateConfig::for_tests()
         });
         let key = signing_key();
@@ -965,7 +899,7 @@ mod tests {
         let bytes_clone = bytes.clone();
         service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            let outcome = classify(&manifest, "0.1.0", "https://example/release");
+            let outcome = classify(&manifest, "0.1.0");
             DiscoveryResult {
                 outcome,
                 manifest: Some(manifest),
@@ -973,13 +907,8 @@ mod tests {
         }));
         drive_until_quiescent(&mut service);
         match service.state() {
-            UpdateState::Available {
-                version,
-                release_page_url,
-                ..
-            } => {
+            UpdateState::Available { version, .. } => {
                 assert_eq!(version, "1.0.0");
-                assert_eq!(release_page_url, "https://example/release");
             }
             other => panic!("expected Available, got {other:?}"),
         }
@@ -1011,8 +940,6 @@ mod tests {
                 DiscoveryResult {
                     outcome: CheckOutcome::NewerAvailable {
                         version: "9.9.9".to_owned(),
-                        notes_url: "https://example/notes".to_owned(),
-                        release_page_url: "https://example/release".to_owned(),
                     },
                     manifest: None,
                 }
@@ -1049,7 +976,6 @@ mod tests {
     fn manifest_with(version: &str) -> Manifest {
         Manifest {
             version: version.to_owned(),
-            notes_url: "https://example/notes".to_owned(),
             macos: PlatformEntry {
                 url: "https://example/mac.zip".to_owned(),
                 sha256: "0".repeat(64),
@@ -1092,8 +1018,6 @@ mod tests {
         service.last_manifest = Some(manifest_with("1.0.0"));
         service.state.apply(CheckOutcome::NewerAvailable {
             version: "1.0.0".to_owned(),
-            notes_url: "n".to_owned(),
-            release_page_url: "r".to_owned(),
         });
         // Stub the install worker so start_install doesn't depend on
         // platform shape or filesystem.
@@ -1117,8 +1041,6 @@ mod tests {
         service.last_manifest = Some(manifest_with("1.0.0"));
         service.state.apply(CheckOutcome::NewerAvailable {
             version: "1.0.0".to_owned(),
-            notes_url: "n".to_owned(),
-            release_page_url: "r".to_owned(),
         });
         service.config.install_root = Some(std::env::temp_dir());
         // Test installer immediately reports progress + Staged.
@@ -1146,8 +1068,6 @@ mod tests {
         service.last_manifest = Some(manifest_with("1.0.0"));
         service.state.apply(CheckOutcome::NewerAvailable {
             version: "1.0.0".to_owned(),
-            notes_url: "n".to_owned(),
-            release_page_url: "r".to_owned(),
         });
         service.config.install_root = Some(std::env::temp_dir());
         service.install_override = Some(Box::new(|_, tx| {
@@ -1205,6 +1125,7 @@ mod tests {
                     .join("MacOS");
                 std::fs::create_dir_all(&macos).unwrap();
                 std::fs::write(macos.join("snappyref"), b"binary").unwrap();
+                std::fs::write(macos.join("snappyref-updater"), b"helper").unwrap();
             }
             TargetPlatform::Windows => {
                 let bundle = staging.join(stager::EXPECTED_TOP_LEVEL);
@@ -1214,6 +1135,23 @@ mod tests {
         }
         stager::record_source_sha(&staging, sha);
         staging
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn detect_existing_staging_rejects_missing_helper() {
+        let root = crate::test_support::TempRoot::new("restart-missing-helper");
+        let staging = write_valid_staging(&root, "9.9.9", &"0".repeat(64));
+        std::fs::remove_file(
+            staging.join("SnappyRef/SnappyRef.app/Contents/MacOS/snappyref-updater"),
+        )
+        .unwrap();
+        let mut service = UpdateService::new(UpdateConfig {
+            install_root: Some(root.to_path_buf()),
+            ..UpdateConfig::for_tests()
+        });
+        service.detect_existing_staging(&manifest_with("9.9.9"));
+        assert!(!service.state().is_ready());
     }
 
     #[test]
@@ -1247,7 +1185,7 @@ mod tests {
         let bytes_clone = bytes.clone();
         service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            let outcome = classify(&manifest, "0.1.0", "https://example/release");
+            let outcome = classify(&manifest, "0.1.0");
             DiscoveryResult {
                 outcome,
                 manifest: Some(manifest),
@@ -1289,7 +1227,7 @@ mod tests {
         let bytes_clone = bytes.clone();
         service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            let outcome = classify(&manifest, "1.0.0", "https://example/release");
+            let outcome = classify(&manifest, "1.0.0");
             DiscoveryResult {
                 outcome,
                 manifest: Some(manifest),
@@ -1333,7 +1271,7 @@ mod tests {
         let bytes_clone = bytes.clone();
         service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            let outcome = classify(&manifest, "0.1.0", "https://example/release");
+            let outcome = classify(&manifest, "0.1.0");
             DiscoveryResult {
                 outcome,
                 manifest: Some(manifest),
@@ -1379,7 +1317,7 @@ mod tests {
         let bytes_clone = bytes.clone();
         service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            let outcome = classify(&manifest, "0.1.0", "https://example/release");
+            let outcome = classify(&manifest, "0.1.0");
             DiscoveryResult {
                 outcome,
                 manifest: Some(manifest),
@@ -1429,7 +1367,7 @@ mod tests {
         let bytes_clone = bytes.clone();
         service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            let outcome = classify(&manifest, "0.1.0", "https://example/release");
+            let outcome = classify(&manifest, "0.1.0");
             DiscoveryResult {
                 outcome,
                 manifest: Some(manifest),
