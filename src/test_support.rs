@@ -34,23 +34,3 @@ impl Drop for TempRoot {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
-
-impl crate::library::storage::Library {
-    pub(crate) fn fixture_placement(
-        &self,
-        board_id: i64,
-        placement: crate::data::Placement,
-    ) -> Result<crate::data::Placement, String> {
-        let mut stack = self.load_board_document(board_id)?.stack_order;
-        stack.push(crate::data::CanvasStackItem::Placement(placement.id()));
-        self.fixture_board_document(
-            board_id,
-            crate::canvas::CanvasDocumentChanges {
-                updated_placements: vec![placement.clone()],
-                stack_order: Some(stack),
-                ..Default::default()
-            },
-        )?;
-        Ok(placement)
-    }
-}
