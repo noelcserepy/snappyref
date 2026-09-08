@@ -182,11 +182,7 @@ decisions:
       eager-full-decoded-cache:
         status: rejected
         reason: It scaled memory use with the full Library and delayed useful work.
-    sources:
-      - label: On-demand canvas pixel snapshots
-        url: https://github.com/noelcserepy/snappyref/blob/ca1ab5ce46bb0d1d99bbac7bc281bc56911827ef/docs/adr/0008-on-demand-canvas-pixel-snapshots.md
-      - label: Prioritize small assets first in the import queue
-        url: https://github.com/noelcserepy/snappyref/blob/93bd3ddf84f1c612f910fe7985863538a19eb38f/docs/adr/0016-prioritize-small-assets-first-in-import-queue.md
+    sources: []
 
   orientation-policy:
     current: Recognize and normalize EXIF Orientation values 1 through 8 for JPEG and TIFF before reporting prepared pixels and intrinsic dimensions. Other format-specific orientation metadata may be normalized when supported but is not required.

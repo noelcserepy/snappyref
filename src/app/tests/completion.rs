@@ -15,7 +15,7 @@ fn preparation_without_diagnostics_updates_the_accepted_edit_and_survives_restar
             },
         )
         .unwrap();
-    let id = reservation.placement_id.unwrap();
+    let id = reservation.placement_id;
     let mut loaded = persisted_loaded_item(&library, id, app.active_board_id);
     loaded.queue_id = Some(reservation.queue_id);
     loaded.origin = crate::image_preparation::ImportOrigin::Path;
@@ -122,7 +122,9 @@ fn batch_completion_persists_empty_textbox_cleanup_without_an_extra_history_entr
             None,
         ),
     );
-    app.register_test_batch(app.active_board_id, egui::Pos2::ZERO, vec![1, 2]);
+    app.placement_creation
+        .batches
+        .register_multi_item_batch(app.active_board_id, vec![1, 2]);
     app.canvas.take_document_changes();
     app.canvas.begin_textbox_edit(annotation.id);
     for loaded in prepared {

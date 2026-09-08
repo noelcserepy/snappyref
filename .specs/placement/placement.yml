@@ -151,8 +151,6 @@ decisions:
     sources:
       - label: Deepen placement architecture and module ownership
         url: https://github.com/noelcserepy/snappyref/pull/128
-      - label: Loading placements are placements
-        url: https://github.com/noelcserepy/snappyref/blob/93bd3ddf84f1c612f910fe7985863538a19eb38f/docs/adr/0026-loading-placements-are-placements.md
 
   geometry-authority:
     current: RectGeometry owns board-space display size, center, scale, and rotation. Asset dimensions remain source metadata, and Board Document owns stack order.

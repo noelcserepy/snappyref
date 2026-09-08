@@ -1,6 +1,5 @@
 use eframe::egui;
 
-use crate::library::storage::Library;
 use crate::placement::arrangement::PlacementArrangementInput;
 
 #[derive(Clone, Copy, Debug)]
@@ -13,50 +12,6 @@ struct LayoutRect {
 struct PlacementCandidate {
     center: egui::Pos2,
     generation_index: usize,
-}
-
-pub fn arrange_rect_world(
-    library: &Library,
-    desired_world: egui::Pos2,
-    viewport_world: egui::Rect,
-    item_width: f32,
-    item_height: f32,
-    placement_gap: f32,
-) -> Result<egui::Pos2, String> {
-    let existing_items = library.load_placement_arrangement_inputs()?;
-    Ok(arrange_rect_with_existing_layout(
-        &existing_items,
-        desired_world,
-        viewport_world,
-        item_width,
-        item_height,
-        placement_gap,
-    ))
-}
-
-pub(crate) fn resolve_import_world(
-    library: &Library,
-    target_board_id: i64,
-    desired_world: egui::Pos2,
-    reserved_world: Option<egui::Pos2>,
-    viewport_world: egui::Rect,
-    item_width: f32,
-    item_height: f32,
-    placement_gap: f32,
-) -> Result<egui::Pos2, String> {
-    if let Some(reserved_world) = reserved_world {
-        return Ok(reserved_world);
-    }
-
-    let existing_items = library.load_placement_arrangement_inputs_for_board(target_board_id)?;
-    Ok(arrange_rect_with_existing_layout(
-        &existing_items,
-        desired_world,
-        viewport_world,
-        item_width,
-        item_height,
-        placement_gap,
-    ))
 }
 
 pub fn arrange_rect_with_existing_layout(

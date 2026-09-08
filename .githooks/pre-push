@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Pre-push gate. Mirrors what CI used to enforce per-PR; CI now only checks
-# format. Bypass with `git push --no-verify` if you really mean it.
+# Local pre-push checks: formatting, shipping-feature compilation, and update
+# preservation. Bypass with `git push --no-verify` if you really mean it.
 #
 # One-time setup on a fresh clone:
 #   git config core.hooksPath .githooks

@@ -323,7 +323,6 @@ impl PlacementCreation {
         provisional_ids: &[i64],
         screen_rect: egui::Rect,
         anchor: egui::Pos2,
-        viewport: egui::Rect,
         config: super::content_resolution::ContentResolutionRequestConfig,
         trace: Option<crate::image_preparation::ImagePrepTrace>,
     ) -> Result<Option<String>, String> {
@@ -389,14 +388,8 @@ impl PlacementCreation {
                 ImportSource::Clipboard { .. } => "Queued clipboard image".to_owned(),
             };
             let reservation = created.reservation;
-            let request = super::content_resolution::import_request(
-                source,
-                reservation,
-                anchor,
-                viewport,
-                config,
-                trace,
-            );
+            let request =
+                super::content_resolution::import_request(source, reservation, config, trace);
             if let Err(error) = worker.enqueue(request) {
                 self.cancel(reservation);
                 status = Some(error);
@@ -410,7 +403,7 @@ impl PlacementCreation {
             context.canvas.select_placements(&placement_ids);
         }
         self.batches
-            .register_multi_item_batch(context.board_id, anchor, queue_ids);
+            .register_multi_item_batch(context.board_id, queue_ids);
         Ok(status)
     }
     pub(crate) fn reserve_committed(

@@ -5,7 +5,6 @@ pub(crate) mod group_layout;
 pub(crate) mod lifecycle;
 
 pub(crate) mod initial_layout;
-pub use initial_layout::arrange_rect_world;
 pub const DEFAULT_PLACEMENT_TARGET_AREA: f32 = crate::data::DEFAULT_PLACEMENT_TARGET_AREA;
 pub fn placement_target_reference_span() -> f32 {
     DEFAULT_PLACEMENT_TARGET_AREA.sqrt()

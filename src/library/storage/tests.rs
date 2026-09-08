@@ -29,48 +29,6 @@ fn loaded_placements_load_as_committed_loaded_content() {
     );
     assert_eq!(reloaded[0].lifecycle, PlacementLifecycle::Committed);
     assert_eq!(reloaded[0].state.geometry.size, egui::vec2(10.0, 20.0));
-    assert_eq!(
-        library.load_placement_arrangement_inputs().unwrap()[0],
-        crate::placement::arrangement::PlacementArrangementInput::new(
-            placement.state.id,
-            egui::pos2(3.0, 4.0),
-            egui::vec2(20.0, 40.0),
-        )
-    );
-}
-
-#[test]
-fn legacy_content_resolution_intent_payload_alias_decodes_as_source() {
-    let loading_payload = r#"{"Loading":{"intent":{"ExternalPath":{"path":"/tmp/source.png"}},"status_message":"Queued"}}"#;
-    let failed_payload = r#"{"Failed":{"intent":{"Unknown":{"description":"clipboard"}},"message":"Could not read image","recoverable":true}}"#;
-
-    let decode = |payload: &str| {
-        super::StoredPlacementContent::decode(payload)
-            .unwrap()
-            .into_content(|_| None)
-    };
-    let loading = decode(loading_payload);
-    let failed = decode(failed_payload);
-
-    assert_eq!(
-        loading,
-        PlacementContent::Loading {
-            source: ContentResolutionSource::ExternalPath {
-                path: "/tmp/source.png".to_owned(),
-            },
-            status_message: Some("Queued".to_owned()),
-        }
-    );
-    assert_eq!(
-        failed,
-        PlacementContent::Failed {
-            source: Some(ContentResolutionSource::Unknown {
-                description: "clipboard".to_owned(),
-            }),
-            message: "Could not read image".to_owned(),
-            recoverable: true,
-        }
-    );
 }
 
 fn board_items_column_not_null(connection: &Connection, column: &str) -> bool {
@@ -206,6 +164,23 @@ fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
 
     let connection = Connection::open(root.join("library.db")).unwrap();
     connection
+        .execute_batch(
+            "PRAGMA user_version = 0;
+        ALTER TABLE user_session ADD COLUMN camera_pan_x REAL NOT NULL DEFAULT 0;
+        ALTER TABLE user_session ADD COLUMN camera_pan_y REAL NOT NULL DEFAULT 0;
+        ALTER TABLE user_session ADD COLUMN camera_zoom REAL NOT NULL DEFAULT 1;
+        ALTER TABLE user_session ADD COLUMN auto_image_scaling INTEGER DEFAULT 1;
+        ALTER TABLE user_session ADD COLUMN placement_gap REAL DEFAULT 12;
+        ALTER TABLE user_session ADD COLUMN import_target_canvas_area REAL DEFAULT 12;
+        ALTER TABLE user_session ADD COLUMN semantic_search_enabled INTEGER DEFAULT 1;
+        ALTER TABLE user_session ADD COLUMN canvas_image_max_side INTEGER DEFAULT 100;
+        ALTER TABLE user_session ADD COLUMN rotation_snap_degrees REAL DEFAULT 5;
+        ALTER TABLE user_session ADD COLUMN default_textbox_background INTEGER DEFAULT 0;
+        ALTER TABLE user_session ADD COLUMN sidebar_open INTEGER DEFAULT 0;
+        ALTER TABLE user_session ADD COLUMN sidebar_tab TEXT DEFAULT 'settings';",
+        )
+        .unwrap();
+    connection
         .execute(
             "UPDATE user_session
              SET auto_image_scaling = 1,
@@ -328,16 +303,14 @@ fn existing_legacy_user_session_columns_backfill_payload() {
         )
         .unwrap();
     assert!(payload.as_deref().is_some_and(|value| !value.is_empty()));
-    connection
-        .execute(
-            "UPDATE user_session
-             SET placement_gap = 12.0,
-                 sidebar_open = 0,
-                 sidebar_tab = 'settings'
-             WHERE id = 1",
-            [],
-        )
+    let columns: Vec<String> = connection
+        .prepare("PRAGMA table_info(user_session)")
+        .unwrap()
+        .query_map([], |row| row.get(1))
+        .unwrap()
+        .collect::<Result<_, _>>()
         .unwrap();
+    assert_eq!(columns, ["id", "session_payload", "active_board_id"]);
     drop(connection);
 
     let library = Library::initialize(root.to_path_buf()).unwrap();
@@ -404,3 +377,5 @@ mod durability;
 mod boards;
 
 mod assets;
+
+mod migrations;

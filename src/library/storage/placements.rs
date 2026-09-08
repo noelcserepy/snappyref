@@ -1,5 +1,7 @@
 use super::assets::{insert_asset_row, load_exact_asset_for_original};
-use super::boards::{active_board_id, board_is_non_archived};
+#[cfg(test)]
+use super::boards::active_board_id;
+use super::boards::board_is_non_archived;
 use super::connection::Library;
 use super::connection::write_transaction;
 use super::placement_content::StoredPlacementContent;
@@ -14,7 +16,6 @@ use crate::data::PlacementContent;
 use crate::data::PlacementLifecycle;
 use crate::data::PlacementState;
 use crate::data::RectGeometry;
-use crate::placement::arrangement::PlacementArrangementInput;
 use eframe::egui;
 use rusqlite::Connection;
 use rusqlite::Transaction;
@@ -523,6 +524,7 @@ impl Library {
         })
     }
 
+    #[cfg(test)]
     pub fn load_placements(&self) -> Result<Vec<Placement>, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
@@ -696,61 +698,6 @@ impl Library {
 
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("failed to collect board-items: {error}"))
-    }
-
-    pub fn load_placement_arrangement_inputs(
-        &self,
-    ) -> Result<Vec<PlacementArrangementInput>, String> {
-        let connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        self.load_placement_arrangement_inputs_for_board_id(&connection, active_board_id)
-    }
-
-    pub fn load_placement_arrangement_inputs_for_board(
-        &self,
-        board_id: i64,
-    ) -> Result<Vec<PlacementArrangementInput>, String> {
-        let connection = self.connection()?;
-        if !board_is_non_archived(&connection, board_id)? {
-            return Err(format!("cannot load missing or archived board {board_id}"));
-        }
-        self.load_placement_arrangement_inputs_for_board_id(&connection, board_id)
-    }
-
-    fn load_placement_arrangement_inputs_for_board_id(
-        &self,
-        connection: &Connection,
-        board_id: i64,
-    ) -> Result<Vec<PlacementArrangementInput>, String> {
-        let mut statement = connection
-            .prepare(
-                "SELECT
-                    b.id,
-                    b.x,
-                    b.y,
-                    b.width * b.scale,
-                    b.height * b.scale
-                 FROM board_items b
-                 LEFT JOIN assets a ON a.id = b.asset_id
-                 WHERE b.archived = 0
-                   AND (a.id IS NULL OR a.archived = 0)
-                   AND b.board_id = ?1
-                 ORDER BY b.z_index ASC, b.id ASC",
-            )
-            .map_err(|error| format!("failed to prepare board-arrangement query: {error}"))?;
-
-        let rows = statement
-            .query_map(params![board_id], |row| {
-                Ok(PlacementArrangementInput::new(
-                    row.get(0)?,
-                    egui::pos2(row.get(1)?, row.get(2)?),
-                    egui::vec2(row.get(3)?, row.get(4)?),
-                ))
-            })
-            .map_err(|error| format!("failed to read board-arrangement query: {error}"))?;
-
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("failed to collect board-arrangement inputs: {error}"))
     }
 
     #[cfg(test)]

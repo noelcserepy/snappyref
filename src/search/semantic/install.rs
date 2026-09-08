@@ -15,11 +15,6 @@ use crate::updater::{download, install_paths};
 // Semantic Search reuses the updater download/staging helpers, but its
 // `updates/` bucket lives under the writable data root with `models/`, not
 // under the executable install root used by app auto-update.
-const DEFAULT_SEMANTIC_SEARCH_ASSET_URL: &str = "https://github.com/noelcserepy/snappyref-dist/releases/download/semantic-search/snappyref-semantic-search.zip";
-const DEFAULT_SEMANTIC_SEARCH_ASSET_SHA256: &str =
-    "252bbd840e67c09041feaf2e127f791903dab31d50bffb4810a162f1f1999429";
-const DEFAULT_SEMANTIC_SEARCH_ASSET_SIZE: u64 = 253_732_373;
-
 const SEMANTIC_SEARCH_DOWNLOAD_PREFIX: &str = "semantic-search-download-";
 const SEMANTIC_SEARCH_STAGING_PREFIX: &str = "semantic-search-staging-";
 
@@ -70,15 +65,11 @@ impl From<io::Error> for SemanticSearchInstallError {
 
 pub(crate) fn default_semantic_search_asset_descriptor() -> SemanticSearchAssetDescriptor {
     SemanticSearchAssetDescriptor {
-        url: option_env!("SNAPPYREF_SEMANTIC_SEARCH_URL")
-            .unwrap_or(DEFAULT_SEMANTIC_SEARCH_ASSET_URL)
-            .to_owned(),
-        sha256: option_env!("SNAPPYREF_SEMANTIC_SEARCH_SHA256")
-            .unwrap_or(DEFAULT_SEMANTIC_SEARCH_ASSET_SHA256)
-            .to_owned(),
-        size: option_env!("SNAPPYREF_SEMANTIC_SEARCH_SIZE")
-            .and_then(|raw| raw.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_SEMANTIC_SEARCH_ASSET_SIZE),
+        url: env!("SNAPPYREF_SEMANTIC_SEARCH_URL").to_owned(),
+        sha256: env!("SNAPPYREF_SEMANTIC_SEARCH_SHA256").to_owned(),
+        size: env!("SNAPPYREF_SEMANTIC_SEARCH_SIZE")
+            .parse()
+            .expect("build validates model size"),
         model_key: DEFAULT_SEMANTIC_SEARCH_MODEL.model_key.to_owned(),
     }
 }
@@ -495,9 +486,14 @@ mod tests {
     fn default_semantic_search_descriptor_is_installable_contract() {
         let descriptor = default_semantic_search_asset_descriptor();
 
-        assert_eq!(descriptor.url, DEFAULT_SEMANTIC_SEARCH_ASSET_URL);
-        assert_eq!(descriptor.sha256, DEFAULT_SEMANTIC_SEARCH_ASSET_SHA256);
-        assert_eq!(descriptor.size, DEFAULT_SEMANTIC_SEARCH_ASSET_SIZE);
+        assert_eq!(descriptor.url, env!("SNAPPYREF_SEMANTIC_SEARCH_URL"));
+        assert_eq!(descriptor.sha256, env!("SNAPPYREF_SEMANTIC_SEARCH_SHA256"));
+        assert_eq!(
+            descriptor.size,
+            env!("SNAPPYREF_SEMANTIC_SEARCH_SIZE")
+                .parse::<u64>()
+                .unwrap()
+        );
         validate_descriptor(&descriptor).unwrap();
     }
 

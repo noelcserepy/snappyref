@@ -13,23 +13,18 @@ on:
         required: false
         default: true
         type: boolean
-      windows_app_run_id:
-        description: Windows app workflow run id; blank uses latest successful build
+      windows_build_tag:
+        description: Existing Windows build release tag; blank uses release_tag
         required: false
         default: ""
         type: string
-      macos_app_run_id:
-        description: macOS app workflow run id; blank uses latest successful build
+      macos_build_tag:
+        description: Existing macOS build release tag; blank uses release_tag
         required: false
         default: ""
         type: string
-      create_draft_release:
-        description: Attach final zips to a draft GitHub Release
-        required: false
-        default: false
-        type: boolean
       release_tag:
-        description: Release tag used when create_draft_release is true
+        description: Release tag for final zip assets; created as a draft if missing
         required: false
         default: v0.2.0
         type: string
@@ -43,25 +38,20 @@ on:
         required: false
         default: true
         type: boolean
-      windows_app_run_id:
+      windows_build_tag:
         required: false
         default: ""
         type: string
-      macos_app_run_id:
+      macos_build_tag:
         required: false
         default: ""
         type: string
-      create_draft_release:
-        required: false
-        default: false
-        type: boolean
       release_tag:
         required: false
         default: v0.2.0
         type: string
 
 permissions:
-  actions: read
   contents: write
 
 jobs:
@@ -72,150 +62,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve app run ids
-        id: resolve
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          windows_run_id="${{ inputs.windows_app_run_id }}"
-          macos_run_id="${{ inputs.macos_app_run_id }}"
-
-          if [[ "${{ inputs.include_windows }}" == "true" && -z "$windows_run_id" ]]; then
-            windows_run_id=$(gh run list \
-              --workflow build-windows-app.yml \
-              --status success \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId')
-          fi
-
-          if [[ "${{ inputs.include_macos }}" == "true" && -z "$macos_run_id" ]]; then
-            macos_run_id=$(gh run list \
-              --workflow build-macos-app.yml \
-              --status success \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId')
-          fi
-
-          if [[ "${{ inputs.include_windows }}" == "true" && -z "$windows_run_id" ]]; then
-            echo "No successful Build Windows App run found." >&2
-            exit 1
-          fi
-
-          if [[ "${{ inputs.include_macos }}" == "true" && -z "$macos_run_id" ]]; then
-            echo "No successful Build macOS App run found." >&2
-            exit 1
-          fi
-
-          echo "windows_app_run_id=$windows_run_id" >> "$GITHUB_OUTPUT"
-          echo "macos_app_run_id=$macos_run_id" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/download-artifact@v4
-        if: ${{ inputs.include_windows }}
+      - name: Package selected app builds
+        uses: ./.github/actions/package-release
         with:
-          run-id: ${{ steps.resolve.outputs.windows_app_run_id }}
-          github-token: ${{ github.token }}
-          name: snappyref-windows-app
-          path: ${{ runner.temp }}/app-artifacts/windows
+          include_windows: ${{ inputs.include_windows }}
+          include_macos: ${{ inputs.include_macos }}
+          windows_build_tag: ${{ inputs.windows_build_tag || inputs.release_tag }}
+          macos_build_tag: ${{ inputs.macos_build_tag || inputs.release_tag }}
+          release_tag: ${{ inputs.release_tag }}
+          token: ${{ github.token }}
 
-      - uses: actions/download-artifact@v4
-        if: ${{ inputs.include_windows }}
-        with:
-          run-id: ${{ steps.resolve.outputs.windows_app_run_id }}
-          github-token: ${{ github.token }}
-          name: snappyref-windows-semantic-search-descriptor
-          path: ${{ runner.temp }}/descriptor-artifacts/windows
-
-      - uses: actions/download-artifact@v4
-        if: ${{ inputs.include_macos }}
-        with:
-          run-id: ${{ steps.resolve.outputs.macos_app_run_id }}
-          github-token: ${{ github.token }}
-          name: snappyref-macos-app
-          path: ${{ runner.temp }}/app-artifacts/macos
-
-      - uses: actions/download-artifact@v4
-        if: ${{ inputs.include_macos }}
-        with:
-          run-id: ${{ steps.resolve.outputs.macos_app_run_id }}
-          github-token: ${{ github.token }}
-          name: snappyref-macos-semantic-search-descriptor
-          path: ${{ runner.temp }}/descriptor-artifacts/macos
-
-      - name: Verify Semantic Search descriptors
-        run: |
-          set -euo pipefail
-          descriptors=()
-          canonical_descriptors=()
-          if [[ "${{ inputs.include_windows }}" == "true" ]]; then
-            descriptors+=("${RUNNER_TEMP}/descriptor-artifacts/windows/semantic-search-descriptor.env")
-          fi
-          if [[ "${{ inputs.include_macos }}" == "true" ]]; then
-            descriptors+=("${RUNNER_TEMP}/descriptor-artifacts/macos/semantic-search-descriptor.env")
-          fi
-          if [[ "${#descriptors[@]}" -eq 0 ]]; then
-            echo "no platform descriptors selected" >&2
-            exit 1
-          fi
-          for descriptor in "${descriptors[@]}"; do
-            if [[ ! -s "$descriptor" ]]; then
-              echo "missing Semantic Search descriptor artifact: $descriptor" >&2
-              exit 1
-            fi
-            canonical="${RUNNER_TEMP}/canonical-$(basename "$(dirname "$descriptor")")-semantic-search-descriptor.env"
-            tr -d '\r' < "$descriptor" > "$canonical"
-            canonical_descriptors+=("$canonical")
-            grep -Eq '^semantic_search_url=.+$' "$canonical"
-            grep -Eq '^semantic_search_sha256=[0-9a-fA-F]{64}$' "$canonical"
-            grep -Eq '^semantic_search_size=[1-9][0-9]*$' "$canonical"
-          done
-          first="${canonical_descriptors[0]}"
-          for descriptor in "${canonical_descriptors[@]:1}"; do
-            if ! cmp -s "$first" "$descriptor"; then
-              echo "selected app builds were compiled with different Semantic Search descriptors" >&2
-              diff -u "$first" "$descriptor" || true
-              exit 1
-            fi
-          done
-
-      - name: Package selected zips
-        run: |
-          set -euo pipefail
-          release_assets="${RUNNER_TEMP}/release-assets"
-          mkdir -p "$release_assets"
-
-          if [[ "${{ inputs.include_windows }}" == "true" ]]; then
-            windows_app="${RUNNER_TEMP}/windows-app.zip"
-            (cd "${RUNNER_TEMP}/app-artifacts/windows" && zip -9 -r "$windows_app" SnappyRef)
-            scripts/package-release-assets.sh \
-              --platform windows \
-              --app-archive "$windows_app" \
-              --output "$release_assets/snappyref-windows-${{ inputs.release_tag }}.zip"
-          fi
-
-          if [[ "${{ inputs.include_macos }}" == "true" ]]; then
-            macos_app_zip=$(find "${RUNNER_TEMP}/app-artifacts/macos" -type f -name 'snappyref-macos-app.zip' | head -n 1)
-            if [[ -z "$macos_app_zip" ]]; then
-              echo "missing macOS app artifact" >&2
-              exit 1
-            fi
-            scripts/package-release-assets.sh \
-              --platform macos \
-              --app-archive "$macos_app_zip" \
-              --output "$release_assets/snappyref-mac-${{ inputs.release_tag }}.zip"
-          fi
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: snappyref-release-zips
-          path: ${{ runner.temp }}/release-assets/*.zip
-          retention-days: 7
-
-      - name: Create draft release
-        if: ${{ inputs.create_draft_release }}
+      - name: Retain final zips on GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

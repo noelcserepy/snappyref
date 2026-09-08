@@ -441,9 +441,7 @@ impl InspectScenario {
                     },
                 )
                 .unwrap();
-            let placement_id = reservation
-                .placement_id
-                .expect("sample import should create loading placement");
+            let placement_id = reservation.placement_id;
             let loading_state = harness
                 .state()
                 .canvas
@@ -621,7 +619,6 @@ pub(super) fn inspect_status_slug(status: &LocalModelStoreStatus) -> String {
         LocalModelStoreStatus::Missing => "missing".to_owned(),
         LocalModelStoreStatus::Downloading { percent } => format!("downloading-{percent:03}"),
         LocalModelStoreStatus::Installed => "installed".to_owned(),
-        LocalModelStoreStatus::InstalledViaMigration => "installed-via-migration".to_owned(),
         LocalModelStoreStatus::Failed(_) => "failed".to_owned(),
     }
 }
@@ -1017,18 +1014,6 @@ pub(super) fn test_canvas_annotation(id: i64, start: egui::Pos2) -> crate::data:
 }
 
 impl SnappyRefApp {
-    pub(super) fn register_test_batch(
-        &mut self,
-        target_board_id: i64,
-        anchor_world: egui::Pos2,
-        queue_ids: Vec<u64>,
-    ) {
-        self.placement_creation.batches.register_multi_item_batch(
-            target_board_id,
-            anchor_world,
-            queue_ids,
-        );
-    }
     pub(super) fn install_test_prepared_image(
         &mut self,
         ctx: &egui::Context,

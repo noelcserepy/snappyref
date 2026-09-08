@@ -498,7 +498,6 @@ impl SnappyRefApp {
         self.perf_scenario = Some(scenario);
 
         let desired_world = self.preferred_import_world(ctx, screen_rect);
-        let viewport_world = self.import_viewport_world_rect(screen_rect);
 
         let entries = match self
             .perf_scenario
@@ -516,7 +515,7 @@ impl SnappyRefApp {
             // in via `dispatch_perf_trickle_imports`.
             let mut iter = entries.into_iter();
             if let Some(first) = iter.next() {
-                if let Err(error) = self.enqueue_perf_entry(&first, desired_world, viewport_world) {
+                if let Err(error) = self.enqueue_perf_entry(&first, desired_world) {
                     self.emit_perf_error_and_close(ctx, error);
                     return;
                 }
@@ -530,7 +529,7 @@ impl SnappyRefApp {
             }
         } else {
             for entry in entries {
-                if let Err(error) = self.enqueue_perf_entry(&entry, desired_world, viewport_world) {
+                if let Err(error) = self.enqueue_perf_entry(&entry, desired_world) {
                     self.emit_perf_error_and_close(ctx, error);
                     return;
                 }
@@ -543,7 +542,6 @@ impl SnappyRefApp {
         &mut self,
         entry: &PerfCorpusEntry,
         desired_world: egui::Pos2,
-        viewport_world: egui::Rect,
     ) -> Result<(), String> {
         let path = self
             .perf_scenario
@@ -561,8 +559,6 @@ impl SnappyRefApp {
         let request = crate::placement::content_resolution::import_request(
             ImportSource::Path(path.clone()),
             reservation,
-            desired_world,
-            viewport_world,
             self.import_request_config(),
             self.import_trace(),
         );
@@ -626,7 +622,6 @@ impl SnappyRefApp {
         }
 
         let desired_world = self.preferred_import_world(ctx, screen_rect);
-        let viewport_world = self.import_viewport_world_rect(screen_rect);
 
         // Pop one entry now, schedule the next interval if more remain.
         let entry = match self
@@ -638,7 +633,7 @@ impl SnappyRefApp {
             None => return,
         };
 
-        if let Err(error) = self.enqueue_perf_entry(&entry, desired_world, viewport_world) {
+        if let Err(error) = self.enqueue_perf_entry(&entry, desired_world) {
             self.emit_perf_error_and_close(ctx, error);
             return;
         }

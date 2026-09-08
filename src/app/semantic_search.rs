@@ -18,8 +18,7 @@ pub(super) fn semantic_search_settings_status(
     status: crate::search::semantic::LocalModelStoreStatus,
 ) -> SemanticSearchSettingsStatus {
     match status {
-        crate::search::semantic::LocalModelStoreStatus::Installed
-        | crate::search::semantic::LocalModelStoreStatus::InstalledViaMigration => {
+        crate::search::semantic::LocalModelStoreStatus::Installed => {
             SemanticSearchSettingsStatus::Installed
         }
         crate::search::semantic::LocalModelStoreStatus::Missing => {
@@ -61,13 +60,12 @@ impl SnappyRefApp {
         self.search.sync_service(
             self.library.as_ref(),
             &mut self.status,
-            Some(&mut self.canvas),
             self.settings.canvas_image_max_side,
         );
     }
 
     pub(super) fn handle_search_results(&mut self) {
-        self.search.handle_results(&mut self.canvas);
+        self.search.handle_results();
     }
 
     pub(super) fn drive_semantic_search_install(&mut self, ctx: &egui::Context) {

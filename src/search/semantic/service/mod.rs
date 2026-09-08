@@ -1,6 +1,6 @@
 mod helper;
+pub(crate) use helper::run_embed_image_server;
 use helper::{EmbeddingHelperClient, embed_image_in_helper, ensure_embedding_helper};
-pub(crate) use helper::{print_embed_image_output, run_embed_image_server};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
@@ -23,7 +23,6 @@ pub struct SemanticSearchConfig {
 
 #[derive(Clone, Debug)]
 pub struct SearchResultAssetEntry {
-    #[allow(dead_code)]
     pub asset_id: i64,
     pub asset_preview_path: Option<PathBuf>,
     pub asset_width: u32,
@@ -98,6 +97,7 @@ enum ModelState {
 }
 
 pub struct SemanticSearchService {
+    #[cfg(test)]
     library: Library,
     model_state: Arc<Mutex<ModelState>>,
     text_embedding_cache: Arc<Mutex<HashMap<String, Vec<f32>>>>,
@@ -197,6 +197,7 @@ impl SemanticSearchService {
         });
 
         let service = Self {
+            #[cfg(test)]
             library,
             model_state,
             text_embedding_cache,

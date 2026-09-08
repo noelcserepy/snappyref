@@ -770,49 +770,6 @@ fn add_annotation_invalidates_textbox_layout_cache() {
 }
 
 #[test]
-fn add_annotations_clears_textbox_layout_cache() {
-    eframe::egui::__run_test_ui(|ui| {
-        let mut state = CanvasState::default();
-        state.cache_textbox_layout(
-            1,
-            "one",
-            default_text_size(),
-            default_annotation_color(),
-            120.0,
-            1.0,
-            layout_textbox_galley(
-                ui,
-                "one",
-                default_text_size(),
-                default_annotation_color(),
-                120.0,
-                1.0,
-            ),
-        );
-        state.cache_textbox_layout(
-            2,
-            "two",
-            default_text_size(),
-            default_annotation_color(),
-            120.0,
-            1.0,
-            layout_textbox_galley(
-                ui,
-                "two",
-                default_text_size(),
-                default_annotation_color(),
-                120.0,
-                1.0,
-            ),
-        );
-
-        state.add_annotations(Vec::new());
-
-        assert!(state.render.textbox_layout_cache.is_empty());
-    });
-}
-
-#[test]
 fn remove_annotation_locally_invalidates_textbox_layout_cache() {
     eframe::egui::__run_test_ui(|ui| {
         let mut state = CanvasState::default();

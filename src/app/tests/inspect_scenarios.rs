@@ -2126,10 +2126,7 @@ fn inspect_semantic_search_real_install_writes_artifact() {
         }),
     );
 
-    if matches!(
-        initial_status,
-        LocalModelStoreStatus::Installed | LocalModelStoreStatus::InstalledViaMigration
-    ) {
+    if matches!(initial_status, LocalModelStoreStatus::Installed) {
         scenario.assertion("semantic search already installed", true);
         scenario.capture_screen("screen-001-installed", &mut harness);
         let report = scenario.finish();

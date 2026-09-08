@@ -26,14 +26,15 @@ Avoid:
 
 - internal refactors, architecture, implementation details, test-only work, CI, release tooling, dependency bumps, docs-only work, and agent/process changes
 - PR numbers in the final copy unless the user asks for traceability
-- contributor names, branch names, commit hashes, or internal code/ADR terminology when a plain user-facing phrase is clearer
+- contributor names, branch names, commit hashes, or internal architecture terminology when a plain user-facing phrase is clearer
 - promising a fix more broadly than the PR evidence supports
 
 ## Inputs
 
 - Release number: use the user's provided release number. If missing, infer it from the latest unreleased version/tag context when obvious; otherwise ask for it.
 - Previous release: find the most recent actual GitHub Release and the exact commit/tag it points to. Use that commit as the boundary.
-- Change set: PRs merged after the latest actual release commit and included in the new release.
+- Target commit: resolve the new release tag or intended release ref to its exact commit. Use `HEAD` only when that is the intended release code.
+- Change set: commits included in the target but absent from the previous release, with their associated PRs.
 - Do not use the PR that updates the version number as the release boundary. Version bumps may happen before or after release work and are not reliable.
 
 ## Gathering PRs
@@ -55,22 +56,31 @@ git rev-list -n 1 <latest-release-tag>
 
 Use `git rev-list -n 1 <latest-release-tag>` as the previous-release commit when the release tag exists locally. If the tag is missing, fetch tags or use GitHub release metadata to resolve the target commit. Do not substitute a version-bump commit or version-bump PR for this boundary.
 
-3. Prefer GitHub release metadata when available:
+3. Enumerate the complete commit range:
 
 ```sh
-gh pr list --state merged --base main --search "merged:>=YYYY-MM-DD" --json number,title,body,mergedAt,labels,url
+git merge-base --is-ancestor <previous-release-commit> <target-commit>
+git log --reverse --format='%H %s' <previous-release-commit>..<target-commit>
 ```
 
-Use the latest release `publishedAt` date only as a search accelerator. The authoritative inclusion boundary is still the latest release commit.
+If the ancestor check fails, inspect the release branches before choosing the
+comparison range. Include merge, squash, rebase, and direct commits. Publication
+dates do not determine which changes shipped.
 
-4. If GitHub metadata is unavailable, fall back to local git history from the release commit:
+4. Resolve associated PRs from the commits, using merge or squash subjects when
+they identify the PR. For a commit without a reliable PR link:
 
 ```sh
-git log <previous-release-commit>..HEAD --merges --first-parent --oneline
-git log <previous-release-commit>..HEAD --oneline
+gh api --paginate 'repos/{owner}/{repo}/commits/<commit-sha>/pulls' \
+  --jq '.[] | select(.merged_at != null) | {number, title, merge_commit_sha, html_url}'
 ```
 
-5. For ambiguous PR titles, inspect the PR body or changed files:
+Deduplicate PR numbers across commits. A PR association is supporting metadata;
+the commit range remains authoritative. Check reverts and partial inclusion
+before describing a whole PR as shipped. Keep direct commits without PRs in the
+review. If GitHub metadata is unavailable, inspect the local commits and diffs.
+
+5. Inspect PR details when the title does not establish the user-facing effect:
 
 ```sh
 gh pr view <number> --json title,body,files,labels,mergedAt,url
@@ -124,7 +134,7 @@ If there are no user-facing changes, say so briefly instead of padding the relea
 
 Before responding:
 
-- Confirm the latest actual release tag/commit used as the boundary and the PR range collected from it.
+- Confirm the previous release and target commits, account for the complete range, and deduplicate the associated PRs.
 - Re-read the bullets and remove anything that exposes internal work without a user-visible consequence.
 - Make sure every bullet would make sense to a non-developer using SnappyRef.
 - Make sure the final answer is the patchnotes markdown, not a process report, unless the user explicitly asks for methodology.

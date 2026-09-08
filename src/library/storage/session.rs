@@ -129,14 +129,6 @@ impl Library {
         })
     }
 
-    pub fn load_session_viewport(&self) -> Result<(i64, ViewportState), String> {
-        let connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let viewport = board_viewport_state(&connection, active_board_id)
-            .map_err(|error| format!("failed to load active board viewport: {error}"))?;
-        Ok((active_board_id, viewport))
-    }
-
     pub fn save_user_session(&self, session: &UserSession) -> Result<(), String> {
         let connection = self.connection()?;
         let active_board_id = if board_is_non_archived(&connection, session.active_board_id)? {
@@ -145,14 +137,12 @@ impl Library {
             active_board_id(&connection)?
         };
         let session_payload = encode_user_session_payload(session)?;
-        // The camera columns predate per-board viewports and stay NOT NULL;
-        // the board row owns the viewport.
         connection
             .execute(
                 "INSERT INTO user_session (
-                    id, camera_pan_x, camera_pan_y, camera_zoom, session_payload, active_board_id
+                    id, session_payload, active_board_id
                  )
-                 VALUES (1, 0.0, 0.0, 1.0, ?1, ?2)
+                 VALUES (1, ?1, ?2)
                  ON CONFLICT(id) DO UPDATE SET
                     session_payload = excluded.session_payload,
                     active_board_id = excluded.active_board_id",

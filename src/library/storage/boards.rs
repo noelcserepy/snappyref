@@ -1,5 +1,6 @@
 use super::connection::Library;
 use crate::data::Board;
+#[cfg(test)]
 use crate::data::DEFAULT_VIEWPORT_ZOOM;
 use rusqlite::Connection;
 use rusqlite::Transaction;
@@ -124,14 +125,11 @@ pub(super) fn persist_active_board_id(
         .execute(
             "INSERT INTO user_session (
                 id,
-                camera_pan_x,
-                camera_pan_y,
-                camera_zoom,
                 active_board_id
              )
-             VALUES (1, 0.0, 0.0, ?2, ?1)
+             VALUES (1, ?1)
              ON CONFLICT(id) DO UPDATE SET active_board_id = excluded.active_board_id",
-            params![board_id, DEFAULT_VIEWPORT_ZOOM],
+            params![board_id],
         )
         .map_err(|error| format!("failed to persist active board: {error}"))?;
     Ok(())

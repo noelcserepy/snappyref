@@ -23,7 +23,6 @@ use super::{
     canvas_source_image_from_rgba, is_svg_path, original_mime_type_is_svg, parse_svg_document,
     read_svg_document, stable_svg_uri_key,
 };
-use crate::placement::initial_layout::resolve_import_world;
 
 const URL_IMPORT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const URL_IMPORT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -32,7 +31,7 @@ const URL_IMPORT_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 struct ImportedImagePersistRequest<'a> {
     library: &'a Library,
     target_board_id: i64,
-    placement_id: Option<i64>,
+    placement_id: i64,
     stored_path: &'a std::path::Path,
     mime_type: &'a str,
     width: u32,
@@ -50,7 +49,7 @@ fn persist_imported_image_with_exact_reuse(
         .library
         .persist_imported_image_resolving_placement_with_hash(
             request.target_board_id,
-            request.placement_id,
+            Some(request.placement_id),
             request.stored_path,
             request.mime_type,
             request.width,
@@ -75,28 +74,26 @@ pub fn import_path_sync(
     library: &Library,
     source_path: PathBuf,
     desired_world: egui::Pos2,
-    viewport_world: egui::Rect,
     auto_scale: bool,
-    placement_gap: f32,
 ) -> Result<PreparedPlacementImage, String> {
     let target_board_id = library.load_user_session()?.active_board_id;
     import_sync(
         library,
-        ImportRequest {
-            target_board_id,
-            queue_id: 0,
-            placement_id: Some(library.allocate_document_id()),
-            source: ImportSource::Path(source_path),
-            desired_world,
-            reserved_world: None,
-            viewport_world,
-            max_texture_side: usize::MAX,
-            canvas_image_settings: CanvasImageSettings::default(),
-            auto_scale,
-            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-            placement_gap,
-            trace: None,
-        },
+        super::tests::reserve_import_fixture(
+            library,
+            ImportRequest {
+                target_board_id,
+                queue_id: 0,
+                placement_id: library.allocate_document_id(),
+                source: ImportSource::Path(source_path),
+                reserved_world: desired_world,
+                max_texture_side: usize::MAX,
+                canvas_image_settings: CanvasImageSettings::default(),
+                auto_scale,
+                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+                trace: None,
+            },
+        ),
         None,
     )
 }
@@ -115,7 +112,7 @@ pub(crate) fn import(
         Err(error) => ImagePrepResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),
-            placement_id,
+            placement_id: Some(placement_id),
             context,
             error,
         },
@@ -133,14 +130,11 @@ pub(crate) fn import_sync(
         queue_id,
         placement_id,
         source,
-        desired_world,
         reserved_world,
-        viewport_world,
         max_texture_side,
         canvas_image_settings,
         auto_scale,
         placement_target_area,
-        placement_gap,
         mut trace,
     } = request;
     if let Some(trace) = &mut trace {
@@ -160,16 +154,6 @@ pub(crate) fn import_sync(
         auto_scale,
         placement_target_area,
     );
-    let arranged_world = resolve_import_world(
-        library,
-        target_board_id,
-        desired_world,
-        reserved_world,
-        viewport_world,
-        decoded.source_width as f32 * initial_scale.max(0.01),
-        decoded.source_height as f32 * initial_scale.max(0.01),
-        placement_gap,
-    )?;
 
     let store_started_at = Instant::now();
     let stored = store_original(library, &decoded)?;
@@ -183,7 +167,7 @@ pub(crate) fn import_sync(
         height: decoded.source_height,
         file_size: stored.file_size,
         original_sha256: &stored.sha256,
-        arranged_world,
+        arranged_world: reserved_world,
         initial_scale,
     })?;
     let store_and_persist = store_started_at.elapsed();

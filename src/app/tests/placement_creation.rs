@@ -146,7 +146,9 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
 fn completed_multi_file_import_batch_selects_and_compacts_loaded_geometry() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
-    app.register_test_batch(app.active_board_id, egui::pos2(120.0, 80.0), vec![1, 2, 3]);
+    app.placement_creation
+        .batches
+        .register_multi_item_batch(app.active_board_id, vec![1, 2, 3]);
 
     for (id, width, height) in [(1_i64, 180_u32, 80_u32), (2, 70, 210), (3, 140, 120)] {
         let asset = Asset {
@@ -187,8 +189,9 @@ fn completed_multi_file_import_batch_selects_and_compacts_loaded_geometry() {
 fn completed_import_batch_compacts_loaded_items_after_out_of_order_failures() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
-    let anchor = egui::pos2(-340.0, 210.0);
-    app.register_test_batch(app.active_board_id, anchor, vec![1, 2, 3]);
+    app.placement_creation
+        .batches
+        .register_multi_item_batch(app.active_board_id, vec![1, 2, 3]);
 
     let mut third = test_loaded_item(3, app.active_board_id);
     third.placement.require_loaded_asset_mut().width = 140;
@@ -245,7 +248,9 @@ fn completed_import_batch_compacts_loaded_items_after_out_of_order_failures() {
 fn completed_inactive_board_import_batch_does_not_mutate_active_canvas() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
-    app.register_test_batch(1, egui::pos2(0.0, 0.0), vec![1, 2]);
+    app.placement_creation
+        .batches
+        .register_multi_item_batch(1, vec![1, 2]);
     app.active_board_id = 2;
 
     app.install_test_prepared_image(&ctx, test_loaded_item(1, 1));
@@ -285,12 +290,12 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
 
     assert_eq!(known.target_board_id, second.id);
     assert_eq!(known.queue_id, 1);
-    assert!(known.placement_id.is_some());
-    assert_eq!(known.reserved_world, Some(egui::Pos2::ZERO));
+    assert!(known.placement_id > 0);
+    assert_eq!(known.reserved_world, egui::Pos2::ZERO);
     assert_eq!(unknown.target_board_id, second.id);
     assert_eq!(unknown.queue_id, 2);
-    assert!(unknown.placement_id.is_some());
-    assert_eq!(unknown.reserved_world, Some(egui::pos2(200.0, 0.0)));
+    assert!(unknown.placement_id > 0);
+    assert_eq!(unknown.reserved_world, egui::pos2(200.0, 0.0));
 }
 
 #[test]
@@ -308,7 +313,7 @@ fn failed_import_fails_the_accepted_placement_before_it_is_durable() {
             },
         )
         .unwrap();
-    let placement_id = reservation.placement_id.unwrap();
+    let placement_id = reservation.placement_id;
 
     // The creation unit may still be queued; failure handling must not
     // depend on the row existing.
@@ -379,7 +384,7 @@ fn accepted_import_for_inactive_board_keeps_history_on_target_board() {
             },
         )
         .unwrap();
-    let placement_id = reservation.placement_id.unwrap();
+    let placement_id = reservation.placement_id;
     app.switch_to_board(second.id);
 
     let mut loaded = persisted_loaded_item(&library, placement_id, first.id);

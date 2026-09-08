@@ -34,19 +34,6 @@ pub fn run() -> eframe::Result<()> {
         return Ok(());
     }
 
-    if let Some(path) = std::env::args().skip(1).find_map(|argument| {
-        argument
-            .strip_prefix("--semantic-embed-image=")
-            .map(str::to_owned)
-    }) {
-        if let Err(error) = search::semantic::print_embed_image_output(std::path::Path::new(&path))
-        {
-            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
-                error,
-            ))));
-        }
-        return Ok(());
-    }
     if std::env::args()
         .skip(1)
         .any(|argument| argument == "--semantic-embed-server")
@@ -69,8 +56,7 @@ pub fn run() -> eframe::Result<()> {
         return Ok(());
     }
     let viewport_size = config.startup_viewport_size();
-    let restored_window = config.restored_window_state();
-    let restored_settings = config.restored_workspace_settings();
+    let startup = config.prepare_startup();
     let startup_focus_enabled = config.startup_focus_enabled();
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size([viewport_size.x, viewport_size.y])
@@ -80,7 +66,7 @@ pub fn run() -> eframe::Result<()> {
         .with_titlebar_shown(false)
         .with_titlebar_buttons_shown(true)
         .with_active(startup_focus_enabled);
-    if let Some(window) = &restored_window {
+    if let Some(window) = startup.window() {
         if let (Some(width), Some(height)) = (window.inner_width, window.inner_height) {
             viewport = viewport.with_inner_size([width, height]);
         }
@@ -88,10 +74,7 @@ pub fn run() -> eframe::Result<()> {
             viewport = viewport.with_position([x, y]);
         }
     }
-    if restored_settings
-        .as_ref()
-        .is_some_and(|settings| settings.always_on_top)
-    {
+    if startup.always_on_top() {
         viewport = viewport.with_window_level(eframe::egui::viewport::WindowLevel::AlwaysOnTop);
     }
     let mut options = eframe::NativeOptions {
@@ -107,7 +90,7 @@ pub fn run() -> eframe::Result<()> {
             ui::theme::configure_theme(&cc.egui_ctx);
             cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(app::SnappyRefApp::new(cc, config.clone())))
+            Ok(Box::new(app::SnappyRefApp::new(cc, config, startup)))
         }),
     )
 }

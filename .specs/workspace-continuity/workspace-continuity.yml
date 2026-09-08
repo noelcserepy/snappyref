@@ -29,10 +29,11 @@ interface:
           reason: WorkspaceContinuityFailure
 
       behavior:
-        versioned-payload-selection: restored must use the newest supported workspace payload that parses successfully as one unit.
-        missing-fields-default: Fields absent from an older supported payload must use their schema defaults.
-        invalid-payload-defaulted: A payload that cannot be parsed or whose version is unsupported must fall back to legacy session values or fresh defaults as one unit.
+        payload-selection: restored must use the stored workspace payload that parses successfully as one unit.
+        missing-fields-default: Fields absent from a parseable payload must use their schema defaults.
+        invalid-payload-defaulted: A missing, empty, or unparseable payload must use fresh defaults as one unit.
         unusable-window-contained: After payload restoration, unusable window bounds may fall back without discarding the other restored session state.
+        upgrade-preserves-settings: Upgrading settings stored in older database columns must preserve their supported values in the current workspace payload. An existing payload takes precedence over obsolete columns.
         usable-default: defaulted must provide a coherent active Board identity or a restoration request that Active Board can resolve.
 
       caller_obligations: {}
@@ -84,6 +85,8 @@ interface:
       caller_obligations: {}
 
   guarantees:
+    coherent-startup-restore: Initial window setup and app construction must use the same restored workspace state.
+    current-settings-representation: After successful storage migration, workspace settings must have one current payload representation, without obsolete preference columns. A failed migration must leave prior durable settings intact.
     session-separate-from-document: Workspace and window state must not enter Board undo history.
     interaction-nonblocking: Session persistence must not block canvas interaction.
     zero-default-placement-gap: A workspace without a saved Placement Gap starts at 0 board-space units.
@@ -94,24 +97,32 @@ interface:
 
 decisions:
   session-payload-recovery:
-    current: Restore a supported parseable workspace payload as one unit, default missing schema fields, and fall back as one unit when the payload cannot be parsed.
+    current: Store workspace settings without an explicit payload version. Restore a parseable payload as one unit, default missing fields, and use defaults as one unit when the payload is missing, empty, or unparseable.
     affects:
       - "[[#/interface/operations/restore]]"
     reasons:
-      - One versioned payload keeps related workspace settings consistent.
-      - Schema defaults let older payloads omit fields added later.
+      - One payload keeps related workspace settings consistent.
+      - Schema defaults let existing payloads omit fields added later.
+      - Downgrading after a newer app has migrated user data is unsupported; a settings version check would not make the database safe to downgrade.
     consequences:
       - Present malformed setting fields do not receive independent salvage during payload parsing.
       - Missing Board identities and unusable window bounds are repaired after payload selection.
+      - Restoration does not reject a payload based on an unknown version field.
     reconsider_when:
       - Stored workspace corruption shows that field-level salvage preserves more valid state without admitting contradictory settings.
+      - An incompatible settings format change needs a specific migration, or switching between app versions becomes a supported workflow.
     explored_paths:
+      payload-version-gate:
+        status: rejected
+        reason: No current supported workflow requires explicit settings versions. Add a specific migration when a format change needs one.
       field-by-field-payload-salvage:
         status: rejected
         reason: No accepted recovery policy defines validity and fallback for every persisted field independently.
     sources:
       - label: Store user session preferences in payload
         url: https://github.com/noelcserepy/snappyref/commit/c3a09f29f9780e1075ec9e6b7e59bbc0182b9c34
+      - label: Keep workspace settings unversioned
+        url: https://github.com/noelcserepy/snappyref/issues/206
 
   fresh-workspace-defaults:
     current: Start a workspace without saved global state in Mouse Pointer Mode with Placement Gap 0; the initial Board supplies its own default view.

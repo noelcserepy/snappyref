@@ -126,16 +126,13 @@ impl ImportSource {
 pub struct ImportRequest {
     pub target_board_id: i64,
     pub queue_id: u64,
-    pub placement_id: Option<i64>,
+    pub placement_id: i64,
     pub source: ImportSource,
-    pub desired_world: egui::Pos2,
-    pub reserved_world: Option<egui::Pos2>,
-    pub viewport_world: egui::Rect,
+    pub reserved_world: egui::Pos2,
     pub max_texture_side: usize,
     pub canvas_image_settings: CanvasImageSettings,
     pub auto_scale: bool,
     pub placement_target_area: f32,
-    pub placement_gap: f32,
     pub trace: Option<ImagePrepTrace>,
 }
 

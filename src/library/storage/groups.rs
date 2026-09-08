@@ -1,3 +1,4 @@
+#[cfg(test)]
 use super::connection::Library;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
@@ -94,6 +95,7 @@ pub(super) fn replace_board_groups(
     Ok(())
 }
 
+#[cfg(test)]
 impl Library {
     pub fn load_groups(&self) -> Result<Vec<Group>, String> {
         let connection = self.connection()?;

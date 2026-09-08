@@ -257,6 +257,7 @@ interface:
     relative-order-preserved: Reordering a multi-item selection must preserve the selected items' relative order.
     provisional-history-neutral: Provisional Placements must not enter persistence or history before commit.
     history-isolated-per-board: Undo and redo for one Board must not consume entries created for another Board.
+    content-format-upgrade: Upgrading persisted Loading and Failed Placement content from the old intent field to source must preserve content and undo/redo history, including archived Board history. Reopening an upgraded database must not require the old field alias. A failed conversion must leave prior durable records intact.
     history-survives-restart: Committed Board and Board-lifecycle history must remain available after app restart.
     archived-content-recoverable: Deleting a Board or Board item archives its durable content so Undo can restore the same identities.
     new-board-zoom: A Board without saved view state starts at zoom 0.45.
@@ -303,8 +304,6 @@ decisions:
     sources:
       - label: Add document undo history
         url: https://github.com/noelcserepy/snappyref/pull/119
-      - label: Document history
-        url: https://github.com/noelcserepy/snappyref/blob/93bd3ddf84f1c612f910fe7985863538a19eb38f/docs/adr/0024-document-history.md
 
   history-durability:
     current: Apply, Undo, and Redo change memory first, queue ordered persistence that starts automatically, and preserve the resulting history across restart.

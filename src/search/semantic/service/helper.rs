@@ -49,28 +49,6 @@ impl From<EmbedModelLoadTimingOutput> for ModelLoadTiming {
     }
 }
 
-pub(crate) fn print_embed_image_output(path: &std::path::Path) -> Result<(), String> {
-    let (model, _) =
-        OrtImageEmbeddingModel::load_with_progress_timed(DEFAULT_SEMANTIC_SEARCH_MODEL, |_| {})
-            .map_err(|error| {
-                format!("failed to load semantic model in embedding helper: {error}")
-            })?;
-    let embedding = model
-        .embed_image_path_timed(path)
-        .map(|(embedding, _timing)| embedding)
-        .map_err(|error| format!("failed to embed image in embedding helper: {error}"))?;
-    serde_json::to_writer(
-        std::io::stdout(),
-        &EmbedImageOutput {
-            embedding: Some(embedding),
-            error: None,
-            model_load_timing: None,
-        },
-    )
-    .map_err(|error| format!("failed to write embedding helper output: {error}"))?;
-    Ok(())
-}
-
 pub(crate) fn run_embed_image_server() -> Result<(), String> {
     let (model, timing) =
         OrtImageEmbeddingModel::load_with_progress_timed(DEFAULT_SEMANTIC_SEARCH_MODEL, |_| {})

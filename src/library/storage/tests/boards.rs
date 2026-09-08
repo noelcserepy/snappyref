@@ -42,21 +42,7 @@ fn committed_loading_and_failed_placements_persist_load_and_stack() {
     ));
     assert_eq!(reloaded[0].state.geometry.size.x, 320.0);
     assert_eq!(reloaded[1].state.geometry.size.y, 90.0);
-    assert_eq!(
-        library.load_placement_arrangement_inputs().unwrap(),
-        vec![
-            crate::placement::arrangement::PlacementArrangementInput::new(
-                loading.state.id,
-                egui::pos2(12.0, 24.0),
-                egui::vec2(640.0, 360.0),
-            ),
-            crate::placement::arrangement::PlacementArrangementInput::new(
-                failed.state.id,
-                egui::pos2(48.0, 96.0),
-                egui::vec2(120.0, 90.0),
-            ),
-        ]
-    );
+
     assert_eq!(
         library.load_canvas_stack_order().unwrap(),
         vec![

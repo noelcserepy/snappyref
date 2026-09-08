@@ -47,7 +47,7 @@ pub(crate) fn paste_board_payload_at(
     };
     let source_center = egui::pos2(payload.source_center_x, payload.source_center_y);
     let target_anchor_world = placement_anchor_for_payload(
-        library,
+        context.canvas,
         context.viewport_world,
         context.placement_gap,
         payload,
@@ -243,7 +243,7 @@ fn move_pasted_content_to_front(
 }
 
 fn placement_anchor_for_payload(
-    library: &Library,
+    canvas: &CanvasState,
     viewport_world: egui::Rect,
     placement_gap: f32,
     payload: &ClipboardBoardSelection,
@@ -252,13 +252,29 @@ fn placement_anchor_for_payload(
     let Some(bounds) = clipboard_payload_bounds(payload) else {
         return Ok(requested_anchor_world);
     };
-    crate::placement::arrange_rect_world(
-        library,
-        requested_anchor_world,
-        viewport_world,
-        bounds.width(),
-        bounds.height(),
-        placement_gap,
+    let existing = canvas
+        .committed_placements()
+        .into_iter()
+        .map(|placement| {
+            crate::placement::arrangement::PlacementArrangementInput::new(
+                placement.id(),
+                placement.state.geometry.center,
+                crate::data::rotated_display_size(
+                    placement.state.geometry.scaled_size(),
+                    placement.state.geometry.rotation,
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+    Ok(
+        crate::placement::initial_layout::arrange_rect_with_existing_layout(
+            &existing,
+            requested_anchor_world,
+            viewport_world,
+            bounds.width(),
+            bounds.height(),
+            placement_gap,
+        ),
     )
 }
 
@@ -530,5 +546,60 @@ mod group_tests {
             vec![ids[2], ids[3], ids[0]]
         );
         assert!(!canvas.add_members_to_group(b, &[ids[0]]).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod paste_geometry_tests {
+    use super::*;
+
+    #[test]
+    fn paste_uses_current_geometry_when_moves_and_board_switches_are_not_persisted() {
+        let root = crate::test_support::TempRoot::new("paste-current-canvas");
+        let library = Library::initialize(root.to_path_buf()).unwrap();
+        let path = library.store_rgba_image("source", &[255; 4], 1, 1).unwrap();
+        let stored = library
+            .persist_imported_image(&path, "image/png", 100, 100, 4, egui::Pos2::ZERO, 1.0)
+            .unwrap();
+        let second = library.create_board("Second").unwrap();
+        // The database still names Board 1 and stores its image at the origin.
+        // Each canvas below is the accepted state before queued writes catch up.
+        for (board, x) in [(1, 1000.0), (second.id, 2000.0)] {
+            let mut canvas = CanvasState::default();
+            let mut current = stored.clone();
+            if board != 1 {
+                current.state.id = library.allocate_document_id();
+            }
+            current.state.geometry.center = egui::pos2(x, 0.0);
+            canvas.add_unresolved_placement(current.clone());
+            canvas.select_placements(&[current.id()]);
+            let payload = copy_selected_board_payload(&canvas).unwrap();
+            let mut context = ActiveBoardCommandContext {
+                canvas: &mut canvas,
+                library: Some(&library),
+                import_worker_available: true,
+                placement_gap: 12.0,
+                viewport_world: egui::Rect::from_min_max(
+                    egui::pos2(-3000.0, -3000.0),
+                    egui::pos2(3000.0, 3000.0),
+                ),
+            };
+            paste_board_payload_at(&mut context, &payload, egui::pos2(x, 0.0)).unwrap();
+            assert_eq!(
+                context
+                    .canvas
+                    .placement_for_id(context.canvas.selected_placement_ids()[0])
+                    .unwrap()
+                    .state
+                    .geometry
+                    .center,
+                egui::pos2(x + 112.0, 0.0)
+            );
+            assert_eq!(library.load_user_session().unwrap().active_board_id, 1);
+            assert_eq!(
+                library.load_placements().unwrap()[0].state.geometry.center,
+                egui::Pos2::ZERO
+            );
+        }
     }
 }

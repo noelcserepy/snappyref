@@ -55,21 +55,6 @@ fn first_launch_semantic_search_prompt_waits_for_storage_and_missing_assets() {
 }
 
 #[test]
-fn first_launch_semantic_search_prompt_skips_installed_and_migrated_assets() {
-    let root = TempRoot::new("snappyref-semantic-prompt-installed");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let mut app = test_app(Some(library));
-
-    app.search
-        .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
-    assert!(!app.should_show_semantic_search_first_launch_prompt());
-
-    app.search
-        .set_local_model_store_status_for_test(LocalModelStoreStatus::InstalledViaMigration);
-    assert!(!app.should_show_semantic_search_first_launch_prompt());
-}
-
-#[test]
 fn first_launch_semantic_search_prompt_skips_without_storage() {
     let mut app = test_app(None);
     app.search

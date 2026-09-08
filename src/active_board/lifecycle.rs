@@ -245,7 +245,7 @@ impl BoardLifecycle<'_> {
         ctx: Option<&egui::Context>,
         document: &crate::data::BoardDocumentSnapshot,
     ) -> Result<(), String> {
-        self.search.close_overlay(Some(self.canvas));
+        self.search.close_overlay();
         self.search.reset_embedding_backfill();
         self.canvas.clear_for_board_switch();
         *self.active_board_id = document.board.id;
@@ -459,8 +459,7 @@ impl BoardLifecycle<'_> {
 
     pub(crate) fn restore(&mut self) -> Result<(), String> {
         let library = self.library.ok_or("Storage unavailable")?;
-        let (board_id, _) = library.load_session_viewport()?;
-        let document = self.accepted_board_document(library, board_id)?;
+        let document = self.accepted_board_document(library, *self.active_board_id)?;
         self.open_board_document_snapshot(None, &document)
     }
 

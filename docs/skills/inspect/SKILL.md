@@ -8,11 +8,7 @@ argument-hint: "[behavior-or-scenario]"
 
 # Inspect
 
-Inspect is the app inspection path. Use it when you need to see or verify
-SnappyRef behavior as the user experiences it, especially clicks, drags, search
-palette interactions, import/loading states, and multi-step UI flows.
-
-The loop is:
+Reproduce app behavior through this loop:
 
 ```text
 seed -> act -> wait -> capture -> inspect artifact -> adjust/fix -> rerun
@@ -68,35 +64,14 @@ Check the harness if scenario failures look suspicious:
 docs/skills/inspect/scripts/check-harness.sh
 ```
 
-## Current Scenarios
+Use `--list` for the current scenario catalogue. Useful starting examples:
 
-- `check-harness`: proves the inspect path can run a known drag scenario.
-- `search-drag-to-canvas`: drags one search result to the canvas and verifies
-  provisional and committed placement state.
-- `semantic-search-install`: clicks the first-launch Semantic Search install
-  prompt with a test installer.
-- `semantic-search-sidebar-status`: opens Settings sidebar and screenshots the
-  Semantic Search status.
-- `semantic-search-real-install`: clicks Settings install and drives the real
-  Semantic Search installer to installed or failed.
-- `sample-image-import`: captures before, loading, and loaded image import
-  states.
-- `pending-drop-batch-undo`: drops two files, undoes the accepted Loading
-  batch, then drains controlled late Loaded and Failed results.
-- `blue-image-search-drag`: select/move image, open image search, select three
-  results, drag provisional placements, drop and verify loaded placements.
-- `delete-board-modal-flash`: opens the delete-board confirmation and captures
-  the first modal frame to prove the sidebar blocker stays invisible.
-- `board-lifecycle-undo-redo`: drives Board create, rename, confirmed delete,
-  Undo, and Redo while checking identity, active Board, content, and view. Its
-  artifact records the current title-double-click harness limitation.
-- `search-palette-footer`: captures empty and populated search-palette footer
-  states with fixed-width result/status metadata.
-- `compact-equal-size-images`, `compact-mixed-column-images`, and
-  `compact-windows-column-images`: screenshot-backed compact-arrange examples
-  for equal, mixed, and window-shaped placement groups.
+- `sample-image-import`: before, loading, and loaded image states.
+- `search-drag-to-canvas`: provisional and committed search-result placement.
+- `semantic-search-install`: first-launch installation with a test installer.
 
-Use these as examples, not as a closed set.
+`semantic-search-real-install` uses the real networked installer. Use it only
+when verifying that integration.
 
 ## Evidence Rules
 
@@ -190,45 +165,13 @@ Current useful primitives include:
   layout constants.
 - `inspect_click_at`: sends pointer press/release with modifiers.
 
-These primitives implement the core verbs:
-
-- `seed`: scenario-specific app setup and deterministic result injection.
-- `act`: labels, keys, pointer events, `inspect_click_at`, layout-derived
-  coordinates.
-- `wait`: `drive_progress`, `drive_import_lifecycle`, explicit `harness.step()`.
-- `capture`: `capture_screen`, report facts, events, and assertions.
-
 ## Writing A New Scenario
 
 Create a focused Rust test-backed scenario when no existing scenario reproduces
-the behavior.
-
-A good scenario:
-
-- seeds deterministic app state
-- uses `app_full_harness` for screenshots
-- performs user-like actions through labels, keys, or pointer events
-- captures meaningful before/mid/after frames
-- records structured facts for important app state
-- asserts both intermediate and final behavior
-- writes artifacts through `InspectScenario`
-
-Keep the scenario name user-behavior oriented:
-
-```text
-blue-image-search-drag
-sample-image-import
-semantic-search-real-install
-```
-
-Avoid:
-
-- OS-level mouse automation
-- raw app screenshot flags as the primary path
-- new legacy `--verify-*` probes
-- unstructured `println!` debugging
-- sleeps where `harness.step()` can drive frames
-- pixel coordinates when a layout helper or semantic target exists
+the behavior. Name it after the user action, capture meaningful before/mid/after
+frames, and assert intermediate and final behavior. Write facts and artifacts
+through `InspectScenario` rather than unstructured terminal output. Use
+`harness.step()` instead of sleeps when frames can drive the work.
 
 ## Search Palette Work
 
@@ -244,6 +187,10 @@ indexing, model loading, or asset installation.
 
 When Semantic Search is missing and the task is not about missing-assets UI,
 prefer accepting/installing it as part of deterministic setup.
+
+Injected search results can exist before their thumbnails finish decoding.
+When thumbnail appearance matters, wait for preview readiness before capture;
+result count alone does not establish that the thumbnails are visible.
 
 ## Progress Work
 
@@ -275,18 +222,6 @@ It asserts:
 
 - expected placement count
 - no pending content-resolution work
-
-## Old Probes
-
-Old `--verify-*` flags were removed because useful visual states should be
-reproduced through inspect scenarios, not stored behind app startup flags.
-
-Do not add new legacy probes. If an old state matters, rebuild it as
-`seed -> act -> wait -> capture`. If it does not matter enough to become a
-scenario/helper, leave it deleted.
-
-Historical note: at least one old `--verify-* --screenshot` launch hung during
-inspection. Prefer harness-rendered scenarios.
 
 ## Reporting Back
 

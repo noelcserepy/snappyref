@@ -75,10 +75,6 @@ generate_webp() {
   fi
 }
 
-generate_qoi() {
-  generate_with_ffmpeg qoi
-}
-
 generate_exr() {
   local target="$work_dir/source.exr"
   if ffmpeg -hide_banner -loglevel error -y -i "$source_image" -frames:v 1 -pix_fmt rgba64le "$target"; then
@@ -89,20 +85,6 @@ generate_exr() {
   fi
 }
 
-generate_pnm_family() {
-  generate_with_ffmpeg pbm
-  generate_with_ffmpeg pgm
-  generate_with_ffmpeg ppm
-}
-
-generate_optional_ffmpeg() {
-  local extension=$1
-  if ffmpeg -hide_banner -loglevel error -encoders 2>/dev/null | awk '{print $2}' | grep -qx "$extension"; then
-    generate_with_ffmpeg "$extension"
-  else
-    generate_with_ffmpeg "$extension"
-  fi
-}
 
 copy_source
 generate_with_ffmpeg png
@@ -110,12 +92,14 @@ generate_with_ffmpeg bmp
 generate_tiff
 generate_with_ffmpeg tga
 generate_webp
-generate_qoi
+generate_with_ffmpeg qoi
 generate_exr
-generate_pnm_family
-generate_optional_ffmpeg avif
-generate_optional_ffmpeg jp2
-generate_optional_ffmpeg jxl
+generate_with_ffmpeg pbm
+generate_with_ffmpeg pgm
+generate_with_ffmpeg ppm
+generate_with_ffmpeg avif
+generate_with_ffmpeg jp2
+generate_with_ffmpeg jxl
 
 printf 'decode benchmark source=%s work_dir=%s\n' "$source_image" "$work_dir"
 for image in "${generated[@]}"; do

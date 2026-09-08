@@ -78,8 +78,10 @@ pub(crate) struct UpdateService {
     install_rx: Option<Receiver<InstallProgress>>,
     /// Test override: short-circuit the network and feed a canned outcome
     /// instead of spawning a thread. See `spawn_fetch`.
+    #[cfg(test)]
     fetch_override: Option<Box<dyn FnMut() -> DiscoveryResult + Send>>,
     /// Test override: feed install events directly. See `spawn_install`.
+    #[cfg(test)]
     install_override: Option<Box<dyn FnMut(InstallContext, Sender<InstallProgress>) + Send>>,
 }
 
@@ -170,7 +172,9 @@ impl UpdateService {
             last_check_completed_at: None,
             manual_check_requested: false,
             install_rx: None,
+            #[cfg(test)]
             fetch_override: None,
+            #[cfg(test)]
             install_override: None,
         };
         // Best-effort startup hygiene: discard partial downloads from a
@@ -277,9 +281,12 @@ impl UpdateService {
     /// Tests never download: without an override the install fails
     /// immediately instead of touching the network.
     fn spawn_install(&mut self, context: InstallContext, tx: Sender<InstallProgress>) {
+        #[cfg(test)]
         if let Some(installer) = self.install_override.as_mut() {
             (installer)(context, tx);
-        } else if cfg!(test) {
+            return;
+        }
+        if cfg!(test) {
             let _ = tx.send(InstallProgress::Failed {
                 reason: "no test installer".to_owned(),
             });
@@ -522,10 +529,13 @@ impl UpdateService {
     /// Tests never reach the network: without an override the check fails
     /// immediately instead of spawning the fetch thread.
     fn spawn_fetch(&mut self, tx: Sender<DiscoveryResult>) {
+        #[cfg(test)]
         if let Some(fetcher) = self.fetch_override.as_mut() {
             let outcome = (fetcher)();
             let _ = tx.send(outcome);
-        } else if cfg!(test) {
+            return;
+        }
+        if cfg!(test) {
             let _ = tx.send(DiscoveryResult {
                 outcome: CheckOutcome::Failed,
                 manifest: None,

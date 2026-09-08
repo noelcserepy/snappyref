@@ -1,4 +1,6 @@
+#[cfg(test)]
 use super::boards::active_board_id;
+#[cfg(test)]
 use super::connection::Library;
 #[cfg(test)]
 use super::connection::write_transaction;
@@ -203,6 +205,7 @@ pub(super) fn ensure_canvas_stack_items_populated(connection: &Connection) -> Re
     Ok(())
 }
 
+#[cfg(test)]
 impl Library {
     pub fn load_canvas_stack_order(&self) -> Result<Vec<CanvasStackItem>, String> {
         let connection = self.connection()?;
@@ -210,7 +213,6 @@ impl Library {
         load_canvas_stack_order_for_board_id(&connection, active_board_id)
     }
 
-    #[cfg(test)]
     pub fn save_canvas_stack_order(&self, stack_order: &[CanvasStackItem]) -> Result<(), String> {
         let mut connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
