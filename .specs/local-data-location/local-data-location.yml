@@ -30,7 +30,7 @@ interface:
           reason: LocalDataLocationFailure
 
       behavior:
-        explicit-install-override-first: A supported install-root override must win for development and update verification.
+        explicit-install-override-first: A supported install-root override must win for App Update development and verification. This override must not relocate Library or model data.
         macos-bundle-aware: For a macOS app bundle, install_root must be the parent directory of the app bundle.
         plain-binary-parent: For a plain executable, install_root must be the executable's parent directory.
 
@@ -42,7 +42,7 @@ interface:
       input:
         environment:
           type: LocalDataEnvironment
-          description: Resolved install root, platform user-data roots, and supported data-root override.
+          description: Executable-derived install root, platform user-data roots, and supported data-root override.
 
       outcomes:
         resolved:
@@ -54,6 +54,7 @@ interface:
         explicit-data-override-first: A supported explicit data-root override must win over automatic selection.
         writable-portable-preferred: Without an override, a writable install_root must also be the data_root.
         protected-install-fallback: A non-writable install_root must use the platform user-data directory.
+        unused-fallback-independent: An explicit data-root override or writable portable root must resolve without requiring unused executable or platform user-data fallback information.
         write-probe-cleaned: Automatic writability probing must not leave probe files behind.
 
       caller_obligations: {}
@@ -76,14 +77,14 @@ interface:
           reason: LocalDataLocationFailure
 
       behavior:
-        library-override-first: An explicit Library-only override must win for the Library and must not relocate other data capabilities.
+        library-override-first: An explicit Library-only override must win without requiring automatic root resolution. Library content, workspace session state, and Asset embeddings follow that override; Local Model Store files and Semantic Search staging do not.
         default-library-child: Without an override, library_root must be the library child of data_root.
 
       caller_obligations: {}
 
   guarantees:
     one-data-root-vocabulary: Data root means writable app state shared by the Library, Local Model Store, session state, embeddings, and Semantic Search staging.
-    library-root-narrower: Library root means only managed Library storage and may be overridden independently for tests and diagnostics.
+    library-root-narrower: Library root means managed Library storage, including its workspace session state and Asset embeddings, and may be overridden independently from model files and Semantic Search staging for tests and diagnostics.
     install-root-distinct: Install root means the portable app location and remains distinct from a protected-install data-root fallback.
     app-update-staging-excluded: App Update download and staging remain install-root-relative and do not silently follow a data-root override.
     no-content-mutation: Resolving paths must not migrate, delete, or rewrite capability-owned data.
@@ -120,7 +121,7 @@ decisions:
         url: https://github.com/noelcserepy/snappyref/blob/main/docs/release-operations.md#install-and-data-root-contract
 
   library-only-override:
-    current: Let the Library root be overridden independently without relocating models, session state, embeddings, or Semantic Search staging.
+    current: Let the Library root override relocate Library content, workspace session state, and Asset embeddings together without relocating model files or Semantic Search staging.
     affects:
       - "[[#/interface/operations/resolve-library-root]]"
       - "[[#/interface/guarantees/library-root-narrower]]"

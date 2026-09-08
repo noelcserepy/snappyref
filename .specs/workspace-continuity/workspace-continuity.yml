@@ -65,7 +65,7 @@ interface:
       input:
         change:
           type: WorkspaceSettingChange
-          description: A closed change to pointer mode, Placement Gap, automatic image scaling, rotation snapping, colors, text-box background, or always-on-top behavior.
+          description: A closed change to pointer mode, Placement Gap, rotation snapping, colors, text-box background, or always-on-top behavior.
 
       outcomes:
         changed:
