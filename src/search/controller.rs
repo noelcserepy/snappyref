@@ -88,7 +88,6 @@ pub(super) struct SearchCacheEntry {
 pub(super) struct ActiveSearchRequest {
     pub(super) request_id: u64,
     pub(super) cache_key: SearchCacheKey,
-    pub(super) query: String,
 }
 
 #[derive(Clone, Debug)]
@@ -146,42 +145,40 @@ impl SearchController {
     }
 
     pub(crate) fn remove_semantic_search_assets_from_settings(&mut self, status: &mut String) {
+        self.remove_semantic_search_assets_with(status, || {
+            #[cfg(not(test))]
+            {
+                let data_root = crate::local_data_location::resolve_data_root()?;
+                remove_semantic_search_assets(
+                    &data_root,
+                    &default_semantic_search_asset_descriptor(),
+                )
+            }
+            #[cfg(test)]
+            Ok(())
+        });
+    }
+
+    fn remove_semantic_search_assets_with(
+        &mut self,
+        status: &mut String,
+        remove_files: impl FnOnce() -> Result<(), String>,
+    ) {
         self.semantic_install.force_stop();
-        #[cfg(not(test))]
-        match crate::local_data_location::resolve_data_root() {
-            Ok(data_root) => {
-                let descriptor = default_semantic_search_asset_descriptor();
-                match remove_semantic_search_assets(&data_root, &descriptor) {
-                    Ok(()) => {
-                        self.service = None;
-                        self.local_model_store_status = Some(LocalModelStoreStatus::Missing);
-                        self.overlay.status = SearchOverlayStatus::Ready;
-                        self.overlay.install_action_focus_requested = true;
-                        self.reset_embedding_backfill();
-                        *status = "Semantic Search removed".to_owned();
-                    }
-                    Err(error) => {
-                        self.local_model_store_status =
-                            Some(LocalModelStoreStatus::Failed(error.clone()));
-                        self.overlay.status = SearchOverlayStatus::Error(error.clone());
-                        *status = format!("Semantic Search remove failed: {error}");
-                    }
-                }
+        match remove_files() {
+            Ok(()) => {
+                self.service = None;
+                self.local_model_store_status = Some(LocalModelStoreStatus::Missing);
+                self.overlay.status = SearchOverlayStatus::Ready;
+                self.overlay.install_action_focus_requested = true;
+                self.reset_embedding_backfill();
+                *status = "Semantic Search removed".to_owned();
             }
             Err(error) => {
                 self.local_model_store_status = Some(LocalModelStoreStatus::Failed(error.clone()));
                 self.overlay.status = SearchOverlayStatus::Error(error.clone());
                 *status = format!("Semantic Search remove failed: {error}");
             }
-        }
-        #[cfg(test)]
-        {
-            self.service = None;
-            self.local_model_store_status = Some(LocalModelStoreStatus::Missing);
-            self.overlay.status = SearchOverlayStatus::Ready;
-            self.overlay.install_action_focus_requested = true;
-            self.reset_embedding_backfill();
-            *status = "Semantic Search removed".to_owned();
         }
     }
 
@@ -483,7 +480,7 @@ impl SearchController {
                 let Some(active_search) = self.active_search.take() else {
                     return;
                 };
-                self.overlay.last_submitted_query = active_search.query;
+                self.overlay.last_submitted_query = active_search.cache_key.query.clone();
                 self.overlay.has_more_results = results.len() > self.overlay.result_limit;
                 results.truncate(self.overlay.result_limit);
                 self.overlay.results = results;
@@ -497,24 +494,28 @@ impl SearchController {
                 self.select_after_results_refresh();
                 self.overlay.status = SearchOverlayStatus::Ready;
             }
+            SearchQueryResult::ModelPending { request_id }
+                if Some(request_id) == active_request_id =>
+            {
+                self.active_search = None;
+                if !matches!(self.overlay.status, SearchOverlayStatus::Loading(_)) {
+                    self.overlay.status =
+                        SearchOverlayStatus::Loading("Preparing semantic search…".to_owned());
+                }
+            }
             SearchQueryResult::Failed { request_id, error }
                 if Some(request_id) == active_request_id =>
             {
                 self.active_search = None;
-                if error == "Loading model…" {
-                    if !matches!(self.overlay.status, SearchOverlayStatus::Loading(_)) {
-                        self.overlay.status =
-                            SearchOverlayStatus::Loading("Preparing semantic search…".to_owned());
-                    }
-                    return;
-                }
                 self.overlay.status = SearchOverlayStatus::Error(error);
                 self.overlay.results.clear();
                 self.overlay.result_selection.clear();
                 self.pending_result_selection = None;
                 self.overlay.has_more_results = false;
             }
-            SearchQueryResult::Completed { .. } | SearchQueryResult::Failed { .. } => {}
+            SearchQueryResult::Completed { .. }
+            | SearchQueryResult::ModelPending { .. }
+            | SearchQueryResult::Failed { .. } => {}
         }
     }
 
@@ -551,9 +552,6 @@ impl SearchController {
         placement_creation_config: SearchPlacementCreationConfig,
     ) {
         if !self.overlay.open {
-            crate::diagnostics::search_drag_debug(
-                "prepare_canvas_provisional_batch skip overlay_closed",
-            );
             return;
         }
         let egui_pointer_pos = ctx.input(|input| input.pointer.latest_pos());
@@ -564,16 +562,9 @@ impl SearchController {
             .and_then(|_| crate::platform::native_drop::cursor_screen_pos())
             .or(egui_pointer_pos);
         let Some(mut drag) = self.overlay.drag_state.take() else {
-            crate::diagnostics::search_drag_debug(format!(
-                "prepare_canvas_provisional_batch skip no_drag pointer_pos={pointer_pos:?}"
-            ));
             return;
         };
         let Some(expanded_rect) = self.overlay.last_expanded_overlay_rect else {
-            crate::diagnostics::search_drag_debug(format!(
-                "prepare_canvas_provisional_batch skip no_expanded_rect pointer_pos={pointer_pos:?} asset_ids={:?}",
-                drag.asset_ids
-            ));
             self.overlay.drag_state = Some(drag);
             return;
         };
@@ -581,26 +572,14 @@ impl SearchController {
         if !drag.outside_overlay && !drag.provisional_batch_active {
             drag.outside_overlay =
                 pointer_pos.is_some_and(|pos| !expanded_rect.expand(2.0).contains(pos));
-            crate::diagnostics::search_drag_debug(format!(
-                "prepare_canvas_provisional_batch outside_check pointer_pos={pointer_pos:?} expanded_rect={expanded_rect:?} outside_overlay={}",
-                drag.outside_overlay
-            ));
         }
         if !drag.outside_overlay {
-            crate::diagnostics::search_drag_debug(format!(
-                "prepare_canvas_provisional_batch skip inside_overlay asset_ids={:?}",
-                drag.asset_ids
-            ));
             self.overlay.drag_state = Some(drag);
             return;
         }
 
         if let Some(pointer_pos) = pointer_pos {
             let pointer_world = canvas.screen_to_world(pointer_pos, screen_rect);
-            crate::diagnostics::search_drag_debug(format!(
-                "prepare_canvas_provisional_batch update pointer_pos={pointer_pos:?} pointer_world={pointer_world:?} asset_ids={:?} active={}",
-                drag.asset_ids, drag.provisional_batch_active
-            ));
             update_search_provisional_batch(
                 ctx,
                 canvas,
@@ -611,11 +590,6 @@ impl SearchController {
                 screen_rect,
                 placement_creation_config,
             );
-        } else {
-            crate::diagnostics::search_drag_debug(format!(
-                "prepare_canvas_provisional_batch skip no_pointer asset_ids={:?}",
-                drag.asset_ids
-            ));
         }
         self.overlay.drag_state = Some(drag);
         ctx.request_repaint_after(Duration::from_millis(16));
@@ -724,16 +698,37 @@ impl SearchController {
         self.pending_result_selection = None;
     }
 
-    pub(super) fn dismiss_image_pivot(&mut self) {
-        self.overlay.image_pivot = None;
+    fn reset_result_navigation(&mut self) {
+        self.pending_result_selection = None;
+        self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
+        self.overlay.has_more_results = false;
+    }
+
+    fn clear_query_results(&mut self) {
         self.overlay.last_submitted_query.clear();
         self.active_search = None;
         self.overlay.results.clear();
         self.overlay.result_selection.clear();
-        self.pending_result_selection = None;
+        self.reset_result_navigation();
+    }
+
+    pub(super) fn query_edited(&mut self) {
+        self.overlay.last_query_edit_at = Some(Instant::now());
+        self.overlay
+            .result_selection
+            .select_initial(self.overlay.results.len());
         self.overlay.active_recent_search_index = 0;
-        self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
-        self.overlay.has_more_results = false;
+        self.reset_result_navigation();
+        if self.overlay.query.trim().is_empty() && self.overlay.image_pivot.is_none() {
+            self.overlay.results.clear();
+            self.overlay.result_selection.clear();
+        }
+    }
+
+    pub(super) fn dismiss_image_pivot(&mut self) {
+        self.overlay.image_pivot = None;
+        self.clear_query_results();
+        self.overlay.active_recent_search_index = 0;
         self.overlay.last_query_edit_at = Some(Instant::now());
     }
 
@@ -741,13 +736,7 @@ impl SearchController {
         self.overlay.query = query.to_owned();
         self.overlay.image_pivot = None;
         self.overlay.last_query_edit_at = None;
-        self.overlay.last_submitted_query.clear();
-        self.active_search = None;
-        self.overlay.results.clear();
-        self.overlay.result_selection.clear();
-        self.pending_result_selection = None;
-        self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
-        self.overlay.has_more_results = false;
+        self.clear_query_results();
         self.submit_query();
     }
 
@@ -774,13 +763,8 @@ impl SearchController {
 
     fn open_image_pivot_search(&mut self, pivot: ImageSearchPivot) {
         self.overlay.query.clear();
-        self.overlay.last_submitted_query.clear();
-        self.overlay.results.clear();
-        self.overlay.result_selection.clear();
-        self.pending_result_selection = None;
+        self.clear_query_results();
         self.overlay.active_recent_search_index = 0;
-        self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
-        self.overlay.has_more_results = false;
         self.overlay.image_pivot = Some(pivot);
         self.overlay.last_query_edit_at = None;
         self.submit_query();
@@ -890,7 +874,6 @@ impl SearchController {
                 self.active_search = Some(ActiveSearchRequest {
                     request_id,
                     cache_key,
-                    query: query.clone(),
                 });
                 self.overlay.status = SearchOverlayStatus::Loading("Searching…".to_owned());
             }
@@ -1005,6 +988,96 @@ mod tests {
     use crate::test_support::TempRoot;
     use eframe::egui;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn model_removal_failure_and_retry_share_settings_result_handling() {
+        let mut search = SearchController::default();
+        search.local_model_store_status = Some(LocalModelStoreStatus::Installed);
+        search.embedding_backfill.exhausted = true;
+        let mut status = String::new();
+        search.remove_semantic_search_assets_with(&mut status, || Err("read only".to_owned()));
+        assert!(
+            matches!(search.overlay.status, SearchOverlayStatus::Error(ref error) if error == "read only")
+        );
+        assert!(matches!(
+            search.local_model_store_status,
+            Some(LocalModelStoreStatus::Failed(_))
+        ));
+        assert_eq!(status, "Semantic Search remove failed: read only");
+        assert!(search.embedding_backfill.exhausted);
+
+        search.remove_semantic_search_assets_with(&mut status, || Ok(()));
+        assert!(search.local_model_assets_missing());
+        assert!(matches!(search.overlay.status, SearchOverlayStatus::Ready));
+        assert!(search.overlay.install_action_focus_requested);
+        assert!(!search.embedding_backfill.exhausted);
+        assert_eq!(status, "Semantic Search removed");
+    }
+
+    #[test]
+    fn pending_model_preserves_results_and_ignores_stale_requests() {
+        let mut search = SearchController::default();
+        search.overlay.query = "cat".to_owned();
+        search.overlay.results = search_result_groups(2);
+        search.overlay.result_selection.replace(1);
+        search.active_search = Some(ActiveSearchRequest {
+            request_id: 7,
+            cache_key: search.current_cache_key("cat", None),
+        });
+        search.process_search_result(SearchQueryResult::ModelPending { request_id: 6 });
+        assert!(search.active_search.is_some());
+        search.process_search_result(SearchQueryResult::ModelPending { request_id: 7 });
+        assert!(search.active_search.is_none());
+        assert!(matches!(
+            search.overlay.status,
+            SearchOverlayStatus::Loading(_)
+        ));
+        assert_eq!(search.overlay.results.len(), 2);
+        assert_eq!(search.overlay.result_selection.lead(), Some(1));
+
+        search.active_search = Some(ActiveSearchRequest {
+            request_id: 8,
+            cache_key: search.current_cache_key("cat", None),
+        });
+        search.process_search_result(SearchQueryResult::Failed {
+            request_id: 8,
+            error: "Loading model…".to_owned(),
+        });
+        assert!(matches!(
+            search.overlay.status,
+            SearchOverlayStatus::Error(_)
+        ));
+        assert!(search.overlay.results.is_empty());
+    }
+
+    #[test]
+    fn typing_retains_results_while_pivot_and_recent_queries_reset_them() {
+        let mut search = SearchController::default();
+        search.overlay.query = "cat".to_owned();
+        search.overlay.results = search_result_groups(2);
+        search.overlay.result_selection.replace(1);
+        search.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE * 2;
+        search.overlay.has_more_results = true;
+        search.query_edited();
+        assert_eq!(search.overlay.results.len(), 2);
+        assert_eq!(search.overlay.result_selection.lead(), Some(1));
+        assert_eq!(search.overlay.result_limit, SEARCH_RESULT_PAGE_SIZE);
+        assert!(!search.overlay.has_more_results);
+        assert!(search.overlay.last_query_edit_at.is_some());
+
+        search.open_image_pivot_search(super::ImageSearchPivot {
+            asset_id: 12,
+            asset_preview_path: None,
+        });
+        assert!(search.overlay.query.is_empty());
+        assert!(search.overlay.results.is_empty());
+        assert!(search.overlay.image_pivot.is_some());
+        assert!(search.overlay.last_query_edit_at.is_none());
+        search.submit_recent_search("dog");
+        assert_eq!(search.overlay.query, "dog");
+        assert!(search.overlay.image_pivot.is_none());
+        assert!(search.overlay.last_query_edit_at.is_none());
+    }
 
     #[test]
     fn provisional_placement_commit_requires_unmodified_primary_click() {
@@ -1565,8 +1638,8 @@ mod tests {
 
         assert_eq!(canvas.guide_snap_indicator_count(), 1);
         assert!(canvas.guide_snap_mark_count() > 0);
-        assert!(!canvas.selection_border_visible_for_test(10.5));
-        assert!(canvas.selection_border_visible_for_test(12.1));
+        assert!(!canvas.selection_border_visible(10.5));
+        assert!(canvas.selection_border_visible(12.1));
     }
 
     #[test]
@@ -1869,7 +1942,6 @@ mod tests {
         search.active_search = Some(ActiveSearchRequest {
             request_id: 7,
             cache_key,
-            query: "mountain".to_owned(),
         });
 
         search.process_search_result(SearchQueryResult::Completed {

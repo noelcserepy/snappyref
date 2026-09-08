@@ -18,15 +18,6 @@ def load_ndjson(path: Path) -> list[dict]:
     return events
 
 
-def event_name(event: dict) -> str | None:
-    if "name" in event:
-        return event.get("name")
-    payload = event.get("payload")
-    if isinstance(payload, dict):
-        return payload.get("name")
-    return None
-
-
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: summarize-artifact.py <artifact-dir>", file=sys.stderr)
@@ -90,7 +81,7 @@ def main() -> int:
     if facts:
         print("facts:")
         for fact in facts:
-            print(f"- {event_name(fact) or '<unnamed>'}")
+            print(f"- {fact.get('payload', {}).get('name', '<unnamed>')}")
 
     if frames:
         print("frames:")

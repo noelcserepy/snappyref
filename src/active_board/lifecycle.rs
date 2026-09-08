@@ -1,5 +1,4 @@
 //! Board activation and lifecycle replay complete through one concrete owner.
-use super::catalog::BoardSummariesCache;
 use super::editing::BoardEditing;
 use crate::active_board::history::{BoardLifecycleHistoryAction, HistoryAction, HistoryDirection};
 use crate::data::{BoardDocumentSnapshot, UserSession};
@@ -11,7 +10,6 @@ pub(crate) struct BoardLifecycle<'a> {
     pub(crate) canvas: &'a mut crate::canvas::CanvasState,
     pub(crate) library: Option<&'a Library>,
     pub(crate) active_board_id: &'a mut i64,
-    pub(crate) catalog: &'a mut BoardSummariesCache,
     pub(crate) search: &'a mut crate::search::SearchController,
     pub(crate) placement_creation: &'a mut crate::placement::content_resolution::PlacementCreation,
     pub(crate) residency: &'a mut crate::canvas::residency::ImageResidencyCoordinator,
@@ -80,11 +78,8 @@ impl BoardLifecycle<'_> {
         match action {
             HistoryAction::Document(document_action) => {
                 let replay = self.apply_history_to_active_canvas(document_action, direction);
-                self.editing.persistence.enqueue_document_unit(
-                    *self.active_board_id,
-                    replay.document_changes,
-                    &self.editing.history,
-                )?;
+                self.editing
+                    .enqueue_document_changes(*self.active_board_id, replay.document_changes)?;
                 self.load_history_placement_content(ctx, replay.placements_needing_content)
             }
             HistoryAction::Board(lifecycle_action) => {
@@ -93,25 +88,12 @@ impl BoardLifecycle<'_> {
         }
     }
 
-    /// The Board document as accepted so far: durable rows (or the accepted
-    /// creation while the Board is not durable yet) with queued history
-    /// applied on top, so opening a Board never shows state that durability
-    /// still lags behind.
     pub(crate) fn accepted_board_document(
         &self,
         library: &Library,
         board_id: i64,
     ) -> Result<BoardDocumentSnapshot, String> {
-        let mut document = self.editing.accepted_board_document(library, board_id)?;
-        if let Some(summary) = self
-            .catalog
-            .summaries()
-            .into_iter()
-            .find(|summary| summary.board.id == board_id)
-        {
-            document.board = summary.board;
-        }
-        Ok(document)
+        self.editing.accepted_board_document(library, board_id)
     }
 
     fn apply_board_lifecycle_history(
@@ -123,6 +105,9 @@ impl BoardLifecycle<'_> {
         let Some(library) = self.library else {
             return Err("Storage unavailable".to_owned());
         };
+        if let BoardLifecycleHistoryAction::Renamed { board_id, .. } = action {
+            self.editing.documents.ensure_loaded(library, *board_id)?;
+        }
         let active_before_replay = *self.active_board_id;
         match (action, direction) {
             (
@@ -140,7 +125,7 @@ impl BoardLifecycle<'_> {
                     },
                     &self.editing.history,
                 )?;
-                self.catalog.archive(document.board.id);
+                self.editing.documents.archive(document.board.id);
                 self.open_board_document_snapshot(Some(ctx), &active_document)?;
             }
             (BoardLifecycleHistoryAction::Created { document, .. }, HistoryDirection::Forward) => {
@@ -151,7 +136,7 @@ impl BoardLifecycle<'_> {
                     },
                     &self.editing.history,
                 )?;
-                self.catalog.restore_document(document);
+                self.editing.documents.restore_document(document);
                 self.open_board_document_snapshot(Some(ctx), document)?;
             }
             (
@@ -169,7 +154,7 @@ impl BoardLifecycle<'_> {
                     },
                     &self.editing.history,
                 )?;
-                self.catalog.rename(*board_id, before_name);
+                self.editing.documents.rename(*board_id, before_name);
             }
             (
                 BoardLifecycleHistoryAction::Renamed {
@@ -186,7 +171,7 @@ impl BoardLifecycle<'_> {
                     },
                     &self.editing.history,
                 )?;
-                self.catalog.rename(*board_id, after_name);
+                self.editing.documents.rename(*board_id, after_name);
             }
             (
                 BoardLifecycleHistoryAction::Deleted {
@@ -203,7 +188,7 @@ impl BoardLifecycle<'_> {
                     },
                     &self.editing.history,
                 )?;
-                self.catalog.restore_document(document);
+                self.editing.documents.restore_document(document);
                 if active_before_replay != *active_before {
                     self.open_board_document_snapshot(Some(ctx), document)?;
                 }
@@ -228,7 +213,7 @@ impl BoardLifecycle<'_> {
                     },
                     &self.editing.history,
                 )?;
-                self.catalog.archive(document.board.id);
+                self.editing.documents.archive(document.board.id);
                 if let Some(active_document) = active_document {
                     self.open_board_document_snapshot(Some(ctx), &active_document)?;
                 }
@@ -421,7 +406,7 @@ impl BoardLifecycle<'_> {
         let document = self.accepted_board_document(library, board_id)?;
         self.flush_current()?;
         library.set_active_board(board_id)?;
-        self.dedupe_for_activation();
+        self.dedupe_for_activation()?;
         let document = self
             .accepted_board_document(library, board_id)
             .unwrap_or(document);
@@ -429,19 +414,21 @@ impl BoardLifecycle<'_> {
     }
 
     pub(crate) fn reload_active(&mut self) -> Result<(), String> {
-        self.dedupe_for_activation();
+        self.dedupe_for_activation()?;
         self.restore()
     }
 
-    fn dedupe_for_activation(&mut self) {
+    fn dedupe_for_activation(&mut self) -> Result<(), String> {
+        self.editing.persistence.flush()?;
         if let Some(library) = self.library {
-            if let Ok(report) = library.dedupe_exact_assets(32, 8) {
-                if report.changed() {
-                    self.search.invalidate_library_search_cache();
-                    let _ = self.catalog.refresh_from(library);
-                }
+            let report = library.dedupe_exact_assets(32, 8)?;
+            if report.changed() {
+                self.editing
+                    .remap_assets(library, &report.asset_id_remaps)?;
+                self.search.invalidate_library_search_cache();
             }
         }
+        Ok(())
     }
 
     pub(crate) fn restore(&mut self) -> Result<(), String> {
@@ -452,13 +439,7 @@ impl BoardLifecycle<'_> {
 
     pub(crate) fn create(&mut self) -> Result<String, String> {
         let library = self.library.ok_or("Storage unavailable")?;
-        let boards = self
-            .catalog
-            .summaries()
-            .into_iter()
-            .map(|summary| summary.board)
-            .collect::<Vec<_>>();
-        let board = library.new_board(generated_board_name(&boards));
+        let board = library.new_board(generated_board_name(self.editing.documents.summaries()));
         let document = BoardDocumentSnapshot {
             board: board.clone(),
             placements: Vec::new(),
@@ -482,19 +463,21 @@ impl BoardLifecycle<'_> {
             },
             &self.editing.history,
         )?;
-        self.catalog.restore_document(&document);
+        self.editing.documents.restore_document(&document);
         self.open_board_document_snapshot(None, &document)?;
         Ok(format!("Created {}", board.name))
     }
 
     pub(crate) fn rename(&mut self, board_id: i64, name: &str) -> Result<Option<String>, String> {
-        self.library.ok_or("Storage unavailable")?;
+        let library = self.library.ok_or("Storage unavailable")?;
+        self.editing.accepted_board_document(library, board_id)?;
         let before = self
-            .catalog
+            .editing
+            .documents
             .summaries()
             .into_iter()
             .find(|summary| summary.board.id == board_id)
-            .map(|summary| summary.board.name)
+            .map(|summary| summary.board.name.clone())
             .ok_or("Board unavailable")?;
         let after = name.trim().to_owned();
         if after.is_empty() || after == before {
@@ -508,7 +491,7 @@ impl BoardLifecycle<'_> {
                 after_name: after.clone(),
             }),
         );
-        self.catalog.rename(board_id, &after);
+        self.editing.documents.rename(board_id, &after);
         self.editing.persistence.enqueue_board_lifecycle_unit(
             super::persistence::BoardLifecyclePersistence::Rename {
                 board_id,
@@ -522,7 +505,8 @@ impl BoardLifecycle<'_> {
     pub(crate) fn delete(&mut self, ctx: &egui::Context, board_id: i64) -> Result<String, String> {
         let library = self.library.ok_or("Storage unavailable")?;
         let board_ids = self
-            .catalog
+            .editing
+            .documents
             .summaries()
             .into_iter()
             .map(|summary| summary.board.id)
@@ -568,7 +552,7 @@ impl BoardLifecycle<'_> {
             },
             &self.editing.history,
         )?;
-        self.catalog.archive(board_id);
+        self.editing.documents.archive(board_id);
         if let Some(document) = active_document {
             self.open_board_document_snapshot(Some(ctx), &document)?;
         }
@@ -576,10 +560,10 @@ impl BoardLifecycle<'_> {
     }
 }
 
-fn generated_board_name(boards: &[crate::data::Board]) -> String {
+fn generated_board_name(boards: &[crate::data::BoardSummary]) -> String {
     let names = boards
         .iter()
-        .map(|board| board.name.as_str())
+        .map(|summary| summary.board.name.as_str())
         .collect::<std::collections::HashSet<_>>();
     (2..)
         .map(|number| format!("Board {number}"))

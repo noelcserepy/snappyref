@@ -37,16 +37,13 @@ by a key they do not know.
 ## Publish Full Release
 
 1. Make sure `main` contains the intended release commit.
-2. Run the local pre-push gate or let the push hook run it:
-   `cargo fmt --check`, shipping-feature `cargo check`, and
-   `update_preservation_smoke`.
+2. Use the [local pre-push gate](../README.md#development-checks).
 3. Bump the package version as needed. The release tag must match it.
 4. Dispatch `Publish Full Release` with the release tag.
-5. Keep `build_profile=release` for public builds.
+5. Public builds use the shipping `release` profile.
 6. Inspect the draft `snappyref-dist` release assets before publishing.
 7. Confirm archive validation passed for both app zips.
-8. Run update smokes when the release touches update, startup, storage,
-   packaging, or platform-specific behavior.
+8. Run [update smokes](#update-smokes) only on explicit user request.
 
 ## Publish Semantic Search Asset
 
@@ -84,7 +81,8 @@ Conversion tools are not installed with the app.
 
 ## Update Smokes
 
-Use these scripts only when explicitly verifying the published update channel:
+Run these scripts only on explicit user request to verify the published update
+channel. Release scope alone does not authorize them:
 
 ```sh
 scripts/update-smoke-macos.sh

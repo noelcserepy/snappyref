@@ -1,9 +1,8 @@
 use std::cell::RefCell;
-use std::ffi::OsString;
-use std::os::windows::ffi::OsStringExt;
 use std::ptr;
 use std::sync::{Mutex, OnceLock};
 
+use crate::sources::clipboard::windows::{append_hdrop_paths, registered_clipboard_format};
 use eframe::egui;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{E_POINTER, HWND, POINTL};
@@ -16,13 +15,9 @@ use windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS;
 use windows::core::{Ref, Result, implement};
 use windows_sys::Win32::Foundation::{HGLOBAL, POINT};
 use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
-use windows_sys::Win32::System::DataExchange::{
-    CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
-    RegisterClipboardFormatW,
-};
 use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 use windows_sys::Win32::System::Ole::{CF_HDROP, CF_UNICODETEXT};
-use windows_sys::Win32::UI::Shell::{DragQueryFileW, HDROP};
+use windows_sys::Win32::UI::Shell::HDROP;
 use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 use super::payload::NativeDropState;
@@ -244,53 +239,6 @@ unsafe fn extract_drop_payload(data_object: &IDataObject) -> super::NativeDropPa
     payload
 }
 
-pub(super) fn clipboard_paths() -> Vec<std::path::PathBuf> {
-    unsafe {
-        if IsClipboardFormatAvailable(CF_HDROP as u32) == 0 {
-            return Vec::new();
-        }
-        if OpenClipboard(ptr::null_mut()) == 0 {
-            return Vec::new();
-        }
-        let handle = GetClipboardData(CF_HDROP as u32);
-        let mut paths = Vec::new();
-        if !handle.is_null() {
-            append_hdrop_paths(handle as HDROP, &mut paths);
-        }
-        let _ = CloseClipboard();
-        paths
-    }
-}
-
-pub(super) fn clipboard_pureref_binary() -> Option<Vec<u8>> {
-    let format = registered_clipboard_format("pureref/binary") as u32;
-    unsafe {
-        if format == 0 || IsClipboardFormatAvailable(format) == 0 {
-            return None;
-        }
-        clipboard_hglobal_bytes(format)
-    }
-}
-
-unsafe fn append_hdrop_paths(hdrop: HDROP, paths: &mut Vec<std::path::PathBuf>) {
-    let item_count = unsafe { DragQueryFileW(hdrop, 0xffffffff, ptr::null_mut(), 0) };
-    for index in 0..item_count {
-        let character_count = unsafe { DragQueryFileW(hdrop, index, ptr::null_mut(), 0) };
-        if character_count == 0 {
-            continue;
-        }
-        let mut buffer = Vec::with_capacity(character_count as usize + 1);
-        unsafe {
-            DragQueryFileW(hdrop, index, buffer.as_mut_ptr(), character_count + 1);
-            buffer.set_len(character_count as usize);
-        }
-        let path = std::path::PathBuf::from(OsString::from_wide(&buffer));
-        if !paths.contains(&path) {
-            paths.push(path);
-        }
-    }
-}
-
 unsafe fn drop_text_values(data_object: &IDataObject) -> Vec<String> {
     let mut values = Vec::new();
     for format in [
@@ -355,38 +303,6 @@ unsafe fn with_hglobal_data<T>(
         ReleaseStgMedium(&mut medium);
         Some(value)
     }
-}
-
-unsafe fn clipboard_hglobal_bytes(format: u32) -> Option<Vec<u8>> {
-    if unsafe { OpenClipboard(ptr::null_mut()) } == 0 {
-        return None;
-    }
-
-    let bytes = (|| {
-        let handle = unsafe { GetClipboardData(format) };
-        if handle.is_null() {
-            return None;
-        }
-        let pointer = unsafe { GlobalLock(handle) };
-        if pointer.is_null() {
-            return None;
-        }
-        let size = unsafe { GlobalSize(handle) };
-        let bytes = unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), size) }.to_vec();
-        let _ = unsafe { GlobalUnlock(handle) };
-        Some(bytes)
-    })();
-
-    let _ = unsafe { CloseClipboard() };
-    bytes
-}
-
-fn registered_clipboard_format(name: &str) -> u16 {
-    let wide = name
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    unsafe { RegisterClipboardFormatW(wide.as_ptr()) as u16 }
 }
 
 fn utf16_hglobal_text(pointer: *const u8, size: usize) -> Option<String> {

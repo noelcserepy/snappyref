@@ -272,7 +272,22 @@ mod tests {
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
             .unwrap();
         let source = library
-            .persist_imported_image(&source_path, "image/png", 1, 1, 4, egui::Pos2::ZERO, 1.0)
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::Pos2::ZERO,
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&source_path, "image/png", 1, 1, 4, None)
+                        .unwrap(),
+                ),
+            )
             .unwrap();
         let mut canvas = CanvasState::default();
         let provisional = start_provisional_batch(
@@ -330,15 +345,17 @@ mod tests {
         let existing = (1..=2)
             .map(|index| {
                 library
-                    .persist_committed_loading_placement(
-                        egui::pos2(index as f32 * 10.0, 0.0),
-                        1.0,
-                        100.0,
-                        50.0,
-                        crate::data::ContentResolutionSource::Unknown {
-                            description: format!("existing placement {index}"),
-                        },
-                        None,
+                    .fixture_placement(
+                        library.load_user_session().unwrap().active_board_id,
+                        library.new_committed_loading_placement(
+                            egui::pos2(index as f32 * 10.0, 0.0),
+                            1.0,
+                            eframe::egui::vec2(100.0, 50.0),
+                            crate::data::ContentResolutionSource::Unknown {
+                                description: format!("existing placement {index}"),
+                            },
+                            None,
+                        ),
                     )
                     .unwrap()
             })

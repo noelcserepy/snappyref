@@ -80,7 +80,7 @@ fn delete_selected_annotation_records_undo_history() {
     let root = TempRoot::new("snappyref-delete-annotation-history");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let annotation = library
-        .create_canvas_annotation(
+        .fixture_annotation(
             CanvasAnnotationKind::Textbox,
             egui::pos2(40.0, 60.0),
             egui::pos2(140.0, 100.0),
@@ -116,7 +116,22 @@ fn undo_delete_restores_last_placement_to_active_canvas() {
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let placement = library
-        .persist_imported_image(&source, "image/png", 1, 1, 4, egui::pos2(40.0, 60.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(40.0, 60.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&source, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
     app.board_editing.persistence = crate::app::DocumentPersistence::queued(library.clone());
@@ -265,7 +280,7 @@ fn undo_and_redo_defer_storage_until_explicit_flush() {
     let root = TempRoot::new("snappyref-history-deferred-persistence");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let annotation = library
-        .create_canvas_annotation(
+        .fixture_annotation(
             CanvasAnnotationKind::Textbox,
             egui::pos2(40.0, 60.0),
             egui::pos2(140.0, 100.0),
@@ -345,30 +360,25 @@ fn crop_can_be_undone_once_and_redone_with_its_asset_intact() {
         .store_rgba_image("source", &[255; 2 * 2 * 4], 2, 2)
         .unwrap();
     let loading = library
-        .persist_committed_loading_placement(
-            egui::Pos2::ZERO,
-            1.0,
-            2.0,
-            2.0,
-            crate::data::ContentResolutionSource::ExternalPath {
-                path: source_path.to_string_lossy().into_owned(),
-            },
-            Some("Loading".to_owned()),
-        )
-        .unwrap();
-    let source = library
-        .persist_imported_image_resolving_placement(
+        .fixture_placement(
             library.load_user_session().unwrap().active_board_id,
-            loading.state.id,
-            &source_path,
-            "image/png",
-            2,
-            2,
-            2 * 2 * 4,
-            egui::Pos2::ZERO,
-            1.0,
+            library.new_committed_loading_placement(
+                egui::Pos2::ZERO,
+                1.0,
+                eframe::egui::vec2(2.0, 2.0),
+                crate::data::ContentResolutionSource::ExternalPath {
+                    path: source_path.to_string_lossy().into_owned(),
+                },
+                Some("Loading".to_owned()),
+            ),
         )
         .unwrap();
+    let source = crate::data::Placement::loaded(
+        crate::data::PlacementState::new(loading.state.id, egui::Pos2::ZERO, 1.0, 0.0, 0, false),
+        library
+            .register_original(&source_path, "image/png", 2, 2, 2 * 2 * 4, None)
+            .unwrap(),
+    );
     let source_asset_id = source.require_loaded_asset().id;
     library
         .upsert_asset_embedding_blob(source_asset_id, "crop-test", &[1.0, 0.0])
@@ -527,14 +537,21 @@ fn undo_after_persisted_duplicate_removes_the_created_placement() {
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let source_item = library
-        .persist_imported_image(
-            &image_path,
-            "image/png",
-            1,
-            1,
-            4,
-            egui::pos2(10.0, 20.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(10.0, 20.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&image_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -986,14 +1003,21 @@ fn remove_from_library_context_action_waits_for_confirmation() {
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let source_item = library
-        .persist_imported_image(
-            &image_path,
-            "image/png",
-            1,
-            1,
-            4,
-            egui::pos2(10.0, 20.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(10.0, 20.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&image_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -1031,21 +1055,43 @@ fn move_to_front_context_action_persists_canvas_stack_order() {
         .store_rgba_image("second", &[0, 255, 0, 255], 1, 1)
         .unwrap();
     let first = library
-        .persist_imported_image(&first_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&first_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
     let second = library
-        .persist_imported_image(
-            &second_path,
-            "image/png",
-            1,
-            1,
-            4,
-            egui::pos2(10.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(10.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&second_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let annotation = library
-        .create_canvas_annotation(
+        .fixture_annotation(
             CanvasAnnotationKind::Textbox,
             egui::pos2(10.0, 12.0),
             egui::pos2(110.0, 72.0),
@@ -1112,6 +1158,7 @@ fn create_undo_persists_reassigned_redo_history_with_the_archive() {
 
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = original.id;
+    app.refresh_board_summaries();
     app.board_editing.persistence = crate::app::DocumentPersistence::queued(library.clone());
     app.create_and_switch_board(false);
     app.flush_persistence();
@@ -1127,10 +1174,10 @@ fn create_undo_persists_reassigned_redo_history_with_the_archive() {
     trigger_connection
         .execute_batch(&format!(
             "CREATE TRIGGER fail_reassigned_history
-             BEFORE UPDATE ON board_document_history
-             WHEN json_array_length(json_extract(
+             BEFORE INSERT ON board_history
+             WHEN NEW.board_id = {} AND json_array_length(json_extract(
                  NEW.payload,
-                 '$.histories_by_board.\"{}\".redo_stack'
+                 '$.redo_stack'
              )) > 0
              BEGIN
                  SELECT RAISE(ABORT, 'injected reassigned-history failure');
@@ -1220,34 +1267,48 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
         .store_rgba_image("second", &vec![180; 20 * 10 * 4], 20, 10)
         .unwrap();
     let first = library
-        .persist_imported_image(
-            &first_path,
-            "image/png",
-            10,
-            10,
-            4,
-            egui::pos2(0.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&first_path, "image/png", 10, 10, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let second = library
-        .persist_imported_image(
-            &second_path,
-            "image/png",
-            20,
-            10,
-            4,
-            egui::pos2(20.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(20.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&second_path, "image/png", 20, 10, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
-    library
-        .archive_placements(&[first.state.id, second.state.id])
+    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[first.state.id, second.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[first.state.id, second.state.id]).contains(id))).collect()), ..Default::default()})
         .unwrap();
-    let empty_board = library.create_board("Empty").unwrap();
+    let empty_board = library.fixture_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
+    app.refresh_board_summaries();
     app.search.overlay.open = true;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
@@ -1345,19 +1406,39 @@ fn context_menu_move_to_front_routes_through_rendered_menu_row() {
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let back_item = library
-        .persist_imported_image(&image_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&image_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
     let selected_item = library
-        .create_placement_from_asset(
-            back_item.require_loaded_asset().id,
-            egui::pos2(10.0, 20.0),
-            1.0,
-            0.0,
-            0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            library
+                .new_placement_from_asset(
+                    back_item.require_loaded_asset().id,
+                    egui::pos2(10.0, 20.0),
+                    1.0,
+                    0.0,
+                    0,
+                )
+                .unwrap(),
         )
         .unwrap();
     let front_annotation = library
-        .create_canvas_annotation(
+        .fixture_annotation(
             CanvasAnnotationKind::Line,
             egui::pos2(40.0, 60.0),
             egui::pos2(80.0, 90.0),

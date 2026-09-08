@@ -206,11 +206,7 @@ pub(crate) fn hover_dissolve(ctx: &egui::Context, id: egui::Id, hot: bool) -> f3
     )
 }
 
-pub(crate) fn pulse_decay(
-    ctx: &egui::Context,
-    _id: egui::Id,
-    started_at: Option<Instant>,
-) -> Option<f32> {
+pub(crate) fn pulse_decay(ctx: &egui::Context, started_at: Option<Instant>) -> Option<f32> {
     let started_at = started_at?;
     let t = started_at.elapsed().as_secs_f32() / theme::MOTION_PULSE_SECONDS;
     if t >= 1.0 {

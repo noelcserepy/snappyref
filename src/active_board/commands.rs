@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::sources::clipboard::decode_board_selection;
 use eframe::egui;
 
 use crate::canvas::CanvasState;
@@ -7,7 +9,7 @@ use crate::data::{
 use crate::library::storage::Library;
 use crate::sources::clipboard::{
     ClipboardBoardSelection, clipboard_payload_bounds, copy_selected_board_payload,
-    decode_board_selection, validate_clipboard_payload,
+    validate_clipboard_payload,
 };
 
 pub(crate) struct ActiveBoardCommandContext<'a> {
@@ -24,6 +26,7 @@ pub(crate) struct PasteCommandOutcome {
     pub(super) reload: Vec<crate::data::Placement>,
 }
 
+#[cfg(test)]
 pub(crate) fn paste_json_at(
     context: &mut ActiveBoardCommandContext<'_>,
     paste_text: &str,
@@ -290,7 +293,22 @@ mod group_tests {
         let mut source = CanvasState::default();
         let path = library.store_rgba_image("group", &[255; 16], 2, 2).unwrap();
         let first = library
-            .persist_imported_image(&path, "image/png", 2, 2, 16, egui::pos2(0., 0.), 1.)
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(0., 0.),
+                        1.,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&path, "image/png", 2, 2, 16, None)
+                        .unwrap(),
+                ),
+            )
             .unwrap();
         let second = library
             .new_placement_from_asset(first.asset_id().unwrap(), egui::pos2(100., 0.), 1., 0., 1)
@@ -304,7 +322,7 @@ mod group_tests {
             .unwrap()
             .unwrap();
         let payload = copy_selection_to_json(&source).unwrap().unwrap();
-        let target_board = library.create_board("Clipboard destination").unwrap();
+        let target_board = library.fixture_board("Clipboard destination").unwrap();
         library.set_active_board(target_board.id).unwrap();
         let mut target = CanvasState::default();
         let mut context = ActiveBoardCommandContext {
@@ -369,7 +387,22 @@ mod group_tests {
             .store_rgba_image("wide", &vec![255; 200 * 100 * 4], 200, 100)
             .unwrap();
         let placement = library
-            .persist_imported_image(&path, "image/png", 200, 100, 80000, egui::Pos2::ZERO, 1.)
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::Pos2::ZERO,
+                        1.,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&path, "image/png", 200, 100, 80000, None)
+                        .unwrap(),
+                ),
+            )
             .unwrap();
         for factor in [1., 1.375] {
             let mut source = CanvasState::default();
@@ -493,7 +526,22 @@ mod group_tests {
         let library = Library::initialize(root.to_path_buf()).unwrap();
         let path = library.store_rgba_image("group", &[255; 16], 2, 2).unwrap();
         let first = library
-            .persist_imported_image(&path, "image/png", 2, 2, 16, egui::pos2(0., 0.), 1.)
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(0., 0.),
+                        1.,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&path, "image/png", 2, 2, 16, None)
+                        .unwrap(),
+                ),
+            )
             .unwrap();
         let mut canvas = CanvasState::default();
         let mut ids = vec![first.id()];
@@ -559,9 +607,24 @@ mod paste_geometry_tests {
         let library = Library::initialize(root.to_path_buf()).unwrap();
         let path = library.store_rgba_image("source", &[255; 4], 1, 1).unwrap();
         let stored = library
-            .persist_imported_image(&path, "image/png", 100, 100, 4, egui::Pos2::ZERO, 1.0)
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::Pos2::ZERO,
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&path, "image/png", 100, 100, 4, None)
+                        .unwrap(),
+                ),
+            )
             .unwrap();
-        let second = library.create_board("Second").unwrap();
+        let second = library.fixture_board("Second").unwrap();
         // The database still names Board 1 and stores its image at the origin.
         // Each canvas below is the accepted state before queued writes catch up.
         for (board, x) in [(1, 1000.0), (second.id, 2000.0)] {

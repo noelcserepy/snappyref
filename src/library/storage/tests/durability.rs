@@ -5,15 +5,17 @@ fn board_unit_persists_failed_resolution_state_with_matching_history() {
     let root = TempRoot::new("snappyref-failed-resolution-board-unit-test");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let loading = library
-        .persist_committed_loading_placement(
-            egui::pos2(10.0, 20.0),
-            1.0,
-            100.0,
-            80.0,
-            ContentResolutionSource::ExternalPath {
-                path: "/tmp/missing.png".to_owned(),
-            },
-            Some("Loading".to_owned()),
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            library.new_committed_loading_placement(
+                egui::pos2(10.0, 20.0),
+                1.0,
+                eframe::egui::vec2(100.0, 80.0),
+                ContentResolutionSource::ExternalPath {
+                    path: "/tmp/missing.png".to_owned(),
+                },
+                Some("Loading".to_owned()),
+            ),
         )
         .unwrap();
     let mut history = crate::active_board::history::DocumentHistory::default();
@@ -65,7 +67,22 @@ fn board_unit_persists_undone_placement_state_with_redo_history() {
     fs::write(&source, [255, 255, 255, 255]).unwrap();
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let original = library
-        .persist_imported_image(&source, "image/png", 10, 20, 4, egui::pos2(3.0, 4.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(3.0, 4.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&source, "image/png", 10, 20, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
     let mut moved = original.clone();
     moved.state.geometry.center = egui::pos2(30.0, 40.0);
@@ -124,7 +141,22 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
         .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let placement = library
-        .persist_imported_image(&path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
 
     library
@@ -190,7 +222,22 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
         .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let placement = library
-        .persist_imported_image(&path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
 
     library
@@ -257,7 +304,22 @@ fn terminal_embedding_failures_are_not_automatic_retry_jobs() {
         .store_rgba_image("terminal", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let placement = library
-        .persist_imported_image(&path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
 
     library

@@ -154,7 +154,7 @@ def evaluate(directory, samples, tree, launch_unix_ms, expected, profile="full")
     if profile == 'full':
         metrics.update(quiescent_cpu_percent=cpu_percent(quiet),
                        quiescent_rss_bytes=statistics.median(row['rss_bytes'] for row in quiet),
-                       peak_tree_rss_bytes=sampling.tree_rss_stats(tree)['peak_tree_rss_bytes'])
+                       peak_tree_rss_bytes=sampling.peak_tree_rss_bytes(tree))
     for value in metrics.values():
         if value is not None and (not math.isfinite(value) or value < 0):
             raise ValueError(f'invalid metric: {metrics}')

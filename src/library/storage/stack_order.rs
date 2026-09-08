@@ -2,8 +2,6 @@
 use super::boards::active_board_id;
 #[cfg(test)]
 use super::connection::Library;
-#[cfg(test)]
-use super::connection::write_transaction;
 use crate::data::CanvasStackItem;
 use rusqlite::Connection;
 use rusqlite::Transaction;
@@ -177,15 +175,5 @@ impl Library {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;
         load_canvas_stack_order_for_board_id(&connection, active_board_id)
-    }
-
-    pub fn save_canvas_stack_order(&self, stack_order: &[CanvasStackItem]) -> Result<(), String> {
-        let mut connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let transaction = write_transaction(&mut connection, "canvas-stack")?;
-        replace_board_stack_order(&transaction, active_board_id, stack_order)?;
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit canvas stack order: {error}"))
     }
 }

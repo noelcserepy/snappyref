@@ -77,10 +77,30 @@ fn assert_copy_keeps_stack_order(
             StackContentKind::Placement => {
                 let placement = match asset_id {
                     None => library
-                        .persist_imported_image(&image_path, "image/png", 1, 1, 4, position, 1.0)
+                        .fixture_placement(
+                            library.load_user_session().unwrap().active_board_id,
+                            crate::data::Placement::loaded(
+                                crate::data::PlacementState::new(
+                                    library.allocate_document_id(),
+                                    position,
+                                    1.0,
+                                    0.0,
+                                    0,
+                                    false,
+                                ),
+                                library
+                                    .register_original(&image_path, "image/png", 1, 1, 4, None)
+                                    .unwrap(),
+                            ),
+                        )
                         .unwrap(),
                     Some(asset_id) => library
-                        .create_placement_from_asset(asset_id, position, 1.0, 0.0, 0)
+                        .fixture_placement(
+                            library.load_user_session().unwrap().active_board_id,
+                            library
+                                .new_placement_from_asset(asset_id, position, 1.0, 0.0, 0)
+                                .unwrap(),
+                        )
                         .unwrap(),
                 };
                 asset_id = Some(placement.require_loaded_asset().id);
@@ -90,7 +110,7 @@ fn assert_copy_keeps_stack_order(
             StackContentKind::Annotation => {
                 let fixture = test_canvas_annotation(0, position);
                 let annotation = library
-                    .create_canvas_annotation(
+                    .fixture_annotation(
                         fixture.kind,
                         fixture.start(),
                         fixture.end(),

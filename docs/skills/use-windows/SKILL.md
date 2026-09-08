@@ -11,41 +11,21 @@ argument-hint: "[windows-check-or-build]"
 Use this skill when the Mac agent needs Windows-native feedback without GitHub
 Actions.
 
-## Contract
+## Ownership and connection
 
-- Tracked docs define the workflow.
-- Private machine details live only in `.env.windows`.
-- The Mac checkout is the source of truth for edits.
-- The Windows checkout is an execution target for native checks and builds.
-- Do not develop or patch files on the Windows checkout. Make changes on Mac,
-  sync to Windows, then verify there.
+Edit on Mac, then sync to the Windows execution checkout. Do not patch Windows
+files unless the user requests a one-off diagnostic experiment; bring real fixes
+back to Mac before testing. Use native checks before GitHub Actions unless the
+user asks otherwise.
 
-## Private Config
+Scripts load private machine values from gitignored `.env.windows`, using
+`.env.windows.example` as the tracked template. If missing, ask for the SSH
+alias or host and Windows checkout path. Keep those details out of tracked docs.
 
-Windows scripts load private local values from:
-
-```text
-.env.windows
-```
-
-Use `.env.windows.example` as the tracked template. `.env.windows` is gitignored
-and should contain only local machine values such as:
-
-- `SNAPPYREF_WINDOWS_HOST`
-- `SNAPPYREF_WINDOWS_REPO`
-
-If the private config is missing, ask the user for:
-
-- SSH alias or host for the Windows machine
-- Windows checkout path
-
-## Connection Model
-
-- Use SSH over Tailscale or another private network path.
-- Use key-based auth. Avoid password prompts in agent-run commands.
-- Use PowerShell explicitly for remote Windows commands.
-- Treat visible GUI launch as separate from build/test. SSH-launched GUI apps may
-  run in a non-interactive Windows session and not appear on the desktop.
+Use key-based SSH over Tailscale or another private network, with explicit
+PowerShell commands. Test key-only SSH if connection state is uncertain. Do not
+install background sync tools unless asked. Explain security impact before
+changing firewall, SSH, or Tailscale settings.
 
 ## Sync
 
@@ -71,12 +51,16 @@ After syncing, run the cheapest Windows-native check first:
 scripts/windows-check.sh
 ```
 
-Use fuller checks only when needed:
+Normal checks and tests use shipping default features. The Windows user needs
+libjpeg-turbo and the explicit `TURBOJPEG_*` environment settings used by the
+[shipping build](../../../.github/workflows/build-windows-app.yml). Keep local
+installation paths in that machine's user environment. The test wrapper runs
+serially, matching the canonical behavior gate; an explicit `--test-threads`
+option overrides that default.
 
 ```sh
 scripts/windows-test.sh
 scripts/windows-test.sh <filter>
-scripts/windows-build-release-fast.sh
 ```
 
 For one-off commands, use:
@@ -91,8 +75,8 @@ Use this guidance when changing the Windows drop bridge in
 [windows.rs](../../../src/platform/native_drop/windows.rs) or its winit fallback.
 Registration ownership and generated COM ABI rationale live beside that code.
 
-For native drop changes, edit on Mac, sync, then check on Windows. Verify
-Explorer file import, cursor-following previews, and final placement. Verify
+For native drop changes, verify Explorer file import, cursor-following previews,
+and final placement on Windows. Verify
 browser URL drops where the custom bridge can register. In-process inspect
 scenarios do not exercise the COM calling convention or OS registration.
 
@@ -103,7 +87,8 @@ appear on the logged-in desktop. For manual app verification, build the Windows
 binary through the repo wrapper, then launch it in the interactive desktop
 session with a one-shot scheduled task.
 
-Build the same Windows feature set used by the fast release smoke path:
+For quick development GUI checks, build `release-fast` with reduced features.
+This build does not verify the shipping feature set:
 
 ```sh
 scripts/windows-build-release-fast.sh
@@ -136,21 +121,4 @@ Notes:
 For explicit update verification, use the canonical
 [update smoke procedure](../../release-operations.md#update-smokes).
 
-## Workflow
-
-1. Confirm `.env.windows` exists.
-2. Make source changes only in the Mac checkout.
-3. Test key-only SSH if connection state is uncertain.
-4. Run `scripts/windows-sync.sh`.
-5. Run the narrowest Windows check that answers the task.
-6. Report the command result and any warnings that matter.
-
-## Guardrails
-
-- Do not use GitHub Actions for inner-loop Windows checks unless the user asks.
-- Do not install background sync tools unless the user asks.
-- Do not edit the Windows checkout directly unless the user explicitly asks for
-  a one-off diagnostic experiment. Bring any real fix back to Mac before testing.
-- Do not change Windows firewall, SSH, or Tailscale settings without explaining
-  the security impact first.
-- Keep private machine details in `.env.windows`, not tracked docs.
+Report the commands, results, and any native behavior that remains unverified.

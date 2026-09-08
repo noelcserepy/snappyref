@@ -42,35 +42,14 @@ There is no standalone design-system document. Treat the code as the canonical v
 - use inspect scenarios/artifacts as runtime visual evidence
 - when visual semantics change, update the owning token/component comment, API name, test, or inspect scenario in the same change
 
-## Testing Notes
+## Verification
 
-- Use `cargo check` after UI/app-inspection changes before trusting screenshots. For behavior verification, prefer an inspect scenario and artifact.
-- Run networked update smokes only on explicit request. The canonical procedure
-  lives in [release-operations](docs/release-operations.md#update-smokes).
-- For Windows behavior, packaging, paths, updater, native input, or other
-  platform-specific changes, use [use-windows](docs/skills/use-windows/SKILL.md)
-  before GitHub Actions. That skill owns verification expectations and recipes.
+Use [inspect](docs/skills/inspect/SKILL.md) for behavior evidence and
+[perf-profiling](docs/skills/perf-profiling/SKILL.md#regular-profiling-and-refactors)
+for the before/after architecture-refactor procedure and measurement sequencing.
+Use [use-windows](docs/skills/use-windows/SKILL.md) for platform-sensitive changes
+before GitHub Actions. It owns native verification and sync requirements.
 
-## Before Architecture Refactors
-
-Run `python3 scripts/check-refactor-behavior.py`, then the repeated release-app
-fast baseline and comparison described in `docs/skills/perf-profiling/SKILL.md`.
-Fast is the regular default. Run full performance only on explicit user demand,
-never automatically for refactors, releases, or inconclusive fast results.
-Do not run performance concurrently with builds or behavior tests. Keep the
-reference baseline unchanged until measured differences have been reviewed.
-
-## Pre-push Checks
-
-The pre-push gate (fmt + `cargo check` under shipping features + the
-`update_preservation_smoke` test) lives in `.githooks/pre-push` and runs
-automatically on `git push` once the hook path is configured. One-time setup on
-a fresh clone:
-
-```sh
-git config core.hooksPath .githooks
-```
-
-The hook is the local backstop for formatting and cargo checks.
-Bypass with `git push --no-verify` when you genuinely need to (e.g. debugging
-branches that you know will not merge).
+[Release operations](docs/release-operations.md#update-smokes) owns networked
+update smoke procedures and their explicit-request-only scope.
+[Development checks](README.md#development-checks) owns pre-push setup.

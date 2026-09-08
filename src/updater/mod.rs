@@ -53,15 +53,12 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 pub(crate) struct UpdateService {
     state: UpdateState,
     started_at: Instant,
-    settled_idle_at: Option<Instant>,
+    settled_idle: bool,
     last_check: Option<Duration>,
     consecutive_failures: u32,
-    in_flight: Option<Receiver<DiscoveryResult>>,
+    in_flight: Option<Receiver<CheckOutcome>>,
     next_check_after: Option<Duration>,
     config: UpdateConfig,
-    /// Latest verified manifest, kept so a click on Install knows the URL
-    /// and sha256 without re-fetching.
-    last_manifest: Option<Manifest>,
     /// Wall-clock unix millis at which the most recent discovery check
     /// completed (success or failure). About / Updates renders this; `None`
     /// before the first check returns.
@@ -75,7 +72,7 @@ pub(crate) struct UpdateService {
     /// Test override: short-circuit the network and feed a canned outcome
     /// instead of spawning a thread. See `spawn_fetch`.
     #[cfg(test)]
-    fetch_override: Option<Box<dyn FnMut() -> DiscoveryResult + Send>>,
+    fetch_override: Option<Box<dyn FnMut() -> CheckOutcome + Send>>,
     /// Test override: feed install events directly. See `spawn_install`.
     #[cfg(test)]
     install_override: Option<Box<dyn FnMut(InstallContext, Sender<InstallProgress>) + Send>>,
@@ -128,16 +125,7 @@ pub(crate) struct InstallContext {
     pub sha256: String,
     pub size: u64,
     pub install_root: PathBuf,
-    pub platform: Option<TargetPlatform>,
-}
-
-/// Internal channel payload from the discovery worker. Carries both the
-/// observable outcome and the parsed manifest so the service can store
-/// the latter for use by the Update button.
-#[derive(Clone, Debug)]
-pub(crate) struct DiscoveryResult {
-    pub outcome: CheckOutcome,
-    pub manifest: Option<Manifest>,
+    pub platform: TargetPlatform,
 }
 
 impl UpdateService {
@@ -154,13 +142,12 @@ impl UpdateService {
         let service = Self {
             state: UpdateState::Hidden,
             started_at: Instant::now(),
-            settled_idle_at: None,
+            settled_idle: false,
             last_check: None,
             consecutive_failures: 0,
             in_flight: None,
             next_check_after: None,
             config,
-            last_manifest: None,
             last_check_completed_at: None,
             manual_check_requested: false,
             install_rx: None,
@@ -241,8 +228,8 @@ impl UpdateService {
     pub(crate) fn start_install(&mut self) {
         // Only allowed while we have a verified manifest and the update UI
         // is showing Available.
-        let manifest = match (&self.last_manifest, self.state.clone()) {
-            (Some(manifest), UpdateState::Available { .. }) => manifest.clone(),
+        let manifest = match &self.state {
+            UpdateState::Available { release } => release.clone(),
             _ => return,
         };
         let Some(platform) = TargetPlatform::current() else {
@@ -251,7 +238,10 @@ impl UpdateService {
         };
         let entry = manifest.entry_for(platform);
         let Some(install_root) = self.resolved_install_root() else {
-            self.state = UpdateState::Failed;
+            self.state = UpdateState::Failed {
+                reason: "Cannot resolve the app install location".to_owned(),
+                version: Some(manifest.version),
+            };
             return;
         };
         let context = InstallContext {
@@ -260,7 +250,7 @@ impl UpdateService {
             sha256: entry.sha256.clone(),
             size: entry.size,
             install_root,
-            platform: Some(platform),
+            platform,
         };
         self.state.begin_install(context.version.clone());
         let (tx, rx) = channel();
@@ -391,8 +381,8 @@ impl UpdateService {
     /// the app's queues have drained for the first time since startup —
     /// the same signal the existing perf-scenario logic uses.
     pub(crate) fn tick(&mut self, app_settled_idle: bool) {
-        if app_settled_idle && self.settled_idle_at.is_none() {
-            self.settled_idle_at = Some(Instant::now());
+        if app_settled_idle && !self.settled_idle {
+            self.settled_idle = true;
             self.write_diagnostic("settled_idle");
         }
 
@@ -402,30 +392,21 @@ impl UpdateService {
                     self.in_flight = None;
                     self.last_check = Some(self.started_at.elapsed());
                     self.last_check_completed_at = current_unix_millis();
-                    match &result.outcome {
+                    match &result {
                         CheckOutcome::Failed => self.consecutive_failures += 1,
                         CheckOutcome::NewerAvailable { .. } | CheckOutcome::UpToDate => {
                             self.consecutive_failures = 0;
                         }
                     }
-                    if let Some(manifest) = result.manifest.clone() {
-                        self.last_manifest = Some(manifest);
-                    }
                     self.write_diagnostic(&format!(
                         "result outcome={:?} state_before={:?}",
-                        result.outcome, self.state
+                        result, self.state
                     ));
-                    let newer_available =
-                        matches!(result.outcome, CheckOutcome::NewerAvailable { .. });
-                    self.state.apply(result.outcome);
+                    self.state.apply(result);
                     self.write_diagnostic(&format!("state_after={:?}", self.state));
-                    // On a confirmed new version, see if a previously
-                    // staged bundle is already on disk for it and the
-                    // update UI can short-circuit to Ready.
-                    if let Some(manifest) = self.last_manifest.clone() {
-                        if newer_available {
-                            self.detect_existing_staging(&manifest);
-                        }
+                    if let UpdateState::Available { release } = &self.state {
+                        let release = release.clone();
+                        self.detect_existing_staging(&release);
                     }
                 }
                 Err(TryRecvError::Empty) => {
@@ -455,7 +436,7 @@ impl UpdateService {
         }
 
         let input = ScheduleInput {
-            settled_idle: self.settled_idle_at.is_some(),
+            settled_idle: self.settled_idle,
             now: self.started_at.elapsed(),
             last_check: self.last_check,
             consecutive_failures: self.consecutive_failures,
@@ -496,7 +477,7 @@ impl UpdateService {
     /// first settled-idle sample and while a worker is in flight so
     /// discovery cannot stall in a quiescent UI.
     pub(crate) fn time_until_next_check(&self) -> Option<Duration> {
-        if self.settled_idle_at.is_none() {
+        if !self.settled_idle {
             return Some(Duration::from_millis(250));
         }
         if self.in_flight.is_some() || self.install_rx.is_some() {
@@ -518,7 +499,7 @@ impl UpdateService {
 
     /// Tests never reach the network: without an override the check fails
     /// immediately instead of spawning the fetch thread.
-    fn spawn_fetch(&mut self, tx: Sender<DiscoveryResult>) {
+    fn spawn_fetch(&mut self, tx: Sender<CheckOutcome>) {
         #[cfg(test)]
         if let Some(fetcher) = self.fetch_override.as_mut() {
             let outcome = (fetcher)();
@@ -526,10 +507,7 @@ impl UpdateService {
             return;
         }
         if cfg!(test) {
-            let _ = tx.send(DiscoveryResult {
-                outcome: CheckOutcome::Failed,
-                manifest: None,
-            });
+            let _ = tx.send(CheckOutcome::Failed);
         } else {
             let config = self.config.clone();
             std::thread::spawn(move || {
@@ -651,12 +629,7 @@ fn run_install(context: InstallContext, tx: Sender<InstallProgress>) {
         }
     }
 
-    let Some(platform) = context.platform else {
-        let _ = tx.send(InstallProgress::Failed {
-            reason: "no release shape for this platform".to_owned(),
-        });
-        return;
-    };
+    let platform = context.platform;
 
     let staging_root = install_paths::staging_dir(&context.install_root, &context.version);
     match stager::extract_and_validate(&zip_path, &staging_root, platform) {
@@ -682,7 +655,7 @@ fn run_install(context: InstallContext, tx: Sender<InstallProgress>) {
     }
 }
 
-fn run_fetch(config: &UpdateConfig) -> DiscoveryResult {
+fn run_fetch(config: &UpdateConfig) -> CheckOutcome {
     if let Some(path) = &config.diagnostic_path {
         write_diagnostic(path, "fetch_begin");
     }
@@ -693,10 +666,7 @@ fn run_fetch(config: &UpdateConfig) -> DiscoveryResult {
                 write_diagnostic(path, &format!("fetch_failed {error}"));
             }
             log_failure("fetch", &error);
-            return DiscoveryResult {
-                outcome: CheckOutcome::Failed,
-                manifest: None,
-            };
+            return CheckOutcome::Failed;
         }
     };
     let manifest = match manifest::parse_and_verify(&bytes) {
@@ -706,10 +676,7 @@ fn run_fetch(config: &UpdateConfig) -> DiscoveryResult {
                 write_diagnostic(path, &format!("verify_failed {error}"));
             }
             log_failure("verify", &error);
-            return DiscoveryResult {
-                outcome: CheckOutcome::Failed,
-                manifest: None,
-            };
+            return CheckOutcome::Failed;
         }
     };
     let outcome = classify(&manifest, &config.current_version);
@@ -722,10 +689,7 @@ fn run_fetch(config: &UpdateConfig) -> DiscoveryResult {
             ),
         );
     }
-    DiscoveryResult {
-        outcome,
-        manifest: Some(manifest),
-    }
+    outcome
 }
 
 fn fetch_manifest(url: &str) -> Result<Vec<u8>, String> {
@@ -774,10 +738,10 @@ fn write_diagnostic(path: &Path, message: &str) {
 
 /// Compare a verified manifest's version against `current_version` and
 /// translate into the outcome the state machine consumes.
-pub(crate) fn classify(manifest: &Manifest, current_version: &str) -> CheckOutcome {
+fn classify(manifest: &Manifest, current_version: &str) -> CheckOutcome {
     if version::is_newer_than(&manifest.version, current_version) {
         CheckOutcome::NewerAvailable {
-            version: manifest.version.clone(),
+            release: manifest.clone(),
         }
     } else {
         CheckOutcome::UpToDate
@@ -823,8 +787,8 @@ mod tests {
         let manifest = manifest::parse_and_verify_with_key(&bytes, &signing_key().verifying_key())
             .expect("test manifest verifies");
         match classify(&manifest, "0.1.0") {
-            CheckOutcome::NewerAvailable { version } => {
-                assert_eq!(version, "9.9.9");
+            CheckOutcome::NewerAvailable { release } => {
+                assert_eq!(release.version, "9.9.9");
             }
             other => panic!("expected NewerAvailable, got {other:?}"),
         }
@@ -868,10 +832,7 @@ mod tests {
         let calls_clone = calls.clone();
         service.fetch_override = Some(Box::new(move || {
             calls_clone.fetch_add(1, Ordering::SeqCst);
-            DiscoveryResult {
-                outcome: CheckOutcome::UpToDate,
-                manifest: None,
-            }
+            CheckOutcome::UpToDate
         }));
 
         service.started_at = Instant::now() - Duration::from_secs(60);
@@ -899,16 +860,12 @@ mod tests {
         let bytes_clone = bytes.clone();
         service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            let outcome = classify(&manifest, "0.1.0");
-            DiscoveryResult {
-                outcome,
-                manifest: Some(manifest),
-            }
+            classify(&manifest, "0.1.0")
         }));
         drive_until_quiescent(&mut service);
         match service.state() {
-            UpdateState::Available { version, .. } => {
-                assert_eq!(version, "1.0.0");
+            UpdateState::Available { release } => {
+                assert_eq!(release.version, "1.0.0");
             }
             other => panic!("expected Available, got {other:?}"),
         }
@@ -917,12 +874,9 @@ mod tests {
     #[test]
     fn service_reports_failed_on_fetch_failure() {
         let mut service = UpdateService::new(UpdateConfig::for_tests());
-        service.fetch_override = Some(Box::new(|| DiscoveryResult {
-            outcome: CheckOutcome::Failed,
-            manifest: None,
-        }));
+        service.fetch_override = Some(Box::new(|| CheckOutcome::Failed));
         drive_until_quiescent(&mut service);
-        assert_eq!(*service.state(), UpdateState::Failed);
+        assert!(matches!(service.state(), UpdateState::Failed { .. }));
         assert_eq!(service.consecutive_failures, 1);
     }
 
@@ -937,17 +891,11 @@ mod tests {
         service.fetch_override = Some(Box::new(move || {
             let n = calls_clone.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
-                DiscoveryResult {
-                    outcome: CheckOutcome::NewerAvailable {
-                        version: "9.9.9".to_owned(),
-                    },
-                    manifest: None,
+                CheckOutcome::NewerAvailable {
+                    release: manifest_with("9.9.9"),
                 }
             } else {
-                DiscoveryResult {
-                    outcome: CheckOutcome::Failed,
-                    manifest: None,
-                }
+                CheckOutcome::Failed
             }
         }));
         drive_until_quiescent(&mut service);
@@ -973,7 +921,7 @@ mod tests {
         );
     }
 
-    fn manifest_with(version: &str) -> Manifest {
+    pub(super) fn manifest_with(version: &str) -> Manifest {
         Manifest {
             version: version.to_owned(),
             macos: PlatformEntry {
@@ -990,18 +938,81 @@ mod tests {
     }
 
     #[test]
-    fn start_install_is_noop_when_no_manifest_is_cached() {
-        let mut service = UpdateService::new(UpdateConfig::for_tests());
-        // No discovery has run yet, so last_manifest is None even if the
-        // state happens to be Hidden. start_install must not transition.
+    fn retained_available_release_keeps_its_exact_package_after_older_discovery() {
+        for later_version in ["0.5.0", "1.0.0", "1.5.0", "2.0.0"] {
+            let root = crate::test_support::TempRoot::new("retained-release");
+            let mut service = UpdateService::new(UpdateConfig {
+                current_version: "1.0.0".to_owned(),
+                install_root: Some(root.to_path_buf()),
+                ..UpdateConfig::for_tests()
+            });
+            let mut offered = manifest_with("2.0.0");
+            offered.macos.url = "https://example/offered-mac.zip".into();
+            offered.windows.url = "https://example/offered-win.zip".into();
+            offered.macos.sha256 = "a".repeat(64);
+            offered.windows.sha256 = "b".repeat(64);
+            let later = manifest_with(later_version);
+            let mut responses = std::collections::VecDeque::from([
+                classify(&offered, "1.0.0"),
+                classify(&later, "1.0.0"),
+            ]);
+            service.fetch_override = Some(Box::new(move || responses.pop_front().unwrap()));
+            drive_until_quiescent(&mut service);
+            service.request_check_now();
+            drive_until_quiescent(&mut service);
+            assert_eq!(
+                service.state(),
+                &UpdateState::Available {
+                    release: offered.clone()
+                }
+            );
+            service.install_override = Some(Box::new(move |context, _| {
+                let expected = offered.entry_for(context.platform);
+                assert_eq!(context.version, offered.version);
+                assert_eq!(context.url, expected.url);
+                assert_eq!(context.sha256, expected.sha256);
+                assert_eq!(context.size, expected.size);
+            }));
+            service.start_install();
+            assert!(service.state().is_downloading());
+        }
+    }
+
+    #[test]
+    fn preparation_failure_keeps_reason_and_requires_a_fresh_check() {
+        let root = crate::test_support::TempRoot::new("failed-release-recheck");
+        let mut service = UpdateService::new(UpdateConfig {
+            current_version: "1.0.0".into(),
+            install_root: Some(root.to_path_buf()),
+            ..UpdateConfig::for_tests()
+        });
+        service.fetch_override = Some(Box::new(|| classify(&manifest_with("2.0.0"), "1.0.0")));
+        drive_until_quiescent(&mut service);
+        service.install_override = Some(Box::new(|_, tx| {
+            tx.send(InstallProgress::Failed {
+                reason: "Package checksum mismatch".into(),
+            })
+            .unwrap();
+        }));
         service.start_install();
-        assert_eq!(*service.state(), UpdateState::Hidden);
+        service.drain_install_progress();
+        assert_eq!(
+            service.state(),
+            &UpdateState::Failed {
+                reason: "Package checksum mismatch".into(),
+                version: Some("2.0.0".into()),
+            }
+        );
+        service.start_install();
+        assert!(matches!(service.state(), UpdateState::Failed { .. }));
+        service.request_check_now();
+        drive_until_quiescent(&mut service);
+        assert!(service.state().is_available());
     }
 
     #[test]
     fn start_install_is_noop_unless_state_is_available() {
         let mut service = UpdateService::new(UpdateConfig::for_tests());
-        service.last_manifest = Some(manifest_with("1.0.0"));
         // State is still Hidden. start_install must refuse to act so a
         // race between failure and click cannot kick off a phantom
         // download.
@@ -1015,9 +1026,8 @@ mod tests {
             current_version: "0.1.0".to_owned(),
             ..UpdateConfig::for_tests()
         });
-        service.last_manifest = Some(manifest_with("1.0.0"));
         service.state.apply(CheckOutcome::NewerAvailable {
-            version: "1.0.0".to_owned(),
+            release: manifest_with("1.0.0"),
         });
         // Stub the install worker so start_install doesn't depend on
         // platform shape or filesystem.
@@ -1038,9 +1048,8 @@ mod tests {
     #[test]
     fn drain_install_progress_promotes_to_ready_on_staged() {
         let mut service = UpdateService::new(UpdateConfig::for_tests());
-        service.last_manifest = Some(manifest_with("1.0.0"));
         service.state.apply(CheckOutcome::NewerAvailable {
-            version: "1.0.0".to_owned(),
+            release: manifest_with("1.0.0"),
         });
         service.config.install_root = Some(std::env::temp_dir());
         // Test installer immediately reports progress + Staged.
@@ -1065,9 +1074,8 @@ mod tests {
     #[test]
     fn drain_install_progress_transitions_to_failed_on_install_error() {
         let mut service = UpdateService::new(UpdateConfig::for_tests());
-        service.last_manifest = Some(manifest_with("1.0.0"));
         service.state.apply(CheckOutcome::NewerAvailable {
-            version: "1.0.0".to_owned(),
+            release: manifest_with("1.0.0"),
         });
         service.config.install_root = Some(std::env::temp_dir());
         service.install_override = Some(Box::new(|_, tx| {
@@ -1077,7 +1085,7 @@ mod tests {
         }));
         service.start_install();
         service.tick(true);
-        assert_eq!(*service.state(), UpdateState::Failed);
+        assert!(matches!(service.state(), UpdateState::Failed { .. }));
     }
 
     #[test]
@@ -1190,11 +1198,7 @@ mod tests {
         let bytes_clone = bytes.clone();
         service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            let outcome = classify(&manifest, "0.1.0");
-            DiscoveryResult {
-                outcome,
-                manifest: Some(manifest),
-            }
+            classify(&manifest, "0.1.0")
         }));
         drive_until_quiescent(&mut service);
         assert!(
@@ -1232,11 +1236,7 @@ mod tests {
         let bytes_clone = bytes.clone();
         service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            let outcome = classify(&manifest, "1.0.0");
-            DiscoveryResult {
-                outcome,
-                manifest: Some(manifest),
-            }
+            classify(&manifest, "1.0.0")
         }));
         drive_until_quiescent(&mut service);
 
@@ -1276,11 +1276,7 @@ mod tests {
         let bytes_clone = bytes.clone();
         service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            let outcome = classify(&manifest, "0.1.0");
-            DiscoveryResult {
-                outcome,
-                manifest: Some(manifest),
-            }
+            classify(&manifest, "0.1.0")
         }));
         drive_until_quiescent(&mut service);
         assert!(
@@ -1322,11 +1318,7 @@ mod tests {
         let bytes_clone = bytes.clone();
         service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            let outcome = classify(&manifest, "0.1.0");
-            DiscoveryResult {
-                outcome,
-                manifest: Some(manifest),
-            }
+            classify(&manifest, "0.1.0")
         }));
         drive_until_quiescent(&mut service);
         assert!(
@@ -1372,11 +1364,7 @@ mod tests {
         let bytes_clone = bytes.clone();
         service.fetch_override = Some(Box::new(move || {
             let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            let outcome = classify(&manifest, "0.1.0");
-            DiscoveryResult {
-                outcome,
-                manifest: Some(manifest),
-            }
+            classify(&manifest, "0.1.0")
         }));
         drive_until_quiescent(&mut service);
         assert!(!stale.exists(), "stale staging-0.9.0/ must be removed");
@@ -1391,10 +1379,7 @@ mod tests {
     #[test]
     fn last_check_completed_at_records_a_timestamp_after_a_check_returns() {
         let mut service = UpdateService::new(UpdateConfig::for_tests());
-        service.fetch_override = Some(Box::new(|| DiscoveryResult {
-            outcome: CheckOutcome::UpToDate,
-            manifest: None,
-        }));
+        service.fetch_override = Some(Box::new(|| CheckOutcome::UpToDate));
         assert_eq!(service.last_check_completed_at(), None);
         drive_until_quiescent(&mut service);
         assert!(
@@ -1421,10 +1406,7 @@ mod tests {
         let calls_clone = calls.clone();
         service.fetch_override = Some(Box::new(move || {
             calls_clone.fetch_add(1, Ordering::SeqCst);
-            DiscoveryResult {
-                outcome: CheckOutcome::UpToDate,
-                manifest: None,
-            }
+            CheckOutcome::UpToDate
         }));
         // Drive the initial steady-state check to completion so the
         // schedule has settled into the long-poll wait.
@@ -1449,10 +1431,7 @@ mod tests {
         let calls_clone = calls.clone();
         service.fetch_override = Some(Box::new(move || {
             calls_clone.fetch_add(1, Ordering::SeqCst);
-            DiscoveryResult {
-                outcome: CheckOutcome::UpToDate,
-                manifest: None,
-            }
+            CheckOutcome::UpToDate
         }));
 
         service.request_check_now();
@@ -1469,10 +1448,7 @@ mod tests {
     #[test]
     fn time_until_next_check_polls_while_discovery_is_in_flight() {
         let mut service = UpdateService::new(UpdateConfig::for_tests());
-        service.fetch_override = Some(Box::new(|| DiscoveryResult {
-            outcome: CheckOutcome::UpToDate,
-            manifest: None,
-        }));
+        service.fetch_override = Some(Box::new(|| CheckOutcome::UpToDate));
 
         service.tick(true);
 

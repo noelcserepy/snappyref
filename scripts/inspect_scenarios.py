@@ -30,7 +30,7 @@ SCENARIOS = {
     'canvas-edit-operations': ('inspect_canvas_edit_operations_writes_artifact', 'canvas-edit-operations', True, False),
     'canvas-navigation-boards': ('inspect_canvas_navigation_and_boards_writes_artifact', 'canvas-navigation-boards', True, False),
     'session-restart-restore': ('inspect_session_restart_restore_writes_artifact', 'session-restart-restore', True, False),
-    'persistence-dropped-write': ('inspect_persistence_dropped_write_writes_artifact', 'persistence-dropped-write', True, False),
+    'persistence-write-retry': ('inspect_persistence_write_retry_writes_artifact', 'persistence-write-retry', True, False),
 }
 
 

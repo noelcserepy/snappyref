@@ -163,7 +163,6 @@ pub(crate) fn search_result_tile(
     ui: &mut egui::Ui,
     group: &SearchResultAssetEntry,
     asset_preview_cache: &mut HashMap<i64, SearchAssetPreviewEntry>,
-    _lead: bool,
     selected: bool,
     tile_width: f32,
 ) -> egui::Response {

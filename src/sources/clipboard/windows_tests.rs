@@ -88,14 +88,28 @@ fn native_windows_clipboard_image_metadata_files_and_pureref_bytes() {
         .store_rgba_image("clipboard-source", &rgba, 2, 1)
         .unwrap();
     let placement = library
-        .persist_imported_image(
-            &source,
-            "image/png",
-            2,
-            1,
-            std::fs::metadata(&source).unwrap().len(),
-            egui::Pos2::ZERO,
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::Pos2::ZERO,
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(
+                        &source,
+                        "image/png",
+                        2,
+                        1,
+                        std::fs::metadata(&source).unwrap().len(),
+                        None,
+                    )
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let placement_id = placement.state.id;
@@ -123,6 +137,10 @@ fn native_windows_clipboard_image_metadata_files_and_pureref_bytes() {
         .unwrap();
     assert!(image_payload.external_image.is_some());
     write_payload(&image_payload).unwrap();
+    assert!(matches!(
+        super::read(None).unwrap(),
+        Some(super::ClipboardContent::BoardSelection(_))
+    ));
     {
         let mut clipboard = arboard::Clipboard::new().unwrap();
         let image = clipboard.get_image().unwrap();
@@ -150,6 +168,10 @@ fn native_windows_clipboard_image_metadata_files_and_pureref_bytes() {
     assert_eq!(mixed_payload.item_count, 2);
     assert!(mixed_payload.external_image.is_none());
     write_payload(&mixed_payload).unwrap();
+    assert!(matches!(
+        super::read(None).unwrap(),
+        Some(super::ClipboardContent::BoardSelection(_))
+    ));
     {
         let mut clipboard = arboard::Clipboard::new().unwrap();
         assert_eq!(clipboard.get_text().unwrap(), mixed_payload.internal_json);
@@ -173,7 +195,19 @@ fn native_windows_clipboard_image_metadata_files_and_pureref_bytes() {
         );
     }
     files.extend([0, 0]);
-    let binary = [0, 1, 255, 128, 42, 0];
+    let binary = [
+        "GraphicsImageItem",
+        "https://example.com/native-pureref.png",
+    ]
+    .into_iter()
+    .flat_map(|text| {
+        let bytes = text
+            .encode_utf16()
+            .flat_map(u16::to_be_bytes)
+            .collect::<Vec<_>>();
+        (bytes.len() as u32).to_be_bytes().into_iter().chain(bytes)
+    })
+    .collect::<Vec<_>>();
     let pureref_format = unsafe { RegisterClipboardFormatW(wide("pureref/binary").as_ptr()) };
     assert_ne!(pureref_format, 0);
     let binary_size;
@@ -184,15 +218,63 @@ fn native_windows_clipboard_image_metadata_files_and_pureref_bytes() {
         publish_bytes(CF_HDROP as u32, &files);
         binary_size = publish_bytes(pureref_format, &binary);
     }
-    assert_eq!(crate::platform::native_drop::clipboard_paths(), paths);
+    let Some(super::ClipboardContent::Sources { sources, pureref }) = super::read(None).unwrap()
+    else {
+        panic!("expected native clipboard paths");
+    };
+    assert_eq!(
+        sources,
+        paths
+            .into_iter()
+            .map(crate::image_preparation::ImportSource::Path)
+            .collect::<Vec<_>>()
+    );
+    assert!(!pureref);
     let mut expected_binary = binary.to_vec();
     expected_binary.resize(binary_size, 0);
     assert_eq!(
-        crate::platform::native_drop::clipboard_pureref_binary(),
+        super::native::clipboard_pureref_binary(),
         Some(expected_binary)
     );
-    // This verifies the registered binary format, not the PureRef application.
-    assert_ne!(unsafe { OpenClipboard(hwnd) }, 0);
-    let _open = OpenNativeClipboard;
-    assert_ne!(unsafe { EmptyClipboard() }, 0);
+    // The registered format exercises PureRef normalization without its application.
+    {
+        assert_ne!(unsafe { OpenClipboard(hwnd) }, 0);
+        let _open = OpenNativeClipboard;
+        assert_ne!(unsafe { EmptyClipboard() }, 0);
+        publish_bytes(pureref_format, &binary);
+    }
+    let Some(super::ClipboardContent::Sources { sources, pureref }) = super::read(None).unwrap()
+    else {
+        panic!("expected native PureRef sources");
+    };
+    assert!(pureref);
+    assert_eq!(
+        sources,
+        [crate::image_preparation::ImportSource::Url(
+            "https://example.com/native-pureref.png".into()
+        )]
+    );
+    {
+        let mut clipboard = arboard::Clipboard::new().unwrap();
+        clipboard
+            .set_image(arboard::ImageData {
+                width: 2,
+                height: 1,
+                bytes: std::borrow::Cow::Borrowed(&rgba),
+            })
+            .unwrap();
+    }
+    let Some(super::ClipboardContent::Sources { sources, pureref }) = super::read(None).unwrap()
+    else {
+        panic!("expected native raster image");
+    };
+    assert!(!pureref);
+    assert_eq!(
+        sources,
+        [crate::image_preparation::ImportSource::Clipboard {
+            rgba,
+            width: 2,
+            height: 1
+        }]
+    );
 }

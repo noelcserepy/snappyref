@@ -54,22 +54,14 @@ impl SnappyRefApp {
         }
     }
 
-    pub(super) fn sync_semantic_search_service(&mut self) {
-        self.search.sync_service(
-            self.library.as_ref(),
-            &mut self.status,
-            self.settings.canvas_image_max_side,
-        );
-    }
-
-    pub(super) fn handle_search_results(&mut self) {
-        self.search.handle_results();
-    }
-
     pub(super) fn drive_semantic_search_install(&mut self, ctx: &egui::Context) {
         if self.search.drive_semantic_search_install(&mut self.status) {
             if self.search.local_model_assets_available() {
-                self.sync_semantic_search_service();
+                self.search.sync_service(
+                    self.library.as_ref(),
+                    &mut self.status,
+                    self.settings.canvas_image_max_side,
+                );
             }
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
@@ -84,10 +76,6 @@ impl SnappyRefApp {
     pub(super) fn mark_semantic_search_first_launch_prompt_seen(&mut self) {
         self.settings.semantic_search_first_launch_prompt_seen = true;
         self.save_user_session();
-    }
-
-    pub(super) fn decline_semantic_search_first_launch_prompt(&mut self) {
-        self.mark_semantic_search_first_launch_prompt_seen();
     }
 
     pub(super) fn enable_semantic_search_from_first_launch_prompt(&mut self, ctx: &egui::Context) {
@@ -156,7 +144,7 @@ impl SnappyRefApp {
         if enable {
             self.enable_semantic_search_from_first_launch_prompt(ctx);
         } else if decline {
-            self.decline_semantic_search_first_launch_prompt();
+            self.mark_semantic_search_first_launch_prompt_seen();
         }
     }
 
@@ -225,16 +213,6 @@ impl SnappyRefApp {
         }
     }
 
-    pub(super) fn handle_search_shortcut(&mut self, ctx: &egui::Context) {
-        self.search.handle_shortcut(
-            ctx,
-            self.library.as_ref(),
-            &mut self.canvas,
-            &mut self.status,
-            self.settings.canvas_image_max_side,
-        );
-    }
-
     pub(super) fn show_search_overlay(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
         let visible_canvas_rect = self.visible_canvas_screen_rect(screen_rect);
         if let Some(drop_request) = self.search.show_overlay(
@@ -253,14 +231,5 @@ impl SnappyRefApp {
         if self.search.take_recent_searches_dirty() {
             self.save_user_session();
         }
-    }
-
-    pub(super) fn search_using_selected_image(&mut self) {
-        self.search.search_using_selected_image(
-            self.library.as_ref(),
-            &mut self.canvas,
-            &mut self.status,
-            self.settings.canvas_image_max_side,
-        );
     }
 }

@@ -43,7 +43,7 @@ pub(super) fn render_sidebar_for_test(ctx: &egui::Context, app: &mut SnappyRefAp
     if app.should_block_sidebar_input() {
         block_sidebar_input(ctx, sidebar_rect(screen_rect));
     }
-    let board_summaries = app.board_summaries();
+    let board_summaries = app.board_editing.documents.summaries();
     let about_updates = app.about_updates_view();
     let sidebar_result = show_sidebar(
         ctx,
@@ -241,7 +241,7 @@ impl InspectScenario {
                 "selection_border_visible": harness
                     .state()
                     .canvas
-                    .selection_border_visible_for_test(now_seconds),
+                    .selection_border_visible(now_seconds),
             }),
         );
     }
@@ -955,19 +955,19 @@ pub(super) fn persisted_loaded_item(
             1,
         )
         .unwrap();
-    let placement = library
-        .persist_imported_image_resolving_placement(
-            target_board_id,
+    let placement = crate::data::Placement::loaded(
+        crate::data::PlacementState::new(
             placement_id,
-            &stored,
-            "image/png",
-            1,
-            1,
-            4,
             eframe::egui::pos2(0.0, 0.0),
             1.0,
-        )
-        .unwrap();
+            0.0,
+            0,
+            false,
+        ),
+        library
+            .register_original(&stored, "image/png", 1, 1, 4, None)
+            .unwrap(),
+    );
     PreparedPlacementImage {
         placement,
         ..test_loaded_item(placement_id, target_board_id)

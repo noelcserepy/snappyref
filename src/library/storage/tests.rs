@@ -17,7 +17,22 @@ fn loaded_placements_load_as_committed_loaded_content() {
     fs::write(&source, [255, 255, 255, 255]).unwrap();
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let placement = library
-        .persist_imported_image(&source, "image/png", 10, 20, 4, egui::pos2(3.0, 4.0), 2.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(3.0, 4.0),
+                    2.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&source, "image/png", 10, 20, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
 
     let reloaded = library.load_placements().unwrap();
@@ -57,20 +72,34 @@ fn update_preservation_smoke() {
     let original_bytes = [255, 0, 0, 255];
     let library = Library::initialize(library_root.clone()).unwrap();
     let first_board = library.list_boards().unwrap()[0].clone();
-    let second_board = library.create_board("Second").unwrap();
+    let second_board = library.fixture_board("Second").unwrap();
     library.set_active_board(second_board.id).unwrap();
     let original_path = library
         .store_rgba_image("preserved-original", &original_bytes, 1, 1)
         .unwrap();
     let imported = library
-        .persist_imported_image(
-            &original_path,
-            "image/png",
-            1,
-            1,
-            original_bytes.len() as u64,
-            egui::pos2(42.0, 24.0),
-            1.5,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(42.0, 24.0),
+                    1.5,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(
+                        &original_path,
+                        "image/png",
+                        1,
+                        1,
+                        original_bytes.len() as u64,
+                        None,
+                    )
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let mut session = UserSession {

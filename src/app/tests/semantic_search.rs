@@ -71,7 +71,7 @@ fn first_launch_semantic_search_prompt_not_now_persists_suppression() {
     app.search
         .set_local_model_store_status_for_test(LocalModelStoreStatus::Missing);
 
-    app.decline_semantic_search_first_launch_prompt();
+    app.mark_semantic_search_first_launch_prompt_seen();
 
     assert!(!app.should_show_semantic_search_first_launch_prompt());
     app.flush_persistence();
@@ -345,7 +345,15 @@ fn search_shortcut_opens_overlay_when_enabled() {
             }],
             ..Default::default()
         },
-        |ui| app.handle_search_shortcut(ui.ctx()),
+        |ui| {
+            app.search.handle_shortcut(
+                ui.ctx(),
+                app.library.as_ref(),
+                &mut app.canvas,
+                &mut app.status,
+                app.settings.canvas_image_max_side,
+            )
+        },
     );
 
     assert!(app.search.overlay.open);
@@ -377,7 +385,15 @@ fn search_shortcut_opens_missing_palette_with_focused_install_action() {
             }],
             ..Default::default()
         },
-        |ui| app.handle_search_shortcut(ui.ctx()),
+        |ui| {
+            app.search.handle_shortcut(
+                ui.ctx(),
+                app.library.as_ref(),
+                &mut app.canvas,
+                &mut app.status,
+                app.settings.canvas_image_max_side,
+            )
+        },
     );
 
     assert!(app.search.overlay.open);
@@ -473,34 +489,48 @@ fn command_enter_library_search_results_show_pending_cursor_arrangement_inputs()
         .store_rgba_image("second", &vec![180; 20 * 10 * 4], 20, 10)
         .unwrap();
     let first = library
-        .persist_imported_image(
-            &first_path,
-            "image/png",
-            10,
-            10,
-            4,
-            egui::pos2(0.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&first_path, "image/png", 10, 10, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let second = library
-        .persist_imported_image(
-            &second_path,
-            "image/png",
-            20,
-            10,
-            4,
-            egui::pos2(20.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(20.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&second_path, "image/png", 20, 10, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
-    library
-        .archive_placements(&[first.state.id, second.state.id])
+    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[first.state.id, second.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[first.state.id, second.state.id]).contains(id))).collect()), ..Default::default()})
         .unwrap();
-    let empty_board = library.create_board("Empty").unwrap();
+    let empty_board = library.fixture_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
+    app.refresh_board_summaries();
     app.search.overlay.open = true;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
@@ -551,34 +581,48 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
         .store_rgba_image("second", &vec![180; 20 * 10 * 4], 20, 10)
         .unwrap();
     let first = library
-        .persist_imported_image(
-            &first_path,
-            "image/png",
-            10,
-            10,
-            4,
-            egui::pos2(0.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&first_path, "image/png", 10, 10, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let second = library
-        .persist_imported_image(
-            &second_path,
-            "image/png",
-            20,
-            10,
-            4,
-            egui::pos2(20.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(20.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&second_path, "image/png", 20, 10, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
-    library
-        .archive_placements(&[first.state.id, second.state.id])
+    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[first.state.id, second.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[first.state.id, second.state.id]).contains(id))).collect()), ..Default::default()})
         .unwrap();
-    let empty_board = library.create_board("Empty").unwrap();
+    let empty_board = library.fixture_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
+    app.refresh_board_summaries();
     app.search.overlay.open = true;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
@@ -645,34 +689,48 @@ fn multi_select_enter_library_search_results_show_pending_cursor_arrangement_inp
         .store_rgba_image("second", &vec![180; 20 * 10 * 4], 20, 10)
         .unwrap();
     let first = library
-        .persist_imported_image(
-            &first_path,
-            "image/png",
-            10,
-            10,
-            4,
-            egui::pos2(0.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&first_path, "image/png", 10, 10, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let second = library
-        .persist_imported_image(
-            &second_path,
-            "image/png",
-            20,
-            10,
-            4,
-            egui::pos2(20.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(20.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&second_path, "image/png", 20, 10, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
-    library
-        .archive_placements(&[first.state.id, second.state.id])
+    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[first.state.id, second.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[first.state.id, second.state.id]).contains(id))).collect()), ..Default::default()})
         .unwrap();
-    let empty_board = library.create_board("Empty").unwrap();
+    let empty_board = library.fixture_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
+    app.refresh_board_summaries();
     app.search.overlay.open = true;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {
@@ -715,21 +773,29 @@ fn dragging_library_search_result_out_of_palette_creates_provisional_placement()
         .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
         .unwrap();
     let source = library
-        .persist_imported_image(
-            &source_path,
-            "image/png",
-            10,
-            10,
-            4,
-            egui::pos2(0.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&source_path, "image/png", 10, 10, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
-    library.archive_placements(&[source.state.id]).unwrap();
-    let empty_board = library.create_board("Empty").unwrap();
+    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[source.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[source.state.id]).contains(id))).collect()), ..Default::default()}).unwrap();
+    let empty_board = library.fixture_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
+    app.refresh_board_summaries();
     app.search.overlay.open = true;
     app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: source.require_loaded_asset().id,
@@ -768,34 +834,48 @@ fn dragging_multiple_library_search_results_centers_provisional_group_on_pointer
         .store_rgba_image("second", &vec![180; 80 * 120 * 4], 80, 120)
         .unwrap();
     let first = library
-        .persist_imported_image(
-            &first_path,
-            "image/png",
-            120,
-            80,
-            4,
-            egui::pos2(0.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&first_path, "image/png", 120, 80, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let second = library
-        .persist_imported_image(
-            &second_path,
-            "image/png",
-            80,
-            120,
-            4,
-            egui::pos2(0.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&second_path, "image/png", 80, 120, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
-    library
-        .archive_placements(&[first.state.id, second.state.id])
+    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[first.state.id, second.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[first.state.id, second.state.id]).contains(id))).collect()), ..Default::default()})
         .unwrap();
-    let empty_board = library.create_board("Empty").unwrap();
+    let empty_board = library.fixture_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
+    app.refresh_board_summaries();
     app.search.overlay.open = true;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {

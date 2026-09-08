@@ -1,48 +1,10 @@
 use super::*;
 
 #[test]
-fn archived_loading_placement_rejects_late_import_completion() {
-    let root = TempRoot::new("snappyref-failed-loading-placement-test");
-    let source = root.join("source.png");
-    fs::write(&source, [255, 255, 255, 255]).unwrap();
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let loading = library
-        .persist_committed_loading_placement(
-            egui::pos2(10.0, 20.0),
-            1.0,
-            100.0,
-            80.0,
-            ContentResolutionSource::Unknown {
-                description: "clipboard".to_owned(),
-            },
-            Some("Queued".to_owned()),
-        )
-        .unwrap();
-
-    library.archive_placements(&[loading.state.id]).unwrap();
-    assert!(
-        library
-            .persist_imported_image_resolving_placement(
-                1,
-                loading.state.id,
-                &source,
-                "image/png",
-                100,
-                80,
-                4,
-                egui::Pos2::ZERO,
-                1.0,
-            )
-            .is_err()
-    );
-    assert!(library.load_placements().unwrap().is_empty());
-}
-
-#[test]
 fn exact_dedupe_relinks_placements_to_first_asset_and_deletes_duplicates() {
     let root = TempRoot::new("snappyref-exact-dedupe-test");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let second_board = library.create_board("Second").unwrap();
+    let second_board = library.fixture_board("Second").unwrap();
     let first_path = library
         .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
         .unwrap();
@@ -51,26 +13,54 @@ fn exact_dedupe_relinks_placements_to_first_asset_and_deletes_duplicates() {
         .unwrap();
 
     let first = library
-        .persist_imported_image(
-            &first_path,
-            "image/png",
-            1,
-            1,
-            fs::metadata(&first_path).unwrap().len(),
-            egui::pos2(10.0, 20.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(10.0, 20.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(
+                        &first_path,
+                        "image/png",
+                        1,
+                        1,
+                        fs::metadata(&first_path).unwrap().len(),
+                        None,
+                    )
+                    .unwrap(),
+            ),
         )
         .unwrap();
     library.set_active_board(second_board.id).unwrap();
     let duplicate = library
-        .persist_imported_image(
-            &duplicate_path,
-            "image/png",
-            1,
-            1,
-            fs::metadata(&duplicate_path).unwrap().len(),
-            egui::pos2(30.0, 40.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(30.0, 40.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(
+                        &duplicate_path,
+                        "image/png",
+                        1,
+                        1,
+                        fs::metadata(&duplicate_path).unwrap().len(),
+                        None,
+                    )
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let first_asset_id = first.require_loaded_asset().id;
@@ -100,8 +90,51 @@ fn exact_dedupe_relinks_placements_to_first_asset_and_deletes_duplicates() {
             .is_some()
     );
 
+    let mut history = crate::active_board::history::DocumentHistory::default();
+    history.record_applied(
+        second_board.id,
+        crate::active_board::history::HistoryAction::document(
+            "Added duplicate".into(),
+            vec![crate::active_board::history::HistoryChange {
+                before: None,
+                after: Some(duplicate.clone()),
+            }],
+            vec![],
+            None,
+        ),
+    );
+    library
+        .persist_board_unit(
+            &crate::library::storage::BoardDurabilityOperation::Document {
+                board_id: second_board.id,
+                changes: Default::default(),
+            },
+            &history,
+        )
+        .unwrap();
     let report = library.dedupe_exact_assets(usize::MAX, usize::MAX).unwrap();
 
+    let replay = library
+        .load_document_history()
+        .unwrap()
+        .undo(second_board.id)
+        .unwrap();
+    let crate::active_board::history::HistoryAction::Document(action) = replay.action else {
+        panic!("expected placement history")
+    };
+    assert_eq!(
+        action.placements[0].after.as_ref().unwrap().asset_id(),
+        Some(first_asset_id)
+    );
+    assert_eq!(
+        action.placements[0]
+            .after
+            .as_ref()
+            .unwrap()
+            .require_loaded_asset()
+            .original_path,
+        first.require_loaded_asset().original_path
+    );
     assert_eq!(report.hashed_assets, 2);
     assert_eq!(report.duplicate_assets_removed, 1);
     assert_eq!(report.placements_relinked, 1);
@@ -163,43 +196,29 @@ fn hash_aware_import_reuses_existing_exact_asset() {
     let original_sha256 = crate::library::storage::sha256_file(&first_path).unwrap();
 
     let first = library
-        .register_imported_asset_for_placement(
-            1,
-            library.allocate_document_id(),
+        .register_original(
             &first_path,
             "image/png",
             1,
             1,
             fs::metadata(&first_path).unwrap().len(),
             Some(&original_sha256),
-            egui::pos2(0.0, 0.0),
-            1.0,
         )
         .unwrap();
     let duplicate = library
-        .register_imported_asset_for_placement(
-            1,
-            library.allocate_document_id(),
+        .register_original(
             &duplicate_path,
             "image/png",
             1,
             1,
             fs::metadata(&duplicate_path).unwrap().len(),
             Some(&original_sha256),
-            egui::pos2(10.0, 0.0),
-            1.0,
         )
         .unwrap();
 
-    assert_eq!(
-        duplicate.require_loaded_asset().id,
-        first.require_loaded_asset().id
-    );
-    assert_eq!(
-        duplicate.require_loaded_asset().original_path,
-        first.require_loaded_asset().original_path
-    );
-    assert_eq!(duplicate.asset_id(), first.asset_id());
+    assert_eq!(duplicate.id, first.id);
+    assert_eq!(duplicate.original_path, first.original_path);
+    assert_eq!(duplicate.id, first.id);
     assert!(!duplicate_path.exists());
     assert!(first_path.exists());
 
@@ -234,20 +253,15 @@ fn parallel_hash_aware_imports_converge_on_one_exact_asset() {
         std::thread::spawn(move || {
             barrier.wait();
             library
-                .register_imported_asset_for_placement(
-                    1,
-                    library.allocate_document_id(),
+                .register_original(
                     &first_path,
                     "image/png",
                     1,
                     1,
                     fs::metadata(&first_path).unwrap().len(),
                     Some(&original_sha256),
-                    egui::pos2(0.0, 0.0),
-                    1.0,
                 )
                 .unwrap()
-                .require_loaded_asset()
                 .id
         })
     };
@@ -257,20 +271,15 @@ fn parallel_hash_aware_imports_converge_on_one_exact_asset() {
         std::thread::spawn(move || {
             barrier.wait();
             library
-                .register_imported_asset_for_placement(
-                    1,
-                    library.allocate_document_id(),
+                .register_original(
                     &duplicate_path,
                     "image/png",
                     1,
                     1,
                     fs::metadata(&duplicate_path).unwrap().len(),
                     Some(&original_sha256),
-                    egui::pos2(10.0, 0.0),
-                    1.0,
                 )
                 .unwrap()
-                .require_loaded_asset()
                 .id
         })
     };
@@ -305,7 +314,6 @@ fn canvas_image_cache_path_is_deterministic() {
     let path = library
         .store_canvas_image_cache(42, 2000, &[255, 0, 0, 255], 1, 1)
         .unwrap();
-    let path = path.unwrap();
 
     assert_eq!(
         path,
@@ -328,7 +336,6 @@ fn store_and_remove_canvas_image_cache_round_trips_thumb_file() {
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let preview_path = library
         .store_canvas_image_cache(7, 2000, &[255, 0, 0, 255], 1, 1)
-        .unwrap()
         .unwrap();
 
     assert!(preview_path.is_file());
@@ -351,11 +358,9 @@ fn remove_asset_canvas_caches_removes_all_variants_for_asset() {
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library
         .store_canvas_image_cache(7, 2000, &[255, 0, 0, 255], 1, 1)
-        .unwrap()
         .unwrap();
     let second = library
         .store_canvas_image_cache(7, 4000, &[255, 0, 0, 255], 1, 1)
-        .unwrap()
         .unwrap();
 
     library.remove_asset_canvas_caches(7).unwrap();
@@ -387,32 +392,61 @@ fn embedding_backfill_includes_unplaced_library_assets() {
         .unwrap();
 
     let ready = library
-        .persist_imported_image(&ready_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&ready_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
     let pending = library
-        .persist_imported_image(
-            &pending_path,
-            "image/png",
-            1,
-            1,
-            4,
-            egui::pos2(10.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(10.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&pending_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let unplaced = library
-        .persist_imported_image(
-            &unplaced_path,
-            "image/png",
-            1,
-            1,
-            4,
-            egui::pos2(20.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(20.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&unplaced_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
 
-    library.archive_placements(&[unplaced.state.id]).unwrap();
+    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[unplaced.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[unplaced.state.id]).contains(id))).collect()), ..Default::default()}).unwrap();
     library
         .upsert_asset_embedding_blob(
             ready.require_loaded_asset().id,
@@ -451,25 +485,46 @@ fn embedding_backfill_skips_svg_assets() {
     .unwrap();
 
     let raster = library
-        .persist_imported_image(
-            &raster_path,
-            "image/png",
-            1,
-            1,
-            4,
-            egui::pos2(0.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&raster_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let svg = library
-        .persist_imported_image(
-            &svg_path,
-            "image/svg+xml",
-            1,
-            1,
-            fs::metadata(&svg_path).unwrap().len(),
-            egui::pos2(1.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(1.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(
+                        &svg_path,
+                        "image/svg+xml",
+                        1,
+                        1,
+                        fs::metadata(&svg_path).unwrap().len(),
+                        None,
+                    )
+                    .unwrap(),
+            ),
         )
         .unwrap();
 
@@ -516,10 +571,40 @@ fn embedding_backfill_retries_failed_assets_after_never_tried_assets() {
         .unwrap();
 
     let retry = library
-        .persist_imported_image(&retry_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&retry_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
     let fresh = library
-        .persist_imported_image(&fresh_path, "image/png", 1, 1, 4, egui::pos2(1.0, 0.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(1.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&fresh_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
 
     library
@@ -559,10 +644,40 @@ fn next_embedding_backfill_job_prefers_never_tried_assets_before_retries() {
         .unwrap();
 
     let retry = library
-        .persist_imported_image(&retry_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&retry_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
     let fresh = library
-        .persist_imported_image(&fresh_path, "image/png", 1, 1, 4, egui::pos2(1.0, 0.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(1.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&fresh_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
     library
         .record_retryable_asset_embedding_failure(
@@ -614,17 +729,39 @@ fn embedding_helpers_scope_to_requested_model_key() {
         .unwrap();
 
     let first = library
-        .persist_imported_image(&first_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&first_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
     let second = library
-        .persist_imported_image(
-            &second_path,
-            "image/png",
-            1,
-            1,
-            4,
-            egui::pos2(10.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(10.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&second_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
 

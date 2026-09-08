@@ -18,14 +18,6 @@ on:
         required: false
         default: main
         type: string
-      build_profile:
-        description: Build profile
-        required: false
-        default: release
-        type: choice
-        options:
-          - release
-          - release-fast
       include_windows:
         description: Build and package Windows
         required: false
@@ -90,7 +82,7 @@ jobs:
     uses: ./.github/workflows/build-windows-app.yml
     with:
       ref: ${{ inputs.ref }}
-      build_profile: ${{ inputs.build_profile }}
+      build_profile: release
       semantic_search_url: ${{ inputs.semantic_search_url }}
       semantic_search_sha256: ${{ inputs.semantic_search_sha256 }}
       semantic_search_size: ${{ inputs.semantic_search_size }}
@@ -103,7 +95,7 @@ jobs:
     uses: ./.github/workflows/build-macos-app.yml
     with:
       ref: ${{ inputs.ref }}
-      build_profile: ${{ inputs.build_profile }}
+      build_profile: release
       semantic_search_url: ${{ inputs.semantic_search_url }}
       semantic_search_sha256: ${{ inputs.semantic_search_sha256 }}
       semantic_search_size: ${{ inputs.semantic_search_size }}
@@ -125,7 +117,7 @@ jobs:
       - name: Keep latest release cache per platform
         env:
           GH_TOKEN: ${{ github.token }}
-          BUILD_PROFILE: ${{ inputs.build_profile }}
+          BUILD_PROFILE: release
         run: |
           set -euo pipefail
 

@@ -15,7 +15,7 @@
 //! dev or test fixture redirect the entire updates tree to a temporary
 //! directory without juggling exe paths.
 //!
-//! Every public function takes explicit paths so the module is unit
+//! Path construction functions take explicit paths so the module is unit
 //! testable without touching `std::env::current_exe`.
 
 use std::path::{Path, PathBuf};

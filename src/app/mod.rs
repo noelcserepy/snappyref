@@ -2,7 +2,6 @@ use eframe::egui;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::active_board::catalog::BoardSummariesCache;
 use crate::active_board::crop;
 #[cfg(test)]
 use crate::active_board::history::{HistoryAction, HistoryChange};
@@ -20,9 +19,11 @@ const STARTUP_VIEWPORT_SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
 const USER_SESSION_SAVE_DEBOUNCE: Duration = Duration::from_millis(750);
 
 mod context_menu;
+mod dialogs;
 mod history;
 mod import_intake;
 pub(crate) mod perf_scenario;
+mod sidebar_session;
 
 use perf_scenario::{FramePerfState, PerfLogState, PerfScenarioState};
 mod semantic_search;
@@ -215,7 +216,6 @@ pub struct SnappyRefApp {
     pending_missing_drop_fallback: Option<crate::sources::external_drag::ExternalDragIntake>,
     pending_user_session: Option<crate::data::UserSession>,
     pending_user_session_save_at: Option<Instant>,
-    board_summaries_cache: BoardSummariesCache,
     update_service: UpdateService,
     user_update_flow_active: bool,
     update_smoke: Option<UpdateSmokeState>,
@@ -270,7 +270,11 @@ impl SnappyRefApp {
         app.library = Some(library);
         app.apply_user_session(startup.session);
         app.refresh_board_summaries();
-        app.sync_semantic_search_service();
+        app.search.sync_service(
+            app.library.as_ref(),
+            &mut app.status,
+            app.settings.canvas_image_max_side,
+        );
         if !config.skip_existing_items_on_start() {
             if let Err(error) = app.board_lifecycle().restore() {
                 app.status = error;
@@ -323,7 +327,6 @@ impl SnappyRefApp {
             pending_missing_drop_fallback: None,
             pending_user_session: None,
             pending_user_session_save_at: None,
-            board_summaries_cache: BoardSummariesCache::default(),
             update_service: UpdateService::new(update_config),
             user_update_flow_active: false,
             update_smoke: None,
@@ -331,46 +334,23 @@ impl SnappyRefApp {
         }
     }
 
-    fn board_summaries(&self) -> Vec<crate::data::BoardSummary> {
-        self.board_summaries_cache.summaries()
+    fn board_summaries(&self) -> &[crate::data::BoardSummary] {
+        self.board_editing.documents.summaries()
     }
 
     fn refresh_board_summaries(&mut self) {
-        let Some(library) = &self.library else {
-            self.board_summaries_cache.clear();
-            return;
-        };
-        let accepted_active_board = self
-            .board_summaries_cache
-            .summaries()
-            .into_iter()
-            .find(|summary| summary.board.id == self.active_board_id)
-            .map(|summary| summary.board);
-        if let Err(error) = self.board_summaries_cache.refresh_from(library) {
-            self.status = error;
-            return;
+        if let Some(library) = &self.library {
+            if let Err(error) = self.board_editing.documents.refresh_from(library) {
+                self.status = error;
+            }
+            if let Err(error) = self
+                .board_editing
+                .documents
+                .ensure_loaded(library, self.active_board_id)
+            {
+                self.status = error;
+            }
         }
-        if !self
-            .board_summaries_cache
-            .summaries()
-            .iter()
-            .any(|summary| summary.board.id == self.active_board_id)
-            && let Some(board) = accepted_active_board
-        {
-            self.board_summaries_cache
-                .restore_document(&crate::data::BoardDocumentSnapshot {
-                    board,
-                    placements: self.canvas.committed_placements(),
-                    annotations: Vec::new(),
-                    groups: self.canvas.groups().to_vec(),
-                    stack_order: Vec::new(),
-                    viewport: self.canvas.viewport_state(),
-                });
-        }
-        self.board_summaries_cache.set_placement_count(
-            self.active_board_id,
-            self.canvas.committed_placements().len(),
-        );
     }
 
     fn create_and_switch_board(&mut self, keep_sidebar_open: bool) {
@@ -404,7 +384,7 @@ impl SnappyRefApp {
                     .board_summaries()
                     .into_iter()
                     .find(|summary| summary.board.id == board_id)
-                    .map(|summary| summary.board.name)
+                    .map(|summary| summary.board.name.clone())
                     .unwrap_or_else(|| "Board".to_owned());
                 self.request_board_delete(board_id, board_name);
             }
@@ -452,7 +432,6 @@ impl SnappyRefApp {
             canvas: &mut self.canvas,
             library: self.library.as_ref(),
             active_board_id: &mut self.active_board_id,
-            catalog: &mut self.board_summaries_cache,
             search: &mut self.search,
             placement_creation: &mut self.placement_creation,
             residency: &mut self.residency,
@@ -472,9 +451,20 @@ impl SnappyRefApp {
             self.status = "Storage unavailable".to_owned();
             return None;
         };
+        if let Err(error) = self.board_editing.persistence.flush() {
+            self.status = error;
+            return None;
+        }
         match library.dedupe_exact_assets(hash_limit, group_limit) {
             Ok(report) => {
                 if report.changed() {
+                    if let Err(error) = self
+                        .board_editing
+                        .remap_assets(library, &report.asset_id_remaps)
+                    {
+                        self.status = error;
+                        return None;
+                    }
                     self.search.invalidate_library_search_cache();
                     self.refresh_board_summaries();
                 }
@@ -720,6 +710,9 @@ impl SnappyRefApp {
             return;
         }
 
+        self.board_editing
+            .documents
+            .remove_assets(&pending.asset_ids);
         self.canvas.remove_assets(&pending.asset_ids);
         {
             self.search.invalidate_library_search_cache();
@@ -807,28 +800,6 @@ impl SnappyRefApp {
         crate::sources::clipboard::copy_selected_board_payload(&self.canvas)
     }
 
-    fn handle_internal_clipboard_paste_at(
-        &mut self,
-        paste_text: &str,
-        anchor_world: egui::Pos2,
-    ) -> bool {
-        let viewport = self.startup_viewport_world_rect();
-        let (owner, mut context) = self.board_edit_context(viewport);
-        match owner.paste_json(&mut context, paste_text, anchor_world) {
-            Ok(Some(status)) => {
-                self.status = status;
-                self.refresh_board_summaries();
-                true
-            }
-            Ok(None) => false,
-            Err(error) => {
-                self.status = error;
-                true
-            }
-        }
-    }
-
-    #[cfg(test)]
     fn paste_board_payload_at(
         &mut self,
         payload: &crate::sources::clipboard::ClipboardBoardSelection,
@@ -1247,8 +1218,6 @@ impl SnappyRefApp {
     }
 }
 
-mod sidebar_session;
-
 use sidebar_session::{sidebar_tab_from_session, sidebar_tab_session_value};
 
 impl SnappyRefApp {
@@ -1285,7 +1254,7 @@ impl eframe::App for SnappyRefApp {
         self.frame_perf.import_result_drain_ms = 0.0;
 
         self.handle_import_results(ui.ctx());
-        self.handle_search_results();
+        self.search.handle_results();
         self.drive_semantic_search_install(ui.ctx());
         self.handle_history_shortcuts(ui.ctx());
         if self.drive_perf_scenario(ui.ctx(), screen_rect) {
@@ -1296,7 +1265,13 @@ impl eframe::App for SnappyRefApp {
         self.handle_clipboard_paste(ui.ctx(), screen_rect);
         self.handle_hovered_files(ui, screen_rect);
         self.handle_dropped_files(ui, screen_rect);
-        self.handle_search_shortcut(ui.ctx());
+        self.search.handle_shortcut(
+            ui.ctx(),
+            self.library.as_ref(),
+            &mut self.canvas,
+            &mut self.status,
+            self.settings.canvas_image_max_side,
+        );
         self.handle_board_shortcuts(ui.ctx());
         self.handle_selection_shortcuts(ui.ctx(), screen_rect);
         let sidebar_open = self.sidebar_open;
@@ -1372,7 +1347,7 @@ impl eframe::App for SnappyRefApp {
             ui.ctx()
                 .request_repaint_after(wait.max(Duration::from_millis(250)));
         }
-        let board_summaries = self.board_summaries();
+        let board_summaries = self.board_editing.documents.summaries();
         let active_board_name = board_summaries
             .iter()
             .find(|summary| summary.board.id == self.active_board_id)
@@ -1418,7 +1393,11 @@ impl eframe::App for SnappyRefApp {
             if self.settings.always_on_top != always_on_top_before {
                 self.apply_always_on_top_window_level(ui.ctx());
             }
-            self.sync_semantic_search_service();
+            self.search.sync_service(
+                self.library.as_ref(),
+                &mut self.status,
+                self.settings.canvas_image_max_side,
+            );
         }
         if sidebar_result.update_action_clicked {
             self.handle_update_action_click(ui.ctx());
@@ -1457,8 +1436,6 @@ impl eframe::App for SnappyRefApp {
         crate::ui::theme::BACKGROUND.to_normalized_gamma_f32()
     }
 }
-
-mod dialogs;
 
 use dialogs::{
     destructive_action_button, destructive_dialog_width, dialog_body, dialog_frame, dialog_header,

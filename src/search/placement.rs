@@ -7,11 +7,6 @@ use super::selection::SearchSelectionMode;
 
 impl SearchController {
     pub(super) fn start_result_drag(&mut self, index: usize) {
-        crate::diagnostics::search_drag_debug(format!(
-            "start_result_drag index={index} selected_before={:?} result_count={}",
-            self.overlay.result_selection.selected(),
-            self.overlay.results.len()
-        ));
         if !self.overlay.result_selection.contains(index) {
             self.overlay
                 .result_selection
@@ -20,14 +15,9 @@ impl SearchController {
 
         let asset_ids = self.selected_result_asset_ids();
         if asset_ids.is_empty() {
-            crate::diagnostics::search_drag_debug("start_result_drag no_asset_ids");
             return;
         }
 
-        crate::diagnostics::search_drag_debug(format!(
-            "start_result_drag set_drag_state asset_ids={asset_ids:?} selected_after={:?}",
-            self.overlay.result_selection.selected()
-        ));
         self.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
             asset_ids,
             outside_overlay: false,
@@ -85,9 +75,6 @@ impl SearchController {
         let pointer_world = pointer_pos
             .map(|pos| canvas.screen_to_world(pos, screen_rect))
             .unwrap_or_else(|| canvas.screen_to_world(screen_rect.center(), screen_rect));
-        crate::diagnostics::search_drag_debug(format!(
-            "start_keyboard_placement asset_ids={asset_ids:?} pointer_pos={pointer_pos:?} pointer_world={pointer_world:?}"
-        ));
         self.create_search_provisional_placements(
             canvas,
             &asset_ids,
@@ -104,14 +91,6 @@ impl SearchController {
     }
 
     pub(super) fn cancel_search_provisional_batch(&mut self, canvas: &mut CanvasState) {
-        let ids = canvas
-            .provisional_placements_in_selection_order()
-            .into_iter()
-            .map(|placement| placement.state.id)
-            .collect::<Vec<_>>();
-        crate::diagnostics::search_drag_debug(format!(
-            "cancel_search_provisional_batch ids={ids:?}"
-        ));
         self.overlay.drag_state = None;
         crate::placement::lifecycle::cancel_provisional_batch(canvas);
     }
@@ -141,7 +120,7 @@ impl SearchController {
             })
             .collect::<Vec<_>>();
 
-        let batch = crate::placement::lifecycle::start_provisional_batch(
+        crate::placement::lifecycle::start_provisional_batch(
             canvas,
             source_intents,
             anchor_world,
@@ -151,11 +130,6 @@ impl SearchController {
                 gap: placement_creation_config.placement_gap,
             },
         );
-        let selected = canvas.selected_placement_ids();
-        crate::diagnostics::search_drag_debug(format!(
-            "create_search_provisional_placements asset_ids={asset_ids:?} anchor_world={anchor_world:?} batch_ids={:?} selected={selected:?}",
-            batch.placement_ids
-        ));
     }
 
     pub(super) fn selected_result_asset_ids(&self) -> Vec<i64> {
@@ -200,10 +174,6 @@ pub(super) fn update_search_provisional_batch(
     placement_creation_config: SearchPlacementCreationConfig,
 ) {
     if !drag.provisional_batch_active {
-        crate::diagnostics::search_drag_debug(format!(
-            "update_search_provisional_batch create asset_ids={:?} pointer_world={pointer_world:?}",
-            drag.asset_ids
-        ));
         search.create_search_provisional_placements(
             canvas,
             &drag.asset_ids,
@@ -215,21 +185,9 @@ pub(super) fn update_search_provisional_batch(
     } else {
         let now_seconds = ctx.input(|input| input.time);
         canvas.move_selected_placement_group_to_center(pointer_world, screen_rect, now_seconds);
-        crate::diagnostics::search_drag_debug(format!(
-            "update_search_provisional_batch move pointer_world={pointer_world:?} selected={:?}",
-            canvas.selected_placement_ids()
-        ));
     }
 
     let provisional_bounds = canvas.selected_bounds_world();
-    let center_delta_screen = provisional_bounds.map(|bounds| {
-        let delta_world = bounds.center() - pointer_world;
-        egui::vec2(delta_world.x * canvas.zoom, delta_world.y * canvas.zoom)
-    });
-    crate::diagnostics::search_drag_debug(format!(
-        "update_search_provisional_batch bounds={provisional_bounds:?} center_delta_screen={center_delta_screen:?} zoom={} auto_fit_applied={}",
-        canvas.zoom, drag.auto_fit_applied
-    ));
     if !drag.auto_fit_applied
         && let Some(bounds) = provisional_bounds
         && crate::placement::creation::fit_selection_bounds_if_needed(
@@ -248,10 +206,6 @@ pub(super) fn update_search_provisional_batch(
                 screen_rect,
                 now_seconds,
             );
-            crate::diagnostics::search_drag_debug(format!(
-                "update_search_provisional_batch recenter_after_autofit pointer_screen={pointer_screen:?} pointer_world={recentered_world:?} selected_bounds={:?}",
-                canvas.selected_bounds_world()
-            ));
         }
     }
 }

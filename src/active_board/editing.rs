@@ -6,6 +6,7 @@ use crate::active_board::persistence::DocumentPersistence;
 #[derive(Default)]
 pub(crate) struct BoardEditing {
     pub(crate) history: DocumentHistory,
+    pub(crate) documents: super::catalog::AcceptedBoards,
     pub(crate) persistence: DocumentPersistence,
 }
 
@@ -40,12 +41,10 @@ impl BoardEditing {
             .pending_document_changes_preview()
             .groups
             .map(|after| HistoryChange {
-                before: self.history.accepted_groups(board_id).or_else(|| {
-                    library.as_ref().and_then(|library| {
-                        self.accepted_board_document(library, board_id)
-                            .ok()
-                            .map(|document| document.groups)
-                    })
+                before: library.and_then(|library| {
+                    self.accepted_board_document(library, board_id)
+                        .ok()
+                        .map(|document| document.groups)
                 }),
                 after: Some(after),
             });
@@ -62,8 +61,7 @@ impl BoardEditing {
             )
             .with_groups(groups),
         );
-        self.persistence
-            .queue_canvas_document(canvas, board_id, &self.history)?;
+        self.queue_canvas_document(canvas, board_id)?;
         Ok(())
     }
 
@@ -74,6 +72,8 @@ impl BoardEditing {
         board_id: i64,
         label: &str,
     ) -> Result<bool, String> {
+        self.documents
+            .set_viewport(board_id, canvas.viewport_state());
         canvas.reflow_dirty_group_members();
         let Some(library) = library else {
             return Ok(false);
@@ -99,15 +99,10 @@ impl BoardEditing {
             .updated_placements
             .into_iter()
             .filter_map(|after| {
-                let before = self
-                    .history
-                    .accepted_placement(board_id, after.state.id)
-                    .or_else(|| {
-                        current_items
-                            .iter()
-                            .find(|placement| placement.state.id == after.state.id)
-                            .cloned()
-                    });
+                let before = current_items
+                    .iter()
+                    .find(|placement| placement.state.id == after.state.id)
+                    .cloned();
                 Some(HistoryChange {
                     before,
                     after: Some(after),
@@ -118,15 +113,10 @@ impl BoardEditing {
             .updated_annotations
             .into_iter()
             .map(|after| {
-                let before = self
-                    .history
-                    .accepted_annotation(board_id, after.id)
-                    .or_else(|| {
-                        current_annotations
-                            .iter()
-                            .find(|annotation| annotation.id == after.id)
-                            .cloned()
-                    });
+                let before = current_annotations
+                    .iter()
+                    .find(|annotation| annotation.id == after.id)
+                    .cloned();
                 HistoryChange {
                     before,
                     after: Some(after),
@@ -134,19 +124,14 @@ impl BoardEditing {
             })
             .collect::<Vec<_>>();
         let stack_order = changes.stack_order.map(|after| HistoryChange {
-            before: self
-                .history
-                .accepted_stack_order(board_id)
-                .or(current_stack_order),
+            before: current_stack_order,
             after: Some(after),
         });
 
         let groups = changes.groups.map(|after| HistoryChange {
-            before: self.history.accepted_groups(board_id).or_else(|| {
-                current_document
-                    .as_ref()
-                    .map(|document| document.groups.clone())
-            }),
+            before: current_document
+                .as_ref()
+                .map(|document| document.groups.clone()),
             after: Some(after),
         });
         self.history.record_applied(
@@ -159,8 +144,7 @@ impl BoardEditing {
             )
             .with_groups(groups),
         );
-        self.persistence
-            .queue_canvas_document(canvas, board_id, &self.history)
+        self.queue_canvas_document(canvas, board_id)
     }
 }
 
@@ -203,20 +187,6 @@ impl BoardEditContext<'_> {
     }
 }
 impl BoardEditing {
-    pub(crate) fn paste_json(
-        &mut self,
-        context: &mut BoardEditContext<'_>,
-        text: &str,
-        anchor: eframe::egui::Pos2,
-    ) -> Result<Option<String>, String> {
-        let before = context.canvas.canvas_stack_order();
-        let Some(outcome) = super::commands::paste_json_at(&mut context.command(), text, anchor)?
-        else {
-            return Ok(None);
-        };
-        self.accept_paste(context, outcome, before).map(Some)
-    }
-    #[cfg(test)]
     pub(crate) fn paste_payload(
         &mut self,
         context: &mut BoardEditContext<'_>,
@@ -284,8 +254,7 @@ impl BoardEditing {
                     }),
                 ),
             );
-            self.persistence
-                .queue_canvas_document(canvas, board_id, &self.history)?;
+            self.queue_canvas_document(canvas, board_id)?;
         }
         Ok(())
     }
@@ -297,7 +266,7 @@ impl BoardEditing {
         board_id: i64,
         placement_id: i64,
     ) -> Option<crate::data::Placement> {
-        self.history.accepted_placement(board_id, placement_id)
+        self.documents.placement(board_id, placement_id)
     }
 
     pub(crate) fn accepted_board_document(
@@ -305,16 +274,7 @@ impl BoardEditing {
         library: &crate::library::storage::Library,
         board_id: i64,
     ) -> Result<crate::data::BoardDocumentSnapshot, String> {
-        let mut document = match library.load_board_document(board_id) {
-            Ok(document) => document,
-            Err(error) => self
-                .history
-                .accepted_document_for_created_board(board_id)
-                .ok_or(error)?,
-        };
-        self.history
-            .apply_accepted_document_state(board_id, &mut document);
-        Ok(document)
+        self.documents.document(library, board_id)
     }
 
     /// Completion replaces accepted content in the existing edit, without
@@ -343,8 +303,7 @@ impl BoardEditing {
         let changed = self
             .history
             .update_accepted_document_changes(board_id, &changes);
-        self.persistence
-            .enqueue_document_unit(board_id, changes, &self.history)?;
+        self.enqueue_document_changes(board_id, changes)?;
         Ok(changed)
     }
 
@@ -354,19 +313,27 @@ impl BoardEditing {
         placement_id: i64,
         message: String,
     ) -> Result<Option<crate::data::Placement>, String> {
-        let Some(placement) = self
-            .history
-            .fail_accepted_placement(board_id, placement_id, message)
-        else {
+        let Some(mut placement) = self.documents.placement(board_id, placement_id) else {
             return Ok(None);
         };
-        self.persistence.enqueue_document_unit(
+        let source = match &placement.content {
+            crate::data::PlacementContent::Loading { source, .. } => Some(source.clone()),
+            crate::data::PlacementContent::Failed { source, .. } => source.clone(),
+            crate::data::PlacementContent::Loaded { .. } => None,
+        };
+        placement.content = crate::data::PlacementContent::Failed {
+            source,
+            message,
+            recoverable: true,
+        };
+        self.history
+            .update_accepted_placement(board_id, placement.clone());
+        self.enqueue_document_changes(
             board_id,
             crate::canvas::CanvasDocumentChanges {
                 updated_placements: vec![placement.clone()],
                 ..Default::default()
             },
-            &self.history,
         )?;
         Ok(Some(placement))
     }
@@ -392,8 +359,7 @@ impl BoardEditing {
                 None,
             ),
         );
-        self.persistence
-            .queue_canvas_document(canvas, board_id, &self.history)?;
+        self.queue_canvas_document(canvas, board_id)?;
         Ok(integration)
     }
 }
@@ -408,8 +374,7 @@ impl BoardEditing {
         if let Some(action) = action {
             self.history.record_applied(board_id, action);
         }
-        self.persistence
-            .queue_canvas_document(canvas, board_id, &self.history)?;
+        self.queue_canvas_document(canvas, board_id)?;
         Ok(())
     }
 }
@@ -492,11 +457,7 @@ impl BoardEditing {
                         after: Some(context.canvas.groups().to_vec()),
                     })),
                 );
-                self.persistence.queue_canvas_document(
-                    context.canvas,
-                    context.board_id,
-                    &self.history,
-                )?;
+                self.queue_canvas_document(context.canvas, context.board_id)?;
                 Ok(Some(status))
             }
             Ok(None) => Ok(None),
@@ -553,11 +514,7 @@ impl BoardEditing {
                         }),
                     ),
                 );
-                self.persistence.queue_canvas_document(
-                    context.canvas,
-                    context.board_id,
-                    &self.history,
-                )?;
+                self.queue_canvas_document(context.canvas, context.board_id)?;
             }
             if should_focus_text {
                 context.canvas.begin_textbox_edit(annotation_id);
@@ -599,5 +556,77 @@ impl BoardEditing {
         canvas.ungroup_selected();
         self.record_pending_document_changes_history(canvas, library, board_id, "Edit board")?;
         Ok(())
+    }
+}
+
+impl BoardEditing {
+    fn queue_canvas_document(
+        &mut self,
+        canvas: &mut crate::canvas::CanvasState,
+        board_id: i64,
+    ) -> Result<bool, String> {
+        if self.persistence.is_available() {
+            self.documents
+                .apply_changes(board_id, &canvas.pending_document_changes_preview());
+        }
+        self.persistence
+            .queue_canvas_document(canvas, board_id, &self.history)
+    }
+
+    pub(crate) fn enqueue_document_changes(
+        &mut self,
+        board_id: i64,
+        changes: crate::canvas::CanvasDocumentChanges,
+    ) -> Result<(), String> {
+        if self.persistence.is_available() {
+            self.documents.apply_changes(board_id, &changes);
+        }
+        self.persistence
+            .enqueue_document_unit(board_id, changes, &self.history)
+    }
+}
+
+impl BoardEditing {
+    pub(crate) fn remap_assets(
+        &mut self,
+        library: &crate::library::storage::Library,
+        remaps: &[(i64, i64)],
+    ) -> Result<(), String> {
+        let canonical =
+            library.load_assets(&remaps.iter().map(|(_, id)| *id).collect::<Vec<_>>())?;
+        let assets = remaps
+            .iter()
+            .filter_map(|(old, new)| canonical.get(new).map(|asset| (*old, asset.clone())))
+            .collect();
+        self.documents.remap_assets(&assets);
+        self.history.remap_assets(&assets);
+        Ok(())
+    }
+}
+
+pub(super) fn remap_placement_asset(
+    placement: &mut crate::data::Placement,
+    assets: &std::collections::HashMap<i64, crate::data::Asset>,
+) {
+    use crate::data::{ContentResolutionSource, PlacementContent};
+    match &mut placement.content {
+        PlacementContent::Loaded { asset } => {
+            if let Some(canonical) = assets.get(&asset.id) {
+                *asset = canonical.clone();
+            }
+        }
+        PlacementContent::Loading {
+            source: ContentResolutionSource::SearchAsset { asset_id },
+            ..
+        }
+        | PlacementContent::Failed {
+            source: Some(ContentResolutionSource::SearchAsset { asset_id }),
+            ..
+        } => {
+            if let Some(canonical) = assets.get(asset_id) {
+                *asset_id = canonical.id;
+            }
+        }
+        _ => {}
     }
 }

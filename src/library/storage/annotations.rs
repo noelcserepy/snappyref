@@ -47,7 +47,7 @@ impl Library {
     }
 
     #[cfg(test)]
-    pub fn create_canvas_annotation(
+    pub fn fixture_annotation(
         &self,
         kind: CanvasAnnotationKind,
         start: egui::Pos2,
@@ -70,29 +70,15 @@ impl Library {
         );
         let mut stack = self.load_canvas_stack_order()?;
         stack.push(CanvasStackItem::Annotation(annotation.id));
-        self.fixture_document_changes(crate::canvas::CanvasDocumentChanges {
-            updated_annotations: vec![annotation.clone()],
-            stack_order: Some(stack),
-            ..Default::default()
-        })?;
+        self.fixture_board_document(
+            self.load_user_session()?.active_board_id,
+            crate::canvas::CanvasDocumentChanges {
+                updated_annotations: vec![annotation.clone()],
+                stack_order: Some(stack),
+                ..Default::default()
+            },
+        )?;
         Ok(annotation)
-    }
-
-    #[cfg(test)]
-    pub fn update_canvas_annotation(&self, annotation: &CanvasAnnotation) -> Result<(), String> {
-        self.fixture_document_changes(crate::canvas::CanvasDocumentChanges {
-            updated_annotations: vec![annotation.clone()],
-            ..Default::default()
-        })
-    }
-
-    #[cfg(test)]
-    pub fn archive_canvas_annotations(&self, annotation_ids: &[i64]) -> Result<(), String> {
-        self.fixture_document_changes(crate::canvas::CanvasDocumentChanges {
-            archived_annotation_ids: annotation_ids.to_vec(),
-            stack_order: Some(self.load_canvas_stack_order()?.into_iter().filter(|item| !matches!(item, CanvasStackItem::Annotation(id) if annotation_ids.contains(id))).collect()),
-            ..Default::default()
-        })
     }
 }
 

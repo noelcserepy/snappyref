@@ -55,7 +55,8 @@ Recover the latest artifact:
 docs/skills/inspect/scripts/latest-artifact.sh [scenario]
 ```
 
-Check the harness if scenario failures look suspicious:
+The intentional `check-harness` alias runs `search-drag-to-canvas` and writes
+that scenario's artifact. Use it to exercise harness input and capture:
 
 ```sh
 docs/skills/inspect/scripts/check-harness.sh
@@ -198,9 +199,11 @@ Report:
 
 Be concise. The artifact is the detailed evidence.
 
-## Before architecture refactors
+## Refactor behavior evidence
 
-Run `python3 scripts/check-refactor-behavior.py`. It runs the library suite
+Run `cargo check --locked` after UI/app-inspection changes before trusting
+screenshots. For the refactor behavior gate, run
+`python3 scripts/check-refactor-behavior.py`. It runs the library suite
 sequentially, rejects stale or incomplete artifacts for the main interaction
 and persistence scenarios, then checks the actual release image-preparation
 subprocess. The report is `target/refactor-behavior.json`.
@@ -211,4 +214,5 @@ and live model installation are separate from deterministic search interaction
 tests. Native clipboard/external drops and Windows behavior still need platform
 checks when those paths change.
 
-Run performance separately afterward with [perf-profiling](../perf-profiling/SKILL.md).
+[Perf-profiling](../perf-profiling/SKILL.md#regular-profiling-and-refactors) owns
+the before/after sequence and measurement requirements.

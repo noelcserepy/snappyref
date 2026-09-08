@@ -47,7 +47,7 @@ def seed_library(seed_library_path, destination_path, asset_count, placement_cou
         db.execute("PRAGMA foreign_keys = ON")
         db.execute("DELETE FROM canvas_stack_items")
         db.execute("DELETE FROM board_items")
-        db.execute("DELETE FROM board_document_history")
+        db.execute("DELETE FROM board_history")
         db.execute("DELETE FROM asset_embeddings")
         db.execute("DELETE FROM assets")
         db.execute("UPDATE boards SET camera_pan_x=0, camera_pan_y=0, camera_zoom=1")

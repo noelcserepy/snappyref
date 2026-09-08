@@ -288,7 +288,7 @@ impl Library {
     }
 
     #[cfg(test)]
-    pub fn create_board(&self, name: &str) -> Result<Board, String> {
+    pub fn fixture_board(&self, name: &str) -> Result<Board, String> {
         let board = self.new_board(name.to_owned());
         let document = crate::data::BoardDocumentSnapshot {
             board: board.clone(),
@@ -298,44 +298,34 @@ impl Library {
             stack_order: vec![],
             viewport: Default::default(),
         };
-        self.persist_lifecycle_change(
-            &crate::active_board::persistence::BoardLifecyclePersistence::Create {
-                document,
-                active_board_id: self.load_user_session()?.active_board_id,
-            },
+        self.persist_board_unit(
+            &crate::library::storage::BoardDurabilityOperation::Lifecycle(
+                crate::active_board::persistence::BoardLifecyclePersistence::Create {
+                    document,
+                    active_board_id: self.load_user_session()?.active_board_id,
+                },
+            ),
+            &Default::default(),
         )?;
         Ok(board)
     }
 
     #[cfg(test)]
-    pub fn rename_board(&self, board_id: i64, name: &str) -> Result<(), String> {
-        use crate::active_board::persistence::BoardLifecyclePersistence;
-        self.persist_lifecycle_change(&BoardLifecyclePersistence::Rename {
-            board_id,
-            name: name.to_owned(),
-        })
-    }
-
-    #[cfg(test)]
-    pub fn archive_board(&self, board_id: i64, next_active_board_id: i64) -> Result<(), String> {
-        use crate::active_board::persistence::BoardLifecyclePersistence;
-        self.persist_lifecycle_change(&BoardLifecyclePersistence::Archive {
-            board_id,
-            active_board_id: next_active_board_id,
-        })
-    }
-
-    #[cfg(test)]
-    pub fn restore_board_document(
+    pub fn fixture_board_snapshot(
         &self,
         snapshot: &crate::data::BoardDocumentSnapshot,
         active_board_id: i64,
     ) -> Result<(), String> {
         use crate::active_board::persistence::BoardLifecyclePersistence;
-        self.persist_lifecycle_change(&BoardLifecyclePersistence::Restore {
-            document: snapshot.clone(),
-            active_board_id,
-        })
+        self.persist_board_unit(
+            &crate::library::storage::BoardDurabilityOperation::Lifecycle(
+                BoardLifecyclePersistence::Restore {
+                    document: snapshot.clone(),
+                    active_board_id,
+                },
+            ),
+            &Default::default(),
+        )
     }
 
     pub fn set_active_board(&self, board_id: i64) -> Result<(), String> {

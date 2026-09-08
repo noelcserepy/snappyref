@@ -93,132 +93,120 @@ fn textbox_content_rect_stays_inside_zoomed_out_textbox() {
 
 #[test]
 fn textbox_toolbar_aligns_to_content_start_when_space_allows() {
-    eframe::egui::__run_test_ui(|ui| {
-        let mut state = CanvasState::default();
-        let canvas_rect = eframe::egui::Rect::from_min_max(
-            eframe::egui::pos2(0.0, 0.0),
-            eframe::egui::pos2(960.0, 640.0),
-        );
-        state.add_annotation(CanvasAnnotation::new(
-            71,
-            CanvasAnnotationKind::Textbox,
-            eframe::egui::pos2(80.0, 200.0),
-            eframe::egui::pos2(420.0, 320.0),
-            "toolbar".to_owned(),
-            default_text_size(),
-            default_stroke_width(),
-            default_annotation_color(),
-            false,
-            false,
-        ));
-        state.begin_textbox_edit(71);
+    let mut state = CanvasState::default();
+    let canvas_rect = eframe::egui::Rect::from_min_max(
+        eframe::egui::pos2(0.0, 0.0),
+        eframe::egui::pos2(960.0, 640.0),
+    );
+    state.add_annotation(CanvasAnnotation::new(
+        71,
+        CanvasAnnotationKind::Textbox,
+        eframe::egui::pos2(80.0, 200.0),
+        eframe::egui::pos2(420.0, 320.0),
+        "toolbar".to_owned(),
+        default_text_size(),
+        default_stroke_width(),
+        default_annotation_color(),
+        false,
+        false,
+    ));
+    state.begin_textbox_edit(71);
 
-        let annotation = state.annotation_by_id(71).unwrap().clone();
-        let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
-        let toolbar_rect = editing_textbox_toolbar_rect(ui, &state, canvas_rect).unwrap();
+    let annotation = state.annotation_by_id(71).unwrap().clone();
+    let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
+    let toolbar_rect = editing_textbox_toolbar_rect(&state, canvas_rect).unwrap();
 
-        assert!((toolbar_rect.left() - textbox_rect.left()).abs() < 0.1);
-    });
+    assert!((toolbar_rect.left() - textbox_rect.left()).abs() < 0.1);
 }
 
 #[test]
 fn textbox_toolbar_preserves_gap_above_when_space_allows() {
-    eframe::egui::__run_test_ui(|ui| {
-        let mut state = CanvasState::default();
-        let canvas_rect = eframe::egui::Rect::from_min_max(
-            eframe::egui::pos2(0.0, 0.0),
-            eframe::egui::pos2(960.0, 640.0),
-        );
-        state.add_annotation(CanvasAnnotation::new(
-            74,
-            CanvasAnnotationKind::Textbox,
-            eframe::egui::pos2(80.0, 200.0),
-            eframe::egui::pos2(420.0, 320.0),
-            "toolbar".to_owned(),
-            default_text_size(),
-            default_stroke_width(),
-            default_annotation_color(),
-            false,
-            false,
-        ));
-        state.begin_textbox_edit(74);
+    let mut state = CanvasState::default();
+    let canvas_rect = eframe::egui::Rect::from_min_max(
+        eframe::egui::pos2(0.0, 0.0),
+        eframe::egui::pos2(960.0, 640.0),
+    );
+    state.add_annotation(CanvasAnnotation::new(
+        74,
+        CanvasAnnotationKind::Textbox,
+        eframe::egui::pos2(80.0, 200.0),
+        eframe::egui::pos2(420.0, 320.0),
+        "toolbar".to_owned(),
+        default_text_size(),
+        default_stroke_width(),
+        default_annotation_color(),
+        false,
+        false,
+    ));
+    state.begin_textbox_edit(74);
 
-        let annotation = state.annotation_by_id(74).unwrap().clone();
-        let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
-        let toolbar_rect = editing_textbox_toolbar_rect(ui, &state, canvas_rect).unwrap();
+    let annotation = state.annotation_by_id(74).unwrap().clone();
+    let textbox_rect = textbox_screen_rect(&state, canvas_rect, &annotation);
+    let toolbar_rect = editing_textbox_toolbar_rect(&state, canvas_rect).unwrap();
 
-        assert!(
-            (textbox_rect.top() - toolbar_rect.bottom() - TEXTBOX_EDITOR_TOOLBAR_CLEARANCE).abs()
-                < 0.1
-        );
-    });
+    assert!(
+        (textbox_rect.top() - toolbar_rect.bottom() - TEXTBOX_EDITOR_TOOLBAR_CLEARANCE).abs() < 0.1
+    );
 }
 
 #[test]
 fn textbox_toolbar_clamps_to_top_margin_when_above_gap_does_not_fit() {
-    eframe::egui::__run_test_ui(|ui| {
-        let mut state = CanvasState::default();
-        let canvas_rect = eframe::egui::Rect::from_min_max(
-            eframe::egui::pos2(0.0, 0.0),
-            eframe::egui::pos2(960.0, 640.0),
-        );
-        state.add_annotation(CanvasAnnotation::new(
-            72,
-            CanvasAnnotationKind::Textbox,
-            eframe::egui::pos2(80.0, -300.0),
-            eframe::egui::pos2(420.0, -180.0),
-            "toolbar".to_owned(),
-            default_text_size(),
-            default_stroke_width(),
-            default_annotation_color(),
-            false,
-            false,
-        ));
-        state.begin_textbox_edit(72);
+    let mut state = CanvasState::default();
+    let canvas_rect = eframe::egui::Rect::from_min_max(
+        eframe::egui::pos2(0.0, 0.0),
+        eframe::egui::pos2(960.0, 640.0),
+    );
+    state.add_annotation(CanvasAnnotation::new(
+        72,
+        CanvasAnnotationKind::Textbox,
+        eframe::egui::pos2(80.0, -300.0),
+        eframe::egui::pos2(420.0, -180.0),
+        "toolbar".to_owned(),
+        default_text_size(),
+        default_stroke_width(),
+        default_annotation_color(),
+        false,
+        false,
+    ));
+    state.begin_textbox_edit(72);
 
-        let toolbar_rect = editing_textbox_toolbar_rect(ui, &state, canvas_rect).unwrap();
+    let toolbar_rect = editing_textbox_toolbar_rect(&state, canvas_rect).unwrap();
 
-        assert!(
-            (toolbar_rect.top() - (canvas_rect.top() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN))
-                .abs()
-                < 0.1
-        );
-    });
+    assert!(
+        (toolbar_rect.top() - (canvas_rect.top() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN)).abs()
+            < 0.1
+    );
 }
 
 #[test]
 fn textbox_toolbar_clamps_right_without_unnecessary_shift() {
-    eframe::egui::__run_test_ui(|ui| {
-        let mut state = CanvasState::default();
-        let canvas_rect = eframe::egui::Rect::from_min_max(
-            eframe::egui::pos2(0.0, 0.0),
-            eframe::egui::pos2(420.0, 320.0),
-        );
-        state.add_annotation(CanvasAnnotation::new(
-            73,
-            CanvasAnnotationKind::Textbox,
-            eframe::egui::pos2(220.0, 140.0),
-            eframe::egui::pos2(460.0, 240.0),
-            "toolbar".to_owned(),
-            default_text_size(),
-            default_stroke_width(),
-            default_annotation_color(),
-            false,
-            false,
-        ));
-        state.begin_textbox_edit(73);
+    let mut state = CanvasState::default();
+    let canvas_rect = eframe::egui::Rect::from_min_max(
+        eframe::egui::pos2(0.0, 0.0),
+        eframe::egui::pos2(420.0, 320.0),
+    );
+    state.add_annotation(CanvasAnnotation::new(
+        73,
+        CanvasAnnotationKind::Textbox,
+        eframe::egui::pos2(220.0, 140.0),
+        eframe::egui::pos2(460.0, 240.0),
+        "toolbar".to_owned(),
+        default_text_size(),
+        default_stroke_width(),
+        default_annotation_color(),
+        false,
+        false,
+    ));
+    state.begin_textbox_edit(73);
 
-        let toolbar_rect = editing_textbox_toolbar_rect(ui, &state, canvas_rect).unwrap();
+    let toolbar_rect = editing_textbox_toolbar_rect(&state, canvas_rect).unwrap();
 
-        assert!(
-            toolbar_rect.right()
-                <= canvas_rect.right() - TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN + 0.1
-        );
-        assert!(
-            toolbar_rect.left()
-                >= canvas_rect.left() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN - 0.1
-        );
-    });
+    assert!(
+        toolbar_rect.right() <= canvas_rect.right() - TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN + 0.1
+    );
+    assert!(
+        toolbar_rect.left() >= canvas_rect.left() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN - 0.1
+    );
 }
 
 #[test]

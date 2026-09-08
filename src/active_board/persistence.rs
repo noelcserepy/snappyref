@@ -7,7 +7,7 @@ pub(crate) struct DocumentPersistence {
 struct PersistenceQueue {
     tx: std::sync::mpsc::Sender<PersistenceCommand>,
     error_rx: std::sync::mpsc::Receiver<String>,
-    worker: Option<std::thread::JoinHandle<()>>,
+    worker: Option<std::thread::JoinHandle<Result<(), String>>>,
 }
 
 enum PersistenceCommand {
@@ -16,7 +16,7 @@ enum PersistenceCommand {
         operation: crate::library::storage::BoardDurabilityOperation,
         history: crate::active_board::history::DocumentHistory,
     },
-    Flush(std::sync::mpsc::Sender<()>),
+    Flush(std::sync::mpsc::Sender<Result<(), String>>),
     Shutdown,
 }
 
@@ -26,6 +26,8 @@ struct PendingPersistenceBatch {
     /// Failed attempts of the front operation; indexes `RETRY_DELAYS`.
     front_attempts: usize,
     shutdown: bool,
+    blocked: bool,
+    failure: Option<String>,
 }
 
 enum PendingPersistenceOperation {
@@ -34,7 +36,7 @@ enum PendingPersistenceOperation {
         operation: crate::library::storage::BoardDurabilityOperation,
         history: crate::active_board::history::DocumentHistory,
     },
-    Flush(std::sync::mpsc::Sender<()>),
+    Flush(std::sync::mpsc::Sender<Result<(), String>>),
 }
 
 #[derive(Clone)]
@@ -61,6 +63,10 @@ pub(crate) enum BoardLifecyclePersistence {
 /// no library there is no queue: document and session saves are no-ops and
 /// lifecycle changes report storage as unavailable.
 impl DocumentPersistence {
+    pub(crate) fn is_available(&self) -> bool {
+        self.queue.is_some()
+    }
+
     pub(crate) fn queued(library: crate::library::storage::Library) -> Self {
         Self {
             last_saved_user_session: None,
@@ -103,7 +109,7 @@ impl DocumentPersistence {
                 board_id,
                 changes,
             },
-            history: history.clone(),
+            history: history.pending_snapshot(),
         })
     }
 
@@ -114,7 +120,7 @@ impl DocumentPersistence {
     ) -> Result<(), String> {
         self.queue()?.enqueue(PersistenceCommand::CommitBoardUnit {
             operation: crate::library::storage::BoardDurabilityOperation::Lifecycle(change),
-            history: history.clone(),
+            history: history.pending_snapshot(),
         })
     }
 
@@ -146,7 +152,7 @@ impl DocumentPersistence {
     }
 
     /// Stops the worker after it drains everything queued so far. Reports a
-    /// write the worker had to drop on the way out, or a worker that died.
+    /// write that remains unresolved on the way out, or a worker that died.
     pub(crate) fn shutdown(&mut self) -> Result<(), String> {
         let Some(queue) = self.queue.take() else {
             return Ok(());
@@ -168,7 +174,7 @@ impl PersistenceQueue {
         let worker = std::thread::spawn(move || {
             let mut batch = PendingPersistenceBatch::default();
             loop {
-                if batch.operations.is_empty() && !batch.shutdown {
+                if (batch.operations.is_empty() || batch.blocked) && !batch.shutdown {
                     let Ok(command) = rx.recv() else {
                         batch.shutdown = true;
                         if batch.operations.is_empty() {
@@ -189,13 +195,14 @@ impl PersistenceQueue {
                     }
                 }
                 let retry_after = batch.persist(&library, &error_tx);
-                if batch.shutdown && batch.operations.is_empty() {
+                if batch.shutdown && (batch.operations.is_empty() || batch.blocked) {
                     break;
                 }
                 if let Some(delay) = retry_after {
                     std::thread::sleep(delay);
                 }
             }
+            batch.failure.map_or(Ok(()), Err)
         });
         Self {
             tx,
@@ -215,14 +222,15 @@ impl PersistenceQueue {
         self.tx
             .send(PersistenceCommand::Flush(done_tx))
             .map_err(|error| format!("failed to enqueue persistence flush: {error}"))?;
-        done_rx
+        let result = done_rx
             .recv()
             .map_err(|error| format!("failed to wait for persistence flush: {error}"))?;
-        self.drain_errors()
+        let _ = self.drain_errors();
+        result
     }
 
     /// Newest failure reported by the worker since the last poll, without
-    /// waiting for queued writes. Frames poll this so a dropped durable write
+    /// waiting for queued writes. Frames poll this so a failed durable write
     /// becomes visible without a flush barrier.
     fn take_error(&self) -> Option<String> {
         self.drain_errors().err()
@@ -248,9 +256,10 @@ impl PersistenceQueue {
         if let Some(worker) = self.worker.take() {
             worker
                 .join()
-                .map_err(|_| "persistence worker panicked".to_owned())?;
+                .map_err(|_| "persistence worker panicked".to_owned())??;
         }
-        self.drain_errors()
+        let _ = self.drain_errors();
+        Ok(())
     }
 }
 
@@ -265,6 +274,10 @@ impl Drop for PersistenceQueue {
 
 impl PendingPersistenceBatch {
     fn push(&mut self, command: PersistenceCommand) {
+        if self.blocked {
+            self.blocked = false;
+            self.front_attempts = 0;
+        }
         match command {
             PersistenceCommand::SaveUserSession(session) => match self.operations.back_mut() {
                 Some(PendingPersistenceOperation::UserSession(pending)) => *pending = session,
@@ -289,10 +302,9 @@ impl PendingPersistenceBatch {
     /// Persists queued operations in order. Returns the delay before the
     /// front operation should be retried, or `None` once the queue is drained.
     ///
-    /// A failing operation is retried with backoff; after
-    /// `RETRY_DELAYS.len()` failures (or immediately during shutdown) it is
-    /// dropped and reported so later units, which re-upsert the same rows
-    /// and the full history, can still land.
+    /// Exhausted retries retain the failed unit and all later writes. Flush
+    /// reports the failure directly, even if frames consumed the notification.
+    /// New work or a new flush resumes retrying the same front unit.
     fn persist(
         &mut self,
         library: &crate::library::storage::Library,
@@ -307,7 +319,7 @@ impl PendingPersistenceBatch {
                     library.persist_board_unit(&operation, &history)
                 }
                 PendingPersistenceOperation::Flush(done_tx) => {
-                    let _ = done_tx.send(());
+                    let _ = done_tx.send(Ok(()));
                     Ok(())
                 }
             };
@@ -319,11 +331,24 @@ impl PendingPersistenceBatch {
                     self.front_attempts += 1;
                     return Some(*delay);
                 }
-                let _ = error_tx.send(format!(
-                    "dropped durable write after {} attempts: {error}",
+                let error = format!(
+                    "durable write failed after {} attempts: {error}",
                     attempts + 1
-                ));
+                );
+                self.failure = Some(error.clone());
+                self.blocked = true;
+                let _ = error_tx.send(error.clone());
+                self.operations.retain(|operation| {
+                    if let PendingPersistenceOperation::Flush(done) = operation {
+                        let _ = done.send(Err(error.clone()));
+                        false
+                    } else {
+                        true
+                    }
+                });
+                return None;
             }
+            self.failure = None;
             self.front_attempts = 0;
             self.operations.pop_front();
         }
@@ -333,7 +358,7 @@ impl PendingPersistenceBatch {
 
 /// Backoff schedule for a failing durable write, roughly six seconds in
 /// total. Long enough to ride out a transient lock or slow disk, short enough
-/// that a poisoned unit cannot stall flush, shutdown, or later units forever.
+/// that flush and shutdown report persistent failure within a bounded time.
 const RETRY_DELAYS: [std::time::Duration; 7] = [
     std::time::Duration::from_millis(50),
     std::time::Duration::from_millis(100),
@@ -402,14 +427,21 @@ mod tests {
         let source = root.join("source.png");
         std::fs::write(&source, [255, 255, 255, 255]).unwrap();
         let record = library
-            .persist_imported_image(
-                &source,
-                "image/png",
-                1,
-                1,
-                4,
-                eframe::egui::pos2(0.0, 0.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        eframe::egui::pos2(0.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&source, "image/png", 1, 1, 4, None)
+                        .unwrap(),
+                ),
             )
             .unwrap();
         let mut moved = record.clone();
@@ -455,64 +487,97 @@ mod tests {
     }
 
     #[test]
-    fn poisoned_unit_is_dropped_after_bounded_retries_and_later_writes_land() {
-        let root = std::env::temp_dir().join(format!(
-            "snappyref-queued-failure-recovery-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
-        let library = crate::library::storage::Library::initialize(root.clone()).unwrap();
-        let board_id = library.list_boards().unwrap()[0].id;
-        let mut persistence = DocumentPersistence::queued(library.clone());
-        // A foreign-key violation remains poisoned through every retry.
-        let poisoned = crate::canvas::CanvasDocumentChanges {
-            updated_placements: vec![crate::data::Placement {
-                state: crate::data::PlacementState::new(
-                    99,
-                    eframe::egui::Pos2::ZERO,
-                    1.0,
-                    0.0,
-                    0,
-                    false,
-                ),
-                content: crate::data::PlacementContent::Loading {
-                    source: crate::data::ContentResolutionSource::Clipboard,
-                    status_message: None,
+    fn exhausted_write_retains_order_and_flush_failure_until_retry_succeeds() {
+        let root = crate::test_support::TempRoot::new("queued-failure-recovery");
+        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
+        let connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
+        connection.execute_batch("CREATE TRIGGER reject_groups BEFORE INSERT ON board_groups BEGIN SELECT RAISE(ABORT, 'injected failure'); END;").unwrap();
+        let mut batch = super::PendingPersistenceBatch::default();
+        batch.push(super::PersistenceCommand::CommitBoardUnit {
+            operation: crate::library::storage::BoardDurabilityOperation::Document {
+                board_id: 1,
+                changes: crate::canvas::CanvasDocumentChanges {
+                    groups: Some(vec![]),
+                    ..Default::default()
                 },
-                lifecycle: crate::data::PlacementLifecycle::Committed,
-            }],
-            ..Default::default()
-        };
-        persistence
-            .enqueue_document_unit(
-                board_id + 10000,
-                poisoned,
-                &crate::active_board::history::DocumentHistory::default(),
-            )
-            .unwrap();
-        let session = crate::data::UserSession {
-            viewport: crate::data::ViewportState {
-                camera_pan_x: 42.0,
+            },
+            history: Default::default(),
+        });
+        batch.push(super::PersistenceCommand::SaveUserSession(
+            crate::data::UserSession {
+                viewport: crate::data::ViewportState {
+                    camera_pan_x: 42.0,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            ..Default::default()
-        };
-        persistence.save_user_session(session).unwrap();
-
-        let flushed = persistence.flush();
-
-        assert!(
-            flushed
-                .as_ref()
-                .is_err_and(|error| error.starts_with("dropped durable write after")),
-            "{flushed:?}"
-        );
-        assert_eq!(persistence.take_error(), None);
-        assert_eq!(
+        ));
+        let (done, result) = std::sync::mpsc::channel();
+        batch.push(super::PersistenceCommand::Flush(done));
+        let (errors, notifications) = std::sync::mpsc::channel();
+        batch.front_attempts = super::RETRY_DELAYS.len();
+        assert_eq!(batch.persist(&library, &errors), None);
+        assert!(result.recv().unwrap().is_err());
+        assert!(notifications.try_recv().is_ok());
+        assert_eq!(batch.operations.len(), 2);
+        assert_ne!(
             library.load_user_session().unwrap().viewport.camera_pan_x,
             42.0
         );
 
-        let _ = std::fs::remove_dir_all(root);
+        // Consuming the UI notification cannot turn a failed flush into success.
+        let (done, result) = std::sync::mpsc::channel();
+        batch.push(super::PersistenceCommand::Flush(done));
+        batch.front_attempts = super::RETRY_DELAYS.len();
+        batch.persist(&library, &errors);
+        assert!(result.recv().unwrap().is_err());
+        connection
+            .execute_batch("DROP TRIGGER reject_groups;")
+            .unwrap();
+        let (done, result) = std::sync::mpsc::channel();
+        batch.push(super::PersistenceCommand::Flush(done));
+        batch.persist(&library, &errors);
+        assert_eq!(result.recv().unwrap(), Ok(()));
+        assert!(batch.operations.is_empty());
+        assert_eq!(
+            library.load_user_session().unwrap().viewport.camera_pan_x,
+            42.0
+        );
+    }
+}
+
+#[cfg(test)]
+mod owner_tests {
+    #[test]
+    fn individual_edit_writes_only_changed_history_owner() {
+        use crate::active_board::history::{DocumentHistory, HistoryAction};
+        let root = crate::test_support::TempRoot::new("scoped-history-write");
+        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
+        let second = library.fixture_board("Second").unwrap();
+        let mut history = DocumentHistory::default();
+        let action = || HistoryAction::document("Edit".into(), vec![], vec![], None);
+        history.record_applied(1, action());
+        history.record_applied(second.id, action());
+        let mut persistence = super::DocumentPersistence::queued(library.clone());
+        let changes = || crate::canvas::CanvasDocumentChanges {
+            groups: Some(vec![]),
+            ..Default::default()
+        };
+        persistence
+            .enqueue_document_unit(1, changes(), &history)
+            .unwrap();
+        persistence.flush().unwrap();
+        let connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
+        connection.execute_batch(&format!("CREATE TRIGGER reject_unrelated_history BEFORE UPDATE ON board_history WHEN NEW.board_id = {} BEGIN SELECT RAISE(ABORT, 'unrelated Board rewritten'); END;", second.id)).unwrap();
+        history.record_applied(1, action());
+        persistence
+            .enqueue_document_unit(1, changes(), &history)
+            .unwrap();
+        persistence.flush().unwrap();
+        let mut restored = library.load_document_history().unwrap();
+        assert!(restored.undo(1).is_some());
+        assert!(restored.undo(1).is_some());
+        assert!(restored.undo(second.id).is_some());
+        assert!(restored.undo(second.id).is_none());
     }
 }
