@@ -1139,19 +1139,24 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn detect_existing_staging_rejects_missing_helper() {
-        let root = crate::test_support::TempRoot::new("restart-missing-helper");
-        let staging = write_valid_staging(&root, "9.9.9", &"0".repeat(64));
-        std::fs::remove_file(
-            staging.join("SnappyRef/SnappyRef.app/Contents/MacOS/snappyref-updater"),
-        )
-        .unwrap();
-        let mut service = UpdateService::new(UpdateConfig {
-            install_root: Some(root.to_path_buf()),
-            ..UpdateConfig::for_tests()
-        });
-        service.detect_existing_staging(&manifest_with("9.9.9"));
-        assert!(!service.state().is_ready());
+    fn detect_existing_staging_rejects_missing_app_or_helper() {
+        for executable in ["snappyref", "snappyref-updater"] {
+            let root = crate::test_support::TempRoot::new("restart-missing-executable");
+            let staging = write_valid_staging(&root, "9.9.9", &"0".repeat(64));
+            std::fs::remove_file(staging.join(format!(
+                "SnappyRef/SnappyRef.app/Contents/MacOS/{executable}"
+            )))
+            .unwrap();
+            let mut service = UpdateService::new(UpdateConfig {
+                install_root: Some(root.to_path_buf()),
+                ..UpdateConfig::for_tests()
+            });
+            service.detect_existing_staging(&manifest_with("9.9.9"));
+            assert!(
+                !service.state().is_ready(),
+                "missing {executable} became Ready"
+            );
+        }
     }
 
     #[test]

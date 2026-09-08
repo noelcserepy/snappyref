@@ -154,11 +154,7 @@ pub(crate) fn validate_layout(
     }
     match platform {
         TargetPlatform::Macos => {
-            // Match the macOS install layout used by install_paths:
-            //   SnappyRef/SnappyRef.app/Contents/MacOS/{executable}
-            // We don't pin the executable filename — slices that build
-            // the manifest may rename it — but Contents/MacOS must
-            // exist and contain at least one file.
+            // Shipping macOS bundles contain the app and replacement helper separately.
             let app = bundle_root.join("SnappyRef.app");
             if !app.is_dir() {
                 return Err(StageError::InvalidLayout(
@@ -171,21 +167,12 @@ pub(crate) fn validate_layout(
                     "macOS zip is missing `SnappyRef.app/Contents/MacOS/`".to_owned(),
                 ));
             }
-            let any_executable = fs::read_dir(&macos_dir)
-                .map_err(StageError::Io)?
-                .filter_map(Result::ok)
-                .any(|entry| entry.file_type().map(|t| t.is_file()).unwrap_or(false));
-            if !any_executable {
-                return Err(StageError::InvalidLayout(
-                    "macOS zip's `Contents/MacOS/` is empty".to_owned(),
-                ));
-            }
-            let helper = macos_dir.join("snappyref-updater");
-            if !helper.is_file() {
-                return Err(StageError::InvalidLayout(
-                    "macOS zip is missing `SnappyRef.app/Contents/MacOS/snappyref-updater`"
-                        .to_owned(),
-                ));
+            for executable in ["snappyref", "snappyref-updater"] {
+                if !macos_dir.join(executable).is_file() {
+                    return Err(StageError::InvalidLayout(format!(
+                        "macOS zip is missing `SnappyRef.app/Contents/MacOS/{executable}`"
+                    )));
+                }
             }
         }
         TargetPlatform::Windows => {
@@ -418,31 +405,24 @@ mod tests {
     }
 
     #[test]
-    fn rejects_macos_zip_missing_updater_helper() {
-        let dir = TempRoot::new("macos-no-helper");
-        let zip_path = dir.join("no-helper.zip");
-        write_zip(
-            &zip_path,
-            &[
-                ("SnappyRef/", &[][..]),
-                ("SnappyRef/SnappyRef.app/", &[][..]),
-                ("SnappyRef/SnappyRef.app/Contents/", &[][..]),
-                ("SnappyRef/SnappyRef.app/Contents/MacOS/", &[][..]),
-                (
-                    "SnappyRef/SnappyRef.app/Contents/MacOS/snappyref",
-                    b"fake-binary",
-                ),
-                ("SnappyRef/SnappyRef.app/Contents/Info.plist", b"<plist/>"),
-            ],
-        );
-        let staging = dir.join("staging-no-helper");
-
-        let err = extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap_err();
-        match err {
-            StageError::InvalidLayout(msg) => {
-                assert!(msg.contains("snappyref-updater"), "msg was {msg}");
-            }
-            other => panic!("expected InvalidLayout, got {other:?}"),
+    fn rejects_macos_zip_missing_app_or_helper() {
+        for executable in ["snappyref", "snappyref-updater"] {
+            let dir = TempRoot::new("macos-missing-executable");
+            let zip_path = dir.join("incomplete.zip");
+            let missing_path = format!("SnappyRef/SnappyRef.app/Contents/MacOS/{executable}");
+            let entries: Vec<_> = macos_zip_entries()
+                .into_iter()
+                .filter(|(name, _)| *name != missing_path)
+                .collect();
+            write_zip(&zip_path, &entries);
+            let staging = dir.join("staging");
+            let error =
+                extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap_err();
+            assert!(
+                matches!(error, StageError::InvalidLayout(ref message) if message.contains(&format!("MacOS/{executable}`"))),
+                "{error}"
+            );
+            assert!(!staging.exists(), "incomplete extraction must be removed");
         }
     }
 
