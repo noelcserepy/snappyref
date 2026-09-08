@@ -1,3 +1,4 @@
+use super::support::INSPECT_DELETE_KEY;
 use super::*;
 
 #[test]
@@ -1453,7 +1454,7 @@ fn inspect_delete_undo_redo_placement_writes_artifact() {
         "action",
         serde_json::json!({"name": "press Delete shortcut"}),
     );
-    harness.key_press(egui::Key::Backspace);
+    harness.key_press(INSPECT_DELETE_KEY);
     harness.step();
     scenario.fact(
         "placement.after-delete",

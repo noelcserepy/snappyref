@@ -702,3 +702,6 @@ pub(crate) fn decode_board_selection(
     validate_clipboard_payload(&payload)?;
     Ok(Some(payload))
 }
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_tests;

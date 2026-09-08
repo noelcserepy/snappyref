@@ -5,6 +5,7 @@ purpose:
   owns:
     - Canvas viewport and selection interaction.
     - Pointer and keyboard interpretation.
+    - External file and URL drop interaction.
     - Move, resize, uniform scale, rotation, and crop interaction.
     - Annotation and text-box editing interaction.
     - Copy, paste, duplicate, delete, focus, arrangement, and stack-order commands.
@@ -77,6 +78,9 @@ interface:
         source-preserving-crop: Crop actions must not alter the source Asset.
         clipboard-delegated: Copy and paste must use Clipboard Exchange so internal mixed content and native external image content follow one boundary policy.
         external-paste-creates: Accepted external image clipboard content must use Placement Creation's committed creation path.
+        windows-file-drop-continuity: Installing richer Windows URL-drop handling must preserve file drops supplied by an existing window drop target.
+        windows-drop-position: Windows file hover and drop must use the current native cursor location when framework file events omit coordinates, converted into the Canvas interaction coordinate space.
+        external-drop-coherent: External drop intake must keep source content associated with its drop position, consume accepted native drops once, and avoid duplicate sources reported by both native and framework events.
         accepted-intake-view-neutral: Accepted import, paste, URL, and drop intake must not pan, focus, zoom, or otherwise change the viewport.
         search-preview-one-shot-fit: A provisional Search result group may zoom out once when it does not fit, but must not zoom in or repeatedly refit as results resolve.
         search-preview-pointer-anchor: After a Search preview fit, the provisional group must remain positioned at the user's pointer.
@@ -178,3 +182,27 @@ decisions:
         status: rejected
         reason: Oversized Search preview groups could not be positioned coherently.
     sources: []
+
+  windows-drop-integration:
+    current: Preserve an existing Windows drop target and use the native URL bridge only when it can register without replacing that target. Native callbacks must match the platform COM ABI.
+    affects:
+      - "[[#/interface/operations/perform/behavior/windows-file-drop-continuity]]"
+      - "[[#/interface/operations/perform/behavior/windows-drop-position]]"
+      - "[[#/interface/operations/perform/behavior/external-drop-coherent]]"
+    reasons:
+      - Explorer file import must remain available when the window framework already owns the drop target.
+      - A mismatched native callback ABI can fail before source intake reaches Placement Creation.
+      - Framework file events can omit the coordinates needed to position a preview and accepted drop.
+    consequences:
+      - An already registered target must remain installed and must not be revoked by the native bridge.
+      - Browser URL drops may be unavailable while the framework owns file drops.
+      - Native coordinate conversion and cursor fallback remain inside the platform input integration.
+    reconsider_when:
+      - A cooperative drop integration supports richer URL payloads while proving existing file delivery and positioning remain intact.
+    explored_paths:
+      replace-existing-target:
+        status: rejected
+        reason: Recovering richer URL payloads does not justify losing working Explorer file drops.
+    sources:
+      - label: Preserve Windows file drops and correct the native callback ABI
+        url: https://github.com/noelcserepy/snappyref/blob/84d74e575e6c9af2356476636742db6f3fbddcec/docs/adr/0022-preserve-winit-file-drop-on-windows.md
