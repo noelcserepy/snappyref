@@ -15,9 +15,14 @@ use std::time::{Duration, Instant};
 
 use snappyref::updater::descriptor::{self, PendingUpdateDescriptor};
 
+#[path = "../src/test_support.rs"]
+mod test_support;
+use test_support::TempRoot;
+
 /// Build a tempdir layout that mirrors a real install root, populated with
 /// a stale "current" bundle and a freshly-staged bundle ready to swap in.
 struct Fixture {
+    _root: TempRoot,
     install_root: PathBuf,
     staging_dir: PathBuf,
     current_bundle: PathBuf,
@@ -29,15 +34,8 @@ struct Fixture {
 
 impl Fixture {
     fn new(version: &str) -> Self {
-        let install_root = std::env::temp_dir().join(format!(
-            "snappyref-updater-it-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-        ));
-        fs::create_dir_all(&install_root).unwrap();
+        let root = TempRoot::new("snappyref-updater-it");
+        let install_root = root.to_path_buf();
 
         // Untouchables: library/ and models/ must survive the swap.
         let library_dir = install_root.join("library");
@@ -69,6 +67,7 @@ impl Fixture {
         let relaunch_marker = install_root.join("relaunch-marker.txt");
 
         Self {
+            _root: root,
             install_root,
             staging_dir,
             current_bundle,
@@ -90,16 +89,6 @@ impl Fixture {
             })
             .unwrap();
         self.current_bundle.parent().unwrap().join(name)
-    }
-
-    fn cleanup(&self) {
-        let _ = fs::remove_dir_all(&self.install_root);
-    }
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        self.cleanup();
     }
 }
 

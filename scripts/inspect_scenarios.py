@@ -9,6 +9,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 # name: test filter, artifact scenario, refactor coverage, network/ignored
 SCENARIOS = {
+    'check-harness': ('inspect_search_result_drag_to_canvas_writes_artifact', 'search-drag-to-canvas', False, False),
     'group-operations': ('inspect_group_operations_writes_artifact', 'group-operations', True, False),
     'search-drag-to-canvas': ('inspect_search_result_drag_to_canvas_writes_artifact', 'search-drag-to-canvas', True, False),
     'semantic-search-install': ('inspect_semantic_search_install_accepts_prompt', 'semantic-search-install', False, False),
