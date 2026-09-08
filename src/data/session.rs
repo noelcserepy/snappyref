@@ -79,8 +79,6 @@ impl WindowState {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceSettings {
-    #[serde(default = "default_auto_image_scaling")]
-    pub auto_image_scaling: bool,
     #[serde(default = "default_placement_gap")]
     pub placement_gap: f32,
     #[serde(
@@ -100,15 +98,11 @@ pub struct WorkspaceSettings {
     pub pointer_mode: PointerMode,
     #[serde(default)]
     pub always_on_top: bool,
-    /// Unix-epoch milliseconds of the most recent successful update
+    /// Unix-epoch milliseconds of the most recent completed update
     /// discovery check. `None` means the app has not yet performed a
-    /// check on this machine; the Settings Tab renders that as "never".
+    /// check on this machine; About / Updates renders that as "never".
     #[serde(default)]
     pub last_update_check_at: Option<u64>,
-}
-
-fn default_auto_image_scaling() -> bool {
-    true
 }
 
 fn default_placement_gap() -> f32 {
@@ -130,7 +124,6 @@ fn default_rotation_snap_degrees() -> f32 {
 impl Default for WorkspaceSettings {
     fn default() -> Self {
         Self {
-            auto_image_scaling: true,
             placement_gap: DEFAULT_PLACEMENT_GAP,
             placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
             canvas_image_max_side: DEFAULT_CANVAS_IMAGE_MAX_SIDE,
@@ -147,6 +140,21 @@ impl Default for WorkspaceSettings {
 #[cfg(test)]
 mod tests {
     use super::WorkspaceSettings;
+
+    #[test]
+    fn removed_sizing_preference_preserves_supported_settings() {
+        let settings: WorkspaceSettings = serde_json::from_str(
+            r#"{"auto_image_scaling":false,"placement_gap":37.0,"always_on_top":true}"#,
+        )
+        .unwrap();
+        assert_eq!(settings.placement_gap, 37.0);
+        assert!(settings.always_on_top);
+        assert!(
+            !serde_json::to_string(&settings)
+                .unwrap()
+                .contains("auto_image_scaling")
+        );
+    }
 
     #[test]
     fn first_launch_semantic_search_prompt_starts_unseen() {

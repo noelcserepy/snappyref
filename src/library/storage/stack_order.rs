@@ -92,40 +92,6 @@ pub(super) fn replace_board_stack_order(
     Ok(())
 }
 
-#[cfg(test)]
-pub(super) fn append_canvas_stack_item(
-    connection: &Connection,
-    board_id: i64,
-    item: CanvasStackItem,
-) -> Result<(), String> {
-    let next_index = next_canvas_stack_index(connection, board_id)?;
-    connection
-        .execute(
-            "INSERT OR REPLACE INTO canvas_stack_items (
-                board_id,
-                item_kind,
-                item_id,
-                stack_index
-             ) VALUES (?1, ?2, ?3, ?4)",
-            params![board_id, item.kind(), item.item_id(), next_index],
-        )
-        .map_err(|error| format!("failed to append canvas stack item: {error}"))?;
-    Ok(())
-}
-
-#[cfg(test)]
-fn next_canvas_stack_index(connection: &Connection, board_id: i64) -> Result<i64, String> {
-    connection
-        .query_row(
-            "SELECT COALESCE(MAX(stack_index) + 1, 0)
-             FROM canvas_stack_items
-             WHERE board_id = ?1",
-            params![board_id],
-            |row| row.get(0),
-        )
-        .map_err(|error| format!("failed to inspect canvas stack index: {error}"))
-}
-
 pub(super) fn ensure_canvas_stack_items_populated(connection: &Connection) -> Result<(), String> {
     let count: i64 = connection
         .query_row("SELECT COUNT(*) FROM canvas_stack_items", [], |row| {

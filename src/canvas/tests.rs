@@ -1,6 +1,6 @@
 use super::geometry::{
-    crop_center_offset_local, lattice_phase_screen, lattice_phase_world, merge_cropped_item_fields,
-    min_loaded_placement_scale, pixel_crop_rect_from_local, screen_rect_to_local_crop_rect,
+    crop_center_offset_local, merge_cropped_item_fields, min_loaded_placement_scale,
+    pixel_crop_rect_from_local, screen_rect_to_local_crop_rect,
 };
 use super::interaction::{
     handle_textbox_primary_press, hit_test_canvas_item, hit_test_placement_resize_handle,
@@ -10,11 +10,11 @@ use super::interaction::{
 };
 use super::render::{
     annotation_paint_stats_for_annotations, background_lod_layers, background_screen_step,
-    background_world_step, editing_textbox_toolbar_rect, layout_textbox_galley,
-    optimized_image_pass_eligible_for_state, settled_background_lod_level, textbox_content_rect,
-    textbox_empty_hotspot_rect, textbox_font_size, textbox_layout_cache_key,
-    textbox_pointer_region, textbox_required_world_height,
-    textbox_text_interactive_rect_from_galley, unified_canvas_paint_order_for_state,
+    editing_textbox_toolbar_rect, layout_textbox_galley, optimized_image_pass_eligible_for_state,
+    settled_background_lod_level, textbox_content_rect, textbox_empty_hotspot_rect,
+    textbox_font_size, textbox_layout_cache_key, textbox_pointer_region,
+    textbox_required_world_height, textbox_text_interactive_rect_from_galley,
+    unified_canvas_paint_order_for_state,
 };
 use super::{
     AnnotationDraftState, CanvasCropRequest, CanvasInputPolicy, CanvasState, CanvasTexture,
@@ -392,69 +392,6 @@ fn average_selected_placement_area_uses_displayed_area() {
 
         assert!((average_area - 15_000.0).abs() < 0.1);
     });
-}
-
-#[test]
-fn lattice_phase_is_preserved_across_zoom_change_with_same_lod() {
-    let mut state = CanvasState::default();
-    let rect = eframe::egui::Rect::from_min_max(
-        eframe::egui::pos2(0.0, 0.0),
-        eframe::egui::pos2(800.0, 600.0),
-    );
-    let world_point = eframe::egui::pos2(150.0, 94.0);
-    let world_step = background_world_step(0);
-
-    state.zoom = 0.95;
-    let screen_origin_a = state.world_to_screen(eframe::egui::Pos2::ZERO, rect);
-    let screen_point_a = state.world_to_screen(world_point, rect);
-    let phase_a = lattice_phase_screen(
-        screen_origin_a.x,
-        screen_point_a.x,
-        background_screen_step(0, state.zoom),
-    );
-
-    state.zoom = 1.05;
-    let screen_origin_b = state.world_to_screen(eframe::egui::Pos2::ZERO, rect);
-    let screen_point_b = state.world_to_screen(world_point, rect);
-    let phase_b = lattice_phase_screen(
-        screen_origin_b.x,
-        screen_point_b.x,
-        background_screen_step(0, state.zoom),
-    );
-
-    let world_phase = lattice_phase_world(world_point.x, world_step);
-    assert!((phase_a - world_phase).abs() < 0.0001);
-    assert!((phase_b - world_phase).abs() < 0.0001);
-    assert!((phase_a - phase_b).abs() < 0.0001);
-}
-
-#[test]
-fn lattice_phase_is_preserved_under_pan_and_zoom() {
-    let mut state = CanvasState::default();
-    let rect = eframe::egui::Rect::from_min_max(
-        eframe::egui::pos2(0.0, 0.0),
-        eframe::egui::pos2(800.0, 600.0),
-    );
-    let world_point = eframe::egui::pos2(222.0, -118.0);
-    let world_step = background_world_step(-1);
-
-    state.pan = eframe::egui::vec2(123.0, -41.0);
-    state.zoom = 1.9;
-    let screen_origin = state.world_to_screen(eframe::egui::Pos2::ZERO, rect);
-    let screen_point = state.world_to_screen(world_point, rect);
-    let phase_x = lattice_phase_screen(
-        screen_origin.x,
-        screen_point.x,
-        background_screen_step(-1, state.zoom),
-    );
-    let phase_y = lattice_phase_screen(
-        screen_origin.y,
-        screen_point.y,
-        background_screen_step(-1, state.zoom),
-    );
-
-    assert!((phase_x - lattice_phase_world(world_point.x, world_step)).abs() < 0.0001);
-    assert!((phase_y - lattice_phase_world(world_point.y, world_step)).abs() < 0.0001);
 }
 
 #[test]

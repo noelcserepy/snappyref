@@ -40,7 +40,7 @@ by a key they do not know.
 2. Run the local pre-push gate or let the push hook run it:
    `cargo fmt --check`, shipping-feature `cargo check`, and
    `update_preservation_smoke`.
-3. Bump the package version and release workflow defaults as needed.
+3. Bump the package version as needed. The release tag must match it.
 4. Dispatch `Publish Full Release` with the release tag.
 5. Keep `build_profile=release` for public builds.
 6. Inspect the draft `snappyref-dist` release assets before publishing.
@@ -56,6 +56,8 @@ to be republished. Ordinary app releases reuse the existing standalone asset.
 is the canonical URL, SHA256 and size. Cargo and both build workflows read it.
 Workflow inputs and `SNAPPYREF_SEMANTIC_SEARCH_*` build variables override values
 when needed. Update the descriptor after publishing a replacement model package.
+`MODEL_BUNDLE.txt` records the model key and hashes of the tokenizer and both
+ONNX files for manual package provenance. Keep it in model packages.
 Build workflows attach the resolved descriptor alongside the app archive.
 Packaging rejects invalid descriptors or differing descriptors across selected builds.
 
@@ -107,8 +109,12 @@ SnappyRef prefers a writable portable data root beside the installed app. If the
 install root is protected, the app falls back to the user's app-data directory.
 
 - `SNAPPYREF_DATA_ROOT` overrides the shared data root for the **Library**,
-  **Local Model Store**, and Semantic Search staging.
-- `SNAPPYREF_LIBRARY_ROOT` overrides only the **Library** path for tests and
-  diagnostics.
+  **Local Model Store**, workspace session state, Asset embeddings, and Semantic
+  Search staging.
+- `SNAPPYREF_LIBRARY_ROOT` overrides Library content, workspace session state,
+  and Asset embeddings for tests and diagnostics. Model files and Semantic
+  Search staging still follow the data root.
+- `SNAPPYREF_INSTALL_ROOT` overrides the install root for App Update
+  development and verification only. It does not relocate Library or model data.
 - Release zips never include or remove `library/`; the Library is user-owned.
 - Downgrade is unsupported after a newer app has opened and migrated user data.

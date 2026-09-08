@@ -100,9 +100,8 @@ pub fn read(path: &Path) -> Result<PendingUpdateDescriptor, DescriptorError> {
     parse(&bytes)
 }
 
-/// Parse `bytes` as a descriptor. Public for tests and for the replacement process to
-/// re-validate after read.
-pub fn parse(bytes: &[u8]) -> Result<PendingUpdateDescriptor, DescriptorError> {
+/// Parse and validate the descriptor payload.
+fn parse(bytes: &[u8]) -> Result<PendingUpdateDescriptor, DescriptorError> {
     let descriptor: PendingUpdateDescriptor = serde_json::from_slice(bytes)
         .map_err(|error| DescriptorError::Schema(error.to_string()))?;
     validate(&descriptor)?;

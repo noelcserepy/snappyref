@@ -28,7 +28,7 @@ pub(crate) struct SidebarRenderResult {
     pub settings_changed: bool,
     pub interactive_rect: Option<egui::Rect>,
     pub board_action: Option<SidebarBoardAction>,
-    /// True when the Settings Tab update action was activated this frame.
+    /// True when the About / Updates update action was activated this frame.
     pub update_action_clicked: bool,
     pub semantic_search_action: Option<SemanticSearchSettingsAction>,
 }

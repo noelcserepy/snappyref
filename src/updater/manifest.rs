@@ -34,7 +34,6 @@ pub(crate) struct PlatformEntry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Manifest {
     pub version: String,
-    pub notes_url: String,
     pub macos: PlatformEntry,
     pub windows: PlatformEntry,
 }
@@ -157,11 +156,11 @@ pub(crate) fn parse_and_verify_with_key(
         .ok_or(ParseError::MissingField("version"))?
         .to_owned();
 
-    let notes_url = object
+    // The signed wire schema requires this field; runtime does not retain it.
+    object
         .get("notes_url")
         .and_then(Value::as_str)
-        .ok_or(ParseError::MissingField("notes_url"))?
-        .to_owned();
+        .ok_or(ParseError::MissingField("notes_url"))?;
 
     let platforms_value = object
         .get("platforms")
@@ -179,7 +178,6 @@ pub(crate) fn parse_and_verify_with_key(
 
     Ok(Manifest {
         version,
-        notes_url,
         macos: PlatformEntry {
             url: macos.url,
             sha256: macos.sha256,
@@ -248,7 +246,6 @@ mod tests {
         assert_eq!(manifest.version, "0.2.0");
         assert_eq!(manifest.macos.url, "https://example/mac.zip");
         assert_eq!(manifest.windows.size, 2048);
-        assert_eq!(manifest.notes_url, "https://github.com/example/notes");
     }
 
     #[test]

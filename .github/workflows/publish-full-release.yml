@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Release tag, for example v0.1.0
-        required: true
-        default: v0.2.0
+        description: Release tag, blank uses the selected source version
+        required: false
+        default: ""
         type: string
       notes_url:
-        description: Public URL the auto-updater shows for these release notes
+        description: Release notes URL included in the signed update manifest
         required: true
         default: https://github.com/noelcserepy/snappyref-dist/releases
         type: string
@@ -70,8 +70,22 @@ env:
   DIST_REPO: noelcserepy/snappyref-dist
 
 jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - id: release
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: python3 scripts/resolve-release-version.py --tag "$RELEASE_TAG" --github-output "$GITHUB_OUTPUT"
+
   windows:
     name: Build Windows app
+    needs: resolve
     if: ${{ inputs.include_windows }}
     uses: ./.github/workflows/build-windows-app.yml
     with:
@@ -80,10 +94,11 @@ jobs:
       semantic_search_url: ${{ inputs.semantic_search_url }}
       semantic_search_sha256: ${{ inputs.semantic_search_sha256 }}
       semantic_search_size: ${{ inputs.semantic_search_size }}
-      handoff_release_tag: ${{ inputs.release_tag }}
+      handoff_release_tag: ${{ needs.resolve.outputs.tag }}
 
   macos:
     name: Build macOS app
+    needs: resolve
     if: ${{ inputs.include_macos }}
     uses: ./.github/workflows/build-macos-app.yml
     with:
@@ -92,12 +107,13 @@ jobs:
       semantic_search_url: ${{ inputs.semantic_search_url }}
       semantic_search_sha256: ${{ inputs.semantic_search_sha256 }}
       semantic_search_size: ${{ inputs.semantic_search_size }}
-      handoff_release_tag: ${{ inputs.release_tag }}
+      handoff_release_tag: ${{ needs.resolve.outputs.tag }}
 
   prune-release-caches:
     name: Prune release caches
     runs-on: ubuntu-latest
     needs:
+      - resolve
       - windows
       - macos
     if: ${{ always() && (inputs.include_windows || inputs.include_macos) }}
@@ -140,9 +156,10 @@ jobs:
     name: Package release zips
     runs-on: ubuntu-latest
     needs:
+      - resolve
       - windows
       - macos
-    if: ${{ always() && (!inputs.include_windows || needs.windows.result == 'success') && (!inputs.include_macos || needs.macos.result == 'success') }}
+    if: ${{ always() && needs.resolve.result == 'success' && (!inputs.include_windows || needs.windows.result == 'success') && (!inputs.include_macos || needs.macos.result == 'success') }}
 
     steps:
       - uses: actions/checkout@v4
@@ -155,9 +172,9 @@ jobs:
         with:
           include_windows: ${{ inputs.include_windows }}
           include_macos: ${{ inputs.include_macos }}
-          windows_build_tag: ${{ inputs.release_tag }}
-          macos_build_tag: ${{ inputs.release_tag }}
-          release_tag: ${{ inputs.release_tag }}
+          windows_build_tag: ${{ needs.resolve.outputs.tag }}
+          macos_build_tag: ${{ needs.resolve.outputs.tag }}
+          release_tag: ${{ needs.resolve.outputs.tag }}
           token: ${{ github.token }}
 
       - name: Write signing private key
@@ -181,7 +198,7 @@ jobs:
           GH_TOKEN: ${{ secrets.DIST_REPO_TOKEN }}
         run: |
           set -euo pipefail
-          tag="${{ inputs.release_tag }}"
+          tag="${{ needs.resolve.outputs.tag }}"
           version="${{ steps.package.outputs.version }}"
           released_at="${{ steps.package.outputs.released_at }}"
 
@@ -212,7 +229,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="${{ inputs.release_tag }}"
+          tag="${{ needs.resolve.outputs.tag }}"
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" \
               --target "${{ inputs.ref }}" \
@@ -228,7 +245,7 @@ jobs:
           GH_TOKEN: ${{ secrets.DIST_REPO_TOKEN }}
         run: |
           set -euo pipefail
-          tag="${{ inputs.release_tag }}"
+          tag="${{ needs.resolve.outputs.tag }}"
 
           if [[ -z "${GH_TOKEN:-}" ]]; then
             echo "DIST_REPO_TOKEN secret is not configured" >&2
@@ -266,7 +283,7 @@ jobs:
             exit 0
           fi
 
-          tag="${{ inputs.release_tag }}"
+          tag="${{ needs.resolve.outputs.tag }}"
           payload="{\"tag\":\"${tag}\"}"
 
           curl --fail-with-body --show-error --silent \
@@ -282,7 +299,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="${{ inputs.release_tag }}"
+          tag="${{ needs.resolve.outputs.tag }}"
           names=(
             snappyref-windows-app.zip
             snappyref-windows-semantic-search-descriptor.env

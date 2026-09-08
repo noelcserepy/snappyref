@@ -16,7 +16,25 @@ if [[ ! -f "$archive" ]]; then
   exit 1
 fi
 
-entries=$(zipinfo -1 "$archive" | sed 's#\\#/#g')
+# Check containment before any consumer sees the archive. Keep producer bytes intact.
+python3 - "$archive" <<'PYTHON'
+import stat
+import sys
+import zipfile
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    seen = set()
+    for entry in archive.infolist():
+        name = entry.filename
+        parts = name.rstrip('/').split('/')
+        if (parts[0] != 'SnappyRef' or any(part in ('', '.', '..') for part in parts)
+                or '\\' in name or ':' in name or name in seen
+                or stat.S_ISLNK(entry.external_attr >> 16)):
+            raise SystemExit(f'unsafe or non-current archive path: {name!r}')
+        seen.add(name)
+    if archive.testzip() is not None:
+        raise SystemExit('corrupt release archive')
+PYTHON
+entries=$(zipinfo -1 "$archive")
 
 require_entry() {
   local entry=$1

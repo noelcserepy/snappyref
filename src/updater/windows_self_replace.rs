@@ -244,31 +244,12 @@ fn sync_file(path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempRoot;
     use std::fs;
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    fn unique_temp_dir(prefix: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "snappyref-windows-self-replace-{prefix}-{}-{}-{nanos}",
-            std::process::id(),
-            counter,
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
 
     #[test]
     fn file_swap_replaces_current_exe_and_keeps_old_backup() {
-        let dir = unique_temp_dir("swap-ok");
+        let dir = TempRoot::new("swap-ok");
         let current = dir.join("snappyref.exe");
         let staged = dir.join("updates/staging-1.0.0/SnappyRef/snappyref.exe");
         fs::create_dir_all(staged.parent().unwrap()).unwrap();
@@ -280,13 +261,11 @@ mod tests {
         assert_eq!(fs::read(&current).unwrap(), b"new-exe");
         assert_eq!(fs::read(dir.join("snappyref.exe.old")).unwrap(), b"old-exe");
         assert!(staged.exists(), "staged exe remains as recovery source");
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn file_swap_replaces_prior_backup() {
-        let dir = unique_temp_dir("replace-backup");
+        let dir = TempRoot::new("replace-backup");
         let current = dir.join("snappyref.exe");
         let staged = dir.join("updates/staging-1.0.0/SnappyRef/snappyref.exe");
         let backup = dir.join("snappyref.exe.old");
@@ -299,13 +278,11 @@ mod tests {
 
         assert_eq!(fs::read(&current).unwrap(), b"new-exe");
         assert_eq!(fs::read(&backup).unwrap(), b"old-exe");
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn file_swap_preserves_prior_backup_when_current_cannot_be_renamed() {
-        let dir = unique_temp_dir("preserve-backup-on-failure");
+        let dir = TempRoot::new("preserve-backup-on-failure");
         let current = dir.join("snappyref.exe");
         let staged = dir.join("updates/staging-1.0.0/SnappyRef/snappyref.exe");
         let backup = dir.join("snappyref.exe.old");
@@ -322,13 +299,11 @@ mod tests {
         assert_eq!(fs::read(&backup).unwrap(), b"older-backup");
         assert!(!dir.join("snappyref.exe.old.replacing").exists());
         assert!(!dir.join("snappyref.exe.new").exists());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn file_swap_recovers_interrupted_prior_backup_move() {
-        let dir = unique_temp_dir("recover-prior-backup");
+        let dir = TempRoot::new("recover-prior-backup");
         let current = dir.join("snappyref.exe");
         let staged = dir.join("updates/staging-1.0.0/SnappyRef/snappyref.exe");
         let backup = dir.join("snappyref.exe.old");
@@ -343,8 +318,6 @@ mod tests {
         assert_eq!(fs::read(&current).unwrap(), b"new-exe");
         assert_eq!(fs::read(&backup).unwrap(), b"old-exe");
         assert!(!replacing.exists());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

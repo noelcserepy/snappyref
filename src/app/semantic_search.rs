@@ -8,10 +8,8 @@ use crate::ui::sidebar::{SemanticSearchSettingsAction, SemanticSearchSettingsSta
 
 use super::SnappyRefApp;
 use super::dialogs::{
-    destructive_action_button, destructive_confirmation_frame, destructive_dialog_body,
-    destructive_dialog_header, destructive_dialog_width, primary_dialog_button,
-    secondary_dialog_button, semantic_search_prompt_body, semantic_search_prompt_frame,
-    semantic_search_prompt_header, semantic_search_prompt_width,
+    destructive_action_button, destructive_dialog_width, dialog_body, dialog_frame, dialog_header,
+    primary_dialog_button, secondary_dialog_button, semantic_search_prompt_width,
 };
 
 pub(super) fn semantic_search_settings_status(
@@ -117,12 +115,12 @@ impl SnappyRefApp {
             .collapsible(false)
             .resizable(false)
             .title_bar(false)
-            .frame(semantic_search_prompt_frame(ctx, entrance))
+            .frame(dialog_frame(ctx, entrance))
             .show(ctx, |ui| {
                 ui.multiply_opacity(entrance);
                 ui.set_width(semantic_search_prompt_width());
-                semantic_search_prompt_header(ui, "Enable Semantic Search?");
-                semantic_search_prompt_body(ui, |ui| {
+                dialog_header(ui, "Enable Semantic Search?");
+                dialog_body(ui, |ui| {
                     ui.label(
                         egui::RichText::new(
                             "Semantic Search can find references by description after a local download.",
@@ -178,12 +176,12 @@ impl SnappyRefApp {
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, settle))
-            .frame(destructive_confirmation_frame(ctx, entrance))
+            .frame(dialog_frame(ctx, entrance))
             .show(ctx, |ui| {
                 ui.multiply_opacity(entrance);
                 ui.set_min_width(destructive_dialog_width());
-                destructive_dialog_header(ui, "Remove Semantic Search?");
-                destructive_dialog_body(ui, |ui| {
+                dialog_header(ui, "Remove Semantic Search?");
+                dialog_body(ui, |ui| {
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(
@@ -250,7 +248,7 @@ impl SnappyRefApp {
                 visible_canvas_rect,
             },
         ) {
-            self.handle_search_drop(ctx, drop_request, screen_rect);
+            self.handle_search_drop(ctx, drop_request);
         }
         if self.search.take_recent_searches_dirty() {
             self.save_user_session();

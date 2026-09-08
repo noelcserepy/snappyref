@@ -11,8 +11,7 @@ pub(super) use annotations::paint_annotation_draft;
 pub(super) use background::paint_background;
 #[cfg(test)]
 pub(super) use background::{
-    background_lod_layers, background_screen_step, background_world_step,
-    settled_background_lod_level,
+    background_lod_layers, background_screen_step, settled_background_lod_level,
 };
 pub(super) use image_pass::{canvas_texture_from_preview, paint_canvas_items};
 #[cfg(test)]

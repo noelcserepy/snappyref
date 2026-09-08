@@ -31,14 +31,7 @@ fn main() {
             .unwrap_or_else(|| default.to_string());
         assert!(!value.contains(['\n', '\r']), "invalid descriptor value");
         match field {
-            "url" => assert!(
-                (value.starts_with("https://") || value.starts_with("http://"))
-                    && value
-                        .split_once("://")
-                        .is_some_and(|(_, rest)| !rest.is_empty() && !rest.starts_with('/'))
-                    && !value.chars().any(char::is_whitespace),
-                "descriptor requires HTTP URL"
-            ),
+            "url" => assert!(valid_descriptor_url(&value), "descriptor requires HTTP URL"),
             "sha256" => assert!(
                 value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()),
                 "descriptor requires SHA256"
@@ -87,4 +80,19 @@ fn main() {
         );
         resource.compile().expect("compile Windows app resource");
     }
+}
+
+fn valid_descriptor_url(url: &str) -> bool {
+    let Some(rest) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    !rest
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default()
+        .is_empty()
+        && !url.chars().any(char::is_whitespace)
 }

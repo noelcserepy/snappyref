@@ -14,10 +14,7 @@ import time
 import zlib
 
 ROOT = Path(__file__).resolve().parent.parent
-SCENARIOS = ['sample-image-import', 'pending-drop-batch-undo', 'search-drag-to-canvas',
-             'blue-image-search-drag', 'board-lifecycle-undo-redo', 'canvas-edit-operations',
-             'canvas-navigation-boards', 'session-restart-restore', 'persistence-dropped-write',
-             'delete-undo-redo-placement', 'crop-undo-redo-placement', 'group-operations']
+from inspect_scenarios import SCENARIOS, check_artifact
 
 
 def require(condition, message):
@@ -61,16 +58,9 @@ def main():
     started = time.time()
     subprocess.run(['cargo', 'test', '--locked', '--lib', '--', '--test-threads=1'], cwd=ROOT, check=True)
     artifacts = []
-    for scenario in SCENARIOS:
-        latest = ROOT / 'target/snappyref-inspect' / scenario / 'latest.txt'
-        require(latest.stat().st_mtime >= started, f'stale inspect artifact: {scenario}')
-        artifact = Path(latest.read_text().strip())
-        report = json.loads((artifact / 'report.json').read_text())
-        require(report['status'] == 'pass' and report['assertions'] and report['frames'],
-                f'incomplete inspect report: {scenario}')
-        require(all(item['passed'] for item in report['assertions']), f'failed assertion: {scenario}')
-        require(all(Path(frame).is_file() for frame in report['frames']), f'missing frames: {scenario}')
-        artifacts.append(dict(scenario=scenario, artifact=str(artifact), assertions=len(report['assertions'])))
+    for scenario, (_, _, refactor, _) in SCENARIOS.items():
+        if refactor:
+            artifacts.append(check_artifact(scenario, started))
     subprocess.run(['cargo', 'build', '--locked', '--release'], cwd=ROOT, check=True)
     helpers = check_imageprep(ROOT / 'target/release/snappyref')
     result = dict(passed=True, inspect=artifacts, release_helper_checks=helpers,

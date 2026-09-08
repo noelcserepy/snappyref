@@ -1,0 +1,11 @@
+[
+  {"url": "https://example.com/model.zip", "valid": true},
+  {"url": "http://127.0.0.1:123/model.zip", "valid": true},
+  {"url": "https://", "valid": false},
+  {"url": "https:///model.zip", "valid": false},
+  {"url": "https://?query", "valid": false},
+  {"url": "HTTPS://example.com/model.zip", "valid": false},
+  {"url": "ftp://example.com/model.zip", "valid": false},
+  {"url": "https://exa mple.com/model.zip", "valid": false},
+  {"url": "https://example.com/\u00a0model.zip", "valid": false}
+]

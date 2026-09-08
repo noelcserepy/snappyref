@@ -13,7 +13,8 @@ SNAPPYREF_DATA_ROOT="$(mktemp -d)" cargo run --locked --bin snappyref
 ```
 
 Keep that directory to revisit the same Library and settings. A Library-only
-override uses `SNAPPYREF_LIBRARY_ROOT`; model data still follows the data root.
+override uses `SNAPPYREF_LIBRARY_ROOT` and includes session state and Asset
+embeddings. Model files and Semantic Search staging still follow the data root.
 See [data locations and releases](docs/release-operations.md).
 
 [The entrypoint](src/lib.rs) dispatches the GUI, image-preparation subprocess,

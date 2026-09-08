@@ -14,6 +14,9 @@ inputs:
   token:
     required: true
 outputs:
+  tag:
+    value: ${{ steps.release.outputs.tag }}
+    description: Resolved release tag
   version:
     value: ${{ steps.package.outputs.version }}
     description: Release version without the leading v
@@ -23,15 +26,20 @@ outputs:
 runs:
   using: composite
   steps:
+    - id: release
+      shell: bash
+      env:
+        RELEASE_TAG: ${{ inputs.release_tag }}
+      run: python3 scripts/resolve-release-version.py --tag "$RELEASE_TAG" --github-output "$GITHUB_OUTPUT"
     - id: package
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
         INCLUDE_WINDOWS: ${{ inputs.include_windows }}
         INCLUDE_MACOS: ${{ inputs.include_macos }}
-        WINDOWS_BUILD_TAG: ${{ inputs.windows_build_tag }}
-        MACOS_BUILD_TAG: ${{ inputs.macos_build_tag }}
-        RELEASE_TAG: ${{ inputs.release_tag }}
+        WINDOWS_BUILD_TAG: ${{ inputs.windows_build_tag || steps.release.outputs.tag }}
+        MACOS_BUILD_TAG: ${{ inputs.macos_build_tag || steps.release.outputs.tag }}
+        RELEASE_TAG: ${{ steps.release.outputs.tag }}
       run: |
         args=()
         if [[ "$INCLUDE_WINDOWS" == true ]]; then args+=(--windows-tag "$WINDOWS_BUILD_TAG"); fi

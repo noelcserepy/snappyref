@@ -239,7 +239,6 @@ fn ensure_default_board(connection: &Connection) -> Result<(), String> {
 fn legacy_user_session_from_row(row: &rusqlite::Row<'_>) -> Result<UserSession, rusqlite::Error> {
     Ok(UserSession {
         settings: WorkspaceSettings {
-            auto_image_scaling: row.get::<_, i64>(0)? != 0,
             placement_gap: row.get(1)?,
             placement_target_area: row
                 .get::<_, f32>(2)

@@ -6,29 +6,14 @@
 # are distributed separately as `snappyref-semantic-search.zip`.
 set -euo pipefail
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --models-dir)
-      echo "--models-dir is no longer supported: models ship outside the bundle in SnappyRef/models/" >&2
-      exit 2
-      ;;
-    --*)
-      echo "unknown option: $1" >&2
-      exit 2
-      ;;
-    *)
-      break
-      ;;
-  esac
-done
-
-if [[ $# -ne 1 ]]; then
-  echo "usage: $0 <output.zip>" >&2
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  echo "usage: $0 <output.zip> [binary-directory]" >&2
   exit 2
 fi
-
-zip_path=$1
+zip_path=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$1")
+binary_dir=${2:-target/release}
 package_root=$(mktemp -d "${RUNNER_TEMP:-/tmp}/snappyref-macos-package.XXXXXX")
+trap 'rm -rf "$package_root"' EXIT
 install_root="$package_root/SnappyRef"
 app_root="$install_root/SnappyRef.app"
 contents_root="$app_root/Contents"
@@ -44,11 +29,11 @@ PY
 )
 
 mkdir -p "$macos_root" "$resources_root"
-cp target/release/snappyref "$macos_root/"
+cp "$binary_dir/snappyref" "$macos_root/"
 chmod +x "$macos_root/snappyref"
 # Ship the auto-update helper alongside the main binary at
 # SnappyRef.app/Contents/MacOS/snappyref-updater.
-cp target/release/snappyref-updater "$macos_root/"
+cp "$binary_dir/snappyref-updater" "$macos_root/"
 chmod +x "$macos_root/snappyref-updater"
 cp assets/app-icon/snappyref.icns "$resources_root/"
 

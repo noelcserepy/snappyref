@@ -47,33 +47,10 @@ This is the full reference. Keep it unchanged. Regular profiling, including
 refactors, defaults to fast with five cases repeated three times. Fast requires
 a separately acquired matching reference; the full JSON cannot supply one.
 
-Acquire and compare fast runs from the repo root:
-
-```sh
-python3 scripts/check-refactor-behavior.py
-python3 scripts/perf_eval.py run --output perf-assets/runs/fast-before
-# Make the change, repeat behavior checks, then:
-python3 scripts/perf_eval.py run --output perf-assets/runs/fast-after
-python3 scripts/perf_eval.py compare \
-  perf-assets/runs/fast-before/evaluation.json \
-  perf-assets/runs/fast-after/evaluation.json
-```
-
-Fast checks `import-1`, `import-20`, `board-0`, `board-1000`, and `library-1000`.
-It stops after a 500 ms guard following settled idle and compares latency only.
-It omits CPU/RSS, trickle, format/animation controls, intermediate and combined
-sizes, and backfill. A fast pass is not full coverage. The prepared-command goal
-is below 60 seconds, including setup and cleanup but excluding build and model
-installation. The two command times above do not establish a runtime guarantee.
-
-Use `--suite full` only when the user explicitly requests full, with a matching
-full reference. Never run full automatically for refactors, releases, omitted
-workloads, or inconclusive fast results.
-
-Rerun a before-change baseline when the machine, toolchain, corpus, model, or
-measurement settings differ. Keep builds and behavior tests out of timed runs.
-See [perf-profiling](../../docs/skills/perf-profiling/SKILL.md) for the measurement
-contract, scenarios, and regression budgets.
+See [perf-profiling](../../docs/skills/perf-profiling/SKILL.md) for acquisition,
+measurement contracts, scenario coverage, and regression budgets. Fast compares
+latency only. These references do not establish a prepared-command runtime
+guarantee; the ten-run calibration remains outstanding.
 
 The animated case keeps its imported image selected and animating. Its CPU
 is not a resting-board target. CPU readings of zero mean below the roughly

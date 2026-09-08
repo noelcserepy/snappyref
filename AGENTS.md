@@ -21,7 +21,7 @@ Use [perf-profiling](docs/skills/perf-profiling/SKILL.md) when measuring or impr
 
 Use [patchnotes](docs/skills/patchnotes/SKILL.md) when writing user-facing SnappyRef patchnotes, release notes, changelog copy, or a release summary from PRs since the last version release.
 
-Use [use-windows](docs/skills/use-windows/SKILL.md) when checking, building, testing, or syncing SnappyRef on a real Windows machine from the Mac development checkout. It also records the native drop registration rules and generated COM ABI boundary.
+Use [use-windows](docs/skills/use-windows/SKILL.md) when checking, building, testing, or syncing SnappyRef on a real Windows machine from the Mac development checkout.
 
 ## Repo Principles
 
@@ -45,10 +45,11 @@ There is no standalone design-system document. Treat the code as the canonical v
 ## Testing Notes
 
 - Use `cargo check` after UI/app-inspection changes before trusting screenshots. For behavior verification, prefer an inspect scenario and artifact.
-- Use `scripts/update-smoke-macos.sh` or `scripts/update-smoke-windows.sh` only for explicit auto-update smoke checks. They build a scratch install, force the running app to report an old version, fetch the published GitHub manifest, stage the real latest release for that platform, and verify the platform update apply path. Details live in [release-operations](docs/release-operations.md). They are intentionally manual, networked, and not a pre-push gate.
-- Use [use-windows](docs/skills/use-windows/SKILL.md) for Windows-native checks before GitHub Actions when a change touches Windows behavior, release packaging assumptions, path handling, updater behavior, native drop/clipboard/input behavior, or platform-specific code.
-- Windows verification follows one invariant: make changes on Mac, run `scripts/windows-sync.sh`, then verify on Windows. Do not develop directly in the Windows checkout.
-- Do not make Windows verification a mandatory pre-push gate; the Windows machine may be unavailable. Run targeted Windows checks for platform-sensitive work and the full Windows suite before release candidates.
+- Run networked update smokes only on explicit request. The canonical procedure
+  lives in [release-operations](docs/release-operations.md#update-smokes).
+- For Windows behavior, packaging, paths, updater, native input, or other
+  platform-specific changes, use [use-windows](docs/skills/use-windows/SKILL.md)
+  before GitHub Actions. That skill owns verification expectations and recipes.
 
 ## Before Architecture Refactors
 

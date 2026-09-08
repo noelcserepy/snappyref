@@ -1,4 +1,4 @@
-//! Settings Tab update flow, the restart-into-update handoff, and the
+//! About / Updates update flow, the restart-into-update handoff, and the
 //! scripted update smoke run.
 
 use eframe::egui;
@@ -10,7 +10,7 @@ use crate::updater::UpdateState;
 use super::semantic_search::semantic_search_settings_status;
 use super::{AppConfig, SnappyRefApp};
 
-/// Minimum wall time between Settings Tab update-check clicks. Discovery is
+/// Minimum wall time between About / Updates update-check clicks. Discovery is
 /// opportunistic; the manual button is a convenience, not a way to hammer the
 /// manifest endpoint.
 pub(super) const MANUAL_UPDATE_CHECK_THROTTLE: Duration = Duration::from_secs(60);
@@ -79,7 +79,7 @@ impl UpdateSmokeState {
 }
 
 impl SnappyRefApp {
-    /// Build the Settings Tab "About / Updates" view payload from the
+    /// Build the About / Updates view payload from the
     /// internal updater state machine.
     pub(super) fn about_updates_view(&self) -> crate::ui::sidebar::AboutUpdatesView {
         let check_now_enabled = match self.last_manual_update_check {
@@ -190,7 +190,7 @@ impl SnappyRefApp {
         }
     }
 
-    /// Process a Settings Tab update check click. Throttled to one
+    /// Process a About / Updates update check click. Throttled to one
     /// invocation per [`MANUAL_UPDATE_CHECK_THROTTLE`].
     pub(super) fn request_manual_update_check(&mut self, ctx: &egui::Context) {
         if !self.update_service.check_in_flight() {

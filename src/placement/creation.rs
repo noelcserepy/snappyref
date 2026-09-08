@@ -75,7 +75,6 @@ pub(crate) fn display_size_for_dimensions(
     let scale = crate::placement::display_scale_for_placement_target_area(
         width,
         height,
-        true,
         placement_target_area,
     );
     egui::vec2(width as f32 * scale, height as f32 * scale)
@@ -93,22 +92,6 @@ pub(crate) fn fit_selection_bounds_if_needed(
         bounds,
         crate::canvas::FOCUS_SELECTION_PADDING_SCREEN,
     )
-}
-
-#[cfg(test)]
-pub(crate) fn placement_bounds(placements: &[(egui::Pos2, egui::Vec2)]) -> Option<egui::Rect> {
-    let mut min = egui::pos2(f32::INFINITY, f32::INFINITY);
-    let mut max = egui::pos2(f32::NEG_INFINITY, f32::NEG_INFINITY);
-    let mut found = false;
-    for (center, size) in placements {
-        let half_size = *size * 0.5;
-        min.x = min.x.min(center.x - half_size.x);
-        min.y = min.y.min(center.y - half_size.y);
-        max.x = max.x.max(center.x + half_size.x);
-        max.y = max.y.max(center.y + half_size.y);
-        found = true;
-    }
-    found.then(|| egui::Rect::from_min_max(min, max))
 }
 
 pub(crate) fn plan_source_intent_geometries(
@@ -146,7 +129,7 @@ fn create_one_committed_loading_placement(
     intent: SourceIntent,
     center_world: egui::Pos2,
     settings: PlacementCreationSettings,
-) -> Result<CreatedLoadingPlacement, String> {
+) -> CreatedLoadingPlacement {
     let (width, height) = normalized_dimensions(&intent);
     let size_world = display_size_for_dimensions(width, height, settings.placement_target_area);
     let placement = library.new_committed_loading_placement(
@@ -164,10 +147,10 @@ fn create_one_committed_loading_placement(
     canvas.mark_stack_order_for_persistence();
     canvas.select_placements(&[placement.state.id]);
 
-    Ok(CreatedLoadingPlacement {
+    CreatedLoadingPlacement {
         reservation,
         placement,
-    })
+    }
 }
 
 pub(crate) fn create_committed_loading_placement(
@@ -178,13 +161,10 @@ pub(crate) fn create_committed_loading_placement(
     intent: SourceIntent,
     center_world: egui::Pos2,
     settings: PlacementCreationSettings,
-) -> Result<
-    (
-        CreatedLoadingPlacement,
-        Option<crate::active_board::history::HistoryAction>,
-    ),
-    String,
-> {
+) -> (
+    CreatedLoadingPlacement,
+    Option<crate::active_board::history::HistoryAction>,
+) {
     let stack_before = canvas.canvas_stack_order();
     let created = create_one_committed_loading_placement(
         library,
@@ -194,14 +174,14 @@ pub(crate) fn create_committed_loading_placement(
         intent,
         center_world,
         settings,
-    )?;
+    );
     let history_action = committed_batch_history_action(
         std::slice::from_ref(&created.placement),
         None,
         stack_before,
         canvas.canvas_stack_order(),
     );
-    Ok((created, history_action))
+    (created, history_action)
 }
 
 pub(crate) fn create_committed_loading_placements(
@@ -213,7 +193,7 @@ pub(crate) fn create_committed_loading_placements(
     anchor_world: egui::Pos2,
     screen_rect: egui::Rect,
     settings: PlacementCreationSettings,
-) -> Result<CommittedLoadingPlacementBatch, String> {
+) -> CommittedLoadingPlacementBatch {
     let stack_before = canvas.canvas_stack_order();
     let geometry =
         plan_source_intent_geometries(canvas, &intents, anchor_world, screen_rect, settings);
@@ -227,7 +207,7 @@ pub(crate) fn create_committed_loading_placements(
             intent,
             geometry.center,
             settings,
-        )?);
+        ));
     }
     let placement_ids = created
         .iter()
@@ -244,10 +224,10 @@ pub(crate) fn create_committed_loading_placements(
         stack_before,
         canvas.canvas_stack_order(),
     );
-    Ok(CommittedLoadingPlacementBatch {
+    CommittedLoadingPlacementBatch {
         created,
         history_action,
-    })
+    }
 }
 
 /// Undo action for a batch of newly committed placements. Provisional
@@ -419,7 +399,6 @@ fn provisional_asset_placement(
     let scale = crate::placement::display_scale_for_placement_target_area(
         width,
         height,
-        true,
         settings.placement_target_area,
     );
     Placement {
@@ -516,12 +495,7 @@ mod tests {
             eframe::egui::vec2(800.0, 600.0),
         );
         let visible_rect = canvas_rect;
-        let placements = vec![(
-            eframe::egui::pos2(0.0, 0.0),
-            eframe::egui::vec2(1600.0, 1200.0),
-        )];
-
-        let bounds = super::placement_bounds(&placements).unwrap();
+        let bounds = egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1200.0));
 
         assert!(super::fit_selection_bounds_if_needed(
             &mut canvas,

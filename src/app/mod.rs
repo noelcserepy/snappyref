@@ -220,7 +220,7 @@ pub struct SnappyRefApp {
     user_update_flow_active: bool,
     update_smoke: Option<UpdateSmokeState>,
     /// Monotonic instant of the last update-check click. Used to throttle
-    /// the Settings Tab button to one invocation per minute
+    /// the About / Updates button to one invocation per minute
     /// independent of wall-clock noise. `None` until the first click.
     last_manual_update_check: Option<Instant>,
 }
@@ -523,12 +523,12 @@ impl SnappyRefApp {
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, settle))
-            .frame(destructive_confirmation_frame(ctx, entrance))
+            .frame(dialog_frame(ctx, entrance))
             .show(ctx, |ui| {
                 ui.multiply_opacity(entrance);
                 ui.set_min_width(destructive_dialog_width());
-                destructive_dialog_header(ui, "Delete board?");
-                destructive_dialog_body(ui, |ui| {
+                dialog_header(ui, "Delete board?");
+                dialog_body(ui, |ui| {
                     ui.label(
                         egui::RichText::new(format!("Delete \"{}\"?", pending.board_name))
                             .color(crate::ui::theme::TEXT),
@@ -768,12 +768,12 @@ impl SnappyRefApp {
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, settle))
-            .frame(destructive_confirmation_frame(ctx, entrance))
+            .frame(dialog_frame(ctx, entrance))
             .show(ctx, |ui| {
                 ui.multiply_opacity(entrance);
                 ui.set_min_width(destructive_dialog_width());
-                destructive_dialog_header(ui, title);
-                destructive_dialog_body(ui, |ui| {
+                dialog_header(ui, title);
+                dialog_body(ui, |ui| {
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(
@@ -1461,8 +1461,8 @@ impl eframe::App for SnappyRefApp {
 mod dialogs;
 
 use dialogs::{
-    destructive_action_button, destructive_confirmation_frame, destructive_dialog_body,
-    destructive_dialog_header, destructive_dialog_width, secondary_dialog_button,
+    destructive_action_button, destructive_dialog_width, dialog_body, dialog_frame, dialog_header,
+    secondary_dialog_button,
 };
 
 fn apply_arrangement_action(

@@ -24,7 +24,7 @@ fn archived_loading_placement_rejects_late_import_completion() {
         library
             .persist_imported_image_resolving_placement(
                 1,
-                Some(loading.state.id),
+                loading.state.id,
                 &source,
                 "image/png",
                 100,
@@ -163,9 +163,9 @@ fn hash_aware_import_reuses_existing_exact_asset() {
     let original_sha256 = crate::library::storage::sha256_file(&first_path).unwrap();
 
     let first = library
-        .persist_imported_image_resolving_placement_with_hash(
+        .register_imported_asset_for_placement(
             1,
-            Some(library.allocate_document_id()),
+            library.allocate_document_id(),
             &first_path,
             "image/png",
             1,
@@ -177,9 +177,9 @@ fn hash_aware_import_reuses_existing_exact_asset() {
         )
         .unwrap();
     let duplicate = library
-        .persist_imported_image_resolving_placement_with_hash(
+        .register_imported_asset_for_placement(
             1,
-            Some(library.allocate_document_id()),
+            library.allocate_document_id(),
             &duplicate_path,
             "image/png",
             1,
@@ -200,6 +200,8 @@ fn hash_aware_import_reuses_existing_exact_asset() {
         first.require_loaded_asset().original_path
     );
     assert_eq!(duplicate.asset_id(), first.asset_id());
+    assert!(!duplicate_path.exists());
+    assert!(first_path.exists());
 
     let connection = Connection::open(root.join("library.db")).unwrap();
     let live_assets: i64 = connection
@@ -232,9 +234,9 @@ fn parallel_hash_aware_imports_converge_on_one_exact_asset() {
         std::thread::spawn(move || {
             barrier.wait();
             library
-                .persist_imported_image_resolving_placement_with_hash(
+                .register_imported_asset_for_placement(
                     1,
-                    Some(library.allocate_document_id()),
+                    library.allocate_document_id(),
                     &first_path,
                     "image/png",
                     1,
@@ -255,9 +257,9 @@ fn parallel_hash_aware_imports_converge_on_one_exact_asset() {
         std::thread::spawn(move || {
             barrier.wait();
             library
-                .persist_imported_image_resolving_placement_with_hash(
+                .register_imported_asset_for_placement(
                     1,
-                    Some(library.allocate_document_id()),
+                    library.allocate_document_id(),
                     &duplicate_path,
                     "image/png",
                     1,
@@ -419,18 +421,19 @@ fn embedding_backfill_includes_unplaced_library_assets() {
         )
         .unwrap();
 
-    let jobs = library
-        .missing_live_canvas_asset_jobs_for_model("mobileclip_s0")
+    let job = library
+        .next_embedding_backfill_job_for_model("mobileclip_s0", 0)
+        .unwrap()
         .unwrap();
-
-    let job_asset_ids = jobs.iter().map(|job| job.asset_id).collect::<Vec<_>>();
-    assert_eq!(
-        job_asset_ids,
-        vec![
-            pending.require_loaded_asset().id,
-            unplaced.require_loaded_asset().id
-        ]
-    );
+    assert_eq!(job.asset_id, pending.require_loaded_asset().id);
+    library
+        .upsert_asset_embedding_blob(job.asset_id, "mobileclip_s0", &[1.0, 0.0])
+        .unwrap();
+    let job = library
+        .next_embedding_backfill_job_for_model("mobileclip_s0", 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.asset_id, unplaced.require_loaded_asset().id);
 }
 
 #[test]
@@ -470,33 +473,34 @@ fn embedding_backfill_skips_svg_assets() {
         )
         .unwrap();
 
-    let active_jobs = library
-        .missing_active_board_asset_jobs_for_model("mobileclip_s0")
+    let job = library
+        .next_embedding_backfill_job_for_model("mobileclip_s0", 0)
+        .unwrap()
         .unwrap();
-    let live_jobs = library
-        .missing_live_canvas_asset_jobs_for_model("mobileclip_s0")
+    assert_eq!(job.asset_id, raster.require_loaded_asset().id);
+    library
+        .upsert_asset_embedding_blob(job.asset_id, "mobileclip_s0", &[1.0, 0.0])
         .unwrap();
-
-    assert_eq!(
-        active_jobs
-            .iter()
-            .map(|job| job.asset_id)
-            .collect::<Vec<_>>(),
-        vec![raster.require_loaded_asset().id]
-    );
-    assert_eq!(
-        live_jobs.iter().map(|job| job.asset_id).collect::<Vec<_>>(),
-        vec![raster.require_loaded_asset().id]
-    );
     assert!(
-        !active_jobs
-            .iter()
-            .any(|job| job.asset_id == svg.require_loaded_asset().id)
+        library
+            .next_embedding_backfill_job_for_model("mobileclip_s0", 0)
+            .unwrap()
+            .is_none()
     );
+    library
+        .record_retryable_asset_embedding_failure(
+            svg.require_loaded_asset().id,
+            "mobileclip_s0",
+            2,
+            "unsupported",
+            0,
+        )
+        .unwrap();
     assert!(
-        !live_jobs
-            .iter()
-            .any(|job| job.asset_id == svg.require_loaded_asset().id)
+        library
+            .next_embedding_backfill_job_for_model("mobileclip_s0", 0)
+            .unwrap()
+            .is_none()
     );
 }
 
@@ -528,27 +532,19 @@ fn embedding_backfill_retries_failed_assets_after_never_tried_assets() {
         )
         .unwrap();
 
-    let fresh_jobs = library
-        .missing_live_canvas_asset_jobs_for_model("mobileclip_s0")
+    let job = library
+        .next_embedding_backfill_job_for_model("mobileclip_s0", 1_000)
+        .unwrap()
         .unwrap();
-    assert_eq!(
-        fresh_jobs
-            .iter()
-            .map(|job| job.asset_id)
-            .collect::<Vec<_>>(),
-        vec![fresh.require_loaded_asset().id]
-    );
-
-    let retry_jobs = library
-        .retryable_live_canvas_asset_jobs_for_model("mobileclip_s0", 1_000)
+    assert_eq!(job.asset_id, fresh.require_loaded_asset().id);
+    library
+        .upsert_asset_embedding_blob(job.asset_id, "mobileclip_s0", &[1.0, 0.0])
         .unwrap();
-    assert_eq!(
-        retry_jobs
-            .iter()
-            .map(|job| job.asset_id)
-            .collect::<Vec<_>>(),
-        vec![retry.require_loaded_asset().id]
-    );
+    let job = library
+        .next_embedding_backfill_job_for_model("mobileclip_s0", 1_000)
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.asset_id, retry.require_loaded_asset().id);
 }
 
 #[test]
@@ -599,74 +595,6 @@ fn next_embedding_backfill_job_prefers_never_tried_assets_before_retries() {
 }
 
 #[test]
-fn cropped_relink_requires_new_asset_embedding() {
-    let root = std::env::temp_dir().join(format!(
-        "snappyref-crop-embedding-relink-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).unwrap();
-
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let original_path = library
-        .store_rgba_image("original", &[255, 0, 0, 255], 1, 1)
-        .unwrap();
-    let cropped_path = library
-        .store_rgba_image("cropped", &[0, 255, 0, 255], 1, 1)
-        .unwrap();
-
-    let placement = library
-        .persist_imported_image(
-            &original_path,
-            "image/png",
-            1,
-            1,
-            4,
-            egui::pos2(0.0, 0.0),
-            1.0,
-        )
-        .unwrap();
-    library
-        .upsert_asset_embedding_blob(
-            placement.require_loaded_asset().id,
-            "mobileclip_s0",
-            &[1.0, 0.0],
-        )
-        .unwrap();
-
-    let relinked_asset = library
-        .create_asset_and_relink_placement(
-            placement.state.id,
-            &cropped_path,
-            "image/png",
-            1,
-            1,
-            4,
-            egui::pos2(0.0, 0.0),
-        )
-        .unwrap();
-
-    assert_eq!(
-        library
-            .load_asset_embedding(relinked_asset.id, "mobileclip_s0")
-            .unwrap(),
-        None
-    );
-
-    library
-        .upsert_asset_embedding_blob(relinked_asset.id, "mobileclip_s0", &[0.0, 1.0])
-        .unwrap();
-    assert!(
-        library
-            .load_asset_embedding(relinked_asset.id, "mobileclip_s0")
-            .unwrap()
-            .is_some()
-    );
-}
-
-#[test]
 fn embedding_helpers_scope_to_requested_model_key() {
     let root = std::env::temp_dir().join(format!(
         "snappyref-embedding-model-key-test-{}",
@@ -710,11 +638,11 @@ fn embedding_helpers_scope_to_requested_model_key() {
         .upsert_asset_embedding_blob(first.require_loaded_asset().id, "siglip_key", &[0.5, 0.5])
         .unwrap();
 
-    let jobs = library
-        .missing_live_canvas_asset_jobs_for_model("siglip_key")
+    let job = library
+        .next_embedding_backfill_job_for_model("siglip_key", 0)
+        .unwrap()
         .unwrap();
-    assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0].asset_id, second.require_loaded_asset().id);
+    assert_eq!(job.asset_id, second.require_loaded_asset().id);
 
     let embeddings = library.load_library_embeddings("siglip_key").unwrap();
     assert_eq!(embeddings.len(), 1);

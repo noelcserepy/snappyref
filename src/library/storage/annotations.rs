@@ -1,10 +1,6 @@
 #[cfg(test)]
 use super::boards::active_board_id;
 use super::connection::Library;
-#[cfg(test)]
-use super::connection::write_transaction;
-#[cfg(test)]
-use super::stack_order::append_canvas_stack_item;
 use crate::data::CanvasAnnotation;
 use crate::data::CanvasAnnotationColor;
 use crate::data::CanvasAnnotationKind;
@@ -62,8 +58,7 @@ impl Library {
         color: CanvasAnnotationColor,
         background_enabled: bool,
     ) -> Result<CanvasAnnotation, String> {
-        let annotation = CanvasAnnotation::new(
-            self.allocate_document_id(),
+        let annotation = self.new_canvas_annotation(
             kind,
             start,
             end,
@@ -72,76 +67,32 @@ impl Library {
             stroke_width,
             color,
             background_enabled,
-            false,
         );
-        let mut connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let transaction = write_transaction(&mut connection, "annotation create")?;
-        upsert_board_annotation(&transaction, active_board_id, &annotation, false)?;
-        append_canvas_stack_item(
-            &transaction,
-            active_board_id,
-            CanvasStackItem::Annotation(annotation.id),
-        )?;
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit annotation create: {error}"))?;
+        let mut stack = self.load_canvas_stack_order()?;
+        stack.push(CanvasStackItem::Annotation(annotation.id));
+        self.fixture_document_changes(crate::canvas::CanvasDocumentChanges {
+            updated_annotations: vec![annotation.clone()],
+            stack_order: Some(stack),
+            ..Default::default()
+        })?;
         Ok(annotation)
     }
 
     #[cfg(test)]
     pub fn update_canvas_annotation(&self, annotation: &CanvasAnnotation) -> Result<(), String> {
-        let mut connection = self.connection()?;
-        let active_board_id = active_board_id(&connection)?;
-        let transaction = write_transaction(&mut connection, "annotation update")?;
-        upsert_board_annotation(
-            &transaction,
-            active_board_id,
-            annotation,
-            annotation.archived,
-        )?;
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit annotation update: {error}"))
+        self.fixture_document_changes(crate::canvas::CanvasDocumentChanges {
+            updated_annotations: vec![annotation.clone()],
+            ..Default::default()
+        })
     }
 
     #[cfg(test)]
     pub fn archive_canvas_annotations(&self, annotation_ids: &[i64]) -> Result<(), String> {
-        if annotation_ids.is_empty() {
-            return Ok(());
-        }
-
-        let mut connection = self.connection()?;
-        let transaction = write_transaction(&mut connection, "annotation archive")?;
-
-        for annotation_id in annotation_ids {
-            transaction
-                .execute(
-                    "UPDATE canvas_annotations SET archived = 1 WHERE id = ?1",
-                    params![annotation_id],
-                )
-                .map_err(|error| {
-                    format!("failed to archive canvas annotation {annotation_id}: {error}")
-                })?;
-            transaction
-                .execute(
-                    "DELETE FROM canvas_stack_items
-                     WHERE item_kind = 'annotation'
-                       AND item_id = ?1",
-                    params![annotation_id],
-                )
-                .map_err(|error| {
-                    format!(
-                        "failed to remove canvas annotation {annotation_id} from stack: {error}"
-                    )
-                })?;
-        }
-
-        transaction
-            .commit()
-            .map_err(|error| format!("failed to commit annotation archive transaction: {error}"))?;
-
-        Ok(())
+        self.fixture_document_changes(crate::canvas::CanvasDocumentChanges {
+            archived_annotation_ids: annotation_ids.to_vec(),
+            stack_order: Some(self.load_canvas_stack_order()?.into_iter().filter(|item| !matches!(item, CanvasStackItem::Annotation(id) if annotation_ids.contains(id))).collect()),
+            ..Default::default()
+        })
     }
 }
 

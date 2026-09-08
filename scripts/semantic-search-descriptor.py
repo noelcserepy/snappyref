@@ -4,7 +4,6 @@ import argparse
 import os
 from pathlib import Path
 import re
-from urllib.parse import urlsplit
 
 DEFAULT = Path(__file__).resolve().parents[1] / 'assets/semantic-search-descriptor.env'
 KEYS = ('semantic_search_url', 'semantic_search_sha256', 'semantic_search_size')
@@ -24,8 +23,9 @@ def read(path):
 def validate(values):
     if set(values) != set(KEYS):
         raise ValueError('descriptor requires exactly URL, SHA256 and size')
-    url = urlsplit(values[KEYS[0]])
-    if url.scheme not in ('http', 'https') or not url.netloc:
+    url = values[KEYS[0]]
+    rest = next((url[len(prefix):] for prefix in ('http://', 'https://') if url.startswith(prefix)), '')
+    if not re.split(r'[/\?#]', rest, maxsplit=1)[0] or any(char.isspace() for char in url):
         raise ValueError('descriptor requires HTTP URL')
     if not re.fullmatch(r'[0-9a-fA-F]{64}', values[KEYS[1]]):
         raise ValueError('descriptor requires SHA256')

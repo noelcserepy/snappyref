@@ -139,7 +139,7 @@ fn imported_asset_resolves_existing_loading_placement_preserving_area_and_stack_
     let loaded = library
         .persist_imported_image_resolving_placement(
             1,
-            Some(loading.state.id),
+            loading.state.id,
             &source,
             "image/png",
             640,
@@ -583,7 +583,7 @@ fn delete_board_archives_board_preserves_assets_and_archives_board_content() {
         )
         .unwrap();
 
-    let remaining_active = library.active_board_after_delete(second.id).unwrap();
+    let remaining_active = first.id;
     library.archive_board(second.id, remaining_active).unwrap();
 
     assert_eq!(remaining_active, first.id);
@@ -619,9 +619,8 @@ fn delete_board_archives_board_preserves_assets_and_archives_board_content() {
         assert_eq!(annotation_count, 1);
     }
 
-    let remaining_active = library.active_board_after_delete(first.id).unwrap();
+    let remaining_active = third.id;
     library.archive_board(first.id, remaining_active).unwrap();
-    assert!(library.active_board_after_delete(third.id).is_err());
 }
 
 #[test]
@@ -650,7 +649,7 @@ fn restoring_board_snapshot_restores_loading_placement_content_exactly() {
     library
         .persist_imported_image_resolving_placement(
             second.id,
-            Some(loading.state.id),
+            loading.state.id,
             &source,
             "image/png",
             1,
@@ -774,7 +773,6 @@ fn workspace_settings_remain_global_across_active_boards() {
     library.set_active_board(second_board.id).unwrap();
 
     let mut session = library.load_user_session().unwrap();
-    session.settings.auto_image_scaling = false;
     session.settings.placement_gap = 48.0;
     session.settings.placement_target_area = 45_000.0;
     session.settings.semantic_search_first_launch_prompt_seen = true;
@@ -789,7 +787,6 @@ fn workspace_settings_remain_global_across_active_boards() {
     let reopened = library.load_user_session().unwrap();
 
     assert_eq!(reopened.active_board_id, first_board.id);
-    assert!(!reopened.settings.auto_image_scaling);
     assert_eq!(reopened.settings.placement_gap, 48.0);
     assert_eq!(reopened.settings.placement_target_area, 45_000.0);
     assert!(reopened.settings.semantic_search_first_launch_prompt_seen);
@@ -852,7 +849,7 @@ fn clipboard_images_get_unique_destination_paths() {
 }
 
 #[test]
-fn active_board_embedding_backfill_jobs_include_active_placements_only() {
+fn embedding_backfill_prioritizes_active_board_placements() {
     let root = TempRoot::new("snappyref-active-board-embedding-backfill-test");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let second = library.create_board("Second").unwrap();
@@ -902,14 +899,13 @@ fn active_board_embedding_backfill_jobs_include_active_placements_only() {
         .unwrap();
     library.set_active_board(1).unwrap();
 
-    let jobs = library
-        .missing_active_board_asset_jobs_for_model("mobileclip_s0")
+    let job = library
+        .next_embedding_backfill_job_for_model("mobileclip_s0", 0)
+        .unwrap()
         .unwrap();
-
-    let job_asset_ids = jobs.iter().map(|job| job.asset_id).collect::<Vec<_>>();
-    assert_eq!(job_asset_ids, vec![active.require_loaded_asset().id]);
-    assert!(!job_asset_ids.contains(&ready.require_loaded_asset().id));
-    assert!(!job_asset_ids.contains(&inactive.require_loaded_asset().id));
+    assert_eq!(job.asset_id, active.require_loaded_asset().id);
+    assert_ne!(job.asset_id, ready.require_loaded_asset().id);
+    assert_ne!(job.asset_id, inactive.require_loaded_asset().id);
 }
 
 #[test]

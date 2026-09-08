@@ -5,7 +5,7 @@
 //! * `Hidden`      – no Available Update is known.
 //! * `Available`   – a verified manifest reports a version newer than
 //!   the running app.
-//! * `Downloading` – the user has clicked Install. The update UI renders
+//! * `Downloading` – the user has clicked Update. The update UI renders
 //!   percent-complete in place.
 //! * `Ready`       – the downloaded bundle has been verified and staged.
 //!   The Settings action offers Restart.
@@ -18,11 +18,7 @@
 pub(crate) enum CheckOutcome {
     /// Manifest was fetched and verified; the version is greater than the
     /// running app.
-    NewerAvailable {
-        version: String,
-        notes_url: String,
-        release_page_url: String,
-    },
+    NewerAvailable { version: String },
     /// Manifest was fetched and verified, but its version does not outrank
     /// the running app.
     UpToDate,
@@ -37,10 +33,8 @@ pub(crate) enum UpdateState {
     Hidden,
     Available {
         version: String,
-        notes_url: String,
-        release_page_url: String,
     },
-    /// User has clicked Install and the download is in flight. Percent is
+    /// User has clicked Update and the download is in flight. Percent is
     /// in `0..=100`; the version is captured so a manifest swap mid-flight
     /// cannot relabel the update UI.
     Downloading {
@@ -70,11 +64,7 @@ pub(crate) enum InstallProgress {
 impl UpdateState {
     pub(crate) fn apply(&mut self, outcome: CheckOutcome) {
         match outcome {
-            CheckOutcome::NewerAvailable {
-                version,
-                notes_url,
-                release_page_url,
-            } => {
+            CheckOutcome::NewerAvailable { version } => {
                 // Discovery should never overwrite an in-flight download
                 // or a ready bundle for the same or newer version — the
                 // user is mid-install and the update UI must keep showing the
@@ -87,11 +77,7 @@ impl UpdateState {
                         // Ignore: we already know about this version.
                     }
                     _ => {
-                        *self = UpdateState::Available {
-                            version,
-                            notes_url,
-                            release_page_url,
-                        };
+                        *self = UpdateState::Available { version };
                     }
                 }
             }
@@ -201,8 +187,6 @@ mod tests {
     fn newer(version: &str) -> CheckOutcome {
         CheckOutcome::NewerAvailable {
             version: version.to_owned(),
-            notes_url: "https://example/notes".to_owned(),
-            release_page_url: "https://example/release".to_owned(),
         }
     }
 
@@ -382,8 +366,6 @@ mod tests {
         };
         state.apply(CheckOutcome::NewerAvailable {
             version: "1.0.0".to_owned(),
-            notes_url: "n".to_owned(),
-            release_page_url: "r".to_owned(),
         });
         assert!(state.is_downloading());
     }
@@ -395,8 +377,6 @@ mod tests {
         };
         state.apply(CheckOutcome::NewerAvailable {
             version: "1.0.0".to_owned(),
-            notes_url: "n".to_owned(),
-            release_page_url: "r".to_owned(),
         });
         assert!(state.is_ready());
     }
@@ -408,8 +388,6 @@ mod tests {
         };
         state.apply(CheckOutcome::NewerAvailable {
             version: "1.1.0".to_owned(),
-            notes_url: "n".to_owned(),
-            release_page_url: "r".to_owned(),
         });
         assert!(state.is_available());
     }

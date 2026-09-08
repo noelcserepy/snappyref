@@ -19,8 +19,7 @@ use crate::search::semantic::SemanticSearchInstallProgress;
 use crate::search::semantic::{
     DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, LocalModelStoreStatus,
     SearchQueryResult, SemanticSearchConfig, SemanticSearchInstallController,
-    SemanticSearchInstallDisplay, SemanticSearchInstallSnapshot, SemanticSearchService,
-    default_local_model_store_status,
+    SemanticSearchInstallSnapshot, SemanticSearchService, default_local_model_store_status,
 };
 #[cfg(not(test))]
 use crate::search::semantic::{
@@ -276,7 +275,7 @@ impl SearchController {
         status: &mut String,
     ) {
         self.local_model_store_status = Some(model_store_status.clone());
-        match model_store_status {
+        match &model_store_status {
             LocalModelStoreStatus::Installed => {}
             LocalModelStoreStatus::Missing => {
                 self.service = None;
@@ -290,19 +289,18 @@ impl SearchController {
                     self.active_search = None;
                     self.pending_result_selection = None;
                 }
-                self.overlay.status = SearchOverlayStatus::Ready;
             }
-            LocalModelStoreStatus::Downloading { percent } => {
+            LocalModelStoreStatus::Downloading { .. } => {
                 self.service = None;
-                self.overlay.status =
-                    SearchOverlayStatus::Loading(format!("Installing Semantic Search {percent}%"));
             }
             LocalModelStoreStatus::Failed(error) => {
                 self.service = None;
                 self.close_overlay();
-                self.overlay.status = SearchOverlayStatus::Error(error.clone());
                 *status = format!("Semantic Search install failed: {error}");
             }
+        }
+        if !matches!(model_store_status, LocalModelStoreStatus::Installed) {
+            self.overlay.status = model_store_overlay_status(&model_store_status);
         }
     }
 
@@ -331,12 +329,8 @@ impl SearchController {
         snapshot: SemanticSearchInstallSnapshot,
         status: &mut String,
     ) {
+        self.overlay.status = model_store_overlay_status(&snapshot.model_store_status);
         self.local_model_store_status = Some(snapshot.model_store_status);
-        self.overlay.status = match snapshot.display {
-            SemanticSearchInstallDisplay::Ready => SearchOverlayStatus::Ready,
-            SemanticSearchInstallDisplay::Loading(message) => SearchOverlayStatus::Loading(message),
-            SemanticSearchInstallDisplay::Error(error) => SearchOverlayStatus::Error(error),
-        };
         self.overlay.install_action_focus_requested = snapshot.install_action_focus_requested;
         *status = snapshot.status_message;
     }
@@ -979,6 +973,18 @@ fn normalized_recent_searches(recent_searches: Vec<String>) -> Vec<String> {
         }
     }
     normalized
+}
+
+fn model_store_overlay_status(status: &LocalModelStoreStatus) -> SearchOverlayStatus {
+    match status {
+        LocalModelStoreStatus::Installed | LocalModelStoreStatus::Missing => {
+            SearchOverlayStatus::Ready
+        }
+        LocalModelStoreStatus::Downloading { percent } => {
+            SearchOverlayStatus::Loading(format!("Installing Semantic Search {percent}%"))
+        }
+        LocalModelStoreStatus::Failed(error) => SearchOverlayStatus::Error(error.clone()),
+    }
 }
 
 #[cfg(test)]

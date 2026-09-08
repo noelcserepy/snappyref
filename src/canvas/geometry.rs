@@ -179,17 +179,3 @@ pub(super) fn merge_cropped_item_fields(
     item.geometry.center.x += crop_offset_local.x * scale;
     item.geometry.center.y += crop_offset_local.y * scale;
 }
-
-#[cfg(test)]
-pub(super) fn lattice_phase_world(world: f32, world_step: f32) -> f32 {
-    world.rem_euclid(world_step) / world_step
-}
-
-#[cfg(test)]
-pub(super) fn lattice_phase_screen(
-    screen_origin: f32,
-    screen_position: f32,
-    screen_step: f32,
-) -> f32 {
-    (screen_position - screen_origin).rem_euclid(screen_step) / screen_step
-}

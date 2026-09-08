@@ -156,6 +156,7 @@ interface:
     preparation-reservation-required: External-source preparation must receive the identity and planned position of an existing reserved Placement. Workers must resolve content without allocating a replacement Placement or independently choosing its initial position.
     shared-creation-capability: Every source uses the same geometry planning, Placement construction, and content-resolution correlation rules.
     shared-placement-gap: Initial group layout must use Spatial Layout's Placement Gap meaning.
+    automatic-initial-sizing: New image intake and Search result placements must use the automatic target-area sizing policy without a workspace setting to disable it. Existing accepted geometry and internal copies must retain their own geometry rules.
     boundary-validation: Raw files, URLs, clipboard payloads, PureRef content, and platform drop data must become typed source intent before internal use.
     target-board-isolation: A creation remains bound to its target Board through preparation, commit, failure, and final layout.
     one-accepted-batch-history-entry: One accepted multi-item addition creates exactly one Board Document history entry.

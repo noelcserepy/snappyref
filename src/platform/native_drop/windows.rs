@@ -80,6 +80,7 @@ pub(super) fn take_drop() -> super::NativeDropPayload {
     )
 }
 
+// Winit file events have no coordinates, so previews and placement query the OS cursor.
 pub(super) fn cursor_screen_pos() -> Option<egui::Pos2> {
     let hwnd = HWND(*WINDOW_HWND.get()? as *mut _);
     let mut cursor = POINT { x: 0, y: 0 };

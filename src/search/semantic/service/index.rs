@@ -7,6 +7,7 @@ use crate::library::storage::{AssetSearchHit, Library};
 struct DecodedAssetEmbedding {
     asset_id: i64,
     embedding: Vec<f32>,
+    cosine_is_zero: bool,
 }
 
 #[derive(Default)]
@@ -46,19 +47,25 @@ impl AssetIndex {
             .unwrap_or(false)
     }
     pub(super) fn pivot_embedding(&self, asset_id: i64) -> Result<Vec<f32>, String> {
-        let blob = self
-            .library
-            .load_asset_embedding(asset_id, self.model_key)?
-            .ok_or_else(|| "Source image not indexed yet".to_owned())?;
-        normalized_embedding_blob(&blob)
+        let embeddings = self.embeddings()?;
+        embeddings
+            .binary_search_by_key(&asset_id, |row| row.asset_id)
+            .map(|index| embeddings[index].embedding.clone())
+            .map_err(|_| "Source image not indexed yet".to_owned())
     }
     pub(super) fn rerank(&self, hits: &mut [AssetSearchHit], query: &[f32]) -> Result<(), String> {
+        let embeddings = self.embeddings()?;
+        let query_is_zero = squared_norm(query) <= f32::EPSILON;
+        let query = normalized_embedding(query);
         for hit in hits.iter_mut() {
-            if let Some(blob) = self
-                .library
-                .load_asset_embedding(hit.asset_id, self.model_key)?
-            {
-                hit.similarity = cosine_similarity(query, &decode_f32_blob(&blob)?)?;
+            if let Ok(index) = embeddings.binary_search_by_key(&hit.asset_id, |row| row.asset_id) {
+                let row = &embeddings[index];
+                let similarity = dot_product(&query, &row.embedding)?;
+                hit.similarity = if query_is_zero || row.cosine_is_zero {
+                    0.0
+                } else {
+                    similarity
+                };
             }
         }
         hits.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));
@@ -69,30 +76,33 @@ impl AssetIndex {
         query_embedding: &[f32],
         limit: usize,
     ) -> Result<Vec<AssetSearchHit>, String> {
-        let cached_embeddings = self
-            .cache
-            .lock()
-            .map_err(|_| "semantic-search embedding cache poisoned".to_owned())?
-            .library_embeddings
-            .clone();
-        let embeddings = if let Some(embeddings) = cached_embeddings {
-            embeddings
-        } else {
-            let decoded_embeddings =
-                load_decoded_library_embeddings(&self.library, self.model_key)?;
+        let embeddings = self.embeddings()?;
+        score_decoded_embeddings(&embeddings, query_embedding, limit)
+    }
+
+    fn embeddings(&self) -> Result<Arc<Vec<DecodedAssetEmbedding>>, String> {
+        loop {
+            let generation = {
+                let cache = self
+                    .cache
+                    .lock()
+                    .map_err(|_| "semantic-search embedding cache poisoned".to_owned())?;
+                if let Some(embeddings) = &cache.library_embeddings {
+                    return Ok(embeddings.clone());
+                }
+                cache.generation
+            };
+            let embeddings = load_decoded_library_embeddings(&self.library, self.model_key)?;
             let mut cache = self
                 .cache
                 .lock()
                 .map_err(|_| "semantic-search embedding cache poisoned".to_owned())?;
-            cache.warming = false;
-            if cache.library_embeddings.is_none() {
-                cache.library_embeddings = Some(decoded_embeddings.clone());
+            if cache.generation != generation {
+                continue;
             }
-            decoded_embeddings
-        };
-
-        let hits = score_decoded_embeddings(&embeddings, query_embedding, limit)?;
-        Ok(hits)
+            cache.warming = false;
+            return Ok(cache.library_embeddings.get_or_insert(embeddings).clone());
+        }
     }
 
     pub(super) fn invalidate(&self) {
@@ -142,9 +152,11 @@ fn load_decoded_library_embeddings(
         .load_library_embeddings(model_key)?
         .into_iter()
         .map(|row| {
+            let embedding = decode_f32_blob(&row.embedding_blob)?;
             Ok(DecodedAssetEmbedding {
                 asset_id: row.asset_id,
-                embedding: normalized_embedding_blob(&row.embedding_blob)?,
+                cosine_is_zero: squared_norm(&embedding) <= f32::EPSILON,
+                embedding: normalized_embedding(&embedding),
             })
         })
         .collect::<Result<Vec<_>, String>>()
@@ -171,16 +183,12 @@ fn score_decoded_embeddings(
     Ok(hits)
 }
 
-fn normalized_embedding_blob(blob: &[u8]) -> Result<Vec<f32>, String> {
-    decode_f32_blob(blob).map(|embedding| normalized_embedding(&embedding))
+fn squared_norm(embedding: &[f32]) -> f32 {
+    embedding.iter().map(|value| value * value).sum()
 }
 
 fn normalized_embedding(embedding: &[f32]) -> Vec<f32> {
-    let norm = embedding
-        .iter()
-        .map(|value| value * value)
-        .sum::<f32>()
-        .sqrt();
+    let norm = squared_norm(embedding).sqrt();
     if norm <= f32::EPSILON {
         return vec![0.0; embedding.len()];
     }
@@ -211,25 +219,4 @@ fn decode_f32_blob(blob: &[u8]) -> Result<Vec<f32>, String> {
             Ok(f32::from_ne_bytes(bytes))
         })
         .collect()
-}
-
-fn cosine_similarity(left: &[f32], right: &[f32]) -> Result<f32, String> {
-    if left.len() != right.len() {
-        return Err("embedding dimensions do not match".to_owned());
-    }
-
-    let mut dot = 0.0_f32;
-    let mut left_norm = 0.0_f32;
-    let mut right_norm = 0.0_f32;
-    for (lhs, rhs) in left.iter().zip(right.iter()) {
-        dot += lhs * rhs;
-        left_norm += lhs * lhs;
-        right_norm += rhs * rhs;
-    }
-
-    if left_norm <= f32::EPSILON || right_norm <= f32::EPSILON {
-        return Ok(0.0);
-    }
-
-    Ok(dot / (left_norm.sqrt() * right_norm.sqrt()))
 }

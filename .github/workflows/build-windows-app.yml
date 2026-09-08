@@ -34,7 +34,7 @@ on:
       handoff_release_tag:
         description: Source-repo draft release tag for reusable app build handoff
         required: false
-        default: v0.2.0
+        default: ""
         type: string
   workflow_call:
     inputs:
@@ -60,7 +60,7 @@ on:
         type: string
       handoff_release_tag:
         required: false
-        default: v0.2.0
+        default: ""
         type: string
 
 permissions:
@@ -75,6 +75,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
+
+      - name: Resolve release version
+        id: release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.handoff_release_tag }}
+        run: python scripts/resolve-release-version.py --tag "$RELEASE_TAG" --github-output "$GITHUB_OUTPUT"
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -114,10 +121,10 @@ jobs:
         shell: pwsh
         run: |
           if ("${{ inputs.build_profile }}" -eq "release") {
-            cargo build --release --locked --bins
+            cargo build --release --locked --bin snappyref
             "SNAPPYREF_TARGET_DIR=target\release" | Out-File -FilePath $env:GITHUB_ENV -Append
           } else {
-            cargo build --profile release-fast --locked --no-default-features --bins
+            cargo build --profile release-fast --locked --no-default-features --bin snappyref
             "SNAPPYREF_TARGET_DIR=target\release-fast" | Out-File -FilePath $env:GITHUB_ENV -Append
           }
 
@@ -135,16 +142,19 @@ jobs:
       - name: Package app artifact
         shell: pwsh
         run: |
-          $packageRoot = Join-Path $env:RUNNER_TEMP "snappyref-windows-app\SnappyRef"
-          New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
-          Copy-Item (Join-Path $env:SNAPPYREF_TARGET_DIR "snappyref.exe") $packageRoot
-          Copy-Item `
-            (Join-Path $env:RUNNER_TEMP "semantic-search-descriptor\semantic-search-descriptor.env") `
-            (Join-Path $env:RUNNER_TEMP "snappyref-windows-semantic-search-descriptor.env")
-          Compress-Archive `
-            -Path (Join-Path $env:RUNNER_TEMP "snappyref-windows-app\SnappyRef") `
-            -DestinationPath (Join-Path $env:RUNNER_TEMP "snappyref-windows-app.zip") `
-            -Force
+          $scratch = Join-Path $env:RUNNER_TEMP ([Guid]::NewGuid().ToString())
+          $packageRoot = Join-Path $scratch "SnappyRef"
+          try {
+            New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+            Copy-Item (Join-Path $env:SNAPPYREF_TARGET_DIR "snappyref.exe") $packageRoot
+            Copy-Item `
+              (Join-Path $env:RUNNER_TEMP "semantic-search-descriptor\semantic-search-descriptor.env") `
+              (Join-Path $env:RUNNER_TEMP "snappyref-windows-semantic-search-descriptor.env")
+            Compress-Archive `
+              -Path $packageRoot `
+              -DestinationPath (Join-Path $env:RUNNER_TEMP "snappyref-windows-app.zip") `
+              -Force
+          } finally { Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue }
 
       - name: Upload app handoff release assets
         shell: pwsh
@@ -153,7 +163,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $false
-          $tag = "${{ inputs.handoff_release_tag }}"
+          $tag = "${{ steps.release.outputs.tag }}"
           if ([string]::IsNullOrWhiteSpace($tag)) {
             throw "handoff_release_tag is required"
           }
