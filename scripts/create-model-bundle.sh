@@ -6,8 +6,9 @@ if [[ $# -ne 1 ]]; then
   exit 2
 fi
 
-zip_path=$1
+zip_path=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$1")
 bundle_root=$(mktemp -d "${RUNNER_TEMP:-/tmp}/snappyref-model-bundle.XXXXXX")
+trap 'rm -rf "$bundle_root"' EXIT
 
 python3 scripts/fetch-semantic-model.py --target "$bundle_root/models"
 

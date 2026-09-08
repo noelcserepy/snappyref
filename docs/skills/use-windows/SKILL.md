@@ -55,21 +55,15 @@ Use the script wrapper:
 scripts/windows-sync.sh
 ```
 
-It uses tar-over-SSH. It is explicit, background-free, and preserves file bytes
-exactly:
-
-```sh
-git ls-files -co --exclude-standard -z \
-  | tar --null -T - -cf - \
-  | ssh -o BatchMode=yes <windows-ssh-alias> "powershell -NoProfile -Command \"cd <windows-repo-path>; tar -xf -\""
-```
-
-This includes tracked and untracked non-ignored files. It does not convert line
-endings. It does not delete files on Windows that were removed on Mac; if a
-deletion matters, remove it on Windows explicitly or use Git on Windows for that
-case.
+The wrapper synchronizes the managed source files, including additions,
+modifications, deletions, and renames. It preserves file bytes and unrelated
+remote files, including `.git`, build caches, private configuration, and app data.
 
 ## Checks
+
+Run targeted checks for platform-sensitive work and the full Windows suite before
+release candidates. If the machine is unavailable, report that limitation.
+Windows availability is not a mandatory pre-push gate.
 
 After syncing, run the cheapest Windows-native check first:
 
@@ -95,24 +89,7 @@ scripts/windows-remote.sh '<powershell-command>'
 
 Use this guidance when changing the Windows drop bridge in
 [windows.rs](../../../src/platform/native_drop/windows.rs) or its winit fallback.
-The custom bridge reads richer browser and shell payloads for URL imports.
-Preserving Explorer file imports takes priority when the two handlers cannot
-share a window.
-
-- Do not revoke an existing drop target to install the custom bridge. If
-  `RegisterDragDrop` returns `DRAGDROP_E_ALREADYREGISTERED`, retain winit's target
-  and use its file events. Browser URL drops may then be unavailable.
-- Winit's file hover/drop events lack coordinates. Keep the window handle and
-  query the OS cursor position for placement and preview positioning.
-- A richer URL-drop implementation must cooperate with the existing handler.
-  Replacing it blindly can break Explorer imports before files reach the app.
-
-The drop bridge uses generated `windows` COM bindings. They own vtable layout,
-IUnknown lifetime, and the by-value `POINTL` ABI; the implementation trait
-receives a reference after that boundary. Keep that generated boundary rather
-than reintroducing a handwritten vtable. Registration and OLE cleanup belong
-to the window's apartment thread. Only revoke a target this bridge successfully
-registered.
+Registration ownership and generated COM ABI rationale live beside that code.
 
 For native drop changes, edit on Mac, sync, then check on Windows. Verify
 Explorer file import, cursor-following previews, and final placement. Verify
@@ -153,14 +130,11 @@ Notes:
   one-shot scheduled time can fire a second GUI later.
 - The launcher stops existing `snappyref` processes before starting a new one,
   so a manual verification request leaves exactly one GUI instance.
-- For update testing with a fake running version, launch through a `.cmd`
-  wrapper in the interactive scheduled task that sets
-  `SNAPPYREF_UPDATE_CURRENT_VERSION=<version>` before invoking
-  `target\release-fast\snappyref.exe`; verify it landed by also setting
-  `SNAPPYREF_UPDATE_DIAGNOSTIC_PATH` and checking the diagnostic begins with
-  `new current_version=<version>`.
 - Do not use this for automated checks. It is for human-visible GUI
   verification on the Windows machine.
+
+For explicit update verification, use the canonical
+[update smoke procedure](../../release-operations.md#update-smokes).
 
 ## Workflow
 

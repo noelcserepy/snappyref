@@ -49,42 +49,11 @@ if [[ -z "$platform" || -z "$app_archive" || -z "$output" ]]; then
   exit 2
 fi
 
-work_root=$(mktemp -d "${RUNNER_TEMP:-/tmp}/snappyref-package.XXXXXX")
-app_root="$work_root/app"
-package_root="$work_root/package"
-install_root="$package_root/SnappyRef"
-mkdir -p "$app_root" "$install_root"
-
-unzip -q "$app_archive" -d "$app_root"
-
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 case "$platform" in
-  windows)
-    if [[ -d "$app_root/SnappyRef" ]]; then
-      cp -R "$app_root/SnappyRef/." "$install_root/"
-    else
-      cp "$app_root/snappyref.exe" "$install_root/"
-    fi
-    # The app-artifact must no longer carry an UPDATE.txt; strip a stray one
-    # so we never emit it from this pipeline even if upstream is stale.
-    rm -f "$install_root/UPDATE.txt"
-    (cd "$package_root" && zip -9 -r "$output" SnappyRef)
-    scripts/check-release-archive.sh "$output" SnappyRef/snappyref.exe
-    ;;
-  macos)
-    if [[ ! -d "$app_root/SnappyRef/SnappyRef.app" ]]; then
-      echo "missing SnappyRef.app in app archive" >&2
-      exit 1
-    fi
-    cp -R "$app_root/SnappyRef/." "$install_root/"
-    rm -f "$install_root/UPDATE.txt"
-    # The bundle must never carry an in-bundle models directory after the move
-    # to the Local Model Store.
-    rm -rf "$install_root/SnappyRef.app/Contents/Resources/models"
-    (cd "$package_root" && zip -9 -r "$output" SnappyRef)
-    scripts/check-release-archive.sh "$output" SnappyRef/SnappyRef.app/Contents/MacOS/snappyref
-    ;;
-  *)
-    echo "unsupported platform: $platform" >&2
-    exit 2
-    ;;
+  windows) binary="SnappyRef/snappyref.exe" ;;
+  macos) binary="SnappyRef/SnappyRef.app/Contents/MacOS/snappyref" ;;
+  *) echo "unsupported platform: $platform" >&2; exit 2 ;;
 esac
+"$script_dir/check-release-archive.sh" "$app_archive" "$binary"
+cp "$app_archive" "$output"

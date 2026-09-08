@@ -23,8 +23,6 @@ or other heavy work invalidate timing comparisons.
 
 ```sh
 python3 scripts/check-refactor-behavior.py
-python3 scripts/_perf_sampling.py --self-test
-python3 -m unittest discover -s scripts -p test_perf_eval.py
 python3 scripts/perf_eval.py run --output perf-assets/runs/before
 # Make the change, repeat behavior checks, then:
 python3 scripts/perf_eval.py run --output perf-assets/runs/after
@@ -32,6 +30,12 @@ python3 scripts/perf_eval.py compare \
   perf-assets/runs/before/evaluation.json \
   perf-assets/runs/after/evaluation.json \
   --output perf-assets/runs/comparison.json
+```
+
+When changing the evaluator or sampler, run its tests before measurement:
+
+```sh
+python3 -m unittest discover -s scripts -p test_perf_eval.py
 ```
 
 The runner builds with `cargo build --locked --release` and shipping default
@@ -222,6 +226,9 @@ ranges are a conservative noise check, not confidence intervals. Three trials
 support a median and range, not a useful p95. Inspect spread and use a separate complete repeated acquisition for noisy
 results. Do not selectively retry trials or drop outliers. A pass cannot exclude
 smaller regressions or rare stalls. Never update the reference baseline merely to make a regression pass.
+
+`scripts/inventory-perf-assets.sh` lists local corpus files, formats, byte sizes, and
+hashes. It is an inventory; the evaluator fingerprints the measured corpus.
 
 The corpus is private and gitignored. `perf-assets/manifest.json` records source
 and licensing metadata. Keep large assets/raw runs local; commit only compact

@@ -14,9 +14,6 @@ Reproduce app behavior through this loop:
 seed -> act -> wait -> capture -> inspect artifact -> adjust/fix -> rerun
 ```
 
-This is the default path. Legacy `--verify-*` app flags have been removed; do
-not reintroduce them as a state catalog.
-
 ## Core Model
 
 Build every inspection scenario from four verbs:
@@ -157,10 +154,10 @@ Current useful primitives include:
 
 - `app_full_harness`: full app viewport harness.
 - `InspectScenario::capture_screen`: full-app screenshot + frame metadata.
-- `InspectScenario::drive_progress`: step/sample/capture status changes until
-  terminal state or timeout.
-- `InspectScenario::drive_import_lifecycle`: before/loading/loaded image import
-  flow.
+- `InspectScenario::drive_progress`: step frames, capture changed statuses as
+  facts, stop at terminal state or timeout, and assert success/failure.
+- `InspectScenario::drive_import_lifecycle`: capture before/loading/loaded
+  states and assert placement count and completed content resolution.
 - `inspect_search_result_tile_center`: derives palette tile centers from UI
   layout constants.
 - `inspect_click_at`: sends pointer press/release with modifiers.
@@ -175,11 +172,7 @@ through `InspectScenario` rather than unstructured terminal output. Use
 
 ## Search Palette Work
 
-For search result interactions, do not guess tile coordinates. Use:
-
-```rust
-inspect_search_result_tile_center(index, result_count)
-```
+Use `inspect_search_result_tile_center` for tile coordinates.
 
 Use deterministic result injection when testing palette behavior. Use the real
 semantic search service only when the bug is specifically about search ranking,
@@ -191,37 +184,6 @@ prefer accepting/installing it as part of deterministic setup.
 Injected search results can exist before their thumbnails finish decoding.
 When thumbnail appearance matters, wait for preview readiness before capture;
 result count alone does not establish that the thumbnails are visible.
-
-## Progress Work
-
-Use `drive_progress` for downloads, installer state, import state, indexing, or
-other repaint-heavy workflows.
-
-The primitive should:
-
-- step one frame at a time
-- sample app state
-- capture only changed statuses
-- record each status as a fact
-- stop on terminal state or timeout
-- assert success/failure explicitly
-
-Do not use `harness.run()` in a progress loop.
-
-## Import/Loading Work
-
-Use `drive_import_lifecycle` for visual checks around images loading in.
-
-It captures:
-
-- before import
-- loading placements
-- loaded previews
-
-It asserts:
-
-- expected placement count
-- no pending content-resolution work
 
 ## Reporting Back
 

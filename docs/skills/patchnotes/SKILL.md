@@ -32,29 +32,36 @@ Avoid:
 ## Inputs
 
 - Release number: use the user's provided release number. If missing, infer it from the latest unreleased version/tag context when obvious; otherwise ask for it.
-- Previous release: find the most recent actual GitHub Release and the exact commit/tag it points to. Use that commit as the boundary.
+- Previous release: select the latest published app release from `noelcserepy/snappyref-dist`, excluding drafts and `semantic-search`. Resolve its tag in private `noelcserepy/snappyref` for the source commit boundary. Never use a dist commit or `targetCommitish` as a source boundary.
 - Target commit: resolve the new release tag or intended release ref to its exact commit. Use `HEAD` only when that is the intended release code.
 - Change set: commits included in the target but absent from the previous release, with their associated PRs.
 - Do not use the PR that updates the version number as the release boundary. Version bumps may happen before or after release work and are not reliable.
 
 ## Gathering PRs
 
-1. Check the current branch, tags, and latest release:
+1. Select the latest published app release in the public distribution repository:
 
 ```sh
 git status --short
-git tag --sort=-creatordate | head -20
-gh release list --limit 20
+gh api --paginate repos/noelcserepy/snappyref-dist/releases --slurp | \
+  jq 'add | map(select(.draft == false and .published_at != null and .tag_name != "semantic-search" and any(.assets[]?; .name | test("^snappyref-(mac|windows)-.*\\.zip$")))) | sort_by(.published_at) | last | {tag_name, published_at, html_url}'
 ```
 
-2. Resolve the latest actual release to a commit before collecting PRs:
+Confirm the selected release has app ZIP assets, not just the standalone model
+asset. Inspect its release metadata and assets if the tag is unfamiliar.
+
+2. Resolve that exact tag in the private source repository:
 
 ```sh
-gh release view <latest-release-tag> --json tagName,targetCommitish,publishedAt,url
-git rev-list -n 1 <latest-release-tag>
+gh release view <published-app-tag> --repo noelcserepy/snappyref-dist --json tagName,publishedAt,assets,url
+git fetch origin tag <published-app-tag>
+git rev-parse '<published-app-tag>^{commit}'
 ```
 
-Use `git rev-list -n 1 <latest-release-tag>` as the previous-release commit when the release tag exists locally. If the tag is missing, fetch tags or use GitHub release metadata to resolve the target commit. Do not substitute a version-bump commit or version-bump PR for this boundary.
+Confirm `origin` is `noelcserepy/snappyref` before fetching. Record the dist
+release URL/tag and resolved private source commit. If the source tag is missing,
+stop and resolve the missing source provenance. Do not substitute a dist commit,
+release publication date, or version-bump PR.
 
 3. Enumerate the complete commit range:
 
@@ -71,7 +78,7 @@ dates do not determine which changes shipped.
 they identify the PR. For a commit without a reliable PR link:
 
 ```sh
-gh api --paginate 'repos/{owner}/{repo}/commits/<commit-sha>/pulls' \
+gh api --paginate 'repos/noelcserepy/snappyref/commits/<commit-sha>/pulls' \
   --jq '.[] | select(.merged_at != null) | {number, title, merge_commit_sha, html_url}'
 ```
 
@@ -83,7 +90,7 @@ review. If GitHub metadata is unavailable, inspect the local commits and diffs.
 5. Inspect PR details when the title does not establish the user-facing effect:
 
 ```sh
-gh pr view <number> --json title,body,files,labels,mergedAt,url
+gh pr view <number> --repo noelcserepy/snappyref --json title,body,files,labels,mergedAt,url
 ```
 
 Do not include a change just because it appears in git history. Include it only if it has a user-facing effect or clear stability/performance value.
