@@ -21,7 +21,7 @@ Use [perf-profiling](docs/skills/perf-profiling/SKILL.md) when measuring or impr
 
 Use [patchnotes](docs/skills/patchnotes/SKILL.md) when writing user-facing SnappyRef patchnotes, release notes, changelog copy, or a release summary from PRs since the last version release.
 
-Use [use-windows](docs/skills/use-windows/SKILL.md) when checking, building, testing, or syncing SnappyRef on a real Windows machine from the Mac development checkout. It also records the native drop registration rules and unresolved COM ABI check.
+Use [use-windows](docs/skills/use-windows/SKILL.md) when checking, building, testing, or syncing SnappyRef on a real Windows machine from the Mac development checkout. It also records the native drop registration rules and generated COM ABI boundary.
 
 ## Repo Principles
 

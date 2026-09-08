@@ -107,13 +107,12 @@ share a window.
 - A richer URL-drop implementation must cooperate with the existing handler.
   Replacing it blindly can break Explorer imports before files reach the app.
 
-The manual `IDropTargetVtbl` still declares `DragEnter`, `DragOver`, and `Drop`
-with `point: *const POINTL`. The retained ABI concern is that these COM methods
-declare `POINTL` by value. Before changing the bridge, compare the vtable and
-callbacks with generated Windows bindings for the target architecture and
-verify the result on Windows. The discrepancy remains unresolved; this note
-does not establish that the current signatures are correct or that a fix has
-been verified.
+The drop bridge uses generated `windows` COM bindings. They own vtable layout,
+IUnknown lifetime, and the by-value `POINTL` ABI; the implementation trait
+receives a reference after that boundary. Keep that generated boundary rather
+than reintroducing a handwritten vtable. Registration and OLE cleanup belong
+to the window's apartment thread. Only revoke a target this bridge successfully
+registered.
 
 For native drop changes, edit on Mac, sync, then check on Windows. Verify
 Explorer file import, cursor-following previews, and final placement. Verify
