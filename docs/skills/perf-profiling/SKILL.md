@@ -154,11 +154,10 @@ app. Their exclusion is counted, not reported as failed embedding work.
 ## Command runtime
 
 The target is below 60 seconds for a prepared fast command on the baseline Mac.
-A fresh reference and same-binary control took 43.739 and 44.159 seconds, measured
-externally through process exit. Both completed with ordinary desktop activity;
-the control passed comparison. These two commands do not establish ten-run,
-two-session runtime/noise calibration or a guarantee. The target is not a hard
-abort deadline. See [reference evidence](../../../perf-assets/baselines/macos-m4-pro-fast-2026-09-07.json).
+The target is not a hard abort deadline or a runtime guarantee. Recorded timings,
+acquisition conditions, and calibration limits live with the
+[baseline evidence](../../../perf-assets/baselines/README.md).
+
 Include fingerprinting, model copies, fixture seed/construction, every trial,
 cleanup and reporting. Exclude compilation and model download/installation;
 report cold setup separately. Report overruns and retained failures. Never cut

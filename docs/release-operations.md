@@ -23,12 +23,16 @@ ordinary app release zips.
   `publish-full-release.yml` to sign `latest.json`.
 - `DIST_REPO_TOKEN`: fine-grained token with Contents read/write access to
   `noelcserepy/snappyref-dist`.
-- Public key: [keys/signing-key.pub.pem](keys/signing-key.pub.pem), embedded in
-  the app for manifest verification.
+- Public key: [keys/signing-key.pub.pem](keys/signing-key.pub.pem) is the single
+  source for release verification and the app's trusted key. Cargo decodes and
+  validates it during the build, then embeds its 32 key bytes. The installed app
+  does not read a separate key file. Invalid PEM or a different key algorithm
+  fails the build.
 
 If the private key is leaked, generate a new keypair, replace the GitHub secret
-and public key, then ship a manual app update embedding the new public key. Old
-clients reject manifests signed by a key they do not know.
+and the PEM file, then rebuild and ship a manual app update embedding the new
+public key. No Rust constant needs updating. Old clients reject manifests signed
+by a key they do not know.
 
 ## Publish Full Release
 

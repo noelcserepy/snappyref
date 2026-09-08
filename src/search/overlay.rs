@@ -58,7 +58,7 @@ impl SearchController {
             {
                 self.cancel_search_provisional_batch(canvas);
             } else {
-                self.close_overlay(Some(canvas));
+                self.close_overlay();
             }
             return None;
         }
@@ -169,7 +169,7 @@ impl SearchController {
                             && response.has_focus()
                             && ctx.input(|input| input.key_pressed(egui::Key::Backspace));
                         if input_result.pivot_dismissed || pivot_backspace_dismissed {
-                            self.dismiss_image_pivot(canvas);
+                            self.dismiss_image_pivot();
                         }
                         if self.overlay.focus_requested {
                             response.request_focus();
@@ -210,7 +210,7 @@ impl SearchController {
                                             .active_recent_search_index
                                             .min(self.recent_searches.len().saturating_sub(1)),
                                     ) {
-                                        self.submit_recent_search(&recent_search, canvas);
+                                        self.submit_recent_search(&recent_search);
                                     }
                                 } else {
                                     paint_palette_no_results_state(ui, &self.overlay.status);
@@ -435,7 +435,7 @@ impl SearchController {
             && drop_request.is_none()
             && !cancelled_provisional_batch
         {
-            self.close_overlay(Some(canvas));
+            self.close_overlay();
             return drop_request;
         }
 
@@ -443,7 +443,7 @@ impl SearchController {
             && changed_at.elapsed().as_secs_f32() * 1000.0 >= SEARCH_DEBOUNCE_MS
             && self.overlay.query.trim() != self.overlay.last_submitted_query
         {
-            self.submit_query(canvas);
+            self.submit_query();
         } else if self.overlay.last_query_edit_at.is_some() {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
@@ -487,7 +487,7 @@ impl SearchController {
                         mode: arrow_selection_mode,
                     });
                     self.overlay.result_limit += SEARCH_RESULT_PAGE_SIZE;
-                    self.submit_query(canvas);
+                    self.submit_query();
                     if self.pending_result_selection.is_none() {
                         self.overlay.scroll_lead_result_into_view = true;
                     }
@@ -537,7 +537,7 @@ impl SearchController {
                     .active_recent_search_index
                     .min(last_recent_index)]
                 .clone();
-                self.submit_recent_search(&recent_search, canvas);
+                self.submit_recent_search(&recent_search);
             }
         }
         drop_request

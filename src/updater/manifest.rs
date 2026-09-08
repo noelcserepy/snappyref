@@ -12,20 +12,10 @@ use serde_json::Value;
 
 use crate::updater::platform::TargetPlatform;
 
-/// Raw ed25519 public key for the auto-update signing keypair, embedded
-/// at compile time. Must stay in sync with `docs/keys/signing-key.pub.pem`
-/// (the PEM the CI workflow uses with openssl). To regenerate after a
-/// keypair rotation:
-///
-/// ```sh
-/// openssl pkey -in docs/keys/signing-key.pub.pem -pubin -outform DER \
-///   | tail -c 32 | xxd -i
-/// ```
-///
-const SIGNING_PUBLIC_KEY: [u8; 32] = [
-    0xad, 0xfd, 0x89, 0xd7, 0xb3, 0x3b, 0xb0, 0x75, 0x24, 0x01, 0x7f, 0x72, 0xbe, 0xe2, 0x8d, 0x16,
-    0xa5, 0x2b, 0x83, 0xf9, 0xf7, 0xf5, 0xc4, 0x6f, 0x46, 0x9a, 0xb3, 0x27, 0x0f, 0x89, 0xa5, 0xb5,
-];
+/// Build-time decoding of the same PEM used by release signing verification.
+/// The installed app needs only these embedded bytes, not the PEM file.
+const SIGNING_PUBLIC_KEY: &[u8; 32] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/signing-public-key.bin"));
 
 /// "stable" is the only channel that exists at runtime. The manifest keeps
 /// the field so future beta/insider channels can be rejected explicitly by
@@ -108,12 +98,8 @@ struct PlatformRaw {
 
 /// Parse + verify the manifest using the compiled-in public key.
 pub(crate) fn parse_and_verify(bytes: &[u8]) -> Result<Manifest, ParseError> {
-    // `from_bytes` only fails on invalid ed25519 curve encoding. The
-    // embedded key is constant and asserted by a unit test, so any
-    // failure here would indicate a build-time corruption — `expect` is
-    // the right shape.
-    let key = VerifyingKey::from_bytes(&SIGNING_PUBLIC_KEY)
-        .expect("embedded ed25519 public key must be valid");
+    let key = VerifyingKey::from_bytes(SIGNING_PUBLIC_KEY)
+        .expect("build validated the embedded Ed25519 public key");
     parse_and_verify_with_key(bytes, &key)
 }
 
@@ -339,9 +325,6 @@ mod tests {
 
     #[test]
     fn embedded_public_key_decodes() {
-        // The PEM file shipped in the repo must be a valid ed25519 SPKI;
-        // otherwise discovery would always fail at runtime with
-        // InvalidEmbeddedPublicKey.
-        assert!(VerifyingKey::from_bytes(&SIGNING_PUBLIC_KEY).is_ok());
+        assert!(VerifyingKey::from_bytes(SIGNING_PUBLIC_KEY).is_ok());
     }
 }

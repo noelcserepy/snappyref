@@ -523,6 +523,7 @@ impl Library {
         })
     }
 
+    #[cfg(test)]
     pub fn load_placements(&self) -> Result<Vec<Placement>, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;

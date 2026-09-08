@@ -245,7 +245,7 @@ impl BoardLifecycle<'_> {
         ctx: Option<&egui::Context>,
         document: &crate::data::BoardDocumentSnapshot,
     ) -> Result<(), String> {
-        self.search.close_overlay(Some(self.canvas));
+        self.search.close_overlay();
         self.search.reset_embedding_backfill();
         self.canvas.clear_for_board_switch();
         *self.active_board_id = document.board.id;

@@ -101,6 +101,7 @@ interface:
       caller_obligations: {}
 
   guarantees:
+    current-geometry-for-paste: Paste and duplicate placement must use the current accepted Canvas geometry and active Board, including changes not yet durable, when avoiding existing content.
     continuous-interaction-storage-free: Pan, zoom, drag, resize, rotate, and other frame-continuous interaction must not wait for durable storage.
     shortcut-driven: Core editing and navigation actions must be available without opening a command menu.
     provisional-interaction: Provisional Placements support the same selection and transform interactions as committed Placements.
@@ -152,8 +153,6 @@ decisions:
         status: rejected
         reason: Storage waits caused visible interaction stutter.
     sources:
-      - label: Keep interaction frames storage-free
-        url: https://github.com/noelcserepy/snappyref/blob/7411e46bd3e747b6401aef763ca5105b4aab9204/docs/adr/0023-keep-interaction-frames-storage-free.md
       - label: Move active Board persistence off interaction frames
         url: https://github.com/noelcserepy/snappyref/pull/114
 

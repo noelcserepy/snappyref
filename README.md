@@ -32,12 +32,14 @@ artifacts. Use [Windows checks](docs/skills/use-windows/SKILL.md) after syncing
 Mac changes. Configure the local pre-push gate once with
 `git config core.hooksPath .githooks`.
 
-Run performance alone, after behavior checks. The full suite needs the local
+Run performance alone, after behavior checks. Fast is the default and needs the local
 corpus and model assets described in [perf-profiling](docs/skills/perf-profiling/SKILL.md):
 
 ```sh
-python3 scripts/perf_eval.py run --suite full --output perf-assets/runs/my-change
+python3 scripts/perf_eval.py run --output perf-assets/runs/my-change
 ```
+
+Use `--suite full` only when full profiling is explicitly requested.
 
 ## Follow an operation
 

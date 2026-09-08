@@ -127,6 +127,7 @@ impl CanvasState {
             .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn annotations(&self) -> Vec<CanvasAnnotation> {
         self.document.annotations.clone()
     }
@@ -247,14 +248,6 @@ impl CanvasState {
 
     pub(crate) fn mark_stack_order_for_persistence(&mut self) {
         self.document.stack_order_dirty = true;
-    }
-
-    pub fn add_annotations(&mut self, annotations: Vec<CanvasAnnotation>) {
-        self.document.annotations = annotations;
-        for annotation in self.document.annotations.clone() {
-            self.append_missing_stack_item(CanvasStackItem::Annotation(annotation.id));
-        }
-        self.render.textbox_layout_cache.clear();
     }
 
     pub fn apply_annotation_history_state(&mut self, annotation: Option<CanvasAnnotation>) {

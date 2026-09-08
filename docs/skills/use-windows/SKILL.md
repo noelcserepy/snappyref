@@ -91,6 +91,35 @@ For one-off commands, use:
 scripts/windows-remote.sh '<powershell-command>'
 ```
 
+## Native file and URL drops
+
+Use this guidance when changing the Windows drop bridge in
+[windows.rs](../../../src/platform/native_drop/windows.rs) or its winit fallback.
+The custom bridge reads richer browser and shell payloads for URL imports.
+Preserving Explorer file imports takes priority when the two handlers cannot
+share a window.
+
+- Do not revoke an existing drop target to install the custom bridge. If
+  `RegisterDragDrop` returns `DRAGDROP_E_ALREADYREGISTERED`, retain winit's target
+  and use its file events. Browser URL drops may then be unavailable.
+- Winit's file hover/drop events lack coordinates. Keep the window handle and
+  query the OS cursor position for placement and preview positioning.
+- A richer URL-drop implementation must cooperate with the existing handler.
+  Replacing it blindly can break Explorer imports before files reach the app.
+
+The manual `IDropTargetVtbl` still declares `DragEnter`, `DragOver`, and `Drop`
+with `point: *const POINTL`. The retained ABI concern is that these COM methods
+declare `POINTL` by value. Before changing the bridge, compare the vtable and
+callbacks with generated Windows bindings for the target architecture and
+verify the result on Windows. The discrepancy remains unresolved; this note
+does not establish that the current signatures are correct or that a fix has
+been verified.
+
+For native drop changes, edit on Mac, sync, then check on Windows. Verify
+Explorer file import, cursor-following previews, and final placement. Verify
+browser URL drops where the custom bridge can register. In-process inspect
+scenarios do not exercise the COM calling convention or OS registration.
+
 ## Visible GUI Launch
 
 SSH-launched Windows GUI apps may run in a non-interactive session and not

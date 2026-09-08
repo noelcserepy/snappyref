@@ -153,6 +153,7 @@ interface:
     logical-placement-continuity: Content resolution and commit must preserve the visible Placement that the user has already manipulated.
     one-provisional-batch: At most one provisional Placement batch is active at a time.
     lifecycle-follows-acceptance: Preview and positioning interactions use provisional Placements, while already accepted source intake may create committed Placements directly.
+    preparation-reservation-required: External-source preparation must receive the identity and planned position of an existing reserved Placement. Workers must resolve content without allocating a replacement Placement or independently choosing its initial position.
     shared-creation-capability: Every source uses the same geometry planning, Placement construction, and content-resolution correlation rules.
     shared-placement-gap: Initial group layout must use Spatial Layout's Placement Gap meaning.
     boundary-validation: Raw files, URLs, clipboard payloads, PureRef content, and platform drop data must become typed source intent before internal use.

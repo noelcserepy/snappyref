@@ -606,7 +606,7 @@ impl SnappyRefApp {
                 .iter()
                 .any(|event| matches!(event, egui::Event::Copy))
         });
-        if !copy_requested || !self.canvas.has_selection() {
+        if !copy_requested {
             return;
         }
 
@@ -614,6 +614,10 @@ impl SnappyRefApp {
     }
 
     fn copy_selection_to_system_clipboard(&mut self) {
+        if !self.canvas.has_selection() {
+            return;
+        }
+
         let payload = match crate::sources::clipboard::build_selection_copy_payload(
             &self.canvas,
             self.library.as_ref(),
@@ -641,14 +645,6 @@ impl SnappyRefApp {
         } else {
             format!("Copied {} {noun}", payload.item_count)
         };
-    }
-
-    fn copy_selection_to_context_clipboard(&mut self, _ctx: &egui::Context) {
-        if !self.canvas.has_selection() {
-            return;
-        }
-
-        self.copy_selection_to_system_clipboard();
     }
 
     fn move_selected_canvas_items_to_front(&mut self) {

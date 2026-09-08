@@ -1,3 +1,4 @@
+#[cfg(test)]
 use super::boards::active_board_id;
 use super::connection::Library;
 #[cfg(test)]
@@ -42,6 +43,7 @@ impl Library {
         )
     }
 
+    #[cfg(test)]
     pub fn load_canvas_annotations(&self) -> Result<Vec<CanvasAnnotation>, String> {
         let connection = self.connection()?;
         let active_board_id = active_board_id(&connection)?;

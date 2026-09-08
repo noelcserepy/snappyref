@@ -580,7 +580,7 @@ impl SnappyRefApp {
                 }
                 let noun = if count == 1 { "image" } else { "images" };
                 self.status = format!("Added {count} search {noun}");
-                self.search.close_overlay(Some(&mut self.canvas));
+                self.search.close_overlay();
             }
             Err(error) => self.status = error,
         }

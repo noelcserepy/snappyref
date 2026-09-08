@@ -1,13 +1,5 @@
 # Repo Inspection Guide
 
-## Startup
-
-Read these before normal work:
-
-1. `docs/skills/inspect/SKILL.md`, if it exists.
-2. `docs/skills/perf-profiling/SKILL.md`, if it exists.
-3. `docs/skills/patchnotes/SKILL.md`, if it exists.
-
 ## Project Language Maintenance
 
 There is no standalone project glossary. Treat the codebase as the canonical domain language:
@@ -16,10 +8,8 @@ There is no standalone project glossary. Treat the codebase as the canonical dom
 - add short local comments only where naming cannot carry the rationale
 - keep legacy persistence or compatibility vocabulary inside adapter modules
 
-Do not create new ADRs for normal work. Put durable choices in the owning
-module interface, tests, inspect scenarios, repo-local skills, or Telos memory.
-Any remaining `docs/adr/` files are carryover notes to absorb or delete, not the
-normal project memory source.
+Put product contracts in the owning specs and implementation choices in the
+owning module interface, tests, inspect scenarios, or repo-local skills.
 
 When language, boundaries, lifecycle, storage, release/update behavior, or architecture decisions are unclear, ask one question at a time; if the repo answers the question, inspect the repo instead of asking.
 
@@ -31,14 +21,14 @@ Use [perf-profiling](docs/skills/perf-profiling/SKILL.md) when measuring or impr
 
 Use [patchnotes](docs/skills/patchnotes/SKILL.md) when writing user-facing SnappyRef patchnotes, release notes, changelog copy, or a release summary from PRs since the last version release.
 
-Use [use-windows](docs/skills/use-windows/SKILL.md) when checking, building, testing, or syncing SnappyRef on a real Windows machine from the Mac development checkout.
+Use [use-windows](docs/skills/use-windows/SKILL.md) when checking, building, testing, or syncing SnappyRef on a real Windows machine from the Mac development checkout. It also records the native drop registration rules and unresolved COM ABI check.
 
 ## Repo Principles
 
 - Optimize for speed first. Prefer changes that keep startup and core interactions fast.
 - Keep interactions shortcut-driven and low-friction.
 - Use sensible defaults so repeated flows happen automatically.
-- Keep the code and UI simple. If a solution feels complex, look for a smaller one first. If it still looks too complicated, review it with the `simplify` skill before implementing.
+- Keep the code and UI simple. If a solution feels complex, look for a smaller one first.
 
 ## UI Work
 

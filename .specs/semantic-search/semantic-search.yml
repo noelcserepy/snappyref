@@ -4,7 +4,7 @@ purpose:
   outcome: Find reusable Assets across the whole local Library by meaning or visual similarity and place selected results on a Board.
   owns:
     - Local Semantic Search model installation, status, cancellation, removal, and retry.
-    - First-run model onboarding and legacy model-store migration.
+    - First-run model onboarding and standalone model availability.
     - Asset embedding generation, storage policy, and retry scheduling.
     - Text and image-pivot queries over Library Assets.
     - Search result ranking and selection.
@@ -32,7 +32,7 @@ interface:
 
       behavior:
         storage-required: offered requires writable local session storage so the answer can persist.
-        missing-model-only: Installed or successfully migrated model content produces skipped.
+        missing-model-only: Installed model content in the Local Model Store produces skipped.
         once-per-workspace: A previously answered offer produces skipped, including after later model removal.
         enable-shares-install: Accepting the offer must use the same installation capability as Settings and the Search palette.
         not-now-persists: Declining the offer must suppress later automatic offers without disabling manual installation.
@@ -55,7 +55,7 @@ interface:
       behavior:
         progress-measurable: installing must report determinate progress when the package size is known.
         query-ready-during-backfill: ready must not require Library-wide embedding backfill to finish.
-        legacy-store-migrated: A complete legacy in-bundle model must migrate once into the Local Model Store before status reports it missing.
+        standalone-store-only: Only the Local Model Store may satisfy model availability. A model present only inside an app bundle must not be migrated or reported ready.
 
       caller_obligations: {}
 
@@ -196,7 +196,7 @@ interface:
     duplicate-embeddings-discarded: Semantic Search must discard embeddings owned by removed duplicate Assets rather than merge them into the canonical Asset.
     canonical-embedding-retained: Exact duplicate reconciliation must retain an existing canonical Asset embedding and schedule normal backfill when the canonical embedding is missing.
     optional-model-core-capability: Semantic Search remains a core capability even when its separately installed model is missing.
-    migration-idempotent: Legacy in-bundle model migration must leave an existing complete Local Model Store intact and be safe to repeat.
+    model-location-isolated: Model availability checks must not move or delete bundled files or modify Library Assets, Placements, Boards, or reusable embeddings.
     quiet-idle-backfill: Backfill starts only after interactive image work is drained and the app has remained quiet for its idle grace period.
     one-backfill-step-at-a-time: Each idle opportunity schedules at most one missing or retry-eligible Asset embedding before yielding.
 
@@ -263,29 +263,29 @@ decisions:
       - label: Opt-in Semantic Search installation
         url: https://github.com/noelcserepy/snappyref/issues/96
 
-  onboarding-and-migration:
-    current: Offer installation once when storage is available and the model is absent, while transparently migrating a complete legacy in-bundle model into the standalone Local Model Store.
+  onboarding-and-model-location:
+    current: Offer installation once when storage is available and the standalone model is absent. Require explicit installation for a model available only inside an older app bundle.
     affects:
       - "[[#/interface/operations/offer-onboarding]]"
       - "[[#/interface/operations/status]]"
       - "[[#/interface/operations/install-model]]"
-      - "[[#/interface/guarantees/migration-idempotent]]"
+      - "[[#/interface/guarantees/model-location-isolated]]"
     reasons:
       - Optional local assets need a discoverable enable path without repeatedly interrupting users who decline.
-      - Existing users must retain a model previously shipped inside the app bundle.
+      - One supported model location removes bundle discovery and file-moving behavior from availability checks.
     consequences:
       - Enable and Not Now both persist that the first-run offer was answered.
       - Removing the model later does not resurrect the first-run prompt.
-      - A valid standalone store wins over stale in-bundle content.
+      - Users with only a bundled model must install the standalone package again; existing standalone installations remain usable.
     reconsider_when:
       - Semantic Search no longer needs a separate local package.
     explored_paths:
       prompt-every-launch:
         status: rejected
         reason: It ignores a durable Not Now choice.
-      discard-bundled-model:
-        status: rejected
-        reason: It forces an unnecessary redownload for existing users.
+      automatic-bundled-model-migration:
+        status: superseded
+        reason: A fresh explicit download for older bundled installations is acceptable in exchange for one model location.
     sources:
       - label: Opt-in Semantic Search installation
         url: https://github.com/noelcserepy/snappyref/issues/96
@@ -310,8 +310,6 @@ decisions:
         status: rejected
         reason: It delayed useful Search until every Asset had an embedding.
     sources:
-      - label: Idle-prioritized embedding backfill
-        url: https://github.com/noelcserepy/snappyref/blob/93bd3ddf84f1c612f910fe7985863538a19eb38f/docs/adr/0009-idle-prioritized-embedding-backfill.md
       - label: Implement post-install embedding backfill
         url: https://github.com/noelcserepy/snappyref/issues/102
 
@@ -332,7 +330,5 @@ decisions:
         status: rejected
         reason: The accepted schedule uses two fixed retry opportunities instead.
     sources:
-      - label: Bounded embedding failure retries
-        url: https://github.com/noelcserepy/snappyref/blob/ca1ab5ce46bb0d1d99bbac7bc281bc56911827ef/docs/adr/0010-bounded-embedding-failure-retries.md
       - label: Record bounded embedding retries
         url: https://github.com/noelcserepy/snappyref/pull/67

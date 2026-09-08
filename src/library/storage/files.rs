@@ -172,7 +172,7 @@ impl Library {
         ))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn canvas_image_cache_path(&self, asset_id: i64, max_side: u32) -> Option<PathBuf> {
         self.canvas_image_cache_path_for_lod(asset_id, max_side, CanvasImageLod::Working)
     }

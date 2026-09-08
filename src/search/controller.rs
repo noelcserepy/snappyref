@@ -224,7 +224,6 @@ impl SearchController {
         &mut self,
         library: Option<&Library>,
         status: &mut String,
-        canvas: Option<&mut CanvasState>,
         canvas_image_max_side: u32,
     ) {
         if self.service.is_some() {
@@ -238,7 +237,7 @@ impl SearchController {
             .unwrap_or_else(default_local_model_store_status);
         #[cfg(not(test))]
         let model_store_status = default_local_model_store_status();
-        self.sync_model_store_status(model_store_status, status, canvas);
+        self.sync_model_store_status(model_store_status, status);
         if !self
             .local_model_store_status
             .as_ref()
@@ -275,7 +274,6 @@ impl SearchController {
         &mut self,
         model_store_status: LocalModelStoreStatus,
         status: &mut String,
-        _canvas: Option<&mut CanvasState>,
     ) {
         self.local_model_store_status = Some(model_store_status.clone());
         match model_store_status {
@@ -301,7 +299,7 @@ impl SearchController {
             }
             LocalModelStoreStatus::Failed(error) => {
                 self.service = None;
-                self.close_overlay(None);
+                self.close_overlay();
                 self.overlay.status = SearchOverlayStatus::Error(error.clone());
                 *status = format!("Semantic Search install failed: {error}");
             }
@@ -343,7 +341,7 @@ impl SearchController {
         *status = snapshot.status_message;
     }
 
-    pub(crate) fn handle_results(&mut self, canvas: &mut CanvasState) {
+    pub(crate) fn handle_results(&mut self) {
         let Some(service) = &self.service else {
             return;
         };
@@ -370,11 +368,11 @@ impl SearchController {
         }
 
         for result in search_results {
-            self.process_search_result(result, canvas);
+            self.process_search_result(result);
         }
 
         if refresh_active_query {
-            self.submit_query(canvas);
+            self.submit_query();
         }
     }
 
@@ -478,7 +476,7 @@ impl SearchController {
         }
     }
 
-    fn process_search_result(&mut self, result: SearchQueryResult, _canvas: &mut CanvasState) {
+    fn process_search_result(&mut self, result: SearchQueryResult) {
         let active_request_id = self
             .active_search
             .as_ref()
@@ -690,8 +688,8 @@ impl SearchController {
             return false;
         };
 
-        self.sync_service(library, status, Some(canvas), canvas_image_max_side);
-        self.open_image_pivot_search(pivot, canvas);
+        self.sync_service(library, status, canvas_image_max_side);
+        self.open_image_pivot_search(pivot);
         self.overlay.open = true;
         self.overlay.focus_requested = true;
         self.overlay.suppress_next_outside_click = true;
@@ -712,27 +710,27 @@ impl SearchController {
             return;
         }
 
-        self.sync_service(library, status, Some(canvas), canvas_image_max_side);
+        self.sync_service(library, status, canvas_image_max_side);
 
         let pivot = selected_image_pivot(library, canvas);
 
         if pivot.is_some() && self.overlay.image_pivot != pivot {
             if let Some(pivot) = pivot {
-                self.open_image_pivot_search(pivot, canvas);
+                self.open_image_pivot_search(pivot);
             }
         }
 
         self.open_overlay_from_command();
     }
 
-    pub(crate) fn close_overlay(&mut self, _canvas: Option<&mut CanvasState>) {
+    pub(crate) fn close_overlay(&mut self) {
         self.overlay = SearchOverlayState::default();
         self.result_cache.clear();
         self.active_search = None;
         self.pending_result_selection = None;
     }
 
-    pub(super) fn dismiss_image_pivot(&mut self, _canvas: &mut CanvasState) {
+    pub(super) fn dismiss_image_pivot(&mut self) {
         self.overlay.image_pivot = None;
         self.overlay.last_submitted_query.clear();
         self.active_search = None;
@@ -745,7 +743,7 @@ impl SearchController {
         self.overlay.last_query_edit_at = Some(Instant::now());
     }
 
-    pub(super) fn submit_recent_search(&mut self, query: &str, canvas: &mut CanvasState) {
+    pub(super) fn submit_recent_search(&mut self, query: &str) {
         self.overlay.query = query.to_owned();
         self.overlay.image_pivot = None;
         self.overlay.last_query_edit_at = None;
@@ -756,7 +754,7 @@ impl SearchController {
         self.pending_result_selection = None;
         self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
         self.overlay.has_more_results = false;
-        self.submit_query(canvas);
+        self.submit_query();
     }
 
     fn record_recent_search(&mut self, query: &str) {
@@ -780,7 +778,7 @@ impl SearchController {
         }
     }
 
-    fn open_image_pivot_search(&mut self, pivot: ImageSearchPivot, canvas: &mut CanvasState) {
+    fn open_image_pivot_search(&mut self, pivot: ImageSearchPivot) {
         self.overlay.query.clear();
         self.overlay.last_submitted_query.clear();
         self.overlay.results.clear();
@@ -791,7 +789,7 @@ impl SearchController {
         self.overlay.has_more_results = false;
         self.overlay.image_pivot = Some(pivot);
         self.overlay.last_query_edit_at = None;
-        self.submit_query(canvas);
+        self.submit_query();
     }
 
     fn open_overlay_from_command(&mut self) {
@@ -828,7 +826,7 @@ impl SearchController {
             });
     }
 
-    pub(crate) fn submit_query(&mut self, _canvas: &mut CanvasState) {
+    pub(crate) fn submit_query(&mut self) {
         let query = self.overlay.query.trim().to_owned();
         let pivot = self.overlay.image_pivot.clone();
         if query.is_empty() && pivot.is_none() {
@@ -1046,7 +1044,7 @@ mod tests {
     fn missing_local_model_store_makes_import_embedding_queue_a_noop() {
         let mut search = SearchController::default();
         let mut status = "Ready".to_owned();
-        search.sync_model_store_status(LocalModelStoreStatus::Missing, &mut status, None);
+        search.sync_model_store_status(LocalModelStoreStatus::Missing, &mut status);
 
         search
             .queue_asset_index(7, std::path::PathBuf::from("/tmp/imported.png"))
@@ -1063,7 +1061,7 @@ mod tests {
         let mut status = "Ready".to_owned();
         search.overlay.open = true;
 
-        search.sync_model_store_status(LocalModelStoreStatus::Missing, &mut status, None);
+        search.sync_model_store_status(LocalModelStoreStatus::Missing, &mut status);
 
         assert!(search.overlay.open);
         assert!(!search.overlay.focus_requested);
@@ -1079,7 +1077,6 @@ mod tests {
         search.sync_model_store_status(
             LocalModelStoreStatus::Failed("data root is not writable".to_owned()),
             &mut status,
-            None,
         );
 
         assert_eq!(
@@ -1096,7 +1093,6 @@ mod tests {
         search.sync_model_store_status(
             LocalModelStoreStatus::Downloading { percent: 25 },
             &mut status,
-            None,
         );
 
         assert!(search.service.is_none());
@@ -1850,7 +1846,6 @@ mod tests {
     #[test]
     fn result_expansion_selects_pending_next_row_column_after_async_refresh() {
         let mut search = SearchController::default();
-        let mut canvas = CanvasState::default();
         search.overlay.query = "mountain".to_owned();
         search.overlay.last_submitted_query = "mountain".to_owned();
         search.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE * 3;
@@ -1871,13 +1866,10 @@ mod tests {
             query: "mountain".to_owned(),
         });
 
-        search.process_search_result(
-            SearchQueryResult::Completed {
-                request_id: 7,
-                results: search_result_groups(16),
-            },
-            &mut canvas,
-        );
+        search.process_search_result(SearchQueryResult::Completed {
+            request_id: 7,
+            results: search_result_groups(16),
+        });
 
         assert_eq!(search.overlay.results.len(), SEARCH_RESULT_PAGE_SIZE * 3);
         assert_eq!(search.overlay.result_selection.lead(), Some(10));
